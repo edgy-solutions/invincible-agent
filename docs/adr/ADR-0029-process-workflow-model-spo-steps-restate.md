@@ -524,3 +524,69 @@ the new work lands in exactly one place.
 - [[feedback_hitl_suspend_vs_fail_ruling]] — designed-awaits suspend; denials fail.
 - [[feedback_select_from_authorized_set]] — the interview pattern kept from the
   interrogator.
+
+---
+
+## Addendum 2026-09-07 — the pre-resolved step, built for an answered ask
+
+Decision 5's `spo_operation` call-shape — **pre-resolved subject+verb, verified at the
+stage-2 gate** — was recorded as *unproven* in the Risks section. It is now built and running
+on the first case that needed it, which is not a workflow step but **an ask that has been
+answered**.
+
+### What was measured
+
+An ask and the pick that answered it, one user, one sitting:
+
+| artifact | verb | disposition | slots |
+|---|---|---|---|
+| `artifact-1-…058552` | `mesh:planCapabilityPath` | `ask` | — |
+| `artifact-2-…429144` | `mesh:planCapabilityPath` | `route` | `capability_id: C8`, `outcome: bound` |
+
+The pick paid for `/plan`, `/resolve` and `/classify_predicate` — three model calls — to
+arrive at the verb the ask had already established. Clicking one option on a menu cost what
+asking a fresh question costs.
+
+### The shape, as Decision 5 prescribed it
+
+An answered ask dispatches `(subject, verb, bound slots)` and enters at the stage-2 gate.
+`/resolve` and `/classify_predicate` are skipped. **`/find_compatible_verbs` is not**: it is
+the invalidation. Entitlements are revoked, engines retired, the TTL re-primed — a remembered
+verb without a re-check is a cache with no invalidation. It is also a graph read rather than a
+model call, and it is already authoritative for dispatch coordinates. A verb that no longer
+survives the compat-walk falls through to the full path rather than abstaining; the worst case
+of a miss is a slow answer, which is the status quo.
+
+### The route is a LOOKUP KEY, not a claim
+
+`answering_artifact_id` previously only drew a provenance edge, so a false claim cost a wrong
+arrow. Steering routing makes it an authorization surface: a caller who could name any
+artifact would inherit whatever subject and verb it resolved to. So the client posts an id and
+nothing else, and the `(subject, verb)` is read from Neo4j **inside a `MATCH` that joins the
+caller's own `PRODUCED_FOR` edge** — scoped in the query, not fetched-then-filtered, because a
+filter applied after the read is one early return away from being skipped.
+
+### Known consequence, recorded rather than discovered later
+
+**The lookup is user-scoped, so a legitimate pick on someone else's ask falls to the slow
+path.** If asks come to live on shared canvases, the person picking may not be the person who
+asked; the graph will not return that artifact's route to them and the turn routes the full
+way. That is the correct failure mode — slow, never someone else's route — but it is a real
+behaviour, not an oversight, and it will look like an intermittent performance bug to whoever
+meets it first. Widening it is a deliberate future decision about what a shared canvas grants,
+not a bug fix.
+
+The same scoping incidentally covers a case worth naming: **compatibility is re-read under
+whoever is picking, not whoever asked**, so a persona change between ask and pick is caught by
+the stage-2 gate rather than inherited.
+
+### The gap that structure could not see
+
+The branch read `needs_instance` off the compat-walk record without running
+`_filter_verbs_by_arity` — and that flag is not a property of the record as Neo4j returns it;
+the filter puts it there. Every structural assertion passed while the guard read a key nothing
+had written, and a single-asset verb would have dispatched against a set query on this path
+while the full path correctly asked. The enumeration law, on a site added by the same change
+that sealed it. It is now pinned behaviourally in
+`tests/routing/test_pre_resolved_route_behaviour.py`, which calls the router and fails when
+the gate is removed.

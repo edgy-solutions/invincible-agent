@@ -52,13 +52,50 @@ def test_the_flag_is_carried_onto_the_dispatch_predicate():
     assert 'predicate["needs_instance"] = True' in _SUP
 
 
+def _carries_needs_instance(node) -> bool:
+    """Does this block assign `<something>["needs_instance"] = True`?"""
+    import ast as _ast
+    for n in _ast.walk(node):
+        if not isinstance(n, _ast.Assign):
+            continue
+        for t in n.targets:
+            if (isinstance(t, _ast.Subscript)
+                    and isinstance(t.slice, _ast.Constant)
+                    and t.slice.value == "needs_instance"):
+                return True
+    return False
+
+
 def test_the_carry_sits_where_neo4j_is_already_authoritative():
-    """Placed inside the `truth` block deliberately: that seam already treats the compat-walk
-    entry as the source of dispatch coordinates, so the flag travels with them rather than
-    being a second, separately-maintained hop."""
-    i = _SUP.index('predicate["needs_instance"] = True')
-    window = _SUP[max(0, i - 900):i]
-    assert "if truth:" in window
+    """Placed inside the compat-walk `truth` block deliberately: that seam already treats the
+    record as the source of dispatch coordinates, so the flag travels with them rather than
+    being a second, separately-maintained hop.
+
+    ASSERTED ON THE AST. This read `_SUP[i - 900:i]` where `i` was the index of
+    `predicate["needs_instance"] = True` -- and on 2026-09-07 the pre-resolved path added
+    `_pre_predicate["needs_instance"] = True`, of which the old needle is a SUBSTRING. So
+    `index` began matching the new line, the 900-character window slid onto its comment, and
+    the test failed while both carries were correct. Fifth magic-span rot in this repo, and
+    the first caused by a substring rather than by length.
+
+    BOTH carries are checked now, because there are two seams and each is one edit from
+    silently losing the flag -- and a verb whose flag is lost dispatches against a set query
+    instead of asking.
+    """
+    import ast as _ast
+    tree = _ast.parse(_SUP)
+    blocks = [
+        n for n in _ast.walk(tree)
+        if isinstance(n, _ast.If) and _carries_needs_instance(n)
+    ]
+    tests = {_ast.unparse(b.test) for b in blocks}
+    assert any("truth" in t for t in tests), (
+        f"the needs_instance carry is not inside a compat-walk `truth` block: {tests}"
+    )
+    assert any("_pre_truth" in t for t in tests), (
+        "the PRE-RESOLVED path does not carry needs_instance — a single-asset verb would "
+        "dispatch against a set query on that path while the full path correctly asks"
+    )
 
 
 # ── the precondition itself ─────────────────────────────────────────────────

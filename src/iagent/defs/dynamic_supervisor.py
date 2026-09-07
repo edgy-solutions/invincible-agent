@@ -147,6 +147,13 @@ class SupervisorQueryConfig(Config):
     #: stays byte-equal to what the user asked. See gateway.InterviewRequest.spoken_answer.
     spoken_slot: str = ""
     spoken_answer: str = ""
+    #: THE ROUTE AN EARLIER ASK ALREADY ESTABLISHED - {subject_uri, subject_instance_id,
+    #: subject_instance_label, verb_iri}, or `{}` for an ordinary question.
+    #:
+    #: Read from the graph by the gateway under the caller's own ownership edge, NEVER taken
+    #: from the request body: the moment a named ask steers routing it becomes an
+    #: authorization surface, and a client that could post a verb could route anywhere.
+    pre_resolved: Dict[str, Any] = {}
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -707,6 +714,37 @@ def _filter_verbs_by_argument_fit(
     return kept, dropped
 
 
+def _predicate_from_compat_record(cv: dict) -> dict:
+    """Dispatch coordinates for one verb, built from Neo4j's compat-walk record.
+
+    ONE BUILDER, TWO CALLERS, and the second caller is why it was extracted. The pre-resolved
+    path needs exactly this dict and could trivially have built its own - which is the shape
+    this repo has already paid for: the card and the routing record each had a rule for
+    picking the primary subtask, the two agreed in a docstring, and they disagreed in
+    production. Two dicts that match on today's fields drift on the next field added to one.
+
+    Neo4j is authoritative for dispatch coordinates (see the endpoint-authority note at the
+    override site): /find_compatible_verbs reads verb edges Engine O rebuilt deterministically
+    from the TTL, not a vector-search blob that a rename can orphan.
+    """
+    return {
+        "verb_iri": cv.get("verb_iri"),
+        "verb_type": cv.get("verb_local"),
+        "input_uri": cv.get("input_uri"),
+        "output_uri": cv.get("output_uri"),
+        "endpoint": cv.get("endpoint_url") or "",
+        "owner_persona": cv.get("owner_persona"),
+        "domains": cv.get("domains") or [],
+        "cost_class": cv.get("cost_class"),
+        "requires_human_approval": cv.get("requires_human_approval", False),
+        # WHAT THE VERB TAKES - the acceptance schema for spoken slots, projected from the
+        # engine's registration (`mesh_slots`). `[]` until doc-tools' aitool_linker allowlist
+        # carries it, and `[]` means every spoken slot is refused, which is today's behaviour
+        # exactly.
+        "slots": decode_declarations(cv.get("slots")),
+    }
+
+
 def _classify_route(
     context,
     user_query: str,
@@ -714,6 +752,7 @@ def _classify_route(
     routing_domain: str,
     entity_refs: List[str] | None = None,
     user_email: str = "",
+    pre_resolved: Dict[str, Any] | None = None,
 ) -> tuple[str, Dict[str, Any] | None, dict]:
     """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
@@ -748,6 +787,104 @@ def _classify_route(
     # [[failure-mode-pluralism-in-fixes]] for the fix-sequencing
     # rationale (this is Bug A; PROV contamination is Bug B,
     # diagnosed separately).
+    # -- THE PRE-RESOLVED ROUTE: AN ANSWERED ASK IS NOT A NEW QUESTION -----------------
+    #
+    # MEASURED 2026-09-07 on a real pair: an ask and the pick that answered it both resolved
+    # to `mesh:planCapabilityPath`, and the pick paid /plan + /resolve + /classify_predicate
+    # to re-derive the verb the ask had already established. That is the entire cost of
+    # answering a menu, and none of it buys anything.
+    #
+    # WHAT IS SKIPPED AND WHAT IS NOT. /resolve and /classify_predicate are skipped: both are
+    # LLM calls that would re-answer settled questions. /find_compatible_verbs is NOT - it is
+    # the eligibility verifier, it is a graph read rather than a model call, and it is the
+    # authority on dispatch coordinates anyway. Entitlements change, engines are retired, the
+    # TTL is re-primed; a verb that was eligible when the ask was posed may not be eligible
+    # now, and routing to a remembered verb without re-checking is a cache with no
+    # invalidation.
+    #
+    # EVERY FAILURE FALLS THROUGH TO THE FULL PATH rather than abstaining. The worst outcome
+    # of a miss here is a slow answer, which is exactly what the user has today.
+    if pre_resolved and pre_resolved.get("subject_uri") and pre_resolved.get("verb_iri"):
+        _pre_subject = str(pre_resolved["subject_uri"])
+        _pre_verb = str(pre_resolved["verb_iri"])
+        _pre_verbs, _pre_err = _find_compatible_verbs(
+            context, _pre_subject, list(entitled_domains)
+        )
+        # THE ARITY GATE RUNS HERE TOO, and forgetting it is the enumeration law biting a
+        # site I added myself. `needs_instance` is not a property of the verb record as
+        # Neo4j returns it - `_filter_verbs_by_arity` puts it there, and the dispatch
+        # precondition downstream ABSTAINS on a flagged verb with no askable slot. Reading
+        # `_pre_truth.get("needs_instance")` without running the filter first would have
+        # found nothing, every time, silently: a single-asset verb would dispatch against a
+        # set query on the pre-resolved path while the normal path correctly asked.
+        _pre_instance = str(pre_resolved.get("subject_instance_id") or "")
+        _pre_arity_flagged: list = []
+        if _pre_verbs:
+            _pre_verbs, _pre_arity_flagged = _filter_verbs_by_arity(
+                _pre_verbs, not _pre_instance,
+            )
+        _pre_truth = next(
+            (cv for cv in (_pre_verbs or []) if cv.get("verb_iri") == _pre_verb),
+            None,
+        )
+        if _pre_truth is not None:
+            _pre_predicate = _predicate_from_compat_record(_pre_truth)
+            if _pre_truth.get("needs_instance"):
+                _pre_predicate["needs_instance"] = True
+            # NO CLASSIFIER RAN, so there is no classifier confidence to report. The
+            # threshold this feeds guards against a low-confidence LLM verb pick; here the
+            # verb was not picked by an LLM at all - it was carried from a decision the user
+            # acted on and re-confirmed against the compat-walk one line above. Reporting a
+            # fabricated 0.9-ish score would be the worse lie.
+            _pre_predicate["score"] = 1.0
+            context.log.info(
+                "routing_decision PRE-RESOLVED subject_uri=%s verb_iri=%s "
+                "compatible_count=%d - /resolve and /classify_predicate skipped",
+                _pre_subject, _pre_verb, len(_pre_verbs or []),
+            )
+            return _ROUTING_MATCHED, _pre_predicate, {
+                "subject_uri": _pre_subject,
+                "subject_confidence": 1.0,
+                "subject_reasoning": "carried from the ask this turn answers",
+                "subject_candidates": [],
+                # WHAT THE ARITY GATE FLAGGED, not `[]`. An empty trace beside a
+                # confident route reads as "nothing was excluded", which is the
+                # plausible-negative shape: indistinguishable from a gate that never ran.
+                "eligibility_excluded": [
+                    _eligibility_record(
+                        str(v.get("verb_iri") or ""), "arity", "needs_instance",
+                        disposal=DISPOSAL_FLAGGED,
+                    )
+                    for v in _pre_arity_flagged
+                ],
+                "fallback_reason": None,
+                "subject_instance_id": str(
+                    pre_resolved.get("subject_instance_id") or ""
+                ),
+                "subject_instance_label": str(
+                    pre_resolved.get("subject_instance_label") or ""
+                ),
+                "compatible_verb_iris": [
+                    cv.get("verb_iri") for cv in (_pre_verbs or [])
+                ],
+                "compatible_verbs": _pre_verbs,
+                "neo4j_find_error": _pre_err,
+                "verb_iri": _pre_verb,
+                "verb_confidence": 1.0,
+                "verb_reasoning": "carried from the ask this turn answers",
+                "candidate_verbs": [_pre_verb],
+                # SAYS SO IN THE RECORD. Without this the decision panel shows a confident
+                # route with an empty candidate pool and no way to tell that from a
+                # classifier that considered exactly one option - the reads-as-deliberate
+                # shape this repo keeps finding at render seams.
+                "pre_resolved": True,
+            }
+        context.log.info(
+            "pre-resolved route REJECTED subject_uri=%s verb_iri=%s (find_err=%s) - "
+            "the ask's verb is no longer compatible; routing the full path",
+            _pre_subject, _pre_verb, _pre_err,
+        )
+
     (
         subject_uri, subject_conf, subject_reason, subject_instance_id,
         subject_candidates, subject_abstention_reason, subject_instance_label,
@@ -1046,22 +1183,7 @@ def _classify_route(
     if predicate is None and verb_iri != "UNKNOWN" and compatible_verbs:
         for cv in compatible_verbs:
             if cv.get("verb_iri") == verb_iri:
-                predicate = {
-                    "verb_iri": cv.get("verb_iri"),
-                    "verb_type": cv.get("verb_local"),
-                    "input_uri": cv.get("input_uri"),
-                    "output_uri": cv.get("output_uri"),
-                    "endpoint": cv.get("endpoint_url") or "",
-                    "owner_persona": cv.get("owner_persona"),
-                    "domains": cv.get("domains") or [],
-                    "cost_class": cv.get("cost_class"),
-                    "requires_human_approval": cv.get("requires_human_approval", False),
-                    # WHAT THE VERB TAKES - the acceptance schema for spoken slots,
-                    # projected from the engine's registration (`mesh_slots`). `[]` until
-                    # doc-tools' aitool_linker allowlist carries it, and `[]` means every
-                    # spoken slot is refused, which is today's behaviour exactly.
-                    "slots": decode_declarations(cv.get("slots")),
-                }
+                predicate = _predicate_from_compat_record(cv)
                 break
 
     # --------------------------------------------------------------
@@ -2156,6 +2278,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         routing_domain=routing_domain,
         entity_refs=list(config.entity_refs) if config.entity_refs else None,
         user_email=config.user_email,
+        pre_resolved=dict(config.pre_resolved or {}),
     )
 
     # ------------------------------------------------------------------
@@ -2480,6 +2603,34 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 metadata={
                     "verb_iri": MetadataValue.text(str(predicate.get("verb_iri") or "")),
                     "disposition": MetadataValue.text(str(disposition.action or "")),
+                    # THE SUBJECT, BESIDE THE VERB IT WAS CHOSEN FOR. `resolved_intent`
+                    # recorded the verb alone, which makes the pair unreconstructible: an
+                    # answered ask carries `mesh:planCapabilityPath` and no record of the
+                    # subject that verb was found compatible WITH, so a follow-up has to run
+                    # /resolve and /classify_predicate again to get back to a (subject, verb)
+                    # the ask had already established. Measured 2026-09-07: the ask and its
+                    # pick both resolved to mesh:planCapabilityPath, and the pick paid the
+                    # full pipeline to re-derive it.
+                    #
+                    # Read off the routing telemetry, the one place both halves exist at once.
+                    # THE PERSONA THAT OWNS THE VERB, so a re-route can rebuild the
+                    # agent roster without asking /plan for it. The roster is what fires the
+                    # HUD's plan step (gateway consumes `active_agent_roster`), so skipping
+                    # /plan without carrying this would leave the step firing with an empty
+                    # cast - a visible regression traded for a latency win, which is not a
+                    # trade worth making silently.
+                    "owner_persona": MetadataValue.text(
+                        str(predicate.get("owner_persona") or "")
+                    ),
+                    "subject_uri": MetadataValue.text(
+                        str(telemetry.get("subject_uri") or "")
+                    ),
+                    "subject_instance_id": MetadataValue.text(
+                        str(telemetry.get("subject_instance_id") or "")
+                    ),
+                    "subject_instance_label": MetadataValue.text(
+                        str(telemetry.get("subject_instance_label") or "")
+                    ),
                     "accepted_slots": MetadataValue.text(
                         json.dumps(accepted.params, default=str)
                     ),

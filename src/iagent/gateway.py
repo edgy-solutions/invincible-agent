@@ -3172,6 +3172,73 @@ async def _keepalive_wrap(stream, interval_s: float = 10.0):
 # Dagster GraphQL Orchestration
 # ══════════════════════════════════════════════════════════
 
+# ── THE ASK'S OWN ROUTE, READ BACK SERVER-SIDE ──────────────────────────────────────────
+#
+# MEASURED 2026-09-07: an ask and the pick that answered it both resolved to
+# `mesh:planCapabilityPath`. The pick paid for /plan, /resolve and /classify_predicate to
+# arrive at the verb the ask had already established, which is why answering a menu costs
+# what asking a fresh question costs. The route is not re-derived here; it is looked up.
+#
+# WHY THIS IS READ AND NOT POSTED. `answering_artifact_id` has until now only ever drawn a
+# provenance edge, so a false claim cost a wrong arrow. The moment the named ask STEERS
+# routing it becomes an authorization surface: a caller who could name any artifact would
+# inherit whatever verb and subject that artifact resolved to. So the client sends an id and
+# nothing else, and the (subject, verb) is read from the graph under the caller's own
+# ownership edge. A caller naming an artifact that is not theirs gets `{}` and the ordinary
+# full path — never someone else's route.
+#
+# `resolved_intent` is a JSON STRING on the node: Neo4j property values are primitives or
+# arrays, never maps.
+_PRE_RESOLVED_CYPHER = """
+MATCH (a:AnswerArtifact {id: $artifact_id})-[:PRODUCED_FOR]->(:Actor {actor_id: $user_id})
+RETURN a.resolved_intent AS resolved_intent
+"""
+
+
+def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
+    """The (subject, verb) an earlier ask already established, or `{}`.
+
+    `{}` on every uncertainty — unknown id, another user's artifact, an artifact written
+    before the subject was captured, an unreachable graph. Every one of those means "route
+    this the ordinary way", which is correct and merely slow. There is no failure mode here
+    that should produce a ROUTE, because a half-known route is the one outcome worse than a
+    slow one: it would dispatch a verb against a subject nobody confirmed.
+    """
+    if not artifact_id or not user_id:
+        return {}
+    try:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _PRE_RESOLVED_CYPHER, artifact_id=artifact_id, user_id=user_id
+            ).single()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pre-resolved lookup failed for %s: %s", artifact_id, exc)
+        return {}
+    if not rec or not rec.get("resolved_intent"):
+        return {}
+    try:
+        intent = json.loads(rec["resolved_intent"]) or {}
+    except (ValueError, TypeError):
+        return {}
+    subject = str(intent.get("subject_uri") or "")
+    verb = str(intent.get("verb_iri") or "")
+    # BOTH HALVES OR NEITHER. A verb without its subject is not a dispatchable route
+    # (ADR-0019 Contract B), and a subject without a verb saves nothing worth the branch.
+    # Artifacts written before the subject was captured land here and route normally.
+    if not subject or not verb or subject == "UNKNOWN":
+        return {}
+    return {
+        "subject_uri": subject,
+        "subject_instance_id": str(intent.get("subject_instance_id") or ""),
+        "subject_instance_label": str(intent.get("subject_instance_label") or ""),
+        "verb_iri": verb,
+        # For the synthesized plan's roster. Empty is tolerable here - it costs an empty
+        # cast list on one HUD step - so it does NOT join the both-halves-or-neither guard
+        # above, which exists to stop an undispatchable route.
+        "owner_persona": str(intent.get("owner_persona") or ""),
+    }
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,
@@ -3208,6 +3275,9 @@ async def _launch_supervisor_job(
     bound_slots: dict | None = None,
     spoken_slot: str | None = None,
     spoken_answer: str | None = None,
+    # The route an earlier ask already established, read back under the caller's ownership
+    # edge. `{}` for an ordinary question, which is every request that answers nothing.
+    pre_resolved: dict | None = None,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -3282,6 +3352,7 @@ async def _launch_supervisor_job(
         "bound_slots": dict(bound_slots or {}),
         "spoken_slot": spoken_slot or "",
         "spoken_answer": spoken_answer or "",
+        "pre_resolved": dict(pre_resolved or {}),
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -3853,6 +3924,54 @@ async def generate_dagster_stream(
             "descend from an ask.",
             session_id, request.answering_artifact_id,
         )
+    # THE OTHER TWO OUTCOMES, BECAUSE ONLY THE REFUSAL WAS AUDIBLE.
+    #
+    # MEASURED 2026-09-07: `derived_from_artifact_id` was NULL on all 14 most recent
+    # artifacts, including the ask/pick pair the user walked — and the logs could not say
+    # whether the claim never arrived or arrived and was dropped, because the only line on
+    # this path fires when a claim is REFUSED. An absent warning was consistent with both.
+    #
+    # The silent case is the one that matters: `answeringArtifactBody()` returns `{}` when
+    # the client has no id, so a pick with an unknown ask posts a well-formed body that
+    # simply omits the claim. That is indistinguishable from a plain question at every
+    # layer below this line, and it is the shape that produced two cards where the fold
+    # was fully built on both sides and merely had nothing to fold.
+    elif _answering_artifact_id:
+        logger.info(
+            "lineage claim ACCEPTED for run %s: this turn answers %s",
+            session_id, _answering_artifact_id,
+        )
+    elif _answers_something:
+        # GUARDED ON `_answers_something`, and the first version was NOT — it would have
+        # fired on every ordinary question while asserting "turn carries an answer", which
+        # is a false statement in a line someone reads to diagnose. An ordinary question
+        # legitimately has no ask to name and is not worth a line.
+        logger.info(
+            "lineage ABSENT for run %s: turn carries an answer (bound_slots=%d "
+            "spoken_answer=%s) but names no ask — it will render as its own card",
+            session_id, len(request.bound_slots or {}), bool(request.spoken_answer),
+        )
+
+    # THE SKIP, DECIDED WHERE THE ID HAS ALREADY BEEN JUDGED. Only an ACCEPTED claim gets
+    # here: `_answering_artifact_id` is None for a refused one and for an ordinary question,
+    # and the lookup is scoped to this caller's own ownership edge on top of that.
+    _pre_resolved = _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+    if _pre_resolved:
+        logger.info(
+            "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
+            "— skipping /plan, /resolve and /classify_predicate",
+            session_id, _answering_artifact_id,
+            _pre_resolved["subject_uri"], _pre_resolved["verb_iri"],
+        )
+    elif _answering_artifact_id:
+        # AUDIBLE, because this is the branch that silently costs the user 40 seconds. An
+        # accepted lineage claim that yields no route means the ask predates the subject
+        # capture, or the artifact is not this caller's. Both route the ordinary way; only
+        # one of them is worth investigating, and a log line is how anyone tells them apart.
+        logger.info(
+            "no pre-resolved route on ask %s for run %s — routing the full path",
+            _answering_artifact_id, session_id,
+        )
 
     _artifact_bundle: dict = {
         "id": _artifact_id,
@@ -3900,7 +4019,25 @@ async def generate_dagster_stream(
     # anymore — the supervisor's `create_task_plan` op asks Engine O's /plan
     # endpoint itself when task_plan_json is empty. Step F'.3 will switch
     # that decomposition path to be predicate-aware too.
+    # ONE TASK, NOT A DECOMPOSITION. `/plan` is a BAML call that decomposes a question into
+    # persona-assigned subtasks; an answered ask is not a new question and has nothing to
+    # decompose. Synthesizing the plan here skips that model call while `create_task_plan`
+    # runs unchanged - it takes the `task_plan_json` branch it already has, and still yields
+    # `active_agent_roster`, so the HUD's plan step fires exactly as before.
+    #
+    # `sub_query` is the user's phrase VERBATIM. Composing anything here would reintroduce
+    # the rewrite the fold removed: the phrase the router sees stays byte-equal to what the
+    # person asked, and the answer rides beside it in `bound_slots`.
     task_plan_json = ""
+    if _pre_resolved:
+        task_plan_json = json.dumps({
+            "tasks": [{
+                "target_persona": _pre_resolved.get("owner_persona") or "",
+                "sub_query": user_query,
+            }],
+            "domain": domain,
+            "extracted_concepts": [],
+        })
     run_id = await _launch_supervisor_job(
         user_query,
         session_id,
@@ -3919,6 +4056,7 @@ async def generate_dagster_stream(
         bound_slots=dict(request.bound_slots or {}),
         spoken_slot=request.spoken_slot,
         spoken_answer=request.spoken_answer,
+        pre_resolved=_pre_resolved,
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
@@ -4076,6 +4214,13 @@ async def generate_dagster_stream(
                     "accepted_slots": _j("accepted_slots", {}),
                     "refused_slots": _j("refused_slots", []),
                     "slot_resolution": _j("slot_resolution", {}),
+                    # The subject the verb was chosen for — see the producer. Without it
+                    # `resolved_intent` names an action and not the thing acted on, and a
+                    # re-route cannot be dispatched from the artifact alone.
+                    "owner_persona": _slots_md.get("owner_persona") or "",
+                    "subject_uri": _slots_md.get("subject_uri") or "",
+                    "subject_instance_id": _slots_md.get("subject_instance_id") or "",
+                    "subject_instance_label": _slots_md.get("subject_instance_label") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "

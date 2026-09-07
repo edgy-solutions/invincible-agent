@@ -251,11 +251,18 @@ def _returns_missing_the_trace() -> list[str]:
 
 
 def test_every_routing_return_carries_the_trace():
-    """THE PART THAT BREAKS. Three of the five return sites build their OWN telemetry dict
+    """THE PART THAT BREAKS. Four of the six return sites build their OWN telemetry dict
     rather than using the shared one, and the abstention branches are among them — so a key
-    added only to the happy path is missing exactly where it explains the most."""
-    assert _routing_returns() == 5, (
-        f"expected 5 routing returns, found {_routing_returns()} — if a path was added, it "
+    added only to the happy path is missing exactly where it explains the most.
+
+    SIX SINCE 2026-09-07: the pre-resolved path returns its own telemetry, and this census is
+    what forced that return to carry the trace deliberately rather than shipping an empty
+    one. The count tripping on a NEW path is the assertion working, not noise — its first
+    version would have let the sixth site through with `eligibility_excluded: []`, which
+    reads as "nothing was excluded" and is indistinguishable from a gate that never ran.
+    """
+    assert _routing_returns() == 6, (
+        f"expected 6 routing returns, found {_routing_returns()} — if a path was added, it "
         f"needs the trace deliberately"
     )
     missing = _returns_missing_the_trace()

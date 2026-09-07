@@ -32,19 +32,87 @@ _GW = (_REPO / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
 _ASSET = "subtask_slots_decision"
 
 
+# -- LOCATED STRUCTURALLY, NOT BY CHARACTER SPAN ------------------------------
+#
+# These helpers read `_SUP[i:i + 2500]` and `_GW[i:i + 4000]` until 2026-09-07, when adding
+# `subject_uri` to the slots decision -- a change that ADDED a key and removed nothing --
+# pushed `slot_resolution` past the 2500-character boundary and turned four tests red. Every
+# key was still emitted. The window had simply stopped covering them.
+#
+# FOURTH INSTANCE of a magic span rotting in this repo, and the second where the rot was
+# caused by comment prose written to explain a previous one. Widening the number resets the
+# timer and nothing else, so the span is gone: the materialization is found by its asset key
+# and the gateway branch by its test expression, and both grow with the code.
+
+
+def _sup_tree():
+    return ast.parse(_SUP)
+
+
+def _is_slots_materialization(node) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    if getattr(f, "id", getattr(f, "attr", "")) != "AssetMaterialization":
+        return False
+    for kw in node.keywords:
+        if kw.arg == "asset_key" and isinstance(kw.value, (ast.List, ast.Tuple)):
+            if _ASSET in [e.value for e in kw.value.elts if isinstance(e, ast.Constant)]:
+                return True
+    return False
+
+
+def _materialization():
+    found = [n for n in ast.walk(_sup_tree()) if _is_slots_materialization(n)]
+    assert len(found) == 1, f"expected one {_ASSET} materialization, found {len(found)}"
+    return found[0]
+
+
+def _metadata_dict():
+    for kw in _materialization().keywords:
+        if kw.arg == "metadata" and isinstance(kw.value, ast.Dict):
+            return kw.value
+    raise AssertionError(f"the {_ASSET} materialization carries no metadata dict")
+
+
+def _value_src(key: str) -> str:
+    """The unparsed VALUE expression for one metadata key."""
+    d = _metadata_dict()
+    for k, v in zip(d.keys, d.values):
+        if isinstance(k, ast.Constant) and k.value == key:
+            return ast.unparse(v)
+    raise AssertionError(f"{key} is not emitted at all")
+
+
 def _emitted_keys() -> set:
     """The metadata keys the supervisor puts on the slots materialization."""
-    i = _SUP.index(f'asset_key=["{_ASSET}"]')
-    window = _SUP[i:i + 2500]
-    return set(re.findall(r'"([a-z_]+)":\s*MetadataValue\.', window))
+    return {
+        k.value for k in _metadata_dict().keys
+        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+    }
+
+
+def _gateway_branch_src() -> str:
+    """The BODY of the `path == [_ASSET]` branch.
+
+    The body ONLY -- an `elif` chain nests every later branch inside this node's `orelse`, so
+    unparsing the whole `If` would drag them in and quietly widen every assertion made
+    against it.
+    """
+    for n in ast.walk(ast.parse(_GW)):
+        if isinstance(n, ast.If) and _ASSET in ast.unparse(n.test):
+            return chr(10).join(ast.unparse(stmt) for stmt in n.body)
+    raise AssertionError(f"no gateway branch tests for {_ASSET}")
 
 
 def _consumed_keys() -> set:
     """The metadata keys the gateway reads out of it."""
-    i = _GW.index(f'path == ["{_ASSET}"]')
-    window = _GW[i:i + 4000]
-    return set(re.findall(r'_slots_md\.get\("([a-z_]+)"', window)) \
-        | set(re.findall(r'_j\("([a-z_]+)"', window))
+    src = _gateway_branch_src()
+    # SINGLE QUOTES, because `ast.unparse` normalises string literals to them. Matching any
+    # character instead of a quote harvested "ey" out of `_j(key, fallback)` -- a phantom key
+    # that no producer could ever emit, which read exactly like a real producer/consumer gap.
+    return (set(re.findall(r"_slots_md\.get\('([a-z_]+)'", src))
+            | set(re.findall(r"_j\('([a-z_]+)'", src)))
 
 
 # ── the two halves exist ────────────────────────────────────────────────────
@@ -116,17 +184,24 @@ def test_the_emission_happens_AFTER_slots_are_accepted():
 def test_the_capture_is_non_fatal():
     """Provenance that fails must not take an answer down. A run that succeeded and
     recorded less beats one that did not run."""
-    i = _SUP.index(f'asset_key=["{_ASSET}"]')
-    window = _SUP[max(0, i - 400):i + 1900]
-    assert "except Exception" in window, "the slots materialization must be non-fatal"
+    guarded = [
+        t for t in ast.walk(_sup_tree())
+        if isinstance(t, ast.Try)
+        and any(_is_slots_materialization(c) for stmt in t.body for c in ast.walk(stmt))
+    ]
+    assert guarded, (
+        "the slots materialization is not inside a try -- a provenance failure would take "
+        "the answer down with it"
+    )
+    assert all(t.handlers for t in guarded), "the try has no handler"
 
 
 def test_the_gateway_does_not_invent_an_SSE_event_for_it():
     """This is provenance for the artifact, not a step for the HUD. A UI event with no
     reader is the orphan shape in the other direction."""
-    i = _GW.index(f'path == ["{_ASSET}"]')
-    window = _GW[i:i + 1800]
-    assert "_sse(" not in window, "the slots decision must not emit an SSE event"
+    assert "_sse(" not in _gateway_branch_src(), (
+        "the slots decision must not emit an SSE event"
+    )
 
 
 def test_resolved_intent_still_reaches_the_writer():
@@ -154,12 +229,12 @@ def test_refused_slots_are_structured_records_not_formatted_prose():
     `Refusal.__str__` is unchanged and stays right where it is — a LOG LINE is read by a
     person, a PAYLOAD is read by a renderer, and the same string cannot serve both.
     """
-    i = _SUP.index('"refused_slots": MetadataValue.text(')
-    window = _SUP[i:i + 700]
+    window = _value_src("refused_slots")
     assert "[str(r) for r in" not in window, (
         "refused_slots is being stringified again — a renderer would have to parse prose"
     )
-    for field in ('"name": r.name', '"reason": r.reason', '"spoken": r.spoken'):
+    # Unparsed form: `ast.unparse` renders dict keys with single quotes.
+    for field in ("'name': r.name", "'reason': r.reason", "'spoken': r.spoken"):
         assert field in window, f"the refusal record lost {field}"
 
 
@@ -181,3 +256,41 @@ def test_the_disclosure_keys_the_strip_needs_are_all_carried():
     for key in ("slot_resolution", "accepted_slots", "refused_slots"):
         assert key in _emitted_keys(), f"{key} missing from the slots decision"
         assert key in _consumed_keys(), f"{key} is emitted but the gateway drops it"
+
+
+# ── the SUBJECT, beside the verb it was chosen for ──────────────────────────
+#
+# MEASURED 2026-09-07, on the ask/pick pair a user actually walked:
+#
+#     artifact-1-...058552   verb_iri=mesh:planCapabilityPath  disposition=ask
+#     artifact-2-...429144   verb_iri=mesh:planCapabilityPath  disposition=route
+#                            accepted_slots={"capability_id": "C8"}  outcome=bound
+#
+# The pick re-derived the verb the ask had already established, at the cost of the whole
+# pipeline -- /plan, /resolve, /classify_predicate -- which is why a follow-up costs what a
+# first question costs. The artifact could not have been used to skip that work even in
+# principle: it named the verb and never the subject the verb was found compatible WITH, and
+# ADR-0019 Contract B forbids calling a verb without subject grounding. A verb alone is not a
+# dispatchable route.
+
+_SUBJECT_KEYS = ("subject_uri", "subject_instance_id", "subject_instance_label")
+
+
+def test_the_subject_is_captured_beside_the_verb():
+    missing = [k for k in _SUBJECT_KEYS if k not in _emitted_keys()]
+    assert not missing, f"the slots decision names an action and not the thing acted on: {missing}"
+
+
+def test_the_gateway_carries_the_subject_onto_the_artifact():
+    missing = [k for k in _SUBJECT_KEYS if k not in _consumed_keys()]
+    assert not missing, f"the subject is emitted but never reaches resolved_intent: {missing}"
+
+
+def test_the_subject_is_read_from_the_ROUTING_TELEMETRY_not_a_placeholder():
+    """NON-VACUITY ON THE VALUES, which the key-set assertions above cannot see. Three keys
+    mapped to `""` satisfy every join check in this file while capturing nothing -- presence
+    is not content -- and an empty subject would send a re-route back through /resolve while
+    reporting that it had skipped it."""
+    for key in _SUBJECT_KEYS:
+        src = _value_src(key)
+        assert "telemetry" in src, f"{key} is not read from the routing telemetry: {src}"
