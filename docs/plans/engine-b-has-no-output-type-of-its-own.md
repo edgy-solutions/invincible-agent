@@ -2,13 +2,31 @@
 id:         engine-b-has-no-output-type-of-its-own
 status:     open
 owner:      unassigned
-blocked-on:
+blocked-on: the ONTOLOGY half is done (mesh:StatefulSupportResponse, 2026-09-06); what remains is a PRIME to carry the class into the graph, and the CODE half — Engine B returning that shape instead of BAML AgentResponse
 closed-by:
 repo:       invincible-agent
 ruled-by:   ADR-0046 §1 (a registered verb declares both Contract D ends) — this item is why Engine B cannot satisfy it today
 code-site:  agent_fleet/langgraph_support/main.py:55 (the import), :262-267 (the return), setup/ontologies/mesh_system.ttl:109-112
 summary:    Engine B returns BAML `AgentResponse`, whose graph class `mesh:AgentResponse` is documented as "The final output of a smolagents CodeAgent run" — Engine A's loop, not Engine B's graph. So Engine B has NO OUTPUT TYPE OF ITS OWN, and the Contract D output end it would need in order to register does not describe what it produces. Found 2026-09-01 by the ADR-0046 read. Not urgent while Engine B registers nothing (it calls register_engine_to_mesh zero times), which is exactly why it is worth filing NOW: the borrowed shape is invisible until the moment someone tries to register the engine, and at that moment it looks like a five-minute problem and is a modelling one.
 ---
+
+> **PARTIALLY CLOSED 2026-09-06 — the ontology half only, and the remainder is named.**
+> `mesh:StatefulSupportResponse` is declared in `setup/ontologies/mesh_system.ttl`
+> (`rdfs:subClassOf mesh:Response`), and verified present in the grounding-exclusion seal's
+> DERIVED population rather than assumed into it — 49 response shapes enumerated by
+> `?uri rdfs:subClassOf+ mesh:Response`, this class among them, so §1's *"a hosted graph inherits
+> the platform's fixes rather than re-earning them"* holds for it.
+>
+> **Two things remain and neither is cosmetic.** (1) A **prime** must carry the class into the
+> graph — the registrar MATCHes and must never invent ontology, so a registration citing a class
+> the graph does not hold gets a Contract D 422 telling the exact truth (the failure
+> `mesh:DispositionReview`'s comment records at `mesh_system.ttl`). (2) The **code half**: Engine B
+> still returns BAML `AgentResponse` at `main.py`, so the wire shape is unchanged.
+>
+> **The declaration deliberately does not pre-decide ADR-0046 §8.4** (retire / re-register / host).
+> It names what `/support` returns today so Engine B stops describing itself with Engine A's noun
+> in the meantime. See [[slice-1-cannot-declare-slots-for-an-input-no-node-reads]] for why the
+> INPUT end is not declarable on the same terms.
 
 # Engine B borrows Engine A's response shape
 
