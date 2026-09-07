@@ -7,7 +7,7 @@ closed-by:
 repo:       invincible-agent
 ruled-by:   ADR-0046 §9 (the extraction is on slice 1's critical path) — this item SCOPES the manifest against the extraction's real shape, and corrects §9's count
 code-site:  agent_fleet/finance_agent/slots.py, agent_fleet/planning_agent/slots.py, agent_fleet/cost_agent/slots.py
-summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation and puts the extraction on slice 1's critical path. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-03 — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three - the MECHANISM has forked, not just the vocabulary §9 predicted. slots_for() emits `required` in two engines and `mandatory` in the third; _type_of returns (type, values) in two and a bare str in the third; and the merge surface is now six engine-unique functions, not one. Engine O's _slot_spec reads d.get("required"), so engine-cost's declarations carry no REQUIRED marker into the slot-filler prompt. BLAST RADIUS IS EXACTLY ONE CONSUMER, measured: slot_acceptance and slot_disposition both key on `kind`, which cost emits correctly, so the mandatory disposition still fires and the failure mode is a WEAKER FILL AND A NEEDLESS ASK, not a wrong answer. Latent today either way — mesh_slots is unprojected.
+summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-03 — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three: the MECHANISM has forked, not just the vocabulary §9 predicted — _type_of returns (type, values) in F and P and a bare str in C, and the merge surface is six engine-unique functions, not one. THE KEY DIVERGENCE THIS PACKET ALSO REPORTED IS CLOSED: engine-cost's slots_for emitted `mandatory` where F and P emitted `required`, and ad34120 (2026-09-04) unified all three on `required`, sealed against the consumer. Re-verified 2026-09-06 — the fork and the six functions STAND and are the extraction's real content; the key is settled.
 ---
 
 # The manifest is the fourth consumer, and the mechanism has already forked
@@ -38,7 +38,7 @@ longer describes the tree.**
 
 | | finance | planning | cost |
 |---|---|---|---|
-| `slots_for()` output keys | `name, kind, type, required` | `name, kind, type, required` | `name, type, `**`mandatory`**`, kind` |
+| `slots_for()` output keys | `name, kind, type, required` | `name, kind, type, required` | ~~`mandatory`~~ → **`required`** (fixed by `ad34120`) |
 | `_type_of()` returns | `(type, enum-values)` | `(type, enum-values)` | **bare `str`** |
 | enum values sourced | the parameter's own `Literal` | the parameter's own `Literal` | a hand-mapped `_ENUM_VALUES` table |
 | `_is_union` helper | yes | yes | **absent** |
@@ -54,51 +54,35 @@ mapping that decides which parameters get a `values` key at all. So a new `Liter
 finance or planning ships its vocabulary automatically, and in cost it ships silently without one
 until someone adds a row.
 
-## §C — The consequence, measured to ONE consumer rather than assumed across all of them
+## §C — CLOSED 2026-09-04 by `ad34120`; kept because the shape recurs
 
-`agent_fleet/ontology_service/main.py:2673` — Engine O's `_slot_spec`, which renders the prompt the
-slot filler works from — reads:
+**This section reported a second divergence: engine-cost's `slots_for()` emitted `mandatory` where
+finance and planning emitted `required`, while Engine O's `_slot_spec` — the code that renders the
+slot-filler's prompt — tests `d.get("required")`. It is fixed.** `ad34120` unified all three on
+`required` and sealed it against the consumer. Re-verified 2026-09-06: cost emits
+`"required": mandatory` and its own `mandatory_slots()` reads `s["required"]`.
 
-```python
-if d.get("required"):
-    bits.append("REQUIRED")
-```
+**Two things are worth keeping rather than deleting with the defect.**
 
-Engine-cost never emits `required`, so **no engine-cost slot is ever marked REQUIRED in the
-slot-filling prompt** — including `rate_vintage`, the slot its own module names as the engine's
-designed refusal.
+**1. The severity was corrected before the fix, and the correction is the lesson.** The first draft
+of this section said the refusal *never fires*. That was wrong: two of the three consumers of a
+declaration key on `kind`, which cost emitted correctly all along.
 
-**THE FIRST DRAFT OF THIS SECTION SAID THE REFUSAL NEVER FIRES. THAT WAS WRONG, and the check that
-corrected it is the one worth recording.** The other two consumers of a declaration do not read
-`required` at all — they key on `kind`:
-
-| consumer | keys on | engine-cost |
+| consumer | keys on | cost, at the time |
 |---|---|---|
-| `slot_disposition.py:170` — which slots are spoken-mandatory | `kind == "spoken-mandatory"` | **correct** |
-| `slot_acceptance.py:163` — route-supplied slots are not accepted from a speaker | `kind` | **correct** |
-| `ontology_service/main.py:2673` — the REQUIRED marker in the filler's prompt | `required` | **never set** |
+| `slot_disposition.py` — which slots are spoken-mandatory | `kind == "spoken-mandatory"` | **correct** |
+| `slot_acceptance.py` — route-supplied slots are not accepted from a speaker | `kind` | **correct** |
+| `ontology_service` `_slot_spec` — the REQUIRED marker in the filler's prompt | `required` | **never set** |
 
-Cost's `kind` is right, so the ask machinery still works. **The real failure mode is therefore
-narrower and worth naming exactly: the filler model is told less about a slot it must extract, so it
-extracts it less reliably; the disposition then correctly notices the absence and asks.** The cost
-is a degraded fill and a needless ask — not a confident wrong answer, and not a refusal that never
-fires.
+So the real cost was a weaker prompt and a needless ask, not a confident wrong answer. **Asserting
+three consumers by reading one is the error to not repeat here**, because the extraction will be
+reasoning about exactly these consumers.
 
-`decode_declarations` (`slot_acceptance.py:59`) normalises the CONTAINER — a JSON string into a list
-of records — and never the keys, and no `mandatory`→`required` mapping exists anywhere in
-first-party code. Nothing between the engine and the prompt closes the gap.
-
-**IT IS NOT FIRING TODAY.** `mesh_slots` is not projected into the graph yet — blocked on doc-tools'
-`aitool_linker` allowlist — so `decode_declarations(cv.get("slots"))` returns `[]` for **every**
-engine and every spoken slot is refused (`slot_acceptance.py:24`, `dynamic_supervisor.py:785`). The
-carry lands dark by design, in the order *declare → project → honour*. So this is a defect with a
-scheduled start time, and it will not go red when it arrives — a missing `REQUIRED` line in a prompt
-has no failure signature.
-
-**Cheapest correct fix, and it belongs to engine-cost, not here:** emit `required` alongside
-`mandatory` (the cost seals and `mandatory_slots()` read the latter) so the key matches the two
-engines that predate it and the consumer that reads it. `tests/cost/test_engine_cost_contracts.py`
-asserts on `slots_for` output, so the seal moves with it.
+**2. DO NOT CITE THAT CONSUMER BY LINE NUMBER.** This packet first cited it as
+`ontology_service/main.py:2673`. In six days that line has been 2673 → 2779 → **3020**, while the
+code never changed — another lane is growing that file steadily. **Grep the key, not the line.**
+The durable citation is `_slot_spec` in `agent_fleet/ontology_service/main.py`, and the extraction
+should re-locate it the same way.
 
 ## §D — What the MANIFEST needs from the extraction
 
@@ -108,7 +92,7 @@ requires the union, which is a stronger argument for extraction than "three copi
 
 | manifest row (§1) | supplied today by | where it lives |
 |---|---|---|
-| slots: name, type, mandatory, defaults | `slots_for()` | all three — **but on two different key names** |
+| slots: name, type, mandatory, defaults | `slots_for()` | all three, **on one key name since `ad34120`** |
 | enum vocabulary for a slot | `slots_for()` → `values` | derived from the `Literal` in F and P; via a hand-mapped table in C |
 | slot KIND (4-kind vocabulary) | `SLOT_KINDS`, `HANDLE_SLOTS`, `CEREMONY_VERBS` | all three; **`SLOT_KINDS` is identical in all three and is the one thing safe to hoist verbatim** |
 | arity (`single` vs set-shaped) | `arity_for()` | **planning only** |
@@ -125,9 +109,9 @@ requires the union, which is a stronger argument for extraction than "three copi
    `arity_for` (P), `missing_mandatory` + `refusal_for` + `with_live_vocabularies` (F),
    `all_declarations` + `mandatory_slots` (C). Every one of them is a manifest row above, so none
    can be dropped as incidental — **the manifest is what proves they are all mechanism.**
-2. **Settle the output key FIRST, before the extraction, not during it.** It is the cheapest
-   possible fix now and the most expensive after a shared util exists with a compatibility shim in
-   it. The consumer (`_slot_spec`) has already voted: `required`.
+2. ~~**Settle the output key FIRST.**~~ **DONE — `ad34120`, 2026-09-04.** All three engines emit
+   `required`, so the extraction starts from one key rather than reconciling two. This is the only
+   one of the three that closed; the other two stand.
 3. **Two manifest rows have no derivation anywhere** — subject/output URIs and identity
    requirements. The extraction should not invent them; the manifest declares them by hand, and
    this packet records that as a deliberate boundary rather than a gap to be discovered in slice 1.

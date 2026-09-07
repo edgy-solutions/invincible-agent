@@ -501,6 +501,19 @@ Each of these is genuinely open. **None is a decision written as prose.**
 4. **What becomes of Engine B?** Retire it; re-register its existing use case under the new contract
    (§9's slice 1); or keep it as the hosting engine for option A. Decided by 1 and 2, not
    independently — but **not left as it is** (§4).
+
+   > **RULED 2026-09-06 — RETIRE IT.** Decided by the architect on the finding in
+   > [`slice-1-cannot-declare-slots-for-an-input-no-node-reads`](../plans/slice-1-cannot-declare-slots-for-an-input-no-node-reads.md):
+   > `synthesize_stateful` sends `dagster_context` — every parallel sub-task's result, fanned in,
+   > which *is* the use case — Engine B writes it into `messages`, and **no node reads it**. Three
+   > descriptions of the verb's input exist (request model, caller, nodes) and no two agree.
+   > **Declaring a slot for it would turn an unimplemented feature into a contract, so there is no
+   > honest verb to register.** The deployment is retired: disabled, then removed from the chart.
+   >
+   > **What survives the retirement, deliberately.** `mesh:StatefulSupportResponse` **stays
+   > declared** — it is the output class the next hosted graph inherits rather than re-earning, which
+   > is §1's whole argument made portable. The `AsyncPostgresSaver`-per-`thread_id` checkpointer
+   > pattern stays documented: it was the one part of Engine B that worked.
 5. **When the SDK fix is CONSUMED here, does route C supersede route A's shim?** (§3.1.)
    **The checkable event is the pin bump across the 13 `pyproject.toml` files and their 13
    `uv.lock` entries — not the existence of a tag.** v0.4.0 is now on the SDK's `origin` and on
@@ -526,6 +539,29 @@ Each of these is genuinely open. **None is a decision written as prose.**
 ## §9 — Rollout: slice 1 proves the model on the thing that already exists
 
 **Nothing new until the existing thing passes its own gates** — ADR-0029's slice-1 discipline.
+
+> **AMENDED 2026-09-06 — SLICE 1 AS WRITTEN WAS UNBUILDABLE, AND THAT IS THIS ADR WORKING RATHER
+> THAN FAILING.** Slice 1 chose Engine B precisely because it is *"the system's own worked example
+> of what happens when a component is admitted without a contract."* Attempting the declaration
+> found that the example goes further than the section knew: **the exemplar had nothing admissible.**
+> Its intended use case's principal input is read by no node, so the contract could not be written
+> honestly — not because the work was hard, but because there was no verb under it.
+>
+> **The exemplar is retired (§8.4, ruled the same day) and the slice waits for its consumer.**
+> ADR-0046 slice 1 is now **the first real graph a team brings**, which is what §9's own closing
+> line already required of the manifest schema: *authored against a second real consumer rather
+> than designed against an imagined one.* The slice inherits that discipline instead of getting an
+> exemption from it.
+>
+> **What this does NOT relax.** Every §1 requirement stands unchanged for that first real graph, and
+> the `slot_declarations` extraction stays on its critical path — the manifest is still the
+> extraction's fourth consumer (amended below). What changed is only *which* graph proves the
+> contract, and the honest reading is that Engine B could never have proved it: a contract
+> demonstrated on a keyword heuristic and an f-string would have been a demonstration of the
+> paperwork, not the gate.
+>
+> **Naming, per the same ruling:** slices are qualified by ADR number from here — *ADR-0046 slice 1*
+> and *ADR-0050 slice 1* are different work and both lanes were live on theirs.
 
 **Slice 1 — re-register Engine B's actual use case under the contract.** Not a new graph. Take the
 conversational-synthesis case, give it a real subject and output class, a manifest with declared
