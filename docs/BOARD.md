@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **124 of 136 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **126 of 138 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -69,6 +69,10 @@ _Coverage: **124 of 136 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
+
+- **an-eligibility-gate-must-leave-evidence** — Eligibility gates remove candidates SILENTLY and the record afterwards shows only what survived, so an abstention over a pool of one reads as classifier uncertainty when the truth is that a gate deleted the answer first. Those need opposite remedies. Every gate now records what it removed or flagged and why, the record reaches the artifact through both layers, and the abstention message distinguishes "nothing fit" from "something fit and was excluded" — because only the second is a cue the caller can act on.
+  status: open · owner: agent (lane 1) for the record; cortex for the decision-path panel · repo: invincible-agent (+ cortex-ui) · blocked-on: cortex rendering `excluded` beside the recall candidates — the RECORD is built and deployed (supervisor + engine-o + gateway, verified by symbol); the RENDER is outstanding
+  → [docs/plans/an-eligibility-gate-must-leave-evidence.md](plans/an-eligibility-gate-must-leave-evidence.md)
 
 - **an-override-onto-an-unserved-class-must-abstain** — THERE ARE TWO PATHS INTO resolved_uri AND ONLY ONE IS GATED. The productive-option gate (4d13eee) restricts what the LLM may CHOOSE — the candidate pool is limited to classes carrying a verb in the caller's domains. Step 4's instance-resolution pre-step then OVERRIDES that choice with a unanimous provider answer, unchecked, so a phone-book match can install a class no verb serves. Measured by the engine-cost lane: 10 of 18 draws had a winner outside the candidate set, and every one resolved to fin:WBSElement, which carries no verb in ANY domain. That is the DOMINANT dead end in their data — 5 of 9 scoped draws — and it is reached by the one path the gate cannot see. THE OVERRIDE IS NOT THE DEFECT: a caller named "lot 4", a provider resolved it, and fin:WBSElement is a DECLARED drill-down referent in engine-fin's _NO_VERB_BY_DESIGN. The instance resolution is working. What is missing is that nothing notices the resolved subject cannot be answered. RULED: a productivity check AFTER preemption — same predicate as the gate, applied to the WINNER rather than the pool — abstaining or asking, with the resolved instance carried as context.
   status: open · owner: agent (lane 1) — BUILT 2026-09-04, NOT ROLLED (roll after the ask/BIND walk)
@@ -333,6 +337,10 @@ _Coverage: **124 of 136 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **supervisor-mint-missing-identity** — Every supervisor dispatch is unauthenticated at work — `mint_supervisor_token()` raises KeyError, so specialists record `caller: none`. Inert under OBSERVE, and it becomes a hard failure the moment REQUIRE_TRANSPORT_AUTH flips.
   status: open · owner: agent · blocked-on: nothing — one read settles it: `printenv` for SUPERVISOR_CLIENT_ID and SUPERVISOR_CLIENT_SECRET in the pod that runs the supervisor. KeyError does not say which.
   → [docs/plans/supervisor-mint-missing-identity.md](plans/supervisor-mint-missing-identity.md)
+
+- **the-domain-gate-removes-verbs-inside-a-cypher-query** — Every other eligibility gate now records what it removed (`an-eligibility-gate-must-leave-evidence`). The domain gate cannot, because it filters INSIDE the Cypher query — the excluded verbs are never materialised on either side of the wire, so there is no Python seam where a removed verb passes through. `domain_scope_excluded` is detected today by RE-ASKING Neo4j unscoped on the empty-pool path, which is a different and more expensive mechanism and only fires when the pool is empty. A domain gate that removes SOME verbs and leaves others is invisible, and that is the shape that produces a confident wrong answer rather than an abstention.
+  status: open · owner: agent (lane 1) — it is engine-o's Cypher · blocked-on: a decision on whether `/find_compatible_verbs` returns the unscoped set alongside the scoped one
+  → [docs/plans/the-domain-gate-removes-verbs-inside-a-cypher-query.md](plans/the-domain-gate-removes-verbs-inside-a-cypher-query.md)
 
 - **the-filler-has-no-entity-resolution** — MEASURED. Six spoken slots are OPAQUE IDS (site_id, capability_id, project_id, tech_id, process_id, scope_initiative_id) and the filler has no entity resolution, so it confidently emits the spoken NAME. "how loaded is the Aurora site" -> {"site_id": "Aurora"} at confidence 0.92 -> 422 unknown site 'Aurora'. That is a WRONG fill, not a miss: an honest refusal to a perfectly answerable question. The system ALREADY has the component for this — /resolve and entity_refs, ADR-0031's instance-resolution ladder — so the filler is doing a job another part owns. Also the first evidence on the threshold question, and it points at the harder branch: the wrong fill scored 0.92 where the correct one scored 0.98. Suggestive, n=3, and pre-registers a hypothesis the corpus will settle.
   status: open · owner: unassigned

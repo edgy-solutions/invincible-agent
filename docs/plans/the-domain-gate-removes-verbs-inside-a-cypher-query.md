@@ -1,7 +1,7 @@
 ---
 id:         the-domain-gate-removes-verbs-inside-a-cypher-query
-status:     open — the one eligibility gate the trace does NOT cover
-owner:      unassigned
+status:     open
+owner:      agent (lane 1) — it is engine-o's Cypher
 blocked-on: a decision on whether `/find_compatible_verbs` returns the unscoped set alongside the scoped one
 repo:       invincible-agent
 ruled-by:   ADR-0025 (`domain_scope_excluded`, the deny primitive's data shadow)

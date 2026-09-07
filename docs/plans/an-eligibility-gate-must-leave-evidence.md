@@ -1,8 +1,8 @@
 ---
 id:         an-eligibility-gate-must-leave-evidence
-status:     open — RECORD BUILT (lane 1), RENDER OUTSTANDING (cortex)
+status:     open
 owner:      agent (lane 1) for the record; cortex for the decision-path panel
-blocked-on: cortex rendering `excluded` beside the recall candidates
+blocked-on: cortex rendering `excluded` beside the recall candidates — the RECORD is built and deployed (supervisor + engine-o + gateway, verified by symbol); the RENDER is outstanding
 repo:       invincible-agent (+ cortex-ui)
 ruled-by:   ADR-0033 (route | ask | abstain); the four-things-per-draw law, applied one layer up
 code-site:  src/iagent/defs/dynamic_supervisor.py (`_eligibility_record`, `_abstention_note`, the five routing returns), agent_fleet/ontology_service/main.py (the productive-option gate's structured records + `SemanticResolutionResponse.excluded`), src/iagent/gateway.py (`_project_route_decision`)
