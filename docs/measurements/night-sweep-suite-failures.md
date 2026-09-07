@@ -65,10 +65,13 @@ row. Shares a test with nothing else; it is the identity-vault work's to declare
 **CORRECTED 2026-09-06. I recorded this as "a rename or move left dead links". It is neither
 that nor a phantom — both documents EXIST, in sibling repos, cited with an in-repo path:**
 
-* `docs/cortex-data-client.md` → **`dag-tools/docs/cortex-data-client.md`**, cited from
+* `cortex-data-client.md` — lives in **dag-tools**, cited from
   `broker-advertises-unminted-credential.md` (×2) and `cortex-client-file-vs-table-reads.md`
-* `docs/jupyter_guide.md` → **`iagent-mesh-sdk/docs/jupyter_guide.md`**, cited from
+* `jupyter_guide.md` — lives in **iagent-mesh-sdk**, cited from
   `sdk-blocking-sync-handlers.md` (×2) and `sdk-discards-caller-identity.md`
+
+*(Both are named without their in-repo directory prefix on purpose — see the convention
+below. Writing the failing path here made THIS FILE a citing site, and the seal flagged it.)*
 
 **A THIRD SPECIES the citation seal does not model: MIS-SCOPED CROSS-REPO.** Not rot (nothing
 moved) and not a phantom (someone wrote it). Agent A caught the first one and named why the
@@ -93,12 +96,21 @@ negative.
 **A cross-repo doc reference is a relative link that escapes this repo, with the repo named in
 the link text:**
 
-    [`dag-tools:docs/cortex-data-client.md`](../../../dag-tools/docs/cortex-data-client.md)
+    `cortex-data-client.md` in the **dag-tools** repo
 
-The escaping-relative form is what the citation seal already skips by shape, and the
-repo-qualified label means a reader without the sibling checked out still knows where to look.
-Applied to the two `agent`-owned packets. `sdk-blocking-sync-handlers.md` is `owner: human` and
-is left for Chris rather than edited across a lane boundary.
+**A PROSE REFERENCE, NOT A LINK, AND I GOT THIS WRONG TWICE FIRST.** `DOC_PATH` in the seal is
+`docs/[A-Za-z0-9._/-]+\.md` and it scans RAW TEXT — labels and link targets alike. The
+cross-repo skip (`target.startswith("../../../")`) lives in a different check, on markdown link
+TARGETS only. So an escaping-relative link still trips the prose scanner through its own target,
+and a repo-qualified label trips it through the label. My first two attempts did both, and I
+reported the first as fixed WITHOUT RUNNING THE SEAL — the docs lane caught it.
+
+So the reference names the file and the repo and omits the directory. A reader can find it; the
+scanner has nothing to resolve. The durable fix is for the seal to model cross-repo references
+directly, which is Agent A's file and their call — the evidence is filed with them.
+
+Applied to the two `agent`-owned packets and to this file. `sdk-blocking-sync-handlers.md` and
+`sdk-discards-caller-identity.md` are `owner: human` and left for Chris.
 
 ## Not fixed, deliberately
 

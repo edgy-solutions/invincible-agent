@@ -192,3 +192,42 @@ def test_MATCHED_is_the_shared_vocabulary():
     side and not the other silently makes every result 'not matched'."""
     assert MATCHED == "matched"
     assert f'"route_status": "{MATCHED}"' in _SUP
+
+
+# ── the THIRD selection, found by sweeping rather than remembering ───────────
+
+def test_the_graph_trace_uses_the_same_function_too():
+    """FOUND 2026-09-06 by enumerating presence-keyed reads instead of recalling which ones
+    I had fixed. `one-card-n-decisions.md` had named THREE selections over one choice; I
+    unified the record and the card and left the trace on first-emitted.
+
+    It is the artifact-4 symptom exactly: the trace claimed
+    `Program -> VarianceDecomposition via finVarianceAnalysis` while Engine A answered.
+
+    Its eligibility is narrower — the supervisor emits a trace only when the subject grounded
+    and compatible verbs exist — which is what made first-emitted LOOK adequate: every
+    candidate had at least got somewhere. Narrower is not the same. Two subtasks that both
+    ground and pick different verbs hand the card one path and the decision panel another."""
+    assert _calls_pick_primary(_GW, "_primary_graph_trace_mat")
+    i = _GW.index('path == ["subtask_graph_trace"]')
+    assert "_primary_graph_trace_mat(mats)" in _GW[i:i + 700], (
+        "the graph trace is back on first-emitted"
+    )
+
+
+def test_the_trace_carries_the_key_it_is_selected_by():
+    """A selector reading a key the producer never writes returns the first item every time
+    and looks like it is choosing. `pick_primary` degrades to first-on-unreadable by design,
+    so this failure would be SILENT — the exact shape it is meant to prevent."""
+    i = _SUP.index('asset_key=["subtask_graph_trace"]')
+    assert '"route_status"' in _SUP[i:i + 900], (
+        "subtask_graph_trace no longer carries route_status; the selector cannot see it"
+    )
+
+
+def test_all_three_selections_name_the_same_function():
+    """The count is the point. Three selections over one choice, one rule."""
+    callers = [fn for fn in ("_primary_routing_mat", "_primary_graph_trace_mat")
+               if _calls_pick_primary(_GW, fn)]
+    assert len(callers) == 2, f"gateway selectors not on the shared rule: {callers}"
+    assert _calls_pick_primary(_SUP, "generate_ui_payload")

@@ -2438,6 +2438,23 @@ def _stage(
 from iagent_pure.primary_selection import pick_primary  # noqa: E402
 
 
+def _primary_graph_trace_mat(mats: list[dict]) -> dict | None:
+    """The graph trace belonging to the subtask the answer came from.
+
+    Same rule, same function, third caller — see `pick_primary`. The trace has a NARROWER
+    eligibility than the routing decision (the supervisor emits it only when the subject
+    grounded and compatible verbs exist), which made first-emitted look adequate: every
+    candidate had at least succeeded at grounding. It is still a different rule over the same
+    choice, and two subtasks that both ground and pick different verbs give the card one path
+    and the decision panel another.
+    """
+    traces = [
+        m for m in mats
+        if (m.get("assetKey", {}) or {}).get("path") == ["subtask_graph_trace"]
+    ]
+    return pick_primary(traces, lambda m: _metadata_dict(m).get("route_status"))
+
+
 def _primary_routing_mat(mats: list[dict]) -> dict | None:
     """The routing decision the user's ANSWER actually flowed through.
 
@@ -4110,6 +4127,11 @@ async def generate_dagster_stream(
             elif (
                 path == ["subtask_graph_trace"]
                 and "graph_trace_emitted" not in emitted_steps
+                # THE THIRD SELECTION, unified 2026-09-06. The record and the card were
+                # keyed on `pick_primary`; this still took the first EMITTED trace — so on
+                # artifact-4 the trace claimed Program -> VarianceDecomposition while Engine A
+                # actually answered. Three selections over one choice, and I fixed two.
+                and mat is _primary_graph_trace_mat(mats)
             ):
                 trace_nodes = _project_graph_trace(mat)
                 if trace_nodes:

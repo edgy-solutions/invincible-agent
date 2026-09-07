@@ -1790,6 +1790,10 @@ def _log_subtask_route_assets(
             AssetMaterialization(
                 asset_key=["subtask_graph_trace"],
                 metadata={
+                    # THE SAME KEY THE RECORD AND THE CARD SELECT BY. Without it the gateway
+                    # could only take the FIRST emitted trace, which is a third rule over the
+                    # same choice — and three rules agree by luck. See _primary_routing_mat.
+                    "route_status": MetadataValue.text(status),
                     "subject_uri": MetadataValue.text(subject_uri),
                     "picked_verb_iri": MetadataValue.text(
                         telemetry.get("verb_iri") or ""
