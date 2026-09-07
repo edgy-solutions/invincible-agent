@@ -81,7 +81,7 @@ credential advertised to a reader is, by construction, write-capable.
 
 ## Severity — worse than the docs' own caveat
 
-`docs/cortex-data-client.md` already names a limitation, honestly:
+[`dag-tools:docs/cortex-data-client.md`](../../../dag-tools/docs/cortex-data-client.md) already names a limitation, honestly:
 
 > the credentials in the ticket grant access to the **whole** object or table. The
 > narrowing happens in your process. […] this is a data-plane convention, not a
@@ -227,7 +227,7 @@ df = pl.read_database_uri(query, uri=adbc_uri); lf = df.lazy()      # postgres
 lf = pl.from_arrow(client.query_arrow(...)).lazy()                  # clickhouse
 ```
 
-`docs/cortex-data-client.md` says so plainly: *"for the two database backends that is a
+[`dag-tools:docs/cortex-data-client.md`](../../../dag-tools/docs/cortex-data-client.md) says so plainly: *"for the two database backends that is a
 `.lazy()` wrapper around an **already-materialized** DataFrame."*
 
 So for a SQL-backed asset, "client connects and runs the SQL" and "broker runs the SQL and

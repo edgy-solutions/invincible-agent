@@ -27,7 +27,7 @@ df = lf.filter(...).select(...).head(20).collect()      # identical for both
 | when data moves | at `.collect()`, only what is needed | **before you ever see the LazyFrame** |
 | cost scales with | what you asked for | **the whole table** |
 
-`docs/cortex-data-client.md` already states it honestly — *"for the two database backends that
+[`dag-tools:docs/cortex-data-client.md`](../../../dag-tools/docs/cortex-data-client.md) already states it honestly — *"for the two database backends that
 is a `.lazy()` wrapper around an already-materialized DataFrame"* — but the **type system says
 they are the same thing**, and the type is what people code against.
 

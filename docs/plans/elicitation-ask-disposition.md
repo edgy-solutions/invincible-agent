@@ -123,8 +123,9 @@ would be asserting knowledge it does not have.
 ### Pre-existing failures, checked and not adopted
 
 The full suite has 6 failures, none from this change and none touching its surface: two
-dangling `docs/` citations (`cortex-data-client.md`, `jupyter_guide.md`) from three unrelated
-SDK/broker packets, three endpoint-gating manifest rows (`/internal/identity/redeem`,
+MIS-SCOPED CROSS-REPO citations (`cortex-data-client.md` lives in dag-tools,
+`jupyter_guide.md` in iagent-mesh-sdk — both real, both cited with an in-repo path) from three
+unrelated SDK/broker packets, three endpoint-gating manifest rows (`/internal/identity/redeem`,
 `/fill_slots`, `/enumerate_instances` + `/resolve_instance`), and a helm chart-version drift.
 **`/enumerate_instances` and `/fill_slots` are the option-source lane's routes** — filed here,
 not fixed, per the split.

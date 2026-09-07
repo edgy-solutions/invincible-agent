@@ -60,14 +60,45 @@ row. Shares a test with nothing else; it is the identity-vault work's to declare
 
 ## Unowned / pre-existing — one
 
-`test_citation_paths` — two `docs/` paths cited but absent, a rename or move left dead links:
+`test_citation_paths` — two `docs/` paths cited but absent.
 
-* `docs/cortex-data-client.md` — cited from `broker-advertises-unminted-credential.md` (×2) and
-  `cortex-client-file-vs-table-reads.md`
-* `docs/jupyter_guide.md` — cited from `sdk-blocking-sync-handlers.md` (×2) and
-  `sdk-discards-caller-identity.md`
+**CORRECTED 2026-09-06. I recorded this as "a rename or move left dead links". It is neither
+that nor a phantom — both documents EXIST, in sibling repos, cited with an in-repo path:**
 
-The test names the citing sites, so the fix needs no repo-wide grep.
+* `docs/cortex-data-client.md` → **`dag-tools/docs/cortex-data-client.md`**, cited from
+  `broker-advertises-unminted-credential.md` (×2) and `cortex-client-file-vs-table-reads.md`
+* `docs/jupyter_guide.md` → **`iagent-mesh-sdk/docs/jupyter_guide.md`**, cited from
+  `sdk-blocking-sync-handlers.md` (×2) and `sdk-discards-caller-identity.md`
+
+**A THIRD SPECIES the citation seal does not model: MIS-SCOPED CROSS-REPO.** Not rot (nothing
+moved) and not a phantom (someone wrote it). Agent A caught the first one and named why the
+distinction matters: filing it as a phantom would have entered a real, quotable document into
+an allowlist asserting it was never written — and the mechanical honesty check for that
+allowlist (`git log --diff-filter=A` empty) PASSES, because it only looks in this repo. The
+guard's own scope, one level up.
+
+The tell is unmistakable in hindsight: `broker-advertises-unminted-credential.md` **quotes the
+document verbatim** — *"the credentials in the ticket grant access to the whole object or
+table"*, which appears once in the dag-tools file. You cannot quote a doc nobody wrote.
+
+**AND MY OWN SEARCH FOR THE SECOND ONE WAS TRUNCATED.** I swept the sibling repos with
+`ls -d */ | head -12` against 49 directories and concluded `jupyter_guide.md` existed nowhere —
+which would have made it the phantom Agent A had just warned against filing. An uncapped
+`find` located it in `iagent-mesh-sdk/docs/` immediately. Second truncated instrument in one
+day; the other was a `python` invocation that silently produced no output and read as a clean
+negative.
+
+## The convention, so the seal can tell the two apart
+
+**A cross-repo doc reference is a relative link that escapes this repo, with the repo named in
+the link text:**
+
+    [`dag-tools:docs/cortex-data-client.md`](../../../dag-tools/docs/cortex-data-client.md)
+
+The escaping-relative form is what the citation seal already skips by shape, and the
+repo-qualified label means a reader without the sibling checked out still knows where to look.
+Applied to the two `agent`-owned packets. `sdk-blocking-sync-handlers.md` is `owner: human` and
+is left for Chris rather than edited across a lane boundary.
 
 ## Not fixed, deliberately
 
