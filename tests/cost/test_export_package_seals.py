@@ -1085,20 +1085,25 @@ def test_the_dataset_agreement_check_COVERS_PERIOD(slice2, tmp_path):
     their ties differently, producing six reported "differences" that were the same values in
     another order.
 
-    TWO DIFFERENT PROPERTIES, and it is worth being exact about which is proven where, because
-    I first tried to force one mutation to cover both and it would not:
+    TWO DIFFERENT PROPERTIES, and it is worth being exact about which is proven where:
 
-      * NO FALSE POSITIVES ON TIED ROWS — this is what putting period in the key buys, and it
-        is proven by `test_the_embedded_rows_and_the_duckdb_agree` passing at all. That test
-        FAILED with six spurious differences the moment twelve tied rows existed.
+      * NO FALSE POSITIVES ON TIED ROWS — what putting period in the key buys. Proven by
+        `test_the_agreement_is_INDEPENDENT_OF_INSERTION_ORDER` below.
 
-      * A PERIOD CHANGE IS DETECTED — proven below by tampering with the shipped file.
+      * A PERIOD CHANGE IS DETECTED — proven here by tampering with the shipped file.
 
-    Removing period from the key does NOT break the second property: the reordering misaligns
-    the rows and the prices disagree anyway. So there is no mutation that turns this test red,
-    and rather than invent one, the honest record is that this test asserts detection while the
-    agreement test asserts stability. A bite-check that cannot be constructed is a fact about
-    the property, not a licence to skip saying so.
+    A CORRECTION I OWE THIS DOCSTRING. It previously said no mutation could turn the first
+    property red, and recorded that as "a fact about the property". THAT WAS WRONG, and it was
+    wrong in a way worth naming: removing period from the key is an EQUIVALENT MUTANT *on this
+    data only*, because both sides happen to emit tied rows in period order — the database via
+    ORDER BY, the embedded rows via a stable sort over insertion order. Nothing guarantees the
+    second. The seed simply builds months in order.
+
+    So it was never a fact about the property; it was a missing input. Feed the SAME rows in a
+    different insertion order and the mutation produces NINE spurious differences over
+    identical data. The lesson, from cortex-ui-60, is the one I had inverted: when a mutation
+    changes no output, do not conclude the property is untestable and do not touch the test —
+    go find the input where the coincidence breaks.
     """
     import shutil
 
@@ -1237,3 +1242,33 @@ def test_the_rendered_page_says_PROGRAM_and_LABOR():
         assert not re.search(r"\b" + form + r"\b", ours, re.IGNORECASE), (
             f"{form!r} is rendered on the page")
     assert re.search(r"\bLabor\b", ours), "the labor headings are gone entirely"
+
+def test_the_agreement_is_INDEPENDENT_OF_INSERTION_ORDER(slice2):
+    """THE INPUT THAT BREAKS THE COINCIDENCE, and the reason `period` is in the key.
+
+    `datasets_agree` sorts both sides. With period in the key both orderings are fully
+    determined and agree. WITHOUT it, Python's sort is stable, so tied rows keep their
+    insertion order while the database returns them in period order — and the check reports
+    differences between a row and itself.
+
+    That defect is invisible on the rows the seed happens to produce, because it builds months
+    in order. This feeds the SAME MULTISET in a different order, which a producer is free to do
+    and nothing forbids. Measured: nine spurious differences over identical data.
+    """
+    pkg, db = slice2
+    rows = pkg["dataset"]["rows"]
+    results = list(rows["results"])
+    monthly = [i for i, r in enumerate(results)
+               if r["category"] == "sepm_monthly" and r["lot"] == pkg["lots"][0]]
+    assert len(monthly) > 1, "no tied rows to reorder - this seal has gone vacuous"
+    for a, b in zip(monthly, reversed(monthly)):
+        if a >= b:
+            break
+        results[a], results[b] = results[b], results[a]
+    reordered = dict(rows, results=results)
+
+    assert sorted(map(str, results)) == sorted(map(str, rows["results"])), (
+        "the reordering changed the data - it must only change the ORDER")
+    assert X.datasets_agree(reordered, str(db)) == [], (
+        "the same rows in a different order were reported as differences - the comparison "
+        "depends on insertion order, so it cannot distinguish a reordering from a corruption")
