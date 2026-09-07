@@ -195,6 +195,15 @@ mesh:DispositionReview a owl:Class ;
 # `route_status: matched` through one shared function, but a class that means "some agent
 # answered" is what let the wrong shortcut look right.
 #
+# THE CONTRAST WITH mesh:AgentResponse LIVES HERE, NOT IN rdfs:comment, AND THAT IS THE
+# WHOLE LESSON OF THIS FIX (2026-09-06). The comment first read "Distinguished from
+# mesh:AgentResponse by its per-thread durable memory". True, useful to a human, and WRONG
+# for the slot it was in: rdfs:comment is embedded by doc-tools and scored against user
+# queries, so naming a sibling makes this class compete for that sibling's traffic —
+# `idp:Pipeline` won "list the datasets in publog" by naming `idp:Dataset` exactly this way
+# (tests/routing/test_definitions_are_retrieval_input.py). A `#` comment is read by people
+# and by nothing else, so the contrast is safe here and poison there.
+#
 # THIS DOES NOT PRE-DECIDE ADR-0046 §8.4 (retire Engine B / re-register its use case / keep
 # it as the hosting engine for option A). It names the shape the `/support` endpoint returns
 # TODAY — triage category, summary, extracted metrics, scoped to a `thread_id` checkpoint —
@@ -204,7 +213,7 @@ mesh:DispositionReview a owl:Class ;
 mesh:StatefulSupportResponse a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Stateful Support Response" ;
-  rdfs:comment "Output of Engine B's LangGraph support graph: a triage category, a response summary and extracted metrics, scoped to a thread_id whose conversational state is checkpointed in PostgreSQL. Distinguished from mesh:AgentResponse by its per-thread durable memory — the property that is Engine B's reason to exist." .
+  rdfs:comment "Output of a LangGraph support graph: a triage category for the incoming task, a summary of what was done, and extracted metrics, all keyed to one conversation thread whose state is checkpointed in PostgreSQL and read back on the next call. Durable per-thread memory is the distinguishing property." .
 
 # =============================================================================
 # PRESENTATION ARCHETYPES (added 2026-08-21) — the OBJECT end of a rendersAs
