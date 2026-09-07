@@ -28,8 +28,11 @@ global:
 # --------------------------------------------------------------------------
 # Disabled engines for Phase 2 (re-enable in Phase 3)
 # --------------------------------------------------------------------------
-engineB:
-  enabled: false  # LangGraph support — Phase 3 (stateful sessions)
+# engineB's override is GONE, not flipped: the chart default is now false (Engine B is
+# retired, ADR-0046 §8.4), so an override repeating it would be a second place to change
+# and a reader could not tell whether sandbox was disabling a live engine or echoing a
+# retired one. This list is "disabled for Phase 2, re-enable in Phase 3"; Engine B is not
+# coming back, so it does not belong on it.
 engineC:
   enabled: false  # Swarms scraper — out of scope for DA
 engineE:

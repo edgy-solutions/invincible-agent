@@ -311,7 +311,14 @@ engineA:
   env: {}
 
 engineB:
-  enabled: true
+  # RETIRED 2026-09-06 — ADR-0046 §8.4. Default flipped true -> false because a chart
+  # default of `true` meant every deployment NOT using values-sandbox.yaml still ran a pod
+  # the project had decided to stop running; the sandbox override was hiding that from the
+  # only environment anyone looks at. The block is kept for now, not deleted: removal is a
+  # follow-up once mesh:StatefulSupportResponse is primed and nothing references engineB
+  # (the remaining references are enumerated in src/iagent/defs/agent_routers.py, where its
+  # Dagster trigger asset used to be).
+  enabled: false
   replicas: 1
   image: { name: "langgraph-support", tag: "latest" }
   port: 8082

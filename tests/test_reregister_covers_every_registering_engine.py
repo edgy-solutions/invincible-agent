@@ -67,9 +67,12 @@ _KEY_TO_AGENT_DIR = {
 _NOT_A_REGISTERING_AGENT = {
     "centralGateway": "not an agent_fleet engine; a gateway with no verbs of its own",
     "engineB": (
-        "LangGraph support. Registers NOTHING and is invisible to the mesh by omission "
-        "rather than by design — see ADR-0046, which documents it. Waived here so the "
-        "partition holds; the waiver is a description of the defect, not an endorsement."
+        "LangGraph support, RETIRED 2026-09-06 by ADR-0046 §8.4. This waiver used to read "
+        "'invisible to the mesh by omission rather than by design ... a description of the "
+        "defect, not an endorsement' — and that is no longer true: it is now by design. It "
+        "registers nothing because there was nothing honest to register, its intended use "
+        "case's principal input being read by no node. Still waived, for the opposite "
+        "reason, until the chart block is removed and this key stops existing."
     ),
     "engineC": "swarms scraper; no mesh verbs",
     "engineF": (
