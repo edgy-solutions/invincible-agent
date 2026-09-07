@@ -163,13 +163,30 @@ dagster:
     image:
       tag: ""  # defaults to .Chart.AppVersion
     port: 4000
+    # SIZED FROM THE LOAD, NOT BY DOUBLING. `DefaultRunLauncher` starts runs INSIDE this pod
+    # (see dagster.yaml — "production would use K8sRunLauncher"), so one pod holds the gRPC
+    # server, the run, and up to `max_concurrent: 5` step subprocesses at once. Dagster SPAWNS
+    # rather than forks, so every step re-imports the module graph from cold, and that import
+    # measures 17.5s single-threaded in this image (dagster 6.2s, of which dagster.components
+    # 4.8s; iagent_mesh.service_identity 3.1s — a module doing 3s of work at import).
+    #
+    # MEASURED 2026-09-07 at cpu limit "1": nr_throttled 47914 of 140348 periods — a THIRD of
+    # every scheduling period — and 4417 seconds of accumulated throttled time. Four concurrent
+    # cold imports contending for one core turned a 2-5s step spawn into 36-48s, four steps
+    # deep. That was ~146s of every answer and had been for weeks, and it presented as "the
+    # mesh is slow" rather than as a resource limit.
+    #
+    # The request buys one whole core for the resident gRPC server; the limit buys headroom for
+    # concurrent spawns. A limit of 2 would still throttle a four-step fan-out and would
+    # re-measure as half-fixed. Memory follows the same reasoning: peak was 578Mi while imports
+    # were CPU-starved and therefore SERIALISED, so real concurrency needs margin above it.
     resources:
       requests:
-        cpu: 250m
-        memory: 512Mi
-      limits:
         cpu: "1"
         memory: 1Gi
+      limits:
+        cpu: "4"
+        memory: 2Gi
   # When webserver/daemon are disabled, point to external Dagster's gRPC
   externalWorkspace:
     # Set to true if an external Dagster should discover this user code
