@@ -135,6 +135,14 @@ dagster:
   daemon:
     enabled: true
     replicas: 1
+    # DECLARED because dagster.yaml READS it. The template was changed to use
+    # `.Values.dagster.daemon.image.*` (its own comment records why: webserver.image.*
+    # prevented per-component overrides) and this block was never added, so
+    # `.Values.dagster.daemon.image.registry` was a nil dereference and
+    # `helm template helm/invincible-agent` FAILED on bare defaults — for everyone, not
+    # just the daemon. Mirrors webserver and userCode exactly.
+    image:
+      tag: ""  # defaults to .Chart.AppVersion
     resources:
       requests:
         cpu: 250m
@@ -142,6 +150,13 @@ dagster:
       limits:
         cpu: "1"
         memory: 1Gi
+  # READ by dagster-user-code.yaml:120 and declared only in values-sandbox.yaml, so a
+  # bare-defaults render was a nil dereference. OFF by default: an optional second code
+  # location that points at a sibling repo's service must be opted into, not inherited.
+  docToolsCodeLocation:
+    enabled: false
+    host: doc-tools
+    port: 3030
   userCode:
     enabled: true
     replicas: 1
