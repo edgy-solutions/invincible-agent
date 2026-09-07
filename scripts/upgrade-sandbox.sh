@@ -60,6 +60,56 @@ for f in "${VALUES[@]}"; do echo "  -f ${f##*/}"; done
 # that can say WHY. tests/test_prime_timeout_bounds_agree.py asserts the ordering.
 HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"
 
+# ── THE RESOLVED TIMEOUT, NOT THE DEFAULT ──────────────────────────────────────────────
+#
+# MEASURED 2026-09-06: `helm upgrade --timeout 10m` marked release 100 FAILED while the prime
+# hook ran on healthily underneath. Third instance across two lanes.
+#
+# tests/test_prime_timeout_bounds_agree.py was GREEN throughout, and could not have caught it:
+# it reads the LITERAL DEFAULT out of this file and asserts it exceeds ingestTimeout. Two ways
+# the effective value differs from that literal, and the seal sees neither —
+#
+#   1. an env override        HELM_TIMEOUT=10m bash scripts/upgrade-sandbox.sh
+#   2. a caller-supplied flag "$@" lands AFTER --timeout below, so a later --timeout WINS
+#
+# The comment above has said "anything passed in $@ comes after and therefore wins" the whole
+# time. A comment that must be read to be obeyed is not a guard — the same finding as the
+# tuple-arity note that had gone stale for three weeks.
+#
+# So this checks what helm will ACTUALLY receive: the env-resolved value, then overridden by
+# the last --timeout in "$@" if there is one. Refuses rather than warns, because the
+# killed-client trap below already demonstrates that a warning in a long log does not stop
+# anyone — including me.
+_effective_timeout="${HELM_TIMEOUT}"
+_prev=""
+for _arg in "$@"; do
+  case "${_arg}" in
+    --timeout=*) _effective_timeout="${_arg#--timeout=}" ;;
+    *)           [ "${_prev}" = "--timeout" ] && _effective_timeout="${_arg}" ;;
+  esac
+  _prev="${_arg}"
+done
+
+# Minutes, from helm's duration form (90s / 15m / 2h). An unparseable value is NOT waved
+# through: it is the case where nobody can say what the budget is.
+_mins="$(printf '%s' "${_effective_timeout}" | awk '
+  /^[0-9]+h$/ { printf "%d", substr($0,1,length($0)-1)*60; exit }
+  /^[0-9]+m$/ { printf "%d", substr($0,1,length($0)-1);    exit }
+  /^[0-9]+s$/ { printf "%d", substr($0,1,length($0)-1)/60; exit }
+  { print "" }
+')"
+
+if [ -z "${_mins}" ] || [ "${_mins}" -lt 75 ]; then
+  echo "REFUSING: effective helm --timeout is '${_effective_timeout}' (${_mins:-unparseable} min)." >&2
+  echo "  The prime hook blocks on primeSubstrate.ingestTimeout (60m) and a full chain has" >&2
+  echo "  been observed past 30 minutes. A shorter budget marks the release FAILED while the" >&2
+  echo "  hook runs on — measured 2026-09-06, release 100." >&2
+  echo "  This checks the RESOLVED value: HELM_TIMEOUT env, then any --timeout in \"\$@\"." >&2
+  echo "  If you mean it: ALLOW_SHORT_HELM_TIMEOUT=1 $0 ..." >&2
+  [ "${ALLOW_SHORT_HELM_TIMEOUT:-}" = "1" ] || exit 2
+  echo "  ALLOW_SHORT_HELM_TIMEOUT=1 set — proceeding under protest." >&2
+fi
+
 # KILLED-CLIENT TRAP. ${HELM_TIMEOUT} above protects against helm giving up early; it does
 # NOT protect against something killing this process from outside — a wrapper timeout, a
 # Ctrl-C, a CI step budget. Measured 2026-09-02: this script was invoked as
