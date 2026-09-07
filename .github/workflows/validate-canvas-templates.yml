@@ -1,0 +1,102 @@
+# Canvas-template validation — ADR-0050 §1.3.
+#
+# "A CI job in THIS repo validates every `policy/canvases/*.yaml` against the committed schema,
+# so an invalid template fails AT MERGE rather than at seed time in a pod."
+#
+# ── THIS JOB IS WIRED TO pull_request, AND THAT DEPARTS FROM A STANDING CONVENTION ────────────
+# `suite-order-independence.yml` is `workflow_dispatch` ONLY, on a documented rule
+# (docs/plans/no-ci-gate-on-the-suite.md): a never-executed job wired to `push` either burns
+# minutes on every commit or goes red for environment reasons and trains people to ignore it.
+# That rule was filed from a real burn and it is right about the job it was written for.
+#
+# The exemption claimed here is narrow and is argued rather than assumed:
+#
+#   * The subject is ~200 lines of YAML and one JSON Schema. Runtime is seconds, not the 1543-
+#     test suite's minutes.
+#   * It is HERMETIC — pure Python, two pip packages, no cluster, no database, no network at
+#     test time. The generator loads its models by file path precisely so importing them cannot
+#     drag in Dagster and Postgres (sealed by tests/test_canvas_schema_drift.py). The dominant
+#     cause of environment-flaky reds does not apply.
+#   * §1.3's requirement is specifically MERGE-TIME failure. A dispatch-only job does not
+#     deliver it, and shipping one while claiming §1.3 was satisfied would be the decorative
+#     seal ADR-0050 is written against.
+#
+# THE FALLBACK IS PRE-COMMITTED: if this goes red for an environment reason even once, demote it
+# to `workflow_dispatch` and say so in the packet. The standing rule wins on evidence; it is
+# being set aside on an argument, and an argument loses to a red run.
+#
+# fetch-depth is left at the default 1 ON PURPOSE. The neighbouring job needs full history
+# because `generate_board.py` resolves `closed-by` shas; nothing here reads git history, so
+# taking depth 0 would copy a workaround along with the pattern it belongs to.
+
+name: validate canvas templates
+
+on:
+  pull_request:
+    paths:
+      - "policy/canvases/**"
+      - "src/iagent/canvas_template.py"
+      - "scripts/generate_canvas_schema.py"
+      - ".github/workflows/validate-canvas-templates.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: python -m pip install --quiet pydantic pyyaml jsonschema
+
+      - name: schema matches the models
+        # --check never writes. If the committed schema and the Pydantic models disagree, the
+        # schema was hand-edited or the models moved without regenerating.
+        run: python scripts/generate_canvas_schema.py --check
+
+      - name: every ratified template satisfies the schema
+        # --validate fails on ZERO files as well as on invalid ones: a validator that finds
+        # nothing and exits 0 is indistinguishable from one that passed, which is the false
+        # green this repo has already been bitten by (a grep for absence over empty output).
+        run: python scripts/generate_canvas_schema.py --validate
+
+      - name: the check can still reject
+        # BROKEN-ON-PURPOSE, in CI, per acceptance seal 1: "a schema check that never rejects is
+        # indistinguishable from no check." Writes a deliberately invalid template to the
+        # workspace, asserts a non-zero exit, and removes it. Runs on a throwaway checkout, so
+        # it cannot touch anyone's tree.
+        #
+        # THE FIXTURE VIOLATES EXACTLY ONE RULE, and that is not fussiness. The first draft used
+        # `_brokenonpurpose` as the id, which ALSO violates the `template_id` pattern — so the
+        # step would have gone red even with the verb check deleted, and would have been
+        # measuring a coincidence rather than the thing it names. Verified locally: with this
+        # id, the validator emits one violation and it is the verb's. If you edit this fixture,
+        # re-check that it still fails for one reason only.
+        run: |
+          set -u
+          cat > policy/canvases/brokenonpurpose.yaml <<'YAML'
+          template_id: brokenonpurpose
+          title: deliberately invalid
+          description: a panel whose verb is not a prefixed IRI
+          panels:
+            - verb: "this is not a verb iri"
+              role: anchor
+          YAML
+          out="$(python scripts/generate_canvas_schema.py --validate 2>&1)" && rc=0 || rc=$?
+          rm -f policy/canvases/brokenonpurpose.yaml
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::the validator ACCEPTED a template with a malformed verb — it is not checking what it claims to check"
+            exit 1
+          fi
+          # And it must have failed for the RIGHT reason. A non-zero exit caused by anything
+          # else (a missing dependency, a moved directory) would otherwise read as the control
+          # working — the empty-output false green in its most tempting form.
+          echo "$out" | grep -q "panels/0/verb" || {
+            echo "::error::validator failed, but not on the verb — the control is measuring something else"
+            exit 1
+          }
+          echo "validator correctly rejected the broken template, on the verb"

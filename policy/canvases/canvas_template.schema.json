@@ -1,0 +1,133 @@
+{
+  "$comment": "GENERATED from src/iagent/canvas_template.py by scripts/generate_canvas_schema.py (ADR-0050 \u00a71.2). Do not edit by hand \u2014 run the generator. Sealed by tests/test_canvas_schema_drift.py.",
+  "$defs": {
+    "Panel": {
+      "additionalProperties": false,
+      "description": "`{verb, slots, layout}` \u2014 ADR-0050 \u00a72.\n\n`slots` are PANEL-LOCAL declared values; `consumes` names template-level shared slots. Both\nare declarations, not requests: \u00a73 is BLOCKED until the dispatch boundary carries slots, so a\nslice-1 template declares the verbs' OWN DEFAULTS, which is true today and produces the same\nboard whether or not the carry has landed. The declaration documents reality rather than\nhoping for it \u2014 and when the carry lands, a declared default that changes the card is the\ncarry ARRIVING, which is a correction to record, not a regression.",
+      "properties": {
+        "consumes": {
+          "description": "Names of template-level shared slots this panel binds (\u00a73.1).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumes",
+          "type": "array"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why this panel declares what it does \u2014 carried into review, not into `template_ref`, so an explanation can be improved without minting a ref.",
+          "title": "Note"
+        },
+        "role": {
+          "description": "\u00a77 slot role. Ordinal is this panel's list index.",
+          "enum": [
+            "anchor",
+            "pair"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "slots": {
+          "additionalProperties": true,
+          "description": "Panel-local slot declarations. Never asked at load (\u00a73.1).",
+          "title": "Slots",
+          "type": "object"
+        },
+        "verb": {
+          "description": "Prefixed verb IRI, e.g. `mesh:planCostCurve`. Dispatched through the stage-2 structural gate, never the classifier.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_]*:[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verb",
+        "role"
+      ],
+      "title": "Panel",
+      "type": "object"
+    },
+    "SharedSlot": {
+      "additionalProperties": false,
+      "description": "A slot the template's panels share \u2014 `program` is \u00a73's worked case.\n\nONE ASK, N PANELS. An unfilled shared slot fires exactly one elicitation at load, through\nADR-0033's `slot-unfilled` -> ask disposition, and the answer binds into every panel that\ndeclares it. This is a CONSUMER of the elicitation surface, not a second one.",
+      "properties": {
+        "description": {
+          "description": "What the ask means, in the words a user would hear.",
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "description": "Slot name as the verbs' signatures spell it.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "description": "Whether the template refuses to load unfilled. \u00a73.4: a shared slot is the BOARD'S SUBJECT, so a caller not entitled to it refuses the TEMPLATE, not the panel \u2014 every panel would be a hole.",
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "SharedSlot",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One file, one template (\u00a71.1).",
+  "properties": {
+    "description": {
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "panels": {
+      "items": {
+        "$ref": "#/$defs/Panel"
+      },
+      "minItems": 1,
+      "title": "Panels",
+      "type": "array"
+    },
+    "shared_slots": {
+      "items": {
+        "$ref": "#/$defs/SharedSlot"
+      },
+      "title": "Shared Slots",
+      "type": "array"
+    },
+    "template_id": {
+      "description": "Must equal the filename stem. The seed verb's `template_id` slot is enumerated from the ratified set, so this string is a menu option (\u00a74).",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Template Id",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "template_id",
+    "title",
+    "description",
+    "panels"
+  ],
+  "title": "CanvasTemplate",
+  "type": "object"
+}

@@ -1,0 +1,85 @@
+# PORTFOLIO CANVAS — the first ratified template (ADR-0050 slice 1).
+#
+# This re-expresses TODAY'S seeded canvas, which lives as five natural-language phrases in
+# `src/iagent/gateway.py` (PORTFOLIO_CANVAS_QUESTIONS). The phrases are not copied here: a panel
+# is a PRE-RESOLVED STEP, not a phrase (§2). Each phrase's verb was read off the seeder's own
+# `measure` field and the planning agent's VERBS table, so the mapping is transcribed, not
+# inferred.
+#
+# ── WHY THE SLOTS BELOW ARE THE VERBS' OWN DEFAULTS ──────────────────────────────────────────
+# §3 is BLOCKED: the dispatch boundary does not carry slots
+# ([[slots-are-extracted-then-dropped-at-dispatch]] — nothing is extracted at all; `RouteIntent`
+# has zero callers and every verb runs on defaults). So slice 1 declares what each verb ACTUALLY
+# DOES TODAY, read from its signature in `agent_fleet/planning_agent/measures.py`. That makes
+# this template TRUE right now and produces the same board whether or not the carry has landed.
+#
+# When the carry lands, a declared default that changes a card is the carry ARRIVING — record it
+# as a correction, not a regression (ADR-0050 Rollout).
+#
+# ── ORDER IS THE DECLARATION ─────────────────────────────────────────────────────────────────
+# Position 0 is the anchor; the client never sorts and the projection never reorders or dedupes.
+# `role` carries the slot role only — never pixels (§7). Geometry stays in cortex's TEMPLATES
+# builder, keyed by template_id, because coordinates are derived from viewport aspect and
+# measured content heights and no YAML number would survive a different pane.
+---
+template_id: portfolio
+title: Portfolio planning canvas
+description: >-
+  The five gold-tier portfolio measures as one board: schedule anchoring the top, spend and site
+  load beneath it, funding and maturity beneath those. Re-expression of the phrase-seeded canvas
+  that shipped before templates were ratifiable.
+
+# No shared slots in slice 1. `program` is §3's worked case and belongs to SLICE 2, which is
+# gated on the dispatch-boundary slot carry. Declaring a shared slot here would fire an ask whose
+# answer nothing can bind — an elicitation that costs the user a question and changes no card.
+shared_slots: []
+
+panels:
+  # ── SLOT 0 — the anchor ────────────────────────────────────────────────────────────────────
+  - verb: mesh:planSchedule
+    role: anchor
+    slots:
+      group_by: initiative
+    note: >-
+      group_by=initiative is planSchedule's signature default. Declared rather than omitted so
+      the panel states what it computes; the phrase it replaces ("what is scheduled by initiative
+      and phase") already matched this default, so slice 1 expects no change here.
+
+  # ── SLOTS 1-2 — the first pair ─────────────────────────────────────────────────────────────
+  - verb: mesh:planCostCurve
+    role: pair
+    slots: {}
+    note: >-
+      planCostCurve takes no defaulted enum — `window` and `scope_initiative_id` default to None,
+      meaning the full governed span. An empty `slots` here is a positive statement that the verb
+      runs unscoped, not an omission.
+
+  - verb: mesh:planSiteLoad
+    role: pair
+    slots: {}
+    note: >-
+      `site_id` and `window` default to None — every site, full span. Same positive-empty
+      reading as planCostCurve.
+
+  # ── SLOTS 3-4 — the second pair ────────────────────────────────────────────────────────────
+  - verb: mesh:planFundingGap
+    role: pair
+    slots:
+      group_by: org
+    note: >-
+      THE ONE PANEL ADR-0050 PREDICTED WOULD BE INTERESTING, and it is the reason declaring
+      defaults is worth doing. The phrase it replaces says "by organization" — chosen 2026-08-28
+      to MATCH THE DEFAULT after the by-initiative wording returned eleven ORGANISATIONS: the
+      verb had run on `group_by=org` while the card's question said something else, with no
+      disclosure surface, because the strip renders routing and not verb params. Declaring
+      `group_by: org` makes the card's parameters legible instead of merely true by luck. Revert
+      to `initiative` ONLY when slot extraction AND carry both land — the acceptance test for
+      that build is this panel returning initiatives.
+
+  - verb: mesh:planMaturityGrid
+    role: pair
+    slots: {}
+    note: >-
+      `as_of` defaults to None, meaning the latest assessment at or before now. Deliberately not
+      pinned to a date: pinning would freeze the grid at authoring time and the card would go
+      quietly stale rather than visibly empty.
