@@ -113,6 +113,21 @@ KNOWN_ARCHETYPES = frozenset({
     # and SHORTFALL_GRID, and the reason it is prospective rather than reactive is that the four
     # archetypes before them were all refused at this door for being remembered last.
     "CANVAS_SEED",
+    # ROUNDS FOUR AND FIVE, both on 2026-09-06, from two different lanes on one night.
+    # NAMED_HOLE (ADR-0050 §5, cortex) and STEP_LADDER (the price-composition archetype,
+    # cortex + engine-cost). The comment on INTERVAL_TIMELINE above says to add the next
+    # archetype HERE FIRST, before the frontend registers it. That is now the fifth time the
+    # instruction was available and the fourth and fifth times it was not followed — not
+    # through carelessness, but because this registry is the only one that is neither the
+    # ontology, the contract, nor the binding, so forgetting it looks like a frontend bug.
+    #
+    # ADDED HERE ONLY. Both still need an owl:Class in mesh_system.ttl under mesh:Archetype
+    # (NOT mesh:Response — there is a test for exactly that confusion) with a real
+    # rdfs:comment, and that comment IS the definition the router reads, so it belongs to the
+    # lane that owns the archetype rather than to whoever notices the red first. Seven tests
+    # stay red until it lands, and it needs a prime window.
+    "NAMED_HOLE",
+    "STEP_LADDER",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that
