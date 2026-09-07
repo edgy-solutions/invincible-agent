@@ -570,6 +570,53 @@ the extraction/matching layer.
 shows: if some phrasings are also *unstable* across repeats, both defects are real and the title
 needs to say so rather than trade one wrong name for another.
 
+## ⛔ THE BANKED BASELINE IS SUPERSEDED BY THE 2026-09 ONTOLOGY PRIME — RE-BASELINE, DO NOT COMPARE ACROSS
+
+**Ruled by Lane 1 / the architect, and the ruling is right:** the prime is the point three
+lanes' declared classes wait on, and a 290-probe baseline is re-runnable. **A prime held for one
+lane's baseline stops being a coordination point.** So the prime went ahead and this packet
+adapts rather than the fleet waiting.
+
+Three classes ride it: `cost:ExportPackage`, `cost:DisclosureRecipient`, and
+`mesh:StatefulSupportResponse` (Engine B is retired; that class stays as the output class the
+next graph inherits).
+
+**WHAT THIS COSTS AND WHAT IT DOES NOT.** The banked pre-landing baseline (290 probes, 0 errors,
+stamped `CODE=…fe90b047 PINNED pre-gate`) is now void **for before/after purposes only**. An
+ontology prime re-ingests class definitions and recomputes their embeddings, which is the exact
+axis this packet measured moving on its own — so a comparison spanning the prime would credit
+the substrate's change to the matcher fix.
+
+**The 0.006 finding survives intact and is the more valuable half.** That a hundredth of a
+similarity point flipped both the winning class *and* the extracted identifier, **with no deploy
+at all**, is a fact about substrate sensitivity, not about any fix. Re-baselining does not touch
+it.
+
+**THE PROCEDURE, so nothing rests on memory:**
+
+1. **Re-baseline immediately before the after-run**, on the post-prime substrate — not the
+   banked file. Same corpus, same in-cluster runner, all three stamp axes.
+2. **Record the prime's run id and timestamp in the new stamp**, from the prime's manifest, so
+   the two runs are attributable to one named substrate rather than to "after the prime".
+3. **Keep the banked file.** It is still the only measurement of the pre-gate world and the
+   evidence for the drift finding; it is simply not the other half of a delta.
+
+### THE RULE THIS AND LANE 1'S FINDING SHARE — worth stating once
+
+Lane 1 hit a borrowed `mesh#AgentResponse` making a false premise look true: the card selector
+keyed on *"first result carrying an `output_uri`"*, which a `no_match` result satisfied, so a
+fabricated card rendered. This packet hit the mirror image: `not_specific` was returned on an
+**empty provider result**, so *"the token is not a name"* and *"nobody was asked a question they
+could answer"* wore one label — which is what disguised a fan-out starvation bug as correct
+behaviour.
+
+> **A value that can arise from two different situations cannot be a decision input until it
+> says which.** (Lane 1's formulation, 2026-09, from the two instances together.)
+
+Same observation, opposite causes, one defect class. And the generalisation Lane 1 took from
+this packet is the actionable half: **check whether anything downstream keys on a class's
+PRESENCE rather than on `route_status`** — the card selector was one instance, not the pattern.
+
 ## THE READ, RUN 2026-08-15 — 290 probes, 0 errors, **0 nondeterminism**
 
 **In-cluster** (no port-forward), repeat=10 over 29 phrasings, scored on `instance_id != ""`.
