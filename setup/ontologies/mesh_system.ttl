@@ -614,3 +614,33 @@ mesh:IntervalTimeline a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Interval Timeline" ;
   rdfs:comment "Nested intervals — group, phase, item — drawn on a shared time axis, where the top level's MEANING is stated by the payload rather than fixed by the renderer. Its row identity is the PAIR (group, item), not the item alone: under a many-to-many pivot one item appears once per thing it contributes to, each with its own weight, and a renderer keyed on the item would draw duplicates or discard real rows. Dragging is arrangement and is client-side; the DROP is a governed write that re-evaluates server-side, so the bars a reader sees after a move are the substrate's answer and not the gesture's. A LIVE VIEW." .
+
+# --- two archetypes that exist because something could NOT be produced ---------
+# Added 2026-09-06, cortex lane. Both were registered on the frontend and declared here
+# afterwards, which is the wrong order and is why master went red for every lane: the
+# admission vocabulary and Contract D are separate registries with separate triggers, and an
+# archetype the backend has no word for is refused AT THE DOOR. The runbook says to land the
+# backend word FIRST. These two did not, and the note is left rather than tidied because the
+# sequencing is what keeps costing time.
+
+# The SUBJECT end. Written after the seal refused the first attempt, which used one IRI for
+# both ends: `test_every_binding_renders_a_response_AS_AN_ARCHETYPE` requires the subject to be
+# a Response and the object an Archetype, and it was right to refuse. A withheld panel IS
+# produced — the seeder decides it, per caller, at dispatch — so it has a response shape, and
+# the earlier reasoning that `no verb produces a hole, so there is no subject` confused `no
+# verb ran` with `nothing was produced`. The record of a refusal is a result.
+
+mesh:WithheldPanel a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Withheld Panel" ;
+  rdfs:comment "The result of evaluating a declared panel under a caller whose grants do not cover its verb: the panel was asked for, the gate answered no, and that answer is what this carries. It is a RESULT rather than an absence — the board is complete and one of its cells is a decision — which is why it has a subject end at all. What it may state is set per classification by the producer: the panel it stands for, the reason, the verb, any subset or none, since naming them discloses that the panel exists and that this caller lacks it." .
+
+mesh:NamedHole a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Named Hole" ;
+  rdfs:comment "The card a declared panel becomes when the caller may not invoke its verb: it exists, occupies the panel's place, and states that something is missing and why. A SILENTLY SHORTER BOARD IS THE THING THIS REFUSES — the template declared the panel, so its absence is a fact the reader is owed, and two callers seeing different-sized boards from one template is the eligibility intersection made spatial rather than a defect. IT IS ONE OF THREE DISPOSITIONS AND NOT THE OTHER TWO: a verb that FAILED or timed out is unavailable and the whole board refuses, because a board that closed its gaps would be the confidently-wrong answer in layout form; a verb that answered and legitimately has nothing draws its own rowless card, which is a measurement rather than a denial. IT DERIVES NOTHING AND MAY THEREFORE SAY LITTLE. Whether the hole names the panel, the reason or the verb is a per-classification policy the producer decides by which fields it populates — naming them discloses that the panel exists and that this caller lacks it, which in some contexts is the protected fact. With none of them the card still says the one thing always true and always the reader's: a panel is missing because of who is asking, and the board is otherwise intact." .
+
+mesh:StepLadder a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Step Ladder" ;
+  rdfs:comment "A total built up by striking factors IN ORDER, each step carrying the rate applied, the figure it was struck on, what it added, and the running total afterwards. ORDER IS THE ANSWER AND IS NOT A RANKING: each step's basis descends from earlier results, so sorting by magnitude would both break the walk and assert a precedence nobody stated. THE STRUCK-ON FIGURE IS WHAT MAKES IT CHECKABLE and is why a contribution ranking cannot carry this shape — a factor is routinely struck on a component or an earlier subtotal rather than on the previous running total, and a reader verifying the arithmetic cannot recover that figure from the amounts. The running total is what makes the sequence one movement rather than several independent figures. A STEP MAY LEGITIMATELY HAVE NO RATE AND NO BASIS: the seed step is an amount rather than a factor struck on something, and rendering either as zero would report a measurement that came out empty, which is a different and false claim. Money is an exact decimal carried as a string end to end, because the shape's whole value is that a recipient can reproduce every figure and a float in the middle of that is a divergence with nothing declaring it. Structurally named — a price composition is its first use and not its definition; any domain that strikes factors in sequence wants this card." .

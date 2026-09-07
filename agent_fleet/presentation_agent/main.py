@@ -503,6 +503,28 @@ _FLAT_ARCHETYPES: Dict[str, tuple] = {
          "accepted_slots", "message", "truncated_from", "total_count", "disposition",
          "verb_iri", "reason"),
     ),
+    # NAMED_HOLE, 2026-09-06. Fields read from
+    # cortex-ui/src/components/registry/NamedHole.contract.ts, not invented here.
+    #
+    # IT BELONGS IN THIS TABLE AND NOT IN _PROJECTED_ARCHETYPES, for the same reason
+    # ELICITATION does and the test above states: that projector requires a NON-EMPTY LIST
+    # under its payload key, and a hole has no rows at all — it is four scalars. An entry
+    # there would return None on every hole and degrade the card to KNOWLEDGE_DOCUMENT, which
+    # is the exact failure both tables exist to prevent, arriving through the door built to
+    # stop it.
+    #
+    # ONLY `disposition` IS REQUIRED, and the card refuses anything but `unentitled`: an
+    # unavailable verb refuses the whole board and an empty result draws its own rowless card,
+    # so drawing a hole for those would erase the distinction between three different answers.
+    # THE OTHER THREE ARE OPTIONAL BY POLICY RATHER THAN BY OVERSIGHT — naming the panel, the
+    # reason or the verb discloses that the panel exists and that this caller lacks it, which
+    # in a compartmented context may be the protected fact. The producer decides per
+    # classification by which of them it populates; the card renders what it is given and
+    # derives nothing.
+    "NAMED_HOLE": (
+        ("disposition",),
+        ("reason", "panel_label", "verb_iri"),
+    ),
 }
 
 
@@ -548,6 +570,18 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # shape of failure to notice because nothing looks broken.
     "INTERVAL_TIMELINE": ("rows", ("group_kind", "scope_label", "milestones")),
     "PERIOD_SERIES": ("rows", ("scope_label", "value_unit")),
+    # STEP_LADDER, 2026-09-06. Rows live under `steps` rather than `structured_data`, and the
+    # passthrough is exactly what the card READS — nothing more. `lot` and `fiscal_year` are on
+    # the producer envelope and are deliberately NOT carried: no consumer reads them, and a
+    # field advertised to a renderer that never looks at it is the same defect as one a
+    # renderer needs and never gets, pointing the other way.
+    #
+    # `sums` IS LOAD-BEARING AND MUST NOT BE DROPPED. It is the producer's report of the
+    # reconciliation invariant, and the card refuses to draw on false — a build-up that does not
+    # reconcile is something that should not have reached a renderer at all. Dropping it here
+    # would leave the card unable to tell a checked walk from an unchecked one, and it would
+    # draw a confident-looking table either way.
+    "STEP_LADDER": ("steps", ("price", "unit_price", "value_unit", "sums", "quantity", "rate_vintage", "scope_label")),
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),
     "DELTA_SET": ("effects", ("scope_label", "baseline_label", "headline")),

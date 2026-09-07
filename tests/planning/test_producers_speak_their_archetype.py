@@ -57,6 +57,22 @@ _CONTRACTS = {
 #: CLAIM, and the coverage test below forces it to be written down rather than left as a gap
 #: nobody can see.
 _EXEMPT = {
+    # STEP_LADDER, 2026-09-06 — the SAME shape as DELTA_SET below, and exempt for the same
+    # stated reason rather than a new one. Its only producer is engine-cost's
+    # `cost_price_composition`; no planning or finance verb emits a build-up. Conformance
+    # belongs beside that engine, in tests/cost/test_cost_cards_conform.py, so that adding a
+    # cost verb does not require editing a planning test.
+    #
+    # THIS IS AN INTERIM AND NAMES ITS OWN END: engine-cost holds `cost:PriceComposition`
+    # unbound until the archetype exists — it now does — and has said they add the binding row
+    # AND the conformance case together. When that case lands this entry should be DELETED, not
+    # kept as a second claim about a producer that is by then covered. A stale exemption is a
+    # claim, which is what the DELTA_SET note below had to be amended for.
+    "STEP_LADDER": (
+        "no PLANNING producer emits it - it is engine-cost's cost_price_composition. "
+        "Conformance for that binding lands in tests/cost/test_cost_cards_conform.py with "
+        "the binding row; delete this entry then."
+    ),
     # AMENDED 2026-09-05: no longer true of the fleet, and a stale exemption is a claim.
     # `cost_rate_comparison` binds to DELTA_SET and IS a measure over seed state. It is exempt
     # HERE because this module enumerates planning and finance producers; its conformance
