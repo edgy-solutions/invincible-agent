@@ -248,6 +248,29 @@ services:
       # effect/integrity writes are never acceptable on in-cluster reachability alone. So the two
       # writes below are FINDINGS, not `internal`.
       - method: POST
+        path: /enumerate_instances
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: internal
+        justification: >-
+          Class -> member list, by FAN-OUT to every registered mesh:enumerateInstances
+          provider. READ; changes no state. ClusterIP, no ingress.
+          THE EXPOSURE IS WIDER THAN /resolve_instance BELOW AND SAYING SO IS THE POINT.
+          That route re-exposes what one provider knows about one identifier; this one asks
+          EVERY registered provider to enumerate a whole class and returns the members. A
+          caller who can name a class can list its contents across the mesh, and the per-IRI
+          can_view gate that protects `/resolve` is not on this door.
+          It is ungated for the same reason its predecessor was, and that reason is now
+          WEAKER: the supervisor was the only caller when this was one hard-wired URL to
+          engine-p, and it is still the only caller — but the blast radius of a future second
+          caller grew when the fan-out did.
+          `internal` is honest ONLY while the cluster boundary is the trust boundary. The
+          condition is restated rather than assumed and it EXPIRES at a shared cluster, under
+          the same trigger as [[engine-o-internal-hardening]] — to which this route should be
+          added rather than tracked separately.
+      - method: POST
         path: /resolve_instance
         identity: none
         gate: none
