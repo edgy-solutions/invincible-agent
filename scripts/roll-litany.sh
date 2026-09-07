@@ -82,12 +82,59 @@ for DEP in "$@"; do
   rm -f /tmp/rs.$$
   echo "  LEG1 rollout   : ok"
 
-  POD=$(kubectl -n "$NS" get pods --field-selector=status.phase=Running \
-        -o jsonpath="{range .items[*]}{.metadata.name}{' '}{.metadata.creationTimestamp}{'\n'}{end}" \
-        | grep "^${DEP}-" | sort -k2 | tail -1 | cut -d' ' -f1)
+  # THE POD THAT SERVES TRAFFIC, not the newest one that lists. A partially-rolled
+  # deployment gives a TRUE answer from a pod nobody is routed to — every leg below then
+  # reports on an image no user reaches. Endpoints are the authority; newest-Running is the
+  # fallback, and it SAYS so rather than pretending.
+  POD=$(kubectl -n "$NS" get endpoints "$DEP" -o jsonpath='{.subsets[0].addresses[0].targetRef.name}' 2>/dev/null)
+  if [ -n "$POD" ]; then
+    POD_SRC="serving"
+  else
+    POD=$(kubectl -n "$NS" get pods --field-selector=status.phase=Running -o jsonpath="{range .items[*]}{.metadata.name}{' '}{.metadata.creationTimestamp}{'\n'}{end}" | grep "^${DEP}-" | sort -k2 | tail -1 | cut -d' ' -f1)
+    POD_SRC="newest-running (NO SERVICE ENDPOINT - may serve nobody)"
+  fi
   [ -z "$POD" ] && { echo "  no running pod"; exit 1; }
-  echo "  pod            : $POD"
-  echo "  LEG2 digest    : $(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.status.containerStatuses[0].imageID}' | sed 's/.*@sha256://' | cut -c1-16)"
+  echo "  pod            : $POD  [$POD_SRC]"
+
+  # ── LEG 2 — A CHOSEN COMMIT, not whatever :latest happened to resolve to ──────────────
+  #
+  # MEASURED 2026-09-06: another lane rolled engine-o onto an image built BEFORE `2ff0acf`,
+  # and that fix silently regressed OUT of the deployment. Nobody did anything wrong —
+  # `:latest` plus independent rolls means one lane can roll BACK another lane's change and
+  # neither notices, because both pulled "the newest image" at different moments.
+  #
+  # A digest change is not a landed commit. A `:latest` pull is not even a CHOSEN commit.
+  IMG=$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.status.containerStatuses[0].image}')
+  DIG=$(kubectl -n "$NS" get pod "$POD" -o jsonpath='{.status.containerStatuses[0].imageID}' | sed 's/.*@sha256://' | cut -c1-16)
+  echo "  LEG2 image     : ${IMG##*/}  digest ${DIG}"
+  case "${IMG}" in
+    *:latest)
+      echo "  LEG2 tag       : UNPINNED (:latest) - cannot say WHICH commit ran."
+      echo "                   Ruled 2026-09-06: rolls reference the commit-tagged image."
+      echo "                   The chart still publishes :latest; until that migrates this"
+      echo "                   leg REPORTS rather than enforces. REQUIRE_PINNED_IMAGE=1"
+      echo "                   makes it a stop."
+      if [ "${REQUIRE_PINNED_IMAGE:-}" = "1" ]; then
+        echo "  STOPPING: REQUIRE_PINNED_IMAGE=1 and the image is :latest"
+        exit 1
+      fi
+      ;;
+    *)
+      echo "  LEG2 tag       : ${IMG##*:}"
+      if [ -n "${EXPECT_COMMIT:-}" ]; then
+        case "${IMG}" in
+          *"${EXPECT_COMMIT}"*)
+            echo "  LEG2 commit    : ok (matches EXPECT_COMMIT)"
+            ;;
+          *)
+            echo "  STOPPING: tag ${IMG##*:} does not carry EXPECT_COMMIT=${EXPECT_COMMIT}"
+            echo "            The roll landed a different commit than intended."
+            exit 1
+            ;;
+        esac
+      fi
+      ;;
+  esac
 
   V=$(kubectl -n "$NS" exec "$POD" -- python -c "import importlib.metadata as m;print(m.version('iagent-mesh'))" 2>/dev/null | tr -d '\r')
   echo "  LEG3 sdk in img: ${V:-ABSENT}"
