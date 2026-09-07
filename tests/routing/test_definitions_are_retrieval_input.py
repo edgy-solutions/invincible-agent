@@ -1,5 +1,25 @@
 """A class definition is RETRIEVAL INPUT, not documentation.
 
+SCOPE, ADDED 2026-09-06 BECAUSE A RED ROW HERE WAS REPORTED AS A LIVE EXPOSURE AND WAS NOT.
+This scans EVERY class in the TTLs, including response shapes whose definitions never reach
+the pool: doc-tools — the pool's sole writer — filters `rdfs:subClassOf mesh:Response` out
+of the Weaviate `OntologyClass` collection (ADR-0046 §1, one filter at the pool rather than
+one per reader). Measured the same day, with controls, from engine-w:
+
+    pool size 15443 (the query works) · WorkPackage 1 and Capability 5 (positive controls)
+    StatefulSupportResponse 0 · AgentResponse 0 · DispositionReview 0
+
+**So a red row on a response shape is a lint failure, not a live retrieval defect.** I read
+one as live and said so — having confused the Neo4j graph, which a prime writes and where
+the class had just landed, with the Weaviate pool, which is what recall actually draws from.
+The LangGraph lane measured the difference rather than arguing it.
+
+It is still worth guarding, and the reason is the same one that makes a workload assertion
+better than a string assertion: the filter keys off a DECLARATION a human has to remember to
+write. A class that ever stops being declared under `mesh:Response` enters the pool carrying
+whatever its definition says. The definition should be safe on its own terms, not by another
+component's filter.
+
 Weaviate embeds ``"<label> — <definition>"`` and Engine O's hybrid search scores a user's
 query against that text. So the definition is not prose a human reads; it is one side of a
 similarity comparison. What reads well to a person can score badly as a discriminator, and
