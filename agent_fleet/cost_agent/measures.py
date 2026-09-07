@@ -363,7 +363,8 @@ def cost_price_composition(state: CostState, *, lot: int, rate_vintage: str) -> 
             {
                 "name": s.name,
                 "rate": None if s.rate is None else str(s.rate),
-                "basis": str(s.basis),
+                # NULL, not "0", for the seed step. See CompositionStep.basis.
+                "basis": None if s.basis is None else str(s.basis),
                 "amount": str(s.amount),
                 "running_total": str(s.running_total),
                 "value_unit": VALUE_UNIT,

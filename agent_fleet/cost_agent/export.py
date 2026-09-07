@@ -154,7 +154,8 @@ def build_manifest(
             # unverifiable without knowing it was struck on labor-plus-fringe.
             "intermediates": [
                 {"name": s.name, "rate": None if s.rate is None else str(s.rate),
-                 "basis": str(s.basis), "amount": str(s.amount),
+                 "basis": None if s.basis is None else str(s.basis),
+                 "amount": str(s.amount),
                  "running_total": str(s.running_total)}
                 for s in build.steps
             ],

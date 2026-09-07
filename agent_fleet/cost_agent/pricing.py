@@ -96,7 +96,14 @@ class CompositionStep:
     """
     name: str
     rate: Decimal | None         # None for the seed step, which is an amount not a factor
-    basis: Decimal               # the amount the rate was applied to
+    #: The amount the rate was applied to -- and None for the seed step, for the SAME reason
+    #: `rate` is. The seed step is an amount, not a factor struck on something, so it has no
+    #: basis at all. This carried 0, which reads as a basis that was measured and came out
+    #: empty; the composition table then printed "0.00" in a column whose whole job is to let
+    #: a reader check that overhead was struck on labor-plus-fringe rather than on labor.
+    #: Absent is not zero, and a column that answers "what was this applied to" must be able
+    #: to say "nothing -- this is where the walk starts".
+    basis: Decimal | None
     amount: Decimal              # what this step added
     running_total: Decimal       # the total after this step
 
@@ -290,7 +297,7 @@ def compose_price(
         CompositionStep(
             name="Base cost",
             rate=None,
-            basis=Decimal("0"),
+            basis=None,
             amount=seed,
             running_total=seed,
         )

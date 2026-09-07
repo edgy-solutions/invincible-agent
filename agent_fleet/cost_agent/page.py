@@ -205,7 +205,9 @@ def composition_view(lot: int) -> list[dict[str, str]]:
     return [
         {"name": s["name"],
          "rate": "" if s["rate"] is None else s["rate"],
-         "basis": _money(Decimal(s["basis"])),
+         # RENDERS BLANK, like `rate` does. A dash or a zero would both be
+         # claims: one that the value is unavailable, one that it was measured.
+         "basis": "" if s["basis"] is None else _money(Decimal(s["basis"])),
          "amount": _money(Decimal(s["amount"])),
          "running_total": _money(Decimal(s["running_total"]))}
         for s in _check_for(lot)["intermediates"]

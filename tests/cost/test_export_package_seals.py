@@ -473,12 +473,28 @@ def test_the_slope_moves_the_scenario_in_BOTH_directions(slice2):
     assert not worse["difference"].startswith("-"), "a shallower curve must raise it"
 
 
+def _check_for_lot(pkg, lot):
+    return next(c for c in pkg["manifest"]["checks"] if c["lot"] == lot)
+
+
 def test_ONE_money_format_across_every_rendered_figure(slice2):
     """Two formats on one screen from one package: the composition table printed raw strings."""
     pkg, _ = slice2
     lot = pkg["lots"][0]
-    figures = [r[k] for r in PAGE.composition_view(lot)
-               for k in ("basis", "amount", "running_total")]
+    comp = PAGE.composition_view(lot)
+    # A BLANK IS PERMITTED ONLY WHERE THE VALUE IS GENUINELY ABSENT, and the seal proves that
+    # rather than skipping empties. The seed step has no basis - it is an amount, not a factor
+    # struck on something - so its cell renders blank like `rate` does. Every OTHER blank would
+    # be a formatting failure wearing the same clothes.
+    blanks = [(r["name"], k) for r in comp for k in ("basis", "amount", "running_total")
+              if r[k] == ""]
+    assert blanks == [(comp[0]["name"], "basis")], f"unexpected blank cells: {blanks}"
+    manifest_first = _check_for_lot(pkg, lot)["intermediates"][0]
+    assert manifest_first["basis"] is None, (
+        "the page renders the seed step's basis blank while the manifest carries a value - "
+        "one of them is lying about whether it was measured")
+    figures = [r[k] for r in comp
+               for k in ("basis", "amount", "running_total") if r[k] != ""]
     lv = PAGE.labor_view(lot)
     figures += [lv["total_hours"], lv["total_cost"], lv["unit_price"], lv["touch_per_unit"]]
     for f in figures:
