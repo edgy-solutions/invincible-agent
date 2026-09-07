@@ -1,9 +1,10 @@
 ---
 id:         slice-1-cannot-declare-slots-for-an-input-no-node-reads
-status:     open
-owner:      unassigned
-blocked-on: the slot_declarations extraction (Lane 1's) gates the BUILD; ADR-0046 §8.4 gates the SUBJECT
-closed-by:
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  83ec883
+closed-by-note: Closed by an ARCHITECT RULING rather than by code, and 83ec883 is the commit that records it in ADR-0046 (§8.4 RULED - retire Engine B; §9 amended - slice 1 waits for its consumer). This packet asked slice 1 to choose between declaring the implemented TRIAGE case and implementing the intended SYNTHESIS case, and named a third reading it did not rule: that a use case whose principal input was never read by anything is evidence for retirement. The ruling took the third. mesh:StatefulSupportResponse STAYS DECLARED as the class the next hosted graph inherits, and the checkpointer pattern stays documented.
 repo:       invincible-agent
 ruled-by:   ADR-0046 §1 (the admission grammar) and §9 (slice 1) — this packet SCOPES slice 1 against Engine B as it actually is
 code-site:  agent_fleet/langgraph_support/main.py, src/iagent/defs/dynamic_supervisor.py, setup/ontologies/mesh_system.ttl

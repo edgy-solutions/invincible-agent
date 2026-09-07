@@ -1,9 +1,10 @@
 ---
 id:         engine-b-has-no-output-type-of-its-own
-status:     open
-owner:      unassigned
-blocked-on: the ONTOLOGY half is done (mesh:StatefulSupportResponse, 2026-09-06); what remains is a PRIME to carry the class into the graph, and the CODE half — Engine B returning that shape instead of BAML AgentResponse
-closed-by:
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  83ec883
+closed-by-note: Closed in BOTH halves, but only one of them by being done. The ONTOLOGY half is done - mesh:StatefulSupportResponse (971bdd7), verified present in the grounding-exclusion seal's DERIVED population rather than assumed into it. The CODE half is MOOT, not fixed - Engine B is retired by the 2026-09-06 ruling recorded in 83ec883, so it will never return the new shape and no engine currently returns it. The class is kept deliberately, as the output class the next hosted graph inherits. ONE THING REMAINS AND IS NOT THIS PACKET'S: the class is in the TTL and NOT in the graph, so it needs the prime it is queued for - a registration citing a class the graph does not hold gets a Contract D 422, which is the mesh:DispositionReview failure exactly.
 repo:       invincible-agent
 ruled-by:   ADR-0046 §1 (a registered verb declares both Contract D ends) — this item is why Engine B cannot satisfy it today
 code-site:  agent_fleet/langgraph_support/main.py:55 (the import), :262-267 (the return), setup/ontologies/mesh_system.ttl:109-112
