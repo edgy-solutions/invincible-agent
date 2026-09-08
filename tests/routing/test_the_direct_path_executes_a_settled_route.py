@@ -42,14 +42,19 @@ _SUBJ = "http://invincible-agent/cost#CostCategory"
 _ENDPOINT = "http://iagent-engine-cost.sandbox.svc:8097/measure/cost_category_breakdown"
 
 
-def _compat(arity: str = "single", verb: str = _VERB) -> dict:
+_LOT = {"name": "lot", "type": "integer", "required": True, "kind": "spoken-mandatory",
+        "referent": "http://invincible-agent/cost#ProductionLot"}
+_YEAR = {"name": "fiscal_year", "type": "integer", "required": True,
+         "kind": "spoken-mandatory"}
+
+
+def _compat(arity: str = "single", verb: str = _VERB, slots=None) -> dict:
     return {
         "verb_iri": verb, "verb_local": "costCategoryBreakdown", "input_uri": _SUBJ,
         "output_uri": "http://invincible-agent/cost#CategoryBreakdown",
         "endpoint_url": _ENDPOINT, "owner_persona": "COST_ANALYST",
         "domains": ["PRODUCTION_COST"], "arity": arity,
-        "slots": json.dumps([{"name": "lot", "type": "integer", "required": True,
-                              "kind": "spoken-mandatory"}]),
+        "slots": json.dumps(slots if slots is not None else [_LOT]),
     }
 
 
@@ -79,7 +84,7 @@ def run(monkeypatch):
     stages: list = []
 
     def _go(*, verbs=None, err=None, bound=None, arity="single", instance="", label="",
-            boom=False):
+            spoken="", slots=None, boom=False):
         stages.clear()
         # The stub honours `find_compatible_verbs`' REAL three-outcome contract, including
         # `(None, err)` on failure — never `([...], err)`. A fixture that hands back verbs
@@ -89,7 +94,7 @@ def run(monkeypatch):
             dd, "find_compatible_verbs",
             lambda s, d, *, ontology_url, **k: (
                 (None, err) if err is not None
-                else ((verbs if verbs is not None else [_compat(arity)]), None)
+                else ((verbs if verbs is not None else [_compat(arity, slots=slots)]), None)
             ),
         )
 
@@ -101,7 +106,7 @@ def run(monkeypatch):
             pre_resolved={"subject_uri": _SUBJ, "verb_iri": _VERB,
                           "subject_instance_id": instance, "subject_instance_label": label},
             bound_slots=bound if bound is not None else {"lot": "4"},
-            spoken_answer="", user_query="where did the money go",
+            spoken_answer=spoken, user_query="where did the money go",
             entitled_domains=["PRODUCTION_COST"], acting_persona="COST_ANALYST",
             ontology_url="http://engine-o", accept_slots=accept_slots, post=_post,
             on_stage=lambda kind, status: stages.append((kind, status)),
@@ -237,6 +242,69 @@ def test_a_REQUIRED_slot_that_is_NOT_a_referent_still_asks(run):
             f"arity={arity!r}: the engine was called with no `lot` — this is the 400 that "
             f"should be an ask"
         )
+
+
+# ── the spoken answer ───────────────────────────────────────────────────────
+
+def test_a_SPOKEN_answer_to_the_ask_reaches_the_engine(run):
+    """THE LIVE FAILURE, 2026-09-08 23:34, and the commonest pick there is.
+
+    `spoken_answer` was a parameter `dispatch_pre_resolved` accepted and NEVER READ — it
+    appeared exactly once in the file, in the signature. Someone who answered an ask by
+    typing the value got `bound_slots={}`, the disposition correctly said "slot lot
+    unfilled", and the turn fell back to the run, which filled it via `/fill_slots` and
+    answered in 24 seconds. The fast path could never have answered this shape.
+
+    NO TEST IN THIS FILE COULD HAVE CAUGHT IT: all thirty-four passed `spoken_answer=""`.
+    An unused parameter whose fixture is always empty is invisible to any number of green
+    tests — the fixture agreed with the bug rather than exercising the feature.
+    """
+    out, posted = run(bound={}, spoken="4")
+    assert out.kind == dd.ROUTED, out.reason
+    assert out.accepted_params == {"lot": 4}
+    assert posted["body"]["params"] == {"lot": 4}
+    assert isinstance(posted["body"]["params"]["lot"], int), (
+        "the engine indexes an int-keyed lot; a spoken answer is text until it is coerced"
+    )
+
+
+def test_a_spoken_answer_is_TYPE_CHECKED_not_trusted(run):
+    """Binding is not believing. The answer still goes through `accept_slots`, so a value of
+    the wrong shape is REFUSED and asked again — never handed to the engine, which would
+    return a refusal listing the value it had just rejected."""
+    out, posted = run(bound={}, spoken="lot four")
+    assert out.kind == dd.ASK
+    assert "refused" in out.reason, out.reason
+    assert not posted
+
+
+def test_TWO_unfilled_slots_are_not_guessed_at(run):
+    """THE BOUND ON THE INFERENCE, and the reason it is safe to make it at all. With one
+    unfilled mandatory slot the ask asked for that slot and the answer is its value. With
+    two there is a real ambiguity `/fill_slots` resolves with a model; assigning here would
+    be a coin toss dressed as a fast path."""
+    out, posted = run(bound={}, spoken="4", slots=[_LOT, _YEAR])
+    assert out.kind == dd.ASK, out.reason
+    assert not posted
+
+    # ON THE ASSIGNMENT, NOT THE OUTCOME. This test SURVIVED its own mutation while
+    # asserting only `ASK` and `not posted`: relaxing the guard to `len(_unfilled) >= 1`
+    # binds the answer to whichever slot happens to be first, the SECOND slot is still
+    # unfilled, and the disposition asks anyway — same outcome, wrong state. The follow-up
+    # ask would then ask for `fiscal_year` with `lot` silently locked to a value the person
+    # never gave it. The defect is the binding, so the binding is what must be asserted.
+    assert out.accepted_params == {}, (
+        f"a value was assigned by POSITION among two candidate slots: "
+        f"{out.accepted_params}"
+    )
+
+
+def test_an_EXPLICIT_binding_is_not_overwritten_by_the_spoken_phrase(run):
+    """A pick from a menu is a stronger statement than a phrase. When the slot is already
+    bound there is nothing unfilled, so the spoken text is not consulted at all."""
+    out, posted = run(bound={"lot": "7"}, spoken="4")
+    assert out.kind == dd.ROUTED, out.reason
+    assert posted["body"]["params"] == {"lot": 7}
 
 
 # ── the engine failing is not the same as the route being wrong ─────────────

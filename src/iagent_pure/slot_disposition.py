@@ -172,8 +172,15 @@ class Disposition(NamedTuple):
         return self.action == ASK
 
 
-def _mandatory(declared: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def mandatory_slots(declared: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The declarations an ask may be owed for. PUBLIC because the direct path needs the
+    SAME set this module decides on — a second predicate for "which slots are mandatory"
+    would be a copy, and the two would agree until one grew a kind."""
     return [d for d in declared if d.get("kind") == "spoken-mandatory"]
+
+
+#: Retained so this module's own call sites and seals read unchanged.
+_mandatory = mandatory_slots
 
 
 def _from_candidates(

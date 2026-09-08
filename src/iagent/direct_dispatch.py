@@ -52,6 +52,7 @@ from iagent_pure.slot_disposition import (
     ASK as _ASK,
     ROUTE as _ROUTE,
     decide_disposition,
+    mandatory_slots,
 )
 from iagent_pure.routing_record import (
     graph_trace_record as build_graph_trace_record,
@@ -228,7 +229,37 @@ def dispatch_pre_resolved(
     predicate["score"] = 1.0
 
     # ── 3. SLOTS. Validated against the menu that offered them, not splatted ────────────
-    acceptance = accept_slots(dict(bound_slots or {}), predicate.get("slots") or [])
+    _declared = predicate.get("slots") or []
+    _supplied = dict(bound_slots or {})
+
+    # ── THE SPOKEN ANSWER IS AN ANSWER, and this path was DROPPING IT ───────────────────
+    #
+    # MEASURED 2026-09-08 23:34. `spoken_answer` was a parameter this function accepted and
+    # never read — it appeared exactly once in the file, in the signature. So a person who
+    # answered an ask by TYPING the value got `bound_slots={}`, the disposition correctly
+    # said "slot lot unfilled", and the turn fell back to the run — which filled it via
+    # `/fill_slots` and answered in 24 seconds. The fast path was structurally incapable of
+    # ever answering the commonest pick there is.
+    #
+    # MY SEAL COULD NOT SEE IT: every test in the file passed `spoken_answer=""`. An unused
+    # parameter whose fixture is always empty is invisible to any number of green tests, and
+    # this one had thirty-four.
+    #
+    # EXACTLY ONE UNFILLED MANDATORY SLOT, OR NOTHING. With one, the ask asked for that slot
+    # and the answer is its value — no inference, and `accept_slots` still type-checks it, so
+    # a spoken "four" is REFUSED rather than guessed at. With two or more there is a genuine
+    # ambiguity that `/fill_slots` resolves with a model; assigning here would be a coin
+    # toss dressed as a fast path, so it falls back and the run does it properly.
+    if spoken_answer:
+        _unfilled = [
+            str(dcl.get("name") or "")
+            for dcl in mandatory_slots(_declared)
+            if str(dcl.get("name") or "") and str(dcl.get("name")) not in _supplied
+        ]
+        if len(_unfilled) == 1:
+            _supplied[_unfilled[0]] = spoken_answer
+
+    acceptance = accept_slots(_supplied, _declared)
     params = dict(getattr(acceptance, "params", {}) or {})
     refusals = [
         {"name": r.name, "reason": r.reason, "spoken": r.spoken}
@@ -257,7 +288,7 @@ def dispatch_pre_resolved(
     # silence, which is the contract that makes passing it honest.
     disposition = decide_disposition(
         accepted=params,
-        declared=predicate.get("slots") or [],
+        declared=_declared,
         resolution=getattr(acceptance, "resolution", {}) or {},
         enumerate_class=None,
     )
@@ -323,6 +354,13 @@ def dispatch_pre_resolved(
             _why,
             routing_mat=routing_mat, graph_trace_mat=graph_trace_mat,
             predicate=predicate, refusals=refusals,
+            # WHAT WAS ACCEPTED, even though an ask is still owed. Left empty at first, and
+            # a mutation walked through the gap: a test asserting "no value was bound when
+            # two slots were candidates" could not fail, because this field was `{}` on
+            # every ask regardless. A record that reports nothing accepted whenever it asks
+            # cannot distinguish "asked with nothing bound" from "asked with one of two
+            # bound", and those have different follow-up questions.
+            accepted_params=params,
         )
 
     # ── 4b. THE ARITY PRECONDITION, the half of the old gate that must survive ──────────
