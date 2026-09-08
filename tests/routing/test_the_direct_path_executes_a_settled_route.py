@@ -173,7 +173,12 @@ def test_a_single_asset_verb_with_no_slot_ASKS_rather_than_dispatching(run):
     and the engine must not be called with a set query."""
     out, posted = run(bound={})
     assert out.kind == dd.ASK
-    assert out.reason == "needs_instance"
+    # THE DISPOSITION NAMES THE SLOT, and it is the disposition that fires here — not the
+    # arity precondition. `decide_disposition` walks every mandatory declaration; the arity
+    # gate only ever sees a slot that is required AND a referent. The narrower one used to
+    # be the only check on this path, which is how a live pick reached the engine with
+    # `params={}` and got back "Request Refused - Missing Slot: lot".
+    assert "lot" in out.reason, out.reason
     assert not posted
 
 
@@ -188,11 +193,50 @@ def test_a_REFUSED_slot_says_so_rather_than_claiming_needs_instance(run):
     assert [r["reason"] for r in out.refusals] == ["wrong-shape"]
 
 
-def test_a_multi_arity_verb_does_not_ask(run):
-    """The control on the gate. A flag that is always on would make every pick ask forever."""
-    out, posted = run(arity="set", bound={})
-    assert out.kind == dd.ROUTED
+def test_a_multi_arity_verb_with_ITS_SLOT_FILLED_does_not_ask(run):
+    """The control: a gate that is always on would make every pick ask forever.
+
+    THIS TEST ASSERTED THE DEFECT UNTIL 2026-09-08. It passed `arity="set", bound={}` and
+    required ROUTED — so it demanded that a verb with a REQUIRED, UNFILLED `lot` be
+    dispatched with empty params, which is exactly the live failure a real pick produced
+    ("Request Refused - Missing Slot: lot"). Written to isolate the arity flag, it removed
+    the mandatory slot to do so and pinned the wrong answer as the expected one.
+
+    The control it was meant to be needs the slot SUPPLIED: then nothing is owed, and a
+    verb that still asks is a gate stuck on."""
+    out, posted = run(arity="set", bound={"lot": "4"})
+    assert out.kind == dd.ROUTED, out.reason
     assert posted
+
+
+def test_a_REQUIRED_slot_that_is_NOT_a_referent_still_asks(run):
+    """THE LIVE FAILURE, 2026-09-08 23:05, and the narrowest possible regression test.
+
+    A pick reached `iagent-engine-cost` with `params={}` and the card read "Request Refused
+    — Missing Slot: lot (type: integer, required)". The persisted artifact confirmed it:
+    `accepted_slots={}`, `refused_slots=[]` — nothing arrived and nothing was refused, so
+    nothing stopped the dispatch.
+
+    WHY THE ARITY PRECONDITION COULD NOT SEE IT. `arity_for` derives "single" from a slot
+    that is both REQUIRED and a REFERENT. `lot` is required and is NOT a referent — it is a
+    production lot number, not a named individual — so the verb is not single-arity,
+    `needs_instance` is never set, and the gate that was the direct path's ONLY slot check
+    correctly declined to fire. `decide_disposition` walks every mandatory declaration and
+    is the layer that turns this into an ask; the run calls it and the fast path did not.
+
+    So the arity parameter here is deliberately NOT "single": that is the whole point. A
+    test that only ever exercises the single-arity shape cannot distinguish the narrow gate
+    from the general one, which is why five other tests in this file were green while a real
+    pick failed.
+    """
+    for arity in (None, "set", ""):
+        out, posted = run(arity=arity, bound={})
+        assert out.kind == dd.ASK, f"arity={arity!r}: {out.kind} ({out.reason})"
+        assert "lot" in out.reason, out.reason
+        assert not posted, (
+            f"arity={arity!r}: the engine was called with no `lot` — this is the 400 that "
+            f"should be an ask"
+        )
 
 
 # ── the engine failing is not the same as the route being wrong ─────────────

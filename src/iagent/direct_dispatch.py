@@ -47,6 +47,12 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from iagent.verb_lookup import find_compatible_verbs
+from iagent_pure.slot_disposition import (
+    ABSTAIN as _ABSTAIN_ACTION,
+    ASK as _ASK,
+    ROUTE as _ROUTE,
+    decide_disposition,
+)
 from iagent_pure.routing_record import (
     graph_trace_record as build_graph_trace_record,
     routing_record as build_routing_record,
@@ -229,6 +235,33 @@ def dispatch_pre_resolved(
         for r in (getattr(acceptance, "refusals", []) or [])
     ]
 
+    # ── 3b. THE DISPOSITION. `route | ask | abstain`, THE SAME RULE THE RUN USES ────────
+    #
+    # THIS WAS MISSING AND IT COST A LIVE PICK (measured 2026-09-08, 23:05). The run calls
+    # `decide_disposition` FIRST and the arity precondition second; the direct path had only
+    # the second, which is strictly narrower. `arity_for` derives "single" from a slot that
+    # is both REQUIRED and a REFERENT, so `needs_instance` never fires for a slot that is
+    # merely required — `cost_category_breakdown`'s `lot` is exactly that. The fast path
+    # dispatched with `params={}` and the engine answered "Request Refused — Missing Slot:
+    # lot", which is the 400-instead-of-an-ask this repo removed a month ago, reintroduced
+    # by a fast path that skipped the layer that removed it.
+    #
+    # I READ THE ARITY GATE'S DOCSTRING AS THE MECHANISM. It says a kept single-arity verb
+    # "reaches `decide_disposition` with an unfilled mandatory referent, which is an ASK" —
+    # true, and it describes the gate as a FLAG whose decision is made elsewhere. Carrying
+    # the flag without its decider was reading half a sentence.
+    #
+    # `enumerate_class=None` IS CORRECT HERE AND NOT A SHORTCUT. This path does not build
+    # the menu — an `ask` falls back to the run, which has the real enumerator — so all it
+    # needs to know is THAT an ask is owed. None is reported as `no_provider`, never as
+    # silence, which is the contract that makes passing it honest.
+    disposition = decide_disposition(
+        accepted=params,
+        declared=predicate.get("slots") or [],
+        resolution=getattr(acceptance, "resolution", {}) or {},
+        enumerate_class=None,
+    )
+
     # ONE BUILDER, TWO EXECUTION SHAPES. The content comes from
     # `iagent_pure.routing_record` — the same function the supervisor's op calls — and only
     # the envelope differs. These were two hand-written mappings until 2026-09-08, sealed to
@@ -265,7 +298,34 @@ def dispatch_pre_resolved(
         compatible_verbs=list(verbs or []),
     ))
 
-    # ── 4. THE ARITY PRECONDITION, before any dispatch ──────────────────────────────────
+    # ── 4. THE DISPOSITION DECIDES, before any dispatch ─────────────────────────────────
+    if disposition.action != _ROUTE:
+        # AN ASK OR AN ABSTAIN IS NOT THIS PATH'S TO ANSWER. Both need the menu the
+        # supervisor builds, so both hand the turn back — correct and slow rather than fast
+        # and wrong. Reported with the SLOT and the disposition's own reason, because
+        # "needs a slot" and "there is no such thing" send a reader to different places.
+        # THE REFUSAL OUTRANKS "UNFILLED" WHEN THERE IS ONE. Both arrive with the slot
+        # missing from `accepted`, and the disposition cannot tell them apart — it sees only
+        # what survived. "unfilled" for a slot the person ANSWERED and that was REJECTED
+        # sends a reader to look for a missing answer they already gave, which is the same
+        # plausible-but-wrong reason as `classify_called` reporting false for a classifier
+        # that ran.
+        _refused = next(
+            (r for r in refusals if r["name"] == disposition.slot), None
+        )
+        _why = (
+            f"slot refused: {_refused['reason']}" if _refused
+            else f"{disposition.action}: slot {disposition.slot or '?'} "
+                 f"({disposition.reason or 'unfilled'})"
+        )
+        return DirectOutcome(
+            ASK if disposition.action == _ASK else ABSTAIN,
+            _why,
+            routing_mat=routing_mat, graph_trace_mat=graph_trace_mat,
+            predicate=predicate, refusals=refusals,
+        )
+
+    # ── 4b. THE ARITY PRECONDITION, the half of the old gate that must survive ──────────
     # A single-asset verb whose instance was never named must ASK, never dispatch. This is
     # the case that made the ask fire in the first place, so a pick that lands back here is
     # a second ask — the one-option-menu shape — not an error.
