@@ -126,7 +126,20 @@ _EXACT_MATCH_WAIVERS: dict[str, str] = {
 #: work rather than bundled into a fix for a different service.
 _KNOWN_OPEN_RUNTIME_SITES = {
     "agent_fleet/ontology_service/main.py",
-    "agent_fleet/mesh_registrar/v2_substrate.py",
+}
+
+#: `v2_substrate.py` LEFT this register in the same change that protected it, which is the
+#: half usually forgotten — a debt entry that outlives its debt is a monument nobody can tell
+#: apart from a live one.
+#:
+#: It still matches exactly, deliberately: `main.py::register` canonicalises both URIs at the
+#: boundary before Contract D or the saga runs, so MERGE, COMPENSATE and PROBE all receive
+#: the full IRI. Expanding inside each of those four queries would be four expansions that
+#: must agree forever.
+_PROTECTED_BY_BOUNDARY = {
+    "agent_fleet/mesh_registrar/v2_substrate.py": (
+        "canonicalised upstream by main.py::register via _canonical_uri, before any query"
+    ),
 }
 
 
@@ -151,6 +164,7 @@ def test_no_UNACCOUNTED_exact_match_on_an_ontology_uri():
         s for s in _census()
         if not any(s.startswith(p) for p in _EXACT_MATCH_WAIVERS)
         and s.rsplit(":", 1)[0] not in _KNOWN_OPEN_RUNTIME_SITES
+        and s.rsplit(":", 1)[0] not in _PROTECTED_BY_BOUNDARY
     ]
     assert not unaccounted, (
         f"exact-match OntologyClass uri lookup(s) that cannot see a CURIE and are neither "
@@ -162,7 +176,7 @@ def test_the_known_open_list_has_not_silently_grown():
     """A known-open list is a debt register, and a debt register that anyone may append to
     without noticing is a waiver list wearing a different name. If a third runtime service
     starts matching exactly, that is a decision someone should have to make on purpose."""
-    assert len(_KNOWN_OPEN_RUNTIME_SITES) == 2, (
+    assert len(_KNOWN_OPEN_RUNTIME_SITES) == 1, (
         f"the known-open set changed: {sorted(_KNOWN_OPEN_RUNTIME_SITES)}"
     )
 
@@ -196,17 +210,33 @@ _CURIE = re.compile(r"^[a-zA-Z][\w-]*:[A-Za-z]")
 
 
 def _declared_uris() -> list[tuple[str, str, str]]:
-    """(file, field, value) for every input_uri / output_uri literal in the fleet."""
+    """(file, field, value) for every input_uri / output_uri literal in the fleet.
+
+    READ FROM THE AST, NOT BY REGEX OVER SOURCE TEXT. The first version matched raw text and
+    immediately flagged `input_uri='cost:LaborComposition'` inside the docstring THIS FIX
+    ADDED — prose quoting the defect, accused of being the defect.
+
+    That is the same failure as an absence assertion satisfied by the comment explaining the
+    absence, in presence form, and it is the second time in two days. A lint that cannot tell
+    code from commentary reports the explanation as the bug, and the natural repair — deleting
+    the example from the comment — would make the documentation worse to keep the check green.
+    """
+    import ast as _ast
     out = []
-    pat = re.compile(r"\b(input_uri|output_uri)\s*=\s*[\"']([^\"']+)[\"']")
     for path in _tracked("agent_fleet/*.py", "agent_fleet/**/*.py"):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            tree = _ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
             continue
         rel = str(path.relative_to(_REPO)).replace("\\", "/")
-        for m in pat.finditer(text):
-            out.append((rel, m.group(1), m.group(2)))
+        for n in _ast.walk(tree):
+            if not isinstance(n, _ast.Call):
+                continue
+            for kw in n.keywords:
+                if (kw.arg in ("input_uri", "output_uri")
+                        and isinstance(kw.value, _ast.Constant)
+                        and isinstance(kw.value.value, str)):
+                    out.append((rel, kw.arg, kw.value.value))
     return out
 
 
@@ -230,3 +260,49 @@ def test_the_lint_can_see_declarations_at_all():
     found = _declared_uris()
     assert len(found) >= 5, f"the lint found only {len(found)} uri declarations"
     assert any("://" in v for _, _, v in found), "no full-IRI declaration found as a control"
+
+
+# ── the boundary expansion, which is what makes the exact matches safe ──────
+
+def test_the_registrar_canonicalises_at_the_boundary():
+    """ONE EXPANSION, BEFORE ANY QUERY. Contract D, the saga's MERGE, its COMPENSATE and its
+    read-back PROBE all match `uri` exactly; expanding in each is four things that must agree
+    forever."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    assert "def _canonical_uri(" in src
+    # THE FUNCTION, NOT A CHARACTER WINDOW. The first version read `src[i:i + 2600]`, and the
+    # comment written to explain this very fix pushed `_contract_d_check` past the boundary.
+    # Fifth magic-span rot in this repo, third one caused by the prose sitting beside it.
+    import ast as _ast
+    fn = next(
+        n for n in _ast.walk(_ast.parse(src))
+        if isinstance(n, _ast.FunctionDef) and n.name == "register"
+    )
+    body = _ast.unparse(fn)
+    assert "_canonical_uri(manifest.input_uri)" in body
+    assert "_canonical_uri(manifest.output_uri)" in body
+    assert body.index("_canonical_uri") < body.index("_contract_d_check"), (
+        "canonicalisation runs after Contract D — the gate would see the raw CURIE"
+    )
+
+
+def test_the_expansion_refuses_to_GUESS_when_ambiguous():
+    """`mesh:` really is declared twice across the TTLs (invincible-agent and internal), so an
+    ambiguous CURIE is live rather than hypothetical. Binding a verb to whichever namespace
+    sorted first would be a silent wrong answer — strictly worse than a loud unresolved one,
+    because the caller's own `missing` reporting still fires on a pass-through."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    i = src.index("def _canonical_uri(")
+    body = src[i:src.index("def _contract_d_check(", i)]
+    assert "len(uris) == 1" in body, "the expansion accepts a non-unique match"
+    assert "ambiguous" in body.lower(), "an ambiguous CURIE is resolved silently"
+
+
+def test_the_expansion_never_fails_a_registration():
+    """A lookup helper that can raise turns a registration into an outage. Every uncertainty
+    returns the input unchanged, which preserves exactly the behaviour that existed before."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    i = src.index("def _canonical_uri(")
+    body = src[i:src.index("def _contract_d_check(", i)]
+    assert "except Exception" in body, "an unreachable graph would fail the registration"
+    assert body.count("return uri") >= 3, "not every uncertainty passes the value through"

@@ -429,6 +429,57 @@ _SUBSTRATE_SENTINEL_URI = os.getenv(
 )
 
 
+def _canonical_uri(uri: str) -> str:
+    """Resolve a CURIE to the full IRI the graph stores, or return the value unchanged.
+
+    THE ONE EXPANSION, done at the boundary so every downstream query — Contract D, the
+    saga's MERGE, its COMPENSATE, its read-back PROBE — receives the canonical form. Four
+    queries expanding independently is four things that must agree forever; one is one.
+
+    THE NAMESPACE COMES FROM THE GRAPH, never a baked-in prefix map. This image carries
+    neither the ontology TTLs nor `agent_fleet/utils`, so any map compiled in here would be
+    a second copy that drifts out of step with the ontologies — which is precisely how this
+    defect reached a fourth instance.
+
+    Unchanged on every uncertainty: already an IRI, no colon, unknown prefix, ambiguous
+    match, or an unreachable graph. Returning the input means the caller's own "missing"
+    reporting still fires and says the same thing it always did. A silent wrong expansion
+    would be far worse than a loud unresolved one.
+    """
+    if not uri or "://" in uri or ":" not in uri:
+        return uri
+    prefix, _, local = uri.partition(":")
+    if not prefix or not local:
+        return uri
+    suffix = f"/{prefix}#{local}"
+    try:
+        driver = _get_neo4j_driver()
+        with driver.session() as session:
+            rec = session.run(
+                """
+                MATCH (c:OntologyClass) WHERE c.uri ENDS WITH $suffix
+                RETURN collect(DISTINCT c.uri) AS uris
+                """,
+                suffix=suffix,
+            ).single()
+        uris = (rec["uris"] if rec else []) or []
+    except Exception as exc:  # noqa: BLE001 -- never fail a registration on the lookup
+        logger.warning("CURIE expansion failed for %s: %s — passing through", uri, exc)
+        return uri
+    if len(uris) == 1:
+        return uris[0]
+    if len(uris) > 1:
+        # AMBIGUOUS, AND SAID SO. Two namespaces ending `/cost#` make this CURIE genuinely
+        # undecidable; guessing would bind a verb to a class nobody chose. `mesh:` really is
+        # declared twice across the TTLs (invincible-agent and internal), so this is a live
+        # possibility rather than a hypothetical.
+        logger.warning(
+            "CURIE %s is ambiguous — %d namespaces match %s: %s. Passing through unexpanded; "
+            "declare the full IRI in the manifest.", uri, len(uris), suffix, sorted(uris),
+        )
+    return uri
+
+
 def _contract_d_check(input_uri: str, output_uri: str) -> dict:
     """Verify both URIs exist as :OntologyClass nodes in Neo4j.
 
@@ -780,6 +831,29 @@ def register(manifest: RegistrationManifest) -> RegistrationResult:
     tool_urn = (
         f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{manifest.name},PROD)"
     )
+
+    # Step 0: CANONICALISE THE URIs, ONCE, AT THE BOUNDARY.
+    #
+    # Canonical form is the full IRI. Manifests declare CURIEs (`cost:LaborComposition`),
+    # and every Cypher below matches `uri` exactly — Contract D, the saga's MERGE, its
+    # COMPENSATE and its read-back PROBE. Expanding inside each query would be four
+    # expansions that must agree forever; expanding here is one, and everything downstream
+    # sees the form the graph actually stores.
+    #
+    # MEASURED 2026-09-08, AND THE SEQUENCE IS THE LESSON. Fixing only Contract D let the
+    # manifest through the gate and straight into `merge_neo4j_predicate_edge`, which failed
+    # the same way one layer deeper — "MATCH returned no record. Input or output
+    # OntologyClass missing? input_uri='cost:LaborComposition'" — and the saga retried it a
+    # dozen times, which is what turned a silent refusal into 503s for every other engine
+    # registering at the same time. A gate fix that does not follow the value to its
+    # consumers moves the failure rather than removing it.
+    #
+    # The census in `tests/test_a_curie_is_not_a_missing_class.py` had already named
+    # `v2_substrate.py` as an open site. It was right, and it was right one commit early.
+    manifest = manifest.model_copy(update={
+        "input_uri": _canonical_uri(manifest.input_uri),
+        "output_uri": _canonical_uri(manifest.output_uri),
+    })
 
     # Step 1: Contract D (unchanged — read-only check, runs before any write).
     cd = _contract_d_check(manifest.input_uri, manifest.output_uri)
