@@ -17,7 +17,8 @@ not a grep of a file.
 whole 4h19m uptime** — along with six other engines (Lane 1 swept: engine-d, engine-e, engine-fin,
 engine-p, engine-w, data-analyst). **Read the amendment below before acting on this**: the
 consequence is narrower than the alarm claims.
-Its own log says so, in a named alarm:
+
+The engine's own log carries the named alarm:
 
 > `❌ mesh registration: UNREGISTERED (mint failed: ServiceTokenError: ... Keycloak token
 > endpoint unreachable ...)` — *"engine keeps serving but its verbs will NOT route until a
