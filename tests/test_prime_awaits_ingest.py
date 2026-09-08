@@ -128,7 +128,35 @@ def test_it_waits_THROUGH_a_queued_run(monkeypatch):
 
 
 def test_runs_without_an_id_are_not_silently_dropped(monkeypatch):
-    """A launch that returned no runId is unlaunched work, not finished work."""
+    """A launch that returned no runId is unlaunched work, not finished work.
+
+    THIS TEST ASSERTED NOTHING UNTIL 2026-09-08. It called `_await_ingest_runs` with an
+    id-less run and made no assertion — green because the function did not raise, which is
+    precisely the behaviour its own name says must not happen. A test named for a property,
+    documenting that property, and never checking it.
+
+    Found while making the drop loud: `pending = {rid: name for name, rid in launched if rid}`
+    removed the id-less entry, so the prime waited for FEWER runs than it launched and still
+    reported success. A run nobody waits for is indistinguishable from a run that finished,
+    and the whole point of this function is that a partial ingest must be loud — a downstream
+    reregistration against a half-ingested class graph produces confidently-wrong routing.
+
+    Same family as the vacuous positive control `invincible-agent-91` found the same day: the
+    code was fine and the CHECK said nothing, which no mutation run can surface.
+    """
     m = _mod()
     _stub_requests(monkeypatch, m, {"r1": ["SUCCESS"]})
-    m._await_ingest_runs([("mesh", "r1"), ("ghost", "")], "http://dagster/graphql", 60)
+    with pytest.raises(SystemExit) as exc:
+        m._await_ingest_runs([("mesh", "r1"), ("ghost", "")], "http://dagster/graphql", 60)
+    assert "ghost" in str(exc.value), (
+        "the refusal must NAME the run it could not wait on — 'something failed' sends "
+        "someone to the wrong ingest"
+    )
+
+
+def test_a_fully_identified_launch_still_completes_normally(monkeypatch):
+    """THE CONTROL. A refusal that fires on every launch would turn the guard into an outage,
+    and the assertion above would pass just as well against that."""
+    m = _mod()
+    _stub_requests(monkeypatch, m, {"r1": ["SUCCESS"], "r2": ["SUCCESS"]})
+    m._await_ingest_runs([("mesh", "r1"), ("cost", "r2")], "http://dagster/graphql", 60)

@@ -925,6 +925,20 @@ def _await_ingest_runs(
     path that has never been exercised is not known to work.
     """
     print(f"--- Waiting for {len(launched)} ingest run(s) ---", flush=True)
+    # A LAUNCHED RUN WITH NO ID WAS SILENTLY DROPPED FROM THE WAIT SET. `if rid` removed it
+    # here, so the prime waited for fewer runs than it launched and still reported success —
+    # the exact shape this function exists to prevent, one level up from the failure it
+    # guards. It needs a malformed `LaunchRunSuccess` to happen, which is why it has not; but
+    # the whole point of the wait is that a partial ingest must be LOUD, and a run nobody
+    # waits for is indistinguishable from a run that finished.
+    _idless = [name for name, rid in launched if not rid]
+    if _idless:
+        raise SystemExit(
+            f"[ERROR] dagster reported LaunchRunSuccess with no runId for: {_idless}. "
+            f"Those runs cannot be waited on, so completion cannot be established. "
+            f"Refusing to report success — downstream reregistration would run against a "
+            f"class graph of unknown state."
+        )
     pending = {rid: name for name, rid in launched if rid}
     done, failed = {}, {}
     deadline = time.time() + wait_timeout
