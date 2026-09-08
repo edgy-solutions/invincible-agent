@@ -143,16 +143,63 @@ _PROTECTED_BY_BOUNDARY = {
 }
 
 
+def _cypher_literals(tree, source: str):
+    """Every string constant that is real Cypher, with its line — docstrings excluded.
+
+    THE INSTRUMENT AND THE SUBJECT WERE SHARING A SURFACE. This scanned raw source text, so
+    it flagged all four of these identically:
+
+        q = \"\"\"MATCH (c:OntologyClass {uri: $uri})\"\"\"   <- the defect
+        # this used to be MATCH (:OntologyClass {uri: uri})  <- a comment about the defect
+        \"\"\"The old form was MATCH (c:OntologyClass {uri: $uri}).\"\"\"   <- a docstring
+        // MATCH (c:OntologyClass {uri: $uri}) -- replaced   <- a Cypher comment
+
+    Which means documenting the fix trips the check, and the obvious repair is deleting the
+    explanation to keep it green — making the codebase worse to protect a broken instrument.
+    Third time today for me: a manifest lint flagged `input_uri='cost:LaborComposition'`
+    inside the docstring the fix had just added, and an ordering check rotted on a character
+    window the same comment pushed past. `cortex-ui-60` hit the mirror within the hour, where
+    a `/\\bdirection\\b/` seal failed on its own component's user-facing copy.
+
+    The general form is theirs and it is the one to keep: **the check matched a STRING where
+    the defect is a BEHAVIOUR.** A text search cannot separate a field read from a sentence
+    about the field, or a live query from a comment quoting it.
+
+    So: string constants only (Python comments are absent from the AST for free), docstrings
+    dropped, and `//` line comments stripped from inside the Cypher itself.
+    """
+    import ast as _ast
+    docstrings = set()
+    for n in _ast.walk(tree):
+        if isinstance(n, (_ast.Module, _ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            body = getattr(n, "body", None) or []
+            if (body and isinstance(body[0], _ast.Expr)
+                    and isinstance(body[0].value, _ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                docstrings.add(id(body[0].value))
+    for n in _ast.walk(tree):
+        if not isinstance(n, _ast.Constant) or not isinstance(n.value, str):
+            continue
+        if id(n) in docstrings:
+            continue
+        # strip Cypher line comments — a `//` note inside a real query is still prose
+        cleaned = re.sub(r"//[^\n]*", "", n.value)
+        yield cleaned, getattr(n, "lineno", 0)
+
+
 def _census() -> list[str]:
+    import ast as _ast
     sites = []
     for path in _tracked("*.py"):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            source = path.read_text(encoding="utf-8", errors="replace")
+            tree = _ast.parse(source)
+        except (OSError, SyntaxError):
             continue
         rel = str(path.relative_to(_REPO)).replace("\\", "/")
-        for m in _EXACT_MATCH.finditer(text):
-            sites.append(f"{rel}:{text[: m.start()].count(chr(10)) + 1}")
+        for literal, line in _cypher_literals(tree, source):
+            if _EXACT_MATCH.search(literal):
+                sites.append(f"{rel}:{line}")
     return sites
 
 
