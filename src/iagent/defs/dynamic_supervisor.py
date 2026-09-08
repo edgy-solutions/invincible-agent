@@ -518,28 +518,22 @@ def _find_compatible_verbs(
     ``error`` is a non-fatal message (e.g., Neo4j hiccup) — the caller
     treats it as "couldn't check; fall back to unconstrained classifier".
     """
-    if not subject_uri or subject_uri == "UNKNOWN":
-        return [], None
-    try:
-        resp = requests.post(
-            f"{ONTOLOGY_SVC_URL}/find_compatible_verbs",
-            json={
-                "subject_uri": subject_uri,
-                "max_hops": 5,
-                "entitled_domains": entitled_domains,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return list(data.get("verbs") or []), None
-    except Exception as exc:
+    # THE CALL MOVED to `iagent.verb_lookup` so the BFF's direct re-ask uses the SAME
+    # verifier rather than a second copy. This wrapper keeps the supervisor's own contract:
+    # it logs, because a Dagster op's failure is only visible in its log, and the direct path
+    # has a different reporting surface. The DECISION about what a failed check means stays
+    # here too, because the two callers genuinely differ — this one falls through to
+    # unconstrained classification, the direct path falls back to the full run.
+    verbs, err = _lookup_compatible_verbs(
+        subject_uri, list(entitled_domains or []), ontology_url=ONTOLOGY_SVC_URL,
+    )
+    if err is not None:
         context.log.warning(
             "_find_compatible_verbs failed for subject_uri=%s: %s — "
             "falling through to unconstrained predicate classification",
-            subject_uri, exc,
+            subject_uri, err,
         )
-        return None, str(exc)
+    return verbs, err
 
 
 
@@ -1877,6 +1871,7 @@ from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 # EXTRACTED 2026-09-08 so the BFF's direct re-ask calls the SAME two rules rather than a
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
+from iagent.verb_lookup import find_compatible_verbs as _lookup_compatible_verbs
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity as _filter_verbs_by_arity,
     predicate_from_compat_record as _predicate_from_compat_record,
