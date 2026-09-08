@@ -3763,12 +3763,100 @@ async def generate_dagster_stream(
     # Step F'.6: candidate_verb dropped — the supervisor's /search_predicates
     # runs Weaviate hybrid against the raw user_query, no LLM-extracted verb
     # in the middle. The supervisor receives user_query through op config.
+    # ── LINEAGE: A CLAIM, CHECKED BEFORE IT BECOMES A CONCLUSION ────────────────────────
+    #
+    # The client names the ask it is answering; the server decides whether that is lineage.
+    # It is honoured ONLY when the turn also CARRIES an answer — a pick in `bound_slots` or
+    # a typed reply in `spoken_answer`. A turn with neither is an ordinary question, and a
+    # question that claims to descend from an ask is either confused or lying.
+    #
+    # THE COST OF NOT CHECKING IS A FABRICATED ANCESTOR, not a missing one: the writer links
+    # with `MERGE (parent:AnswerArtifact {id: $parent_id})`, which CREATES the node when the
+    # id is unknown. So an unguarded field lets a caller conjure an artifact into the graph by
+    # naming it, and the rail would then fold two cards together on a lineage nobody produced.
+    # Refusing is cheap; a phantom in the provenance graph is not.
+    _answers_something = bool(request.bound_slots) or bool(request.spoken_answer)
+    _answering_artifact_id = (
+        (request.answering_artifact_id or None) if _answers_something else None
+    )
+    if request.answering_artifact_id and not _answers_something:
+        logger.warning(
+            "lineage claim REFUSED for run %s: answering_artifact_id=%r was sent on a turn "
+            "carrying neither a pick nor a typed answer. An ordinary question does not "
+            "descend from an ask.",
+            session_id, request.answering_artifact_id,
+        )
+    # THE OTHER TWO OUTCOMES, BECAUSE ONLY THE REFUSAL WAS AUDIBLE.
+    #
+    # MEASURED 2026-09-07: `derived_from_artifact_id` was NULL on all 14 most recent
+    # artifacts, including the ask/pick pair the user walked — and the logs could not say
+    # whether the claim never arrived or arrived and was dropped, because the only line on
+    # this path fires when a claim is REFUSED. An absent warning was consistent with both.
+    #
+    # The silent case is the one that matters: `answeringArtifactBody()` returns `{}` when
+    # the client has no id, so a pick with an unknown ask posts a well-formed body that
+    # simply omits the claim. That is indistinguishable from a plain question at every
+    # layer below this line, and it is the shape that produced two cards where the fold
+    # was fully built on both sides and merely had nothing to fold.
+    elif _answering_artifact_id:
+        logger.info(
+            "lineage claim ACCEPTED for run %s: this turn answers %s",
+            session_id, _answering_artifact_id,
+        )
+    elif _answers_something:
+        # GUARDED ON `_answers_something`, and the first version was NOT — it would have
+        # fired on every ordinary question while asserting "turn carries an answer", which
+        # is a false statement in a line someone reads to diagnose. An ordinary question
+        # legitimately has no ask to name and is not worth a line.
+        logger.info(
+            "lineage ABSENT for run %s: turn carries an answer (bound_slots=%d "
+            "spoken_answer=%s) but names no ask — it will render as its own card",
+            session_id, len(request.bound_slots or {}), bool(request.spoken_answer),
+        )
+
+    # THE SKIP, DECIDED WHERE THE ID HAS ALREADY BEEN JUDGED. Only an ACCEPTED claim gets
+    # here: `_answering_artifact_id` is None for a refused one and for an ordinary question,
+    # and the lookup is scoped to this caller's own ownership edge on top of that.
+    _pre_resolved = _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+    if _pre_resolved:
+        logger.info(
+            "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
+            "— skipping /plan, /resolve and /classify_predicate",
+            session_id, _answering_artifact_id,
+            _pre_resolved["subject_uri"], _pre_resolved["verb_iri"],
+        )
+    elif _answering_artifact_id:
+        # AUDIBLE, because this is the branch that silently costs the user 40 seconds. An
+        # accepted lineage claim that yields no route means the ask predates the subject
+        # capture, or the artifact is not this caller's. Both route the ordinary way; only
+        # one of them is worth investigating, and a log line is how anyone tells them apart.
+        logger.info(
+            "no pre-resolved route on ask %s for run %s — routing the full path",
+            _answering_artifact_id, session_id,
+        )
+
     mode: str
     entity_refs: list[str] = []
     intent_extraction: dict = {}
 
     if is_interview_active:
         mode = "CONVERSATIONAL"
+    elif _pre_resolved:
+        # THE FOURTH MODEL CALL, and the one the first pass missed. `/route_intent` runs
+        # ExtractIntent before anything else and cost 5.4s of a 40s pick, measured
+        # 2026-09-08 (POST 00:55:11.3 -> lineage evaluated 00:55:16.7). The commit that
+        # skipped /plan, /resolve and /classify_predicate said "three model calls"; it was
+        # four, and this one ran BEFORE the pre-resolved lookup could say it was unwanted.
+        #
+        # NOTHING DOWNSTREAM NEEDS IT ON THIS PATH. Its three consumers are `resolved_intent`
+        # (overwritten by the slots decision the moment routing lands), `slots` (empty on
+        # essentially every request today - the filler is not called), and `entity_refs`,
+        # which exist to feed /resolve. /resolve is skipped here by construction, so refs
+        # extracted for it would be carried and dropped.
+        #
+        # The lookup moved ABOVE this block to make the skip possible; it reads the ask under
+        # the caller's own ownership edge and needs nothing from the extraction.
+        mode = "ONE_SHOT"
     else:
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
@@ -3920,78 +4008,6 @@ async def generate_dagster_stream(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
-    # ── LINEAGE: A CLAIM, CHECKED BEFORE IT BECOMES A CONCLUSION ────────────────────────
-    #
-    # The client names the ask it is answering; the server decides whether that is lineage.
-    # It is honoured ONLY when the turn also CARRIES an answer — a pick in `bound_slots` or
-    # a typed reply in `spoken_answer`. A turn with neither is an ordinary question, and a
-    # question that claims to descend from an ask is either confused or lying.
-    #
-    # THE COST OF NOT CHECKING IS A FABRICATED ANCESTOR, not a missing one: the writer links
-    # with `MERGE (parent:AnswerArtifact {id: $parent_id})`, which CREATES the node when the
-    # id is unknown. So an unguarded field lets a caller conjure an artifact into the graph by
-    # naming it, and the rail would then fold two cards together on a lineage nobody produced.
-    # Refusing is cheap; a phantom in the provenance graph is not.
-    _answers_something = bool(request.bound_slots) or bool(request.spoken_answer)
-    _answering_artifact_id = (
-        (request.answering_artifact_id or None) if _answers_something else None
-    )
-    if request.answering_artifact_id and not _answers_something:
-        logger.warning(
-            "lineage claim REFUSED for run %s: answering_artifact_id=%r was sent on a turn "
-            "carrying neither a pick nor a typed answer. An ordinary question does not "
-            "descend from an ask.",
-            session_id, request.answering_artifact_id,
-        )
-    # THE OTHER TWO OUTCOMES, BECAUSE ONLY THE REFUSAL WAS AUDIBLE.
-    #
-    # MEASURED 2026-09-07: `derived_from_artifact_id` was NULL on all 14 most recent
-    # artifacts, including the ask/pick pair the user walked — and the logs could not say
-    # whether the claim never arrived or arrived and was dropped, because the only line on
-    # this path fires when a claim is REFUSED. An absent warning was consistent with both.
-    #
-    # The silent case is the one that matters: `answeringArtifactBody()` returns `{}` when
-    # the client has no id, so a pick with an unknown ask posts a well-formed body that
-    # simply omits the claim. That is indistinguishable from a plain question at every
-    # layer below this line, and it is the shape that produced two cards where the fold
-    # was fully built on both sides and merely had nothing to fold.
-    elif _answering_artifact_id:
-        logger.info(
-            "lineage claim ACCEPTED for run %s: this turn answers %s",
-            session_id, _answering_artifact_id,
-        )
-    elif _answers_something:
-        # GUARDED ON `_answers_something`, and the first version was NOT — it would have
-        # fired on every ordinary question while asserting "turn carries an answer", which
-        # is a false statement in a line someone reads to diagnose. An ordinary question
-        # legitimately has no ask to name and is not worth a line.
-        logger.info(
-            "lineage ABSENT for run %s: turn carries an answer (bound_slots=%d "
-            "spoken_answer=%s) but names no ask — it will render as its own card",
-            session_id, len(request.bound_slots or {}), bool(request.spoken_answer),
-        )
-
-    # THE SKIP, DECIDED WHERE THE ID HAS ALREADY BEEN JUDGED. Only an ACCEPTED claim gets
-    # here: `_answering_artifact_id` is None for a refused one and for an ordinary question,
-    # and the lookup is scoped to this caller's own ownership edge on top of that.
-    _pre_resolved = _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
-    if _pre_resolved:
-        logger.info(
-            "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
-            "— skipping /plan, /resolve and /classify_predicate",
-            session_id, _answering_artifact_id,
-            _pre_resolved["subject_uri"], _pre_resolved["verb_iri"],
-        )
-    elif _answering_artifact_id:
-        # AUDIBLE, because this is the branch that silently costs the user 40 seconds. An
-        # accepted lineage claim that yields no route means the ask predates the subject
-        # capture, or the artifact is not this caller's. Both route the ordinary way; only
-        # one of them is worth investigating, and a log line is how anyone tells them apart.
-        logger.info(
-            "no pre-resolved route on ask %s for run %s — routing the full path",
-            _answering_artifact_id, session_id,
-        )
-
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,

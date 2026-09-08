@@ -308,3 +308,71 @@ def test_the_arity_flag_is_applied_BEFORE_the_verb_is_chosen():
     assert src.index("_filter_verbs_by_arity") < src.index("_pre_truth = next"), (
         "the arity filter runs after the verb is selected; the flag never reaches it"
     )
+
+
+# ── the fourth model call, which the first pass missed ──────────────────────
+
+def _handler() -> ast.AST:
+    """The streaming interview handler — located by the route it serves."""
+    tree = ast.parse(_GW)
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            src = ast.unparse(n)
+            if "/route_intent" in src and "_pre_resolved_from_ask" in src:
+                return n
+    raise AssertionError("no handler calls both /route_intent and the pre-resolved lookup")
+
+
+def test_the_pre_resolved_LOOKUP_precedes_the_intent_EXTRACTION():
+    """MEASURED 2026-09-08: 5.4s of a 40s pick, gone before anything could decide it was
+    unwanted. `/route_intent` runs ExtractIntent — a model call — and it sat AHEAD of the
+    lookup that would have said this turn already knows its subject and verb.
+
+    ORDERING IS THE WHOLE PROPERTY. A skip placed after the thing it skips is not a skip; it
+    is a discard. The three-calls-skipped claim in the previous commit was true and
+    incomplete for exactly this reason.
+    """
+    src = ast.unparse(_handler())
+    lookup = src.index("_pre_resolved_from_ask")
+    extract = src.index("/route_intent")
+    assert lookup < extract, (
+        "the intent extraction runs before the pre-resolved lookup — a pick pays for a model "
+        "call whose output this path then discards"
+    )
+
+
+def test_a_pre_resolved_turn_SKIPS_the_intent_extraction():
+    """The branch itself. Asserted on the AST so prose about skipping cannot satisfy it —
+    an absence check over source text was satisfied by its own comment once already today.
+
+    THE FIRST VERSION OF THIS SURVIVED ITS OWN MUTATION. It looked for any `If` testing
+    `_pre_resolved` whose body lacked `route_intent` — and the LOGGING branch a few lines
+    above (`if _pre_resolved: logger.info(...)`) satisfies that perfectly. Replacing the real
+    branch with `elif False:` left the test green. Asserting on the neighbour rather than the
+    claim, which is the defect I have filed against myself twice before.
+
+    Pinned to the CHAIN now: the branch must skip the call while its own alternative makes
+    it. That is a property only the real if/elif can have.
+    """
+    fn = _handler()
+    guarded = [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.If)
+        and "_pre_resolved" in ast.unparse(n.test)
+        and "route_intent" not in ast.unparse(n.body)
+        and "route_intent" in ast.unparse(n.orelse)
+    ]
+    assert guarded, (
+        "no branch skips /route_intent when the route is already known — a branch that "
+        "merely logs is not a skip"
+    )
+
+
+def test_the_extraction_still_runs_for_an_ORDINARY_question():
+    """THE CONTROL. A handler that never extracts intent would satisfy the assertions above
+    while breaking every first question — which is the majority of traffic."""
+    src = ast.unparse(_handler())
+    assert "/route_intent" in src, "the intent extraction is gone entirely"
+    assert "ExtractIntent" in _GW or "intent_extraction" in src, (
+        "nothing consumes an extraction any more — the control is vacuous"
+    )
