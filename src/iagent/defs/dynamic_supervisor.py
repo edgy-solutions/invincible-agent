@@ -3231,7 +3231,57 @@ IS_DEV = os.getenv("DAGSTER_IS_DEV_CLI") == "1"
 
 # Use in_process locally to save RAM. Use multiprocess in Prod for parallel speed.
 # We limit max_concurrent to 5 to protect cloud resources from fork-bombing.
-mesh_executor = in_process_executor if IS_DEV else multiprocess_executor.configured({"max_concurrent": 5})
+#
+# ── START METHOD: THE STEP SPAWN IS A COLD IMPORT ──────────────────────────────────────
+#
+# MEASURED 2026-09-08. Dagster SPAWNS step subprocesses, so every step re-imports this
+# module graph from nothing before it runs a line. That import is ~3.6s on the fleet (it was
+# 15.7s before the host CPU affinity was fixed), and it is paid once per step:
+#
+#     create_task_plan              spawn 8s
+#     execute_subtask[task_0]       spawn 5s   <- then 2s of actual work
+#     generate_ui_payload           spawn 7s
+#     assert_every_engine_answered  spawn 7s
+#
+# ~22s of a 29s run, for a pre-resolved pick that does two seconds of thinking.
+#
+# `forkserver` starts ONE clean server process, preloads the named modules into it, and every
+# step forks from that — so the import is paid once per run instead of once per step, and
+# parallelism is KEPT (unlike in_process_executor, which serialises the fan-out an ordinary
+# question needs).
+#
+# WHY forkserver AND NOT fork. A plain fork would inherit this process's threads and open
+# handles — the Dagster gRPC server, engine HTTP pools — and forking a threaded process is a
+# classic deadlock. The forkserver's children descend from a process that has done nothing
+# but import, which is the whole reason the mechanism exists.
+#
+# REVERSIBLE WITHOUT A REDEPLOY. If forkserver misbehaves, set SUPERVISOR_START_METHOD=spawn
+# in the chart and roll — no code change. `spawn` is the previous behaviour exactly.
+_START_METHOD = os.getenv("SUPERVISOR_START_METHOD", "forkserver").strip().lower()
+if _START_METHOD not in ("forkserver", "spawn"):
+    logger.warning(
+        "SUPERVISOR_START_METHOD=%r is not one of forkserver|spawn — falling back to spawn, "
+        "which is the pre-2026-09-08 behaviour",
+        _START_METHOD,
+    )
+    _START_METHOD = "spawn"
+
+_EXECUTOR_CONFIG: Dict[str, Any] = {"max_concurrent": 5}
+if _START_METHOD == "forkserver":
+    # PRELOAD THE EXPENSIVE HALF, not everything. This module transitively pulls dagster
+    # (~2.3s) and the engine routers; naming it here is what makes a fork cheap. A module that
+    # fails to import in the forkserver would take every step down with it, so this list stays
+    # short and holds only modules the steps already import unconditionally.
+    _EXECUTOR_CONFIG["start_method"] = {
+        "forkserver": {"preload_modules": ["src.iagent.defs.dynamic_supervisor"]}
+    }
+else:
+    _EXECUTOR_CONFIG["start_method"] = {"spawn": {}}
+
+mesh_executor = (
+    in_process_executor if IS_DEV
+    else multiprocess_executor.configured(_EXECUTOR_CONFIG)
+)
 
 @op(
     ins={"results": In(List[Dict[str, Any]]), "ui_payload": In(Any)},
