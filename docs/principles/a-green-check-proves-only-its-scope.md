@@ -125,6 +125,34 @@ When adding or reviewing a guard, answer both halves in writing:
    anything quoting its own subject matter. If not, define the escape mark *before* the first
    false positive, or the guard will be weakened under pressure rather than fixed.
 
+**Corollary — THE INSTRUMENT CAN SELECT THE WRONG SUBJECT, and a real file is the hardest
+wrong answer to notice.** Sizing the `slot_declarations` merge (2026-09-06), a grep for the
+concept's name returned `planning_agent/measures.py` — 1385 lines, 27 functions, **zero** names
+shared with the other two implementations. Measuring it would have reported a 10x-overstated
+surface and "the three implementations have nothing in common", which makes a tractable merge
+look intractable.
+
+The file was real, non-empty, in the right package, and **mentions** `slot_declarations` in a
+comment. `planning_agent/slots.py` **implements** it and never names it. So:
+
+> **Grepping for a concept's NAME finds the file that talks about it, not the file that does
+> it.** An empty result announces itself; a wrong-but-plausible result does not.
+
+Caught only by the shared-function count being zero — a number that should have been impossible
+for three implementations of one thing, and was therefore a signal about the *instrument* rather
+than the subject. Which is the population-count corollary above, arriving one level out: **an
+implausible measurement is evidence about your measuring, before it is evidence about the
+world.**
+
+Lane 1 records this as the fifth instance in one day, across four lanes, of a family it states
+as *measure a sample, speak about the population* — the others being `head -10` on a ranked
+list, `tail -3` on a string sort, `grep -m1` on an eight-core SoC, benchmarking nodes through
+pods with different cgroup quotas, a hand-written removal list of eleven against sixteen tracked
+references, and an ASK helper reading `results.bindings` so every probe silently read NO. **The
+family is Lane 1's to promote if it earns its own law**; this entry claims only the instance,
+because five instances across four lanes is a cross-lane finding and minting the principle from
+inside one lane would fork it.
+
 **Corollary — a passing sample from outside the failing population is not evidence.** Before
 citing a spot-check as confirmation, state which population it was drawn from and whether that
 population could have exhibited the defect.
