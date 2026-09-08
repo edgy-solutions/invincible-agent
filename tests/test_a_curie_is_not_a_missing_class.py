@@ -1,0 +1,232 @@
+"""A CURIE MUST NOT READ AS A MISSING CLASS — the fourth instance of the prefix defect.
+
+MEASURED 2026-09-08. Six presentations were refused by the registrar under Contract D, each
+naming a class that was in the graph the whole time:
+
+    missing ['cost:CategoryBreakdown']      cost#CategoryBreakdown      present
+    missing ['cost:SupplierConcentration']  cost#SupplierConcentration  present
+    missing ['cost:RateComparison']         cost#RateComparison         present
+    missing ['cost:UnitPriceTrend']         cost#UnitPriceTrend         present
+    missing ['cost:LaborComposition']       cost#LaborComposition       present
+    missing ['cost:RateAssumptions']        cost#RateAssumptions        present
+
+The check was an exact string match on `uri`, against manifests that declare CURIEs while the
+graph stores full IRIs — 1049 full IRIs against 1 CURIE-shaped value. No amount of priming or
+rolling could fix a form mismatch.
+
+WHY THIS ONE COST MORE THAN THE OTHER THREE. The earlier instances were caught by a row that
+did not match. This one REPORTED THE CLASS ABSENT, which accuses the ontology and sends an
+operator to the prime. The prime cannot fix a form mismatch, so the remedy became "roll it
+again" — and a roll is a retry storm, which makes a PERMANENT failure look intermittent. That
+is the mechanism behind "sometimes I have to roll all the containers": any time the fix is
+rolling again, the question is which subset never succeeds.
+
+THE POPULATION IS THE POINT. Four instances means nobody knows how many `uri`-keyed
+comparison sites exist, so this file censuses them rather than fixing the two that were
+found. A hand-written list of sites is a sample; `git`-derived is the population.
+
+Run: uv run --frozen pytest tests/test_a_curie_is_not_a_missing_class.py -v
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+
+_REPO = Path(__file__).resolve().parents[1]
+_REGISTRAR = _REPO / "agent_fleet" / "mesh_registrar" / "main.py"
+
+
+def _tracked(*globs: str) -> list[Path]:
+    """Files git actually tracks — the population, not whatever happens to be on disk."""
+    out = subprocess.run(
+        ["git", "ls-files", *globs], cwd=str(_REPO),
+        capture_output=True, text=True, check=False,
+    ).stdout.split()
+    return [_REPO / p for p in out]
+
+
+# ── the fix, at the site that lied ──────────────────────────────────────────
+
+def test_the_contract_d_check_accepts_a_CURIE():
+    """The expansion, asserted on the query rather than on a comment about it."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    assert "ENDS WITH suffix" in src, "the Contract D match no longer expands a CURIE"
+    assert "split(uri, ':')[0]" in src, "the namespace is not derived from the value"
+
+
+def test_the_suffix_is_ANCHORED_on_a_slash():
+    """`cost:X` must not match a namespace merely ENDING in the letters 'cost' —
+    `http://example/notcost#X` is a different class. The leading '/' is the anchor and it is
+    the only thing standing between an expansion and a false positive."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    assert "'/' + split(uri, ':')[0] + '#'" in src, (
+        "the suffix is unanchored — a CURIE could match an unrelated namespace"
+    )
+
+
+def test_a_full_IRI_still_matches_exactly():
+    """The control on the other side. An expansion that broke the canonical form would trade
+    one silent refusal for a louder one."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    assert "c.uri = uri OR" in src, "the exact-match branch is gone"
+    assert "CONTAINS '://'" in src, "full IRIs are no longer detected and passed through"
+
+
+def test_BOTH_uri_keyed_queries_in_the_registrar_expand():
+    """THE POPULATION, INSIDE ONE FILE. The Contract D check and the substrate sentinel are
+    two `uri`-keyed lookups; fixing only the one that was reported is how a defect reaches a
+    fifth instance. The sentinel matters more than it looks — a CURIE sentinel would report
+    the substrate permanently un-ready, flipping every rejection from permanent to deferred
+    and inverting the discriminant the function exists to provide."""
+    src = _REGISTRAR.read_text(encoding="utf-8")
+    assert src.count("ENDS WITH suffix") == 2, (
+        f"expected both uri-keyed queries to expand, found {src.count('ENDS WITH suffix')}"
+    )
+    assert "MATCH (:OntologyClass {uri: uri})" not in src, (
+        "an exact-match-only OntologyClass lookup survives in the registrar"
+    )
+
+
+# ── the census: who else compares a uri? ────────────────────────────────────
+
+_EXACT_MATCH = re.compile(r"MATCH\s*\(\s*[a-zA-Z]*\s*:OntologyClass\s*\{\s*uri\s*:", re.I)
+
+#: Sites that compare an OntologyClass uri exactly, each with the reason it is allowed to.
+#: A waiver must say why a CURIE cannot arrive there — "it does not today" is NOT a reason,
+#: because that is exactly what was true of the registrar until it wasn't.
+#:
+#: THE CENSUS FOUND 57 SITES ACROSS 12 FILES on 2026-09-08. Four instances of this defect had
+#: been fixed one at a time; nobody had ever counted. `scripts/migrate_compact_to_full_iri.py`
+#: exists, which means the repo migrated compact forms to full IRIs once already and the
+#: comparison sites were never brought along.
+_EXACT_MATCH_WAIVERS: dict[str, str] = {
+    "scripts/": (
+        "one-off migration and repair tooling. Each script constructs the values it "
+        "compares, in the form it just wrote, within the same run — there is no external "
+        "caller to hand it a CURIE. `migrate_compact_to_full_iri.py` is the migration that "
+        "made the full IRI canonical in the first place."
+    ),
+    "tests/": (
+        "fixtures asserting on the CANONICAL form deliberately. A test that accepted either "
+        "form would stop pinning which one is canonical, which is the property under test."
+    ),
+}
+
+#: Runtime sites that take an EXTERNALLY SUPPLIED uri and still match exactly. These are not
+#: waived — they are OPEN, and listed so the population is visible rather than implied. They
+#: work today because their callers pass full IRIs (the resolver returns them), which is a
+#: property of the callers rather than of these queries.
+#:
+#: NOT FIXED IN THIS PASS, deliberately: the registrar is the site that produced a false
+#: `missing` and sent an operator to the prime. `_FIND_COMPAT_VERBS_CYPHER` in particular is
+#: the eligibility verifier the pre-resolved re-ask calls, and changing it belongs with that
+#: work rather than bundled into a fix for a different service.
+_KNOWN_OPEN_RUNTIME_SITES = {
+    "agent_fleet/ontology_service/main.py",
+    "agent_fleet/mesh_registrar/v2_substrate.py",
+}
+
+
+def _census() -> list[str]:
+    sites = []
+    for path in _tracked("*.py"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(path.relative_to(_REPO)).replace("\\", "/")
+        for m in _EXACT_MATCH.finditer(text):
+            sites.append(f"{rel}:{text[: m.start()].count(chr(10)) + 1}")
+    return sites
+
+
+def test_no_UNACCOUNTED_exact_match_on_an_ontology_uri():
+    """THE CENSUS. Four instances means nobody holds the population, so it is derived rather
+    than remembered. Every site must be expanded, waived with a reason, or on the known-open
+    list — the one thing it must not be is unnoticed."""
+    unaccounted = [
+        s for s in _census()
+        if not any(s.startswith(p) for p in _EXACT_MATCH_WAIVERS)
+        and s.rsplit(":", 1)[0] not in _KNOWN_OPEN_RUNTIME_SITES
+    ]
+    assert not unaccounted, (
+        f"exact-match OntologyClass uri lookup(s) that cannot see a CURIE and are neither "
+        f"waived nor tracked: {unaccounted}. Expand the value, or add it with a reason."
+    )
+
+
+def test_the_known_open_list_has_not_silently_grown():
+    """A known-open list is a debt register, and a debt register that anyone may append to
+    without noticing is a waiver list wearing a different name. If a third runtime service
+    starts matching exactly, that is a decision someone should have to make on purpose."""
+    assert len(_KNOWN_OPEN_RUNTIME_SITES) == 2, (
+        f"the known-open set changed: {sorted(_KNOWN_OPEN_RUNTIME_SITES)}"
+    )
+
+
+def test_the_known_open_sites_still_exist():
+    """The other direction, and the half usually left out: when a site is actually fixed the
+    entry must go in the SAME change, or the register decays into a monument whose entries
+    nobody can tell apart. Borrowed from `invincible-agent-32`'s removal-list seal."""
+    still = {s.rsplit(":", 1)[0] for s in _census()}
+    stale = sorted(_KNOWN_OPEN_RUNTIME_SITES - still)
+    assert not stale, (
+        f"listed as open but no longer matching exactly — remove from the list in the same "
+        f"change that fixed it: {stale}"
+    )
+
+
+def test_the_census_actually_scanned_something():
+    """Non-vacuity, and the failure this repo has shipped inside a test written to prevent
+    it: a broken scan finds zero offenders and reads exactly like a clean repo."""
+    files = _tracked("*.py")
+    assert len(files) > 100, f"the file census found only {len(files)} python files"
+    joined = "\n".join(
+        p.read_text(encoding="utf-8", errors="replace") for p in files[:400]
+    )
+    assert "OntologyClass" in joined, "the scan never saw an OntologyClass reference at all"
+
+
+# ── the declaring side: lint, not runtime tolerance ─────────────────────────
+
+_CURIE = re.compile(r"^[a-zA-Z][\w-]*:[A-Za-z]")
+
+
+def _declared_uris() -> list[tuple[str, str, str]]:
+    """(file, field, value) for every input_uri / output_uri literal in the fleet."""
+    out = []
+    pat = re.compile(r"\b(input_uri|output_uri)\s*=\s*[\"']([^\"']+)[\"']")
+    for path in _tracked("agent_fleet/*.py", "agent_fleet/**/*.py"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(path.relative_to(_REPO)).replace("\\", "/")
+        for m in pat.finditer(text):
+            out.append((rel, m.group(1), m.group(2)))
+    return out
+
+
+def test_manifests_declare_full_iris():
+    """THE DECLARING SIDE, as a lint rather than a runtime tolerance. The registrar's
+    expansion is belt-and-braces; canonical form is the full IRI, so a CURIE in a manifest is
+    a defect to flag at build time rather than to absorb at runtime — otherwise the tolerance
+    becomes the spec and the canonical form quietly stops being canonical."""
+    bad = [
+        f"{f}: {field}={val}"
+        for f, field, val in _declared_uris()
+        if "://" not in val and _CURIE.match(val)
+    ]
+    assert not bad, (
+        f"manifest(s) declare a CURIE where the canonical form is a full IRI: {bad}"
+    )
+
+
+def test_the_lint_can_see_declarations_at_all():
+    """Non-vacuity for the lint. Zero declarations found would pass it forever."""
+    found = _declared_uris()
+    assert len(found) >= 5, f"the lint found only {len(found)} uri declarations"
+    assert any("://" in v for _, _, v in found), "no full-IRI declaration found as a control"

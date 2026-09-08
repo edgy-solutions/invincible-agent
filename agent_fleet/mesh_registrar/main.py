@@ -456,8 +456,41 @@ def _contract_d_check(input_uri: str, output_uri: str) -> dict:
     with driver.session() as session:
         rec = session.run(
             """
+            // CURIE OR FULL IRI. The canonical form is the full IRI and the graph holds
+            // 1049 of them against 1 CURIE-shaped value — but manifests declare
+            // `cost:CategoryBreakdown`, and this check was an EXACT string match on `uri`.
+            // A CURIE therefore could never match, no matter how many times the substrate
+            // was primed or the pods rolled.
+            //
+            // MEASURED 2026-09-08: six presentations refused with `missing` naming classes
+            // that were present in the graph the whole time — CategoryBreakdown,
+            // SupplierConcentration, RateComparison, UnitPriceTrend, LaborComposition,
+            // RateAssumptions. The refusal reads as "the ontology is incomplete", which
+            // sends an operator to the prime; the prime cannot fix a form mismatch, so the
+            // remedy became "roll it again", and a roll is a retry storm that makes a
+            // PERMANENT failure look intermittent.
+            //
+            // Fourth instance of the prefix defect in this repo. The others were caught by
+            // the row not matching; here the check REPORTED the class absent, which is worse
+            // — it accused the ontology.
+            //
+            // THE NAMESPACE IS RESOLVED AGAINST THE GRAPH, not a hand-list. The graph IS the
+            // loaded ontologies, so a prefix map baked into this image would be a second
+            // copy that drifts — which is how instance three became instance four. The
+            // suffix is anchored on `/` so `cost:X` cannot match a namespace merely ENDING
+            // in the letters "cost".
+            //
+            // Belt-and-braces only: `test_manifests_declare_full_iris` lints the declaring
+            // side, so a CURIE should never reach here in the first place.
             UNWIND $uris AS uri
-            WITH uri WHERE NOT EXISTS { MATCH (:OntologyClass {uri: uri}) }
+            WITH uri,
+                 CASE WHEN uri CONTAINS '://' THEN null
+                      ELSE '/' + split(uri, ':')[0] + '#' + split(uri, ':')[1] END AS suffix
+            WITH uri, suffix
+            WHERE NOT EXISTS {
+                MATCH (c:OntologyClass)
+                WHERE c.uri = uri OR (suffix IS NOT NULL AND c.uri ENDS WITH suffix)
+            }
             RETURN collect(uri) AS missing
             """,
             uris=[input_uri, output_uri],
@@ -471,8 +504,23 @@ def _contract_d_check(input_uri: str, output_uri: str) -> dict:
             # what let the boot race survive a guard built specifically for it.
             srec = session.run(
                 """
+                // SAME RULE AS THE CHECK ABOVE, deliberately, even though sentinels are
+                // configured as full IRIs today and match exactly. Leaving one `uri`-keyed
+                // site un-expanded is precisely how the prefix defect reached its fourth
+                // instance: each site looked fine in isolation and nobody held the
+                // population. A sentinel set to a CURIE would otherwise report the
+                // substrate permanently un-ready, which flips every Contract D rejection
+                // from permanent to deferred — a silent inversion of the discriminant this
+                // whole function exists to provide.
                 UNWIND $sentinel_uris AS uri
-                WITH uri WHERE NOT EXISTS { MATCH (:OntologyClass {uri: uri}) }
+                WITH uri,
+                     CASE WHEN uri CONTAINS '://' THEN null
+                          ELSE '/' + split(uri, ':')[0] + '#' + split(uri, ':')[1] END AS suffix
+                WITH uri, suffix
+                WHERE NOT EXISTS {
+                    MATCH (c:OntologyClass)
+                    WHERE c.uri = uri OR (suffix IS NOT NULL AND c.uri ENDS WITH suffix)
+                }
                 RETURN collect(uri) AS absent
                 """,
                 sentinel_uris=sentinels,
