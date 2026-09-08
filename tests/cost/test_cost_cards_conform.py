@@ -15,6 +15,7 @@ bound without a case would otherwise be a gap nobody can see.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -285,3 +286,98 @@ def test_the_projector_reads_steps_not_structured_data(state):
     every cost verb was in before its binding row existed."""
     rows_key, _ = _projected("STEP_LADDER")
     assert rows_key == "steps"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# `favourable` — the producer's verdict, which cortex refuses to infer
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_ONE_FIELD_NAME_DOES_NOT_CARRY_TWO_VOCABULARIES(state):
+    """`direction` meant improved/degraded/neutral in one verb and up/down/flat in another, in
+    the same file. Only the first agreed with what a consumer reads, so the collision was
+    invisible until a card tried to draw.
+
+    DERIVED: every row of every verb is scanned for a `direction` key, so a third vocabulary
+    cannot be introduced under the same name without this going red.
+    """
+    from agent_fleet.cost_agent.pricing import DEFAULT_COMPOSITION  # noqa: F401
+
+    seen: dict[str, set] = {}
+    for fn_name, kw in _CALLS.items():
+        payload = measures.VERBS[fn_name](state, **kw)
+        for key in ("rows", "effects"):
+            for row in payload.get(key, []) or []:
+                if "direction" in row:
+                    seen.setdefault(fn_name, set()).add(row["direction"])
+    for fn_name, values in seen.items():
+        assert values <= {"improved", "degraded", "neutral"}, (
+            f"{fn_name} emits `direction` = {sorted(values)}, which is not DELTA_SET's "
+            "vocabulary. One field name carrying two meanings is how the movement signal was "
+            "dropped silently.")
+
+
+def test_the_ranking_verdict_is_STATED_not_inferable_from_the_sign(state):
+    """Cortex: 'A renderer deciding from contribution > 0 would be right on this payload and
+    wrong on the next one.' So the sign and the verdict must be able to disagree — if they
+    always agreed, the field would be decorative and a renderer inferring it would be correct.
+    """
+    rows = measures.cost_category_breakdown(state, lot=4)["rows"]
+    verdicts = [(r["contribution"] > 0, r.get("favourable")) for r in rows
+                if "favourable" in r]
+    assert verdicts, "no row carries a verdict"
+    assert any(sign != fav for sign, fav in verdicts), (
+        "every verdict matches the sign of `contribution`, so the field asserts nothing a "
+        "renderer could not have guessed")
+
+
+def test_the_verdict_rests_on_PER_UNIT_movement_not_on_share(state):
+    """A share is a composition, not a cost. Labor's share can rise on a lot that got cheaper,
+    and calling that 'degraded' would be a false claim rendered in red."""
+    # LOT 7, NOT LOT 4, AND THE CHOICE IS THE TEST. On lot 4 the two rules agree on every row,
+    # so lot 4 cannot tell them apart — the seal would have been green and vacuous. On lot 7
+    # labor's SHARE falls while its PER-UNIT COST RISES: a share-based rule calls that
+    # favourable, and it got dearer. That row is the whole argument for the choice.
+    rows = measures.cost_category_breakdown(state, lot=7)["rows"]
+    share_rule_would_say = {r["entity_id"]: (r["share_direction"] == "down") for r in rows}
+    disagreeing = [r["entity_id"] for r in rows
+                   if "favourable" in r
+                   and r["favourable"] != share_rule_would_say[r["entity_id"]]]
+    assert disagreeing, (
+        "the verdict agrees with share direction on every row of this lot, so the seal cannot "
+        "tell the two rules apart - pick a lot where they diverge")
+    for r in rows:
+        if "favourable" in r:
+            assert r["favourable"] == (
+                Decimal(r["per_unit_delta_vs_prior_lot"]) < 0), r["entity_name"]
+
+
+def test_NO_VERDICT_WHERE_NOTHING_MOVED(state):
+    """`favourable` is a boolean in cortex's contract and False means 'this got worse' — it is
+    not a resting state. The first version emitted False for two buckets whose per-unit delta
+    displayed as 0.00, which would have drawn an adverse tone on an unchanged row.
+    """
+    rows = measures.cost_category_breakdown(state, lot=4)["rows"]
+    unchanged = [r for r in rows if r["per_unit_delta_vs_prior_lot"] == "0.00"]
+    assert unchanged, "no unchanged bucket on this lot - the seal has gone vacuous"
+    for r in unchanged:
+        assert "favourable" not in r, f"{r['entity_name']} carries a verdict on zero movement"
+
+
+def test_the_FIRST_LOT_carries_NO_verdict_at_all(state):
+    for r in measures.cost_category_breakdown(state, lot=1)["rows"]:
+        assert "favourable" not in r, "a verdict without a prior lot to compare against"
+        assert r["per_unit_delta_vs_prior_lot"] is None
+
+
+def test_the_verdict_is_QUANTITY_NORMALISED(state):
+    """Lot 4 is 24 units against lot 3's 18. A bucket costing more in TOTAL says nothing about
+    whether it got better or worse, so a verdict read off totals would be about lot size."""
+    rows = {r["entity_id"]: r for r in measures.cost_category_breakdown(state, lot=4)["rows"]}
+    prior = {r["entity_id"]: r for r in measures.cost_category_breakdown(state, lot=3)["rows"]}
+    misled = [k for k, r in rows.items()
+              if "favourable" in r
+              and r["favourable"] is True
+              and Decimal(r["amount"]) > Decimal(prior[k]["amount"])]
+    assert misled, (
+        "no bucket is favourable per unit while costing more in total, so this seal cannot "
+        "distinguish a normalised verdict from a raw one")

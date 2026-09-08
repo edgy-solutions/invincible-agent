@@ -472,10 +472,17 @@ def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
     if total <= 0:  # pragma: no cover - the seed guards against it, but a share of zero
         raise NotInModel(f"lot {lot} has no recorded cost, so it has no division")
     prior_shares = None
+    prior_per_unit = None
     if prior is not None:
         p = buckets(prior)
         ptotal = sum(p.values(), Decimal("0"))
         prior_shares = {k: (v / ptotal) for k, v in p.items()} if ptotal > 0 else None
+        # PER UNIT, NOT PER LOT. Lot 4 is 24 units against lot 3's 18, so a bucket costing
+        # more in total says nothing about whether it got better or worse. Normalising by
+        # quantity is what makes the comparison a verdict rather than an observation about
+        # lot size.
+        if prior.quantity:
+            prior_per_unit = {k: (v / prior.quantity) for k, v in p.items()}
 
     rows = []
     for name, amount in mine.items():
@@ -492,12 +499,54 @@ def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
         if prior_shares is not None:
             delta = (share - prior_shares[name]).quantize(Decimal("0.0001"))
             row["share_delta_vs_prior_lot"] = str(delta)
-            row["direction"] = "up" if delta > 0 else ("down" if delta < 0 else "flat")
+            # RENAMED FROM `direction`. This engine used ONE FIELD NAME FOR TWO VOCABULARIES in
+            # this file: `cost_rate_comparison` emits DELTA_SET's improved/degraded/neutral,
+            # and this emitted up/down/flat. Only the first happened to agree with what a
+            # consumer reads, so the collision was invisible until a card tried to draw. The
+            # name now says which movement it describes, and the DELTA_SET vocabulary is left
+            # to mean only itself.
+            row["share_direction"] = ("up" if delta > 0
+                                      else ("down" if delta < 0 else "flat"))
         else:
             # FIRST LOT HAS NO PRIOR, and that is reported rather than rendered as zero
             # movement — a flat delta and an absent one mean different things.
             row["share_delta_vs_prior_lot"] = None
-            row["direction"] = None
+            row["share_direction"] = None
+
+        # `favourable` IS THE PRODUCER'S VERDICT AND CORTEX WILL NOT INFER IT. Its contract is
+        # explicit: "in cost variance a positive number is favourable; in other measures the
+        # same sign is not. A renderer deciding from `contribution > 0` would be right on this
+        # payload and wrong on the next one."
+        #
+        # SO WHAT IS THE VERDICT HERE? NOT the share movement, which is what the obvious
+        # mapping (up -> degraded) would use. A share is a composition, not a cost: labor's
+        # share can rise because material fell, on a lot that got cheaper overall. Calling that
+        # "degraded" would be a false claim rendered in red, and the reader has no way to
+        # check it.
+        #
+        # The honest verdict is PER-UNIT COST MOVEMENT: this bucket cost more or less per unit
+        # than it did last lot. That is a real cost judgement, it is quantity-normalised, and
+        # it is the question a cost reader means by "is that better or worse".
+        #
+        # ABSENT ON THE FIRST LOT rather than defaulted. There is no verdict without a prior,
+        # and `favourable: false` would read as "this got worse".
+        if prior_per_unit is not None and lot_obj.quantity:
+            per_unit = amount / lot_obj.quantity
+            # QUANTIZED FIRST, AND THE VERDICT READS THE QUANTIZED FIGURE. Comparing the raw
+            # values would let a bucket display "0.00" and still carry a verdict, which is the
+            # card disagreeing with itself on its own row.
+            moved = (per_unit - prior_per_unit[name]).quantize(Decimal("0.01"))
+            row["per_unit_amount"] = str(per_unit.quantize(Decimal("0.01")))
+            row["per_unit_delta_vs_prior_lot"] = str(moved)
+            # ABSENT WHEN NOTHING MOVED. `favourable` is a boolean in cortex's contract, and
+            # False means "this got worse" — it is not a resting state. An unchanged bucket has
+            # no verdict, and the first version emitted False for two of them, which would have
+            # rendered an adverse tone on a row displaying 0.00.
+            if moved != 0:
+                row["favourable"] = moved < 0
+        else:
+            row["per_unit_amount"] = None
+            row["per_unit_delta_vs_prior_lot"] = None
         rows.append(row)
 
     for _r in rows:

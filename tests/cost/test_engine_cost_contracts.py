@@ -398,7 +398,7 @@ def test_category_breakdown_reports_SHARE_and_MOVEMENT_not_amount(state):
     shares = {x["category"]: Decimal(x["share_of_total"]) for x in r["rows"]}
     assert abs(sum(shares.values()) - Decimal("1")) < Decimal("0.001"), "shares must total 1"
     assert all(x["share_delta_vs_prior_lot"] is not None for x in r["rows"])
-    assert {x["direction"] for x in r["rows"]} <= {"up", "down", "flat"}
+    assert {x["share_direction"] for x in r["rows"]} <= {"up", "down", "flat"}
 
 
 def test_the_FIRST_lot_reports_absent_movement_not_zero(state):
@@ -406,7 +406,7 @@ def test_the_FIRST_lot_reports_absent_movement_not_zero(state):
     r = measures.cost_category_breakdown(state, lot=1)
     assert r["compared_to_lot"] is None
     assert all(x["share_delta_vs_prior_lot"] is None for x in r["rows"])
-    assert all(x["direction"] is None for x in r["rows"])
+    assert all(x["share_direction"] is None for x in r["rows"])
 
 
 def test_category_breakdown_needs_NO_rate_vintage(state):
