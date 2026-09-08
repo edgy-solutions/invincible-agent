@@ -48,6 +48,22 @@ def _tracked(*globs: str) -> list[Path]:
     return [_REPO / p for p in out]
 
 
+
+def _load_registrar():
+    """The registrar module, with its heavy deps stubbed.
+
+    Loaded by path so `_canonical_uri` can be CALLED rather than read. The Neo4j driver is
+    replaced per-test, which is the only dependency the function actually has.
+    """
+    import importlib.util, sys, types
+    for name in ("neo4j", "fastapi", "pydantic"):
+        pass  # real ones are installed; nothing to stub
+    spec = importlib.util.spec_from_file_location("mesh_registrar_under_test", _REGISTRAR)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 # ── the fix, at the site that lied ──────────────────────────────────────────
 
 def test_the_contract_d_check_accepts_a_CURIE():
@@ -337,12 +353,56 @@ def test_the_expansion_refuses_to_GUESS_when_ambiguous():
     """`mesh:` really is declared twice across the TTLs (invincible-agent and internal), so an
     ambiguous CURIE is live rather than hypothetical. Binding a verb to whichever namespace
     sorted first would be a silent wrong answer — strictly worse than a loud unresolved one,
-    because the caller's own `missing` reporting still fires on a pass-through."""
-    src = _REGISTRAR.read_text(encoding="utf-8")
-    i = src.index("def _canonical_uri(")
-    body = src[i:src.index("def _contract_d_check(", i)]
-    assert "len(uris) == 1" in body, "the expansion accepts a non-unique match"
-    assert "ambiguous" in body.lower(), "an ambiguous CURIE is resolved silently"
+    because the caller's own `missing` reporting still fires on a pass-through.
+
+    CALLED, NOT GREPPED, AND THE FIXTURE PROVES THE CHOICE MATTERS.
+
+    The first version asserted `"len(uris) == 1" in body` and `"ambiguous" in body.lower()` —
+    a string check on a behaviour, and a seal defending a CHOICE without any data that could
+    tell the choice from its alternative. `invincible-agent-91`'s technique, which a mutation
+    run cannot supply: when a seal defends "this rule rather than the obvious one", make it
+    assert that its own fixture DISTINGUISHES the two. The question is "what would look
+    different if I had chosen the other rule?" — and if nothing in the fixture would, the
+    seal is decoration.
+
+    So the fixture below is deliberately one where guessing and refusing differ: two
+    namespaces both ending `/mesh#`, which is live rather than hypothetical because `mesh:`
+    really is declared twice across the TTLs. A "pick the first" implementation returns a
+    real IRI here; the correct one returns the input unchanged.
+    """
+    import types
+    reg = _load_registrar()
+
+    ambiguous = ["http://invincible-agent/mesh#Thing", "http://internal/mesh#Thing"]
+    unique = ["http://invincible-agent/cost#CategoryBreakdown"]
+
+    def _driver_returning(uris):
+        class _S:
+            def run(self, *a, **k):
+                return types.SimpleNamespace(single=lambda: {"uris": uris})
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return types.SimpleNamespace(session=lambda: _S())
+
+    # the rejected rule, built explicitly so the fixture can be shown to separate them
+    would_guess = sorted(ambiguous)[0]
+
+    reg._get_neo4j_driver = lambda: _driver_returning(ambiguous)
+    got_ambiguous = reg._canonical_uri("mesh:Thing")
+
+    reg._get_neo4j_driver = lambda: _driver_returning(unique)
+    got_unique = reg._canonical_uri("cost:CategoryBreakdown")
+
+    assert got_ambiguous != would_guess, (
+        "an ambiguous CURIE was resolved to a namespace nobody chose — a silent wrong answer, "
+        "strictly worse than a loud unresolved one"
+    )
+    assert got_ambiguous == "mesh:Thing", "an ambiguous CURIE must pass through unchanged"
+    # THE CONTROL ON THE CHOICE ITSELF: the two rules must actually differ on this fixture,
+    # or the assertion above passes for free and proves nothing.
+    assert would_guess != "mesh:Thing", "the fixture cannot distinguish guessing from refusing"
+    # and the unambiguous case must still resolve, or "refuse" degenerates into "never expand"
+    assert got_unique == unique[0], "a unique match no longer expands"
 
 
 def test_the_expansion_never_fails_a_registration():
