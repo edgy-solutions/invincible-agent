@@ -413,6 +413,12 @@ class ApplyLoop:
         with self._driver.session() as session:
             result = session.run(
                 """
+                // `valid_until` and `code_hash` are NOT read here, deliberately.
+                // Neo4j removes a property assigned null, so a field nothing sources does
+                // not exist on the node and every poll logged a warning for it — twice a
+                // second, on a reader whose next REAL warning would then go unread. Both
+                // are still projection COLUMNS and both still accept a value the moment
+                // something writes one; the read comes back when the write does.
                 MATCH (a:AnswerArtifact)
                 WHERE a.watermark > $last_applied
                 RETURN a {
@@ -422,7 +428,6 @@ class ApplyLoop:
                   .created_at,
                   .updated_at,
                   .valid_as_of,
-                  .valid_until,
                   .status,
                   .durability_status,
                   .message_id,
@@ -435,8 +440,7 @@ class ApplyLoop:
                   .graph_trace_json
                 } AS a,
                   [(a)-[:PRODUCED_BY]->(p) | p {
-                    .actor_type, .actor_id, .version, .endpoint,
-                    .code_hash
+                    .actor_type, .actor_id, .version, .endpoint
                   }] AS producers,
                   [(a)-[:PRODUCED_FOR]->(u) | u {
                     .actor_type, .actor_id, .user_id, .is_authenticated,

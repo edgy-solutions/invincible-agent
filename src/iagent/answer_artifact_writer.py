@@ -134,6 +134,11 @@ class AnswerArtifactBundle:
     rendered_output: Optional[Dict[str, Any]] = None
     derived_from_artifact_id: Optional[str] = None
     valid_until: Optional[int] = None
+    #: The artifact-kind discriminator (ADR projector Decision 2). The projector READS
+    #: `.kind` and has always defaulted it to "answer" because nothing ever wrote it — so the
+    #: column was right and the read warned twice a second, forever. Written now, so the read
+    #: is true and a second kind has somewhere to come from.
+    kind: str = "answer"
     # Factual S·P headline composed at write time from the captured
     # routing facts (subject label · verb label; fallback → the
     # structured fallback_reason). Per ADR-0028 Decision 4 and the
@@ -488,6 +493,7 @@ class AnswerArtifactWriter:
               a.rendered_output = $rendered_output,
               a.graph_trace_json = $graph_trace_json,
               a.duration_ms = $duration_ms,
+              a.kind = $kind,
               a.durability_status = $durability_status,
               a.watermark = $watermark
             """,
@@ -498,10 +504,26 @@ class AnswerArtifactWriter:
             valid_until=bundle.valid_until,
             question_text=bundle.question_text,
             summary=bundle.summary,
-            # None stays None all the way to the store — Neo4j simply does not
-            # set the property, so an artifact with no measurement has no
-            # `duration_ms` rather than a zero that would read as "instant".
-            duration_ms=bundle.duration_ms,
+            # COMPUTED HERE, which is what the field's own docstring always said to do:
+            # "Compute this from `valid_as_of`, never from the wire." Nothing ever did, so
+            # every artifact this system has written has had NO duration_ms — Neo4j drops a
+            # property set to null, which is why the projector's read warned on every poll
+            # and why the column was empty on every row.
+            #
+            # `valid_as_of` is stamped when the gateway admits the request and `now_ms` when
+            # the write lands, so this is time-to-persistence: the number the direct-path
+            # work is about to be measured against. A bundle that supplies its own value
+            # still wins — nothing does today, and this is not the place to forbid it.
+            #
+            # An upsert of an already-written artifact would recompute against the original
+            # `valid_as_of` and report a longer span. That is honest for a re-write and
+            # today's path writes once, but it is the thing to look at if this number ever
+            # starts drifting upward.
+            duration_ms=(
+                bundle.duration_ms if bundle.duration_ms is not None
+                else max(0, now_ms - bundle.valid_as_of)
+            ),
+            kind=bundle.kind,
             message_id=bundle.message_id,
             # Neo4j properties can't be nested dicts — serialize the
             # sub-objects to JSON strings. The projector (Hop 2) will
