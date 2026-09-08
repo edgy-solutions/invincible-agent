@@ -249,6 +249,19 @@ def test_every_stage_pair_is_BALANCED_on_every_outcome(run, case):
     red here even though nothing about the new branch is described in this file.
     """
     out, _ = run(**case)
+
+    # THE FLOOR, BECAUSE THIS GUARD'S OWN FAILURE MODE IS SILENCE. `_stage_faults([])`
+    # returns no faults, so a path that reports NOTHING is indistinguishable here from a
+    # path that reports a perfectly balanced pair — the check would pass for the opposite
+    # of the reason in its comment. Every case below reaches the verifier by construction
+    # (each supplies a subject and a verb), so the verification pair is owed on all six and
+    # its absence is a fault rather than an outcome. Same rule as putting a population floor
+    # on a derived scrape: a reader that reads too little fails OPEN.
+    assert (dd.STAGE_VERIFYING, "started") in run.stages, (
+        f"{out.kind}: no stage reported at all — the balance check below cannot tell this "
+        f"apart from a clean run"
+    )
+
     faults = _stage_faults(run.stages)
     assert not faults, f"{out.kind}: {faults} (emitted: {run.stages})"
 
