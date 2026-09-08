@@ -47,6 +47,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from iagent.verb_lookup import find_compatible_verbs
+from iagent_pure.routing_record import (
+    graph_trace_record as build_graph_trace_record,
+    routing_record as build_routing_record,
+)
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity,
     predicate_from_compat_record,
@@ -214,45 +218,41 @@ def dispatch_pre_resolved(
         for r in (getattr(acceptance, "refusals", []) or [])
     ]
 
-    routing_mat = materialization(
+    # ONE BUILDER, TWO EXECUTION SHAPES. The content comes from
+    # `iagent_pure.routing_record` — the same function the supervisor's op calls — and only
+    # the envelope differs. These were two hand-written mappings until 2026-09-08, sealed to
+    # agree by an AST diff; that seal found THREE fields missing here on the day it was
+    # written, including `route_status` on the graph trace, which is the key
+    # `_primary_graph_trace_mat` selects by. A shared builder makes the diff unnecessary.
+    routing_mat = materialization(**build_routing_record(
+        status="matched",
         subject_uri=subject,
+        # NO CLASSIFIER RAN, so there is no classifier confidence. A fabricated 0.9-ish
+        # score would be the worse lie: the verb was carried from a decision a person acted
+        # on and re-confirmed against the compat-walk a few lines above.
         subject_confidence=1.0,
-        subject_instance_id=instance_id or None,
-        subject_instance_label=pre_resolved.get("subject_instance_label") or None,
-        subject_candidates="[]",
+        subject_instance_id=instance_id,
+        subject_instance_label=pre_resolved.get("subject_instance_label") or "",
         verb_iri=verb,
         verb_confidence=1.0,
-        route_status="matched",
         classify_called=False,
         candidate_count=len(verbs or []),
-        fallback_reason=None,
-        handler_endpoint=predicate.get("endpoint") or "",
-        handler_provider=predicate.get("provider") or _provider_from_endpoint(predicate),
-        owner_persona=predicate.get("owner_persona") or "",
+        subject_candidates=[],
+        fallback_reason="",
+        eligibility_excluded=_excluded(flagged),
         acting_persona=acting_persona,
-        acting_domains=",".join(entitled_domains or []),
-        eligibility_excluded=_excluded_json(flagged),
-        # THE LAST THREE ARE NOT DECORATION — each was missing until the two-producer
-        # agreement seal derived the run's label set and diffed it against this one.
-        #
-        # `output_uri` is on the compat record and the run emits it; omitting it here would
-        # make the same field present or absent depending on which path answered.
-        output_uri=predicate.get("output_uri") or "",
-        # `sub_query` is the run's per-subtask phrase. This path runs ONE task, so the
-        # sub-query IS the user's question — emitted rather than skipped, because a consumer
-        # reading it would otherwise find a blank only on the fast path.
-        sub_query=user_query or "",
-    )
-    graph_trace_mat = materialization(
-        # `route_status` HERE IS LOAD-BEARING, not a copy of the field above. It is the key
-        # `_primary_routing_mat` selects by; without it the gateway can only take the FIRST
-        # emitted trace, which is a third rule over a choice that already has two. The run's
-        # own comment at this materialization says so.
-        route_status="matched",
+        acting_domains=list(entitled_domains or []),
+        # ONE TASK, so the sub-query IS the user's phrase. Never composed here: the rewrite
+        # fold exists so what the router records stays byte-equal to what the person asked.
+        sub_query=user_query,
+        predicate=predicate,
+    ))
+    graph_trace_mat = materialization(**build_graph_trace_record(
+        status="matched",
         subject_uri=subject,
         picked_verb_iri=verb,
-        compatible_verbs=_compatible_json(verbs or []),
-    )
+        compatible_verbs=list(verbs or []),
+    ))
 
     # ── 4. THE ARITY PRECONDITION, before any dispatch ──────────────────────────────────
     # A single-asset verb whose instance was never named must ASK, never dispatch. This is
@@ -329,28 +329,16 @@ def _json(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
-def _excluded_json(flagged: List[dict]) -> str:
-    return _json([
+def _excluded(flagged: List[dict]) -> List[dict]:
+    """The arity gate's disposals, as a LIST. The record builder does the encoding —
+    handing it a pre-encoded string would double-encode it into a quoted blob."""
+    return ([
         {"uri": str(v.get("verb_iri") or ""), "gate": "arity",
          "reason": "needs_instance", "disposal": "flagged"}
         for v in flagged
     ])
 
 
-def _compatible_json(verbs: List[dict]) -> str:
-    return _json(verbs)
-
-
-def _provider_from_endpoint(predicate: dict) -> str:
-    """A last-resort display name, derived from the endpoint host.
-
-    The routing record's `handler_provider` arrives empty for engines that register no
-    provider, and the HUD then renders "Unknown engine" beside a perfectly good endpoint —
-    a lookup whose miss becomes text rather than failing. Deriving the host is not a fix for
-    the registration gap; it is a better empty than the word "Unknown".
-    """
-    endpoint = str(predicate.get("endpoint") or "")
-    if "//" not in endpoint:
-        return ""
-    host = endpoint.split("//", 1)[1].split("/", 1)[0].split(":", 1)[0]
-    return host.split(".", 1)[0]
+# `_provider_from_endpoint` MOVED to iagent_pure.routing_record. It was a display-name
+# fallback that only this route applied, which made the fast path and the slow path
+# disagree about WHO answered the identical question. It now runs for both.

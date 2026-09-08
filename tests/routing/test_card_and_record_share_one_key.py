@@ -219,9 +219,18 @@ def test_the_trace_carries_the_key_it_is_selected_by():
     """A selector reading a key the producer never writes returns the first item every time
     and looks like it is choosing. `pick_primary` degrades to first-on-unreadable by design,
     so this failure would be SILENT — the exact shape it is meant to prevent."""
-    i = _SUP.index('asset_key=["subtask_graph_trace"]')
-    assert '"route_status"' in _SUP[i:i + 900], (
-        "subtask_graph_trace no longer carries route_status; the selector cannot see it"
+    from iagent_pure.routing_record import graph_trace_record
+    # ON THE RECORD, NOT ON THE SOURCE. This matched a literal inside a 900-character
+    # window after the asset key; extracting the builder into `iagent_pure` moved the
+    # literal and the seal went red with the behaviour untouched. A window on source is
+    # also fragile in the direction that matters — a field pushed past character 900 by
+    # an added comment reads as absent.
+    rec = graph_trace_record(
+        status="matched", subject_uri="S", picked_verb_iri="V", compatible_verbs=[],
+    )
+    assert rec.get("route_status") == "matched", (
+        "subtask_graph_trace no longer carries route_status; the selector cannot see it "
+        "and pick_primary degrades to first-on-unreadable, which looks like choosing"
     )
 
 

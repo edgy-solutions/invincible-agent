@@ -357,85 +357,233 @@ def test_the_routing_record_carries_every_label_the_projector_reads(run):
     out, _ = run(arity="set", instance="urn:lot:4", label="Lot 4")
     assert out.kind == dd.ROUTED, out.reason
     missing = wanted - set(_md(out.routing_mat))
-    assert missing == {"fallback_reason"}, (
+    assert missing == set(), (
         f"routing labels the projector reads but the dispatch does not emit: "
-        f"{sorted(missing - {'fallback_reason'})} — each projects as a silent default"
+        f"{sorted(missing)} — each projects as a silent default"
     )
 
 
-def _run_producer_labels() -> tuple:
-    """What the DAGSTER path emits, by AST, for (routing_decision, graph_trace).
+def _calls_shared_builder(path: Path, name: str) -> bool:
+    """Does this module CALL the shared record builder, by AST rather than by substring?
 
-    `_log_subtask_route_assets` builds `routing_meta` as a dict literal and then adds four
-    more keys under `if predicate:` — the matched path, which is the only path the direct
-    path can be on. Both are collected; a key added to either one appears here without
-    anyone remembering to update a list.
-    """
+    Import aliases are followed, so `routing_record as build_routing_record` counts and a
+    same-named local function does not."""
     import ast
-    sup = (Path(__file__).resolve().parents[2] / "src" / "iagent" / "defs"
-           / "dynamic_supervisor.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(sup))
-              if isinstance(n, ast.FunctionDef) and n.name == "_log_subtask_route_assets")
-    routing, trace = set(), set()
-    for node in ast.walk(fn):
-        # `routing_meta["x"] = ...` — the four keys added under `if predicate:`
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Subscript) and getattr(t.value, "id", "") == "routing_meta":
-                    if isinstance(t.slice, ast.Constant):
-                        routing.add(t.slice.value)
-        # The dict literal itself. It is `routing_meta: Dict[str, Any] = {...}` — an
-        # ANNOTATED assignment, so an `ast.Assign` walk finds only the four subscripts and
-        # silently reports a 4-label contract. Caught by the `>= 15` floor below, which is
-        # the whole reason a scrape gets a positive control: an under-reading scrape makes
-        # the comparison PASS while checking almost nothing.
-        elif isinstance(node, ast.AnnAssign):
-            if (getattr(node.target, "id", "") == "routing_meta"
-                    and isinstance(node.value, ast.Dict)):
-                routing |= {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
-        # the graph-trace materialization is an inline `metadata={...}` keyword
-        if isinstance(node, ast.keyword) and node.arg == "metadata" and isinstance(
-            node.value, ast.Dict
-        ):
-            keys = {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
-            if "picked_verb_iri" in keys:
-                trace |= keys
-    return routing, trace
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    aliases = {
+        (a.asname or a.name)
+        for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+        and (n.module or "").endswith("routing_record")
+        for a in n.names if a.name == name
+    }
+    if not aliases:
+        return False
+    return any(
+        isinstance(n, ast.Call) and getattr(n.func, "id", "") in aliases
+        for n in ast.walk(tree)
+    )
 
 
-def test_the_two_producers_emit_THE_SAME_LABELS(run):
-    """BYTE-EQUALITY AGAINST THE RUN, derived rather than transcribed.
+@pytest.mark.parametrize("mod", ["src/iagent/direct_dispatch.py",
+                                 "src/iagent/defs/dynamic_supervisor.py"])
+@pytest.mark.parametrize("builder", ["routing_record", "graph_trace_record"])
+def test_BOTH_routes_build_the_record_with_the_SAME_FUNCTION(mod, builder):
+    """THE COPY IS GONE, and this is what replaced the diff that used to police it.
 
-    The Dagster run and this module both feed ONE projector. A label the run emits and this
-    path does not is a field that appears or disappears depending on which path answered —
-    invisible in every test that exercises one path at a time, and the exact shape of the
-    card/routing-record divergence this repo already paid for.
+    Until 2026-09-08 the run and the direct path each built their own label→value mapping
+    and a test asserted the two agreed. That is a copy with a seal on it, and it failed the
+    way copies do: three fields — `output_uri`, `sub_query`, and `route_status` on the graph
+    trace, the key `_primary_graph_trace_mat` selects by — existed on one side only, and
+    every test that exercised one route at a time was green.
 
-    THIS COMPARISON FOUND THREE REAL OMISSIONS on 2026-09-08, none of which the
-    projector-coverage test above could see because `_project_route_decision` does not read
-    them: `output_uri`, `sub_query`, and — the load-bearing one — `route_status` on the graph
-    trace, which is the key `_primary_routing_mat` selects by. A consumer that starts reading
-    any of them would have found the fast path blank.
-
-    ONE-WAY, DELIBERATELY. The direct path must emit everything the run does; it may emit
-    MORE, because a path that knows something the run does not should say so. What it must
-    never do is know less.
+    One builder now, in `iagent_pure.routing_record`, wrapped by each side in its own
+    transport. So the property worth sealing is no longer "the two mappings agree" but
+    "there is only one mapping" — which is checked here, and which no amount of field
+    drift can quietly violate.
     """
-    run_routing, run_trace = _run_producer_labels()
-    assert len(run_routing) >= 15 and len(run_trace) >= 4, (
-        f"the run-producer scrape looks wrong: {sorted(run_routing)} / {sorted(run_trace)}"
+    path = Path(__file__).resolve().parents[2] / mod
+    assert _calls_shared_builder(path, builder), (
+        f"{mod} does not call the shared {builder} — a second mapping has reappeared, and "
+        f"a field added to one route will be invisible to every single-route test"
     )
-    out, _ = run(arity="set", instance="urn:lot:4", label="Lot 4")
 
-    missing_routing = run_routing - set(_md(out.routing_mat))
-    assert missing_routing == {"fallback_reason"}, (
-        f"the run emits routing label(s) the direct path does not: "
-        f"{sorted(missing_routing - {'fallback_reason'})}"
+
+def _entries_from_dagster(record: dict) -> dict:
+    """Wrap a record the way the SUPERVISOR does, then flatten it the way the GATEWAY does.
+
+    This is the run's transport reproduced offline: `MetadataValue` by type, then the entry
+    shape Dagster's GraphQL layer emits for each. It is an instrument, so it gets a control
+    — `test_the_two_transports_are_not_both_empty` below — because a converter that produced
+    nothing would make the equality assertion pass while comparing two empty dicts.
+    """
+    from iagent.defs.dynamic_supervisor import _as_metadata_value
+    # COERCED PER TYPE, THE WAY THE WIRE DOES, and the first version was not. Dagster's
+    # `MetadataValue.int(False)` keeps a bool in `.value` — it does not coerce — so an
+    # instrument that read `.value` straight through reported a bool for an Int field and a
+    # mutation disabling the bool branch of `_as_metadata_value` came out IDENTICAL. The
+    # model reproduced the wrapper choice and not the encoding, which is the half that
+    # carries the defect.
+    _wire = {
+        "TextMetadataValue": ("text", str),
+        "IntMetadataValue": ("intValue", int),
+        "FloatMetadataValue": ("floatValue", float),
+        "BoolMetadataValue": ("boolValue", bool),
+    }
+    entries = []
+    for label, value in record.items():
+        mv = _as_metadata_value(value)
+        key, cast = _wire[type(mv).__name__]
+        entries.append({"label": label, key: cast(mv.value)})
+    return {"metadataEntries": entries}
+
+
+def test_the_transport_wraps_each_type_as_ITSELF():
+    """The direct control on `_as_metadata_value`, because the equality test above compares
+    two things that can agree while both being wrong.
+
+    `bool` must be tested BEFORE `int`: a bool IS an int in Python, so an unguarded int
+    branch swallows it and `classify_called` reaches the HUD as 0/1 where it expects
+    true/false. Asserted on the wrapper's own type rather than through a round trip."""
+    from iagent.defs.dynamic_supervisor import _as_metadata_value
+    assert type(_as_metadata_value(True)).__name__ == "BoolMetadataValue"
+    assert type(_as_metadata_value(3)).__name__ == "IntMetadataValue"
+    assert type(_as_metadata_value(1.5)).__name__ == "FloatMetadataValue"
+    assert type(_as_metadata_value("x")).__name__ == "TextMetadataValue"
+
+
+def _shared_record() -> dict:
+    from iagent_pure.routing_record import routing_record
+    return routing_record(
+        status="matched", subject_uri=_SUBJ, subject_confidence=1.0,
+        subject_instance_id="urn:lot:4", subject_instance_label="Lot 4", verb_iri=_VERB,
+        verb_confidence=1.0, classify_called=False, candidate_count=1,
+        subject_candidates=[], fallback_reason="", eligibility_excluded=[],
+        acting_persona="COST_ANALYST", acting_domains=["PRODUCTION_COST"],
+        sub_query="where did the money go",
+        predicate={"endpoint": _ENDPOINT, "owner_persona": "COST_ANALYST",
+                   "output_uri": "http://invincible-agent/cost#CategoryBreakdown"},
     )
-    missing_trace = run_trace - set(_md(out.graph_trace_mat))
-    assert not missing_trace, (
-        f"the run emits graph-trace label(s) the direct path does not: {sorted(missing_trace)}"
+
+
+def test_the_two_TRANSPORTS_project_to_the_same_record():
+    """THE EQUALITY THE DIFF WAS STANDING IN FOR — same content, both envelopes, one result.
+
+    With the mapping shared, the only place the routes can still diverge is the WRAPPING:
+    the run goes through Dagster `MetadataValue` and GraphQL, the direct path through
+    `materialization()`. Both are flattened by the gateway's `_metadata_dict`, so if the two
+    envelopes round-trip differently the artifact differs while every label matches.
+
+    They genuinely can differ. `candidate_count` travels as an `intValue` on one side and a
+    `floatValue` on the other; the projector coerces with `int(...)`, which is why this is
+    equal rather than a defect — but that is a fact to VERIFY, not to assume, and it is
+    exactly what a byte comparison against a run-produced artifact would have told us.
+    """
+    from iagent.gateway import _metadata_dict, _project_route_decision
+    rec = _shared_record()
+    run_mat, direct_mat = _entries_from_dagster(rec), dd.materialization(**rec)
+
+    # FLATTENED FIRST, AND THIS IS THE ASSERTION THAT MATTERS. Comparing only the PROJECTED
+    # records lets a divergence hide in any field the projector reads but does not surface —
+    # a mutation disabling the bool branch of `_as_metadata_value` sent `classify_called`
+    # through as the integer 1 (bool IS an int in Python, so it fell to the int branch) and
+    # the projected comparison was still equal. The lossy step must not be the comparison.
+    flat_run, flat_direct = _metadata_dict(run_mat), _metadata_dict(direct_mat)
+    assert set(flat_run) == set(flat_direct), (
+        f"labels differ between transports: "
+        f"{sorted(set(flat_run) ^ set(flat_direct))}"
     )
+    _differ = {
+        k: (flat_run[k], flat_direct[k])
+        for k in flat_run
+        # int vs float is the ONE tolerated difference and it is named rather than ignored:
+        # `MetadataValue.int` and `materialization`'s float branch carry `candidate_count`
+        # differently, and the projector coerces with `int(...)`. Any other mismatch, and
+        # any type mismatch that is not numeric, is a real divergence.
+        if flat_run[k] != flat_direct[k]
+        or (isinstance(flat_run[k], bool) != isinstance(flat_direct[k], bool))
+    }
+    assert not _differ, f"the two transports carry different values: {_differ}"
+
+    via_run = _project_route_decision(run_mat)
+    via_direct = _project_route_decision(direct_mat)
+    assert via_run == via_direct, (
+        "the two transports project different records from identical content"
+    )
+
+
+def test_a_registered_provider_WINS_and_an_absent_one_is_derived():
+    """WHO ANSWERED, and the fallback that keeps it from reading "Unknown engine".
+
+    `handler_provider` arrives empty for engines that register no provider, and the HUD then
+    renders "Unknown engine" beside a perfectly good endpoint — a lookup whose miss becomes
+    text. The host is a better empty than that word. It lives in the SHARED builder, so this
+    seals both arms: a registered provider must not be overwritten by the derivation, and an
+    absent one must not stay blank.
+
+    ON ONE SIDE ONLY IT WOULD BE A DIVERGENCE — the fast path and the slow path naming
+    different engines for the identical question — which is what it was until the builder
+    was shared, and no test could see it because each route was exercised alone.
+    """
+    from iagent_pure.routing_record import routing_record
+
+    def _provider(pred):
+        return routing_record(
+            status="matched", subject_uri="S", subject_confidence=1.0,
+            subject_instance_id="", subject_instance_label="", verb_iri="V",
+            verb_confidence=1.0, classify_called=False, candidate_count=1,
+            subject_candidates=None, fallback_reason="", eligibility_excluded=None,
+            acting_persona="P", acting_domains=None, sub_query="q", predicate=pred,
+        )["handler_provider"]
+
+    assert _provider({"endpoint": _ENDPOINT, "provider": "engine-cost"}) == "engine-cost", (
+        "a registered provider was overwritten by the host derivation"
+    )
+    assert _provider({"endpoint": _ENDPOINT}) == "iagent-engine-cost", (
+        "no provider and no derivation — the HUD renders 'Unknown engine' beside a "
+        "perfectly good endpoint"
+    )
+    # An endpoint that is not a URL derives nothing rather than inventing a name from it.
+    assert _provider({"endpoint": "not-a-url"}) == ""
+
+
+def test_the_record_carries_EXACTLY_the_contract_it_declares():
+    """THE FIELD SET, PINNED — because with one builder there is no longer a second producer
+    to diff against, and that diff is what used to catch a dropped field.
+
+    Deleting `sub_query` from the builder survived every other seal in this file: the
+    projector does not read it, both transports agreed about its absence, and one-route
+    tests cannot see it. A pin is the right instrument HERE and was the wrong one before:
+    two producers agreeing by test is a copy, but one producer declaring its contract is a
+    contract. Adding a field is then a deliberate act that updates this line — which is
+    exactly the review this record's history says it needs.
+    """
+    from iagent_pure.routing_record import GRAPH_TRACE_LABELS, ROUTING_LABELS
+    assert set(ROUTING_LABELS) == {
+        "route_status", "subject_uri", "subject_confidence", "subject_instance_id",
+        "subject_instance_label", "verb_iri", "verb_confidence", "classify_called",
+        "candidate_count", "subject_candidates", "fallback_reason", "eligibility_excluded",
+        "acting_persona", "acting_domains", "sub_query",
+    }
+    assert set(GRAPH_TRACE_LABELS) == {
+        "route_status", "subject_uri", "picked_verb_iri", "compatible_verbs",
+    }
+    # The four handler fields are CONDITIONAL — absent when there was nothing to dispatch
+    # to, because no handler is not the same as a handler with no name.
+    assert set(_shared_record()) - set(ROUTING_LABELS) == {
+        "handler_provider", "handler_endpoint", "owner_persona", "output_uri",
+    }
+
+
+def test_the_two_transports_are_not_both_empty():
+    """THE CONTROL on the equality above. Two empty dicts are equal, and a converter that
+    silently produced nothing would make that test pass while comparing nothing at all —
+    the guard whose failure mode is silence, one layer up."""
+    from iagent.gateway import _project_route_decision
+    rec = _shared_record()
+    assert len(rec) >= 15, f"the shared record is too small to be the real one: {sorted(rec)}"
+    projected = _project_route_decision(_entries_from_dagster(rec))
+    assert projected, "the run transport projected nothing — the comparison would be vacuous"
+    assert (projected.get("about") or {}).get("uri") == _SUBJ
 
 
 def test_the_graph_trace_carries_every_label_ITS_projector_reads(run):

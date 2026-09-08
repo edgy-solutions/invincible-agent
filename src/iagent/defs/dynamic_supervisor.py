@@ -1723,6 +1723,33 @@ def _call_engine_a_fallback(
 # ──────────────────────────────────────────────────────────────────────
 
 
+# THE CONTENT LIVES IN `iagent_pure`; THIS FILE OWNS ONLY THE TRANSPORT. The gateway's
+# direct path calls the same two builders and wraps them in the materialization entry
+# shape, so a field added to a record reaches both routes or neither.
+from iagent_pure.routing_record import (
+    routing_record as build_routing_record,
+    graph_trace_record as build_graph_trace_record,
+)
+
+
+def _as_metadata_value(value):
+    """Wrap one record value in the Dagster MetadataValue its type calls for.
+
+    BY TYPE, NOT BY A PER-FIELD TABLE, because a table is a second place to remember a
+    field. The gateway's `_metadata_dict` flattens every one of these back to the same
+    label -> value dict, so what a value is wrapped in never reaches a consumer; what it IS
+    does. `bool` is tested first: it is a subclass of `int` in Python, and an int-wrapped
+    bool reads back as 0/1 where a consumer expects true/false.
+    """
+    if isinstance(value, bool):
+        return MetadataValue.bool(value)
+    if isinstance(value, int):
+        return MetadataValue.int(value)
+    if isinstance(value, float):
+        return MetadataValue.float(value)
+    return MetadataValue.text(str(value))
+
+
 def _log_subtask_route_assets(
     context,
     *,
@@ -1733,87 +1760,36 @@ def _log_subtask_route_assets(
 ) -> None:
     """Emit the two route-observability asset materializations."""
     # ── subtask_routing_decision ────────────────────────────────────
+    # ONE BUILDER, TWO EXECUTION SHAPES. The content comes from
+    # `iagent_pure.routing_record`; this side wraps it in Dagster MetadataValues and the
+    # gateway's direct path wraps the SAME content in the materialization entry shape. They
+    # used to be two mappings with a test asserting they agreed — a copy with a seal on it,
+    # and that seal found three fields missing from the other side the day it was written.
+    #
+    # WRAPPING BY TYPE, not by a per-field table: the gateway's `_metadata_dict` flattens
+    # text / jsonString / floatValue / intValue / boolValue back to one label -> value dict,
+    # so the transport is a detail and the content is the thing worth sharing.
     routing_meta: Dict[str, Any] = {
-        "route_status": MetadataValue.text(status),
-        "subject_uri": MetadataValue.text(
-            telemetry.get("subject_uri") or "UNKNOWN"
-        ),
-        "subject_confidence": MetadataValue.float(
-            float(telemetry.get("subject_confidence") or 0.0)
-        ),
-        "subject_instance_id": MetadataValue.text(
-            telemetry.get("subject_instance_id") or ""
-        ),
-        "subject_instance_label": MetadataValue.text(
-            telemetry.get("subject_instance_label") or ""
-        ),
-        "verb_iri": MetadataValue.text(
-            telemetry.get("verb_iri") or "UNKNOWN"
-        ),
-        "verb_confidence": MetadataValue.float(
-            float(telemetry.get("verb_confidence") or 0.0)
-        ),
-        # classify_called is true whenever /classify_predicate ran
-        # (status == matched OR status == no_match-after-classify-returned-UNKNOWN).
-        # ADR-0019 Contract B short-circuit cases (subject UNKNOWN, or
-        # Neo4j zero-compat) DO NOT invoke classify_predicate; status
-        # carries that signal already.
-        # READ, NOT RE-DERIVED. Only the router knows whether it called the classifier, so
-        # the router records it. Deriving it here reported FALSE for a classifier that ran
-        # and returned UNKNOWN — precisely the case the note below always claimed was TRUE.
-        "classify_called": MetadataValue.bool(bool(telemetry.get("classify_called"))),
-        "candidate_count": MetadataValue.int(
-            len(telemetry.get("compatible_verb_iris") or [])
-        ),
-        # Decision-path Part 0 captures: the resolver candidate pool
-        # (winners AND losers with scores) as JSON, and the structured
-        # fallback_reason. candidate_count above stays (cheap glance);
-        # subject_candidates is the full pool the visualizer's resolver
-        # stage renders. fallback_reason is a CLOSED enum (extended, never
-        # collapsed into an existing value): subject_unknown |
-        # instance_not_found | no_compatible_verbs | domain_scope_excluded
-        # | no_verb_classified | infra_error, or empty on the matched
-        # path. instance_not_found (abstention-gate arc, 2026-07-03) is a
-        # NAMED individual the registry doesn't know, decided structurally
-        # — distinct from subject_unknown (the class itself didn't ground).
-        "subject_candidates": MetadataValue.text(
-            json.dumps(telemetry.get("subject_candidates") or [])
-        ),
-        "fallback_reason": MetadataValue.text(
-            str(telemetry.get("fallback_reason") or "")
-        ),
-        # THE ELIGIBILITY TRACE — what each gate removed or flagged, and why. Carried as
-        # JSON beside `subject_candidates` (what survived) because the difference between
-        # them is the difference between "nothing fit" and "something fit and was excluded",
-        # and only the second is a cue to rephrase.
-        "eligibility_excluded": MetadataValue.text(
-            json.dumps(telemetry.get("eligibility_excluded") or [])
-        ),
-        # Acting-persona provenance — the CALLER persona + domain the
-        # decision was computed under (persona-driven verb eligibility).
-        # The premise that makes a same-query-different-verb divergence
-        # self-explaining. Distinct from owner_persona (answerer-side).
-        "acting_persona": MetadataValue.text(
-            str(telemetry.get("acting_persona") or "")
-        ),
-        "acting_domains": MetadataValue.text(
-            ",".join(telemetry.get("acting_domains") or [])
-        ),
-        "sub_query": MetadataValue.text(sub_query or ""),
+        k: _as_metadata_value(v)
+        for k, v in build_routing_record(
+            status=status,
+            subject_uri=telemetry.get("subject_uri") or "",
+            subject_confidence=telemetry.get("subject_confidence") or 0.0,
+            subject_instance_id=telemetry.get("subject_instance_id") or "",
+            subject_instance_label=telemetry.get("subject_instance_label") or "",
+            verb_iri=telemetry.get("verb_iri") or "",
+            verb_confidence=telemetry.get("verb_confidence") or 0.0,
+            classify_called=telemetry.get("classify_called"),
+            candidate_count=len(telemetry.get("compatible_verb_iris") or []),
+            subject_candidates=telemetry.get("subject_candidates"),
+            fallback_reason=telemetry.get("fallback_reason"),
+            eligibility_excluded=telemetry.get("eligibility_excluded"),
+            acting_persona=telemetry.get("acting_persona"),
+            acting_domains=telemetry.get("acting_domains"),
+            sub_query=sub_query,
+            predicate=predicate,
+        ).items()
     }
-    if predicate:
-        routing_meta["handler_provider"] = MetadataValue.text(
-            str(predicate.get("provider") or "")
-        )
-        routing_meta["handler_endpoint"] = MetadataValue.text(
-            str(predicate.get("endpoint") or "")
-        )
-        routing_meta["owner_persona"] = MetadataValue.text(
-            str(predicate.get("owner_persona") or "")
-        )
-        routing_meta["output_uri"] = MetadataValue.text(
-            str(predicate.get("output_uri") or "")
-        )
     context.log_event(
         AssetMaterialization(
             asset_key=["subtask_routing_decision"],
@@ -1837,20 +1813,13 @@ def _log_subtask_route_assets(
             AssetMaterialization(
                 asset_key=["subtask_graph_trace"],
                 metadata={
-                    # THE SAME KEY THE RECORD AND THE CARD SELECT BY. Without it the gateway
-                    # could only take the FIRST emitted trace, which is a third rule over the
-                    # same choice — and three rules agree by luck. See _primary_routing_mat.
-                    "route_status": MetadataValue.text(status),
-                    "subject_uri": MetadataValue.text(subject_uri),
-                    "picked_verb_iri": MetadataValue.text(
-                        telemetry.get("verb_iri") or ""
-                    ),
-                    # Stash the full list as JSON text so the gateway
-                    # can deserialize and project per-verb nodes for
-                    # the typed graph_trace event.
-                    "compatible_verbs": MetadataValue.text(
-                        json.dumps(compatible_verbs)
-                    ),
+                    k: _as_metadata_value(v)
+                    for k, v in build_graph_trace_record(
+                        status=status,
+                        subject_uri=subject_uri,
+                        picked_verb_iri=telemetry.get("verb_iri") or "",
+                        compatible_verbs=compatible_verbs,
+                    ).items()
                 },
             )
         )

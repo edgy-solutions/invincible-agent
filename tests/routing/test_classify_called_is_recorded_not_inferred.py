@@ -140,11 +140,18 @@ def test_the_short_circuits_all_say_False():
 # ── and the materialization reads it rather than re-deriving ────────────────
 
 def test_the_materialization_reads_the_recorded_value():
-    i = _SUP.index('"classify_called": MetadataValue.bool(')
-    window = _SUP[i:i + 200]
-    assert 'telemetry.get("classify_called")' in window, (
-        "the materialization is not reading the recorded flag"
+    # BOTH TRUTH VALUES, on the record itself. The old form matched a source literal in
+    # a 200-character window and could not distinguish "reads the flag" from "hardcodes
+    # a bool" at all — it only checked that the words appeared near each other.
+    assert _record(classify_called=True)["classify_called"] is True
+    assert _record(classify_called=False)["classify_called"] is False, (
+        "the record does not carry the flag it was given — a classifier that ran would "
+        "be reported as not having run"
     )
+    # AND IT MUST BE A REAL BOOL. `_as_metadata_value` tests bool before int (bool IS an
+    # int in Python), and an int-wrapped bool reads back as 0/1 where the HUD wants
+    # true/false.
+    assert isinstance(_record(classify_called=True)["classify_called"], bool)
 
 
 def test_the_old_DERIVATION_is_gone():
@@ -154,3 +161,29 @@ def test_the_old_DERIVATION_is_gone():
         "classify_called is being derived from status and verb_iri again — that expression "
         "reports False for a classifier that ran and returned UNKNOWN"
     )
+
+
+# ── the shared record builder ───────────────────────────────────────────────
+#
+# THE PRODUCER MOVED, SO THE CHECK MOVED WITH IT. These assertions used to match literal
+# source text in `dynamic_supervisor.py` — `"classify_called": MetadataValue.bool(` and the
+# like. On 2026-09-08 the label→value mapping was extracted into `iagent_pure.routing_record`
+# so the Dagster run and the gateway's direct path stopped keeping two copies of it, and
+# every one of those substring seals went red WITH THE BEHAVIOUR COMPLETELY INTACT.
+#
+# That is the instrument defect this repo keeps paying for from the other direction: a check
+# pinned to a NAME rather than a BEHAVIOUR fires on a change that does not matter, which
+# teaches whoever hits it to edit the check. Asserting on the record the builder RETURNS
+# survives the next move and still dies for the reason in the docstring.
+def _record(**over):
+    from iagent_pure.routing_record import routing_record
+    base = dict(
+        status="matched", subject_uri="S", subject_confidence=0.9, subject_instance_id="",
+        subject_instance_label="", verb_iri="V", verb_confidence=0.8, classify_called=True,
+        candidate_count=2, subject_candidates=[], fallback_reason="",
+        eligibility_excluded=[{"gate": "arity"}], acting_persona="P",
+        acting_domains=["D"], sub_query="q",
+        predicate={"endpoint": "http://iagent-engine-cost:8097/x"},
+    )
+    base.update(over)
+    return routing_record(**base)

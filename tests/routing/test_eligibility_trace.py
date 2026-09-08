@@ -207,7 +207,15 @@ def test_many_removals_are_summarised_not_dumped():
 # ── the join: producer key == consumer key ──────────────────────────────────
 
 def test_the_supervisor_emits_the_key_the_gateway_reads():
-    assert f'"{_KEY}": MetadataValue.text(' in _SUP, "supervisor does not emit the trace"
+    # THE PRODUCER SIDE IS ASSERTED ON THE RECORD; the consumer side stays a source read
+    # because the gateway projector genuinely is the text being checked there.
+    rec = _record()
+    assert _KEY in rec, "the shared record builder does not emit the trace"
+    import json as _json
+    assert _json.loads(rec[_KEY]) == [{"gate": "arity"}], (
+        f"the trace is not JSON-encoded content: {rec[_KEY]!r} — a pre-encoded string "
+        f"handed to the builder would double-encode into a quoted blob"
+    )
     assert f'md.get("{_KEY}")' in _GW, "gateway does not read the trace"
 
 
@@ -305,3 +313,29 @@ def test_the_supervisor_actually_reads_engine_os_half():
     hop, and it is the one nobody's own tests cover."""
     assert 'data.get("excluded")' in _SUP
     assert "subject_excluded" in _SUP
+
+
+# ── the shared record builder ───────────────────────────────────────────────
+#
+# THE PRODUCER MOVED, SO THE CHECK MOVED WITH IT. These assertions used to match literal
+# source text in `dynamic_supervisor.py` — `"classify_called": MetadataValue.bool(` and the
+# like. On 2026-09-08 the label→value mapping was extracted into `iagent_pure.routing_record`
+# so the Dagster run and the gateway's direct path stopped keeping two copies of it, and
+# every one of those substring seals went red WITH THE BEHAVIOUR COMPLETELY INTACT.
+#
+# That is the instrument defect this repo keeps paying for from the other direction: a check
+# pinned to a NAME rather than a BEHAVIOUR fires on a change that does not matter, which
+# teaches whoever hits it to edit the check. Asserting on the record the builder RETURNS
+# survives the next move and still dies for the reason in the docstring.
+def _record(**over):
+    from iagent_pure.routing_record import routing_record
+    base = dict(
+        status="matched", subject_uri="S", subject_confidence=0.9, subject_instance_id="",
+        subject_instance_label="", verb_iri="V", verb_confidence=0.8, classify_called=True,
+        candidate_count=2, subject_candidates=[], fallback_reason="",
+        eligibility_excluded=[{"gate": "arity"}], acting_persona="P",
+        acting_domains=["D"], sub_query="q",
+        predicate={"endpoint": "http://iagent-engine-cost:8097/x"},
+    )
+    base.update(over)
+    return routing_record(**base)
