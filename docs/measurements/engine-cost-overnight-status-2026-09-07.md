@@ -1,5 +1,5 @@
 ---
-status: BLOCKED ON A LIVE DEFECT — engine-cost is UNREGISTERED in the running cluster
+status: CORRECTED — the outage is narrower than first reported; all 9 cost verbs still route
 date: 2026-09-07
 engine: engine-cost
 ---
@@ -13,7 +13,10 @@ not a grep of a file.
 
 ## THE HEADLINE, because it changes what the morning can do
 
-**`engine-cost` is UNREGISTERED in the running mesh and has been for its whole 4h19m uptime.**
+**`engine-cost` failed every registration attempt at startup and has been in that state for its
+whole 4h19m uptime** — along with six other engines (Lane 1 swept: engine-d, engine-e, engine-fin,
+engine-p, engine-w, data-analyst). **Read the amendment below before acting on this**: the
+consequence is narrower than the alarm claims.
 Its own log says so, in a named alarm:
 
 > `❌ mesh registration: UNREGISTERED (mint failed: ServiceTokenError: ... Keycloak token
@@ -37,9 +40,38 @@ is the human's call — especially since the same startup race may have caught o
 a coordinated roll is Lane 1's to sequence, not mine. The evidence also lives in the current
 pod's log, which a roll discards.
 
-**Consequence for tonight's ask: question 3 cannot be walked.** Not because the card is wrong —
-because no cost verb routes at all. Any "no card" result read before that roll is evidence about
-Keycloak's start order, not about bindings, producers, or archetypes.
+> ## AMENDED 2026-09-08 — I OVERSTATED THIS, AND IN THE DIRECTION THAT MATTERS
+>
+> The paragraph below originally read *"question 3 cannot be walked … no cost verb routes at
+> all."* **That is wrong.** Lane 1 corrected the mechanism and I verified the correction against
+> Neo4j rather than accepting it.
+>
+> **Registration from an EARLIER successful startup survives, and routing still uses it.**
+> Routing reads Neo4j's compat-walk, where a registration is a **relationship carrying
+> `endpoint_url`** — not a node, which is why my first Neo4j queries found nothing and I wrongly
+> read that silence as absence.
+>
+> **All nine cost verbs are registered right now**, with correct endpoints, including
+> `packageExport` → `cost:ExportPackage` at `/measure/package_export`. Its stored slot
+> declaration is correct too: `recipient_scope` **spoken-mandatory**, `include_dataset`
+> spoken-optional. So for this lane **nothing was lost** by the failed startup — verified
+> verb by verb, not inferred from the alarm not firing.
+>
+> **What is actually lost is only what THIS startup would have ADDED OR CHANGED** — a new verb,
+> a changed endpoint, a changed slot declaration. Nothing in engine-cost's registration changed
+> since the last successful one, so the loss set for this lane is empty.
+>
+> **The alarm's own wording is too strong.** *"its verbs will NOT route"* is false: Lane 1
+> proved a pre-resolved pick routed to `engine-p` four hours into this state and returned an
+> answer. **The latent form is worse for diagnosis than an outage** — the fleet looks healthy,
+> answers correctly, and silently ignores every registration change since 23:16.
+>
+> **So question 3 IS walkable**, subject only to the frontend registering the binding rows at
+> page load, which is a different registry and unaffected by this.
+
+**Consequence for tonight's ask, as corrected above: question 3 is walkable.** The engine's
+verbs route on the surviving registration. What would *not* take effect is any registration
+change made since 23:16 — and this lane has none pending.
 
 ---
 
@@ -79,9 +111,18 @@ window has not happened for `StepLadder`. Post-prime it is three steps in one pa
 add the conformance case, delete their exemption (their exemption text carries its own deletion
 instruction).
 
-**Verb registration is a different registry and is the headline above.** Fuseki holds ontology
-only — the sole `mesh#` predicate present is `derivedFrom` — so class resolution says nothing
-about whether a verb routes. The authoritative artifact was the engine's own log.
+**Verb registration is a different registry, and reading it wrongly is how I overstated the
+headline.** Fuseki holds ontology only — the sole `mesh#` predicate present is `derivedFrom` —
+so class resolution says nothing about whether a verb routes. The registrations live in **Neo4j
+as relationships carrying `endpoint_url`**, and my first queries looked for *nodes*, found none,
+and I let the engine's log stand as the whole story. Queried correctly, all nine cost verbs are
+there:
+
+    costLotBreakdown  costUnitPriceTrend  costRateComparison  costLaborComposition
+    costPriceComposition  costRateAssumptions  costCategoryBreakdown
+    costSupplierConcentration  packageExport
+
+each pointing at `iagent-engine-cost.sandbox.svc.cluster.local:8097/measure/<fn>`.
 
 ## 3. QUESTION 3 — what it should return
 
@@ -131,7 +172,7 @@ first.** For lot 4 the producer emits exactly:
 |---|---|
 | `KNOWLEDGE_DOCUMENT · No content available` | binding row not registered at page load, or the archetype not admitted |
 | card draws, all rows blank | producer not emitting `entity_id`/`entity_name`/`contribution` |
-| no card, no refusal, generalist prose | **the verb did not route — the UNREGISTERED state above** |
+| no card, no refusal, generalist prose | routing did not reach a cost verb. **NOT explained by the UNREGISTERED state** — corrected above; the surviving registration still routes. Look at scope, preemption, or the question's phrasing |
 | routed to `fin:WBSElement` | instance preemption; Lane 1 says the post-preemption check is rolled, so this should now abstain instead |
 
 ---
