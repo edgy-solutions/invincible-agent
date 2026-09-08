@@ -542,63 +542,6 @@ def _find_compatible_verbs(
         return None, str(exc)
 
 
-def _filter_verbs_by_arity(
-    compatible_verbs: list[dict], query_is_set: bool
-) -> tuple[list[dict], list[dict]]:
-    """Query-shape eligibility — FLAGS a single-asset verb, no longer excludes it.
-
-    When the query is SET-shaped (subject resolved to a CLASS, with no specific
-    instance), a verb declaring ``arity == "single"`` cannot run as asked. It is marked
-    ``needs_instance`` and KEPT as a candidate. Returns ``(all_verbs, flagged)``.
-
-    WHY EXCLUSION WAS THE WRONG DISPOSAL, ruled 2026-09-04 after H06 failed live.
-    "What is the capability path" grounds to `Capability` cleanly and then reports NO VERB
-    CLASSIFIED, because `planCapabilityPath` is `arity: single`, the question names no
-    instance, and this gate removed the only verb that fits — FOR THE REASON IT WOULD HAVE
-    ASKED ABOUT.
-
-    MEASURED AGAINST THE DEPLOYED GRAPH 2026-09-05, and the pool did NOT go empty: Capability
-    carries TWO verbs under PORTFOLIO_PLANNING, and dropping `planCapabilityPath` left
-    `planMaturityGrid` — which does not answer "what is the capability path". So the classifier
-    was handed one wrong candidate and honestly returned UNKNOWN. The gate did not starve it;
-    it starved it of the RIGHT option, which is the harder failure to see.
-
-    THE GATE'S OWN PREMISE IS OBSOLETE, AND ITS CITATION SAYS SO. `arity_for` was written
-    against `a-missing-mandatory-slot-is-a-400-not-an-ask.md`: routing a set-shaped question
-    to a single verb "gets a 400 for a missing mandatory slot, two hops later and with no
-    surface a reader can act on". **That 400 is now an ASK.** The disposition offers a menu
-    — Capability has nine members under the bound, and the fan-out is live. Excluding the
-    verb to avoid an error that no longer happens costs the answer instead.
-
-    KEEPING IT CANNOT PRODUCE A SILENT DISPATCH, and that is structural rather than lucky.
-    `arity_for` derives "single" from exactly one condition: the measure has a slot that is
-    both REQUIRED and a REFERENT. So the property that makes a verb single-arity IS the
-    property the slot layer asks about — a kept single verb whose instance was never named
-    reaches `decide_disposition` with an unfilled mandatory referent, which is an ASK or an
-    ABSTAIN, never a dispatch. The two mechanisms were built five weeks apart and meet here.
-
-    THE OTHER HALF OF THE GATE STANDS: a set-shaped question must not route to a single verb
-    SILENTLY. It no longer can — but the flag is carried so the disposition and the decision
-    path can both see WHY an ask was owed, rather than inferring it from a missing slot.
-
-    Still PURE — no LLM, no network. Null arity stays unflagged (an incomplete backfill must
-    never over-restrict), and instance-shaped queries flag nothing.
-    """
-    if not query_is_set or not compatible_verbs:
-        return compatible_verbs, []
-    flagged: list[dict] = []
-    out: list[dict] = []
-    for v in compatible_verbs:
-        if str(v.get("arity") or "").lower() == "single":
-            # Copied rather than mutated: these dicts come from
-            # /find_compatible_verbs and are read elsewhere in the turn.
-            marked = dict(v)
-            marked["needs_instance"] = True
-            flagged.append(marked)
-            out.append(marked)
-        else:
-            out.append(v)
-    return out, flagged
 
 
 #: THE DISPOSAL VOCABULARY, written once. Four literals lived at four sites — the writer's
@@ -714,35 +657,6 @@ def _filter_verbs_by_argument_fit(
     return kept, dropped
 
 
-def _predicate_from_compat_record(cv: dict) -> dict:
-    """Dispatch coordinates for one verb, built from Neo4j's compat-walk record.
-
-    ONE BUILDER, TWO CALLERS, and the second caller is why it was extracted. The pre-resolved
-    path needs exactly this dict and could trivially have built its own - which is the shape
-    this repo has already paid for: the card and the routing record each had a rule for
-    picking the primary subtask, the two agreed in a docstring, and they disagreed in
-    production. Two dicts that match on today's fields drift on the next field added to one.
-
-    Neo4j is authoritative for dispatch coordinates (see the endpoint-authority note at the
-    override site): /find_compatible_verbs reads verb edges Engine O rebuilt deterministically
-    from the TTL, not a vector-search blob that a rename can orphan.
-    """
-    return {
-        "verb_iri": cv.get("verb_iri"),
-        "verb_type": cv.get("verb_local"),
-        "input_uri": cv.get("input_uri"),
-        "output_uri": cv.get("output_uri"),
-        "endpoint": cv.get("endpoint_url") or "",
-        "owner_persona": cv.get("owner_persona"),
-        "domains": cv.get("domains") or [],
-        "cost_class": cv.get("cost_class"),
-        "requires_human_approval": cv.get("requires_human_approval", False),
-        # WHAT THE VERB TAKES - the acceptance schema for spoken slots, projected from the
-        # engine's registration (`mesh_slots`). `[]` until doc-tools' aitool_linker allowlist
-        # carries it, and `[]` means every spoken slot is refused, which is today's behaviour
-        # exactly.
-        "slots": decode_declarations(cv.get("slots")),
-    }
 
 
 def _classify_route(
@@ -871,6 +785,8 @@ def _classify_route(
                 "neo4j_find_error": _pre_err,
                 "verb_iri": _pre_verb,
                 "verb_confidence": 1.0,
+                # No /classify_predicate on this path — recorded rather than inferred.
+                "classify_called": False,
                 "verb_reasoning": "carried from the ask this turn answers",
                 "candidate_verbs": [_pre_verb],
                 # SAYS SO IN THE RECORD. Without this the decision panel shows a confident
@@ -955,6 +871,8 @@ def _classify_route(
             "fallback_reason": _fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
+                # No /classify_predicate on this path — recorded rather than inferred.
+                "classify_called": False,
             "verb_reasoning": (
                 # Every reason in Engine O's vocabulary carries an ACTIONABLE
                 # message and it passes through verbatim — "you named X, no
@@ -1110,6 +1028,8 @@ def _classify_route(
             "fallback_reason": fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
+                # No /classify_predicate on this path — recorded rather than inferred.
+                "classify_called": False,
             "verb_reasoning": (
                 "Neo4j marks zero verbs as compatible with this subject "
                 f"(fallback_reason={fb_reason})."
@@ -1313,6 +1233,17 @@ def _classify_route(
         "neo4j_find_error": find_err,
         "verb_iri": verb_iri,
         "verb_confidence": verb_conf,
+        # RECORDED, NOT DERIVED. The materialization used to infer this from
+        # `status == MATCHED or verb_iri != UNKNOWN`, which cannot separate "the classifier
+        # ran and declined" from "the classifier was never asked" — both end no_match with
+        # verb_iri UNKNOWN. The note beside that derivation said the classify-returned-
+        # UNKNOWN case should be TRUE, and the derivation reported FALSE.
+        #
+        # MEASURED 2026-09-08 on artifact-1-1788837904248, an honest wrong-persona refusal:
+        # `confidence: 0.92, classify_called: false` — a number only the classifier could
+        # have produced, recorded next to a claim that it never ran. To a reader, "no verb
+        # fits this subject" and "we never checked" are different answers.
+        "classify_called": True,
         "verb_reasoning": verb_reason,
         "candidate_verbs": candidates,
     }
@@ -1833,10 +1764,10 @@ def _log_subtask_route_assets(
         # ADR-0019 Contract B short-circuit cases (subject UNKNOWN, or
         # Neo4j zero-compat) DO NOT invoke classify_predicate; status
         # carries that signal already.
-        "classify_called": MetadataValue.bool(
-            status == _ROUTING_MATCHED
-            or telemetry.get("verb_iri") not in (None, "UNKNOWN")
-        ),
+        # READ, NOT RE-DERIVED. Only the router knows whether it called the classifier, so
+        # the router records it. Deriving it here reported FALSE for a classifier that ran
+        # and returned UNKNOWN — precisely the case the note below always claimed was TRUE.
+        "classify_called": MetadataValue.bool(bool(telemetry.get("classify_called"))),
         "candidate_count": MetadataValue.int(
             len(telemetry.get("compatible_verb_iris") or [])
         ),
@@ -1943,6 +1874,13 @@ from iagent_pure.predicate_routing import (
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.primary_selection import pick_primary
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
+# EXTRACTED 2026-09-08 so the BFF's direct re-ask calls the SAME two rules rather than a
+# second copy. Aliased to their old private names: every call site and seal below reads
+# unchanged, and the diff stays about the move rather than about renaming.
+from iagent_pure.verb_eligibility import (
+    filter_verbs_by_arity as _filter_verbs_by_arity,
+    predicate_from_compat_record as _predicate_from_compat_record,
+)
 from iagent_pure.slot_disposition import (
     ABSTAIN,
     ROUTE,

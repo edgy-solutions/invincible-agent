@@ -156,8 +156,19 @@ def test_the_predicate_is_built_by_the_ONE_shared_builder():
     repo has already paid for that exact shape once, with two rules for picking the primary
     subtask that agreed in a docstring and disagreed in production."""
     assert "_predicate_from_compat_record" in _calls(_skip_block())
-    assert _SUP.count("_predicate_from_compat_record(") >= 3, (
-        "expected the definition plus both callers"
+    # THE DEFINITION LEFT THIS FILE on 2026-09-08 — it lives in
+    # `iagent_pure.verb_eligibility` so the BFF's direct re-ask calls the same builder. The
+    # count-of-three no longer means what it meant, so the property is asserted directly:
+    # ONE definition, in the shared module, and BOTH supervisor call sites reaching it
+    # through the import rather than through a local copy.
+    shared = (_REPO / "src" / "iagent_pure" / "verb_eligibility.py").read_text(encoding="utf-8")
+    assert shared.count("def predicate_from_compat_record(") == 1, "not one definition"
+    assert "def _predicate_from_compat_record(" not in _SUP, (
+        "the supervisor has grown its own copy of the builder again"
+    )
+    assert "predicate_from_compat_record as _predicate_from_compat_record" in _SUP
+    assert _SUP.count("_predicate_from_compat_record(") >= 2, (
+        "expected both call sites to survive the move"
     )
 
 

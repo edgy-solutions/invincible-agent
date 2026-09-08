@@ -157,9 +157,23 @@ def test_ROUTE_and_ABSTAIN_are_imported():
 def test_the_gate_no_longer_removes_a_candidate():
     """The H06 regression, pinned at the source. If the gate goes back to dropping, the
     pool empties on a set-shaped question and the classifier gets nothing to pick."""
-    i = _SUP.index("def _filter_verbs_by_arity")
-    body = _SUP[i:i + 3600]
-    assert 'marked["needs_instance"] = True' in body
+    # THE GATE MOVED 2026-09-08 to `iagent_pure.verb_eligibility`, so the BFF's direct
+    # re-ask calls the same rule instead of a second copy. The seal follows the function
+    # rather than the file — a check pinned to a path stops testing the moment the code is
+    # refactored, and reads green while doing it.
+    import ast as _ast
+    src = (Path(__file__).resolve().parents[2] / "src" / "iagent_pure"
+           / "verb_eligibility.py").read_text(encoding="utf-8")
+    fn = next(
+        n for n in _ast.walk(_ast.parse(src))
+        if isinstance(n, _ast.FunctionDef) and n.name == "filter_verbs_by_arity"
+    )
+    body = _ast.unparse(fn)
+    assert "marked['needs_instance'] = True" in body
     assert "dropped.append(v)" not in body, (
         "the gate is excluding again — that is the defect H06 surfaced"
+    )
+    # and the supervisor still reaches it, under the name its call sites use
+    assert "filter_verbs_by_arity as _filter_verbs_by_arity" in _SUP, (
+        "the supervisor no longer imports the shared gate"
     )
