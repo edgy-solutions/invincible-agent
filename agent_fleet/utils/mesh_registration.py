@@ -44,6 +44,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import threading
+import time
 
 # The ONE authenticated registration transport (SDK v0.3.0). Carries the retry semantics
 # that used to live in this file — see the note at the call site for why the move went this
@@ -129,6 +132,114 @@ def engine_mint(*, client_id: str, secret_env: str):
         from iagent_mesh.service_identity import mint_token
         return mint_token(client_id=client_id, client_secret=os.environ[secret_env])
     return _mint
+
+
+# ── REGISTRATION STATE, AND A RETRY THAT OUTLIVES STARTUP ───────────────────────────────
+#
+# MEASURED 2026-09-08: seven engines served UNREGISTERED for four hours. A helm upgrade
+# restarted the release; every engine came up inside an eleven-second window and Keycloak came
+# up 47-58 seconds later. The SDK transport's retry is BOUNDED, so each engine exhausted its
+# attempts against a Keycloak that was not yet answering and then never tried again.
+#
+# TWO SEPARATE FAULTS, and this addresses both:
+#
+#   1. registration was effectively startup-only. An engine that cannot mint a token at
+#      second five is not permanently unable to; it simply asked too early. The bounded retry
+#      inside one call is the right shape for a flaky registrar and the wrong shape for a
+#      dependency that has not booted yet.
+#
+#   2. the state was invisible to Kubernetes. The pods were Ready, healthy and answering, and
+#      silently unroutable for anything they would have registered. The only evidence was a
+#      log line nobody greps. `registration_is_ready()` exists so a readiness probe can see
+#      what the log already knew.
+#
+# READINESS, NOT LIVENESS. A failing readiness probe removes the pod from Service endpoints;
+# it does NOT restart it. So reporting not-ready while still retrying is correct and costs
+# exactly what it should — Keycloak a minute late costs a minute of Not Ready. Wiring this to
+# a LIVENESS probe would turn a slow dependency into a crash-loop, which is worse than the
+# outage it fixes. That distinction is the whole reason this returns a status rather than a
+# bare bool.
+_REG_PENDING = "pending"
+_REG_OK = "registered"
+_REG_RETRYING = "retrying"
+
+_REG_LOCK = threading.Lock()
+_REG_STATE: dict = {"status": _REG_PENDING, "components": {}, "last_error": None}
+
+#: Backoff for the supervising retry. Capped rather than unbounded: an engine that has been
+#: retrying for an hour has a problem a faster loop will not fix, and the log should not fill.
+_RETRY_BASE_S = float(os.getenv("MESH_REGISTER_RETRY_BASE_S", "5"))
+_RETRY_MAX_S = float(os.getenv("MESH_REGISTER_RETRY_MAX_S", "300"))
+
+
+def registration_status() -> dict:
+    """A snapshot of what this process knows about its own registration.
+
+    Returned as a copy: a caller mutating the live dict would silently change what every
+    readiness probe reports afterwards.
+    """
+    with _REG_LOCK:
+        return {
+            "status": _REG_STATE["status"],
+            "components": dict(_REG_STATE["components"]),
+            "last_error": _REG_STATE["last_error"],
+        }
+
+
+def registration_is_ready() -> bool:
+    """True only when every component this process tried to register has succeeded.
+
+    An engine with nothing to register is ready — `components` is empty and the status stays
+    at its initial value, which is the correct answer for a service that registers no verbs
+    (Engine O consumes the registry; the presentation agent registers on its own path).
+    """
+    with _REG_LOCK:
+        if not _REG_STATE["components"]:
+            return True
+        return all(v == _REG_OK for v in _REG_STATE["components"].values())
+
+
+def _record(component: str, status: str, error: str | None = None) -> None:
+    with _REG_LOCK:
+        _REG_STATE["components"][component] = status
+        if error is not None:
+            _REG_STATE["last_error"] = error
+        vals = list(_REG_STATE["components"].values())
+        _REG_STATE["status"] = _REG_OK if all(v == _REG_OK for v in vals) else (
+            _REG_RETRYING if _REG_RETRYING in vals else _REG_PENDING
+        )
+
+
+def _retry_forever(component: str, attempt_once) -> None:
+    """Re-attempt one component's registration until it succeeds.
+
+    DAEMON THREAD, deliberately: an engine must not be held open by a retry that may never
+    succeed, and this has no work to finish on shutdown. Jittered so a fleet restarted
+    together does not re-converge into the same eleven-second window that caused the incident
+    this exists to prevent.
+    """
+    delay = _RETRY_BASE_S
+    while True:
+        time.sleep(delay + random.uniform(0, delay * 0.25))
+        try:
+            if attempt_once():
+                _record(component, _REG_OK)
+                logger.info(
+                    "✅ mesh registration RECOVERED for %s after retrying — the engine's "
+                    "verbs are routable again without a restart", component,
+                )
+                return
+        except Exception as exc:  # noqa: BLE001 -- a retry loop must not die on one attempt
+            _record(component, _REG_RETRYING, str(exc))
+        delay = min(delay * 2, _RETRY_MAX_S)
+
+
+def _start_retry(component: str, attempt_once) -> None:
+    _record(component, _REG_RETRYING)
+    threading.Thread(
+        target=_retry_forever, args=(component, attempt_once),
+        name=f"mesh-register-retry:{component}", daemon=True,
+    ).start()
 
 
 def _emit_to_registrar(
@@ -262,6 +373,7 @@ def _emit_to_registrar(
     )
     if result.registered:
         logger.info("✅ %s", result.announcement(urn or name))
+        _record(urn or name, _REG_OK)
         return
 
     # LOUD UNREGISTERED, WITH THE CAUSE NAMED. "mint failed" and "registrar refused" produce
@@ -277,6 +389,17 @@ def _emit_to_registrar(
         "re-registration. This is a named alarm; see "
         "tests/routing/test_resolve_instance_probes.py for the postcondition test.",
         result.announcement(urn or name),
+    )
+    # AND KEEP TRYING. The bounded retry inside `register_with_mesh` has already given up;
+    # this one outlives startup, so a dependency that boots late costs minutes of Not Ready
+    # instead of hours of silent unroutability. `registration_is_ready()` reports False
+    # throughout, which is what makes the state visible to Kubernetes rather than only to
+    # this log line.
+    _start_retry(
+        urn or name,
+        lambda: register_with_mesh(
+            registrar_url, manifest, component=(urn or name), mint=mint, timeout=30.0,
+        ).registered,
     )
 
 
@@ -884,9 +1007,29 @@ def register_presentation_to_mesh(
         emitter = DatahubRestEmitter(gms_server=_gms_server_base(gms_url), token=token)
         mcp = MetadataChangeProposalWrapper(entityUrn=urn, aspect=props)
         emitter.emit(mcp)
-        logger.info(
-            "✅ Registered presentation %s as (%s -> %s -> %s)",
+        # NOT A REGISTRATION, AND IT USED TO SAY IT WAS.
+        #
+        # This line is only ever reached on the FALLBACK path — the gateway-accepted case
+        # returns above with its own "registered VIA GATEWAY" line. So every emission here
+        # follows either a refusal or a missing registrar, and the warning a few lines up
+        # has already said what that means: an audit record only, no rendersAs row in
+        # Weaviate, undiscoverable via /search_predicates.
+        #
+        # It nevertheless logged "✅ Registered presentation ...", three lines after the
+        # warning that said the opposite. MEASURED 2026-09-08 on engine-f: two presentations
+        # rejected under Contract D for missing object classes, each rejection immediately
+        # followed by a green success line for the same presentation.
+        #
+        # The word "Registered" is the defect, not the level. A reader — or a readiness
+        # probe built on this line — would inherit the lie, which is exactly why this is
+        # being fixed before the readiness work rather than after it.
+        logger.warning(
+            "⚠️  presentation %s was NOT registered — audit record only, via direct "
+            "DataHub emit (%s). No rendersAs row reaches Weaviate, so /search_predicates "
+            "will not find it and /render_ui falls back to legacy BAML DesignUI for this "
+            "shape. Claim recorded: (%s -> %s -> %s)",
             urn,
+            _fallback_reason,
             subject_uri,
             _PREDICATE_RENDERS_AS,
             object_uri,
