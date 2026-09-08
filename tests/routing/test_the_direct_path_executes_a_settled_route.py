@@ -67,11 +67,20 @@ class _Resp:
 
 @pytest.fixture()
 def run(monkeypatch):
-    """Call the real `dispatch_pre_resolved` with the verifier and engine stubbed."""
+    """Call the real `dispatch_pre_resolved` with the verifier and engine stubbed.
+
+    `run.stages` collects every `on_stage` call in order, so the stream contract is asserted
+    against what the dispatch really reported rather than against a description of it.
+
+    IT IS DELIBERATELY NOT KEPT IN `posted`. Four tests here assert `not posted` to mean THE
+    ENGINE WAS NEVER CALLED; putting anything else in that dict would give the sentinel a
+    second meaning and quietly change what those four tests check."""
     posted: dict = {}
+    stages: list = []
 
     def _go(*, verbs=None, err=None, bound=None, arity="single", instance="", label="",
             boom=False):
+        stages.clear()
         # The stub honours `find_compatible_verbs`' REAL three-outcome contract, including
         # `(None, err)` on failure — never `([...], err)`. A fixture that hands back verbs
         # AND an error is a shape the function cannot produce, and it would let a caller
@@ -95,8 +104,10 @@ def run(monkeypatch):
             spoken_answer="", user_query="where did the money go",
             entitled_domains=["PRODUCTION_COST"], acting_persona="COST_ANALYST",
             ontology_url="http://engine-o", accept_slots=accept_slots, post=_post,
+            on_stage=lambda kind, status: stages.append((kind, status)),
         ), posted
 
+    _go.stages = stages
     return _go
 
 
@@ -194,6 +205,96 @@ def test_an_engine_that_does_not_answer_ABSTAINS_rather_than_falling_back(run):
     assert "engine did not answer" in out.reason
     assert posted, "it should have tried"
     assert out.routing_mat is not None, "the routing record must survive an engine failure"
+
+
+# ── the stream contract: stages that RAN, and every one of them terminal ────
+
+def _stage_faults(stages):
+    """Every way an emitted sequence can strand or mislead a client.
+
+    BOTH DIRECTIONS, and the second was missing until a mutation walked straight through it.
+    The first version only looked for a `started` with no terminal — so deleting a stage's
+    `started` while keeping its `completed` was clean, and the client would be handed a
+    finished row for a stage it never saw begin. An unbalanced pair is a fault whichever end
+    is absent; checking one end is checking half a property."""
+    faults, state = [], {}
+    for kind, status in stages:
+        if status == "started":
+            if state.get(kind) == "started":
+                faults.append(f"{kind}: started twice with no terminal between")
+            state[kind] = "started"
+        else:
+            if state.get(kind) != "started":
+                faults.append(f"{kind}: {status!r} with no preceding 'started'")
+            state[kind] = status
+    faults += [f"{k}: started and never finished" for k, v in state.items() if v == "started"]
+    return faults
+
+
+@pytest.mark.parametrize("case", [
+    {},                                       # routed
+    {"bound": {}},                            # ask, one-option menu
+    {"bound": {"lot": "abc"}},                # ask, slot refused
+    {"boom": True},                           # abstain
+    {"err": "boom"},                          # fall_back, verifier down
+    {"verbs": []},                            # fall_back, verb retired
+])
+def test_every_stage_pair_is_BALANCED_on_every_outcome(run, case):
+    """THE STREAM CONTRACT, asserted on all six outcomes rather than the happy one.
+
+    A `started` with no terminal leaves a spinner running forever, and it is the FAILURE
+    paths that strand it — the paths a happy-path test never reaches. A terminal with no
+    `started` is the mirror fault: a finished row for a stage the client never saw begin.
+    Both are computed from the emissions, so a return added later without a terminal goes
+    red here even though nothing about the new branch is described in this file.
+    """
+    out, _ = run(**case)
+    faults = _stage_faults(run.stages)
+    assert not faults, f"{out.kind}: {faults} (emitted: {run.stages})"
+
+
+def test_the_stages_ANNOUNCED_are_only_the_stages_this_path_RUNS(run):
+    """No `understanding`, no `locating`, no `choosing_action`. The ask already resolved the
+    subject and the verb, so a stream claiming those ran would be a success line for work
+    that never happened. Derived from `DISPATCH_STAGES` so adding a stage to the module
+    without deciding it is truthful here goes red."""
+    run()
+    emitted = {k for k, _ in run.stages}
+    assert emitted <= set(dd.DISPATCH_STAGES), (
+        f"stages emitted that this path does not run: {sorted(emitted - set(dd.DISPATCH_STAGES))}"
+    )
+    assert emitted == set(dd.DISPATCH_STAGES), (
+        f"declared but never emitted on the routed path: "
+        f"{sorted(set(dd.DISPATCH_STAGES) - emitted)}"
+    )
+
+
+def test_the_engine_stage_NEVER_STARTS_when_the_engine_is_not_called(run):
+    """The stage set must not out-run the work. On an ask and on both fall-backs the engine
+    is never touched, so announcing `calling_engine` would report a call that did not
+    happen — the same fabrication as announcing a classifier that did not run."""
+    for case in ({"bound": {}}, {"err": "boom"}, {"verbs": []}):
+        out, posted = run(**case)
+        assert not posted, f"{case}: the engine WAS called"
+        assert dd.STAGE_CALLING not in {k for k, _ in run.stages}, (
+            f"{case} -> {out.kind}: announced an engine call that never happened"
+        )
+
+
+def test_a_failed_verification_reports_FAILED_not_completed(run):
+    """`completed` and `failed` are different claims about the same stage. A verifier that
+    could not be reached, reported as completed, tells a reader the check passed."""
+    run(err="boom")
+    assert (dd.STAGE_VERIFYING, "failed") in run.stages
+    assert (dd.STAGE_VERIFYING, "completed") not in run.stages
+
+
+def test_an_ask_still_COMPLETES_verification(run):
+    """The control on the assertion above. Verification genuinely succeeded on the ask path —
+    it is the arity precondition that stopped the turn, not the check — so reporting it
+    failed would send a reader to the wrong layer."""
+    run(bound={})
+    assert (dd.STAGE_VERIFYING, "completed") in run.stages
 
 
 # ── the materializations the gateway will project ───────────────────────────

@@ -28,6 +28,7 @@ except ImportError:
     pass
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -2455,6 +2456,19 @@ def _stage(
 # ONE rule for "which subtask did the answer come from", shared with the supervisor's card
 # selector. See iagent_pure/primary_selection.py for why this is not two local functions.
 from iagent_pure.primary_selection import pick_primary  # noqa: E402
+from iagent_pure.slot_acceptance import accept_slots  # noqa: E402
+
+# THE DIRECT PATH (2026-09-08). A pre-resolved pick executes here rather than in a Dagster
+# run — see `direct_dispatch` for what it keeps from the run and why none of it is optional.
+from . import direct_dispatch  # noqa: E402
+from .direct_dispatch import dispatch_pre_resolved  # noqa: E402
+
+# THE SAME DEFAULT AS THE SUPERVISOR'S, and it has to be: both call the same Engine F. A
+# second literal that drifts would render one path's answers from a service the other never
+# reaches, which is invisible until the two disagree.
+_PRESENTATION_AGENT_SVC_URL = os.getenv(
+    "PRESENTATION_AGENT_SVC_URL", "http://iagent-engine-f:8087"
+)
 
 
 def _primary_graph_trace_mat(mats: list[dict]) -> dict | None:
@@ -4050,6 +4064,105 @@ async def generate_dagster_stream(
         "derived_from_artifact_id": _answering_artifact_id,
     }
 
+    # ══ THE DIRECT PATH ═════════════════════════════════════════════════════════════════
+    #
+    # A pre-resolved pick has nothing left to orchestrate: the subject, the verb and the
+    # slots all came from an ask this person already answered. Measured 2026-09-08, the
+    # Dagster route cost 24 seconds for roughly one second of work — 8.4s to launch a run,
+    # 13.1s to execute a job with one op. This branch does that work in-process.
+    #
+    # IT IS STRICTLY AN OPTIMISATION. Anything it cannot confirm returns FALL_BACK and the
+    # run below executes exactly as before, so the worst outcome of a miss here is today's
+    # latency. That is why the fall-back does NOT return: it declines to answer, it does not
+    # end the turn.
+    #
+    # THE STAGES IT ANNOUNCES ARE THE STAGES IT RUNS. The five kinds below describe a
+    # decomposition, a resolution and a classification, none of which happen here. Emitting
+    # them would be a success line for work that never ran, so this path names its own two
+    # and the gateway adds `writing_answer` because the gateway owns the write. cortex-ui
+    # renders arriving stages in arrival order rather than from a fixed list (8cd4ac5), so
+    # a kind it does not know is drawn, not dropped.
+    _direct = None
+    if _pre_resolved:
+        _direct_stages: list = []
+        try:
+            _direct = await asyncio.to_thread(
+                functools.partial(
+                    dispatch_pre_resolved,
+                    pre_resolved=_pre_resolved,
+                    bound_slots=request.bound_slots or {},
+                    spoken_answer=request.spoken_answer or "",
+                    user_query=user_query,
+                    entitled_domains=entitled_domains or [],
+                    acting_persona=user_persona,
+                    ontology_url=_DAGSONTOLOGY_SVC_URL,
+                    accept_slots=accept_slots,
+                    # THE CALLER'S OWN TOKEN, not a minted service identity. On the run path
+                    # this is what the identity vault exists to carry INTO Dagster; here the
+                    # browser's credential is already in hand, so the engine sees the same
+                    # subject it would have seen, by the shorter route.
+                    headers=(
+                        {"Authorization": f"Bearer {caller_token}"} if caller_token else None
+                    ),
+                    on_stage=lambda kind, status: _direct_stages.append(
+                        (kind, status, time.time())
+                    ),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            # A RAISE IS A FALL-BACK, not an error for the user. `dispatch_pre_resolved` is
+            # contracted not to raise; if it does, that is a bug in the fast path and the
+            # slow path still answers the question.
+            logger.warning(
+                "direct path raised for run %s (%s: %s) — routing the full path",
+                session_id, type(exc).__name__, exc,
+            )
+            _direct = None
+
+        # DELIVERED AFTER THE FACT, WITH THEIR REAL TIMES. The dispatch is sync and runs in
+        # a worker thread, so the events cannot be yielded as they happen without a queue —
+        # and the whole path is one to two seconds. What must not be faked is the DATA, so
+        # each stage carries the elapsed time actually measured at its own boundary rather
+        # than a timeline composed here.
+        if _direct is not None:
+            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
+            for _kind, _status, _at in _direct_stages:
+                yield _stage(
+                    _kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000))
+                )
+
+        if _direct is not None and _direct.kind not in (
+            direct_dispatch.ROUTED, direct_dispatch.ABSTAIN
+        ):
+            # NAMED, because this branch silently costs the user twenty seconds and the
+            # reasons it fires have different repairs: an unreachable verifier is substrate,
+            # an ineligible verb is a real invalidation the pick should not have offered,
+            # and an ASK is neither.
+            #
+            # AN `ask` FALLS BACK ON PURPOSE. The ask card and its menu are built inside the
+            # supervisor; rebuilding them here would risk offering a menu that is subtly
+            # WRONG rather than merely slow, and wrong is the one trade this path may not
+            # make. The run re-derives the same ask and asks it correctly. Widening this to
+            # answer asks directly is a separate decision with its own seal.
+            logger.info(
+                "direct path declined for run %s (%s: %s) — routing the full path",
+                session_id, _direct.kind, _direct.reason,
+            )
+            _direct = None
+
+    if _direct is not None:
+        async for _ev in _stream_direct_outcome(
+            outcome=_direct,
+            bundle=_artifact_bundle,
+            session_id=session_id,
+            frontend_id=(request.frontend_id or ""),
+            user_persona=user_persona or "",
+        ):
+            yield _ev
+        yield _sse("stream_end", "{}")
+        await _dispatch_answer_artifact(_artifact_bundle)
+        return
+
     # Per ADR-0009 Step F'.2: /route_intent does not produce a task_plan
     # anymore — the supervisor's `create_task_plan` op asks Engine O's /plan
     # endpoint itself when task_plan_json is empty. Step F'.3 will switch
@@ -4558,6 +4671,171 @@ async def generate_dagster_stream(
 
     yield _sse("stream_end", "{}")
 
+    # ONE WRITER, TWO CALLERS — the direct path calls the same function. See
+    # `_dispatch_answer_artifact`.
+    await _dispatch_answer_artifact(_artifact_bundle)
+
+
+async def _stream_direct_outcome(
+    *,
+    outcome,
+    bundle: dict,
+    session_id: str,
+    frontend_id: str,
+    user_persona: str,
+) -> AsyncGenerator[str, None]:
+    """Emit the SSE for a turn the direct path answered, and fill the artifact bundle.
+
+    THE SAME PROJECTORS, deliberately. `_project_route_decision`, `_project_graph_trace` and
+    `_project_graph_trace_alternates` are the ones the Dagster path uses; the direct path
+    hands them materializations rather than projected records precisely so this stays true.
+    A second shaper is how the card and the routing record came to select different
+    subtasks in production.
+
+    ONLY ROUTED AND ABSTAIN REACH HERE. An `ask` is routed through the full run instead —
+    see the caller. That is a deliberate scope line, not an oversight: the ask card and its
+    menu are built inside the supervisor, and a menu rebuilt slightly differently here would
+    be WRONG rather than slow, which is the one trade this path is not allowed to make.
+    """
+    if outcome.routing_mat is not None:
+        decision = _project_route_decision(outcome.routing_mat)
+        if decision is not None:
+            yield _sse("route_decision", json.dumps(decision))
+            bundle["routing"] = decision
+            handled_by = (decision.get("handled_by") or {}) if isinstance(
+                decision, dict
+            ) else {}
+            if handled_by:
+                bundle["produced_by"] = {
+                    "actor_type": "agent",
+                    "actor_id": handled_by.get("engine_name")
+                    or handled_by.get("name") or "pending",
+                    "endpoint": handled_by.get("endpoint"),
+                    "version": handled_by.get("version"),
+                }
+
+    if outcome.graph_trace_mat is not None:
+        trace_nodes = _project_graph_trace(outcome.graph_trace_mat)
+        if trace_nodes:
+            alternates = _project_graph_trace_alternates(outcome.graph_trace_mat)
+            yield _sse("graph_trace", json.dumps({
+                "nodes": trace_nodes, "alternates": alternates,
+            }))
+            bundle["graph_trace"] = trace_nodes
+            bundle["graph_trace_alternates"] = alternates
+
+    if outcome.slots_mat is not None:
+        _slots_md = _metadata_dict(outcome.slots_mat)
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"]["accepted_slots"] = json.loads(
+            _slots_md.get("accepted_slots") or "{}"
+        )
+        bundle["resolved_intent"]["refused_slots"] = json.loads(
+            _slots_md.get("refused_slots") or "[]"
+        )
+
+    if outcome.kind == direct_dispatch.ABSTAIN:
+        # THE VERB WAS RIGHT AND THE ENGINE DID NOT ANSWER. The routing record above is
+        # already emitted, so the decision path renders and a reader can see WHICH engine
+        # was asked — which is the whole difference between this and a blank failure.
+        logger.warning(
+            "direct path abstained for run %s: %s", session_id, outcome.reason,
+        )
+        yield _perror(
+            "The specialist did not return an answer.",
+            kind=direct_dispatch.STAGE_CALLING,
+            retryable=True,
+            cause="engine_did_not_answer",
+        )
+        bundle["status"] = "failed"
+        return
+
+    # ── THE RENDER. Engine F, with the SAME request body the run builds. ────────────────
+    _expert = outcome.engine_response or {}
+    _predicate = outcome.predicate or {}
+    _results = [{
+        "persona": _predicate.get("owner_persona") or user_persona,
+        "user_persona": user_persona,
+        "answerer_persona": _predicate.get("owner_persona") or user_persona,
+        "predicate_verb_iri": _predicate.get("verb_iri"),
+        "sub_query": bundle.get("question_text") or "",
+        # THE KEY THE CARD SELECTS BY. One result here, so `pick_primary` is trivially this
+        # one — but the field is set because Engine F and the projector both read it, and a
+        # single-element list that omits it would be the one shape neither was tested on.
+        "route_status": "matched",
+        "expert_response": _expert,
+    }]
+    # ADR-0017: the verb's REGISTERED output class, so Engine F does a deterministic
+    # predicate-graph lookup instead of asking BAML to classify the data shape. The run
+    # takes it off the expert's echo; here the registration is in hand and is the source
+    # the echo was copied from.
+    _output_uri = (
+        (_expert.get("output_uri") if isinstance(_expert, dict) else None)
+        or _predicate.get("output_uri")
+        or None
+    )
+
+    yield _stage(direct_dispatch.STAGE_RENDERING, "started")
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            _resp = await client.post(
+                f"{_PRESENTATION_AGENT_SVC_URL}/render_ui",
+                json={
+                    "raw_data": _results,
+                    "user_persona": user_persona,
+                    # Legacy alias, kept in step with the run's body: Engine F reads
+                    # `persona` for the chrome archetype, which is the user-side concern.
+                    "persona": user_persona,
+                    "output_uri": _output_uri,
+                    "frontend_id": frontend_id or None,
+                },
+            )
+            _resp.raise_for_status()
+            _payload = _resp.json()
+            _presentation_path = _resp.headers.get("X-Presentation-Path", "unknown")
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "direct path render failed for run %s (%s: %s)",
+            session_id, type(exc).__name__, exc,
+        )
+        yield _stage(direct_dispatch.STAGE_RENDERING, "failed")
+        yield _perror(
+            "Failed to render the answer.",
+            kind=direct_dispatch.STAGE_RENDERING,
+            retryable=True,
+            cause="render_ui_failed",
+        )
+        bundle["status"] = "failed"
+        return
+
+    logger.info(
+        "direct path rendered run %s via presentation_path=%s",
+        session_id, _presentation_path,
+    )
+    _uris = _expert.get("referenced_uris") if isinstance(_expert, dict) else None
+    if _uris:
+        yield _sse("context_update", json.dumps({"type": "bindings", "data": _uris}))
+
+    yield _stage(direct_dispatch.STAGE_RENDERING, "completed")
+    yield _sse("final_payload", json.dumps(_payload))
+    bundle["rendered_output"] = _payload
+    # THE ONLY SITE ON THIS PATH WHERE STATUS BECOMES 'complete', mirroring the run path's
+    # single flip. Nothing defaults to complete anywhere.
+    bundle["status"] = "complete"
+    bundle["duration_ms"] = max(0, int(time.time() * 1000) - bundle["valid_as_of"])
+
+
+async def _dispatch_answer_artifact(bundle: dict) -> None:
+    """Schedule the AnswerArtifact Neo4j write. ONE writer, TWO callers.
+
+    Lifted verbatim out of the graph-path generator on 2026-09-08 so the DIRECT path
+    writes through exactly this code. A second copy would carry today's fields and
+    miss tomorrow's — `derived_from_artifact_id` and the composed summary are already
+    the kind of field that gets added to one writer and not the other, and the lineage
+    edge is the whole reason a pick is a pick rather than a new question.
+
+    Never raises: every caller treats it as a trailing step that cannot fail delivery.
+    """
     # ── Hop 1: dispatch the AnswerArtifact Neo4j write on a SEPARATE
     # asyncio task AFTER stream_end. Delivery is already done from the
     # client's perspective. The writer's contract: dispatch_async NEVER
@@ -4583,14 +4861,14 @@ async def generate_dagster_stream(
         # that would re-create the trap one layer over: the dispatch
         # site has no idea what actually happened; only the gateway
         # exit paths know.)
-        if _artifact_bundle["status"] == "pending":
+        if bundle["status"] == "pending":
             logger.error(
                 "AnswerArtifact dispatch ABORTED: bundle.status is still "
                 "'pending' at stream_end for artifact %s. Some Graph "
                 "Path exit path failed to flip status. Skipping write "
                 "rather than persisting an honest-pending; investigate "
                 "the gateway exit paths.",
-                _artifact_bundle["id"],
+                bundle["id"],
             )
             return
 
@@ -4602,20 +4880,20 @@ async def generate_dagster_stream(
             # written to the node, projected, read verbatim. See
             # `_compose_answer_summary`.
             _bundle_obj = AnswerArtifactBundle(
-                id=_artifact_bundle["id"],
-                question_text=_artifact_bundle["question_text"],
-                summary=_compose_answer_summary(_artifact_bundle["routing"]),
-                message_id=_artifact_bundle["message_id"],
-                valid_as_of=_artifact_bundle["valid_as_of"],
-                status=_artifact_bundle["status"],
-                produced_by=_artifact_bundle["produced_by"],
-                produced_for=_artifact_bundle["produced_for"],
-                resolved_intent=_artifact_bundle["resolved_intent"],
-                routing=_artifact_bundle["routing"],
-                sources=_artifact_bundle["sources"],
-                graph_trace=_artifact_bundle["graph_trace"],
-                rendered_output=_artifact_bundle["rendered_output"],
-                derived_from_artifact_id=_artifact_bundle[
+                id=bundle["id"],
+                question_text=bundle["question_text"],
+                summary=_compose_answer_summary(bundle["routing"]),
+                message_id=bundle["message_id"],
+                valid_as_of=bundle["valid_as_of"],
+                status=bundle["status"],
+                produced_by=bundle["produced_by"],
+                produced_for=bundle["produced_for"],
+                resolved_intent=bundle["resolved_intent"],
+                routing=bundle["routing"],
+                sources=bundle["sources"],
+                graph_trace=bundle["graph_trace"],
+                rendered_output=bundle["rendered_output"],
+                derived_from_artifact_id=bundle[
                     "derived_from_artifact_id"
                 ],
             )
@@ -4628,13 +4906,13 @@ async def generate_dagster_stream(
             logger.info(
                 "AnswerArtifact dispatch scheduled: id=%s (delivery already "
                 "completed at stream_end)",
-                _artifact_bundle["id"],
+                bundle["id"],
             )
         else:
             logger.warning(
                 "AnswerArtifact writer not available; artifact %s NOT "
                 "scheduled for persistence (trailing-step non-fatal).",
-                _artifact_bundle["id"],
+                bundle["id"],
             )
     except Exception as exc:
         # Belt-and-suspenders: the writer module's dispatch_async is
@@ -4646,7 +4924,6 @@ async def generate_dagster_stream(
             "preserved): %s",
             exc,
         )
-
 
 # ══════════════════════════════════════════════════════════
 # Endpoints

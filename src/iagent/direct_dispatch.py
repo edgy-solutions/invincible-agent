@@ -55,6 +55,7 @@ from iagent_pure.verb_eligibility import (
 __all__ = [
     "DirectOutcome",
     "ROUTED", "ASK", "ABSTAIN", "FALL_BACK",
+    "STAGE_VERIFYING", "STAGE_CALLING", "STAGE_RENDERING", "DISPATCH_STAGES",
     "dispatch_pre_resolved",
     "materialization",
 ]
@@ -63,6 +64,27 @@ ROUTED = "routed"
 ASK = "ask"
 ABSTAIN = "abstain"
 FALL_BACK = "fall_back"
+
+#: THE STAGES THIS PATH ACTUALLY RUNS, and the list is short because the path is short.
+#: The Dagster stream's five kinds describe a decomposition, a resolution and a
+#: classification — none of which happen here, because the ask already answered all three.
+#: Emitting "understanding" for a turn that understood nothing is a success line for work
+#: that never ran, so these are NEW kinds and the client renders what arrives rather than a
+#: fixed five. `rendering_answer` is the gateway's: it makes the Engine F call, so it emits
+#: that one and this module does not.
+STAGE_VERIFYING = "verifying_route"
+STAGE_CALLING = "calling_engine"
+#: The Engine F render, emitted by the gateway because the gateway makes that call.
+#:
+#: NOT `writing_answer`. The artifact write is dispatched AFTER `stream_end`, deliberately —
+#: delivery is never coupled to the Neo4j write — so a stage named for it could never be
+#: reported completed to a client that has already been told the stream is over. A stage the
+#: client can only ever see start is worse than no stage at all.
+STAGE_RENDERING = "rendering_answer"
+
+#: Every kind this module may emit. The gateway's contract seal derives the expected set
+#: from here rather than repeating it, so a stage added below cannot be forgotten there.
+DISPATCH_STAGES = (STAGE_VERIFYING, STAGE_CALLING)
 
 #: The engine call sits inside a request a person is waiting on, not a Dagster op that already
 #: cost tens of seconds. The run's 1800s ceiling is right there and wrong here: a hung engine
@@ -131,14 +153,23 @@ def dispatch_pre_resolved(
     engine_timeout: float = DEFAULT_ENGINE_TIMEOUT_S,
     headers: Optional[Dict[str, str]] = None,
     post=None,
+    on_stage=None,
 ) -> DirectOutcome:
     """Execute a route the ask already established.
+
+    `on_stage(kind, status)` is called at the REAL boundaries of the two stages this
+    function runs — `verifying_route` and `calling_engine` — so the stream reports work
+    that happened rather than a timeline composed after the fact. It is a plain callable,
+    invoked synchronously, because this function is sync and runs in a worker thread; the
+    caller decides how to deliver. Every `started` is followed by exactly one `completed`
+    or `failed` on every return path, which is the property the stream contract rests on.
 
     `accept_slots` and `post` are injected rather than imported so this is testable without a
     network and without the slot module's transitive imports — and so a test that stubs the
     engine is stubbing THE call, not a copy of it.
     """
     _post = post or requests.post
+    _stage = on_stage or (lambda *_a, **_k: None)
     subject = str(pre_resolved.get("subject_uri") or "")
     verb = str(pre_resolved.get("verb_iri") or "")
     instance_id = str(pre_resolved.get("subject_instance_id") or "")
@@ -146,10 +177,12 @@ def dispatch_pre_resolved(
         return DirectOutcome(FALL_BACK, "no pre-resolved route")
 
     # ── 1. VERIFY. The invalidation, and it runs BEFORE anything is dispatched ──────────
+    _stage(STAGE_VERIFYING, "started")
     verbs, err = find_compatible_verbs(subject, entitled_domains, ontology_url=ontology_url)
     if err is not None:
         # COULD NOT CHECK is not NOTHING IS COMPATIBLE. Falling back to the run means the
         # question still gets answered, by the path that has its own handling for this.
+        _stage(STAGE_VERIFYING, "failed")
         return DirectOutcome(FALL_BACK, f"verifier unreachable: {err}")
 
     # ── 2. ARITY. The flag is not on the record; the filter puts it there ───────────────
@@ -161,8 +194,10 @@ def dispatch_pre_resolved(
     if truth is None:
         # The ask's verb is no longer eligible — revoked, retired, re-primed, or this picker
         # has a different persona from the asker. Recomputing is the correct answer.
+        _stage(STAGE_VERIFYING, "failed")
         return DirectOutcome(FALL_BACK, f"verb {verb} no longer compatible with {subject}")
 
+    _stage(STAGE_VERIFYING, "completed")
     predicate = predicate_from_compat_record(truth)
     if truth.get("needs_instance"):
         predicate["needs_instance"] = True
@@ -257,6 +292,7 @@ def dispatch_pre_resolved(
     endpoint = predicate.get("endpoint") or ""
     if not endpoint:
         return DirectOutcome(FALL_BACK, f"verb {verb} has no endpoint")
+    _stage(STAGE_CALLING, "started")
     try:
         resp = _post(
             endpoint,
@@ -270,6 +306,7 @@ def dispatch_pre_resolved(
         # A TYPED FAILURE, not a fall-back. The verb was right and the engine did not answer;
         # re-running the whole thing through Dagster would call the same engine again and
         # produce the same failure a further twenty seconds later.
+        _stage(STAGE_CALLING, "failed")
         return DirectOutcome(
             ABSTAIN, f"engine did not answer: {type(exc).__name__}: {exc}",
             routing_mat=routing_mat, graph_trace_mat=graph_trace_mat,
@@ -277,6 +314,7 @@ def dispatch_pre_resolved(
             refusals=refusals,
         )
 
+    _stage(STAGE_CALLING, "completed")
     return DirectOutcome(
         ROUTED, "", routing_mat=routing_mat, graph_trace_mat=graph_trace_mat,
         slots_mat=slots_mat, engine_response=body, predicate=predicate,

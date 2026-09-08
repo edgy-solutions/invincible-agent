@@ -124,5 +124,33 @@ def test_the_MERGE_that_can_fabricate_is_documented_at_the_guard():
 
 
 def test_the_bundle_field_reaches_the_writer():
-    """The last hop. It was already wired — the value was simply always None."""
-    assert re.search(r"derived_from_artifact_id=_artifact_bundle\[", _GW)
+    """The last hop. It was already wired — the value was simply always None.
+
+    BY AST, AND IT USED TO BE BY SUBSTRING. The old form matched the literal
+    `derived_from_artifact_id=_artifact_bundle[`, which pinned the LOCAL VARIABLE'S NAME
+    rather than the hop. Extracting the write into `_dispatch_answer_artifact` on
+    2026-09-08 renamed that local to `bundle` and this went red with the behaviour
+    completely intact — a check reading a string where the property is a data flow. The
+    same family as a docstring lint flagging the comment that explains the fix.
+
+    What actually matters is unchanged and is what is asserted now: the
+    `AnswerArtifactBundle` is constructed with `derived_from_artifact_id` taken by
+    subscript from the bundle dict, whatever that dict is called. Dropping the keyword,
+    or hardcoding it to None, still goes red.
+    """
+    import ast
+    call = next(
+        (n for n in ast.walk(ast.parse(_GW))
+         if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "AnswerArtifactBundle"),
+        None,
+    )
+    assert call is not None, "the writer's bundle is no longer constructed by that name"
+    kw = next((k for k in call.keywords if k.arg == "derived_from_artifact_id"), None)
+    assert kw is not None, (
+        "AnswerArtifactBundle is built without derived_from_artifact_id — the lineage edge "
+        "cannot be created for any answer"
+    )
+    assert isinstance(kw.value, ast.Subscript), (
+        f"the lineage id is not read from the bundle: {ast.unparse(kw.value)}"
+    )
+    assert ast.unparse(kw.value).endswith("['derived_from_artifact_id']"), ast.unparse(kw.value)
