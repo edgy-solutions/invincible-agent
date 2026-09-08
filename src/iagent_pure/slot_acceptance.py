@@ -179,6 +179,46 @@ def accept_slots(
             refusals.append(Refusal(name, WRONG_SHAPE, value))
             continue
 
+        # ── AN INTEGER SLOT GIVEN A STRING, THREE-VALUED ─────────────────────────
+        #
+        # MEASURED 2026-09-08, walking the first INTEGER slot this system has ever been
+        # asked. Every prior walk used string slots — `capability_id: "C8"`,
+        # `program_id: "NP-MERIDIAN"` — so this had never fired.
+        #
+        # A spoken answer arrives as text. `lot` is declared `"type": "integer"`, the value
+        # reached engine-cost as "1", and its model is a dict keyed by int, so `lots["1"]`
+        # raised KeyError and the engine refused with:
+        #
+        #     lot 1 is not in the model; known lots are [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        #
+        # A refusal that lists the value it just rejected. The message is accurate from
+        # inside the code — the types are simply invisible in it — and to a reader it is
+        # nonsense, which sends them looking for a data problem that does not exist.
+        #
+        # WHY COERCING HERE IS NOT THE THING THIS MODULE REFUSES TO DO. The collection case
+        # above declines to wrap a bare string because `[value]` GUESSES AT STRUCTURE and the
+        # guess is wrong the moment a speaker names two periods. `int("1")` guesses at
+        # nothing: it is total where it is defined and fails loudly where it is not. So this
+        # takes the same three-valued shape as the period resolution below —
+        #
+        #   an integral string   -> parsed, because "1" and 1 are the same answer
+        #   already an int       -> passed through untouched
+        #   anything else        -> REFUSED, with the value named
+        #
+        # — and never a fourth outcome where a non-numeric string reaches a measure and the
+        # engine blames its own model for it.
+        if declared_type in ("integer", "int") and isinstance(value, str):
+            _candidate = value.strip()
+            _negative = _candidate.startswith("-")
+            if (_candidate[1:] if _negative else _candidate).isdigit():
+                params[name] = int(_candidate)
+                continue
+            # `.isdigit()` rather than a try/except around int(): it refuses "1.0", "1_000"
+            # and unicode oddities that int() would silently accept or mangle. A lot number
+            # is an identifier, not an arithmetic expression.
+            refusals.append(Refusal(name, WRONG_SHAPE, value))
+            continue
+
         # ── PERIOD RESOLUTION, THREE-VALUED ──────────────────────────────────────
         # A `period: "date"` slot is compared LEXICALLY against ISO dates by its measure, so
         # a fiscal label there is not a weak filter — it is a COMPLETE NO-OP. Measured:
