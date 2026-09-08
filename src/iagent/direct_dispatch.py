@@ -59,7 +59,8 @@ from iagent_pure.verb_eligibility import (
 __all__ = [
     "DirectOutcome",
     "ROUTED", "ASK", "ABSTAIN", "FALL_BACK",
-    "STAGE_VERIFYING", "STAGE_CALLING", "STAGE_RENDERING", "DISPATCH_STAGES",
+    "STAGE_VERIFYING", "STAGE_CALLING", "STAGE_RENDERING", "STAGE_FELL_BACK",
+    "DISPATCH_STAGES",
     "dispatch_pre_resolved",
     "materialization",
 ]
@@ -85,6 +86,16 @@ STAGE_CALLING = "calling_engine"
 #: reported completed to a client that has already been told the stream is over. A stage the
 #: client can only ever see start is worse than no stage at all.
 STAGE_RENDERING = "rendering_answer"
+#: THE DECLINE, ANNOUNCED. Emitted by the gateway when the fast path hands the turn back to
+#: the run. Without it a fall-back is indistinguishable from the fast path merely being
+#: slow, and the only way to tell them apart is timing a pick by hand — which is exactly how
+#: the original 24 seconds went unnoticed for a day. The FALLBACK RATE is the number that
+#: says whether this path is real, and a rate needs an event per occurrence.
+#:
+#: NOT a second terminal on `verifying_route`: that stage has already reported `failed` on
+#: two of the three decline paths, and a `completed` after a `failed` is the unbalanced pair
+#: this module's own seal forbids.
+STAGE_FELL_BACK = "fell_back"
 
 #: Every kind this module may emit. The gateway's contract seal derives the expected set
 #: from here rather than repeating it, so a stage added below cannot be forgotten there.

@@ -2466,6 +2466,12 @@ from .direct_dispatch import dispatch_pre_resolved  # noqa: E402
 # THE SAME DEFAULT AS THE SUPERVISOR'S, and it has to be: both call the same Engine F. A
 # second literal that drifts would render one path's answers from a service the other never
 # reaches, which is invisible until the two disagree.
+#: How often the direct path handed a turn back to the run, by outcome, for this process.
+#: PER-PROCESS AND DELIBERATELY NOT PERSISTED — it is a liveness signal for an operator
+#: reading one pod's logs, not an SLO. The per-turn event is what a rate is actually built
+#: from; this is the running total so a single log line answers "is it happening at all".
+_DIRECT_FALLBACKS: dict[str, int] = {}
+
 _PRESENTATION_AGENT_SVC_URL = os.getenv(
     "PRESENTATION_AGENT_SVC_URL", "http://iagent-engine-f:8087"
 )
@@ -4148,6 +4154,26 @@ async def generate_dagster_stream(
                 "direct path declined for run %s (%s: %s) — routing the full path",
                 session_id, _direct.kind, _direct.reason,
             )
+            # ON THE TURN, NOT ONLY IN THE LOG. Without this a decline is indistinguishable
+            # from the fast path merely being slow, and the only way to tell them apart is
+            # timing a pick by hand — which is how the original 24 seconds went unnoticed.
+            # THE FALLBACK RATE IS THE NUMBER THAT SAYS WHETHER THE DIRECT PATH IS REAL, and
+            # a rate needs an event per occurrence, not a line someone greps for.
+            #
+            # The REASON travels because the causes have opposite repairs: an unreachable
+            # verifier is substrate, an ineligible verb is a real invalidation the pick
+            # should not have offered, and an `ask` is neither.
+            # ITS OWN KIND, not a second terminal on `verifying_route`. That stage has
+            # already reported `failed` on two of these three paths, and a `completed`
+            # after a `failed` is the unbalanced pair this path's own seal forbids.
+            _DIRECT_FALLBACKS[_direct.kind] = _DIRECT_FALLBACKS.get(_direct.kind, 0) + 1
+            logger.info(
+                "direct-path fallback rate this process: %s",
+                dict(sorted(_DIRECT_FALLBACKS.items())),
+            )
+            _detail = {"outcome": _direct.kind, "reason": _direct.reason}
+            yield _stage(direct_dispatch.STAGE_FELL_BACK, "started", detail=_detail)
+            yield _stage(direct_dispatch.STAGE_FELL_BACK, "completed", detail=_detail)
             _direct = None
 
     if _direct is not None:
