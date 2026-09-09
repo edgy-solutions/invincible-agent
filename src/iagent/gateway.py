@@ -185,6 +185,7 @@ async def lifespan(application: FastAPI):
         # default, which under a corporate proxy produced a ProxyError against a host
         # nobody had configured. See src/iagent/service_urls.py for the full account.
         from .service_urls import cortex_bff_base_url
+        from .canvas_template import ratified_template_ids
 
         _bff_base = cortex_bff_base_url()
         _register_verb(
@@ -215,6 +216,66 @@ async def lifespan(application: FastAPI):
             # it fast would invite a caller to treat it as interactive, which is
             # the one thing this verb is not.
             cost_class="slow",
+        )
+
+        # ── ADR-0050 §4 — THE GENERAL VERB, WITH THE TEMPLATE AS A SLOT ────────────────
+        #
+        # `seedPortfolioCanvas` names its template in the VERB. A second template would need
+        # a second verb, a second synonym set and a second registration, and the router would
+        # be choosing between boards by phrase — which is the classifier deciding a thing the
+        # caller can simply say.
+        #
+        # `mesh:seedCanvas` takes `template_id` as a SPOKEN-MANDATORY slot whose menu is the
+        # RATIFIED SET, read off `policy/canvases/` at registration. An unfilled slot reaches
+        # ADR-0033's disposition and becomes an ASK offering the templates that exist — which
+        # is the one-option menu today and a real choice the moment a second seedable template
+        # lands.
+        #
+        # BOTH ARE REGISTERED, DELIBERATELY. `seedPortfolioCanvas` is the phrase people have
+        # been saying for a fortnight and cortex calls its route directly; retiring it in the
+        # same change that introduces its successor would break a live surface for a rename.
+        # It is superseded, not removed, and the supersession is stated here rather than
+        # implied by a comment on one of them.
+        #
+        # COST-OF-GUESSING ENUMERATION, because this makes a verb reachable from language:
+        #   reachable : seed_canvas, typed against idp:Portfolio, one enumerated slot
+        #   mutates   : ADDITIVELY ONLY — mints artifacts, composes nothing server-side
+        #   authority : the caller's own, re-checked per ask, exactly as the portfolio verb
+        #   amplifies : one request -> N sequential governed asks. Declared `slow`.
+        _ratified = ratified_template_ids()
+        _register_verb(
+            name="cortex_bff_orchestration",
+            description=(
+                "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
+                "through the governed interview path and returning their artifact ids in "
+                "slot order. This BUILDS A BOARD; it does not answer a question. A request "
+                "for ONE measure is that measure's verb, not this one. `template_id` names "
+                "which board: " + ", ".join(_ratified) + "."
+            ),
+            verb="mesh:seedCanvas",
+            input_uri="http://invincible-agent/idp#Portfolio",
+            output_uri="http://invincible-agent/mesh#CanvasSeedResult",
+            endpoint_url=f"{_bff_base}/canvas/seed",
+            verb_synonyms=[
+                "build me a canvas",
+                "seed a canvas from a template",
+                "set up a board from the standard template",
+                "make me a review board",
+            ],
+            owner_persona="PORTFOLIO_LEAD",
+            domains=["PORTFOLIO_PLANNING"],
+            cost_class="slow",
+            # THE MENU IS THE RATIFIED SET, DERIVED. A hand-kept enum here would offer a
+            # template that no longer exists, or omit one that does, with nothing reading as
+            # an error either way — see `ratified_template_ids`.
+            slots=[{
+                "name": "template_id",
+                "type": "string",
+                "required": True,
+                "kind": "spoken-mandatory",
+                "enum": _ratified,
+                "description": "Which ratified canvas template to build.",
+            }],
         )
     except Exception as _exc:  # pragma: no cover
         # Best-effort, matching the fleet's posture: a failed registration means
@@ -1778,10 +1839,18 @@ async def seed_portfolio_canvas(
 
 
 class CanvasSeedRequest(_BaseModel):
-    """What cortex's `requestPortfolioCanvasSeed()` posts: a canvas TYPE, and
-    nothing else. It supplies no session id and no question list, which is the
-    point — the questions and their slot order are the seeder's declaration."""
+    """A canvas TYPE or a ratified `template_id`, and nothing else.
+
+    It supplies no session id and no question list, which is the point — the panels and their
+    slot order are the TEMPLATE'S declaration, not the caller's.
+
+    `template_id` IS THE ONE ADR-0050 SPEAKS, and `canvas_type` is kept because cortex's
+    `requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds
+    the new field would break the live client for a rename, so both are accepted and the
+    resolution below is explicit rather than a silent precedence.
+    """
     canvas_type: str = "portfolio_planning"
+    template_id: Optional[str] = None
 
 
 @app.post("/canvas/seed")
@@ -1815,13 +1884,68 @@ async def canvas_seed(
     is logged on every run so a partial is visible in the record even though the
     response cannot carry it.
     """
-    if request.canvas_type != "portfolio_planning":
+    # ── WHICH TEMPLATE, AND A REFUSAL RATHER THAN A FALLBACK (ADR-0050 §4) ─────────────
+    #
+    # `template_id` wins when given; `canvas_type: "portfolio_planning"` is the legacy spelling
+    # of `portfolio` and is translated once, here, rather than being understood in two places.
+    #
+    # AN UNKNOWN ID REFUSES BY NAME. It must never fall back to the portfolio board: a seed
+    # that quietly builds the wrong template draws, every card is real, and nothing reports it
+    # — and a board that is WRONG is harder to catch than one that is absent. cortex-ui-60 hit
+    # the client-side half of this same hazard tonight, where an unknown id fell through to
+    # generic placement in complete silence.
+    from .canvas_template import load_template, ratified_template_ids
+
+    _requested = (request.template_id or "").strip()
+    if not _requested:
+        _requested = "portfolio" if request.canvas_type == "portfolio_planning" else (
+            request.canvas_type or ""
+        ).strip()
+    try:
+        _template = load_template(_requested)
+    except (KeyError, ValueError) as _terr:
         raise HTTPException(
             status_code=400,
             detail=(
-                "unknown canvas_type "
-                + repr(request.canvas_type)
-                + "; only 'portfolio_planning' has a seeding template"
+                f"no ratified canvas template {_requested!r} "
+                f"(ratified: {ratified_template_ids()}) — {_terr}"
+            ),
+        )
+
+    # ── SEEDABILITY IS A PROPERTY OF THE TEMPLATE, AND IT IS CHECKED BEFORE THE CLOCK ──
+    #
+    # `program_finance` is ratified and CANNOT seed: all six finance verbs require
+    # `program_id` with no default, and `shared_slots` is empty until §3's carry lands. Every
+    # panel would refuse at dispatch — after ~25 minutes of sequential asks, one hole at a
+    # time, ending in a partial-seed refusal that names the wrong cause.
+    #
+    # So it refuses UP FRONT and says which slot is missing. This is the same ordering as the
+    # arity precondition on the direct path: a turn that cannot succeed must not spend the
+    # engine call to find out.
+    _unbound = sorted({
+        s.name for s in _template.shared_slots if s.required
+    } | {
+        c for p in _template.panels for c in p.consumes
+    })
+    if _unbound:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"template {_template.template_id!r} declares shared slot(s) {_unbound} that "
+                f"nothing binds yet, so every panel would refuse. This is the ADR-0050 §3 "
+                f"carry, not a fault in the template or the request."
+            ),
+        )
+    if _template.template_id != "portfolio":
+        # HONEST BOUND, NOT A SILENT ONE. Seeding still runs the portfolio PHRASE list; the
+        # per-panel pre-resolved dispatch that would make any template seedable is the next
+        # increment and is deliberately not implied by this registration.
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                f"template {_template.template_id!r} is ratified and not yet seedable: the "
+                f"seeder still runs a phrase list rather than the template's declared verbs. "
+                f"Only 'portfolio' seeds today."
             ),
         )
 

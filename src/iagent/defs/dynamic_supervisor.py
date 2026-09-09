@@ -1417,7 +1417,11 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # The local-name comparison below tolerates either form anyway — a registry that later
 # expands verbs must not silently turn this gate off, and a silently-off gate here means
 # a seed that 403s exactly the way it did before the fix.
-_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas"})
+# `seedCanvas` is `seedPortfolioCanvas` with the template as a slot (ADR-0050 §4). BOTH
+# are listed: the older verb is superseded, not removed, because cortex calls its route
+# today and a live surface must not break for a rename. A successor added here without
+# its predecessor would silently drop caller identity on every phrase still in use.
+_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas"})
 
 
 class CallerIdentityUnavailable(Exception):

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -136,3 +137,61 @@ def template_ref(t: CanvasTemplate) -> str:
     """`<template_id>@<first 12 hex of sha256 over the canonicalised semantic content>`."""
     digest = hashlib.sha256(_canonical(semantic_content(t)).encode("utf-8")).hexdigest()
     return f"{t.template_id}@{digest[:12]}"
+
+
+# ── §4 — the ratified set, DERIVED from the directory ───────────────────────────────────────
+#
+# The seed verb's `template_id` slot is "enumerated from the ratified set", per the model's own
+# docstring. That enumeration is read off `policy/canvases/` and NEVER kept beside it.
+#
+# A HAND-KEPT LIST IS A SECOND POPULATION, and it drifts in the direction that hides: a template
+# ratified and not listed is simply unofferable, with nothing anywhere reading as an error. Three
+# separate instances of exactly this shape landed on 2026-09-08/09 — a manifest key regex that
+# could not express `neo4j_expert`, a census join that guessed a deployment from an env var, and
+# a frontend registry whose known-ids list sat beside the registry rather than being read from it.
+#
+# THE FILENAME IS THE ID, and the model already requires `template_id` to equal the stem. That is
+# checked here rather than trusted, because a file whose stem and id disagree is offerable under
+# one name and loadable under the other.
+
+_CANVAS_DIR = Path(__file__).resolve().parents[2] / "policy" / "canvases"
+
+
+def ratified_template_ids(directory: "Path | None" = None) -> list[str]:
+    """Every ratified template id, sorted. Derived from the directory each call.
+
+    NOT CACHED: the set changes when a file is ratified, and a process holding a stale set
+    offers a menu that no longer matches the substrate — the same staleness that makes a
+    registration outlive the thing it registered.
+    """
+    d = directory or _CANVAS_DIR
+    if not d.is_dir():
+        return []
+    return sorted(p.stem for p in d.glob("*.yaml"))
+
+
+def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTemplate:
+    """Load and VALIDATE one ratified template. Raises rather than returning a default.
+
+    `KeyError` when the id is not ratified — never a fallback to a default template. A seed
+    that quietly builds the portfolio board because it did not recognise the id produces a
+    board that is WRONG rather than absent, and a wrong board is harder to notice than a
+    missing one: it draws, every card is real, and nothing reports it.
+    """
+    import yaml  # local: the gateway imports this module at startup and yaml is not free
+
+    d = directory or _CANVAS_DIR
+    path = d / f"{template_id}.yaml"
+    if not template_id or not path.is_file():
+        raise KeyError(
+            f"no ratified canvas template {template_id!r}; ratified: "
+            f"{ratified_template_ids(d)}"
+        )
+    t = CanvasTemplate.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+    if t.template_id != template_id:
+        # Offerable under one name, loadable under the other — the menu and the substrate
+        # would disagree about what the caller picked.
+        raise ValueError(
+            f"{path.name} declares template_id {t.template_id!r}, which is not its stem"
+        )
+    return t
