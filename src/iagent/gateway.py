@@ -1982,6 +1982,53 @@ async def canvas_seed(
     # logged. cortex reads only `artifact_ids` and ignores the rest, so this
     # costs the receiver nothing and gives the next caller the fact the log
     # would otherwise be the only witness to.
+    # ── NOTHING SEEDED IS NOT A PARTIAL SEED, AND IT MUST NOT RETURN 200 ───────────────
+    #
+    # MEASURED 2026-09-09, and it made a seal LIE. All five asks 403'd in ~0.1s each, this
+    # route answered 200, and the canvas-determinism seal compared two empty boards, found
+    # them equal, and reported PASS in 2.48 seconds against a run that takes fifty minutes.
+    # The only wrong-looking thing was the clock.
+    #
+    # THE GUARD ABOVE INHERITED THE CASE IT WAS WRITTEN FOR. A partial seed refusing with
+    # 200-and-empty is right: cortex has a no-canvas path and the ruling above is sound. But
+    # `seeded != total` is ALSO true when `seeded == 0`, and a caller who seeded NOTHING has
+    # not received a refusal to compose — they have received a failure, and the status line
+    # is where a headless caller reads that. `seeded`/`total` carried the truth in the body
+    # and the seal read the status, which is what a status is FOR.
+    #
+    # THE CAUSE TRAVELS, because the two total failures have opposite repairs. Five upstream
+    # 403s mean the caller is not entitled to the panels' subjects — the exact cell
+    # `policy/groups.yaml` warns about, where "/resolve scopes the OntologyClass pool to
+    # cells the caller holds" and a non-holder grounds to nothing while every engine reports
+    # healthy. That is the caller's answer and it is a 403. Anything else upstream is a
+    # 502: the seed could not be performed, and that is ours.
+    if seeded == 0 and total:
+        # From the inner route's own per-slot record — `results` is not a local here, and
+        # reaching for it as one is how this refusal would 500 on the path it exists to
+        # report. Each entry carries `status` and a `detail` like "HTTP 403".
+        _codes = {
+            str(r.get("detail") or "")
+            for r in (result.get("results") or [])
+            if r.get("status") != "ok"
+        }
+        _all_403 = bool(_codes) and all("403" in c for c in _codes)
+        logger.warning(
+            "canvas_seed: NOTHING seeded (0/%s) — refusing with %s. Upstream: %s",
+            total, 403 if _all_403 else 502, sorted(_codes)[:5],
+        )
+        raise HTTPException(
+            status_code=403 if _all_403 else 502,
+            detail=(
+                f"seeded 0 of {total} panels; "
+                + (
+                    "every ask was refused (403) — the caller is not entitled to the cell "
+                    "these panels' subjects live in"
+                    if _all_403
+                    else f"upstream failures: {sorted(_codes)[:5]}"
+                )
+            ),
+        )
+
     if seeded != total:
         logger.warning(
             "canvas_seed: PARTIAL seed %s/%s — REFUSING to compose. Compacting "
