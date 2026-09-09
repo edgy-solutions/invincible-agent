@@ -51,7 +51,8 @@ _REGISTRY: Dict[str, Dict[str, Any]] = {}
 SYSTEM_DEFAULT_FRONTEND_ID = "__system_default__"
 
 
-def register(frontend_id: str, frontend_version: str, capabilities: List[Dict[str, Any]]) -> int:
+def register(frontend_id: str, frontend_version: "str | None",
+             capabilities: List[Dict[str, Any]]) -> int:
     """Record a frontend's ADMITTED capabilities. Returns the stored count.
 
     REPLACES rather than merges: a frontend's registration is the whole truth about what it
@@ -64,7 +65,12 @@ def register(frontend_id: str, frontend_version: str, capabilities: List[Dict[st
     with _LOCK:
         _REGISTRY[fid] = {
             "frontend_id": fid,
-            "frontend_version": (frontend_version or "unknown").strip() or "unknown",
+            # ABSENCE IS KEPT AS ABSENCE. This coerced to the word "unknown", which reads
+            # as a reported value and is indistinguishable from a frontend that genuinely
+            # reported the string "unknown". `None` means the question does not apply to
+            # this caller; a frontend that HAS a version and cannot report it is a fault and
+            # must stay visible as one.
+            "frontend_version": (frontend_version or "").strip() or None,
             "capabilities": list(capabilities or []),
         }
         return len(_REGISTRY[fid]["capabilities"])

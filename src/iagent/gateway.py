@@ -2546,7 +2546,21 @@ class RegisterFrontendCapabilitiesRequest(BaseModel):
     declared the capability and code that's serving it is detectable.
     """
     frontend_id: str          # e.g. "cortex-ui-desktop"
-    frontend_version: str     # e.g. "0.1.0"
+    # THREE STATES, NOT TWO (ruled 2026-09-09), and the middle one is the reason:
+    #
+    #   None        NO FRONTEND APPLIES to this caller — an engine, the registrar, a job
+    #   a version   a frontend that knows what it is
+    #   a FAULT     a frontend that HAS a version and cannot report it
+    #
+    # The third must never be laundered into the first. `null` is a statement that the
+    # question does not apply; a frontend that cannot answer it is a defect wearing that
+    # statement's clothes. Same rule as `favourable` — see [[optimistic-defaults-are-dishonest]].
+    #
+    # THIS FIELD WAS THE LITERAL STRING "dev" FOR THE LIFE OF THIS SURFACE. cortex-ui read an
+    # env var nothing in that repo set, so every registration it ever made recorded "dev" and
+    # the drift detection this field exists for could never have fired. A value that is always
+    # the same is indistinguishable from a value nobody set.
+    frontend_version: str | None = None    # e.g. "0.1.0", or a commit sha
     capabilities: list[FrontendCapability]
 
 
@@ -5262,7 +5276,10 @@ async def register_frontend_capabilities(
                 expected_fields=list(_c.get("expected_fields") or []),
                 persona_fit=list(_c.get("persona_fit") or []),
                 domain_fit=list(_c.get("domain_fit") or []),
-                version=payload.frontend_version,
+                # The mesh helper takes `version: str`. An ABSENT version is carried as
+                # empty rather than the string "None", which is what `str(None)` would put
+                # into the graph and what a reader would then see as a version.
+                version=payload.frontend_version or "",
                 frontend_id=payload.frontend_id,
                 recomputes=_recomputes,
             )
