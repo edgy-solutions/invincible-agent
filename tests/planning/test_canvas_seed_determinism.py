@@ -191,9 +191,36 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
                        json={"session_id": session, "frontend_id": "cortex-ui-desktop"},
                        headers=headers, timeout=3600)
         r.raise_for_status()
-        ids = r.json()["artifact_ids"]
+        body = r.json()
+        ids = body["artifact_ids"]
         if len(ids) != 5:
             _void(f"the seed returned {len(ids)} artifact ids, not five")
+
+        # ── AN ALL-FAILED SEED MEASURES NOTHING — VOID, NOT AGREEMENT ───────────────────────
+        #
+        # THIS GUARD EXISTS BECAUSE ITS ABSENCE PRODUCED A FALSE GREEN, 2026-09-09. Every one of
+        # the five questions failed with HTTP 403 in ~0.1s; the route still answered 200 with
+        # five null artifact_ids. Both runs therefore produced five `unseeded` panels, compared
+        # EQUAL, and SEAL 3 REPORTED PASS on a board where nothing seeded at all. The tell was
+        # the clock — 2.48s for what RULING (b) says is ~50 minutes — not any assertion here.
+        #
+        # The hole was the exemption directly below: a null on a panel the SEEDER reported as
+        # failed is real information and still compares, which is true and was the right call —
+        # a question that failed in run A and succeeded in run B is a genuine difference. It is
+        # only true while SOMETHING succeeded. Comparing two total failures is comparing two
+        # empty sets and scoring it as agreement.
+        #
+        # `seeded` and `total` were in the response the whole time and the arm read neither.
+        seeded = body.get("seeded")
+        detail = "; ".join(
+            f"slot {x.get('slot')}: {x.get('status')} {x.get('detail') or ''}".strip()
+            for x in (body.get("results") or [])
+            if x.get("status") != "ok"
+        )
+        if not any(i is not None for i in ids):
+            _void(f"NOTHING SEEDED — all five questions failed, so this run has no panel set to "
+                  f"compare. Two such runs agree perfectly and mean nothing "
+                  f"(seeded={seeded}/{body.get('total')}). Causes: {detail or 'unreported'}")
         panels = []
         for i, aid in enumerate(ids):
             if aid is None:
