@@ -1249,6 +1249,27 @@ services:
   gateway:
     file: src/iagent/gateway.py
     routes:
+      - method: GET
+        path: /artifacts/{artifact_id}
+        identity: keycloak-jwt
+        gate: "get_current_user + PRODUCED_FOR ownership edge IN THE QUERY"
+        exposes: gated-content
+        consumers: [canvas seal-3 live arm, headless readers]
+        class: gated
+        justification: >-
+          Reads back ONE artifact the caller produced — id, status, and its RECORDED ROUTE
+          (subject, verb, instance). Deliberately NOT the rendered output: that is already
+          streamed and projected, and a second delivery path is a second thing to keep in
+          step with the projector.
+          The ownership edge is in the Cypher, not a Python filter after the read, so a
+          broadening of the match is a change to the query a reviewer sees. An artifact
+          belonging to someone else is 404 and NOT 403: telling a caller that an id exists
+          but is not theirs is an existence oracle over other people's questions, and the
+          question text is the sensitive part — the same finding /resolve_instance carries,
+          applied here before it became one.
+          An identity-less caller is refused rather than read broadly; an unreachable graph
+          is 503 rather than 404, because "we could not look" is not "there is no such
+          thing".
       - method: POST
         path: /internal/identity/redeem
         identity: keycloak-jwt
@@ -1768,6 +1789,66 @@ services:
         consumers: [agent_routers.py]
         class: releasable_by_design
         justification: "runs Swarms LLM extraction on the prompt; no data-plane tools, no gated fetch"
+
+  graph_host:
+    file: agent_fleet/graph_host/main.py
+    # engine-lg, the graph host (ADR-0046 slice 1). Declared with its FIRST commit rather than
+    # after a demo: `mount_version` is not `@app`-decorated in main.py, so the route scanner
+    # cannot see /version and THIS DECLARATION IS THE ONLY RECORD A READER HAS.
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
+    routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked for.
+          RELEASABLE BY DESIGN and deliberately ungated, for the same reason as every other
+          service's: a gate here would make "is the fix deployed?" require the credential you
+          are usually debugging. Mounted by the ONE helper agent_fleet/utils/version_endpoint.py.
+      - method: POST
+        path: /graphs/{graph_id}
+        identity: initiator
+        gate: app-level transport auth; per-graph entitlement is the INNER verbs' own
+        exposes: one admitted graph's output
+        consumers: [supervisor, mesh router]
+        class: gated
+        justification: >-
+          Invokes ONE graph admitted by a ratified manifest row. There is deliberately no
+          endpoint taking a graph name and a payload — ADR-0046 §2 refuses `run_any_graph`, and
+          the refusal is structural: an id with no row 404s naming what IS admitted. The graph
+          runs as the INITIATOR (ADR-0049 Ruling 1), so an inner verb the caller cannot invoke
+          refuses for the caller rather than succeeding under the host's service identity.
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: liveness plus the admitted graph ids
+        consumers: [kubelet, operator]
+        class: releasable_by_design
+        justification: >-
+          Liveness and the list of graph ids this pod admitted. The ids are the same ones the
+          mesh advertises as verbs, so this discloses nothing the registry does not.
+      - method: GET
+        path: /ready
+        identity: none
+        gate: none
+        exposes: registration state
+        consumers: [kubelet, operator]
+        class: releasable_by_design
+        justification: >-
+          READINESS, NOT LIVENESS. 503 while registration is still retrying or has given up, so
+          a pod that is up but unroutable leaves Service endpoints instead of silently serving.
+          Wiring this to a liveness probe would turn a slow dependency into a crash-loop.
 
   langgraph_support:
     file: agent_fleet/langgraph_support/main.py

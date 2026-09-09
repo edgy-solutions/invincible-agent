@@ -52,6 +52,11 @@ SERVICE_FILES: dict[str, str] = {
     "domain_broker": "helm/invincible-agent/files/domain-broker.py",
     "swarms_scraper": "agent_fleet/swarms_scraper/main.py",
     "langgraph_support": "agent_fleet/langgraph_support/main.py",
+    # engine-lg, the graph host. Added with the engine's FIRST commit — this dict is
+    # hand-kept, and `test_service_enumerations_agree` is the derived floor that fails when it
+    # drifts. It caught this omission by name within minutes of the file existing, which is the
+    # whole argument for keeping a derived population over a remembered list.
+    "graph_host": "agent_fleet/graph_host/main.py",
     # `core_authz` removed 2026-08-07: agent_fleet/core/authz.py is DELETED. It defined no
     # routes; it was carried here only so the manifest could describe the gate helper the
     # ungated rows were told to adopt. That recommendation was the false row — the helper
