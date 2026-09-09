@@ -94,6 +94,34 @@ populated that field — it was `{}` on every ask regardless. **Asserting
 on a field the path does not fill is asserting on a neighbour.** See
 [[assert-on-the-claim-not-its-neighbour]].
 
+## The one sentence that covers all nine
+
+**"Whatever you mock, you have stopped testing."** — cortex-ui-60, 2026-09-09, after a
+mutation survey found four mutations alive in a classifier whose test mocked the fetch
+wholesale: it checked the LABELS and could not see the function with the defect in it.
+
+It generalises past mocks, and that is why it belongs at the top of this list rather than in
+it. **A mock, a fixture, a stub, a mirror of a helper, a hand-written kwarg list and a
+scrape are all the same act: a decision about where the subject ends.** Every shape above is
+that boundary landing on the wrong side of the defect —
+
+  * shape 3 put a fixture where the subject was;
+  * shape 4 put a permissive parser where a compiler was needed;
+  * shape 7 put the isolation on the condition under test;
+  * shape 8 put an empty value where the feature lived;
+  * shape 9 put the assertion on a neighbouring field.
+
+**THE MOCK BOUNDARY AND THE DEFECT BOUNDARY MUST BE ON THE SAME SIDE OF EACH OTHER, and
+nothing tells you when they are not except a mutation that will not die.** The repair is
+always the same direction: move the fake DOWN, toward the transport, and let the code you
+are actually testing run. Faking `httpx.AsyncClient` instead of a `fetch_version` helper
+turned four surviving mutations into five dead ones on the same classifier.
+
+**And a collapse is a property about a SET, so it needs an assertion about the set.** Six
+single-case tests can each pass against a classifier that returns one constant, if each case
+happens to expect that constant. When the defect is "these two states became one", something
+must require them to be DIFFERENT FROM ONE ANOTHER.
+
 ## The defences that actually worked
 
 **Put a floor on anything whose empty case is silent** — a scrape, an
