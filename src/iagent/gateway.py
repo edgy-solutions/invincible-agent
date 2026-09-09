@@ -310,18 +310,63 @@ async def fleet_version() -> dict:
     results: dict = {}
 
     async def _ask(name: str, base: str) -> None:
+        """FOUR STATES, BECAUSE THERE ARE FOUR, and the first version had one.
+
+            a sha        answered and reports its build
+            no_endpoint  answered with 404 — /version is not in that image yet: ROLL IT
+            unstamped    answered, endpoint present, that build carried no GIT_SHA
+            unreachable  nothing came back at all: the service is DOWN
+
+        Collapsing these is the `fetch_registered_entries` conflation one more time.
+        cortex-ui-60 hit it in their header the same night — it read UNREACHABLE for a BFF
+        that was up and serving picks, because it had 404'd an endpoint that simply had not
+        been rolled yet — and warned me this aggregator had the identical shape. It did.
+        "The service is down" and "the service has not been rolled" have OPPOSITE repairs:
+        go and rescue it, versus deploy it.
+
+        THE DISCRIMINATOR IS WHETHER THE SERVICE SPOKE. httpx raises `HTTPStatusError` with
+        a `.response` when it answered and `RequestError` with none when the request never
+        landed. A non-404 status is neither down nor missing, so it carries its own status:
+        401 and 500 are different problems and neither one is "no endpoint".
+
+        The value of `unreachable` is entirely in how rarely it is right.
+        """
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(f"{base}/version")
-                r.raise_for_status()
-                results[name] = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — nothing came back
             results[name] = {
-                "component": name,
-                "git_sha": None,
-                "unreachable": f"{type(exc).__name__}: {exc}"[:200],
-                "url": base,
+                "component": name, "git_sha": None, "url": base,
+                "state": "unreachable",
+                "detail": f"{type(exc).__name__}: {exc}"[:200],
             }
+            return
+
+        if r.status_code == 404:
+            results[name] = {
+                "component": name, "git_sha": None, "url": base,
+                "state": "no_endpoint",
+                "detail": "/version not served by this build — roll it",
+            }
+            return
+        if r.status_code >= 400:
+            results[name] = {
+                "component": name, "git_sha": None, "url": base,
+                "state": "error", "detail": f"HTTP {r.status_code}",
+            }
+            return
+        try:
+            body = dict(r.json())
+        except Exception as exc:  # noqa: BLE001 — answered with something that is not ours
+            results[name] = {
+                "component": name, "git_sha": None, "url": base,
+                "state": "error", "detail": f"unparseable: {type(exc).__name__}",
+            }
+            return
+        # ANSWERED. `unstamped` is not a failure — it is an image built before the stamp
+        # existed, and saying so sends a reader to the build rather than to the pod.
+        body["state"] = "reporting" if body.get("git_sha") else "unstamped"
+        results[name] = body
 
     await asyncio.gather(*(_ask(n, b) for n, b in targets.items()))
     _self = _version_payload("cortex-bff")
@@ -337,7 +382,13 @@ async def fleet_version() -> dict:
         # own head.
         "distinct_shas": sorted(_shas),
         "asked": len(targets),
-        "unreachable": sorted(n for n, r in results.items() if r.get("unreachable")),
+        # BY STATE, so a reader sees which of the four each service is in rather than a
+        # single bucket that means four different repairs.
+        "by_state": {
+            st: sorted(n for n, r in results.items() if r.get("state") == st)
+            for st in ("reporting", "unstamped", "no_endpoint", "error", "unreachable")
+            if any(r.get("state") == st for r in results.values())
+        },
     }
 
 

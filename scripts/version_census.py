@@ -213,11 +213,22 @@ def main() -> int:
             None,
         )
         proc = (report or {}).get("git_sha")
+        # THE STATE, NOT JUST THE SHA. `no_endpoint` (not rolled yet), `unstamped` (rolled,
+        # built before the stamp), `unreachable` (down) and `error` all arrive with a null
+        # sha and have DIFFERENT REPAIRS. Reporting one dash for all four is the collapse
+        # cortex-ui-60's header made the same night, on the same data.
+        state = (report or {}).get("state") or ""
         pod = None
         if proc is None and not args.skip_exec and not fleet:
             pod = _pod_for(args.namespace, name)
             proc = _process_sha(args.namespace, pod) if pod else None
-        rows.append((name, spec_tag, proc or ("n/a" if args.skip_exec else "-"),
+        _shown = proc or {
+            "no_endpoint": "not-rolled",
+            "unstamped": "unstamped",
+            "unreachable": "DOWN",
+            "error": "error",
+        }.get(state, "n/a" if args.skip_exec else "-")
+        rows.append((name, spec_tag, _shown,
                      (report or {}).get("repo") or "invincible-agent"))
 
     if not rows:
