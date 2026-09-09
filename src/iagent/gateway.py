@@ -3637,7 +3637,8 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
 
 
 _ARTIFACT_BY_ID_CYPHER = """
-MATCH (a:AnswerArtifact {id: $artifact_id})-[:PRODUCED_FOR]->(:Actor {actor_id: $user_id})
+MATCH (a:AnswerArtifact {id: $artifact_id})
+OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
 OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
 RETURN a.id                AS id,
        a.status            AS status,
@@ -3647,7 +3648,8 @@ RETURN a.id                AS id,
        a.duration_ms       AS duration_ms,
        a.resolved_intent   AS resolved_intent,
        a.routing_inline    AS routing_inline,
-       parent.id           AS derived_from
+       parent.id           AS derived_from,
+       owner IS NOT NULL   AS is_owner
 """
 
 
@@ -3699,7 +3701,24 @@ async def get_artifact(
     text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
     before it becomes one.
     """
-    _uid = (current_user.authz_id or current_user.email or "").strip()
+    # ── THE KEY THE WRITER STAMPED, NOT THE AUTHORIZATION IDENTITY ─────────────────────
+    #
+    # MEASURED 2026-09-09: this route read `authz_id` and 285 of alice's 286 artifacts were
+    # PERMANENTLY UNREADABLE BY THEIR OWN PRODUCER. `PRODUCED_FOR` is stamped with
+    # `current_user.id` (the JWT `sub`); `authz_id` resolves from `USER_ENTITLEMENT_CLAIM`,
+    # which defaults to `email` and is unset in the deployed config. The write path stamped
+    # `sub`, the read path looked up `email`, and every lookup missed.
+    #
+    # `id` IS THE RIGHT KEY HERE AND authz_id IS NOT, which is the part worth stating rather
+    # than merely fixing. `PRODUCED_FOR` is a DATA RELATIONSHIP recorded at write time, not
+    # an entitlement decision — the question is "did this actor produce this row", and the
+    # only truthful answer comes from the identifier the row was stamped with.
+    # `_pre_resolved_from_ask` two hundred lines up already keys on `id`; this route was the
+    # odd one out, and reaching for "the authorization identity" is exactly how it got there.
+    #
+    # Confirmed in the live graph: PRODUCED_FOR actors are `sub` UUIDs (285, 8, 2 artifacts)
+    # with a legacy email-keyed handful (1, 2).
+    _uid = (current_user.id or "").strip()
     if not _uid:
         # Honest-absent identity denies rather than reading broadly.
         raise HTTPException(status_code=403, detail="no caller identity on this request")
@@ -3712,7 +3731,28 @@ async def get_artifact(
         logger.warning("artifact read failed for %s: %s", artifact_id, exc)
         raise HTTPException(status_code=503, detail="artifact store unavailable")
 
-    if not rec:
+    # ── THE THIRD FACE OF A 404, AND IT IS WHY THIS SURVIVED DEPLOYMENT ────────────────
+    #
+    # The docstring argues 404-over-403 so an id's existence is not disclosed, and keeps 503
+    # apart from 404 because "we could not look" is not "there is no such thing". Both hold.
+    # invincible-agent-5f found the unhandled third member: **"IT IS YOURS AND I LOOKED IN
+    # THE WRONG PLACE" also renders as 404.** A caller cannot tell a misconfigured scope from
+    # an absent artifact, which is precisely why a route table that answered and a suite that
+    # passed both looked fine.
+    #
+    # It stays a 404 TO THE CALLER — the existence-oracle argument is unchanged, and telling
+    # someone "this exists but is not yours" is the disclosure being avoided. The
+    # discriminator goes to the LOG, where it is useful to an operator and reaches nobody
+    # else. That asymmetry is the whole point: the distinction is valuable to us and
+    # dangerous to them.
+    if not rec or not rec.get("is_owner"):
+        if rec is not None:
+            logger.warning(
+                "artifact %s EXISTS but is not PRODUCED_FOR caller %r — an ownership miss, "
+                "not an absence. If this fires for a caller who did produce it, the read key "
+                "and the write key have diverged again.",
+                artifact_id, _uid,
+            )
         raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
 
     intent: dict = {}

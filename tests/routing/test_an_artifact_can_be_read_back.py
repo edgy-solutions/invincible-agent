@@ -31,7 +31,12 @@ _SUBJ = "http://invincible-agent/idp#Portfolio"
 
 
 class _User:
-    authz_id = "alice"
+    # `id` is the JWT `sub` and is what PRODUCED_FOR is stamped with. `authz_id` is the
+    # AUTHORIZATION identity and is deliberately DIFFERENT here — this route read it once
+    # and 285 of one user's 286 artifacts became unreadable by their own producer, so the
+    # fixture keeps them distinguishable rather than letting a wrong key look right.
+    id = "a400f096-d252-49cc-9336-5f47a5b9e4cd"
+    authz_id = "alice@example.com"
     email = "alice@example.com"
 
 
@@ -39,7 +44,7 @@ def _row(**over):
     base = {
         "id": "artifact-1", "status": "complete", "summary": "Portfolio · plan Cost Curve",
         "question_text": "what does spend look like per period", "valid_as_of": 1788908472202,
-        "duration_ms": 15873, "derived_from": None,
+        "duration_ms": 15873, "derived_from": None, "is_owner": True,
         "resolved_intent": json.dumps({
             "subject_uri": _SUBJ, "verb_iri": _VERB, "subject_instance_id": "",
         }),
@@ -127,7 +132,10 @@ async def test_the_read_is_SCOPED_to_the_caller(read):
     reading the whole store."""
     _, seen = await read(_row())
     assert "PRODUCED_FOR" in seen["cypher"], seen["cypher"]
-    assert seen["params"]["user_id"] == "alice"
+    assert seen["params"]["user_id"] == "a400f096-d252-49cc-9336-5f47a5b9e4cd", (
+        "the read is keyed on the AUTHORIZATION identity rather than the one the writer "
+        "stamped — every lookup will miss for every artifact"
+    )
     assert seen["params"]["artifact_id"] == "artifact-1"
 
 
@@ -138,9 +146,13 @@ async def test_someone_elses_artifact_is_404_not_403(read):
     same finding `/resolve_instance` carries, applied before it becomes one here."""
     from fastapi import HTTPException
 
-    with pytest.raises(HTTPException) as exc:
-        await read(None)
-    assert exc.value.status_code == 404
+    # NOT-FOUND and NOT-YOURS are two different rows now — the query returns the artifact
+    # with `is_owner` false rather than returning nothing — and both must still be 404 to
+    # the caller. The discriminator goes to the log, not the response.
+    for row in (None, _row(is_owner=False)):
+        with pytest.raises(HTTPException) as exc:
+            await read(row)
+        assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -151,8 +163,9 @@ async def test_an_identityless_caller_is_DENIED_not_read_broadly(read):
     from fastapi import HTTPException
 
     class _Anon:
-        authz_id = ""
-        email = ""
+        id = ""
+        authz_id = "alice@example.com"   # present, and NOT the key: must still deny
+        email = "alice@example.com"
 
     with pytest.raises(HTTPException) as exc:
         await read(_row(), _Anon())
