@@ -195,19 +195,56 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
         if len(ids) != 5:
             _void(f"the seed returned {len(ids)} artifact ids, not five")
         panels = []
-        for aid in ids:
+        for i, aid in enumerate(ids):
             if aid is None:
-                panels.append({"verb": None, "role": None, "slots": {}})
+                # A seeded question that FAILED. Real information, aligned to slot index by the
+                # seeder on purpose, and a legitimate part of a panel set.
+                panels.append({"verb": None, "role": None, "slots": {}, "unseeded": True})
                 continue
             a = httpx.get(f"{base.rstrip('/')}/artifacts/{aid}", headers=headers, timeout=60)
-            a.raise_for_status()
+
+            # ── READ FAILURES ARE VOID, NEVER DIFFERENCES ───────────────────────────────────
+            # `GET /artifacts/{id}` is gated and scoped to the caller by the PRODUCED_FOR edge,
+            # and its author states two shape facts this arm must respect (2026-09-09):
+            #
+            #   * an unreachable graph answers 503, NOT 404 — "we could not look" is not "there
+            #     is no such thing". Treating 503 as absence would record a difference that
+            #     never happened.
+            #   * `verb_iri` is null when unrecorded and never a placeholder; the recorded
+            #     non-answer "UNKNOWN" is normalised to null at the source rather than
+            #     forwarded, because two artifacts both saying "UNKNOWN" would compare EQUAL on
+            #     a value meaning "no idea".
+            #
+            # So: anything that is not a clean 200 ends the run as VOID. An authorisation
+            # failure especially — two runs that both read nothing would agree perfectly.
+            if a.status_code == 503:
+                _void(f"artifact {aid} (ordinal {i}): the graph was unreachable (503). We could "
+                      f"not LOOK; that is not a difference and must not be recorded as one")
+            if a.status_code in (401, 403):
+                _void(f"artifact {aid} (ordinal {i}): not readable under this identity "
+                      f"({a.status_code}). Two runs that both read nothing agree perfectly")
+            if a.status_code == 404:
+                _void(f"artifact {aid} (ordinal {i}): the seed returned this id and the store "
+                      f"does not have it. That is an anomaly in the seed/read path, not a "
+                      f"finding about panel-set stability")
+            if a.status_code != 200:
+                _void(f"artifact {aid} (ordinal {i}): unexpected status {a.status_code}")
             panels.append({"verb": (a.json().get("routing") or {}).get("verb_iri"),
-                           "role": None, "slots": {}})
-        # An all-None panel set is the signature of recovery having failed silently. Comparing
-        # two of them would report agreement about nothing at all.
-        if all(p["verb"] is None for p in panels):
-            _void("no panel yielded a verb — recovery failed silently; two such runs would "
-                  "compare EQUAL and report a passing seal about nothing")
+                           "role": None, "slots": {}, "unseeded": False})
+
+        # ── A NULL VERB IS AN UNREAD PANEL, NOT AN EQUAL ONE ────────────────────────────────
+        # Scoped to panels that DID seed: a null there means the verb was never recorded, so the
+        # seal would be comparing "no idea" against "no idea" and scoring it as agreement. The
+        # all-null case is the catastrophic version (every panel silently equal); the partial
+        # case is the quiet one, and it is the reason this checks ANY rather than ALL.
+        #
+        # If nulls turn out to be normal rather than exceptional, that is a finding about the
+        # RECORDING path to fix at its source — the way "UNKNOWN" was — and not a reason to
+        # relax this into scoring unknowns as matches.
+        unread = [i for i, p in enumerate(panels) if not p["unseeded"] and p["verb"] is None]
+        if unread:
+            _void(f"panels {unread} seeded but recorded no verb_iri. A null is UNREAD, not "
+                  f"equal — comparing two of them scores agreement about nothing")
         return panels
 
     first, second = seed("seal3-run-a"), seed("seal3-run-b")
