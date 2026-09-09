@@ -624,6 +624,17 @@ _IRI_PREFIXES = {
     # as having no binding at all -- a finance card drawn as KNOWLEDGE_DOCUMENT,
     # "No content available", on an answer that routed perfectly.
     "fin:": "http://invincible-agent/fin#",
+    # cost: (engine-cost) -- THE THIRD SHIPPING OF THIS DEFECT, and the first where the two
+    # tables had already diverged before anyone looked. `cost:` was added to the READ side
+    # (capabilities.canonical_iri_for_lookup) when the seven cost bindings landed, and not
+    # here. The read side folds both forms, so every local check passed; the WRITE side is
+    # what decides the stored form, so the seven rows would have gone onto the wire compact,
+    # missed the linker's MATCH against full-IRI :OntologyClass nodes, and registered as
+    # accepted-and-unreachable.
+    #
+    # The measured cost of that miss is not only a blank card: the hardened path is ~0.12s
+    # and the BAML-designed fallback it drops to is ~16.4s, and the fallback looks plausible.
+    "cost:": "http://invincible-agent/cost#",
 }
 
 

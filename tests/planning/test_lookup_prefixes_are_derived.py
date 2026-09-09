@@ -29,6 +29,23 @@ from agent_fleet.presentation_agent.capabilities import (
     PRESENTATION_CAPABILITIES,
     canonical_iri_for_lookup,
 )
+from agent_fleet.utils.mesh_registration import _IRI_PREFIXES, _expand_mesh_iri
+
+#: THERE ARE TWO TABLES AND THEY DO DIFFERENT JOBS, which is legitimate — but they must agree
+#: on the SET of namespaces or a row goes onto the wire in a form the reader can fold and the
+#: linker cannot match.
+#:
+#:   _IRI_PREFIXES              WRITE side. Decides the form the graph STORES.
+#:   _IRI_PREFIXES_FOR_LOOKUP   READ side. Folds compact and full to one token.
+#:
+#: The read side folding both forms is exactly why a write-side omission passes every local
+#: check: `cost:` was added to the reader when the cost bindings landed and not to the writer,
+#: and the first version of THIS FILE checked only the reader — a population derived correctly
+#: and then applied to one of its two consumers.
+_TABLES = {
+    "write (_IRI_PREFIXES)": _IRI_PREFIXES,
+    "read (_IRI_PREFIXES_FOR_LOOKUP)": _IRI_PREFIXES_FOR_LOOKUP,
+}
 
 ROOT = Path(__file__).resolve().parents[2]
 ONTOLOGIES = ROOT / "setup" / "ontologies"
@@ -62,19 +79,57 @@ def test_the_scan_ACTUALLY_FINDS_the_namespaces():
         assert expected in found, f"{expected} is declared in the ontologies and was not found"
 
 
-def test_every_declared_namespace_is_EXPANDABLE_by_the_lookup():
-    """The seal that would have been red before `cost:` was added."""
-    missing = {p: iri for p, iri in declared_namespaces().items()
-               if p not in _IRI_PREFIXES_FOR_LOOKUP and p not in _EXEMPT}
-    assert not missing, (
-        "these namespaces are declared in setup/ontologies and cannot be expanded by the "
-        f"presentation lookup: {missing}. Any binding row using one would register, report "
-        "ACCEPTED, and never match a payload — a card falling through to KNOWLEDGE_DOCUMENT "
-        "with 'No content available'. Add them to _IRI_PREFIXES_FOR_LOOKUP, or exempt them in "
-        "_EXEMPT with the reason.")
+def test_every_declared_namespace_is_EXPANDABLE_by_BOTH_TABLES():
+    """Both, not either. Checking only the reader is how `cost:` reached the wire compact.
+
+    A namespace the READER knows and the WRITER does not is the worst of the three states: the
+    row is stored in compact form, every local fold succeeds, and the linker's MATCH against
+    full-IRI `:OntologyClass` nodes misses. The capability registers, reports ACCEPTED, and is
+    never reachable — and the card silently drops to the BAML-designed fallback, measured at
+    ~16.4s against ~0.12s for the hardened path.
+    """
+    declared = declared_namespaces()
+    problems = []
+    for label, table in _TABLES.items():
+        for prefix, iri in declared.items():
+            if prefix not in table and prefix not in _EXEMPT:
+                problems.append(f"{prefix} missing from {label}")
+    assert not problems, (
+        "namespaces declared in setup/ontologies that a prefix table cannot expand:\n  "
+        + "\n  ".join(problems))
 
 
-def test_the_expansions_AGREE_with_the_ontologies():
+def test_THE_TWO_TABLES_AGREE_on_their_namespace_set():
+    """They diverge silently, and the divergence has now shipped three times.
+
+    This does not require them to be one table — they decide different things — only that a
+    namespace known to one is known to the other. The failure is asymmetric and the dangerous
+    direction is reader-knows/writer-does-not, so the message names which side is short.
+    """
+    write, read = set(_IRI_PREFIXES), set(_IRI_PREFIXES_FOR_LOOKUP)
+    assert write == read, (
+        f"only the WRITER knows {sorted(write - read)}; only the READER knows "
+        f"{sorted(read - write)}. A namespace the reader folds and the writer does not put on "
+        "the wire is stored compact and never matched.")
+    for prefix in write:
+        assert _IRI_PREFIXES[prefix] == _IRI_PREFIXES_FOR_LOOKUP[prefix], (
+            f"{prefix} expands to two different namespaces on the two sides")
+
+
+def test_EVERY_BINDING_ROW_SURVIVES_THE_WRITE_PATH():
+    """The property the wire-form test states, asserted here against the derived population too
+    — because that test enumerates the rows and this file enumerates the NAMESPACES, and the
+    defect was a namespace missing rather than a row being wrong."""
+    for row in PRESENTATION_CAPABILITIES:
+        for field in ("subject_uri", "object_uri"):
+            value = row.get(field) or ""
+            if not value:
+                continue
+            assert _expand_mesh_iri(value).startswith("http"), (
+                f"{value} stays compact through the WRITE path - the linker will miss it")
+
+
+def test_the_expansions_AGREE_with_the_ontologies():  # noqa: D401 - reader side
     """A prefix present but pointing somewhere else is worse than one that is absent: it
     expands to a URI no payload carries, and the miss looks like a data problem."""
     declared = declared_namespaces()
