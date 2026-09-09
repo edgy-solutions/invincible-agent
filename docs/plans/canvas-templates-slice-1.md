@@ -215,3 +215,76 @@ is three EAC panels or a panel-local ask, and that is a ruling, not a build deta
 * **The EAC ruling** — one pinned method, three panels, or a panel-local ask.
 * **`program` as a shared slot** for `program_finance`, gated on the dispatch-boundary slot carry.
 * Unchanged: the cortex `TEMPLATES` row, frontend-first, before either template is advertised.
+
+---
+
+## 2026-09-09 — A2 REFUSED on evidence, A4 recorded but not yet honourable
+
+Two dispatched items. Neither can be applied as stated, and both premises are disprovable from
+code that landed last night. Recorded here because *"why is `program` still not a shared slot"* is
+a question that will be asked again.
+
+### A2 — declaring `program` as a shared slot would BREAK the one template that seeds
+
+The dispatch: *"declare `program` as a shared slot on both templates… seeding a finance board
+should then raise the one-option `program` ask and bind it into all six panels… it is what makes
+`program_finance` seedable at all."*
+
+**There is no ask, and nothing binds.** `gateway.py`'s seed route computes
+`_unbound = {required shared slot names} ∪ {every panel's consumes}` and, if that set is
+non-empty, raises **409** in its own words: *"declares shared slot(s) … that nothing binds yet, so
+every panel would refuse. This is the ADR-0050 §3 carry, not a fault in the template or the
+request."* The elicitation half of §3 does not exist yet; what exists is the refusal that stands
+in for it.
+
+So the dispatch's effect would be the reverse of its stated purpose:
+
+| template | today | after declaring `program` |
+|---|---|---|
+| `portfolio` | **SEEDS** — the only one that does | **409, stops seeding** |
+| `program_finance` | 501, not yet seedable | 409 — still not seedable, different reason |
+
+`program_finance` does not become seedable; its refusal changes shape. And `portfolio` — the live
+demo path, the only template past the `if template_id != "portfolio"` 501 gate — would go from
+working to refusing. **That is a regression on the only path that currently produces a board.**
+
+**And `program` is not a planning concept at all.** `program_id` occurs **0 times** in
+`agent_fleet/planning_agent/measures.py` and **26 times** in the finance engine's. The five
+planning verbs take `scope_initiative_id`, `site_id`, `group_by`, `color_by`, `window`, `as_of` —
+no program anywhere. Declaring it on `portfolio` would declare a slot none of its verbs accept,
+which is the invented-parameter defect one plane up from the invented-IRI rule.
+
+**What actually unblocks `program_finance`, in order:** (1) the seeder dispatches each panel's
+DECLARED verb instead of running the portfolio phrase list — that is the 501 gate's own stated
+condition; (2) something binds a shared slot's answer into panels — the 409 gate's condition.
+Declaring the slot is the LAST step, not the first, and doing it first converts a clear 501 into a
+409 while breaking `portfolio`.
+
+**The peer's `test_the_unbound_shared_slot_refusal_is_UNREACHABLE_TODAY_and_that_is_recorded`
+therefore stays green, and stays right.** It was written to go red when a ratified template
+declares shared slots, so that the dead 409 branch is not believed to be exercised. It should go
+red when the carry lands — not when a template declares a slot the carry cannot serve. Turning it
+red today by declaring the slot would be satisfying the seal's letter while defeating its purpose.
+
+### A4 — the EAC ruling is right, recorded, and not expressible by this verb
+
+The ruling: **all three methods on one panel; pinning hides the divergence that is the finding.**
+Accepted without reservation — the spread ($13.13M / $14.15M / $14.79M against a $12.00M BAC, ~14%
+of BAC) *is* the answer, and it was the reason for declining to pin it in the first place.
+
+**It cannot be honoured from a template.** `fin_eac_calculation` takes `method: EACMethod` — a
+single `Literal["CPI","CPI_SPI","REMAINING_AT_BUDGET"]` — and raises `MethodRequired` on anything
+else. There is no multi-method affordance in the finance engine. **One panel is one verb
+invocation is one method.** A YAML cannot produce three numbers from a verb that returns one, and
+`method: [.., .., ..]` would be refused by the verb, not honoured by it.
+
+So the ruling needs an **engine** change — the verb returning all three rows, or a sibling
+comparison verb — which belongs to the finance lane. `method: CPI` remains in the file as an
+explicit **placeholder**, now labelled as one: the note records the ruling, says the verb cannot
+honour it, and states that the panel is inert anyway because the template refuses at seed time.
+The placeholder costs nothing today and the ruling is written down rather than quietly unmet.
+
+**What would make this wrong to leave:** if `program_finance` ever becomes seedable before the
+engine change lands, that panel emits one method and the ruling is silently violated by a file
+that claims to record it. Whoever closes the 501 gate must check this note first — which is why it
+is in the panel rather than only here.

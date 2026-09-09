@@ -107,10 +107,16 @@ panels:
     slots:
       method: CPI
     note: >-
-      REQUIRES program_id AND method, NEITHER of which has a default. `method` is declared here
-      as CPI to make the panel expressible at all — but read ADR-0045 before treating that as
-      settled: EAC is spoken-mandatory precisely BECAUSE the three methods disagree materially
-      (CPI, CPI_SPI, REMAINING_AT_BUDGET span $13.13M/$14.15M/$14.79M against a $12.00M budget
-      on the engine's own seed). A template that silently picks one is choosing the answer.
-      **This is the panel most likely to be wrong as declared**, and it is flagged rather than
-      quietly defaulted: the alternative is three EAC panels, or a panel-local ask.
+      RULED 2026-09-09 — ALL THREE METHODS ON ONE PANEL. Not three panels, and not a pinned
+      method: *pinning hides the divergence that is the finding*. CPI, CPI_SPI and
+      REMAINING_AT_BUDGET span $13.13M / $14.15M / $14.79M against a $12.00M budget on the
+      engine's own seed — a ~14%-of-BAC spread that IS the answer, and a template that silently
+      picks one is choosing it on the reader's behalf.
+      **THE RULING CANNOT BE HONOURED BY THIS VERB YET, so `method: CPI` stands as a placeholder
+      and is NOT a considered choice.** `fin_eac_calculation` takes `method: EACMethod` — one
+      Literal — and raises `MethodRequired` on anything else; there is no multi-method affordance
+      anywhere in the finance engine. One panel is one verb invocation is one method. Honouring
+      the ruling needs an ENGINE change (the verb returning all three rows, or a sibling
+      comparison verb), which belongs to the finance lane, not to this file. Until then this
+      panel is inert anyway — the template refuses at seed time, see the header — so the
+      placeholder costs nothing and the ruling is recorded rather than quietly unmet.
