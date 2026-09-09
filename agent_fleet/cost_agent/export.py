@@ -107,7 +107,14 @@ def module_hashes() -> dict[str, str]:
 
     So the hash is taken over exactly the string that reaches the page.
     """
-    from agent_fleet.cost_agent import pricing
+    # FLAT-LAYOUT PAIR. The engine image flattens `agent_fleet/cost_agent` to `/app`, so the
+    # packaged path resolves in the repo and raises in the image — the exact asymmetry that
+    # makes a guard pass every test and disable itself in production. Same try/except idiom
+    # as every other cross-tree import in this fleet.
+    try:  # pragma: no cover - import path differs by runtime
+        import pricing  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover
+        from agent_fleet.cost_agent import pricing
 
     out = {}
     for mod, name in ((pricing, "pricing.py"),):

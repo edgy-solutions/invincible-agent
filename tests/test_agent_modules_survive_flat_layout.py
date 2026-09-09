@@ -155,17 +155,26 @@ def test_relative_imports_are_recoverable() -> None:
 
 
 # ── Waived, with the reason and an expiry mechanism ──────────────────────────────────
-# A real defect this seal found, in code that is NOT this lane's to change. Registry work
-# belongs to another agent, so it is RECORDED rather than silently fixed or silently
-# allowed. Verified live against the running mesh-registrar image on 2026-08-22:
+# EMPTY AS OF 2026-09-09, and the emptiness is the interesting part.
+#
+# The one entry was `agent_fleet/mesh_registrar/v2_restate.py:162` — a REAL defect this seal
+# found, waived only because registry work was another lane's. It was live-verified against
+# the running image on 2026-08-22:
 #     >>> from agent_fleet.mesh_registrar.main import _get_neo4j_driver
 #     ModuleNotFoundError: No module named 'agent_fleet'
-# The RegistrationSaga VirtualObject IS mounted, so the handler raises when invoked.
+# The RegistrationSaga VirtualObject IS mounted, so the handler raised when invoked — a saga
+# that accepts a registration request and then fails at its driver lookup, which is the
+# silent half-registration this repo has chased twice.
+#
+# Both offenders were paired on 2026-09-09, ahead of the first commit-tagged roll: a
+# registration failing at startup while a brand-new version census reports for the first
+# time is the worst possible way to test either one.
+#
+# `test_no_waiver_outlives_its_defect` then went red on this dict, which is the mechanism
+# working: a waiver that survives its defect is an allowance nobody re-examines, and this
+# one would have read as an open registry bug for as long as it sat here.
 # See docs/plans/packaged-imports-unresolvable-in-agent-images.md.
-WAIVED = {
-    "agent_fleet/mesh_registrar/v2_restate.py:162":
-        "another lane's file; live-verified real, filed as its own packet",
-}
+WAIVED: dict[str, str] = {}
 
 
 def _imported_modules(node: ast.AST) -> list[str]:

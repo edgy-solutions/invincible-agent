@@ -159,9 +159,19 @@ if _RESTATE_AVAILABLE:
 
         # Resolve driver + weaviate client inside the handler so the
         # request shape stays JSON-serializable.
-        from agent_fleet.mesh_registrar.main import (
-            _get_neo4j_driver, _get_weaviate_client,
-        )
+        # FLAT-LAYOUT PAIR, AND THIS ONE IS ON THE REGISTRATION PATH. The registrar's image
+        # flattens `agent_fleet/mesh_registrar` to `/app`, so the packaged form raises
+        # ImportError inside the handler — a registration saga that fails at its driver
+        # lookup, after the request was accepted, which is precisely the silent
+        # half-registration this repo has chased twice.
+        try:  # pragma: no cover - import path differs by runtime
+            from main import (  # type: ignore[import-not-found]
+                _get_neo4j_driver, _get_weaviate_client,
+            )
+        except ImportError:  # pragma: no cover
+            from agent_fleet.mesh_registrar.main import (
+                _get_neo4j_driver, _get_weaviate_client,
+            )
 
         def _invoke() -> dict:
             outcome = v2_saga.run_registration_saga(
