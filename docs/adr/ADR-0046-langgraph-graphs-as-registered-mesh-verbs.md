@@ -502,7 +502,27 @@ Each of these is genuinely open. **None is a decision written as prose.**
    (§9's slice 1); or keep it as the hosting engine for option A. Decided by 1 and 2, not
    independently — but **not left as it is** (§4).
 
-   > **RULED 2026-09-06 — RETIRE IT.** Decided by the architect on the finding in
+   > **RULED 2026-09-06 — RETIRE IT.**
+   > **SOURCE:** architect thread, "four rulings" message, **item 2** — session transcript
+   > `~/.claude/projects/c--Users-cnogr-git-invincible-agent/86cf05ab-2d1a-4c38-80fa-87ad65a63878.jsonl`,
+   > user turn at **`2026-09-07T02:56:36.894Z`** (the architect describes it as the morning of
+   > 09-06; the UTC stamp is the machine-findable anchor, and they disagree by a timezone —
+   > cite both or the next search fails on the one you picked). Ruled verbatim: *"Declaring a
+   > slot for it would turn an unimplemented feature into a contract — that's exactly right,
+   > and it means there is no honest verb to register. … slice 1 just answered it by finding
+   > nothing to re-register."*
+   >
+   > **WHY THE CITATION IS HERE AND NOT "decided by the architect".** This line first read
+   > exactly that, and it cost a full stop-work: a later thread could not find the ruling,
+   > searched git history, every ADR, every plan packet and every session log — the right
+   > method, and it came back empty, because **relaying the ruling to a lane WAS its only
+   > recording.** It correctly concluded nobody had ruled, and correctly challenged a
+   > retirement already executed. Producing the source took a scripted search across sixteen
+   > transcripts. **A ruling has a citable source or it is not one**, and a ruling's substance
+   > being right does not repair its provenance being unfindable. Apply this to every `RULED`
+   > line: quote the sentence, name the transcript, give the timestamp.
+   >
+   > Decided on the finding in
    > [`slice-1-cannot-declare-slots-for-an-input-no-node-reads`](../plans/slice-1-cannot-declare-slots-for-an-input-no-node-reads.md):
    > `synthesize_stateful` sends `dagster_context` — every parallel sub-task's result, fanned in,
    > which *is* the use case — Engine B writes it into `messages`, and **no node reads it**. Three
