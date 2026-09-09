@@ -225,9 +225,19 @@ def test_the_unbound_shared_slot_refusal_is_UNREACHABLE_TODAY_and_that_is_record
     any request that can currently be made.
 
     Recording that here is the point. A guard nobody can reach, sitting behind a test that
-    looks like it covers it, is how an unreachable branch is believed to be exercised — and
-    when §3's carry lands and `shared_slots` appear, this test goes red and tells the next
-    reader that the 409 path is now live and needs a real case.
+    looks like it covers it, is how an unreachable branch is believed to be exercised.
+
+    **IT MUST GO RED WHEN THE CARRY LANDS, NOT WHEN A TEMPLATE DECLARES A SLOT THE CARRY
+    CANNOT SERVE** — corrected by invincible-agent-5f, 2026-09-09, who was asked to declare
+    `program` today and refused. Declaring the slot first would satisfy this test's LETTER
+    and defeat its PURPOSE: the 409 branch would still be unreachable in effect, just behind
+    a refusal nobody wanted, and its replacement assertion would be written against a state
+    we manufactured rather than reached. Worse, it would move the one template that seeds
+    from SEEDS to REFUSES.
+
+    So the trigger is the carry, and the order is: the seeder dispatches declared verbs, then
+    something binds the answer, THEN the slot is declared and this goes red for the right
+    reason.
     """
     from iagent.canvas_template import load_template, ratified_template_ids
 

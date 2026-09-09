@@ -250,7 +250,28 @@ it.**
 
 ## §3 — Template-level slots: one ask, N panels
 
-A template may declare **slots its panels share** — `program` is the worked case. The rules:
+A template may declare **slots its panels share** — `program` is the worked case.
+
+> **A shared slot is A PARAMETER THE PANELS' VERBS ACTUALLY TAKE, not a statement that the
+> panels are about the same thing.** *(invincible-agent-5f, 2026-09-09.)*
+>
+> The second reading is what "shared" sounds like in English, which is exactly why it will be
+> reached for. The worked case: declaring `program` on `portfolio.yaml` is perfectly true in
+> the sense that all five panels are about one portfolio's programme of work — and false in
+> the only sense that executes. `program_id` occurs **zero times** in
+> `planning_agent/measures.py` and twenty-six times in the finance engine's; the five planning
+> verbs take `scope_initiative_id` / `site_id` / `group_by` / `color_by` / `window` / `as_of`.
+> A shared slot none of the panels' verbs accept is the **invented-parameter** shape, one
+> plane up from the invented-IRI rule.
+>
+> **And declaring one is the LAST step, not the first.** Until the carry binds an answer into
+> panels, `gateway.py` refuses any template with an unbound shared slot (409) — so declaring
+> `program` on the one template that currently seeds would move it from SEEDS to REFUSES,
+> while the template it was meant to unblock stays unseedable and merely changes which
+> refusal it gives. Order: the seeder dispatches declared verbs, then something binds the
+> answer, *then* the slot is declared.
+
+The rules:
 
 1. **Declaration.** A template declares its shared slots at the top level; a panel declares which of
    them it consumes. A panel may also declare panel-local slots, which are never asked at load.
