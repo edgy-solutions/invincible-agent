@@ -656,7 +656,8 @@ than it is today. The flat/packaged import idiom the extraction must survive is
 > [`the-manifest-is-the-fourth-consumer-not-the-third`](../plans/the-manifest-is-the-fourth-consumer-not-the-third.md),
 > which carries the measurement and the requirements list; the deltas to *this* section are:
 >
-> **1. `agent_fleet/cost_agent/slots.py` landed 2026-09-03 — the third copy is not the manifest.**
+> **1. `agent_fleet/cost_agent/slots.py` landed 2026-09-02 (`ec0a1b3`) — the third copy is not
+> the manifest.**
 > The threshold this paragraph invokes has already been crossed, by a consumer it did not
 > anticipate. The manifest is the **fourth**. Engine-cost's author saw it, named it in the module,
 > and kept that copy deliberately the thinnest so the extraction would have less to reconcile — the

@@ -7,7 +7,7 @@ closed-by:
 repo:       invincible-agent
 ruled-by:   ADR-0046 §9 (the extraction is on slice 1's critical path) — this item SCOPES the manifest against the extraction's real shape, and corrects §9's count
 code-site:  agent_fleet/finance_agent/slots.py, agent_fleet/planning_agent/slots.py, agent_fleet/cost_agent/slots.py
-summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-03 — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three: the MECHANISM has forked, not just the vocabulary §9 predicted — _type_of returns (type, values) in F and P and a bare str in C, and the merge surface is six engine-unique functions, not one. THE KEY DIVERGENCE THIS PACKET ALSO REPORTED IS CLOSED: engine-cost's slots_for emitted `mandatory` where F and P emitted `required`, and ad34120 (2026-09-04) unified all three on `required`, sealed against the consumer. Re-verified 2026-09-06 — the fork and the six functions STAND and are the extraction's real content; the key is settled.
+summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-02 (ec0a1b3) — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three: the MECHANISM has forked, not just the vocabulary §9 predicted — _type_of returns (type, values) in F and P and a bare str in C, and the merge surface is six engine-unique functions, not one. THE KEY DIVERGENCE THIS PACKET ALSO REPORTED IS CLOSED: engine-cost's slots_for emitted `mandatory` where F and P emitted `required`, and ad34120 (2026-09-04) unified all three on `required`, sealed against the consumer. Re-verified 2026-09-06 — the fork and the six functions STAND and are the extraction's real content; the key is settled.
 ---
 
 # The manifest is the fourth consumer, and the mechanism has already forked
@@ -20,8 +20,15 @@ than an imagined one, per [ADR-0046](../adr/ADR-0046-langgraph-graphs-as-registe
 ## §A — The count is stale, and the correction is not cosmetic
 
 §9 states the manifest is the third consumer and that the third is where duplication *"stops being
-a cost and becomes the defect"* (`finance_agent/slots.py`). **The third copy arrived on 2026-09-03
+a cost and becomes the defect"* (`finance_agent/slots.py`). **The third copy arrived on 2026-09-02 (`ec0a1b3`)
 as `agent_fleet/cost_agent/slots.py`.** The manifest is the fourth.
+
+> **DATE CORRECTED 2026-09-08.** This packet first said 2026-09-03, because I read the file's
+> MTIME (`ls -la` showed "Sep 3 12:21") instead of asking git, and a checkout's mtime is when the
+> file was last *written here*, not when the change *landed*. Same class as ADR-0046 §8.4's
+> ruling date being a day off — which is half the reason that ruling could not be found when a
+> later thread went looking. **A date in a packet is a search key.** Cite the sha beside it: a
+> sha resolves, a remembered date does not.
 
 **Engine-cost's author saw it and handled it well** — the module says so by name, keeps itself the
 thinnest of the three, and declines to re-implement the referent map or arity *"precisely so the
