@@ -205,13 +205,18 @@ def main() -> int:
         if OUR_PREFIX not in image:
             continue
         spec_tag = image.rsplit(":", 1)[-1] if ":" in image else "?"
-        # The aggregator keys by COMPONENT (engine-o), the cluster by DEPLOYMENT
-        # (iagent-engine-o). Match on the suffix rather than assuming either naming.
-        report = next(
-            (r for k, r in fleet.items()
-             if name.endswith(k) or k.endswith(name.replace("iagent-", ""))),
-            None,
-        )
+        # AN EXACT JOIN, NOT A SUFFIX GUESS. The first live census showed six services with
+        # no sha while every one of them was reporting correctly: the heuristic matched
+        # `iagent-engine-a` to the key "a" by luck and failed to match `iagent-engine-o` to
+        # "ontology" at all. Worse than the misses, a suffix rule can MATCH THE WRONG
+        # SERVICE and report one pod's sha under another's name, which reads as a
+        # successful census.
+        #
+        # The aggregator now keys by the component each service reports for ITSELF
+        # (`engine-o`), and a deployment is `iagent-` plus that. Exact, and a service whose
+        # name does not follow the convention is MISSED VISIBLY rather than mismatched.
+        _key = name[len("iagent-"):] if name.startswith("iagent-") else name
+        report = fleet.get(_key)
         proc = (report or {}).get("git_sha")
         # THE STATE, NOT JUST THE SHA. `no_endpoint` (not rolled yet), `unstamped` (rolled,
         # built before the stamp), `unreachable` (down) and `error` all arrive with a null

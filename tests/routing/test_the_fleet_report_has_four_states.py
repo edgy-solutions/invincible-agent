@@ -157,3 +157,55 @@ async def test_the_FOUR_are_actually_distinguishable(monkeypatch):
         r, _ = await _report(outcome, monkeypatch)
         seen.add(r["state"])
     assert len(seen) == 4, f"the four outcomes collapsed to {sorted(seen)}"
+
+
+@pytest.mark.asyncio
+async def test_the_report_is_keyed_by_what_the_service_CALLS_ITSELF(monkeypatch):
+    """FOUND BY THE FIRST LIVE CENSUS, 2026-09-09, and it read as six stale services.
+
+    The aggregator used to key each report by the ENV VAR its URL came from —
+    `ENGINE_A_PUBLIC_URL` became "a", `ONTOLOGY_SERVICE_URL` became "ontology". Those are
+    accidents of a variable name, so a consumer had to GUESS which deployment "ontology" is,
+    and the census's guess was a suffix match. It matched `iagent-engine-a` to "a" by luck
+    and failed to match `iagent-engine-o` to "ontology" at all: six services showed no sha
+    while every one of them was reporting correctly.
+
+    The misses were the visible half. A suffix rule can also MATCH THE WRONG SERVICE and
+    report one pod's sha under another's name, which reads as a successful census and is the
+    failure nobody would have looked for.
+
+    The payload carries the canonical `component`. Keyed by that, the join is exact, and a
+    service whose name breaks the convention is missed VISIBLY rather than mismatched.
+    """
+    import iagent.gateway as gw
+
+    monkeypatch.setattr(gw, "_fleet_version_targets",
+                        lambda: {"ontology": "http://engine-o:8084"})
+    monkeypatch.setattr(gw.httpx, "AsyncClient", _Client(
+        _Resp(200, {"component": "engine-o", "repo": "invincible-agent",
+                    "git_sha": "1a7ceeaa305c"})))
+    doc = await gw.fleet_version()
+
+    assert "engine-o" in doc["services"], (
+        f"keyed by the env-derived name instead of the reported component: "
+        f"{sorted(doc['services'])}"
+    )
+    assert "ontology" not in doc["services"]
+    # The env name is KEPT, not discarded — it is how an operator finds which variable
+    # pointed here when a service is unreachable and cannot name itself.
+    assert doc["services"]["engine-o"]["asked_as"] == "ontology"
+
+
+@pytest.mark.asyncio
+async def test_a_service_that_CANNOT_name_itself_keeps_the_env_key(monkeypatch):
+    """The control on the re-keying. A 404 or a dead socket carries no payload and therefore
+    no component, so there is nothing canonical to key by — it stays under the name we asked
+    it by, which is the only true thing available. Silently dropping it would remove exactly
+    the service most worth reporting."""
+    import iagent.gateway as gw
+
+    monkeypatch.setattr(gw, "_fleet_version_targets", lambda: {"w": "http://engine-w:8093"})
+    monkeypatch.setattr(gw.httpx, "AsyncClient", _Client(_Resp(404)))
+    doc = await gw.fleet_version()
+    assert doc["services"]["w"]["state"] == "no_endpoint"
+    assert doc["services"]["w"]["asked_as"] == "w"

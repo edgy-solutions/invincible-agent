@@ -337,7 +337,7 @@ async def fleet_version() -> dict:
         except Exception as exc:  # noqa: BLE001 — nothing came back
             results[name] = {
                 "component": name, "git_sha": None, "url": base,
-                "state": "unreachable",
+                "state": "unreachable", "asked_as": name,
                 "detail": f"{type(exc).__name__}: {exc}"[:200],
             }
             return
@@ -345,7 +345,7 @@ async def fleet_version() -> dict:
         if r.status_code == 404:
             results[name] = {
                 "component": name, "git_sha": None, "url": base,
-                "state": "no_endpoint",
+                "state": "no_endpoint", "asked_as": name,
                 "detail": "/version not served by this build — roll it",
             }
             return
@@ -366,7 +366,14 @@ async def fleet_version() -> dict:
         # ANSWERED. `unstamped` is not a failure — it is an image built before the stamp
         # existed, and saying so sends a reader to the build rather than to the pod.
         body["state"] = "reporting" if body.get("git_sha") else "unstamped"
-        results[name] = body
+        # KEYED BY WHAT THE SERVICE CALLS ITSELF, not by the env var we found its URL in.
+        # The env-derived name is an accident of the variable (`ENGINE_A_PUBLIC_URL` -> "a",
+        # `ONTOLOGY_SERVICE_URL` -> "ontology"), and a consumer then has to GUESS which
+        # deployment "ontology" is. Measured on the first live census: six services showed
+        # no sha purely because the guess failed, while every one of them was reporting
+        # correctly. The payload carries the canonical `component` — use it.
+        body.setdefault("asked_as", name)
+        results[str(body.get("component") or name)] = body
 
     await asyncio.gather(*(_ask(n, b) for n, b in targets.items()))
     _self = _version_payload("cortex-bff")

@@ -47,15 +47,82 @@ no reason to check a symbol from someone else's commit.
 
 **So:** the tag names the commit, and rolls stop being order-dependent.
 
-## Current state: the litany REPORTS, it does not yet ENFORCE
+## The prerequisite has landed (2026-09-09)
 
-The chart still publishes `:latest`, so `LEG2` prints the unpinned warning and continues.
-`REQUIRE_PINNED_IMAGE=1` turns it into a stop today, and `EXPECT_COMMIT=<sha>` asserts the tag
-carries a specific commit.
+**Migrating the chart to commit-tagged images was the outstanding prerequisite named here.**
+It is done, in three parts:
 
-**Migrating the chart to commit-tagged images is the outstanding prerequisite** — until it
-lands, this leg cannot enforce, and saying so plainly is the point. A guard that claims to
-check something it cannot is worse than a documented gap.
+* `global.imageTag` pins **every** image this repo builds, in one place:
+  `--set global.imageTag=$(git rev-parse HEAD)`. CI already publishes `:<git-sha>` beside
+  `:latest`, so no new build is needed. **Unset renders byte-identical to today.**
+* Every image bakes `IAGENT_GIT_SHA` at build time, and every service serves `/version`.
+  The BFF serves `/fleet/version`, which asks all of them and returns the lot.
+* `scripts/version_census.py` reads that and exits 1 on any disagreement, so it is a gate
+  rather than something to read and interpret.
+
+It reached SEVEN OF TWELVE when first built, and the reason is worth carrying: a component's
+own `tag` beats a global one, and fourteen values entries said `tag: "latest"` outright. They
+were cleared. The floor also fell through to `Chart.AppVersion` — a tag CI has never
+published — which is what every one of those literals was quietly papering over, and is the
+documented cause of Engine P's ImagePullBackOff.
+
+## The roll procedure
+
+```bash
+SHA=$(git rev-parse HEAD)          # the sha whose BUILD you are rolling
+kubectl -n <ns> set image deploy/<name> <container>=<repo>/<image>:$SHA
+```
+
+`kubectl set image` per deployment, to an explicit commit tag. Targeted, reversible, no helm
+upgrade — use `scripts/upgrade-sandbox.sh` when the chart itself must move.
+
+**HOLD ONE DEPLOYMENT BACK AS A CONTROL.** Pick one nothing in the path under test touches.
+A census that has only ever seen all-green has not been shown able to say otherwise, and this
+is the cheapest possible way to show it. If the held-back service does NOT come back named as
+behind, the census is the thing under test, not the fleet.
+
+```bash
+uv run --frozen python scripts/version_census.py -n <ns> --expect $SHA
+```
+
+### `--expect HEAD` is wrong the moment a docs commit lands after a build
+
+Pass **the sha you rolled**, not `HEAD`. A docs-only or test-only commit moves `HEAD` past the
+image without changing it, and `--expect HEAD` then reports the entire fleet stale for a
+reason that has nothing to do with staleness. `HEAD` is right for the common case and
+becomes wrong silently, which is the worst combination — so the roll script should record the
+sha it rolled and the census should read that, rather than anyone passing `HEAD` from habit.
+
+## The four fleet states
+
+A null sha arrives for four reasons and **they have different repairs.** Collapsing them is
+the `fetch_registered_entries` conflation, and it was in the first version of the aggregator:
+
+| state | what it is | repair |
+|---|---|---|
+| `reporting` | answered, reports its build | nothing |
+| `no_endpoint` | answered **404** — `/version` not in that image | **roll it** |
+| `unstamped` | answered, endpoint present, no `GIT_SHA` | rebuild it |
+| `unreachable` | nothing came back at all | the service is **DOWN** |
+
+**A healthy pod 404ing an endpoint it was not rolled with is BEHIND, never DOWN.** "Go and
+rescue it" and "deploy it" send a person to opposite places. cortex-ui's header called a BFF
+that was up and serving picks UNREACHABLE for exactly this reason, and the same collapse was
+in this repo's aggregator on the same night.
+
+This is not a nicety: **the held-back control lands in precisely this state.** A census that
+called it DOWN would have made the control unreadable.
+
+The discriminator is whether the service SPOKE — a transport failure has no status at all,
+and a non-404 status is neither down nor missing (401 and 500 are different problems, and
+neither one is "no endpoint").
+
+## What the litany still cannot enforce
+
+`REQUIRE_PINNED_IMAGE=1` turns the unpinned warning into a stop, and `EXPECT_COMMIT=<sha>`
+asserts the tag carries a specific commit. Both work now that the chart can be pinned — but
+the chart's DEFAULT is still `latest`, deliberately, so that an unset knob changes nothing.
+Until a deploy sets `global.imageTag`, `LEG2` still prints the warning and continues.
 
 ## The check that is not automated
 
