@@ -95,6 +95,25 @@ def _extract_routes(source_path: Path) -> set[tuple[str, str]]:
                 first = dec.args[0]
                 if isinstance(first, ast.Constant) and isinstance(first.value, str):
                     out.add((method.upper(), first.value))
+
+    # ── ROUTES ADDED BY A HELPER, WHICH A DECORATOR WALK CANNOT SEE ────────────────────
+    #
+    # `_mount_version(app, "engine-o")` adds `GET /version` from
+    # `agent_fleet/utils/version_endpoint.py` — one implementation, fourteen mounts, and
+    # deliberately so: a per-service copy is how fourteen services come to report eleven
+    # shapes. The decorator lives in the helper, so nothing in the service file looks like
+    # a route and this scanner saw none of them.
+    #
+    # THAT IS THE ENUMERATION LAW POINTED AT THE INSTRUMENT. A scanner that only knows one
+    # way of declaring a route reports a service as having no such endpoint, and the
+    # manifest's manifest->source direction then calls a REAL route stale. Recognising the
+    # mount keeps both directions honest: a service that stops mounting it goes red for the
+    # stale declaration, and one that starts mounting it goes red until it is declared.
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and getattr(node.func, "id", "") == "_mount_version"
+                and node.args):
+            out.add(("GET", "/version"))
     return out
 
 

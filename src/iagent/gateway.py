@@ -237,6 +237,110 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── /version and /fleet/version ─────────────────────────────────────────────────────────
+#
+# "IS THE FIX ON THE POD?" was answered twice by hand on 2026-09-08 — pod age, then
+# importing a symbol through `kubectl exec`. Neither is evidence under `:latest`, and
+# neither is something anyone will run for thirteen services.
+#
+# `/version` reports THIS process's baked sha. `/fleet/version` asks every service its own
+# and returns the lot, so the census is one HTTP call from outside the cluster instead of
+# thirteen execs from inside it.
+#
+# EACH THING IS THE THING THAT WAS PUSHED, not "everything has the same number": each
+# payload names its own `repo`, because the frontend is a separate repository with its own
+# head and its own roll. Comparing its sha to the backend's would be comparing unrelated
+# histories.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.version_endpoint import mount_version as _mount_version, version_payload as _version_payload
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.version_endpoint import (  # type: ignore[no-redef]
+        mount_version as _mount_version,
+        version_payload as _version_payload,
+    )
+
+_mount_version(app, "cortex-bff")
+
+
+def _fleet_version_targets() -> dict:
+    """`component -> base url`, DERIVED from the environment the chart already sets.
+
+    A hardcoded list is the shape this repo keeps paying for: a new engine's URL appears in
+    the ConfigMap and the census silently does not include it, so the fleet reads complete
+    while a service is unaccounted for. Scanning `ENGINE_*_PUBLIC_URL` means the population
+    comes from the deployment rather than from someone's memory.
+
+    THE PATH IS STRIPPED. Several of those vars point at a HANDLER (`/analyze`,
+    `/query_graph`) rather than a service root, because their consumers post to them
+    directly. `/version` lives at the root.
+    """
+    from urllib.parse import urlparse
+
+    out: dict = {}
+
+    def _add(name: str, raw: str) -> None:
+        raw = (raw or "").strip()
+        if not raw:
+            return
+        u = urlparse(raw)
+        if not u.scheme or not u.netloc:
+            return
+        out[name] = f"{u.scheme}://{u.netloc}"
+
+    for key, val in os.environ.items():
+        if key.startswith("ENGINE_") and key.endswith("_PUBLIC_URL"):
+            _add(key[len("ENGINE_"):-len("_PUBLIC_URL")].lower(), val)
+    # The three this process talks to by their own names rather than the ENGINE_* pattern.
+    _add("ontology", _DAGSONTOLOGY_SVC_URL)
+    _add("presentation", _PRESENTATION_AGENT_SVC_URL)
+    _add("datahub", os.getenv("DATAHUB_WRAPPER_URL", ""))
+    return out
+
+
+@app.get("/fleet/version", tags=["ops"])
+async def fleet_version() -> dict:
+    """Every service's own report, plus this one's. Unreachable is NAMED, never omitted.
+
+    A service that cannot be asked is the most interesting row in the table — it is what a
+    mid-roll pod, a crash-looping pod and a service that was never deployed all look like —
+    so it appears with its reason instead of being dropped, which would make the fleet read
+    complete. Same rule as the census treating an unplaceable service as NOT current.
+    """
+    targets = _fleet_version_targets()
+    results: dict = {}
+
+    async def _ask(name: str, base: str) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{base}/version")
+                r.raise_for_status()
+                results[name] = r.json()
+        except Exception as exc:  # noqa: BLE001
+            results[name] = {
+                "component": name,
+                "git_sha": None,
+                "unreachable": f"{type(exc).__name__}: {exc}"[:200],
+                "url": base,
+            }
+
+    await asyncio.gather(*(_ask(n, b) for n, b in targets.items()))
+    _self = _version_payload("cortex-bff")
+    _shas = {
+        r.get("git_sha") for r in [_self, *results.values()] if r.get("git_sha")
+    }
+    return {
+        "self": _self,
+        "services": results,
+        # A COUNT, NOT A VERDICT. More than one distinct sha across this repo's services is
+        # a fleet mid-roll or a partial roll; which of those it is depends on when you
+        # asked, and this endpoint does not know. The census decides, against each repo's
+        # own head.
+        "distinct_shas": sorted(_shas),
+        "asked": len(targets),
+        "unreachable": sorted(n for n, r in results.items() if r.get("unreachable")),
+    }
+
+
 _DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-service:8084")
 _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
@@ -4661,25 +4765,7 @@ async def generate_dagster_stream(
             yield _stage("composing", "completed")
             yield _sse("final_payload", json.dumps(result["payload"]))
             # Hop 1: capture rendered_output into the bundle.
-            _artifact_bundle["rendered_output"] = result.get("payload")
-            # Happy path: payload arrived AND parsed cleanly; status
-            # flips to 'complete'. This is the ONLY site where the
-            # status becomes 'complete' — there is no default-to-
-            # complete elsewhere.
-            _artifact_bundle["status"] = "complete"
-            # HOW LONG THE ANSWER TOOK — stamped HERE, adjacent to the flip it
-            # measures, and nowhere else. The operands are fixed on purpose:
-            # this bundle's OWN `valid_as_of` (set once at construction) to now.
-            # A future "simplification" that reads a request timestamp or a
-            # step-start time would change what the number MEANS while keeping
-            # its name — birth-to-complete for THIS bundle is the definition.
-            #
-            # Deliberately NOT set on the `failed` branches above: a failed
-            # artifact has a wall-clock lifetime, but that is not an answer's
-            # duration, and merging the two poisons any later aggregate.
-            _artifact_bundle["duration_ms"] = max(
-                0, int(time.time() * 1000) - _artifact_bundle["valid_as_of"]
-            )
+            _mark_answer_complete(_artifact_bundle, result.get("payload"))
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
@@ -4700,6 +4786,29 @@ async def generate_dagster_stream(
     # ONE WRITER, TWO CALLERS — the direct path calls the same function. See
     # `_dispatch_answer_artifact`.
     await _dispatch_answer_artifact(_artifact_bundle)
+
+
+def _mark_answer_complete(bundle: dict, payload: Any) -> None:
+    """The ONLY place a bundle becomes `complete`, and the only place its duration is stamped.
+
+    ONE SITE, TWO CALLERS — the Dagster path and the direct path. Both used to do this
+    inline, which put two `duration_ms` assignments in this file and tripped the standing
+    seal that says exactly one may exist: "more than one site is how a stamp drifts away
+    from the status it measures." That seal was written before the direct path existed and
+    caught it the first time the second site appeared.
+
+    THE OPERANDS ARE FIXED ON PURPOSE: this bundle's OWN `valid_as_of`, set once at
+    construction, to now. A later "simplification" reading a request timestamp or a step
+    start would change what the number MEANS while keeping its name — birth-to-complete for
+    THIS bundle is the definition.
+
+    Deliberately NOT called on the failure paths: a failed artifact has a wall-clock
+    lifetime, but that is not an answer's duration, and merging the two poisons any
+    aggregate built on it.
+    """
+    bundle["rendered_output"] = payload
+    bundle["status"] = "complete"
+    bundle["duration_ms"] = max(0, int(time.time() * 1000) - bundle["valid_as_of"])
 
 
 async def _stream_direct_outcome(
@@ -4844,11 +4953,7 @@ async def _stream_direct_outcome(
 
     yield _stage(direct_dispatch.STAGE_RENDERING, "completed")
     yield _sse("final_payload", json.dumps(_payload))
-    bundle["rendered_output"] = _payload
-    # THE ONLY SITE ON THIS PATH WHERE STATUS BECOMES 'complete', mirroring the run path's
-    # single flip. Nothing defaults to complete anywhere.
-    bundle["status"] = "complete"
-    bundle["duration_ms"] = max(0, int(time.time() * 1000) - bundle["valid_as_of"])
+    _mark_answer_complete(bundle, _payload)
 
 
 async def _dispatch_answer_artifact(bundle: dict) -> None:

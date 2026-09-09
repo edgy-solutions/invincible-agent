@@ -6,6 +6,25 @@
 global:
   imageRegistry: ghcr.io
   imagePrefix: edgy-solutions/invincible-agent
+  # -- Pin EVERY component image to one tag, normally a commit sha.
+  #
+  # CI publishes `:<git-sha>` beside `:latest` for every service, so this needs no new
+  # build: `--set global.imageTag=$(git rev-parse HEAD)`.
+  #
+  # WHY ONE KNOB AND NOT PER-COMPONENT: pinning services individually is how a cluster ends
+  # up running four commits at once with nothing to read it off. A component may still
+  # override via its own `image.tag` when it genuinely needs to (a hotfix under test), and
+  # `scripts/version_census.py` reports that as a divergence rather than letting it pass.
+  #
+  # EMPTY IS TODAY'S BEHAVIOUR EXACTLY — falls through to Chart.AppVersion.
+  imageTag: ""
+  # -- The floor when neither a component tag nor `imageTag` is set.
+  #
+  # `latest` and NOT `Chart.AppVersion`: CI publishes `:<git-sha>` and `:latest` and nothing
+  # else, so AppVersion names an image that has never existed. Every values file was already
+  # working around it with per-component `tag: ""`, which is exactly what made a global
+  # pin unreachable.
+  defaultImageTag: "latest"
   imagePullPolicy: IfNotPresent
   # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
   clusterDomain: ""
@@ -337,7 +356,7 @@ engineO:
 engineA:
   enabled: true
   replicas: 1
-  image: { name: "restate-analyst", tag: "latest" }
+  image: { name: "restate-analyst", tag: "" }
   port: 8081
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   env: {}
@@ -352,7 +371,7 @@ engineB:
   # Dagster trigger asset used to be).
   enabled: false
   replicas: 1
-  image: { name: "langgraph-support", tag: "latest" }
+  image: { name: "langgraph-support", tag: "" }
   port: 8082
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   env:
@@ -361,7 +380,7 @@ engineB:
 engineC:
   enabled: true
   replicas: 1
-  image: { name: "swarms-scraper", tag: "latest" }
+  image: { name: "swarms-scraper", tag: "" }
   port: 8083
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   env: { SWARMS_MODEL: "gpt-oss-128k:120b" }
@@ -494,7 +513,7 @@ engineD:
 engineE:
   enabled: true
   replicas: 1
-  image: { name: "neo4j-expert", tag: "latest" }
+  image: { name: "neo4j-expert", tag: "" }
   port: 8086
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   # NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect.
@@ -515,7 +534,7 @@ engineE:
 engineW:
   enabled: true
   replicas: 1
-  image: { name: "weaviate-expert", tag: "latest" }
+  image: { name: "weaviate-expert", tag: "" }
   port: 8088
   resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
   # NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect.
@@ -574,7 +593,7 @@ centralGateway:
   replicas: 1
   image:
     repository: "edgy-solutions/dag-tools/central-gateway"
-    tag: "latest"
+    tag: ""
   port: 8000
   resources:
     requests:
@@ -712,7 +731,7 @@ userDeployments:
     image:
       registry: "ghcr.io"
       repository: "edgy-solutions/pub-tools"
-      tag: "latest"
+      tag: ""
     imagePullPolicy: Always
     # Python import path to the Dagster Definitions object. Used by
     # both the code-location pod (`-m <module>`) and the broker pod
@@ -799,7 +818,7 @@ userDeployments:
     image:
       registry: "ghcr.io"
       repository: "edgy-solutions/dag-tools/user-deployment"
-      tag: "latest"
+      tag: ""
     imagePullPolicy: Always
     dagsterModule: "dag_tools.user_deployment.definitions"
     codeLocation:
@@ -884,7 +903,7 @@ meshRegistrar:
   replicas: 1
   image:
     name: mesh-registrar
-    tag: "latest"
+    tag: ""
   port: 8090
   # v0.2 saga budget: how long bounded forward-retry runs before the
   # saga gives up and compensates. Sized to absorb transient-blip
@@ -1037,7 +1056,7 @@ primeSubstrate:
   image:
     registry: ""
     repository: "edgy-solutions/invincible-agent/dagster-control-plane"
-    tag: "latest"
+    tag: ""
     pullPolicy: "Always"
   # Prime-only env vars. Iterated by the prime-substrate-job template
   # AFTER its hardcoded bridges, so anything you set here wins over the
@@ -1238,7 +1257,7 @@ demoSeed:
   image:
     registry: ""
     repository: "edgy-solutions/invincible-agent/dagster-control-plane"
-    tag: "latest"
+    tag: ""
     pullPolicy: "Always"
   # The seed reads Weaviate host/port SEPARATELY (the engines use a combined
   # host:port ConfigMap form). Empty host -> the chart's in-cluster
@@ -1279,7 +1298,7 @@ ontologySeed:
   image:
     registry: ""
     repository: "edgy-solutions/invincible-agent/dagster-control-plane"
-    tag: "latest"
+    tag: ""
     pullPolicy: "Always"
   # The seed reads Weaviate host SEPARATELY from port (host-only); the engines
   # use a combined host:port ConfigMap form. Empty host -> the chart's in-cluster
@@ -1430,7 +1449,7 @@ projector:
     # makes the chart reproducible from values alone. Per-cluster
     # overrides (e.g., production SHA-pin) still go through the
     # values-{env}.yaml overlay.
-    tag: "latest"
+    tag: ""
   port: 8095
   pollIntervalSeconds: 0.5
   batchLimit: 100
@@ -1817,7 +1836,7 @@ topazSeed:
     name: cortex-bff
     registry: ""                   # non-empty wins over global.imageRegistry
     repository: ""                 # non-empty replaces imagePrefix/name path
-    tag: "latest"                  # PIN at work (>= chart-0.3.12 build)
+    tag: ""                  # PIN at work (>= chart-0.3.12 build)
   imagePullPolicy: Always
   topazDirectoryUrl: "http://topaz-svc:9393"
   datahubGmsUrl: "http://datahub-datahub-gms:8080/api/graphql"

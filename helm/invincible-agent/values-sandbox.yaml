@@ -227,7 +227,7 @@ agentFleet:
 dataAnalyst:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
   resources:
     requests:
       cpu: 250m
@@ -298,7 +298,7 @@ engineA:
 engineO:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
   resources:
     requests:
       cpu: 100m
@@ -310,7 +310,7 @@ engineO:
 engineD:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
   # Chart bug workaround: values.yaml has `engineD.resources:` with a
   # literal `...` placeholder that renders as a string and breaks the
   # Deployment schema. Re-declare with a real ResourceRequirements shape.
@@ -325,19 +325,19 @@ engineD:
 engineF:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
 
 # Engine F, the FINANCE engine — a DIFFERENT service from engineF above (which is the
 # presentation agent). Component engine-fin, image finance-agent, port 8096. ADR-0045.
 engineFinance:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
 
 engineCost:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
 
 # --------------------------------------------------------------------------
 # Infrastructure — sandbox-sized storage
@@ -420,7 +420,7 @@ enginePlanning:
     # chart appVersion deliberately; sandbox tracks master. Without this override
     # the pod asks for planning-agent:2026.07.02 — a tag that never existed, since
     # this image was first built today — and sits in ImagePullBackOff.
-    tag: "latest"
+    tag: ""
 
 primeSubstrate:
   enabled: true
@@ -489,7 +489,7 @@ dagster:
     image:
       # Our thin arm64-capable dagster runtime. ghcr.io/edgy-solutions/...
       # is the default registry so no override needed.
-      tag: "latest"
+      tag: ""
       repository: "edgy-solutions/invincible-agent/dagster-server"
     ingress:
       # Dagster UI exposed at dagster.edgy-solutions.com — useful for
@@ -509,7 +509,7 @@ dagster:
   daemon:
     enabled: true
     image:
-      tag: "latest"
+      tag: ""
       repository: "edgy-solutions/invincible-agent/dagster-server"
   userCode:
     enabled: true  # loads iagent.definitions
@@ -523,7 +523,7 @@ dagster:
       # control-plane image — same code, exists in GHCR with multi-arch
       # (linux/amd64 + linux/arm64) variants needed for this arm64 k3s.
       repository: "edgy-solutions/invincible-agent/dagster-control-plane"
-      tag: "latest"
+      tag: ""
 
   # Doc-tools is deployed standalone via the doc-tools chart but exposes
   # a Dagster gRPC code-location server on port 3030. Wiring it into this
@@ -552,7 +552,7 @@ cortexUi:
   # the chart wiring was correct.
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -597,7 +597,7 @@ cortexUi:
 cortexBff:
   enabled: true
   image:
-    tag: "latest"
+    tag: ""
   # MinIO connection for the /federated_image endpoint (Option A: bff
   # proxies image reads from MinIO so they share the same JWT +
   # entitled_domains gate as the rest of the data path; the browser

@@ -64,7 +64,26 @@ Optional override knobs (purely additive; existing callers unaffected):
   "repository" — repository path; concatenated with the registry above.
 */}}
 {{- define "invincible-agent.image" -}}
-{{- $tag := .tag | default .root.Chart.AppVersion -}}
+{{/*
+TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then AppVersion.
+
+`global.imageTag` is the commit-pin knob and it is deliberately ONE knob for the whole
+fleet: pinning services individually is how a cluster ends up running four commits at once
+with nothing to read it off. CI already publishes every image under `:<git-sha>` alongside
+`:latest`, so `--set global.imageTag=<sha>` needs no new build.
+
+THE FLOOR IS `global.defaultImageTag` (i.e. `latest`), NOT `Chart.AppVersion`, and that is a
+correction rather than a preference: CI publishes `:<sha>` and `:latest` and NOTHING ELSE, so
+a component falling through to AppVersion asks the registry for `:2026.07.02`, which does not
+exist. Every environment was already papering over it with an explicit `tag: "latest"` in its
+own values file — which is also what made the pin knob unreachable, since a component tag
+beats a global one. Both are fixed here: the floor is a tag that exists, and the literals are
+cleared so the knob can be seen.
+
+EMPTY IS TODAY'S BEHAVIOUR EXACTLY — every deployed image resolves to `:latest` today and
+still does with the knob unset.
+*/}}
+{{- $tag := .tag | default .root.Values.global.imageTag | default .root.Values.global.defaultImageTag -}}
 {{- if .registry -}}
 {{ .registry }}/{{ .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) }}:{{ $tag }}
 {{- else if .repository -}}

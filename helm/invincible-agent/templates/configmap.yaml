@@ -11,6 +11,14 @@ data:
   BPMN_POSTGRES_DB: {{ include "invincible-agent.pgDatabase" . | quote }}
   BPMN_POSTGRES_USER: {{ include "invincible-agent.pgUser" . | quote }}
 
+  # ── WHAT THE ORCHESTRATOR ASKED FOR ──────────────────────────────────────
+  # Reported by every service's `/version` BESIDE the sha baked into its image, because a
+  # disagreement between the two is the finding: the pod did not restart, or something is
+  # serving that this spec did not describe. This value is the chart's CLAIM and is never
+  # the authority — under `:latest` it does not even identify an image. The authority is
+  # `IAGENT_GIT_SHA`, baked at build time and unable to drift from the code beside it.
+  IAGENT_IMAGE_TAG: {{ .Values.global.imageTag | default .Values.global.defaultImageTag | quote }}
+
   # Agent HTTP timeout
   AGENT_HTTP_TIMEOUT: "300"
 

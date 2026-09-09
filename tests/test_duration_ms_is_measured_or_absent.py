@@ -103,8 +103,22 @@ def test_the_stamp_is_computed_from_THIS_bundles_valid_as_of():
         f"the stamp no longer subtracts valid_as_of: {src!r}. Whatever it measures now, it "
         "is not this bundle's birth-to-complete."
     )
-    assert "_artifact_bundle['valid_as_of']" in src.replace('"', "'"), (
-        f"the stamp reads valid_as_of from something other than THIS bundle: {src!r}"
+    # THE SAME OBJECT, not the same NAME. This pinned the literal
+    # `_artifact_bundle['valid_as_of']` until 2026-09-09 and went red when the stamp was
+    # lifted into `_mark_answer_complete(bundle, ...)` — the data flow untouched, the local
+    # renamed. A check pinned to a name fires on changes that do not matter, which teaches
+    # whoever hits it to edit the check. See
+    # [[a-green-seal-can-be-green-for-the-wrong-reason]] shape 5.
+    #
+    # What actually matters: `X["duration_ms"] = ... X["valid_as_of"] ...` where both X are
+    # the same object. Reading `valid_as_of` off a DIFFERENT bundle is the defect this
+    # guards, and it survives any rename.
+    _target = next(t for t in _stamp_assignment().targets
+                   if isinstance(t, ast.Subscript))
+    _written_to = ast.unparse(_target.value)
+    assert f"{_written_to}['valid_as_of']" in src.replace('"', "'"), (
+        f"the stamp writes duration_ms into {_written_to!r} but reads valid_as_of from "
+        f"somewhere else: {src!r}"
     )
     assert "elapsed_ms" not in src, (
         "the stamp was wired from elapsed_ms — a DIFFERENT field with a different lifetime. "

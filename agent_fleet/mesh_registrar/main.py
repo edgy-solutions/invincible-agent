@@ -90,6 +90,17 @@ app = FastAPI(
     version=REGISTRAR_VERSION,
 )
 
+# ── /version ────────────────────────────────────────────────────────────────────────
+# ONE IMPLEMENTATION, MOUNTED PER SERVICE. The import dance matches the other utils:
+# engine images flatten `agent_fleet/utils` -> `/app/utils`, the bff image keeps the
+# package path. Reports the sha BAKED INTO THE IMAGE, never one a chart injected.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.version_endpoint import mount_version as _mount_version
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.version_endpoint import mount_version as _mount_version
+_mount_version(app, "mesh-registrar")
+
+
 # Lazy-init the Neo4j driver so /health works even when Neo4j is briefly
 # unreachable. /v1/register requires it.
 _NEO4J_DRIVER: Optional[Any] = None

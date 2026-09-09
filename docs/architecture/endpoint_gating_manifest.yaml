@@ -90,6 +90,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -376,6 +393,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -465,6 +499,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -512,6 +563,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -543,6 +611,23 @@ services:
       posture_default: "OBSERVE — logs unverified callers, refuses none"
       announced_at_import: true
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
       - method: GET
         path: /health
         identity: none
@@ -642,6 +727,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -670,6 +772,23 @@ services:
       same as every other engine — it was born WITHOUT it and the glob-based transport seal
       caught that on its first run, which is why this service now appears here at all.
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
       - method: GET
         path: /health
         identity: none
@@ -839,6 +958,23 @@ services:
       the cheap version of that fix.
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: "transport auth (OBSERVE)"
@@ -894,6 +1030,23 @@ services:
       tests/test_service_enumerations_agree.py — which exists to cover that blindness — caught
       the omission BY NAME. The layered guard worked; these rows are what it was asking for.
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
       - method: GET
         path: /health
         identity: none
@@ -963,6 +1116,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -994,6 +1164,23 @@ services:
       posture_default: "OBSERVE — logs unverified callers, refuses none"
       announced_at_import: true
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
       - method: GET
         path: /health
         identity: none
@@ -1062,6 +1249,36 @@ services:
   gateway:
     file: src/iagent/gateway.py
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
+        path: /fleet/version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census]
+        class: releasable_by_design
+        justification: >-
+          Fans /version out to every service the environment names and returns the lot, so a
+          post-roll census is ONE call from outside the cluster instead of thirteen execs
+          inside it — the difference between a check that gets run and one that does not.
+          Same disclosure as /version, aggregated. Unreachable services are NAMED in the
+          response rather than omitted.
       - method: GET
         path: /health
         identity: none
@@ -1496,6 +1713,23 @@ services:
       announced_at_import: true
     routes:
       - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
+      - method: GET
         path: /health
         identity: none
         gate: none
@@ -1527,6 +1761,23 @@ services:
       posture_default: "OBSERVE — logs unverified callers, refuses none"
       announced_at_import: true
     routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time, plus the tag the chart asked
+          for. RELEASABLE BY DESIGN and deliberately ungated: it is read by an operator from
+          outside the cluster and by /fleet/version from inside it, and a gate here would
+          make "is the fix deployed?" require the credential you are usually debugging. It
+          discloses a public repository's commit id and no state, no config, no identity.
+          Mounted by the ONE helper agent_fleet/utils/version_endpoint.py, so it is not
+          @app-decorated in the service file and the route scanner cannot see it — this
+          declaration is the only record, and test_the_fleet_can_be_pinned_to_one_commit
+          asserts every mounting service has one.
       - method: GET
         path: /health
         identity: none

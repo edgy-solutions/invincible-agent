@@ -473,6 +473,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── /version ────────────────────────────────────────────────────────────────────────
+# ONE IMPLEMENTATION, MOUNTED PER SERVICE. The import dance matches the other utils:
+# engine images flatten `agent_fleet/utils` -> `/app/utils`, the bff image keeps the
+# package path. Reports the sha BAKED INTO THE IMAGE, never one a chart injected.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.version_endpoint import mount_version as _mount_version
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.version_endpoint import mount_version as _mount_version
+_mount_version(app, "engine-fin")
+
+
 
 class MeasureRequest(BaseModel):
     """The envelope. `params` carries the slots; there is no state ref.

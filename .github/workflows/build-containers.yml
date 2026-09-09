@@ -165,6 +165,15 @@ jobs:
           # otherwise the gRPC code-location protocol versions diverge.
           RUN pip install --no-cache-dir \
               dagster dagster-webserver dagster-postgres dagster-graphql
+          # ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
+          # Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
+          # claim about what was requested; under `:latest` it is not even that. This is
+          # what the running process can be asked, and it cannot drift from the code in
+          # the layer beside it. `scripts/version_census.py` reads it from every service
+          # and diffs against a git ref, which is how "is it current?" stops being a
+          # person squinting at pod age.
+          ARG GIT_SHA=unknown
+          ENV IAGENT_GIT_SHA=$GIT_SHA
           USER dagsteruser
           WORKDIR /app
           CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
@@ -172,7 +181,7 @@ jobs:
 
             sed -i 's/^[ \t]*//' Dockerfile.dagster-server
             docker buildx build \
-              --platform linux/amd64,linux/arm64 \
+              --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f Dockerfile.dagster-server \
               $TAGS \
               --push .
@@ -239,6 +248,15 @@ jobs:
           # Install lightweight runtime libs only (no compilers)
           RUN apt-get update && apt-get install -y --no-install-recommends libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
           RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+          # ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
+          # Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
+          # claim about what was requested; under `:latest` it is not even that. This is
+          # what the running process can be asked, and it cannot drift from the code in
+          # the layer beside it. `scripts/version_census.py` reads it from every service
+          # and diffs against a git ref, which is how "is it current?" stops being a
+          # person squinting at pod age.
+          ARG GIT_SHA=unknown
+          ENV IAGENT_GIT_SHA=$GIT_SHA
           COPY --from=builder --chown=dagsteruser:dagsteruser /app /app
           USER dagsteruser
           CMD ["/app/.venv/bin/dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
@@ -248,7 +266,7 @@ jobs:
             sed -i 's/^[ \t]*//' Dockerfile.dagster
             
             docker buildx build \
-              --platform linux/amd64,linux/arm64 \
+              --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f Dockerfile.dagster \
               $TAGS \
               --push .
@@ -375,6 +393,15 @@ jobs:
           RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
           # Copy everything from builder with appuser ownership
+          # ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
+          # Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
+          # claim about what was requested; under `:latest` it is not even that. This is
+          # what the running process can be asked, and it cannot drift from the code in
+          # the layer beside it. `scripts/version_census.py` reads it from every service
+          # and diffs against a git ref, which is how "is it current?" stops being a
+          # person squinting at pod age.
+          ARG GIT_SHA=unknown
+          ENV IAGENT_GIT_SHA=$GIT_SHA
           COPY --from=builder --chown=appuser:appuser /app /app
 
           USER appuser
@@ -391,7 +418,7 @@ jobs:
             sed -i 's/^[ \t]*//' Dockerfile.agent
 
             docker buildx build \
-              --platform linux/amd64,linux/arm64 \
+              --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f Dockerfile.agent \
               --build-arg AGENT_DIR=${{ matrix.path }} \
               --build-arg PORT=${{ matrix.port }} \
