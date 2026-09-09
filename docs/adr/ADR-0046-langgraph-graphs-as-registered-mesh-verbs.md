@@ -583,6 +583,52 @@ Each of these is genuinely open. **None is a decision written as prose.**
 > **Naming, per the same ruling:** slices are qualified by ADR number from here — *ADR-0046 slice 1*
 > and *ADR-0050 slice 1* are different work and both lanes were live on theirs.
 
+> **RE-SCOPED 2026-09-08 — SLICE 1 IS THE HOST AND THE FIRST REAL GRAPH.**
+> **SOURCE:** architect thread, dispatch to the LangGraph lane, 2026-09-08 — *"not 're-register
+> Engine B' but 'the engine a team plugs a graph into'."* Cited per §8.4's rule; a `RULED` or
+> re-scoping line without a source is not one.
+>
+> The slice waited for "the first real graph a team brings" and that framing had a gap the
+> architect named: **retiring Engine B removed the only pod with LangGraph in it, so the
+> capability had no host to bring a graph TO.** Slice 1 is therefore the host plus one real
+> exemplar, and the exemplar is chosen to answer a question rather than to demonstrate
+> paperwork.
+>
+> **§8.2 — one graph per engine, or several per hosting engine? ANSWERED: SEVERAL, by
+> construction.** The ADR leaned one-per-engine on entitlement grounds and left it undecided. A
+> manifest-driven host takes the other side, and the entitlement worry is paid differently
+> rather than waved: each row declares its own subject, slots and domains, and every invocation
+> runs as the initiator (ADR-0049 Ruling 1), so two graphs sharing this pod do not share an
+> entitlement surface. **They share a blast radius, and that is the honest cost of the choice** —
+> a bad graph takes its neighbours down with it, which one-pod-per-graph would have avoided.
+>
+> **§8.5 — does route C supersede route A's shim? THE QUESTION DISSOLVES.** This is route A with
+> the SDK's `MeshTool` *inside* it: the host owns the 422 and the entitlement boundary, and
+> `MeshTool` carries the initiator's identity into the graph's nodes. Neither supersedes the
+> other because they are the same code in two deployments.
+>
+> **AND ROUTE C's LAST BLOCKER HAS CLEARED, which §8.5 should not be left implying is open.**
+> §8.5 named a THREE-REPO condition and said that after the pins moved, the `dag-tools` identity
+> step was *"the only thing route C's refusal rests on"*. The pins moved (v0.4.0, fleet-wide,
+> verified in-pod 2026-09-06). `CortexDataClient.__init__` now carries `caller` and
+> `service_identity` — found because the SDK's own seal
+> (`test_cortex_data_client_contract`) went RED, which its docstring says is the signal rather
+> than a defect. **Route C is decidable now**, and a condition nobody re-reads becomes "true
+> because it lapsed".
+>
+> **WHERE THE CONTRACT LIVES, ruled the same day and it changes §1's shape:** the manifest
+> models, the loader, the composition and `register_graph` live in **`iagent-mesh-sdk`**
+> (`iagent_mesh.graph_manifest`, v0.5.0), not in the host engine. *"Plug into our host versus
+> run your own becomes a deployment choice rather than a second implementation."* A loader
+> living in the host makes route C a rewrite and forks the schema the day someone copies it.
+> The layering: `policy/graphs/<id>.yaml` is WHAT a chain is; the SDK is HOW it joins and acts;
+> `engine-lg` is WHERE it runs by default, and is thin.
+>
+> **Composition is ADR-0036's, unchanged.** The seed ships platform graphs, a work-side overlay
+> adds/replaces/deletes by key, and the composed set passes the SAME validation — one
+> `validate_dir`, imported by the policy repo's PR gate and by the seed cronjob, because a
+> validator copied into either rail drifts until a row passes one gate and fails the other.
+
 **Slice 1 — re-register Engine B's actual use case under the contract.** Not a new graph. Take the
 conversational-synthesis case, give it a real subject and output class, a manifest with declared
 slots, an identity requirement and a refusal contract, and make it route. Success is a routed
