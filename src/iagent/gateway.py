@@ -3589,6 +3589,113 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
     }
 
 
+_ARTIFACT_BY_ID_CYPHER = """
+MATCH (a:AnswerArtifact {id: $artifact_id})-[:PRODUCED_FOR]->(:Actor {actor_id: $user_id})
+OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
+RETURN a.id                AS id,
+       a.status            AS status,
+       a.summary           AS summary,
+       a.question_text     AS question_text,
+       a.valid_as_of       AS valid_as_of,
+       a.duration_ms       AS duration_ms,
+       a.resolved_intent   AS resolved_intent,
+       a.routing_inline    AS routing_inline,
+       parent.id           AS derived_from
+"""
+
+
+class ArtifactResponse(_BaseModel):
+    """What a caller may read back about ONE of their own artifacts.
+
+    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
+    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
+    time. `rendered_output` is large, it is already streamed and projected, and a second
+    delivery path for it is a second thing to keep in step with the projector.
+    """
+    id: str
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    question_text: Optional[str] = None
+    valid_as_of: Optional[int] = None
+    duration_ms: Optional[int] = None
+    derived_from: Optional[str] = None
+    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
+    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
+    # has no recorded verb" from "its verb is the string UNKNOWN".
+    subject_uri: Optional[str] = None
+    verb_iri: Optional[str] = None
+    subject_instance_id: Optional[str] = None
+
+
+@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
+async def get_artifact(
+    artifact_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Read back ONE artifact the caller produced — id, status, and its recorded route.
+
+    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
+    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
+    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
+    404'd — the arm would have burned ~25 minutes on the first seed and then errored.
+
+    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
+    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
+    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
+    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
+    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
+    route cannot enforce that, but it can refuse to hand out a value that invites it.
+
+    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
+    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
+    but is not theirs is an existence oracle over other people's questions, and the question
+    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
+    before it becomes one.
+    """
+    _uid = (current_user.authz_id or current_user.email or "").strip()
+    if not _uid:
+        # Honest-absent identity denies rather than reading broadly.
+        raise HTTPException(status_code=403, detail="no caller identity on this request")
+    try:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _ARTIFACT_BY_ID_CYPHER, artifact_id=artifact_id, user_id=_uid
+            ).single()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("artifact read failed for %s: %s", artifact_id, exc)
+        raise HTTPException(status_code=503, detail="artifact store unavailable")
+
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
+
+    intent: dict = {}
+    if rec.get("resolved_intent"):
+        try:
+            intent = json.loads(rec["resolved_intent"]) or {}
+        except (ValueError, TypeError):
+            intent = {}
+
+    def _or_none(v):
+        # "UNKNOWN" is what the router writes when it could not place a subject. It is a
+        # RECORDED non-answer, and forwarding it as if it were a subject would let a reader
+        # compare two artifacts and find them equal on a value that means "no idea".
+        v = str(v or "").strip()
+        return None if not v or v == "UNKNOWN" else v
+
+    return ArtifactResponse(
+        id=str(rec["id"]),
+        status=rec.get("status"),
+        summary=rec.get("summary"),
+        question_text=rec.get("question_text"),
+        valid_as_of=rec.get("valid_as_of"),
+        duration_ms=rec.get("duration_ms"),
+        derived_from=rec.get("derived_from"),
+        subject_uri=_or_none(intent.get("subject_uri")),
+        verb_iri=_or_none(intent.get("verb_iri")),
+        subject_instance_id=_or_none(intent.get("subject_instance_id")),
+    )
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,

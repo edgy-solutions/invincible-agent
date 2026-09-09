@@ -519,6 +519,34 @@ parallelism — but **nothing about the run queue has changed**, and the constra
 sequential is a substrate fact, not a code one. Open, and the honest form of the question is *"has the
 queue changed?"*, not *"can the template say so?"*
 
+**6. When a verb's REQUIRED slot changes the answer materially, may a template pin it?**
+**RULED 2026-09-09 — NO. All three methods on one panel.**
+
+> *"my recommendation is all three methods on one panel; pinning hides the divergence that is
+> the finding."*
+
+The case that raised it: `program_finance`'s `finEacCalculation` was pinned to `method: CPI`
+purely to be expressible. EAC is spoken-mandatory *because* the three methods disagree
+materially — **$13.13M / $14.15M / $14.79M against a $12.00M budget**, on the engine's own
+seed. A template that silently picks one is **choosing the answer**, and the reader has no
+way to know a choice was made: the panel renders, the number is real, and the divergence that
+is the actual finding is invisible.
+
+This is the template-level form of a rule this repo already enforces at three other layers —
+a declared default that changes the card is a claim, an optimistic default is dishonest, and
+a plausible value where an absence belongs is worse than the absence. A pinned
+answer-changing slot is all three at once, wearing a config file's clothes.
+
+**Scope, so this does not over-reach:** it applies to a required slot whose value *changes
+the answer materially*. `plan_schedule`'s optional `scope_initiative_id` is a filter on a
+portfolio-wide answer and declaring it changes nothing about what the panel means —
+`portfolio.yaml` declaring its verbs' own defaults remains correct and is the case §2 was
+written for. The discriminator is whether a reader shown the panel would want to know a
+choice was made.
+
+*Raised by `invincible-agent-5f`, who authored the template and explicitly declined to make
+the call rather than shipping a pin that looked settled.*
+
 ---
 
 ## Acceptance — the seals this ADR commits to
