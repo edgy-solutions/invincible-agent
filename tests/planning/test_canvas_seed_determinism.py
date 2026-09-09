@@ -154,22 +154,60 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
     token = os.environ.get("CANVAS_SEED_TOKEN", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
+    # ── PRE-FLIGHT: THE INSTRUMENT MUST BE ABLE TO WORK BEFORE IT IS ALLOWED TO JUDGE ────────
+    #
+    # Found 2026-09-08 against the live bff, BEFORE spending the window: there is NO
+    # `/artifacts/{id}` route. Its whole surface is /seed/portfolio_canvas, /canvas/seed,
+    # /canvas/lineage_edges, /me/canvases, /interview/stream. Verb recovery by artifact fetch
+    # 404s — so the arm as first written would have burned ~25 minutes on the first seed and
+    # then errored with nothing recorded.
+    #
+    # And the near-miss that matters more: had recovery returned None per panel instead of
+    # 404ing, BOTH runs would have produced identical all-None panel sets and SEAL 3 WOULD HAVE
+    # PASSED. A broken instrument turning a seal green is strictly worse than one turning it
+    # red. Hence VOID: a run that cannot recover verbs is neither pass nor fail.
+    #
+    # `AnswerArtifact` exists as a Neo4j label, which is the likely headless recovery path. It
+    # is NOT wired here yet — writing a recovery path I have not proven would reintroduce the
+    # same defect one layer down.
+    def _void(reason: str):
+        pytest.fail(f"SEAL 3 VOID — the instrument could not produce a reading, so this run is "
+                    f"neither a pass nor a failure and must not be recorded as either: {reason}")
+
+    probe = httpx.get(f"{base.rstrip('/')}/openapi.json", headers=headers, timeout=30)
+    if probe.status_code != 200:
+        _void(f"cannot read the bff's route table (HTTP {probe.status_code})")
+    routes = set(probe.json().get("paths", {}))
+    if "/seed/portfolio_canvas" not in routes:
+        _void("the phrase seeder is gone from this deployment — seal 3's subject does not exist "
+              "here; re-read the recorded structural result instead")
+    if not any(p.startswith("/artifacts") for p in routes):
+        _void("no /artifacts route on this bff, so per-panel verbs cannot be recovered. Wire a "
+              "proven recovery path (AnswerArtifact in Neo4j is the candidate) before running "
+              "this arm — do NOT let unrecovered verbs compare equal")
+
     def seed(session: str) -> list[dict]:
         r = httpx.post(f"{base.rstrip('/')}/seed/portfolio_canvas",
                        json={"session_id": session, "frontend_id": "cortex-ui-desktop"},
                        headers=headers, timeout=3600)
         r.raise_for_status()
         ids = r.json()["artifact_ids"]
+        if len(ids) != 5:
+            _void(f"the seed returned {len(ids)} artifact ids, not five")
         panels = []
-        for i, aid in enumerate(ids):
+        for aid in ids:
             if aid is None:
                 panels.append({"verb": None, "role": None, "slots": {}})
                 continue
             a = httpx.get(f"{base.rstrip('/')}/artifacts/{aid}", headers=headers, timeout=60)
             a.raise_for_status()
-            doc = a.json()
-            panels.append({"verb": (doc.get("routing") or {}).get("verb_iri"),
+            panels.append({"verb": (a.json().get("routing") or {}).get("verb_iri"),
                            "role": None, "slots": {}})
+        # An all-None panel set is the signature of recovery having failed silently. Comparing
+        # two of them would report agreement about nothing at all.
+        if all(p["verb"] is None for p in panels):
+            _void("no panel yielded a verb — recovery failed silently; two such runs would "
+                  "compare EQUAL and report a passing seal about nothing")
         return panels
 
     first, second = seed("seal3-run-a"), seed("seal3-run-b")

@@ -6,7 +6,7 @@ blocked-on:
 closed-by:
 code-site:  policy/canvases/portfolio.yaml, src/iagent/canvas_template.py, scripts/generate_canvas_schema.py, .github/workflows/validate-canvas-templates.yml
 repo:       invincible-agent
-summary:    ADR-0050 slice 1, NON-GATEWAY HALF — landed 2026-08-23. Ratified `policy/canvases/portfolio.yaml` (five panels, verbs read off the seeder's own `measure` field, slots declared as the verbs' REAL signature defaults since §3's carry is blocked), Pydantic models + generated JSON Schema + drift test with positive control, and a merge-gating CI job. Seal 3 recorded FAILING against today's phrase seed — structurally, from source, so it cannot be a lucky pass. GATEWAY HALF IS NOT MINE and is not here: `seedCanvas(template_id)`, `_CALLER_IDENTITY_VERBS`, and the superseded Ruling (a) seal. THREE THINGS OWED, named below rather than implied: verb-EXISTENCE checking (seal 1's other half), the live seal-3 run (~50 min, needs a quiet substrate), and the cortex `TEMPLATES` row §7 requires before the backend advertises a second template.
+summary:    ADR-0050 slice 1, NON-GATEWAY HALF — landed 2026-09-06 (`a59a9c5`, per git; an earlier revision of this line said 08-23, taken from the session clock rather than the commit). Ratified `policy/canvases/portfolio.yaml` (five panels, verbs read off the seeder's own `measure` field, slots declared as the verbs' REAL signature defaults since §3's carry is blocked), Pydantic models + generated JSON Schema + drift test with positive control, and a merge-gating CI job. Seal 3 recorded FAILING against today's phrase seed — structurally, from source, so it cannot be a lucky pass. GATEWAY HALF IS NOT MINE and is not here: `seedCanvas(template_id)`, `_CALLER_IDENTITY_VERBS`, and the superseded Ruling (a) seal. THREE THINGS OWED, named below rather than implied: verb-EXISTENCE checking (seal 1's other half), the live seal-3 run (~50 min, needs a quiet substrate), and the cortex `TEMPLATES` row §7 requires before the backend advertises a second template.
 ---
 
 # Canvas templates, slice 1 — the non-gateway half
@@ -83,11 +83,10 @@ and the step now additionally greps for `panels/0/verb` so a failure from any ot
 
 ## OWED — named, not implied
 
-1. **Verb-EXISTENCE checking.** Acceptance seal 1 is *"a template referencing an undeclared verb
-   fails at merge"*. What landed is the **shape** gate — a malformed verb IRI is refused. Nothing
-   yet asserts `mesh:planCostCurve` is actually registered. The test that covers the shape half
-   says so in its own docstring rather than implying the whole seal.
-2. **The live seal-3 run** (above).
+1. ~~**Verb-EXISTENCE checking.**~~ **CLOSED 2026-09-08** — see *Night of 2026-09-08* below.
+   Seal 1's other half now exists as a mesh check and has been RUN.
+2. **The live seal-3 run** — still owed, and the blocker changed. See below: it is not a
+   scheduling problem, it is a **broken instrument**.
 3. **The cortex `TEMPLATES` row.** §7: `CanvasUse` is a closed union with one row, and a second
    `template_id` must be admitted **on both sides, frontend first**. Slice 1 re-expresses the
    existing canvas so nothing new is advertised yet — but slice 2 cannot land before that row
@@ -105,3 +104,114 @@ on its default while the card's question said something else, with no disclosure
 the strip renders routing and not verb params. Declaring it makes the card's parameters legible
 instead of true by luck. **Revert to `initiative` only when extraction AND carry both land**; the
 acceptance test for that build is this panel returning initiatives.
+
+---
+
+## Night of 2026-09-08 — seal 1 closed from the mesh, seal 3's instrument found broken, second template ratified
+
+### The date correction, and the rule it came from
+
+This packet's summary said *"landed 2026-08-23"*. Git says **`a59a9c5`, 2026-09-06**. The wrong
+date came from the session clock rather than the commit, which is the same class as ADR-0046
+§8.4's `RULED` line being a day off — and the cost is identical: **a citation naming the wrong
+day makes the next search come back empty**, so a real ruling reads as missing. Corrected to what
+git says.
+
+Checked, not assumed, against `git show -s --format=%cd`: ADR-0041 (`0bcdead`, 08-17) ✔,
+ADR-0043 (`a2c73a5`, 08-22) ✔, composing-levers (`02e0fcf`, 08-23) ✔. And line 102's *"reworded
+on 2026-08-28"* is confirmed by `39135c7`, so the one date I was repeating from a code comment
+was right — verified rather than trusted.
+
+### Seal 1's other half — CLOSED, and RUN
+
+`tests/planning/test_template_verbs_are_registered.py`. Seal 1 is honestly **two checks in two
+places**, and saying so beats pretending one covers both:
+
+| half | where | trigger |
+|---|---|---|
+| shape (`verb:` is a well-formed IRI) | the schema | merge, hermetic |
+| **existence** (an engine actually serves it) | **the mesh** | where the mesh is reachable |
+
+**Eligibility is a CONJUNCTIVE read** — `select-from-authorized-set`'s mechanical form: a verb is
+eligible only if it appears in **both** Neo4j and Weaviate. Checking one side would pass exactly
+the verb that registers, reports accepted, and never matches. A one-sided presence is its own
+named failure here, not folded into "missing", because *"in Neo4j but not Weaviate"* is the
+harder fact to diagnose from a symptom.
+
+**Recorded run, live against sandbox on a quiet substrate, 2026-09-08 — all eleven verbs pass:**
+
+* Neo4j: all present as **relationship types** between `OntologyClass` nodes, with the (S,P) edge
+  reachable from each panel's declared subject, `provider: engine_p_planning` for the five
+  planning verbs. Output types match `measures.py` exactly (`IntervalSchedule`,
+  `PeriodCostSeries`, `LoadThresholdGrid`, `FundingGapSet`, `MaturityMatrix`).
+* Weaviate: all with `registration_complete: true` and an endpoint resolving to the serving
+  engine.
+* Both **negative controls** bite: a fabricated verb comes back absent from the same code path.
+
+**The first draft of that check was wrong in the most flattering way**, and it is recorded because
+the correction is the lesson: it queried `(:Predicate)` nodes and returned a confident, uniform
+`NOT FOUND` for all five verbs. Verbs in this graph are **relationship types**, not nodes. A
+uniform extreme from a query whose label does not exist is an instrument failure wearing a
+finding's clothes — and it would have been filed as "the template names five unregistered verbs".
+The negative control is what makes that unrepeatable, which is why it is not optional.
+
+### Seal 3's live arm — NOT run, and the blocker is not scheduling
+
+The window was quiet and offered. **Pre-flight against the live bff killed the run before it
+spent it**, and this replaces the earlier reasons (prime in flight, reaper deadlock, RULING (b)) —
+none of which were tonight's problem:
+
+**There is no `/artifacts/{id}` route.** The bff's surface is `/seed/portfolio_canvas`,
+`/canvas/seed`, `/canvas/lineage_edges`, `/me/canvases`, `/interview/stream`. The arm recovers
+each panel's verb by fetching the artifact by id, because today's seed returns **only** ids. That
+fetch 404s — so the arm would have burned ~25 minutes on the first seed and then errored with
+nothing recorded.
+
+**And the near-miss is worse than the miss.** Had recovery returned `None` per panel instead of
+404ing, both runs would have produced identical all-`None` panel sets and **seal 3 would have
+PASSED**. A broken instrument turning a seal green is strictly worse than one turning it red.
+The arm now has an explicit **VOID** state — a run that cannot recover verbs is neither pass nor
+fail — plus a pre-flight route probe and an all-`None` guard.
+
+`AnswerArtifact` exists as a Neo4j label and is the likely headless recovery path. It is
+deliberately **not wired yet**: writing a recovery path I have not proven would reintroduce the
+same defect one layer down.
+
+**What the run needs before it is worth a window:** a proven verb-recovery path, the VOID state
+(done), and the positive control — `/canvas/seed` is now deployed, so the template path can be
+seeded twice (must be **identical**) alongside the phrase path twice (must **differ**). Same
+instrument, both answers, one substrate. That is what makes the failure attributable rather than
+merely expected, and it roughly doubles the runtime.
+
+### The second template — ratified, and deliberately NOT seedable
+
+`policy/canvases/program_finance.yaml`, six `PROGRAM_FINANCE_ANALYST` verbs, `shared_slots: []`
+per dispatch. It exists to be §9.2's second registry row.
+
+**It cannot seed today, and that is a property of the verbs rather than an oversight.** All six
+take `program_id` as a **required keyword with no default**; `finEacCalculation` also takes
+`method`, whose docstring says *"There is no default"* and which ADR-0045 makes spoken-mandatory.
+
+`portfolio.yaml` could declare its verbs' defaults and be true today **because every planning
+verb defaults to portfolio-wide. Finance has no such defaults to declare.** A finance template
+that named these verbs with empty slots and looked seedable would merge, pass every check, and
+refuse on all six panels at seed time — precisely the empty-panel shape seal 1 exists to catch
+and that a file-only check cannot see. So the file says so in its own header rather than looking
+ready.
+
+`program` belongs in `shared_slots` and is exactly why §3 names it as the worked case ("six cards
+from one ask"). `method` stays panel-local when that lands — it is a per-panel choice, not a board
+subject, and promoting it would ask one question to answer a different one.
+
+**The panel most likely to be wrong as declared is flagged in the file**: `finEacCalculation` is
+pinned to `method: CPI` only to make the panel expressible, and EAC is spoken-mandatory *because*
+the three methods disagree materially — $13.13M / $14.15M / $14.79M against a $12.00M budget on
+the engine's own seed. A template that silently picks one is choosing the answer. The alternative
+is three EAC panels or a panel-local ask, and that is a ruling, not a build detail.
+
+### OWED, updated
+
+* **The seal-3 verb-recovery path** (`AnswerArtifact` in Neo4j) — the live arm stays void without it.
+* **The EAC ruling** — one pinned method, three panels, or a panel-local ask.
+* **`program` as a shared slot** for `program_finance`, gated on the dispatch-boundary slot carry.
+* Unchanged: the cortex `TEMPLATES` row, frontend-first, before either template is advertised.

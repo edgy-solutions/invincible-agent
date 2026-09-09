@@ -1,0 +1,116 @@
+# PROGRAM FINANCE CANVAS — the second ratified template (ADR-0050 §9.2's second registry row).
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# ⚠ THIS TEMPLATE CANNOT SEED TODAY, AND THAT IS A PROPERTY OF THE VERBS, NOT AN OVERSIGHT.
+#
+# Every one of the six finance verbs takes `program_id` as a REQUIRED keyword with NO DEFAULT
+# (`agent_fleet/finance_agent/measures.py`, verified 2026-09-08). `finEacCalculation` takes a
+# second one — `method: EACMethod`, whose docstring says in as many words *"There is no
+# default"*, and which ADR-0045 makes spoken-mandatory: a bare "what's the EAC" is refused with
+# "which method?".
+#
+# `portfolio.yaml` could declare its verbs' defaults and be TRUE today because every planning
+# verb defaults to portfolio-wide. **Finance has no such defaults to declare.** A template that
+# named these verbs with empty slots and looked seedable would merge, pass every check, and
+# refuse on all six panels at seed time — the exact shape ADR-0050 acceptance 1 exists to catch
+# and that a file-only check cannot see.
+#
+# So this file is ratified, schema-valid, and **deliberately not yet seedable**. Its job today is
+# to be the SECOND ROW that ADR-0050 §9.2 needs in order to decide whether a second registry
+# should exist at all. Do not wire it into a seed path expecting cards.
+#
+# WHAT UNBLOCKS IT: `program` as a TEMPLATE-LEVEL SHARED SLOT (§3 — "six cards from one ask",
+# and these six verbs are exactly why that is §3's worked case). `shared_slots` is empty here per
+# dispatch, because §3 is blocked on the dispatch boundary carrying slots
+# ([[slots-are-extracted-then-dropped-at-dispatch]]): nothing is extracted at all, so an ask
+# would cost a turn and bind nowhere. When the carry lands, `program` moves to `shared_slots`
+# and `finEacCalculation`'s `method` stays panel-local — it is a per-panel choice, not a board
+# subject, and promoting it to shared would ask one question to answer a different one.
+#
+# ── VERB EXISTENCE, CHECKED FROM THE MESH ────────────────────────────────────────────────────
+# All six verbs verified 2026-09-08 against the live sandbox mesh — present as Neo4j
+# relationship types AND in Weaviate with `registration_complete: true` and a resolving
+# endpoint, which is the conjunctive read eligibility actually requires. See
+# `tests/planning/test_template_verbs_are_registered.py`.
+#
+# ── ORDER IS THE DECLARATION ─────────────────────────────────────────────────────────────────
+# Position 0 is the anchor. `role` carries the slot role only, never pixels (§7).
+---
+template_id: program_finance
+title: Program finance status
+description: >-
+  Funding status anchoring the top, with burn rate and performance indices beneath it, then the
+  variance decomposition, its ranked drivers, and the estimate at completion. The six
+  PROGRAM_FINANCE_ANALYST measures as one board — six cards that ADR-0050 §3 intends to come
+  from a single ask once `program` can be bound.
+
+# EMPTY PER DISPATCH, and the blocker is §3's, not seedCanvas's. See the header: `program`
+# belongs here and cannot be bound yet.
+shared_slots: []
+
+panels:
+  # ── SLOT 0 — the anchor ────────────────────────────────────────────────────────────────────
+  - verb: mesh:finFundingStatus
+    role: anchor
+    slots: {}
+    note: >-
+      REQUIRES program_id, which has no default — this panel cannot seed until `program` is a
+      bindable shared slot. `window` defaults to None, meaning the full span. Output is
+      FundingStatusGrid; a ladder (authorized ⊇ obligated ⊇ expended), not a comparison.
+
+  # ── SLOTS 1-2 — the first pair ─────────────────────────────────────────────────────────────
+  - verb: mesh:finBurnRate
+    role: pair
+    slots: {}
+    note: >-
+      REQUIRES program_id, no default. `window` defaults to None. Counts cash leaving, NOT value
+      claimed — deliberately paired with finPerformanceIndices, which asks whether the money
+      bought what it was supposed to, because a program can look healthy here and be performing
+      badly.
+
+  - verb: mesh:finPerformanceIndices
+    role: pair
+    slots: {}
+    note: >-
+      REQUIRES program_id, no default. `ca_id` and `window` default to None — program-wide, full
+      span. A series rather than a point, by design: 0.84 falling from 0.95 is a different
+      program from 0.84 risen from 0.75.
+
+  # ── SLOTS 3-4 — the second pair ────────────────────────────────────────────────────────────
+  - verb: mesh:finVarianceAnalysis
+    role: pair
+    slots:
+      variance_kind: cost
+      materiality: 0.05
+      max_depth: 3
+    note: >-
+      REQUIRES program_id, no default. The three slots declared here ARE the signature defaults
+      and are stated rather than omitted so the card's parameters are legible — the same reason
+      portfolio.yaml declares plan_funding_gap's group_by. `materiality` and `max_depth` change
+      how far the decomposition recurses, so a reader who cannot see them cannot tell a shallow
+      tree from a fully explained one.
+
+  - verb: mesh:finVarianceDrivers
+    role: pair
+    slots:
+      variance_kind: cost
+      level: control_account
+      top_n: 10
+    note: >-
+      REQUIRES program_id, no default. Declared values are the signature defaults. `variance_kind`
+      is pinned to `cost` to match the panel above it — a drivers ranking for a DIFFERENT
+      variance than the decomposition beside it would be two answers presented as one story.
+
+  # ── SLOT 5 — the second pair's overflow; see the note on arity ─────────────────────────────
+  - verb: mesh:finEacCalculation
+    role: pair
+    slots:
+      method: CPI
+    note: >-
+      REQUIRES program_id AND method, NEITHER of which has a default. `method` is declared here
+      as CPI to make the panel expressible at all — but read ADR-0045 before treating that as
+      settled: EAC is spoken-mandatory precisely BECAUSE the three methods disagree materially
+      (CPI, CPI_SPI, REMAINING_AT_BUDGET span $13.13M/$14.15M/$14.79M against a $12.00M budget
+      on the engine's own seed). A template that silently picks one is choosing the answer.
+      **This is the panel most likely to be wrong as declared**, and it is flagged rather than
+      quietly defaulted: the alternative is three EAC panels, or a panel-local ask.
