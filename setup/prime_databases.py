@@ -999,10 +999,12 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
       sequence, so it no longer does.
 
       NUCLEAR (--nuclear). Everything the default clears, PLUS the
-      durability graph (blanket `DETACH DELETE`) AND a reset of the derived
-      Postgres stores (truncate the projections, rewind the cursor to 0).
+      durability graph (blanket `DETACH DELETE`), a purge of Restate's
+      durable invocation journal, AND a reset of the derived Postgres
+      stores (truncate the projections, rewind the cursor to 0).
       The source and its projection reset TOGETHER, so a scorched-earth
-      wipe still leaves a consistent empty state — never a stranded cursor.
+      wipe still leaves a consistent empty state — never a stranded cursor,
+      and never a workflow left suspended on a task that no longer exists.
 
     The guard (both tiers): --i-mean-it AND --namespace=<name> in the
     allowlist. --nuclear additionally requires --wipe. No typo can nuke the
@@ -1197,6 +1199,15 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
     except Exception as e:
         print(f"[ERROR] MinIO wipe: {e}")
 
+    # NUCLEAR only, and BEFORE the Postgres reset below: purge Restate's
+    # durable invocation journal. ORDER IS LOAD-BEARING in this direction —
+    # if Restate raises, the task store is still populated and the two remain
+    # consistently stale (recoverable); the reverse order is precisely the
+    # split-brain this exists to kill (task store emptied, workflows left
+    # suspended on tasks that no longer exist, keys held forever).
+    if nuclear:
+        _reset_restate_journal()
+
     # NUCLEAR only, and DELIBERATELY LAST: reset the derived Postgres
     # projection stores after every substrate store has been cleared, so a
     # Postgres hiccup can't abort the Neo4j/Weaviate/Jena/MinIO wipes (an
@@ -1208,6 +1219,122 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
     # (routing) tier never runs this — it preserves the projections outright.
     if nuclear:
         _reset_projection_postgres()
+
+
+# Wall-clock ceiling for the nuclear Restate purge. `kill` is asynchronous, so the
+# purge runs in passes; this bounds them. Named (not inlined) so a seal can shrink it
+# and still exercise the give-up branch.
+_RESTATE_PURGE_BUDGET_S = 180
+
+
+def _reset_restate_journal() -> None:
+    """NUCLEAR only. Purge Restate's durable invocations so the workflow engine
+    resets TOGETHER with the task store its workflows are suspended on.
+
+    Restate keeps its journal on its OWN PVC (`restate-data-<release>-restate-0`),
+    which no other step of this wipe touches. A nuclear prime therefore used to
+    truncate `human_task_projection` while leaving every `GroupedReview` workflow
+    `suspended` — each parked forever on a promise only its (now-deleted) human
+    task could resolve, and each still HOLDING its single-use workflow key. Two
+    consequences, both SILENT, both reporting success:
+
+      * `ctx.workflow_send` is fire-and-forget, so a send to a held key is
+        swallowed — `start_review` returns STARTED and Dagster goes green while
+        no review is ever created.
+      * the ingress Idempotency-Key (`sha1(request_key|approver)`) is retained
+        for `completion_retention` (24h), so a re-drive of the same artifact
+        REPLAYS the cached response — no handler execution, no send, no review.
+
+    Witnessed at work 2026-09-09: `human_task_projection` at 0 rows while
+    sys_invocation still held 30 suspended GroupedReview workflows dating to
+    2026-07-30, the oldest blocking a notice for six weeks. Recovery required
+    purging BOTH kinds of key. Nothing in the review pipeline was broken.
+
+    RAISES on failure and VERIFIES emptiness — a nuclear wipe that silently
+    leaves invocations behind recreates exactly that stranding, so it must not
+    report clean. SCOPE, stated honestly: this purges INVOCATIONS, which is what
+    holds workflow keys and idempotency keys. Virtual-object K/V rows in Restate's
+    `state` table are NOT cleared (no admin endpoint exposes them), and service
+    registrations are deliberately left alone — the `restate-init` hook (weight 5)
+    refreshes those on the next install.
+    """
+    admin = (os.environ.get("RESTATE_ADMIN_URL") or "").strip().rstrip("/")
+    if not admin:
+        raise RuntimeError(
+            "--nuclear requested but RESTATE_ADMIN_URL is not set — refusing to "
+            "report a nuclear wipe as complete while Restate keeps its journal. A "
+            "workflow that outlives the task store holds its single-use key forever "
+            "and silently no-ops every re-drive of that artifact. Wire "
+            "RESTATE_ADMIN_URL into the prime Job (the chart's "
+            "`invincible-agent.restateAdminUrl` helper)."
+        )
+
+    _sql_all = "SELECT id, status FROM sys_invocation"
+
+    def _query(sql: str) -> list:
+        # Accept: application/json — the admin /query endpoint otherwise answers
+        # in Apache Arrow IPC, which this script has no reader for.
+        r = requests.post(
+            f"{admin}/query", json={"query": sql},
+            headers={"accept": "application/json"},
+            proxies=proxy_int, verify=False, timeout=60,
+        )
+        r.raise_for_status()
+        return (r.json() or {}).get("rows") or []
+
+    try:
+        remaining = _query(_sql_all)
+    except Exception as e:
+        raise RuntimeError(
+            f"NUCLEAR Restate reset FAILED: could not read sys_invocation via "
+            f"{admin} ({e}). Refusing to report a partial nuclear wipe as clean — "
+            f"the task store is still intact at this point, so fix connectivity "
+            f"and re-run."
+        )
+
+    # KILL then PURGE, in passes. `purge` accepts only a COMPLETED invocation, and
+    # `kill` is ASYNCHRONOUS — a killed invocation is not completed the instant the
+    # PATCH returns. So each pass kills what is live and purges what has settled,
+    # then re-reads; a purged invocation leaves the table, so nothing is retried
+    # needlessly and the loop terminates when the journal is empty.
+    deadline = time.time() + _RESTATE_PURGE_BUDGET_S
+    killed = purged = 0
+    while remaining and time.time() < deadline:
+        for row in remaining:
+            inv = str(row.get("id") or "").strip()
+            if not inv:
+                continue
+            verb = "purge" if str(row.get("status") or "").lower() == "completed" else "kill"
+            try:
+                r = requests.patch(
+                    f"{admin}/invocations/{inv}/{verb}",
+                    proxies=proxy_int, verify=False, timeout=30,
+                )
+                if r.status_code < 400:
+                    if verb == "purge":
+                        purged += 1
+                    else:
+                        killed += 1
+            except Exception as e:
+                # Tolerated per-invocation: the emptiness check below is the seal,
+                # not this counter. A transient failure gets another pass.
+                print(f"  [warn] Restate {verb} {inv}: {e}")
+        time.sleep(2)  # let kills settle to `completed` before re-reading
+        remaining = _query(_sql_all)
+
+    if remaining:
+        stuck = ", ".join(
+            f"{r.get('id')}({r.get('status')})" for r in remaining[:5]
+        )
+        raise RuntimeError(
+            f"NUCLEAR Restate reset INCOMPLETE: {len(remaining)} invocation(s) "
+            f"survived the purge budget — e.g. {stuck}. Refusing to report a clean "
+            f"nuclear wipe: each survivor holds a single-use workflow key, and the "
+            f"next re-drive of its artifact will return STARTED while creating "
+            f"nothing. Clear them by hand (`restate invocations kill <svc>` then "
+            f"`purge <svc>`) and re-run."
+        )
+    print(f"[OK] Restate journal cleared (NUCLEAR): killed {killed}, purged {purged}.")
 
 
 def _reset_projection_postgres() -> None:
@@ -1328,7 +1455,10 @@ def main() -> None:
                              "substrate, DELETES answer-durability nodes "
                              "(AnswerArtifact/Actor/Source/WatermarkSequence) AND resets "
                              "the Postgres projection stores (answer_artifact_projection / "
-                             "human_task_projection truncated, projector_cursor rewound). "
+                             "human_task_projection truncated, projector_cursor rewound) AND "
+                             "purges Restate's invocation journal (so no workflow is left "
+                             "suspended on a task the wipe just deleted, holding its "
+                             "single-use key). "
                              "Requires --wipe. WITHOUT --nuclear, --wipe preserves all of "
                              "that so the projector is never stranded and answer history "
                              "survives a routine reprime.")

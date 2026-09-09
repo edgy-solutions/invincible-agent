@@ -120,6 +120,9 @@ spec:
                   ("Jena", os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT"), 3030),
                   ("MinIO", os.environ.get("MINIO_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL"), 9000),
                   ("Dagster", os.environ.get("DAGSTER_URL") or os.environ.get("DAGSTER_HOST"), 80),
+                  # Restate: only a --nuclear wipe touches it, but the check is
+                  # unconditional — it self-skips when RESTATE_ADMIN_URL is unset.
+                  ("Restate", os.environ.get("RESTATE_ADMIN_URL"), 9070),
               ]
               for name, url, default_port in checks:
                   if not url:
@@ -305,6 +308,16 @@ spec:
             # — the script only reads it under --nuclear.
             - name: PROJECTOR_POSTGRES_DSN
               value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
+            # RESTATE_ADMIN_URL: consumed ONLY by a --nuclear wipe, to purge the
+            # workflow engine's invocation journal together with the task store
+            # above. Restate keeps its journal on its OWN PVC, which nothing else
+            # in this wipe touches — so without this a nuclear leaves every
+            # GroupedReview suspended on a task it just truncated, holding a
+            # single-use workflow key that makes every later re-drive return
+            # STARTED and create nothing (work 2026-09-09). Harmless on a
+            # non-nuclear run — the script only reads it under --nuclear.
+            - name: RESTATE_ADMIN_URL
+              value: "{{ include "invincible-agent.restateAdminUrl" . }}"
             {{- if .Values.primeSubstrate.namespaceAllowlist }}
             # PRIME_NAMESPACE_ALLOWLIST: comma-separated cluster identifiers
             # the script will allow `--wipe --namespace=` against. Only
