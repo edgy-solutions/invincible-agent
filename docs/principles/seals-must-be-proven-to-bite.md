@@ -202,3 +202,18 @@ Those answer *"did anything happen?"* This answers *"did two things happen indep
 the anchor run **was already non-vacuous**: the negatives exercise a separate path, the values are
 specific, the assertion is real. **Non-vacuity was satisfied and the confound survived it.** That
 is the whole argument for it being its own target rather than a restatement.
+
+---
+
+### The next question after "does it bite?"
+
+A seal that bites can still be answering a *different question* from the one in its
+docstring — passing, or failing, for a reason that merely co-occurs with the property. Nine
+such shapes were collected across two lanes on 2026-09-08, most of them on seals that HAD
+been mutated: a fixture standing in for the subject, a control that neutralised the
+condition under test, a guard whose failure mode is silence, a parser used where a compiler
+was needed.
+
+**Read [[a-green-seal-can-be-green-for-the-wrong-reason]] before writing a seal**, and in
+particular before writing a *control* — shape 7 there is a control that actively defends the
+defect, which mutation testing on the code cannot surface.
