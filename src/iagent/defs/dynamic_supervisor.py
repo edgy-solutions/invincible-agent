@@ -1587,6 +1587,7 @@ def _call_engine_a_fallback(
     fallback_reason: str,
     fallback_score: float | None,
     rejected_predicate: Dict[str, Any] | None,
+    telemetry: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Route a subtask to Engine A as the ADR-0008 generalist fallback.
 
@@ -1650,6 +1651,53 @@ def _call_engine_a_fallback(
             rejected_predicate.get("verb_iri") if rejected_predicate else None
         ),
     }
+
+    # ── THE RESOLUTION TRAVELS, OR ENGINE A RE-RESOLVES IT WRONG ────────────────────────
+    #
+    # MEASURED ON THE WORK CLUSTER 2026-09-08. "make me a portfolio canvas" resolved to
+    # `idp#Portfolio` at 0.96, `/classify_predicate` honestly returned UNKNOWN (no portfolio
+    # verb answers "make a canvas"), and this fallback dropped the subject. Engine A then
+    # re-resolved from the raw phrase — and `_resolve_ontology` posts no `domain`, so
+    # `ResolveRequest.domain` defaults to "MAINTENANCE" with `domains=[]`, meaning the
+    # entitlement filter is a no-op too. A PORTFOLIO_LEAD's question was classified against
+    # the maintenance ontology and answered `SellingBusinessProcess` at 0.62.
+    #
+    # The guard that consumes this already exists — `restate_analyst/main.py`'s
+    # `supplied_subject_uri` branch, whose own comment names the failure it prevents as
+    # `[[resolution-discard-pattern]]`. It was simply never reachable from here, because the
+    # SPECIALIST dispatch threads these three fields and this one did not. The enumeration
+    # law: a field named at one dispatch site and not the other is silent by construction.
+    #
+    # "UNKNOWN" IS NOT A RESOLUTION AND MUST NOT TRAVEL. This fallback also fires when the
+    # subject never grounded (Contract B: unknown subject, zero verbs). Sending the literal
+    # would make the guard trust a non-answer; absent is the honest value, and Engine A
+    # re-resolving from the phrase is correct in exactly that case.
+    _resolved_subject = str((telemetry or {}).get("subject_uri") or "")
+    if _resolved_subject and _resolved_subject != "UNKNOWN":
+        payload["resolved_subject_uri"] = _resolved_subject
+        # THE THREE MOVE TOGETHER. An instance id without its subject is an identifier with
+        # no class to read it against, and the specialist path sends all three.
+        payload["resolved_instance_id"] = str(
+            (telemetry or {}).get("subject_instance_id") or ""
+        )
+        payload["resolved_instance_label"] = str(
+            (telemetry or {}).get("subject_instance_label") or ""
+        )
+        context.log.info(
+            "generalist fallback carries the resolution: subject=%s instance=%r "
+            "— Engine A will NOT re-resolve",
+            _resolved_subject,
+            (telemetry or {}).get("subject_instance_id") or "",
+        )
+    else:
+        # AUDIBLE, because this is the branch where Engine A re-resolves and the domain
+        # defaulting bites. A reader seeing a maintenance-class answer to a planning
+        # question needs to know which of the two paths produced it.
+        context.log.info(
+            "generalist fallback carries NO resolution (subject_uri=%r) — Engine A will "
+            "re-resolve from the phrase",
+            _resolved_subject or None,
+        )
 
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
@@ -2267,6 +2315,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_reason="no_predicate_matched",
             fallback_score=None,
             rejected_predicate=None,
+            telemetry=telemetry,
         )
 
     # status == _ROUTING_MATCHED — apply the threshold against the LLM's
@@ -2293,6 +2342,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_reason="low_confidence",
             fallback_score=score,
             rejected_predicate=predicate,
+            telemetry=telemetry,
         )
 
     endpoint = predicate["endpoint"]

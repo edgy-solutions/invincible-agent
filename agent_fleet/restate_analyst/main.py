@@ -561,7 +561,11 @@ async def _TEMPORARY_urn_resolution_belongs_on_engine_d(
     return resolve_urn_outcome(asset_label, candidates)
 
 
-def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
+def _resolve_ontology(
+    task_description: str,
+    user_email: str = "",
+    entitled_domains: list | None = None,
+) -> dict:
     """Call Engine O to resolve the task description into semantic context.
 
     This function is executed inside ``ctx.run()`` for durable execution —
@@ -581,6 +585,34 @@ def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
     payload: dict = {"query": task_description}
     if user_email:
         payload["user_email"] = user_email
+
+    # ── THE CALLER'S DOMAINS, OR THIS RESOLVES AGAINST MAINTENANCE ──────────────────────
+    #
+    # MEASURED ON THE WORK CLUSTER 2026-09-08, and this was posting `{query, user_email}`
+    # and nothing else. Engine O's `ResolveRequest` declares `domain: str = "MAINTENANCE"`
+    # and `domains: list[str] = []`, so EVERY re-resolve from this engine landed in the
+    # maintenance ontology with the entitlement filter switched off — a no-op, since the
+    # filter passes everything when `entitled_domains` is empty.
+    #
+    # WHAT IT COST: a PORTFOLIO_LEAD asked for a portfolio canvas, the router resolved
+    # `idp#Portfolio` at 0.96, the fallback hop dropped it (fixed in the supervisor), this
+    # function re-resolved from the raw phrase, and the model returned IOF
+    # `SellingBusinessProcess` at 0.62 — a real class, a plausible score, and the wrong
+    # ontology entirely. Engine O diagnosed itself in the same log:
+    # `productive-option gate would have emptied the pool (10 candidate(s), 0 served) — NOT
+    # filtering. Suspect a served-set computed against the wrong domains.` Zero served out
+    # of ten IS the wrong-domain signature.
+    #
+    # SAME SHAPE AS THE SUPERVISOR'S CALL, deliberately: `domains` (the union Engine O
+    # scopes the class pool to) plus `domain` for the BAML label, first entitled rather than
+    # a literal. Two callers of one endpoint that disagree about scoping produce answers
+    # that differ by which path asked, which is the class of defect this repo keeps paying
+    # for. A caller with NO domains still sends none — honest-absent, and Engine O's gate
+    # degrades open exactly as before rather than inheriting a fabricated scope.
+    _domains = [str(d) for d in (entitled_domains or []) if str(d).strip()]
+    if _domains:
+        payload["domains"] = _domains
+        payload["domain"] = _domains[0]
     resp = requests.post(
         ONTOLOGY_RESOLVE_URL,
         json=payload,
@@ -682,7 +714,13 @@ async def analyze(ctx: Context, request: dict) -> dict:
         # on THIS subject (composed-path seal: this path was caller='').
         semantic_ctx = await ctx.run(
             "resolve_ontology",
-            lambda: _resolve_ontology(task.task_description, resolve_caller_email),
+            # THE DOMAINS READ HERE rather than from `caller_entitled_domains`, which is
+            # bound further down — this call happens first. Same source, same request key.
+            lambda: _resolve_ontology(
+                task.task_description,
+                resolve_caller_email,
+                request.get("entitled_domains") or [],
+            ),
         )
 
     # --------------------------------------------------------------------------
