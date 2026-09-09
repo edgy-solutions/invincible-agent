@@ -288,3 +288,101 @@ The placeholder costs nothing today and the ruling is written down rather than q
 engine change lands, that panel emits one method and the ruling is silently violated by a file
 that claims to record it. Whoever closes the 501 gate must check this note first — which is why it
 is in the panel rather than only here.
+
+---
+
+## 2026-09-09 — SEAL 3 RUN LIVE. Result: VOID (twice), and the second void is a finding on `/artifacts/{id}`
+
+**Seal 3 is still unrun.** It has produced no pass and no fail. Both attempts voided, and saying
+so plainly matters more than either answer would have.
+
+### Attempt 1 — a FALSE PASS, caught by the clock and nothing else
+
+Green in **2.48 seconds** against work RULING (b) puts at ~50 minutes. Four tests passed, exit
+code 0, no assertion fired. The implausible duration was the only thing wrong-looking about it.
+
+All five seeded questions had failed **HTTP 403 in ~0.1s** (run identity `agent-user` holds
+`data-engineers`, not the `portfolio-leads` cell Engine P's verbs live in). The route still
+answered **200 with five null `artifact_ids`**. Both runs produced five `unseeded` panels,
+compared EQUAL, and the seal reported PASS on a board where nothing seeded.
+
+**The hole was the exemption in `45a2d06`, one commit old.** That guard voids when a panel that
+*seeded* records no verb, and deliberately exempts panels the seeder itself reported as failed —
+because a failure in run A and a success in run B is a genuine difference. Right, and incomplete:
+it holds only while *something* succeeded. Two total failures are two empty sets scored as
+agreement. Closed in `8ee159b`: void when no id comes back at all, naming `seeded`/`total` and
+every slot's status. **`seeded` and `total` were in the response the whole time and the arm read
+neither.**
+
+> **A guard that exempts a case inherits that case's failure mode.** Third instance in this arc,
+> all three mine — the two-rule fixture, the label that did not exist, and now this.
+
+**Entitlement finding, independent of the instrument:** any headless harness that seeds as
+`agent-user` measures nothing and looks healthy. The 403 arrives *before* routing, so
+`policy/groups.yaml`'s own warning — *"the question grounds to nothing and routes nowhere, while
+every engine reports healthy"* — applies one layer earlier than where it was written.
+
+### Attempt 2 — a real seed, and a real VOID
+
+Re-run as **alice**, who holds `portfolio-leads` (PORTFOLIO_LEAD · PORTFOLIO_PLANNING) per
+committed policy. **No Topaz write was made; this is an identity choice from `policy/users.yaml`.**
+
+Run A seeded for **398s (6m38s)** — real work. It returned five artifact ids. Then the first
+artifact read **404'd**, and the arm voided rather than recording a difference:
+
+```
+SEAL 3 VOID — artifact urn:li:answerArtifact:seal3-run-a-seed0-06d9592b (ordinal 0):
+the seed returned this id and the store does not have it.
+```
+
+**The store does have it.** That void is correct about its own limits and wrong about the cause,
+which is what a void is for.
+
+### THE FINDING — `GET /artifacts/{id}` cannot read the artifacts it produced
+
+Diagnosis, each step checked rather than inferred:
+
+| step | result |
+|---|---|
+| artifact in Neo4j? | **yes** — `(:AnswerArtifact {id: 'urn:li:answerArtifact:seal3-run-a-seed0-06d9592b'})` |
+| URL-encoding? | **no** — raw and percent-encoded both 404 |
+| `PRODUCED_FOR` present? | **yes** → `(:Actor {actor_id: 'a400f096-…'})`, persona PORTFOLIO_LEAD |
+| does that actor match the caller? | **alice's token `sub` IS `a400f096-…`** |
+| so why 404? | the route does not scope on `sub` |
+
+`_ARTIFACT_BY_ID_CYPHER` matches `(:Actor {actor_id: $user_id})` with
+`$user_id = current_user.authz_id`. And `auth.py:184` computes
+`authz_id = payload.get(USER_ENTITLEMENT_CLAIM) or sub`, where
+`USER_ENTITLEMENT_CLAIM = os.getenv("USER_ENTITLEMENT_CLAIM", "email")` — **read from the code,
+not its comment** — and the deployed `iagent-config` **does not set it**. So the read path scopes
+on `alice@example.com` while the write path stamped the `sub` UUID.
+
+**Alice has TWO `Actor` nodes, and the routes disagree about which one she is:**
+
+```
+actor_id = 'alice@example.com'                        persona DATA_ENGINEER      artifacts:   1
+actor_id = 'a400f096-d252-49cc-9336-5f47a5b9e4cd'     persona PORTFOLIO_LEAD     artifacts: 285
+```
+
+**285 of alice's 286 artifacts are unreadable through the route, permanently, by their own
+producer.** It is not a seal-3 problem, not a timing problem, and not fixable in the arm: it is a
+split identity between the write path (`sub`) and the read path (`authz_id`, defaulting to
+`email`).
+
+And the failure wears the wrong face — `404 "no artifact {id} for you"`. The route's own docstring
+argues 404-not-403 so as not to reveal that an id exists, and separately keeps 503 distinct from
+404 because *"we could not look" is not "there is no such thing"*. Both are right. This is the
+third member of that family and it is unhandled: **"it is yours and I looked in the wrong place"**
+also renders as "there is no such thing".
+
+### What this does NOT settle
+
+Seal 3's actual subject — whether two phrase-based seeds produce the same panel set — remains
+**unmeasured**. The structural result stands (a phrase seed cannot express a panel set at all),
+and it is still the stronger of the two. The live arm is now blocked on a defect in the read path
+rather than on a window, a prime, or the queue.
+
+**Incidental measurement worth banking:** one seed of five questions took **6m38s**, not the ~25
+minutes RULING (b) estimates. If that holds, the live arm is ~14 minutes rather than ~50, and the
+scheduling constraint around it is roughly 4× less severe than assumed. One observation, not a
+claim.
