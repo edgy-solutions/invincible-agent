@@ -570,6 +570,45 @@ the call rather than shipping a pin that looked settled.*
 
 ---
 
+## ⛔ ACCEPTANCE 3 IS FALSIFIED AS WRITTEN — measured 2026-09-09
+
+**This ADR calls seal 3 "the one seal phrase-based seeding cannot pass" and requires it to
+FAIL. It passed, three times over.** Two full seeds as `alice` on sha `95f78722`, 658.75s,
+plus one earlier spent seed recovered from the graph — ten artifacts, all `complete`, every
+verb matching `portfolio.yaml` one-for-one on all three runs.
+
+**THE SEAL TESTS THE WRONG EVENT, AND THE SEEDER'S OWN COMMENT NAMES THE RIGHT ONE.**
+Resolution shifts ACROSS A PRIME — *"where are we over budget" moved Portfolio 0.86 → Site
+0.75 across a single prime.* Seal 3 seeds twice against UNCHANGED state, so it never
+exercises the event it was written to catch. On a quiet substrate the classifier is
+deterministic, and a green means exactly one thing: **the substrate did not move between the
+two runs.**
+
+So as scoped it is the decorative seal this ADR was written against, sitting inside this
+ADR's own acceptance list — and it will pass every time anyone runs it under conditions we
+control, *because* controlling them means holding the substrate still, which is exactly what
+a careful operator does for attribution.
+
+**RECORDED IN THE ORDER IT HAPPENED, WHICH IS WHY IT IS CREDIBLE.**
+`invincible-agent-5f` wrote this prediction down *before* the result, once run A's recovered
+panel set showed correct routing, precisely so it could not read as explaining away a green
+after the fact. The packet (`08ddf94`) carries that sequence intact.
+
+**WHAT SURVIVES, AND IT IS THE STRONGER HALF.** The seeder declares five PHRASES and no verb,
+so a panel set is **not expressible until after the seed completes**. That is a property of
+the design rather than of a substrate's mood, it holds on every substrate, and
+`test_todays_phrase_seed_cannot_express_a_panel_set` asserts it from source. It has been the
+load-bearing half since slice 1's first commit and it is now the only half.
+
+**THE RE-SCOPE THAT WOULD TEST THE ACTUAL CLAIM: `seed → PRIME → seed`.** That is the
+documented failure mode and the only experiment that can bite. It needs a prime, which is
+decision-bearing. **Open: whether acceptance 3 is re-scoped to span a prime, or corrected to
+claim only what two quiet seeds can show.** Not decided here, and it must not be left
+implicit — an acceptance criterion that is known-falsified and unamended is worse than one
+nobody wrote.
+
+---
+
 ## Acceptance — the seals this ADR commits to
 
 1. **A template referencing an undeclared verb FAILS AT MERGE.** The CI job of §1.3, against the

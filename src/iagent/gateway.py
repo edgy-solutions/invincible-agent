@@ -166,7 +166,8 @@ async def lifespan(application: FastAPI):
     #               re-checks the caller's Topaz entitlement cell via
     #               /interview/stream; a non-entitled cell 403s there exactly as
     #               it would for a typed question.
-    #   amplifies : one request -> five sequential Dagster runs (~18 min). A
+    #   amplifies : one request -> five sequential Dagster runs (~5-7 min,
+    #               measured 2026-09-09; this said ~18 and the ruling said ~25). A
     #               resource cost an entitled caller can repeat, not a privilege
     #               they can exceed. Declared in the manifest row as `delegates`.
     #
@@ -212,7 +213,8 @@ async def lifespan(application: FastAPI):
             ],
             owner_persona="PORTFOLIO_LEAD",
             domains=["PORTFOLIO_PLANNING"],
-            # Not "fast": five sequential governed asks, ~18 minutes. Declaring
+            # Not "fast": five sequential governed asks, ~5-7 minutes measured.
+            # Still not interactive, which is what `slow` is claiming. Declaring
             # it fast would invite a caller to treat it as interactive, which is
             # the one thing this verb is not.
             cost_class="slow",
@@ -1676,8 +1678,25 @@ class CanvasesBody(_BaseModel):
 # ── RULING (b): SEQUENTIAL, NOT PARALLEL. ──────────────────────────────────
 # Five concurrent runs against `max_concurrent_runs: 2` — with a reaper gap
 # that deadlocked this queue twice in one day — is how the substrate dies at
-# 3am with nobody awake. Sequential costs ~25 minutes for a full seed, which is
-# FINE: seeding is a PRE-WARM operation, not an on-stage one.
+# 3am with nobody awake. The qualitative half of this ruling is untouched by
+# anything below: sequential is right, and how long each ask takes does not
+# bear on it.
+#
+# ── THE NUMBER WAS 4x PESSIMISTIC, MEASURED 2026-09-09 ─────────────────────
+# This said "~25 minutes for a full seed". Two independent measurements on the
+# quiet sandbox, by invincible-agent-5f while running ADR-0050's seal 3:
+#
+#     1 five-question seed      398s   (6m38s)
+#     2 five-question seeds     659s   (~5m29s each)
+#
+# So a full seed is ~5-7 MINUTES, not ~25. The stale figure was not idle: it
+# drove substrate holds, window negotiation and scheduling on two lanes for a
+# day — a ~50-minute estimate for seal 3's two-seed arm that is really ~11.
+# An estimate nobody re-measures becomes a constraint, and this one was
+# quoted back at us in three places before anyone timed it.
+#
+# ~5-7 minutes is still a PRE-WARM operation and not an on-stage one, which is
+# what the ruling actually rests on.
 #
 # ── ORDER IS THE DECLARATION ───────────────────────────────────────────────
 # PORTFOLIO_PLANNING_TEMPLATE (cortex-ui/src/lib/stageConstants.ts) declares
@@ -1876,7 +1895,8 @@ async def canvas_seed(
     if the cost curve fails, site load lands in the cost-curve slot, every card
     is real, and nothing reports it.
 
-    A complete seed (the normal case, and the measured one — 5/5 in 17.7 min)
+    A complete seed (the normal case; 5/5 in 17.7 min when first measured, and
+    5/5 in ~5-7 min re-measured 2026-09-09 on the quiet sandbox)
     is unaffected. A partial seed produces a board that is wrong in a way only a
     human notices. Whether a partial seed should compose at all or refuse
     outright is a PRODUCT ruling, not mine to make silently at this layer: the
@@ -1916,7 +1936,7 @@ async def canvas_seed(
     #
     # `program_finance` is ratified and CANNOT seed: all six finance verbs require
     # `program_id` with no default, and `shared_slots` is empty until §3's carry lands. Every
-    # panel would refuse at dispatch — after ~25 minutes of sequential asks, one hole at a
+    # panel would refuse at dispatch — after minutes of sequential asks, one hole at a
     # time, ending in a partial-seed refusal that names the wrong cause.
     #
     # So it refuses UP FRONT and says which slot is missing. This is the same ordering as the
@@ -3686,7 +3706,7 @@ async def get_artifact(
     WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
     actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
     set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
-    404'd — the arm would have burned ~25 minutes on the first seed and then errored.
+    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
 
     THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
     returned `None` per panel instead of failing, both seeds would have compared EQUAL and
