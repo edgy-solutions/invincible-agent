@@ -209,3 +209,40 @@ async def test_a_service_that_CANNOT_name_itself_keeps_the_env_key(monkeypatch):
     doc = await gw.fleet_version()
     assert doc["services"]["w"]["state"] == "no_endpoint"
     assert doc["services"]["w"]["asked_as"] == "w"
+
+
+def test_targets_are_named_as_the_component_will_name_ITSELF(monkeypatch):
+    """FOUND BY THE SECOND LIVE CENSUS — the fix for the first join defect broke the control.
+
+    A service that ANSWERS is re-keyed by the `component` in its payload. A service that 404s
+    or is down carries no payload and cannot be re-keyed, and those are precisely the rows
+    worth reading. The held-back `engine-w` fell out of its own join and read UNKNOWN instead
+    of `not-rolled`: the repair only covered the case where the service could speak.
+
+    So the canonical name is derived at TARGET time, before anyone has to answer.
+    `ENGINE_W_PUBLIC_URL` -> `engine-w` is the convention every engine already follows; the
+    three older variables are mapped explicitly to the component each announces itself as.
+
+    This is `test the edge, not the nodes` twice over: the aggregator and the census were each
+    correct, and the join between them was wrong in two different ways on two different runs.
+    """
+    import os
+    import iagent.gateway as gw
+
+    monkeypatch.setattr(os, "environ", {
+        "ENGINE_W_PUBLIC_URL": "http://iagent-engine-w:8093/query_knowledge",
+        "ENGINE_A_PUBLIC_URL": "http://iagent-engine-a:8081/analyze",
+        "DATAHUB_WRAPPER_URL": "http://iagent-engine-d:8085",
+    })
+    monkeypatch.setattr(gw, "_DAGSONTOLOGY_SVC_URL", "http://iagent-engine-o:8084")
+    monkeypatch.setattr(gw, "_PRESENTATION_AGENT_SVC_URL", "http://iagent-engine-f:8087")
+    targets = gw._fleet_version_targets()
+
+    assert set(targets) == {"engine-w", "engine-a", "engine-d", "engine-o", "engine-f"}, (
+        f"targets are named after their env vars rather than their components: "
+        f"{sorted(targets)} — a service that cannot speak lands under a key nothing joins on"
+    )
+    # THE PATH IS STILL STRIPPED: several of those variables point at a handler, and
+    # /version lives at the root.
+    assert targets["engine-w"] == "http://iagent-engine-w:8093"
+    assert targets["engine-a"] == "http://iagent-engine-a:8081"

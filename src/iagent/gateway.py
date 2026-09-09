@@ -287,13 +287,24 @@ def _fleet_version_targets() -> dict:
             return
         out[name] = f"{u.scheme}://{u.netloc}"
 
+    # NAMED AS THE COMPONENT WILL NAME ITSELF, not as the variable happens to be spelled.
+    #
+    # A service that ANSWERS is re-keyed by the `component` in its payload. A service that
+    # 404s or is down carries no payload and cannot be re-keyed — and those are exactly the
+    # rows worth reading. Measured on the second live census: the held-back control fell out
+    # of its own join and read UNKNOWN instead of `not-rolled`, because the fix for the
+    # first join defect only covered the case where the service could speak.
+    #
+    # `ENGINE_W_PUBLIC_URL` -> `engine-w` is the convention every engine already follows, so
+    # the canonical name is derivable HERE, before anyone has to answer.
     for key, val in os.environ.items():
         if key.startswith("ENGINE_") and key.endswith("_PUBLIC_URL"):
-            _add(key[len("ENGINE_"):-len("_PUBLIC_URL")].lower(), val)
-    # The three this process talks to by their own names rather than the ENGINE_* pattern.
-    _add("ontology", _DAGSONTOLOGY_SVC_URL)
-    _add("presentation", _PRESENTATION_AGENT_SVC_URL)
-    _add("datahub", os.getenv("DATAHUB_WRAPPER_URL", ""))
+            _add("engine-" + key[len("ENGINE_"):-len("_PUBLIC_URL")].lower(), val)
+    # The three whose URL variables predate that convention. Mapped to the component name
+    # each one announces itself as, so a silent service still lands under the right row.
+    _add("engine-o", _DAGSONTOLOGY_SVC_URL)
+    _add("engine-f", _PRESENTATION_AGENT_SVC_URL)
+    _add("engine-d", os.getenv("DATAHUB_WRAPPER_URL", ""))
     return out
 
 
