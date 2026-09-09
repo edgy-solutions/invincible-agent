@@ -8,7 +8,7 @@ answering a different question from the one in their docstring.
 
 Assembled 2026-09-08 across two lanes — the direct-path work in
 `invincible-agent` and the Electric/stage work in `cortex-ui` — from
-nine instances found in two days. Every one was green, most had
+twelve instances found in three days. Every one was green, most had
 survived mutation, and two of them shipped defects a person found by
 clicking.
 
@@ -94,7 +94,33 @@ populated that field — it was `{}` on every ask regardless. **Asserting
 on a field the path does not fill is asserting on a neighbour.** See
 [[assert-on-the-claim-not-its-neighbour]].
 
-## The one sentence that covers all nine
+**10. A fixture that agrees with the bug.** `/artifacts/{id}` read `current_user.authz_id`
+while the writer stamped `current_user.id`; **285 of one user's 286 artifacts were
+permanently unreadable by their own producer.** Nine tests passed over it, because the test
+fixture set `authz_id` and `id` to the SAME string. Not an empty fixture (shape 8) and not a
+fixture standing in for the subject (shape 3) — a fixture that made two DIFFERENT things
+indistinguishable, so the wrong one could not look wrong. *Tell:* two fields your code
+chooses between are equal in the fixture. **Where the code picks between identifiers, the
+fixture must make them differ.**
+
+**11. A guard that exempts a case inherits that case's failure mode.** *(invincible-agent-5f,
+2026-09-09.)* Their seal voided when a panel that SEEDED recorded no verb, and exempted
+panels the seeder reported as failed — correct, because a failure in run A and a success in
+run B is a genuine difference. It holds only while SOMETHING succeeded. Two total failures
+became two empty sets scored as agreement, and the seal reported PASS in 2.48 seconds against
+a fifty-minute run. The identical shape was one layer down in `/canvas/seed`, whose
+partial-seed refusal returned 200 and therefore covered the zero-seed case too. *Tell:* an
+exemption written to keep one case informative, with no assertion about the case where the
+exemption is all that is left.
+
+**12. A uniform extreme from a query whose population may not exist.** Five-of-five verbs
+absent and sixteen-of-sixteen services unknown are the same reading. 5f's verb check queried
+`(:Predicate)` NODES when verbs in that graph are RELATIONSHIP TYPES, and returned a
+confident uniform NOT FOUND — one commit from filing "the template names five unregistered
+verbs". *Defence:* put a FABRICATED member through the same code path and require it absent.
+A uniform answer is only evidence once the instrument has been shown able to give a mixed one.
+
+## The one sentence that covers all twelve
 
 **"Whatever you mock, you have stopped testing."** — cortex-ui-60, 2026-09-09, after a
 mutation survey found four mutations alive in a classifier whose test mocked the fetch
