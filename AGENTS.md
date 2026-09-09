@@ -939,6 +939,37 @@ asserts a MECHANISM ("it journals through Restate") is the sibling of a ruling t
 string identity — both feel like reasoning and are actually claims, and both need the same
 treatment: trace where the thing actually lives before writing the ruling down.
 
+### A `RULED` line cites its source, or it is not a ruling
+
+**Established 2026-09-09, after a retirement was executed and then could not be traced.**
+
+ADR-0046 §8.4 read `RULED 2026-09-06 — RETIRE IT. Decided by the architect.` When the
+decision was questioned three days later, the lane that wrote it searched every place a
+decision is normally recorded — git history, ADRs, plan packets, session logs — and found
+nothing. Every commit touching the retirement was its own. It had written down someone
+else's claim that a ruling existed, on a relay alone.
+
+**The ruling was real.** It was a user message, `2026-09-07T02:56:36.894Z`, and producing it
+took a scripted search across sixteen transcript files. Two things made it un-findable: the
+cited date was a day off, and RELAYING IT WAS ITS ONLY RECORDING.
+
+So, both halves:
+
+* **Relaying a ruling means QUOTING it with its timestamp.** A dispatch that says "the
+  architect ruled X" ends the trace at the relayer, and a relay that cannot be traced is
+  indistinguishable from one that was invented. The cost of quoting is one message; the cost
+  of not quoting is a lane holding all work pending provenance.
+* **A `RULED` line in an ADR carries the SENTENCE and the TIMESTAMP**, not "decided by the
+  architect". Attribution is not provenance. A ruling that lives only in one conversation is
+  un-findable to every lane that was not in it — which is every lane, later.
+
+The lane's own statement of the failure is the one to keep: *"I checked every fact in the
+dispatch except the one that authorised the work."*
+
+**A dispatch's stated premise is checkable and must be checked** — the same way its facts
+are. This paragraph is that rule's record; it deliberately cites no wiki-link, because a
+pointer to a name only one agent can resolve is the very failure described above.
+
 ### A journaled step's contract is its RETURN VALUE — side effects do not replay
 The memoization mirror of the time-machine rule: a journal replays what was **returned**, not what
 was **done**. `ctx.run` memoizes the return value and does not re-execute the body, so anything the

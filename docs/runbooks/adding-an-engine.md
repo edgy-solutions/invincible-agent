@@ -465,6 +465,38 @@ never degrade — the caller's identity on a governed read, and the registration
 degrades to "unused". There is nowhere in `main.py` a standing secret could be read from, so
 the degraded mode cannot silently become the privileged one.
 
+### REQUIRED — `/version`, from your FIRST commit
+
+**Not after the demo. The census names a service that does not serve it, and "the fourteenth
+service is missing" is a worse first impression than a missing feature.**
+
+One line, next to where you announce transport auth:
+
+```python
+try:      # flat in the image (/app)
+    from utils.version_endpoint import mount_version as _mount_version
+except ImportError:   # packaged in the repo
+    from agent_fleet.utils.version_endpoint import mount_version as _mount_version
+
+_mount_version(app, "engine-x")     # the same component name you announce with
+```
+
+**ONE HELPER, MOUNTED N TIMES — do not write your own.** A per-service copy is how fourteen
+services come to report eleven shapes, and the aggregator then needs a special case per
+engine. The payload is fixed: `component`, `repo`, `git_sha`, `built_at`, `image_tag`,
+`uptime_s`.
+
+**The sha is BAKED INTO THE IMAGE**, not injected by the chart — `ARG GIT_SHA` in the
+Dockerfile, read from `IAGENT_GIT_SHA`. A chart-supplied tag is a claim about what was
+REQUESTED; under `:latest` it is not even that. Both are reported, separately, because a
+disagreement between them is the finding.
+
+**`unknown` is reported as `null`.** An image built before the stamp existed cannot say what
+it is, and a string a consumer would read as a commit is worse than an absence.
+
+Then declare it in `docs/architecture/endpoint_gating_manifest.yaml` — `mount_version` is not
+`@app`-decorated in your file, so the manifest entry is the only record a reader has.
+
 ---
 
 ## §8 — Registration, Contract D, and the ontology seed
@@ -480,6 +512,47 @@ registrations**:
 * **`mesh:enumerateInstances`** — `resolveInstance` scores against something the speaker
   *said*. A slot the phrase never filled has no such string, so **no number of resolve
   providers builds a menu for it.**
+
+### REQUIRED — retry with backoff, and readiness that fails on GAVE UP
+
+**Registration is best-effort by default: the helper catches, logs a warning, and the engine
+boots healthy.** So "I rolled it" and "the edge moved" are different claims and only the
+second matters. Three things, and the third is the one usually missing:
+
+1. **Retry with jittered backoff** on a background daemon thread. A registrar that is
+   starting at the same moment as you is the normal case, not the exception.
+2. **Track the state** — `registration_is_ready()` — rather than inferring it from anything.
+   The layer that knows is the layer that records.
+3. **READINESS FAILS ON "GAVE UP", NOT ON "STILL TRYING".** Those are different states with
+   different meanings to a scheduler: still-trying is a pod that will become useful, gave-up
+   is a pod that never will. A readiness probe that cannot tell them apart either
+   crash-loops a healthy pod or admits a permanently unregistered one.
+
+**A 422 from Contract D is PERMANENT and is not retried** — your classes are not in the graph
+yet. Retrying it forever hides a seed-ordering bug behind a busy log.
+
+### REQUIRED — no success line that does not check success
+
+**`✅ Registered` printed on a path that did not register is the single most expensive line
+this repo has shipped.** It appeared on the fallback branch, so an engine that failed every
+registration logged fourteen ticks and booted green, and the failure was found days later by
+counting edges in the graph.
+
+The rule is mechanical: **a log line asserting an outcome must be inside the branch that
+CHECKED that outcome.** If you cannot see the check from the line, the line is a wish. This
+is the same law as `classify_called` being recorded rather than derived, and as a status
+that is `pending` until something flips it — see [[optimistic-defaults-are-dishonest]].
+
+### REQUIRED — every URI in a manifest goes through the prefix helper
+
+**A CURIE in a manifest is a LINT FAILURE, not a runtime tolerance.** `cost:LotCostBreakdown`
+does not expand: an unknown prefix passes through verbatim, so the row registers, reports
+accepted, and never matches. Nothing errors — the verb is simply never reachable.
+
+Expand on the DECLARING side, through the shared helper, and lint it there. Do not
+hand-expand: a second expansion is a second prefix table, and the two agree until someone
+adds a namespace to one of them. **This is the third time this defect has shipped**, which
+is why it is a gate and not advice.
 
 ### REQUIRED — the boot guard: does every class you make findable lead to a verb?
 

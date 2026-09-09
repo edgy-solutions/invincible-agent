@@ -154,6 +154,26 @@ set and fails.
 check that cannot fail is no check. Do not write a seal that goes
 inert when an internal name changes and call that honest degradation.
 
+**TEST THE EDGE, NOT THE NODES** — cortex-ui-60, 2026-09-09, and it is the sharpest of these
+because it explains why a WELL-tested codebase is the one it happens to. Their store and their
+badge were each clean against ten mutations. Two further mutations deleted the CALLS
+CONNECTING them — the publish on success and the publish on failure — and both survived. The
+badge would have sat at "…" for the life of every session with the whole suite green and every
+component individually correct.
+
+Third instance in that repo alone: three of five interpreter call sites unthreaded, a section
+mounted on the one branch that never renders, and a signal published by nobody. **Both
+endpoints being individually verified is exactly the state in which a missing edge is
+invisible, and it is the state good code is usually in.** When two units are each sealed, the
+untested thing left is the wire between them.
+
+**RUN THE MUTATION HARNESS ON A SCRATCH COPY, NEVER THE SHARED TREE.** Two ways it bites in a
+multi-lane checkout: a peer staging during a run commits the mutant, and `Path.write_text` on
+Windows re-emits CRLF for text read with universal newlines — so a "restored" file shows as
+MODIFIED with a zero-line diff and no content change. Read and write BYTES, and build anchors
+with the file's own line ending: an anchor that matches zero times prints identically to a
+mutation that was killed, so a non-unique match must be fatal rather than reported.
+
 ## The rule that generalises past testing
 
 **A substitute check that finds something is the most convincing wrong
