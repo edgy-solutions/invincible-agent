@@ -86,8 +86,7 @@ def test_an_invalid_ratified_row_fails_the_generator():
             "input_uri: http://x#A\noutput_uri: http://x#B\n",
             encoding="utf-8",
         )
-        sys.path.insert(0, str(_ROOT))
-        from agent_fleet.graph_host.manifest import load_manifests
+        from iagent_mesh.graph_manifest import load_manifests
 
         with pytest.raises(ValueError) as exc:
             load_manifests(tmp_policy)

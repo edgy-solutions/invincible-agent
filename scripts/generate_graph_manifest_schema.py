@@ -24,7 +24,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from agent_fleet.graph_host.manifest import (  # noqa: E402
+# THE CONTRACT COMES FROM THE SDK. It moved out of agent_fleet/graph_host/ on 2026-09-08 so
+# that a team running their own host validates against the same schema rather than a copy —
+# and so the policy repo's PR gate and the seed cronjob import ONE `validate_dir`. A copy in
+# either place drifts until a row passes one gate and fails the other.
+from iagent_mesh.graph_manifest import (  # noqa: E402
     GraphManifest,
     load_manifests,
     manifest_ref,

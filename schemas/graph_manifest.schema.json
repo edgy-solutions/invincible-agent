@@ -2,7 +2,7 @@
   "$defs": {
     "SlotDecl": {
       "additionalProperties": false,
-      "description": "One declared slot. Mirrors what `slots_for()` emits in the three engines that have it.",
+      "description": "One declared slot \u2014 the same record shape the fleet's ``slots_for()`` emits.",
       "properties": {
         "default": {
           "anyOf": [
@@ -75,8 +75,15 @@
     }
   },
   "additionalProperties": false,
-  "description": "One ratified row. One row, one registered mesh verb \u2014 ADR-0046 \u00a71.",
+  "description": "One ratified row. One row, one registered mesh verb.",
   "properties": {
+    "anti_synonyms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Anti Synonyms",
+      "type": "array"
+    },
     "arity": {
       "anyOf": [
         {
@@ -175,6 +182,13 @@
         "$ref": "#/$defs/SlotDecl"
       },
       "title": "Slots",
+      "type": "array"
+    },
+    "synonyms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Synonyms",
       "type": "array"
     },
     "timeout_s": {

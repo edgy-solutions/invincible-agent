@@ -1,0 +1,27 @@
+[project]
+name = "graph-host"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # THE CONTRACT LIVES HERE, NOT IN THIS ENGINE. v0.5.0 carries the graph manifest models,
+    # the ADR-0036 composition, and `register_graph`. This engine is a thin CONSUMER of them
+    # so that a team running their own host (ADR-0046 §8.5 route C) imports the same loader
+    # and validates against the same schema — "plug into our host" vs "run your own" is a
+    # deployment choice rather than a second implementation.
+    # PINNED TO A TAG, never a branch: this package governs fleet auth and identity minting.
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.5.0",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pyyaml",
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+    "langchain-core",
+    "psycopg[binary]",
+    "python-dotenv",
+    "langfuse",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
