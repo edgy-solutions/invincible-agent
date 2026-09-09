@@ -1,0 +1,45 @@
+# RATIFIED CONFIG — one file, one graph, reviewed like a grant (ADR-0050 §1, the discipline
+# the dispatch named). A graph module on disk with no row here is INVISIBLE to the mesh, which
+# is ADR-0046 §2's refusal of `run_any_graph` made structural rather than followed.
+graph_id: fin_program_brief
+module: graphs.fin_program_brief   # flat in the image; the host tries the packaged path second
+builder: build
+
+verb: mesh:finProgramBrief
+name: engine_lg_program_brief
+description: >-
+  A short grounded brief for one program: the cost and schedule variance decomposition, the
+  cash burn against the phased plan, and the funding position, composed into three findings
+  that each cite the artifact they came from. Answers "how is this program doing" as ONE
+  answer rather than three separate asks. NOT the individual measures — those are
+  finVarianceAnalysis, finBurnRate and finFundingStatus, and this verb calls them. OWNS the
+  phrasings: program brief, how is the program doing, give me the summary, where do we stand.
+input_uri: http://invincible-agent/fin#Program
+output_uri: http://invincible-agent/mesh#StatefulSupportResponse
+owner_persona: PROGRAM_FINANCE_ANALYST
+domains: [PROGRAM_FINANCE]
+cost_class: high          # three inner mesh calls plus a synthesis node
+requires_human_approval: false
+timeout_s: 120
+
+slots:
+  - name: program_id
+    kind: spoken-mandatory
+    type: string
+    required: true
+    # DECLARED, never sniffed from the `_id` suffix. Lane 1 measured the cost of guessing: the
+    # filler emitted a plausible value at 0.92 confidence and the engine answered an honest 422
+    # to a perfectly answerable question. The referent is what makes the ask card and the
+    # one-option menu apply to this verb unchanged.
+    referent: http://invincible-agent/fin#Program
+
+arity: single             # forced: program_id is both required and a referent
+
+# ADR-0049 Ruling 2. If the initiator cannot invoke one of the three inner verbs, the brief is
+# produced with that finding NAMED AS ABSENT rather than silently narrowed to two. Declared
+# here and not decided at runtime: a graph that chose per-invocation would give two callers
+# different contracts for the same verb.
+refusal: named-hole
+
+# The one thing worth keeping from Engine B. thread_id = run id.
+checkpointer: true

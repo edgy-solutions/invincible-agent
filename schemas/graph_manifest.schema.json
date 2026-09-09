@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "SlotDecl": {
+      "additionalProperties": false,
+      "description": "One declared slot. Mirrors what `slots_for()` emits in the three engines that have it.",
+      "properties": {
+        "default": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "kind": {
+          "enum": [
+            "spoken-mandatory",
+            "spoken-optional",
+            "handle",
+            "ceremony"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "referent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Referent"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "type": {
+          "default": "string",
+          "title": "Type",
+          "type": "string"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Values"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "title": "SlotDecl",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One ratified row. One row, one registered mesh verb \u2014 ADR-0046 \u00a71.",
+  "properties": {
+    "arity": {
+      "anyOf": [
+        {
+          "enum": [
+            "single",
+            "set"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Arity"
+    },
+    "builder": {
+      "default": "build",
+      "title": "Builder",
+      "type": "string"
+    },
+    "checkpointer": {
+      "default": false,
+      "title": "Checkpointer",
+      "type": "boolean"
+    },
+    "cost_class": {
+      "default": "medium",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Cost Class",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "domains": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Domains",
+      "type": "array"
+    },
+    "graph_id": {
+      "title": "Graph Id",
+      "type": "string"
+    },
+    "input_uri": {
+      "title": "Input Uri",
+      "type": "string"
+    },
+    "module": {
+      "title": "Module",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "output_uri": {
+      "title": "Output Uri",
+      "type": "string"
+    },
+    "owner_persona": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Persona"
+    },
+    "refusal": {
+      "default": "fail",
+      "enum": [
+        "fail",
+        "named-hole"
+      ],
+      "title": "Refusal",
+      "type": "string"
+    },
+    "requires_human_approval": {
+      "default": false,
+      "title": "Requires Human Approval",
+      "type": "boolean"
+    },
+    "slots": {
+      "items": {
+        "$ref": "#/$defs/SlotDecl"
+      },
+      "title": "Slots",
+      "type": "array"
+    },
+    "timeout_s": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout S"
+    },
+    "verb": {
+      "title": "Verb",
+      "type": "string"
+    }
+  },
+  "required": [
+    "graph_id",
+    "module",
+    "verb",
+    "name",
+    "description",
+    "input_uri",
+    "output_uri"
+  ],
+  "title": "GraphManifest",
+  "type": "object"
+}
