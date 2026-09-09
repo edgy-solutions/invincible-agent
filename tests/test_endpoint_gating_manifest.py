@@ -176,3 +176,57 @@ def test_no_stale_manifest_routes():
             if (m, p) not in source:
                 stale.append(f"{service} {m} {p}")
     assert not stale, f"stale manifest routes (not found in source): {stale}"
+
+
+def test_the_scanner_SEES_WHAT_THE_APP_ACTUALLY_HAS():
+    """THE CONTROL ON THE INSTRUMENT — the routes FastAPI ended up with, not the ones a
+    syntactic form advertises.
+
+    `_extract_routes` recognises FORMS: a decorator, and (since 2026-09-09) a
+    `_mount_version(app, ...)` call. cortex-ui-60 made the correct objection to that fix —
+    "decorators plus the shared helper" is still a list of forms, and the THIRD mounting
+    style will be invisible in exactly the same way. Their own scanner had the same hole in
+    a different costume: it knew `function f()` and `const f = () => {}`, and walked past
+    four components written `memo(function ActionNode(...))`, reporting a clean population
+    that was missing them. Adding `memo` to a list would have been the same mistake with a
+    longer list.
+
+    The population is not a set of syntaxes. It is what the application object holds, and
+    FastAPI knows it exactly. So for the one service this suite can import, the two are
+    compared: any route the runtime has and the scanner missed is a hole in the scanner, and
+    it fails HERE rather than by silently under-reporting a service's gating surface.
+
+    ONLY THE GATEWAY, and that is a stated bound rather than an omission — importing
+    thirteen engines would drag Restate, smolagents and live clients into a unit suite. The
+    residual is real: a novel mounting style in an engine is still invisible. This catches
+    it in the file most likely to grow one.
+    """
+    import sys
+    if str(_REPO / "src") not in sys.path:
+        sys.path.insert(0, str(_REPO / "src"))
+    gw = pytest.importorskip("iagent.gateway")
+
+    runtime: set[tuple[str, str]] = set()
+    for r in gw.app.routes:
+        path = getattr(r, "path", None)
+        for m in (getattr(r, "methods", None) or set()):
+            if m in {"HEAD", "OPTIONS"}:
+                continue  # FastAPI adds these itself; they declare no surface
+            if path:
+                runtime.add((m.upper(), path))
+    # FLOOR: an import that yielded a handful of routes would make the diff below vacuous.
+    assert len(runtime) >= 25, f"only {len(runtime)} runtime routes — did the app load?"
+
+    scanned = _extract_routes(_REPO / SERVICE_FILES["gateway"])
+    # Routes the RUNTIME has that the scanner did not find. Mounted routers and framework
+    # internals are excluded by prefix, named rather than filtered silently.
+    _FRAMEWORK = ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect")
+    missed = {
+        (m, p) for m, p in runtime - scanned
+        if p not in _FRAMEWORK and not p.startswith("/static")
+    }
+    assert not missed, (
+        f"the route scanner missed {len(missed)} route(s) the app actually serves: "
+        f"{sorted(missed)} — it recognises a FORM, and something declares a route another "
+        f"way. Widen it to read the population, not to add one more syntax to the list."
+    )

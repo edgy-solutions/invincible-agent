@@ -1249,6 +1249,29 @@ services:
   gateway:
     file: src/iagent/gateway.py
     routes:
+      - method: POST
+        path: /internal/identity/redeem
+        identity: keycloak-jwt
+        gate: "get_current_user + named-principal allowlist (VAULT_REDEEMER_AUTHZ_ID)"
+        exposes: caller-credential
+        consumers: [dynamic_supervisor via the identity vault]
+        class: gated
+        justification: >-
+          DECLARED 2026-09-09. It was in source and absent from this manifest, which is the
+          one state this file exists to make impossible; it was failing CI as undeclared,
+          and the failure is older than the declaration.
+          THE MOST SENSITIVE ROUTE THE GATEWAY HAS — it dispenses the CALLER'S OWN bearer
+          token so the supervisor can act as them, so it is gated twice over and neither
+          gate is incidental. `Depends(get_current_user)` verifies the Keycloak JWT
+          (RS256 pinned, JWKS-verified, all failure paths 401), and the handler then
+          requires the caller's authz_id to equal `VAULT_REDEEMER_AUTHZ_ID` — an unset
+          variable denies, so a missing config fails CLOSED rather than opening the vault.
+          Beyond identity, the vault enforces single-use, run-binding and expiry atomically,
+          and every outcome INCLUDING refusals is audited: an unlogged dispensing surface
+          cannot be reasoned about after the fact.
+          Not `internal` despite the path: the prefix is a naming convention, not a network
+          boundary, and classifying on the URL would record a gate the routing layer does
+          not provide.
       - method: GET
         path: /version
         identity: none
