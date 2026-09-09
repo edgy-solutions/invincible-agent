@@ -256,7 +256,21 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
                       f"finding about panel-set stability")
             if a.status_code != 200:
                 _void(f"artifact {aid} (ordinal {i}): unexpected status {a.status_code}")
-            panels.append({"verb": (a.json().get("routing") or {}).get("verb_iri"),
+            doc = a.json()
+            # `verb_iri` is TOP-LEVEL on this route, not nested under `routing`. The first
+            # version of this arm read `routing.verb_iri` and would have returned None for
+            # every panel — voiding a full seed for an instrument reason, after spending it.
+            # Verified against a real artifact before this run rather than assumed.
+            #
+            # An ABSENT key is a shape change and must void; a PRESENT null is the route's
+            # honest "unrecorded", which the unread guard below already handles. Those are
+            # different facts and collapsing them would hide a contract change behind a
+            # data-quality message.
+            if "verb_iri" not in doc:
+                _void(f"artifact {aid} (ordinal {i}) has no `verb_iri` field at all — the "
+                      f"route's response shape changed; this arm is reading the wrong "
+                      f"contract, not observing a missing verb. Keys: {sorted(doc)}")
+            panels.append({"verb": doc.get("verb_iri"),
                            "role": None, "slots": {}, "unseeded": False})
 
         # ── A NULL VERB IS AN UNREAD PANEL, NOT AN EQUAL ONE ────────────────────────────────

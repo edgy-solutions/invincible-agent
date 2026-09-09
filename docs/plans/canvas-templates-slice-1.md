@@ -386,3 +386,86 @@ rather than on a window, a prime, or the queue.
 minutes RULING (b) estimates. If that holds, the live arm is ~14 minutes rather than ~50, and the
 scheduling constraint around it is roughly 4× less severe than assumed. One observation, not a
 claim.
+
+---
+
+## 2026-09-09, attempt 3 — SEAL 3 PASSED. That falsifies the ADR's claim about it, and the structural result is now doing all the work.
+
+**Result: PASS.** `1 passed in 658.75s (10:58)`, two full seeds as alice against sha `95f78722`,
+no prime, quiet substrate.
+
+Verified independently rather than trusted — read back from the graph through the route, not from
+the test's own verdict:
+
+| slot | run A | run B |
+|---|---|---|
+| 0 | `mesh:planSchedule` | `mesh:planSchedule` |
+| 1 | `mesh:planCostCurve` | `mesh:planCostCurve` |
+| 2 | `mesh:planSiteLoad` | `mesh:planSiteLoad` |
+| 3 | `mesh:planFundingGap` | `mesh:planFundingGap` |
+| 4 | `mesh:planMaturityGrid` | `mesh:planMaturityGrid` |
+
+All ten artifacts `complete`. Add the earlier spent seed and that is **three independent seeds
+producing the identical panel set**, each matching `portfolio.yaml`'s declared verbs one-for-one.
+
+### This falsifies ADR-0050's claim about seal 3, and the correction matters more than the pass
+
+The ADR says seal 3 *"must be run against TODAY's seed once, first, and it must FAIL"*, and calls
+it **"the one seal phrase-based seeding cannot pass"**. It passed. Three times over.
+
+**The prediction was written for the right reason and tests the wrong event.** The instability the
+seeder documents is explicit about its trigger: *"subject resolution SHIFTS when the ontology or
+verb set changes — 'where are we over budget' moved Portfolio 0.86 → Site 0.75 **across a single
+prime**."* Across a prime. Seal 3 seeds twice against **unchanged state**, so it never exercises
+the event it was written to catch. On a quiet substrate the classifier is deterministic, and a
+green here means exactly one thing:
+
+> **The substrate did not move between the two runs.**
+
+It does not mean phrase seeding is safe, and this is the failure mode that matters: **seal 3 as
+scoped will pass every time anyone runs it under conditions we control**, because we control it by
+holding the substrate still. A seal that is green whenever it is convenient to run is the
+decorative seal ADR-0050 was written against, arriving inside ADR-0050's own acceptance list.
+
+This was **predicted before the run and recorded before the result** — the expectation was set in
+writing once run A's recovered panel set showed correct routing, precisely so a green could not be
+explained away afterwards.
+
+### What still stands, and it is the stronger half
+
+The **structural** result is untouched and is now load-bearing on its own:
+
+> Today's seeder declares five PHRASES and no verb. Each panel's verb is whatever the classifier
+> returned on that run, so the panel set is **not expressible until after the seed completes**.
+
+That is a property of the design, not of a substrate's mood, and it does not depend on catching a
+divergence. `test_todays_phrase_seed_cannot_express_a_panel_set` asserts it from source and passes
+on every substrate. **It is the case for the seeder change.** The live arm never was, and now
+demonstrably is not.
+
+### The re-scope seal 3 needs to test what it claims
+
+Seed → **prime** → seed, comparing across the ontology change. That is the documented failure
+mode, and the only experiment that can bite. Costs: a prime (decision-bearing, and not the
+measuring lane's to call), a longer window, and a result that indicts the *combination* of a
+phrase seed and a moving ontology rather than the phrase seed alone.
+
+**Until that runs, nothing empirical supports "phrase seeding is unstable" — only the structural
+argument does.** Recording that plainly, because the pass would otherwise be quoted as evidence
+for the opposite conclusion by someone reading the acceptance list.
+
+### Timing — now a finding rather than an anecdote
+
+| observation | seeds | wall | per seed |
+|---|---|---|---|
+| attempt 2 (run A only) | 1 | 398s | **6m38s** |
+| attempt 3 (both runs) | 2 | 659s | **~5m29s** |
+
+RULING (b) estimates *"~25 minutes for a full seed"*. Two independent measurements put it at
+**5.5–6.6 minutes, roughly 4× pessimistic.** The live arm is ~11 minutes, not ~50.
+
+That figure has been load-bearing for scheduling on both lanes — substrate holds, window
+negotiations, the "seeding is a PRE-WARM operation, not an on-stage one" ruling. It deserves
+correcting at its source in `gateway.py`'s RULING (b) comment, which is not this lane's file. The
+qualitative half of the ruling is untouched: sequential-not-parallel remains right, and the reason
+(`max_concurrent_runs: 2` plus a reaper gap) is unaffected by how long each ask takes.
