@@ -201,18 +201,39 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
-    # LIST. This row is a STOPGAP to get master green.
+    # LIST.
     #
-    # CORRECTED 2026-09-10 BY LANE 1, whose intention this comment described. It read
-    # "Lane 1 is deriving this list from the CI build matrix, which is the actual fix".
-    # I DECIDED AGAINST IT overnight and the row is therefore less temporary than that
-    # promised. The derivation IS the right shape — derived list plus an explicit
-    # _NOT_MIRRORED, because an exclusion list fails LOUDLY (a missing image is noticed)
-    # where an inclusion list fails silently, which is how this one failed five times.
-    # But this is a deploy script that cannot be executed or verified from the dev
-    # machine, and the seal already catches the miss BEFORE a deploy — the fourth
-    # omission was caught exactly that way. An unverified rewrite of the thing that
-    # pushes images to the work cluster was the worse trade. Open, not in flight.
+    # THIS ROW IS NOT AS TEMPORARY AS IT FIRST CLAIMED — corrected 2026-09-10. It said the
+    # list was about to be DERIVED from the CI build matrix and that this entry would
+    # disappear with it. The derivation is OPEN, NOT IN FLIGHT, so the promise was false and
+    # told the next reader to expect a change that is not coming.
+    #
+    # "OPEN, NOT IN FLIGHT" IS LANE 1'S WORDING AND IT MATTERS. My own first correction said
+    # "considered and DECLINED", which reads as rejected on merit. It was not: the derivation
+    # is still the right answer and is simply not being worked. Those are different
+    # instructions to whoever picks this up.
+    #
+    # AND THE SHAPE IT SHOULD TAKE, which is the part worth keeping (Lane 1's, and my earlier
+    # rewrite of this block DROPPED it): a derived list PLUS an explicit _NOT_MIRRORED,
+    # because an EXCLUSION list fails LOUDLY — a missing image is noticed — where an
+    # INCLUSION list fails silently, which is how this one failed five times.
+    #
+    # WHY NOT NOW (Lane 1's decision; reasoning reached this lane as a RELAY via
+    # invincible-agent-5f and then from Lane 1 directly, not read from a document — recorded
+    # here because it existed only in messages between sessions): this is a PowerShell DEPLOY
+    # script that pushes images to the work cluster and cannot be executed or verified from
+    # the dev machine. The seal already catches a missing row BEFORE a deploy — demonstrated,
+    # that is how the fourth omission was caught — so an unverified rewrite of the push path
+    # buys nothing the seal was not already buying, against real risk.
+    #
+    # SO WHAT MAINTAINS THIS LIST IS test_mirror_covers_the_build_matrix.py, and that is an
+    # answer rather than a gap: the hand-kept list stays, and a DERIVED FLOOR above it fails
+    # when it drifts. Add the row when you add an engine; the seal is what makes forgetting
+    # fail instead of shipping.
+    #
+    # AND THE CORRECTION IS ITSELF THE ROW'S LESSON ONE LEVEL UP: a decision recorded in a
+    # conversation does not correct a comment. 5f found this by reading the file rather than
+    # the thread.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true

@@ -275,6 +275,47 @@ asks again.** This is [[a-workaround-erases-its-own-question]] wearing
 a green test: the document keeps reading as verified while its premise
 was quietly swapped.
 
+**And the same shape reaches PROVENANCE, not only checks: cite what the
+trace actually IS rather than launder a relay into a source.**
+
+A peer relayed a ruling — *"Engine B is retired, decided by the
+architect"* — and this lane recorded it in ADR-0046 §8.4 as
+`RULED … Decided by the architect`, with no source, then executed it.
+The relay was faithful and the ruling was real. **The provenance was
+unfindable**, and that cost a full stop-work: a later thread searched
+git history, every ADR, every plan packet and every session log — the
+right method — came back empty, correctly concluded nobody had ruled,
+and challenged a retirement already carried out. Producing the source
+took a scripted search across sixteen transcripts, and the search that
+should have found it failed on a **date one day off**, because the
+citation named the architect's "morning of 09-06" and not the
+transcript's `2026-09-07T02:56Z` — the same moment, a timezone apart.
+
+**A relay that turns out TRUE is the most convincing wrong provenance
+there is**, exactly as a substitute check that finds something is the
+most convincing wrong check. A relay that turns out false gets
+challenged; one that is correct reads as sufficient, and nothing in the
+document distinguishes it from a traced fact.
+
+The fix is not to refuse relays — refusing would have stalled a lane
+over a formality, and the ruling was genuine. It is to record the trace
+as the kind of thing it is: **quote the sentence, name the transcript,
+give the timestamp, and when two dates disagree cite both.** A citation
+naming one of two disagreeing dates is what makes the next search come
+back empty. A citation to a file that does not exist is worse than no
+citation, because it looks checkable and fails silently — this lane
+drafted one from a half-remembered filename and caught it before it
+shipped.
+
+**Corollary, one level up and earned the same week: a decision recorded
+in a conversation does not correct a comment.** A row in a deploy
+script carried a promise that the list was about to be derived; the
+derivation was considered and declined, the reasoning existed only in
+messages between sessions, and the file went on telling readers not to
+maintain the thing in front of them. Sibling of
+[[a-borrowed-name-is-a-claim]], and the special case
+*uncommitted work carries no authorship* sits under it.
+
 ## And the thing none of it replaces
 
 Over two days, seven instruments were green while something real was
@@ -288,6 +329,7 @@ exercise of a path as part of shipping it rather than as confirmation
 of something already shipped.
 
 Related: [[seals-must-be-proven-to-bite]],
+[[a-borrowed-name-is-a-claim]],
 [[a-green-check-proves-only-its-scope]],
 [[a-surviving-mutation-means-you-cannot-tell-yet]],
 [[a-stub-that-needs-another-test-is-not-a-stub]],
