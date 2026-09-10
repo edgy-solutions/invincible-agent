@@ -541,3 +541,86 @@ stated scope is the decorative shape one layer in.
 * Run B waits on: worker6 back → Weaviate and Keycloak scheduled → prime runs → **reregister hook
   completes**. Four conditions, and only the last is the signal to start.
 * Nothing is wasted and nothing needs redoing.
+
+---
+
+## 2026-09-10 — RUN B, across the prime: VOID, and the guard stopped a false FAIL this time
+
+Seed ran 449s (7m29s) as alice against bff `686942e7`, after rev 105 DEPLOYED with all four hooks
+Completed. All five panels **seeded**. All five recorded **no `verb_iri`**, so the arm voided:
+*"panels [0,1,2,3,4] seeded but recorded no verb_iri — a null is UNREAD, not equal."*
+
+**THE SAME GUARD CAUGHT THE OPPOSITE ERROR THIS TIME.** On 2026-09-09 it stopped a false PASS
+(two all-null runs comparing equal). Here it stopped a false **FAIL**: five recorded verbs
+pre-prime against five nulls post-prime compare as *different*, which the arm would have reported
+as **"SEAL 3 BIT ACROSS A PRIME"** — the headline result, fabricated out of an unread instrument.
+A guard that only ever prevented false greens would have been half a guard.
+
+### The post-prime artifacts
+
+All five `status=complete`, `routing_inline.action.iri = "UNKNOWN"`, no `verb_iri`, no
+`disposition`. So the seed completed and produced artifacts; routing resolved to nothing.
+
+### The substrate is NOT the cause — verified at four levels
+
+| checked | result |
+|---|---|
+| Weaviate populated | `Predicate` **122**, `OntologyClass` **16381** |
+| planning classes present | Neo4j 11 `idp#` incl. Portfolio/Site/Capability; Weaviate all three PRESENT |
+| all 11 template verbs eligible | `test_template_verbs_are_registered` **5 passed** post-prime, both stores, both controls |
+| (S,P) edges reachable | all five `idp#<subject> -[verb]-> …` edges present, 1 each |
+| pin direction | `686942e7` is **newer** than `95f78722` — not a rollback |
+
+### What it looks like instead: the component that serves `/resolve` never restarted
+
+```
+iagent-engine-o      Running   6h41m     <- did NOT roll
+iagent-cortex-bff    Running   6h41m     <- did NOT roll
+engine-a/d/e/f/p/w/fin/cost  Running  13m   <- rolled
+engine-reregister    Completed 13m
+```
+
+`/resolve` for *"what is scheduled by initiative and phase"*, **with** alice's identity, persona
+`PORTFOLIO_LEAD` and domain `PORTFOLIO_PLANNING`, returns `MaintenanceWorkOrderRecord` at 0.78 and
+**no `idp` class in the candidate pool at all**; the unauthenticated call shows every planning
+class excluded with `reason: "no_verb_in_scope"`.
+
+That is the signature recorded in [[prime-then-roll-then-read-the-edges]]: *a prime alone never
+restores routing; engines re-register only at startup; the cold-start fallback answers
+confidently from the maintenance ontology.* Confidently is the operative word — 0.78 and 0.85,
+not an abstain.
+
+**Recommendation: roll `engine-o` (and `cortex-bff`), then re-run.** Not done here: it is a fleet
+write during another lane's arc, and it would move the substrate under any measurement in flight.
+
+### THE CONFOUND, which voids the comparison independently of all of the above
+
+The baseline was seeded on bff `95f78722`; run B ran on `686942e7` — **eight hours of commits
+apart**. Seal 3 across a prime assumes the prime is the only thing that moved. It was not. Even a
+clean difference could not have been attributed to the prime.
+
+**For the re-run:** re-seed the baseline on the SAME fleet version the post-prime seed will use,
+or the experiment has two variables again. That is the arm's real precondition and it was not
+written down — the arm pins the baseline by ARTIFACT ID, which fixes *what* is compared and says
+nothing about *what produced it*.
+
+### A gap in my own seal, demonstrated by this run
+
+`missing_from_neo4j` asserts the relationship TYPE exists globally (`CALL db.relationshipTypes()`).
+It does **not** assert the verb is REACHABLE from the panel's subject — and reachability is what
+seal 1 is actually about: *"a template naming a verb no engine serves"* produces an empty panel,
+and so does a verb that exists but hangs off nothing the subject can walk to. The seal passed
+today while `/resolve` reported `no_verb_in_scope` for every one of those verbs.
+
+The edges happen to be intact, so the pass was correct — **by luck rather than by measurement**.
+Owed: an `unreachable_from_subject()` in `tests/_mesh_verbs.py`, deriving each verb's subject from
+Weaviate's `input_uri` and walking `subClassOf*0..5` in Neo4j. Additive, so it will not disturb
+the second consumer mid-build.
+
+### And one near-miss worth recording
+
+My first `/resolve` probe was **unauthenticated** and returned the maintenance ontology at 0.85. I
+nearly reported "routing is broken post-prime" from it. It is the documented cold-start fallback
+answering exactly as designed, and the probe simply carried no identity — the fifth time in two
+days I would have concluded about the subject from a failure of the instrument. What caught it was
+reading the response body rather than the status code: `no_verb_in_scope` named the gate.
