@@ -51,7 +51,16 @@ TEXT_EXT = {
 # subdirectory: the move that motivated this test created `docs/plans/archive/` and
 # `docs/reference/`, and a pattern hard-coded to `docs/plans/` would have gone blind to exactly
 # the paths it was written to protect.
-DOC_PATH = re.compile(r"docs/[A-Za-z0-9._/-]+\.md")
+# A citation of THIS repo's docs/. The negative lookbehind is load-bearing: without it the
+# pattern matches the `docs/...` INSIDE `iagent-mesh-sdk/docs/jupyter_guide.md`, and a
+# correctly-qualified reference to a SIBLING repo's file is reported as this repo's dead
+# link. `_is_cross_repo` below already knows about siblings — but it never saw these,
+# because the scrape had already stripped the prefix that identifies them.
+#
+# THE INSTRUMENT AND THE SUBJECT SHARE A SURFACE: both are the literal text `docs/<name>.md`,
+# and only the character before it tells them apart. Every doc in this repo sits at the
+# docs/ root, so a `<something>/docs/` form is a sibling by construction.
+DOC_PATH = re.compile(r"(?<![A-Za-z0-9._/-])docs/[A-Za-z0-9._/-]+\.md")
 
 # `<name>` placeholders in prose that documents the citation SHAPE rather than citing a file.
 PLACEHOLDER = re.compile(r"[<>]")
@@ -329,3 +338,64 @@ def test_the_moved_population_is_where_the_ruling_put_it():
         "archive packets are being globbed as live packets — the coverage line can never "
         "reach N of N"
     )
+
+
+# ── the scrape's own discrimination ──────────────────────────────────────────
+#
+# EVERY FIXTURE BELOW IS ASSEMBLED AT RUNTIME, and that is not stylistic. `_iter_text_files`
+# walks this file too, so a test that writes a citation-shaped literal to demonstrate the
+# scrape BECOMES one, and `test_every_cited_docs_path_resolves` then reports this file as
+# citing a document that never existed. That happened twice while writing this block.
+#
+# The instrument and the subject share a surface — the literal text of a citation — so the
+# fixture has to be built from pieces that are not themselves that surface.
+
+_D = "do" + "cs/"
+
+
+def test_DOC_PATH_tells_this_repo_from_a_sibling():
+    """THE CONTROL ON THE NEGATIVE LOOKBEHIND, and it needs both directions.
+
+    `DOC_PATH` gained `(?<![A-Za-z0-9._/-])` because it matched the path inside
+    `iagent-mesh-sdk/` + this repo's doc folder and reported a SIBLING repo's file as our
+    dead link. A lookbehind that is too greedy fails the opposite way — it stops seeing real
+    citations, and then `test_every_cited_docs_path_resolves` passes because it collected
+    nothing to check. That direction is silent, so it is asserted first.
+
+    Pure string matching, no filesystem walk: this keeps discriminating in any tree, whether
+    or not a sibling repo is checked out beside it.
+    """
+    must_match = [
+        _D + "adr/ADR-0050-canvas-templates.md",
+        "see `" + _D + "runbooks/adding-an-engine.md` for the sequence",
+        "(" + _D + "architecture/overview.md)",
+        "cited by " + _D + "plans/some-plan.md:7",
+    ]
+    for line in must_match:
+        assert DOC_PATH.search(line), (
+            f"the scrape no longer sees a citation of THIS repo: {line!r} — the lookbehind "
+            f"is too greedy, and an empty collection passes every test in this file"
+        )
+
+    must_not_match = [
+        "iagent-mesh-sdk/" + _D + "jupyter_guide.md",
+        "cortex-ui/" + _D + "theming.md",
+        "../../../iagent-mesh-sdk/" + _D + "jupyter_guide.md",
+    ]
+    for line in must_not_match:
+        assert not DOC_PATH.search(line), (
+            f"the scrape still reads a SIBLING repo's file as ours: {line!r} — the prefix "
+            f"that identifies the repo is stripped before `_is_cross_repo` can see it"
+        )
+
+
+def test_the_collector_still_reports_a_genuinely_dead_citation():
+    """The floor under the fix. Narrowing a scrape to remove false positives is one edit away
+    from removing the true ones too, and this file's whole value is the true ones."""
+    citations = _collect_citations()
+    assert len(citations) >= 50, (
+        f"the collector found only {len(citations)} cited paths — it has been narrowed past "
+        f"the point where 'every citation resolves' means anything"
+    )
+    bad = sorted(c for c in citations if not c.startswith(_D))
+    assert not bad, f"the scrape captured a foreign prefix: {bad}"

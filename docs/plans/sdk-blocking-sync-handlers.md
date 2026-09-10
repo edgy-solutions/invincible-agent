@@ -4,7 +4,7 @@ status:     closed
 owner:      human
 blocked-on: 
 closed-by:  iagent-mesh-sdk e6b6757 (v0.4.0) — sync handlers run on a worker thread via anyio.to_thread.run_sync under an explicit contextvars.copy_context(); the quickstart's promise was made TRUE rather than corrected away. BOTH RULINGS ANSWERED BY ENUMERATION: the census this item demanded found ZERO MeshTool.execute() handlers in invincible-agent (zero MeshTool call sites at all), so the population holding retroactively-broken sync handlers was EMPTY — fix the code, no migration debt, nobody to audit. Landed TOGETHER with [[sdk-discards-caller-identity]]'s SDK half in one change to route_handler, so the run_in_executor composition hazard never had a window.
-code-site:  iagent_mesh/core.py:438, docs/jupyter_guide.md
+code-site:  iagent_mesh/core.py:438, iagent-mesh-sdk/docs/jupyter_guide.md
 repo:       iagent-mesh-sdk
 summary:    AVAILABILITY BUG WEARING A DOC CLAIM. MeshTool runs synchronous handlers DIRECTLY on the event loop — no threadpool — while the quickstart tells authors to prefer sync `def` for Polars work because "we will execute it safely in a background thread." There is no background thread. A recommended handler doing df.collect() blocks the whole tool server. The doc did not describe the code; it described an intention, and authors have been coding against the intention.
 ---
@@ -40,7 +40,7 @@ summary:    AVAILABILITY BUG WEARING A DOC CLAIM. MeshTool runs synchronous hand
 > | criterion | seal |
 > |---|---|
 > | a multi-second `collect()` does not delay a concurrent request | `test_a_blocking_sync_handler_does_not_delay_a_concurrent_request` |
-> | quickstart claim and code agree | `docs/jupyter_guide.md` updated; code threads |
+> | quickstart claim and code agree | `iagent-mesh-sdk/docs/jupyter_guide.md` updated; code threads |
 > | a `ContextVar` set by the auth dependency is readable in a sync handler | `test_THE_COORDINATION_TEST_...` |
 > | the count of affected deployed handlers is known, not estimated | zero, by enumeration |
 >
@@ -63,7 +63,7 @@ if inspect.iscoroutinefunction(func):
 return func(input_data)          # <- no threadpool, no to_thread
 ```
 
-`docs/jupyter_guide.md`, under "Platform Pro-Tip":
+`iagent-mesh-sdk/docs/jupyter_guide.md`, under "Platform Pro-Tip":
 
 > **Use standard `def` (Recommended):** If you are crunching Polars DataFrames
 > (`df.collect()`), stick to standard `def`. **We will execute it safely in a background
