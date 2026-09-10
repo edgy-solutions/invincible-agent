@@ -8,7 +8,7 @@ answering a different question from the one in their docstring.
 
 Assembled 2026-09-08 across two lanes — the direct-path work in
 `invincible-agent` and the Electric/stage work in `cortex-ui` — from
-thirteen instances found in four days. Every one was green, most had
+fourteen instances found in five days. Every one was green, most had
 survived mutation, and two of them shipped defects a person found by
 clicking.
 
@@ -160,7 +160,35 @@ The skip version hides when infrastructure is partly down, which is now the norm
 rather than the exception. The threshold version hides always.
 
 
-## The one sentence that covers all thirteen
+**14. An ABSENCE concluded from a search whose terms were guesses.** *(invincible-agent-5f,
+2026-09-10.)* A grep that returns nothing has established that THE PATTERN DID NOT MATCH. Reading
+it as "the thing is not there" is the same substitution as every entry above, with the instrument
+reduced to one regex.
+
+5f reported that 01's recorded reasoning was "genuinely NOT in the script, in HEAD or in
+bf17651", twice, in writing, and a second lane acted on it. It was in `bf17651` at line 212. The
+search used three terms and every one was a near-miss: `cannot execute` against *"cannot be
+executed"*, `verify` against *"verified"*, and `derive` — case-sensitively — against *"DERIVING"*.
+Three hits came back, all irrelevant, which read as a thorough search that found nothing rather
+than as a wrong one.
+
+**The conclusion was still half-right, and that is what made it dangerous:** the file genuinely
+did lack the reasoning at that moment, because a `--theirs` merge had removed it. Right symptom,
+wrong cause, and the wrong cause travelled further because the symptom checked out.
+
+*Defence:* **before believing a negative search, make the same search find something you know is
+there.** A positive control for a grep, exactly as `assert_checkers_can_say_no` is for a store —
+and for the same reason: a query that has only ever returned nothing has not been shown able to
+return anything. Cheaper still, search for a rare literal you can see with your own eyes in a
+neighbouring line.
+
+*And the companion, from the merge that caused it:* **additions are visible, removals are
+invisible by construction.** Verifying a merge resolution by counting what the result ADDED — one
+row, one map entry, the right totals — cannot see what it dropped, because nothing in the merged
+file points at absent text. Diff against BOTH parents, not against expectations.
+
+
+## The one sentence that covers all fourteen
 
 **"Whatever you mock, you have stopped testing."** — cortex-ui-60, 2026-09-09, after a
 mutation survey found four mutations alive in a classifier whose test mocked the fetch
