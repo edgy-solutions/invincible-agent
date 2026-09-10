@@ -260,7 +260,12 @@ def test_the_targets_are_DERIVED_from_the_environment():
 
 # ── the pin's REACH, which is what actually broke a cluster ──────────────────
 
-_ANY_IMAGE = re.compile(r"image: (ghcr\.io/[^ \n]+)")
+#: ANY registry, not just ghcr.io. The first version of this scrape matched
+#: `ghcr.io/...` alone — so docker.io's neo4j, postgres, electric, fuseki and quay.io's
+#: keycloak and mc were absent from the population EVERY assertion here quantifies over.
+#: A scrape widened to see the excluded half that still could not see two thirds of it
+#: is the original defect one level down.
+_ANY_IMAGE = re.compile(r'image: *"?([^"\s]+)')
 
 
 def _all_rendered(*extra: str) -> dict:
@@ -283,7 +288,22 @@ def _all_rendered(*extra: str) -> dict:
     for ref in _ANY_IMAGE.findall(proc.stdout):
         repo, _, tag = ref.rpartition(":")
         out[repo] = tag
-    assert len(out) >= 14, f"the render scrape found only {len(out)}: {sorted(out)}"
+    # EACH HALF FLOORS ITSELF. A single floor over the whole dict does not share the gate
+    # of the half it is meant to protect: our own images are 14 of the 30, so a render that
+    # produced ours and NO foreign image clears `len(out) >= 14` — and then
+    # `test_the_pin_does_NOT_reach_images_other_repos_build` passes over an empty set, which
+    # is the vacuous green this scrape was widened to prevent.
+    #
+    # A CONTROL MUST SHARE ITS SUBJECT'S GATE (invincible-agent-5f, 2026-09-09, from a
+    # combined store-control that SKIPPED while the assertion it guarded PASSED, in exactly
+    # the half-down cluster the control existed for). Same family as the exempted-case rule.
+    ours = [r for r in out if "/invincible-agent/" in r]
+    foreign = [r for r in out if "/invincible-agent/" not in r]
+    assert len(ours) >= 12, f"the scrape found only {len(ours)} of ours: {sorted(ours)}"
+    assert len(foreign) >= 10, (
+        f"the scrape found only {len(foreign)} foreign image(s): {sorted(foreign)} — the "
+        f"excluded half is empty or nearly so, so every assertion about it is vacuous"
+    )
     return out
 
 
