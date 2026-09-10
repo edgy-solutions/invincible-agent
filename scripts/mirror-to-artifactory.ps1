@@ -199,22 +199,12 @@ $IagentImages = @(
     # which is the row's own point, that a lesson written beside a list does not maintain
     # the list. What maintained it was the derived check.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
-
-    # engine-lg / graph-host — the LangGraph host (ADR-0046 route C). FIFTH OMISSION OF
-    # THIS SHAPE, on the entry directly above whose comment already says a lesson written
-    # beside a list does not maintain the list. e66c063 rendered the chart four ways and
-    # wrote its four namespaces down; runbook §0's table names FOUR namespaces and at
-    # least SIX sites have seals, so the runbook is a SAMPLE of the population and the
-    # commit was faithful to it. Adding a sixth row is the move that has now failed five
-    # times — this list wants DERIVING from build-containers.yml, leaving _NOT_MIRRORED as
-    # the only hand-written list, because an EXCLUSION list fails loudly (you notice a
-    # missing image) where an inclusion list fails silently. Flagged, not done: this
-    # script cannot be executed or verified from the dev machine.
-    #
-    # NAME SPLIT, AGAIN: image `graph-host`, service `iagent-engine-lg`, values key
-    # `graphHost`. Mirrored although engineLG is default-off — default-off is a DEFAULT,
-    # not a guarantee, per the two entries above.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';           dst='edgy-solutions/invincible-agent/graph-host:latest' },
+    # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
+    # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
+    # LIST. This row is a STOPGAP to get master green — Lane 1 is deriving this list from the
+    # CI build matrix, which is the actual fix, and this entry disappears with the hand-kept
+    # list rather than being migrated into it.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.
