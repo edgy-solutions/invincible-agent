@@ -31,6 +31,27 @@ defect is a behaviour — and flagged the comment that explained the
 fix. *Tell:* the check reads source rather than an artifact the code
 produced.
 
+*And the checker's own file is in scope.* Fixing the citation scrape
+(2026-09-09), a citation-shaped literal written to DEMONSTRATE the
+scrape became one — three times in ten minutes: in the explanatory
+comment, then in the control's own fixture list, each reported as this
+file citing a document that never existed. The fixtures are now
+assembled at runtime (`_D = "do" + "cs/"`). **A fixture that is
+indistinguishable from its subject is not a fixture** — and for a
+checker that matches on text, that is the normal case rather than the
+exotic one. The instrument and the subject shared a surface, which is
+also what the underlying bug was: a bare `<docs-dir>/name.md` and the
+tail of `sibling-repo/<docs-dir>/name.md` are the same literal, and
+only the character before it decides which repo is being cited.
+
+**FOURTH INSTANCE, AND IT CAUGHT THE PARAGRAPH ABOVE.** Writing this
+entry tripped the seal — a literal example, spelled out, was scraped as
+a citation of a file that does not exist (`…:43`). Note what the
+defence had to be: not an allowlist, but REFUSING TO WRITE THE STRING,
+the same disposal as [[escapes-collapse-in-a-template-of-a-template]]'s
+*name the character, never write it*. A rule about a text-matching
+checker cannot be documented in the text it matches.
+
 **2. A guard that returns first.** `observe` checked health before
 consulting the missing-menu reader, so two mutants survived and a test
 named "the cost-bindings trap" was passing for a reason other than the
@@ -218,6 +239,25 @@ Windows re-emits CRLF for text read with universal newlines — so a "restored" 
 MODIFIED with a zero-line diff and no content change. Read and write BYTES, and build anchors
 with the file's own line ending: an anchor that matches zero times prints identically to a
 mutation that was killed, so a non-unique match must be fatal rather than reported.
+
+**A GREEN BELONGS TO A SHA, NOT TO A DIRECTORY.** *(invincible-agent-5f + 01, 2026-09-09 — a
+defect in how results are READ rather than how seals are written, and in a shared tree it is the
+default rather than the exception.)* Before believing a local pass, `git status`; when reporting
+one, name the commit it belongs to.
+
+Both ends of it happened within one hour, on one file: 01 had a citation fix and its diagnosis
+sitting UNCOMMITTED while running a seven-minute suite, and 5f ran the same seal in isolation,
+saw it pass over 01's dirty tree, and was one sentence from reporting the seal clear on master.
+The suite at `bf17651` said 2 failed. **The difference between your green and master's is
+someone else's uncommitted work, and it reads exactly like your own.**
+
+**And its companion, learned from getting it wrong in the same message: UNCOMMITTED WORK CARRIES
+NO AUTHORSHIP.** 5f's warning named the wrong lane as the owner of those dirty files — not
+carelessly, but by repeating an attribution received earlier, when the tree itself could not
+have confirmed it. Git can tell you who wrote a *commit*; nothing in the tree tells you who
+wrote an *edit*. So the honest report is *"there is an uncommitted change in these paths"*, with
+no owner named unless someone claims it.
+
 
 ## The rule that generalises past testing
 
