@@ -8,7 +8,7 @@ answering a different question from the one in their docstring.
 
 Assembled 2026-09-08 across two lanes — the direct-path work in
 `invincible-agent` and the Electric/stage work in `cortex-ui` — from
-twelve instances found in three days. Every one was green, most had
+thirteen instances found in four days. Every one was green, most had
 survived mutation, and two of them shipped defects a person found by
 clicking.
 
@@ -120,7 +120,26 @@ confident uniform NOT FOUND — one commit from filing "the template names five 
 verbs". *Defence:* put a FABRICATED member through the same code path and require it absent.
 A uniform answer is only evidence once the instrument has been shown able to give a mixed one.
 
-## The one sentence that covers all twelve
+**13. A control that does not share its subject's gate.** *(invincible-agent-5f, 2026-09-09.)*
+The control and the thing it controls must be reachable under the SAME conditions, or partial
+availability silently buys back the vacuous pass. Two instances, one day, and they are different
+mechanisms:
+
+* *A skip.* 5f's verb check had ONE `can-say-no` control gated on Neo4j **and** Weaviate, while
+  each assertion was gated on one store. Worker6 took Weaviate down — so the control SKIPPED and
+  the Neo4j assertion PASSED. A green with no control behind it, in exactly the degraded state a
+  control exists for. *Defence:* split the control per store so each shares its subject's gate.
+* *A threshold.* 01's `test_the_fleet_can_be_pinned_to_one_commit` floored `len(out) >= 14` over
+  a whole render where our images are 14 of 30 — so a render producing ours and ZERO foreign
+  images cleared it, and the excluded-half test then passed over an empty set. A floor that
+  cannot distinguish "all present" from "half missing" is not gating its own subject.
+  *Defence:* each half floors itself.
+
+The skip version hides when infrastructure is partly down, which is now the normal condition
+rather than the exception. The threshold version hides always.
+
+
+## The one sentence that covers all thirteen
 
 **"Whatever you mock, you have stopped testing."** — cortex-ui-60, 2026-09-09, after a
 mutation survey found four mutations alive in a classifier whose test mocked the fetch
