@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **128 of 140 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **129 of 141 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -307,6 +307,10 @@ _Coverage: **128 of 140 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
+
+- **sandbox-document-objects-are-not-reproducible** — A recoverability audit (2026-09-10, during worker6's storage failure) found sandbox reproducible from the repo EXCEPT for MinIO document objects — the sample PDFs are seeded by nothing and exist only on one failing disk. The bucket-init job creates buckets and uploads nothing. Fix is a manifest of source URLs + sha256 and a fetch/upload script; the bytes must NOT be committed. Also: tests/fixtures/iads_40051_demo is in the repo but wired only to one test, not to any seed path.
+  status: open · owner: unassigned
+  → [docs/plans/sandbox-document-objects-are-not-reproducible.md](plans/sandbox-document-objects-are-not-reproducible.md)
 
 - **sdk-discards-caller-identity** — THE DESTINATION IS AGENTS, NOT NOTEBOOKS — and per-user reads are impossible there today, INVISIBLY, because reading as the service works. MeshTool computes a CallerIdentity, logs it, and DISCARDS it (app-level dependency return values are dropped by FastAPI; execute() calls func(input_data) only), so a tool author cannot learn who invoked them and their only working option entitles every caller of that agent to everything the service can reach. Would otherwise have been found by an analyst promoting their first notebook to a tool — by which point the wrong pattern is written and copied. Carries the CortexDataClient resolution-order decision (explicit caller WINS over env; service identity opt-in only), recorded before tool authors invent the precedence backwards.
   status: open · owner: human · repo: iagent-mesh-sdk · blocked-on: THE SDK HALF IS DONE; THE CLIENT HALF IS NOT. iagent-mesh-sdk v0.4.0 closes steps 1, 2, 4, 5 and 6 — the CallerIdentity reaches the handler, a request-scoped ContextVar carries it, require_authz_id() fails closed, sync handlers thread with the context copied, and the guide documents the pair. STEP 3 REMAINS AND IS IN dag-tools: CortexDataClient still has no `caller=` parameter, no contextvar read, no CORTEX_USER_TOKEN rung and no opt-in service identity (verified against dag_tools/cortex_data/client.py at 61cbfa9). So acceptance 3 ('CORTEX_USER_TOKEN on an agent pod changes nothing') is only VACUOUSLY true — the variable is unread, not outranked — and acceptance 4 ('reading as the service requires saying so') holds inside a handler that uses require_authz_id() but NOT for a bare CortexDataClient(), which still resolves to the service silently. Needs a dag-tools item, and a human ruling on whether this packet closes at the SDK boundary or spans both repos.
