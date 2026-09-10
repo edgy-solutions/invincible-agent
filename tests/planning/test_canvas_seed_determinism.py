@@ -5,10 +5,23 @@ ADR-0050 acceptance 3. Scope stated precisely, because the loose version is unpa
 minted per run (`uuid4`) — and NOT identical rendered content, which is state-dependent by design
 (ADR-0042).
 
-**THIS SEAL MUST BE SHOWN TO FAIL AGAINST TODAY'S PHRASE-BASED SEED.** A seal that has never been
-shown to bite on the thing it was written to catch is decorative, and this is the one seal
-phrase-based seeding cannot pass. Recording that failure is what makes §2 a measurement rather
-than a claim.
+**THE ORIGINAL SCOPING SAID THIS SEAL "CANNOT BE PASSED" BY PHRASE SEEDING. IT WAS PASSED, THREE
+TIMES OVER, ON 2026-09-09** — and the correction is more useful than the seal was. Two seeds
+against UNCHANGED state agree, because on a quiet substrate the classifier is deterministic. The
+event the seeder's comment actually names is an ONTOLOGY CHANGE, and seeding twice in one window
+never exercises it. A green there meant only *"the substrate did not move between the two runs"*.
+
+So there are now two live arms and they are not interchangeable:
+
+  * `test_two_live_seeds_...`   — same-window. **Kept, and it is NOT the seal**: it is the
+    control that showed the classifier is deterministic when nothing changes. Its green is
+    evidence about the substrate, never about phrase seeding.
+  * `test_the_panel_set_survives_a_prime` — seed → PRIME → seed, ADR-0050 acceptance 3 as
+    amended. The only version that can bite.
+
+Recording the falsification here rather than quietly rewriting the claim, because a docstring
+that still asserted "cannot pass" would be the stale-comment-that-matches-the-symptom shape this
+repo has already paid for.
 
 ── WHY THE FAILURE IS PROVABLE WITHOUT A CLUSTER, AND WHY THAT IS NOT A DODGE ─────────────────
 The live arm below drives the real endpoint and is the recorded run. But the structural half is
@@ -131,7 +144,10 @@ def test_the_comparison_can_actually_fail():
 #
 # NOT RUN AS PART OF THE SUITE, and the reason is a measurement hazard rather than convenience:
 #
-#   * Seeding is SEQUENTIAL BY RULING (b) — ~25 minutes per seed, so this arm is ~50 minutes.
+#   * Seeding is SEQUENTIAL BY RULING (b). MEASURED 2026-09-09: 5.5–6.6 minutes per seed (398s
+#     for one; 659s for two), so this arm is ~11 minutes — NOT the ~25-per-seed the ruling's
+#     comment estimated, which is roughly 4x pessimistic. The qualitative half of RULING (b) is
+#     untouched: sequential-not-parallel is unaffected by how long each ask takes.
 #   * `max_concurrent_runs: 2` plus a reaper gap DEADLOCKED this queue twice in one day. Two
 #     full seeds fired alongside other work is how the substrate dies with nobody awake.
 #   * A PRIME CHANGES SUBJECT RESOLUTION. Running this during or just after a prime yields the
@@ -292,3 +308,122 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
     assert panel_set(first) == panel_set(second), (
         "SEAL 3 FAILED against today's phrase-based seed — which is the expected and recorded "
         f"result.\n  run A: {panel_set(first)}\n  run B: {panel_set(second)}")
+
+
+# ── SEAL 3, RE-SCOPED: seed -> PRIME -> seed (ADR-0050 acceptance 3, amended 2026-09-09) ─────
+#
+# THE ORIGINAL SCOPING WAS FALSIFIED BY ITS OWN PASS. Two seeds against UNCHANGED state agreed
+# three times over, because on a quiet substrate the classifier is deterministic. The event the
+# seeder's comment actually names is an ONTOLOGY CHANGE — *"subject resolution SHIFTS when the
+# ontology or verb set changes … moved Portfolio 0.86 -> Site 0.75 ACROSS A SINGLE PRIME."*
+#
+# So the comparison that can bite spans a prime. This arm supplies the second half: the baseline
+# was seeded BEFORE, and one seed runs AFTER.
+#
+# THE BASELINE IS PINNED BY ARTIFACT ID, NOT RE-DERIVED. Two `seal3-run-a-*` sets exist in the
+# graph from different attempts, and "the most recent run A" would silently re-point the baseline
+# the next time anyone seeds. These five ids ARE the recorded pre-prime observation from
+# 2026-09-09 (commit 08ddf94); reading them back is reading the record, not re-measuring it.
+_PRE_PRIME_BASELINE = [
+    "urn:li:answerArtifact:seal3-run-a-seed0-f55f0994",   # mesh:planSchedule
+    "urn:li:answerArtifact:seal3-run-a-seed1-c03024c5",   # mesh:planCostCurve
+    "urn:li:answerArtifact:seal3-run-a-seed2-3ebea304",   # mesh:planSiteLoad
+    "urn:li:answerArtifact:seal3-run-a-seed3-be62f7af",   # mesh:planFundingGap
+    "urn:li:answerArtifact:seal3-run-a-seed4-5d4b8787",   # mesh:planMaturityGrid
+]
+
+# What the record says those five resolved to, so a baseline that reads back DIFFERENTLY is
+# caught rather than quietly adopted. A prime is `wipe: false` and must not alter a stored
+# artifact; if it does, that is a much larger finding than seal 3 and this arm must not paper
+# over it by comparing against whatever the graph now says.
+_PRE_PRIME_VERBS = [
+    "mesh:planSchedule", "mesh:planCostCurve", "mesh:planSiteLoad",
+    "mesh:planFundingGap", "mesh:planMaturityGrid",
+]
+
+
+@pytest.mark.skipif(os.environ.get("CANVAS_SEED_PRIME_B") != "1",
+                    reason="run B of the across-a-prime arm: set CANVAS_SEED_PRIME_B=1 AFTER a "
+                           "prime AND after the reregister hook has finished (two different "
+                           "completions; only the second means the substrate has settled)")
+def test_the_panel_set_survives_a_prime():
+    """SEAL 3, the version that can bite. One seed, compared to the pinned pre-prime record.
+
+    A DIFFERENCE HERE IS THE FINDING, and it is what the original scoping was reaching for: the
+    same five phrases resolving to different verbs because the ontology moved underneath them.
+
+    A MATCH IS ALSO A REAL RESULT and must not be overclaimed. It would mean these five phrases
+    are robust to THIS prime — not that phrase seeding is stable, and not the quiet-substrate
+    green that the unamended seal produced. Note the asymmetry deliberately: the shift the
+    seeder recorded was for *"where are we over budget"*, which is NOT one of the five phrases
+    seeded today (slot 1 asks *"what does spend look like per period"*). So a match is quite
+    possible and says less than it appears to.
+    """
+    import httpx
+
+    base = os.environ.get("CORTEX_BFF_URL")
+    assert base, "CORTEX_BFF_URL must be set"
+    token = os.environ.get("CANVAS_SEED_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    def _void(reason: str):
+        pytest.fail(f"SEAL 3 (across a prime) VOID — no reading was produced, so this is neither "
+                    f"a pass nor a failure and must not be recorded as either: {reason}")
+
+    def _verb_of(aid: str, where: str) -> str:
+        r = httpx.get(f"{base.rstrip('/')}/artifacts/{aid}", headers=headers, timeout=60)
+        if r.status_code == 503:
+            _void(f"{where} {aid}: graph unreachable (503) — we could not look")
+        if r.status_code in (401, 403):
+            _void(f"{where} {aid}: not readable under this identity ({r.status_code})")
+        if r.status_code == 404:
+            _void(f"{where} {aid}: not found. If this is the BASELINE, the prime altered stored "
+                  f"artifacts under `wipe: false` — a far larger finding than seal 3, and this "
+                  f"arm must not paper over it")
+        if r.status_code != 200:
+            _void(f"{where} {aid}: unexpected status {r.status_code}")
+        doc = r.json()
+        if "verb_iri" not in doc:
+            _void(f"{where} {aid}: no `verb_iri` field — the route's shape changed; this arm is "
+                  f"reading the wrong contract. Keys: {sorted(doc)}")
+        return doc.get("verb_iri")
+
+    # ── 1. THE BASELINE MUST READ BACK AS RECORDED, BEFORE ANYTHING IS SPENT ────────────────
+    before = [_verb_of(aid, "baseline") for aid in _PRE_PRIME_BASELINE]
+    if before != _PRE_PRIME_VERBS:
+        _void(f"the pinned pre-prime baseline no longer reads as recorded.\n"
+              f"  recorded: {_PRE_PRIME_VERBS}\n  now:      {before}\n"
+              f"A stored artifact changed under a `wipe: false` prime. Comparing against the "
+              f"NEW value would silently redefine the experiment's own control")
+
+    # ── 2. ONE SEED, AFTER THE PRIME ────────────────────────────────────────────────────────
+    r = httpx.post(f"{base.rstrip('/')}/seed/portfolio_canvas",
+                   json={"session_id": "seal3-postprime-b", "frontend_id": "cortex-ui-desktop"},
+                   headers=headers, timeout=3600)
+    r.raise_for_status()
+    body = r.json()
+    ids = body["artifact_ids"]
+    if len(ids) != 5:
+        _void(f"the seed returned {len(ids)} artifact ids, not five")
+    if not any(i is not None for i in ids):
+        detail = "; ".join(
+            f"slot {x.get('slot')}: {x.get('status')} {x.get('detail') or ''}".strip()
+            for x in (body.get("results") or []) if x.get("status") != "ok")
+        _void(f"NOTHING SEEDED (seeded={body.get('seeded')}/{body.get('total')}). Two empty sets "
+              f"agree perfectly and mean nothing. Causes: {detail or 'unreported'}")
+
+    unseeded = [i for i, a in enumerate(ids) if a is None]
+    after = [None if a is None else _verb_of(a, f"post-prime slot {i}")
+             for i, a in enumerate(ids)]
+    unread = [i for i, v in enumerate(after) if v is None and i not in unseeded]
+    if unread:
+        _void(f"panels {unread} seeded but recorded no verb_iri — a null is UNREAD, not equal")
+
+    # ── 3. THE COMPARISON ───────────────────────────────────────────────────────────────────
+    moved = [(i, b, a) for i, (b, a) in enumerate(zip(before, after)) if b != a]
+    assert not moved, (
+        "SEAL 3 BIT ACROSS A PRIME — the same phrases resolved to different verbs after the "
+        "ontology moved. This is the measured case for declared verbs, and it is the finding "
+        "the original scoping was reaching for.\n"
+        + "\n".join(f"  slot {i}: {b}  ->  {a}" for i, b, a in moved)
+        + f"\n  unseeded this run: {unseeded or 'none'}")
