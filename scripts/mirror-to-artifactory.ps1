@@ -201,9 +201,30 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
-    # LIST. This row is a STOPGAP to get master green — Lane 1 is deriving this list from the
-    # CI build matrix, which is the actual fix, and this entry disappears with the hand-kept
-    # list rather than being migrated into it.
+    # LIST.
+    #
+    # THIS ROW IS THE CURRENT DESIGN, NOT A STOPGAP — corrected 2026-09-10. It first said the
+    # list was about to be DERIVED from the CI build matrix and that this entry would
+    # disappear with it. That derivation was CONSIDERED AND DECLINED, so the promise was
+    # false and told the next reader to expect a change that is not coming.
+    #
+    # WHY DECLINED (Lane 1's decision; reasoning RELAYED to this lane via invincible-agent-5f,
+    # not read from a document — recorded here because it existed only in messages between
+    # sessions): this is a PowerShell DEPLOY script that pushes images to the work cluster,
+    # and it cannot be executed or verified end-to-end from the development machine. The
+    # derived seal already catches a missing row BEFORE a deploy — demonstrated, that is how
+    # the fourth omission above was caught — so an unverified rewrite of the push path bought
+    # nothing the seal was not already buying, against real risk. Defensible, and the reason
+    # belongs beside the list rather than in a handoff.
+    #
+    # SO WHAT MAINTAINS THIS LIST IS test_mirror_covers_the_build_matrix.py, and that is an
+    # answer rather than a gap: the hand-kept list stays, and a DERIVED FLOOR above it fails
+    # when it drifts. Add the row when you add an engine; the seal is what makes forgetting
+    # fail instead of shipping.
+    #
+    # AND THE CORRECTION IS ITSELF THE ROW'S LESSON ONE LEVEL UP: a decision recorded in a
+    # conversation does not correct a comment. 5f found this by reading the file rather than
+    # the thread.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
