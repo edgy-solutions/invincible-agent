@@ -201,9 +201,18 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
-    # LIST. This row is a STOPGAP to get master green — Lane 1 is deriving this list from the
-    # CI build matrix, which is the actual fix, and this entry disappears with the hand-kept
-    # list rather than being migrated into it.
+    # LIST. This row is a STOPGAP to get master green.
+    #
+    # CORRECTED 2026-09-10 BY LANE 1, whose intention this comment described. It read
+    # "Lane 1 is deriving this list from the CI build matrix, which is the actual fix".
+    # I DECIDED AGAINST IT overnight and the row is therefore less temporary than that
+    # promised. The derivation IS the right shape — derived list plus an explicit
+    # _NOT_MIRRORED, because an exclusion list fails LOUDLY (a missing image is noticed)
+    # where an inclusion list fails silently, which is how this one failed five times.
+    # But this is a deploy script that cannot be executed or verified from the dev
+    # machine, and the seal already catches the miss BEFORE a deploy — the fourth
+    # omission was caught exactly that way. An unverified rewrite of the thing that
+    # pushes images to the work cluster was the worse trade. Open, not in flight.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
