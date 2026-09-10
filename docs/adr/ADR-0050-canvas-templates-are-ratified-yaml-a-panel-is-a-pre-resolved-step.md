@@ -621,9 +621,32 @@ nobody wrote.
    slots, slot role, ordinal)** per panel. **Not** identical artifact ids — those are minted per run
    (`uuid4`, [`gateway.py:1500-1507`](../../src/iagent/gateway.py)) — and not identical rendered
    content, which is state-dependent by design (ADR-0042).
-   **This seal must be run against TODAY's seed once, first, and it must FAIL.** A seal that has never
-   been shown to bite on the thing it was written to catch is decorative, and this is the one seal
-   phrase-based seeding cannot pass. Recording the failure is what makes §2 a measurement rather than
+   **⛔ AMENDED 2026-09-09 — THE ARM SPANS A PRIME: `seed → PRIME → seed`.**
+
+   > *"That's the only experiment that can bite, and it folds into the prime rather than competing
+   > with it."*
+
+   As originally written (`seed → seed`) this criterion is **FALSIFIED**: it passed three times over
+   on a quiet substrate, because two seeds against UNCHANGED state never exercise the event the
+   seeder's own comment names — *resolution shifts ACROSS A PRIME* ("where are we over budget" moved
+   Portfolio 0.86 → Site 0.75 across a single prime). On a still substrate the classifier is
+   deterministic and a green means only that nothing moved. See the falsification block above for the
+   measurement and the order it was recorded in.
+
+   So the arm is `seed → PRIME → seed`, under one identity, comparing panel sets across the prime.
+   Run A is already recorded (2026-09-09, as `alice`); run B follows the next prime, which is
+   sequenced with engine registration rather than competing for a window with it.
+
+   **THE STRUCTURAL SEAL IS THE LOAD-BEARING ONE AND ALWAYS WAS.**
+   `test_todays_phrase_seed_cannot_express_a_panel_set` asserts FROM SOURCE that the seeder declares
+   five phrases and no verb, so **a panel set is not expressible until after the seed completes**.
+   That is a property of the design rather than of a substrate's mood; it holds on every substrate,
+   quiet or not, and it is the argument for §2 on its own. The live arm now corroborates it across
+   the one event that can move the answer, rather than carrying the claim.
+
+   *A seal that has never been shown to bite on the thing it was written to catch is decorative* —
+   this ADR's own words, and for a day this criterion was an instance of them, inside this ADR's own
+   acceptance list. Recording the failure is what makes §2 a measurement rather than
    a claim.
 4. **A template-level slot fires exactly ONE ask for N panels.** Assert on the count of elicitations
    emitted, not on the board that came back — a board that rendered proves the binding worked and says

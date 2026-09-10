@@ -56,12 +56,49 @@ in a shared tree.** Stash silently reverts files another writer may be holding, 
 is an aborted pop whose contents survive only if someone notices. Compare baselines with
 `git show HEAD:<path>`, a scratch copy, or a second clone — never by mutating the shared tree.
 
-**Branch-per-agent was considered and REJECTED**, for a reason specific to this repo: branches split
-the working tree from the **generated** artifacts. Two agents on two branches each regenerate
-`BOARD.md` from divergent packet sets and then collide at merge on a generated file — strictly worse
-than colliding on a source file, because the correct resolution is not a merge but a regeneration
-from the union. Single-writer needs no tooling and matches how the agents are actually run: one
-working, one reviewing.
+**Branch-per-agent was considered and REJECTED (2026-08-10)**, for a reason specific to this repo:
+branches split the working tree from the **generated** artifacts. Two agents on two branches each
+regenerate `BOARD.md` from divergent packet sets and then collide at merge on a generated file —
+strictly worse than colliding on a source file, because the correct resolution is not a merge but a
+regeneration from the union. Single-writer needs no tooling and matched how the agents were then
+actually run: one working, one reviewing.
+
+### ⛔ REVERSED 2026-09-09 — ONE `git worktree` PER LANE
+
+> *"The fix is structural and cheap: one `git worktree` per lane, same repo, separate working
+> directories, shared object store. Nobody's `stash`, `add -A`, `reset`, or mutation harness can
+> touch anyone else's tree. Adopt it today; write it into the lane charter beside the
+> commit-and-push rule."*
+
+**THE PREMISE OF THE REJECTION EXPIRED: "one working, one reviewing" is not how this repo runs any
+more.** Four and five lanes now write concurrently, and single-writer has failed four times in one
+week — a `reset` that discarded work, a mutation harness one `git add` from committing a mutant,
+`agent_fleet/graph_host/` sitting untracked in a tree three other lanes were staging in, and a
+`git stash` that took two lanes' uncommitted files hostage and returned them only because someone
+checked. **A rule that four careful agents broke four times is not being broken carelessly; it is
+being asked to do a job it cannot do.**
+
+**A worktree per lane IS a branch per lane** — git refuses the same branch in two worktrees — so this
+reversal inherits the generated-artifact collision the rejection named. **It is accepted with its
+resolution stated, because the rejection already stated it:** *the correct resolution is not a merge
+but a regeneration from the union.* So:
+
+* **`docs/BOARD.md` is NEVER merged.** On any conflict, take either side, then re-run
+  `generate_board.py` and commit the regeneration. A merged board is wrong even when it is clean.
+* **Regenerate immediately before `git add`**, unchanged from the existing rule — a neighbour landing
+  mid-work makes an earlier regeneration stale, and staging it commits their packets back out.
+
+**What it buys, structurally rather than socially:** `stash`, `add -A`, `reset --hard` and any
+mutation harness are confined to one lane's directory. None of the four incidents above is expressible
+across worktrees. It also retires the ad-hoc file locks lanes have been trading in chat ("nobody
+touches `gateway.py` tonight") — those were a social fix for a structural problem, and they only ever
+held because everyone was reading their messages.
+
+    git worktree add ../ia-<lane> -b lane/<lane>     # once per lane
+    git -C ../ia-<lane> pull --rebase origin master   # rebase, do not merge master in
+
+**`git stash` STAYS BANNED** — it is banned for what it does to a *tree*, and a lane can still take
+its own tree hostage. Compare baselines with `git show HEAD:<path>` or a scratch copy.
 
 **STAGE BY EXPLICIT PATH, never by pattern, in a shared tree (2026-08-05).** The same hazard one layer
 down: `git add -u` stages every tracked modification, and `git add -A` every file — including work
@@ -938,6 +975,25 @@ written INTO THIS FILE as settled, by the same thread that would later rely on i
 asserts a MECHANISM ("it journals through Restate") is the sibling of a ruling that asserts a
 string identity — both feel like reasoning and are actually claims, and both need the same
 treatment: trace where the thing actually lives before writing the ruling down.
+
+### An estimate nobody re-measures becomes a constraint
+
+**Recorded 2026-09-09.** `gateway.py`'s RULING (b) said a five-question canvas seed costs
+"~25 minutes"; derived comments repeated "~18". Measured twice on the quiet sandbox the same day:
+**398s for one seed, 659s for two — 5-7 minutes, roughly 4x faster than the figure.**
+
+The figure was not idle. It drove substrate holds, window negotiation and lane scheduling for a full
+day: a "~50 minute" estimate for a two-seed arm that is really ~11, quoted back between lanes in
+three places before anyone ran a stopwatch. **Nobody disputed it because nobody owned it** — it was
+written once as a reasonable guess, and every subsequent reader treated a comment as a measurement.
+
+**The rule:** a duration in a comment is a MEASUREMENT or it is a GUESS, and it says which. A guess
+that survives one planning cycle is treated as fact by the next reader, and the cost is not the wrong
+number — it is every decision taken to accommodate it. Re-measure before you schedule around it, and
+when you correct one, correct every site that repeated it: this one had five.
+
+Sibling of [[decide-the-meaning-before-the-measurement]] and of the wrong-premise law — an inherited
+number is a premise, and a dispatch's stated premise is the one thing worth checking.
 
 ### A `RULED` line cites its source, or it is not a ruling
 
