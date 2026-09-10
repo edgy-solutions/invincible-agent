@@ -36,7 +36,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 # ── the contract: from the SDK, never local ────────────────────────────────────────────────
@@ -194,8 +194,13 @@ class GraphRequest(BaseModel):
     user_id: str | None = None
 
 
+#: The headers that carry WHO IS ASKING, forwarded verbatim to every inner verb. Named as a
+#: constant so the set is one thing rather than three string literals at the point of use.
+_IDENTITY_HEADERS = ("authorization", "x-originator-sub", "x-originator-email")
+
+
 @app.post("/graphs/{graph_id}")
-async def run_graph(graph_id: str, request: GraphRequest) -> dict:
+async def run_graph(graph_id: str, http_request: Request, request: GraphRequest) -> dict:
     """Invoke ONE admitted graph. There is no endpoint that takes a graph the host did not load."""
     entry = _LOADED.get(graph_id)
     if entry is None:
@@ -209,9 +214,17 @@ async def run_graph(graph_id: str, request: GraphRequest) -> dict:
     missing = [s.name for s in m.slots if s.required and s.name not in request.params]
     if missing:
         raise HTTPException(status_code=422, detail=f"{graph_id} requires {missing}")
+    # IDENTITY IS AN ARGUMENT, THREADED — never read from ambient env inside a node, and never
+    # the host's own. ADR-0049 Ruling 1: the inner call carries the INITIATOR's credential, so a
+    # caller entitled to less sees less. This host holds no standing credential to fall back on,
+    # which is what makes that true by construction rather than by discipline.
+    identity = {h: v for h in _IDENTITY_HEADERS
+                if (v := http_request.headers.get(h)) is not None}
+    state = dict(request.params)
+    state["identity"] = identity
     config: dict = {"configurable": {"thread_id": request.thread_id or graph_id,
                                      "user_id": request.user_id}}
-    return await graph.ainvoke(dict(request.params), config=config)
+    return await graph.ainvoke(state, config=config)
 
 
 @app.get("/health")
