@@ -60,6 +60,7 @@ from tests._mesh_verbs import (
     needs_weaviate,
     not_eligible_in_weaviate,
     one_sided,
+    unreachable_from_subject,
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -125,3 +126,33 @@ def test_eligibility_is_conjunctive():
     assert not problems, (
         "a template verb is present in one store and not the other — it will register, report "
         f"accepted, and never match: {problems}")
+
+
+# ── REACHABILITY — seal 1's actual property, added 2026-09-10 ───────────────────────────────
+@needs_neo4j
+@needs_weaviate
+def test_every_template_verb_is_reachable_from_its_subject():
+    """A verb that EXISTS but no subject can walk to produces the same empty panel as a missing
+    one, and `missing_from_neo4j` cannot see the difference — it asks a GLOBAL existence
+    question (`CALL db.relationshipTypes()`).
+
+    Added after run B: that global check passed for all eleven verbs while `/resolve` excluded
+    every one of their subjects with `reason: "no_verb_in_scope"`. The edges turned out to be
+    intact, so the pass was correct **by luck rather than by measurement**. This asks the
+    question the router actually asks.
+    """
+    problems = unreachable_from_subject(template_verbs())
+    assert not problems, (
+        "a template verb exists as a relationship type but is unreachable from any subject it "
+        f"is registered against — it would merge, seed, and render an EMPTY panel: {problems}")
+
+
+@needs_neo4j
+@needs_weaviate
+def test_the_reachability_checker_can_say_no():
+    """Its own control, sharing its subjects' gate. A verb that cannot exist must come back as a
+    problem through the SAME code path, or a green above means only that the query ran."""
+    problems = unreachable_from_subject([("control", "mesh:planNotAVerbAtAll", "planNotAVerbAtAll")])
+    assert problems, (
+        "the reachability check reported a fabricated verb as reachable — it is not "
+        "discriminating, and every green it gives is vacuous")

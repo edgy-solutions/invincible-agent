@@ -336,6 +336,22 @@ _PRE_PRIME_BASELINE = [
 # caught rather than quietly adopted. A prime is `wipe: false` and must not alter a stored
 # artifact; if it does, that is a much larger finding than seal 3 and this arm must not paper
 # over it by comparing against whatever the graph now says.
+# ── THE PRECONDITION THE ARM DID NOT HAVE, AND ITS ABSENCE VOIDED RUN B ────────────────────
+#
+# Pinning the baseline BY ARTIFACT ID fixes WHAT is compared and says NOTHING ABOUT WHAT
+# PRODUCED IT. Run B (2026-09-10) compared a baseline seeded on bff `95f78722` against a seed
+# taken on `686942e7` — eight hours of commits apart — so "across a prime" had two variables in
+# it and could not have attributed a difference to the prime even had one appeared. The fleet
+# has since moved again, to `1d6756ce944a`: three versions for one comparison.
+#
+# So the baseline carries the fleet version it was seeded on, and the arm refuses to compare
+# across a different one. **Re-seeding the baseline is the fix, not relaxing this check** — the
+# whole experiment is "same everything except the prime".
+#
+# UPDATE THIS TOGETHER WITH THE IDS ABOVE. They are one record: five artifacts AND the fleet
+# that produced them. Changing one without the other reintroduces exactly this defect.
+_PRE_PRIME_FLEET_SHA = "95f78722d158b2a97227c048650d5962e1dcef74"
+
 _PRE_PRIME_VERBS = [
     "mesh:planSchedule", "mesh:planCostCurve", "mesh:planSiteLoad",
     "mesh:planFundingGap", "mesh:planMaturityGrid",
@@ -426,6 +442,20 @@ def test_the_panel_set_survives_a_prime():
             return tuple(sorted((k, str(v)) for k, v in slots.items()))
         except Exception:                                   # pragma: no cover - env-dependent
             return ()
+
+    # ── 0. SAME FLEET, OR THE COMPARISON HAS TWO VARIABLES ──────────────────────────────────
+    ver = httpx.get(f"{base.rstrip('/')}/version", headers=headers, timeout=30)
+    if ver.status_code != 200:
+        _void(f"cannot read the fleet version (HTTP {ver.status_code}) — without it this arm "
+              f"cannot tell a prime's effect from a deploy's")
+    running = (ver.json() or {}).get("git_sha") or ""
+    if running != _PRE_PRIME_FLEET_SHA:
+        _void(
+            f"FLEET VERSION MOVED SINCE THE BASELINE. baseline={_PRE_PRIME_FLEET_SHA[:12]} "
+            f"running={running[:12] or '?'}. The comparison would carry TWO variables — the "
+            f"prime AND the deploy — so a difference could not be attributed to either. "
+            f"Re-seed the baseline on the running version and update _PRE_PRIME_BASELINE and "
+            f"_PRE_PRIME_FLEET_SHA together; do not relax this check.")
 
     # ── 1. THE BASELINE MUST READ BACK AS RECORDED, BEFORE ANYTHING IS SPENT ────────────────
     before = [_verb_of(aid, "baseline") for aid in _PRE_PRIME_BASELINE]

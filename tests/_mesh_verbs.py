@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 
 import pytest
@@ -155,3 +156,76 @@ def one_sided(population: list[tuple[str, str, str]]) -> list[tuple[str, str, st
     return [(owner, iri, f"neo4j={local in types} weaviate={local in preds}")
             for owner, iri, local in population
             if (local in types) != (local in preds)]
+
+
+def _predicate_rows_by_verb() -> dict[str, list[dict]]:
+    """Every Predicate row per `verb_local`, not just one.
+
+    `weaviate_predicates()` keys by verb and keeps ONE row, which is right for "is this verb
+    registered at all" and wrong for reachability: a verb is commonly registered against SEVERAL
+    subjects (`finFundingStatus` takes both `Program` and `FundingLine`), and collapsing them
+    would test one subject and report on the verb.
+    """
+    q = {"query": "{Get{Predicate(limit:1000){verb_local input_uri}}}"}
+    req = urllib.request.Request(f"{WEAVIATE_URL.rstrip('/')}/v1/graphql",
+                                 data=json.dumps(q).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        body = json.load(r)
+    if "data" not in body:
+        raise AssertionError(f"Weaviate returned no data — instrument failure, not a finding: "
+                             f"{json.dumps(body)[:400]}")
+    out: dict[str, list[dict]] = {}
+    for p in body["data"]["Get"]["Predicate"]:
+        out.setdefault(p.get("verb_local") or "", []).append(p)
+    return out
+
+
+def unreachable_from_subject(population: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """`(owner, verb_iri, why)` for verbs that EXIST but no subject can walk to.
+
+    WHY THIS IS SEPARATE FROM `missing_from_neo4j`, and why that one is not enough. Seal 1's
+    property is *"a template referencing a verb no engine serves"* — and a verb whose
+    relationship type exists somewhere in the graph, but hangs off nothing its registered subject
+    can reach, produces the SAME empty panel as a verb that was never registered.
+
+    `missing_from_neo4j` asks `CALL db.relationshipTypes()`, which is a GLOBAL existence question.
+    On 2026-09-10 it passed for all eleven template verbs while `/resolve` excluded every one of
+    their subjects with `reason: "no_verb_in_scope"`. The edges turned out to be intact, so the
+    pass was correct — **by luck rather than by measurement**, which is the whole catalogue's
+    subject. This closes that.
+
+    The walk mirrors `/find_compatible_verbs` exactly (`subClassOf*0..5` then the typed edge), so
+    this asks the question the router actually asks rather than a similar-looking one.
+    """
+    from neo4j import GraphDatabase
+
+    rows = _predicate_rows_by_verb()
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    problems: list[tuple[str, str, str]] = []
+    try:
+        with driver.session() as s:
+            for owner, iri, local in population:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local):
+                    problems.append((owner, iri, f"verb name {local!r} is not a safe edge type"))
+                    continue
+                subjects = sorted({(p.get("input_uri") or "") for p in rows.get(local, [])} - {""})
+                if not subjects:
+                    problems.append((owner, iri, "no input_uri registered — no subject to walk from"))
+                    continue
+                reached = False
+                for subj in subjects:
+                    rec = s.run(
+                        f"MATCH (c:OntologyClass {{uri: $u}})-[:subClassOf*0..5]->"
+                        f"(a:OntologyClass)-[r:`{local}`]->(:OntologyClass) RETURN count(r) AS n",
+                        u=subj).single()
+                    if rec and rec["n"]:
+                        reached = True
+                        break
+                if not reached:
+                    problems.append((owner, iri,
+                                     f"exists as a relationship type but unreachable from any "
+                                     f"registered subject: {[x.split('#')[-1] for x in subjects]}"))
+    finally:
+        driver.close()
+    return problems
