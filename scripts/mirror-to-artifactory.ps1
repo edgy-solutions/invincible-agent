@@ -203,19 +203,28 @@ $IagentImages = @(
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
     # LIST.
     #
-    # THIS ROW IS THE CURRENT DESIGN, NOT A STOPGAP — corrected 2026-09-10. It first said the
+    # THIS ROW IS NOT AS TEMPORARY AS IT FIRST CLAIMED — corrected 2026-09-10. It said the
     # list was about to be DERIVED from the CI build matrix and that this entry would
-    # disappear with it. That derivation was CONSIDERED AND DECLINED, so the promise was
-    # false and told the next reader to expect a change that is not coming.
+    # disappear with it. The derivation is OPEN, NOT IN FLIGHT, so the promise was false and
+    # told the next reader to expect a change that is not coming.
     #
-    # WHY DECLINED (Lane 1's decision; reasoning RELAYED to this lane via invincible-agent-5f,
-    # not read from a document — recorded here because it existed only in messages between
-    # sessions): this is a PowerShell DEPLOY script that pushes images to the work cluster,
-    # and it cannot be executed or verified end-to-end from the development machine. The
-    # derived seal already catches a missing row BEFORE a deploy — demonstrated, that is how
-    # the fourth omission above was caught — so an unverified rewrite of the push path bought
-    # nothing the seal was not already buying, against real risk. Defensible, and the reason
-    # belongs beside the list rather than in a handoff.
+    # "OPEN, NOT IN FLIGHT" IS LANE 1'S WORDING AND IT MATTERS. My own first correction said
+    # "considered and DECLINED", which reads as rejected on merit. It was not: the derivation
+    # is still the right answer and is simply not being worked. Those are different
+    # instructions to whoever picks this up.
+    #
+    # AND THE SHAPE IT SHOULD TAKE, which is the part worth keeping (Lane 1's, and my earlier
+    # rewrite of this block DROPPED it): a derived list PLUS an explicit _NOT_MIRRORED,
+    # because an EXCLUSION list fails LOUDLY — a missing image is noticed — where an
+    # INCLUSION list fails silently, which is how this one failed five times.
+    #
+    # WHY NOT NOW (Lane 1's decision; reasoning reached this lane as a RELAY via
+    # invincible-agent-5f and then from Lane 1 directly, not read from a document — recorded
+    # here because it existed only in messages between sessions): this is a PowerShell DEPLOY
+    # script that pushes images to the work cluster and cannot be executed or verified from
+    # the dev machine. The seal already catches a missing row BEFORE a deploy — demonstrated,
+    # that is how the fourth omission was caught — so an unverified rewrite of the push path
+    # buys nothing the seal was not already buying, against real risk.
     #
     # SO WHAT MAINTAINS THIS LIST IS test_mirror_covers_the_build_matrix.py, and that is an
     # answer rather than a gap: the hand-kept list stays, and a DERIVED FLOOR above it fails
