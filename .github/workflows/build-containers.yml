@@ -81,6 +81,15 @@ jobs:
           - service: cost-agent
             path: agent_fleet/cost_agent
             port: "8097"
+          # engine-lg, the graph host. RIDES Dockerfile.agent, which already carries
+          # ARG GIT_SHA / ENV IAGENT_GIT_SHA and is built with --build-arg
+          # GIT_SHA=${{ github.sha }} — so no new stage and no new build-arg are needed, and
+          # /version reports a real commit rather than the literal "unknown" the census treats
+          # as absent. Port must match graphHost.port in the chart and the Procfile, or the
+          # readiness probe hits a closed port.
+          - service: graph-host
+            path: agent_fleet/graph_host
+            port: "8098"
           - service: cortex-bff
             path: .
             # Port aligned with the helm chart's cortexBff.port (8090).

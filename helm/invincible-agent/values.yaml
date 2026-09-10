@@ -478,6 +478,32 @@ engineFinance:
 # The four names differ on purpose — values key engineCost, component engine-cost, image
 # cost-agent, Keycloak client iagent-cost-agent — so grepping any one of them finds only
 # part of the wiring.
+# engine-lg — THE GRAPH HOST (ADR-0046 slice 1). Four names, none of them the same string,
+# per runbook §0: values key graphHost, component/service/deployment engine-lg, image
+# graph-host, Keycloak client iagent-graph-host. All four were verified unclaimed before any
+# wiring; grepping any one of them finds only part of this.
+#
+# NO `repository` OVERRIDE, DELIBERATELY. `invincible-agent.image` treats a component as ours
+# only when its repo sits under `global.imagePrefix`, and anything carrying its own
+# `repository` is left unpinned — correctly, since the commit pin reaching a repo that never
+# built that sha is what produced four ImagePullBackOffs (0a87de0). Naming only `image.name`
+# puts engine-lg under the prefix, so the fleet-wide commit pin DOES reach it.
+graphHost:
+  enabled: false          # off until the prime carries its registration; B5 turns it on
+  replicas: 1
+  image:
+    name: graph-host
+    tag: ""
+  port: 8098
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 engineCost:
   enabled: false
   replicas: 1
@@ -1148,6 +1174,11 @@ primeSubstrate:
       # every other catalog verb came back (the graph showed 8 of 9 verbs on
       # idp:Dataset). Renders as <release>-data-analyst.
       - data-analyst
+      # engine-lg registers one verb per RATIFIED ROW on startup, so it has exactly the
+      # property this list exists for. Omitting it is the data-analyst and Engine P defect a
+      # third time: every other verb returns after a wipe+reprime and the graph verbs do not,
+      # with nothing to say which ones are missing.
+      - engine-lg
       # Engine P self-registers TWELVE planning verbs on startup and was
       # omitted here — the SAME defect as data-analyst above, repeated
       # because that fix was hand-applied and never sealed. Measured
@@ -1759,6 +1790,15 @@ keycloak:
     - clientId: "iagent-cost-agent"
       authzId: "svc:cost-agent"
       secretRef: "costAgentClientSecret"
+    # engine-lg, the graph host. IDENTITY IS AN ARGUMENT, never derived from the component
+    # name: the client id follows the IMAGE (graph-host) while the env var follows the
+    # SERVICE (ENGINE_LG_CLIENT_SECRET), which is why grepping either finds half the wiring.
+    - clientId: "iagent-graph-host"
+      authzId: "svc:graph-host"
+      secretRef: "graphHostClientSecret"
+
+  # Registration identity for engine-lg, the graph host (see serviceClients above).
+  graphHostClientSecret: "sandbox-graph-host-secret"
 
   # Registration identity for engine-d (see serviceClients above).
   engineDClientSecret: "sandbox-engine-d-secret"
