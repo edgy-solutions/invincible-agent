@@ -1,0 +1,7 @@
+# SEED — platform species.
+kind: workflow_ack
+renders_as:
+  badge: APPROVE
+  title: Workflow approval
+  archetype: APPROVAL_TASK
+accepts: [approved, rejected]

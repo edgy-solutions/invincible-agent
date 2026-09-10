@@ -2,11 +2,20 @@
 # Git-asserted + reviewed like promote_answer_artifact.yaml, so classification + grants
 # compose. Executed on the Restate BPMNWorkflowRunner; steps run as the workflow INITIATOR.
 #
-# STATUS: definition ARTIFACT only (M3.1). NOT yet wired to _run_definition — the executor
-# (stage-2 verifier + runner cutover) is a separate SEALED increment, and the extraction/
-# scoring spo_operation steps are BLOCKED on the Part/Notice/BOM ontology classes + registered
-# verbs that don't exist yet (ADR-0029 Slice-2 prereq). This artifact + its validation test are
-# the buildable slice: the grouped-review expressed AS DATA, ready for the executor to consume.
+# STATUS: WIRED (M3.2 build 3). `grouped_review_workflow.run` loads THIS definition from the
+# runtime registry and executes it through the same `_run_definition` that runs every other
+# definition — the runner is definition-driven, not class-driven, which was the whole M3.2
+# acceptance. The grouped mechanics that used to sit inline are now the `human_await` step
+# kind's owned behaviour, selected by `completion.mode: grouped` below.
+#
+# THIS HEADER WAS STALE FOR THREE WEEKS, and that is worth recording. ADR-0040 makes the board
+# a GENERATED INDEX of these headers, so a header claiming "not yet wired" does not merely
+# mislead a reader — it removes the milestone from the board, which is why BOARD.md carried no
+# M3 row the whole time M3.2 was deployed and running. A status marker is machinery here, not
+# commentary, and it goes stale in the direction of under-reporting finished work.
+#
+# STILL OPEN: the extraction/scoring spo_operation steps remain BLOCKED on the Part/Notice/BOM
+# ontology classes + registered verbs that don't exist yet (ADR-0029 Slice-2 prereq).
 #
 # {placeholders} are bound at trigger time (the notice being reviewed + its compartment).
 id: grouped_review

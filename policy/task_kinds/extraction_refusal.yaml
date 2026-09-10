@@ -1,0 +1,13 @@
+# SEED — platform species. A THIRD ARCHETYPE, not an approval: "approve"/"reject" on
+# *"this document could not be prepared for review"* is not an awkward label, it records a
+# decision the data cannot represent. Its verbs are its own for that reason.
+kind: extraction_refusal
+renders_as:
+  badge: TRIAGE
+  title: Unprocessable notice
+  archetype: TRIAGE_TASK
+accepts: [acknowledged, redriven]
+# "Entered in the legacy system" and "withdrawn by the vendor" are entirely different facts
+# about the pipeline, and a bare acknowledgement erases the difference — which is precisely
+# the evidence ADR-0034's decision records need.
+reason_required: [acknowledged]

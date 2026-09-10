@@ -1,0 +1,10 @@
+# SEED — platform species. Structural only; NO domain names may enter this directory.
+# A deployment's own species live in a work-side OVERLAY (ADR-0036), which is what keeps the
+# generic/domain boundary STRUCTURAL rather than lexical: there is no row here to put one in.
+kind: grouped_review
+renders_as:
+  badge: REVIEW
+  title: Disposition review
+  archetype: GROUPED_REVIEW
+# One approval resolves N affected items, so the verbs are the ordinary pair.
+accepts: [approved, rejected]

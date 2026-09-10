@@ -1,0 +1,7 @@
+# SEED — platform species.
+kind: access_request
+renders_as:
+  badge: ACCESS
+  title: Access request
+  archetype: APPROVAL_TASK
+accepts: [approved, rejected]

@@ -11,10 +11,16 @@ inbound seam uses: a sensor on an observable artifact.
 Design (the three seams, per the ruling):
   * TRIGGER = a `review.json` landing under `**/generated/**` (the "extraction done"
     event). We watch MinIO, cursor-based.
-  * IDEMPOTENCY = ONE review per notice. `review.json.doc_id` IS the notice fingerprint
-    (engine-a keys the workflow on it), so the RunRequest `run_key` is `doc_id` -> a
-    re-ingest/restart that re-emits the same notice is DEDUPED by Dagster (and again by
-    the Restate workflow key). No duplicate review in the queue.
+  * IDEMPOTENCY = ONE review per ARTIFACT, NOT per notice. The RunRequest `run_key` is
+    `ETag`+`Key`, so re-emitting the SAME artifact is deduped by Dagster (and again by
+    the Restate workflow key). It says NOTHING about the notice: the same document
+    arriving under a different object key is a different artifact at every layer, and
+    produces a SECOND review with its own task and its own decision record.
+    This paragraph used to claim one-review-per-notice keyed on `doc_id`. That mechanism
+    was REMOVED — `doc_id` is model-extracted and degraded to a shared fallback for every
+    document in one inbox, so the dedup silently ate all but the first (2026-07-30).
+    Nothing watches the logical-notice axis today. See `_run_key_of` for why that is the
+    safer half of the trade, and not a guarantee anyone may rely on.
   * SUBSTRATE-GAP INVARIANT (the tripwire's contract) = `impacted_parts` is built from
     `review.json`'s `review_items`, the ONLY place per-part `needs_review` exists — NEVER
     reconstructed from the graph. So `REVIEW_STATE_UNSOURCED` stays honest by the sensor's
@@ -488,8 +494,11 @@ def _run_key_of(o: dict) -> str:
     multipart threshold), so ETag is content-shaped on this path today. If a producer ever
     switches to multipart, ETag becomes UPLOAD-shaped: identical content uploaded
     differently yields a different ETag and the sensor RE-FIRES. That is degradation in
-    the SAFE direction — a re-fire is absorbed by the workflow's per-notice fingerprint
-    idempotency, whereas a missed fire is silent data loss. This asymmetry is why ETag is
+    the SAFE direction — a re-fire is absorbed by the workflow key, which is composed from
+    this same request_key, so the duplicate attaches instead of forking. (It is NOT absorbed
+    by "per-notice fingerprint idempotency": that mechanism was removed with the doc_id
+    run_key and no longer exists. A re-fire under a DIFFERENT key produces a second review.)
+    A missed fire, by contrast, is silent data loss — and that asymmetry is why ETag is
     acceptable here and would NOT be for a skip-on-match ledger.
     """
     return f"{o.get('ETag', 'no-etag').strip(chr(34))}-{o['Key']}"

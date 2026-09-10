@@ -884,10 +884,14 @@ async def start_review(
     TRIGGER STATUS: this endpoint is the OPS / RE-DRIVE path, NOT the primary trigger.
     The CANONICAL trigger is the extraction->review Dagster sensor
     (`iagent.defs.extraction_review_sensor`), which fires this same start_review flow
-    automatically when a doc-tools extraction lands its review.json — one review per
-    notice (idempotent on the fingerprint), impacted_parts sourced from review.json.
+    automatically when an extraction lands its review.json — one review per ARTIFACT
+    (idempotent on ETag+key, NOT on the extracted notice id: that mechanism was removed,
+    so the same document under a different object key yields a SECOND review),
+    impacted_parts sourced from review.json.
     Call this route by hand only to re-drive a specific notice (e.g. after fixing a
-    ruleset / grant) — same status as re-running a Dagster partition."""
+    ruleset / grant) — same status as re-running a Dagster partition. NOTE the re-drive
+    is subject to the ingress idempotency key below: within its retention window a
+    re-drive of an unchanged artifact REPLAYS the prior response rather than executing."""
     raw_token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
     body = {
         "notice_id": req.notice_id,
