@@ -96,6 +96,36 @@ held because everyone was reading their messages.
 
     git worktree add ../ia-<lane> -b lane/<lane>     # once per lane
     git -C ../ia-<lane> pull --rebase origin master   # rebase, do not merge master in
+    (cd ../ia-<lane> && uv sync)                      # ITS OWN VENV — not optional, see below
+
+    # then once, standing in the new worktree:
+    python -c "import iagent,os;print('SAME TREE?', os.getcwd() in iagent.__file__)"
+
+**`uv sync` IS NOT OPTIONAL AND ITS ABSENCE IS SILENT.** The root venv carries an EDITABLE
+install (`_editable_impl_iagent.pth`) hard-bound to the main checkout, so `import iagent` and
+`import iagent_pure` resolve to the MAIN TREE from inside any worktree that borrows it.
+Reproduced 2026-09-09, hours after this charter was adopted — standing in `git/ia-verify`,
+`iagent.__file__` pointed at `git/invincible-agent/src/iagent/__init__.py`. SAME TREE? False.
+
+Edit `src/iagent/gateway.py` in your worktree, run the suite with the shared venv, and **you
+have tested the main tree's copy of that file.** Green suite, unverified change, no symptom —
+the same shape as `uv sync --frozen` publishing ten images without `iagent_mesh` while CI
+passed on every one.
+
+**The failure schedule is the worst possible one.** A lane's own package files, its own tests
+and `iagent_mesh` all resolve correctly in a worktree; ONLY `src/iagent` and `src/iagent_pure`
+are captured. So a lane can adopt this charter, work correctly for days, and be silently wrong
+the first time it touches `src/` — the shared ground the charter exists to protect.
+
+`tests/test_the_suite_is_testing_THIS_tree.py` fails loudly when the venv is bound elsewhere,
+because a charter line is not a guard: *a comment that must be read to be obeyed* is the same
+objection this file already raises against the helm-timeout note. Found by
+`invincible-agent-32` within hours of adoption, and reproduced before it was written down.
+
+**Same class as the image-pin defect the same night** — `global.imageTag` reaching
+repositories that never built that sha, and a venv reaching a tree that never had your edit,
+are both A SCOPE THAT LOOKS LOCAL AND IS NOT. The pin produced four ImagePullBackOffs, which
+are loud. This produces a green test, which is silent, and silence costs more.
 
 **`git stash` STAYS BANNED** — it is banned for what it does to a *tree*, and a lane can still take
 its own tree hostage. Compare baselines with `git show HEAD:<path>` or a scratch copy.
@@ -1510,6 +1540,29 @@ missing and ZERO tests executed; and a probe whose `wv ... | grep -c` printed `0
 query that had errored — a count for a query that never ran.
 
 **So: read exit codes BARE, or with `set -o pipefail`, never off the tail of a pipe.**
+
+**⚠ HIT TWICE MORE ON 2026-09-09, BY TWO LANES, WITH THIS RULE ALREADY WRITTEN ABOVE.** Lane 1
+reported a `helm upgrade` as "exited 0" — a `date` after the pipeline, so the status read was
+`date`'s; the upgrade had FAILED twenty minutes earlier at a post-upgrade hook, and the false
+success was passed to the human before anyone re-checked. `invincible-agent-5f` did the same
+from the other direction the same day: a background launch logged `rc=0` for a run that never
+started, because the echo came after the redirect.
+
+**That is not a discipline finding about either lane. It is evidence the rule is not reaching
+the point of use** — 5f's phrasing, and it is the right read: *a rule that only exists in a
+document is one more thing that has to be remembered at 4am.* Both instances were people who
+had read this section, one of whom had written parts of it.
+
+The structural forms, in preference order, because "remember harder" has now failed three
+times:
+
+* put `set -o pipefail` at the top of any script whose steps are checked;
+* when a command's status matters, run it BARE and let the harness report it — do not append
+  anything, not `date`, not `echo`, not `tail`;
+* if you must post-process, capture first: `out=$(cmd); rc=$?; echo "$out" | tail -5`.
+
+Sibling of the worktree venv and the `global.imageTag` scope, both found the same night: a
+**scope that looks local and is not**. Here the scope is which command `$?` refers to.
 
 ### COMPOSED-BY-REFERENCE IS ASSERTED BY IDENTITY, NEVER BY DEEP EQUALITY
 2026-08-22. `DECISION_RECORD` was ruled to COMPOSE the disposition contracts rather than
