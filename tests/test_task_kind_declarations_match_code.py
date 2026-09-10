@@ -131,13 +131,19 @@ def test_reason_required_is_reachable_in_every_row():
 def test_the_undeclared_default_is_deliberately_narrowed():
     """THE ONE DIVERGENCE, asserted so it is a decision rather than drift.
 
-    Today an UNDECLARED kind gets ``_DEFAULT_VERBS`` from this code table, while cortex-ui
-    renders that same undeclared kind READ-ONLY. The UI shows no buttons; this side would still
-    have accepted the decision. The declaration model unifies them on NO verbs.
+    Today an UNDECLARED kind gets ``_DEFAULT_VERBS`` here — and the UI hands it Approve/Reject
+    too, because its default archetype renders an approval card unconditionally. So this is not
+    two safe behaviours being unified; it is a LIVE HOLE on both sides, and the declaration
+    model closes it by giving an undeclared species no verbs at all.
+
+    (An earlier version of this docstring said the UI degraded to read-only. It does not. That
+    claim came from a comment above the UI's default asserting a no-verb mode that was never
+    built — the cause was addressed, the effect never changed, and reading the note instead of
+    tracing the render propagated the error into this repo. Traced 2026-09-09.)
 
     So the cutover CHANGES behaviour here, in the honest direction, and this test is where that
-    is written down. It fails the day someone re-widens the default, which would restore the
-    asymmetry silently.
+    is written down. It fails the day someone re-widens the default, which would reopen the hole
+    silently.
     """
     assert _DEFAULT_VERBS == frozenset({"approved", "rejected"}), (
         "the code default moved — re-read the cutover note before changing this"
