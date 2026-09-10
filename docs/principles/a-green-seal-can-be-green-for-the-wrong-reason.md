@@ -317,6 +317,22 @@ kinds of object; a lane following the general form would have dropped
 half of a conjunctive eligibility read. Asserting on the neighbour of
 the thing you checked is the same defect one step out.
 
+**And a derived population is only as complete as the thing it derives
+FROM.** invincible-agent-5f's refinement, measured the same day the
+rule was written. `_fleet_version_targets()` scans `ENGINE_*_PUBLIC_URL`
+*precisely* so that nobody hand-maintains a fleet list — its own
+docstring says a hardcoded list is "the shape this repo keeps paying
+for". It is still incomplete: the chart sets no URL variable for
+engine-lg at all, so the census printed a clean uniform table of
+seventeen deployments with one service silently unaccounted for.
+
+**An env var nobody set is invisible to a scan of env vars.** Deriving
+moves the hole from the list to the SOURCE of the list; it does not
+remove it. So the derivation needs its own floor — a count checked
+against an independent enumeration (here: deployments in the
+namespace, not variables in a ConfigMap) — for the same reason a
+scrape does.
+
 **And weight it by who receives it.** The realm one went to the USER,
 who has no instrument of their own to check it against. A fabricated
 finding costs least when it lands on someone who can reproduce it, and

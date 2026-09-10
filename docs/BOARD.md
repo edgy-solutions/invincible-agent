@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **129 of 141 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **130 of 142 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -63,6 +63,10 @@ _Coverage: **129 of 141 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-succeeded-run-reported-as-failed** — TWO ITEMS, ONE OBSERVATION, handed to lane 1. (1) A FALSE RED, which is the worse direction: `supervisor_query_job` logged RUN_SUCCESS while the stream had already emitted `pipeline_error dagster_run_failed` and `ui_payload_timeout` to the user. A run that succeeded was reported as failed, so the instrument disagrees with the system in the direction that manufactures phantom bugs. (2) THE LATENCY ITSELF: measured 5m06s, 5m23s and 6m37s for single finance questions, against a BFF budget shorter than any of them. That is the demo's ceiling and nobody has profiled where it goes.
   status: open · owner: lane 1 (supervisor / BFF queue) — HANDED OVER, not diagnosed further · blocked-on: lane 1
   → [docs/plans/a-succeeded-run-reported-as-failed.md](plans/a-succeeded-run-reported-as-failed.md)
+
+- **adding-an-engine-has-more-registry-sites-than-the-runbook-names** — Runbook §0 names FOUR namespaces a new engine must be registered in. At least EIGHT sites exist, three of them found the hard way on engine-lg alone (mirror script — fifth omission of that same row, _KEY_TO_AGENT_DIR, and ENGINE_LG_PUBLIC_URL which the version census derives its population from). A commit faithful to the runbook inherits the runbook's gaps. Fix is a derived checklist, not a ninth row.
+  status: open · owner: unassigned
+  → [docs/plans/adding-an-engine-has-more-registry-sites-than-the-runbook-names.md](plans/adding-an-engine-has-more-registry-sites-than-the-runbook-names.md)
 
 - **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
   status: open · owner: unassigned
