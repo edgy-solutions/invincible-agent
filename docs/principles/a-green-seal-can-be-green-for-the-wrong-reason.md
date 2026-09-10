@@ -287,6 +287,41 @@ wrote an *edit*. So the honest report is *"there is an uncommitted change in the
 no owner named unless someone claims it.
 
 
+**Derive the population, never name it.** The one-line defence for
+shapes 12 and 14 together, because they are the same reading: a
+confident negative about a population you never established. Three
+instances in one day, two of them mine and inside twenty minutes of
+each other.
+
+    MATCH (n:Predicate) RETURN count(n)   -> 0    no such LABEL exists in Neo4j
+    grep 'cannot execute'                 -> 0    the text says "cannot be executed"
+    GET /realms/iagent                    -> 404  the realm is called invincible-agent
+
+Each looks exactly like the real negative it is not: an empty
+registry, an absent rationale, a missing realm. **A zero from a label
+that does not exist is indistinguishable from a zero from an empty
+one**, and nothing in the result says which you got.
+
+So the query is never the first step. `CALL db.labels()` before
+`MATCH (n:X)`. `db.relationshipTypes()` before asserting a verb is
+unregistered. And **before believing a negative search, make the same
+search find something you know is there** — a positive control for a
+grep, for the same reason `assert_checkers_can_say_no` is one for a
+store.
+
+**Scope the claim to what you measured.** Having established that
+Neo4j holds verbs as relationship types, I wrote "never off a node
+label" — and Weaviate *does* have a real `Predicate` class carrying
+`verb_local` and `registration_complete`. Same word, two stores, two
+kinds of object; a lane following the general form would have dropped
+half of a conjunctive eligibility read. Asserting on the neighbour of
+the thing you checked is the same defect one step out.
+
+**And weight it by who receives it.** The realm one went to the USER,
+who has no instrument of their own to check it against. A fabricated
+finding costs least when it lands on someone who can reproduce it, and
+most when it lands on the one reader who cannot.
+
 ## The rule that generalises past testing
 
 **A substitute check that finds something is the most convincing wrong
