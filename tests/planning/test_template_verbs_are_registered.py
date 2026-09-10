@@ -22,11 +22,25 @@ here rather than a green.
 
 ── THE NEGATIVE CONTROL IS NOT OPTIONAL ────────────────────────────────────────────────────────
 A check that has only ever seen its expected answer has not been shown able to give another.
-`test_the_checker_can_say_no` runs a verb that cannot exist through the SAME code path and
+`test_the_checkers_can_say_no` runs a verb that cannot exist through the SAME code path and
 requires it to come back absent. Without it, a query with a wrong label — which is precisely how
 this file's first draft failed, returning a confident uniform NOT FOUND for all five verbs
 because it matched `:Predicate` nodes in a graph whose verbs are RELATIONSHIP TYPES — reads as a
 finding instead of a broken instrument.
+
+── THE QUERIES AND CONTROLS NOW LIVE IN `tests/_mesh_verbs.py` ─────────────────────────────────
+Extracted at the SECOND consumer (a ratified-graph-rows check needs the same probes), because
+this repo has already paid for extracting at the third. **The controls moved WITH the queries,
+and that is the design rather than a tidying choice.** The argument against sharing is that a
+broken helper reddens two files and neither owns it — true for a helper extracted without its
+controls, and it inverts once they come along:
+
+    controls red                              -> the INSTRUMENT is broken; the helper owns it
+    controls green, assertions below red      -> the DATA is bad; THIS file owns it
+
+Copied controls are worse on both counts, because a copy can drift until it stops discriminating
+and still passes — drift in a control is invisible by construction. What stays here: the
+population (`template_verbs`) and every claim made about it, so a red still names a template.
 
 ── SKIPPING MUST NOT READ AS PASSING ───────────────────────────────────────────────────────────
 Without a reachable mesh these tests SKIP. A skip is not a pass, and the CI job does not run
@@ -35,30 +49,24 @@ recorded run is in `docs/plans/canvas-templates-slice-1.md`.
 """
 from __future__ import annotations
 
-import json
-import os
-import urllib.request
 from pathlib import Path
 
 import pytest
 
+from tests._mesh_verbs import (
+    assert_checkers_can_say_no,
+    missing_from_neo4j,
+    needs_neo4j,
+    needs_weaviate,
+    not_eligible_in_weaviate,
+    one_sided,
+)
+
 _ROOT = Path(__file__).resolve().parents[2]
 _CANVAS_DIR = _ROOT / "policy" / "canvases"
 
-# Sandbox coordinates come from the environment. Defaults are deliberately absent: a test that
-# silently points at a default substrate is a test whose subject you cannot name in its output.
-NEO4J_URI = os.environ.get("NEO4J_URI")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD")
-WEAVIATE_URL = os.environ.get("WEAVIATE_URL")
 
-_needs_neo4j = pytest.mark.skipif(
-    not (NEO4J_URI and NEO4J_PASSWORD),
-    reason="set NEO4J_URI + NEO4J_PASSWORD to check verb existence against the mesh")
-_needs_weaviate = pytest.mark.skipif(
-    not WEAVIATE_URL, reason="set WEAVIATE_URL to check the Weaviate half of eligibility")
-
-
+# ── THE POPULATION — the only part that is this file's ──────────────────────────────────────
 def template_verbs() -> list[tuple[str, str, str]]:
     """`(template_id, verb_iri, verb_local)` for every ratified template."""
     yaml = pytest.importorskip("yaml")
@@ -73,94 +81,47 @@ def template_verbs() -> list[tuple[str, str, str]]:
     return out
 
 
-def _neo4j_relationship_types() -> set[str]:
-    """Verbs are RELATIONSHIP TYPES between OntologyClass nodes, not nodes.
-
-    Read off `/find_compatible_verbs`'s own walk (`MATCH (s:OntologyClass {uri})-[r]->(o)`),
-    because guessing this schema is what produced the first draft's false negative.
-    """
-    from neo4j import GraphDatabase
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-    try:
-        with driver.session() as s:
-            return {r["relationshipType"] for r in s.run("CALL db.relationshipTypes()")}
-    finally:
-        driver.close()
-
-
-def _weaviate_predicates() -> dict[str, dict]:
-    q = {"query": "{Get{Predicate(limit:1000){verb_iri verb_local endpoint_url "
-                  "registration_complete}}}"}
-    req = urllib.request.Request(f"{WEAVIATE_URL.rstrip('/')}/v1/graphql",
-                                 data=json.dumps(q).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        body = json.load(r)
-    if "data" not in body:
-        raise AssertionError(f"Weaviate returned no data — instrument failure, not a finding: "
-                             f"{json.dumps(body)[:400]}")
-    return {(p.get("verb_local") or ""): p for p in body["data"]["Get"]["Predicate"]}
-
-
-# ── THE NEGATIVE CONTROLS ───────────────────────────────────────────────────────────────────
-@_needs_neo4j
+# ── THE CONTROLS — one shared implementation, PER STORE, run in THIS file's environment ─────
+#
+# SPLIT PER STORE, and the reason is a live near-miss rather than symmetry. The first version
+# gated one control on BOTH stores. Tonight Weaviate is down and Neo4j is up, so that control
+# SKIPPED while `test_every_template_verb_exists_in_neo4j` PASSED — a green with no control
+# behind it, in exactly the degraded state a control exists for. A control must share its
+# subject's gate, or partial availability silently buys back the vacuous pass.
+@needs_neo4j
 def test_the_neo4j_checker_can_say_no():
-    """The same code path must report a verb that cannot exist as ABSENT."""
-    types = _neo4j_relationship_types()
-    assert types, "zero relationship types — instrument failure, not an empty mesh"
-    assert "planDefinitelyNotARegisteredVerb" not in types, (
-        "the mesh reports a fabricated verb as present — the query is not discriminating")
+    """If this reddens, the Neo4j INSTRUMENT is broken and the Neo4j assertion below says
+    nothing either way. Shared implementation with the ratified-graph consumer so it cannot
+    drift in one of them; invoked here so it runs where this file's assertions run."""
+    assert_checkers_can_say_no(neo4j=True, weaviate=False)
 
 
-@_needs_weaviate
+@needs_weaviate
 def test_the_weaviate_checker_can_say_no():
-    preds = _weaviate_predicates()
-    assert preds, "zero Predicate rows — instrument failure, not an empty registry"
-    assert "planDefinitelyNotARegisteredVerb" not in preds, (
-        "Weaviate reports a fabricated verb as present — the query is not discriminating")
+    """Same, for the Weaviate half."""
+    assert_checkers_can_say_no(neo4j=False, weaviate=True)
 
 
-# ── THE SEAL ────────────────────────────────────────────────────────────────────────────────
-@_needs_neo4j
+# ── THE ASSERTIONS — this file's claims about its own population ────────────────────────────
+@needs_neo4j
 def test_every_template_verb_exists_in_neo4j():
-    types = _neo4j_relationship_types()
-    assert types, "zero relationship types — instrument failure"
-    missing = [(t, iri) for t, iri, local in template_verbs() if local not in types]
+    missing = missing_from_neo4j(template_verbs())
     assert not missing, (
         "a ratified template names a verb the mesh does not serve. It would merge, seed, and "
         f"render an EMPTY panel: {missing}")
 
 
-@_needs_weaviate
+@needs_weaviate
 def test_every_template_verb_is_registration_complete_in_weaviate():
-    preds = _weaviate_predicates()
-    problems = []
-    for t, iri, local in template_verbs():
-        p = preds.get(local)
-        if p is None:
-            problems.append((t, iri, "absent from Weaviate"))
-        elif not p.get("registration_complete"):
-            problems.append((t, iri, "registration_complete is falsy"))
-        elif not p.get("endpoint_url"):
-            problems.append((t, iri, "no endpoint_url — nothing would serve it"))
+    problems = not_eligible_in_weaviate(template_verbs())
     assert not problems, f"template verbs are not eligible on the Weaviate side: {problems}"
 
 
-@_needs_neo4j
-@_needs_weaviate
+@needs_neo4j
+@needs_weaviate
 def test_eligibility_is_conjunctive():
-    """BOTH stores, per select-from-authorized-set. A one-sided presence is the defect.
-
-    Reported as its own failure rather than folded into the two above, because "in Neo4j but not
-    Weaviate" is a DIFFERENT fact from "missing" — it is the registered-but-never-matches shape,
-    and collapsing them would hide the one that is hardest to diagnose from a symptom.
-    """
-    types, preds = _neo4j_relationship_types(), _weaviate_predicates()
-    one_sided = [
-        (t, iri, f"neo4j={local in types} weaviate={local in preds}")
-        for t, iri, local in template_verbs()
-        if (local in types) != (local in preds)
-    ]
-    assert not one_sided, (
+    """BOTH stores, per select-from-authorized-set. A one-sided presence is the defect."""
+    problems = one_sided(template_verbs())
+    assert not problems, (
         "a template verb is present in one store and not the other — it will register, report "
-        f"accepted, and never match: {one_sided}")
+        f"accepted, and never match: {problems}")
