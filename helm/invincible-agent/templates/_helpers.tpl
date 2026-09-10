@@ -63,33 +63,43 @@ Optional override knobs (purely additive; existing callers unaffected):
                  a different registry from the rest of the iagent images.
   "repository" — repository path; concatenated with the registry above.
 */}}
-{{- define "invincible-agent.image" -}}
 {{/*
-TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then AppVersion.
+TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then `global.defaultImageTag`.
 
-`global.imageTag` is the commit-pin knob and it is deliberately ONE knob for the whole
-fleet: pinning services individually is how a cluster ends up running four commits at once
-with nothing to read it off. CI already publishes every image under `:<git-sha>` alongside
-`:latest`, so `--set global.imageTag=<sha>` needs no new build.
+`global.imageTag` is the commit-pin knob, and ONE knob for the whole fleet on purpose: pinning
+services individually is how a cluster ends up running four commits at once with nothing to
+read it off. CI publishes every image under `:<git-sha>` beside `:latest`, so
+`--set global.imageTag=<sha>` needs no new build.
 
-THE FLOOR IS `global.defaultImageTag` (i.e. `latest`), NOT `Chart.AppVersion`, and that is a
-correction rather than a preference: CI publishes `:<sha>` and `:latest` and NOTHING ELSE, so
-a component falling through to AppVersion asks the registry for `:2026.07.02`, which does not
-exist. Every environment was already papering over it with an explicit `tag: "latest"` in its
-own values file — which is also what made the pin knob unreachable, since a component tag
-beats a global one. Both are fixed here: the floor is a tag that exists, and the literals are
-cleared so the knob can be seen.
+IT APPLIES ONLY TO IMAGES THIS REPO BUILDS, and the scoping is the whole point.
+MEASURED 2026-09-09: the pin was global over every image the chart renders, so a commit sha
+reached `cortex-ui/frontend`, `dag-tools/central-gateway`, `dag-tools/user-deployment` and
+`pub-tools` — repositories that have never built it. Four deployments into ImagePullBackOff on
+a live cluster, from a knob whose name says "image tag" and whose reach was every image.
+A COMMIT SHA ONLY MEANS SOMETHING INSIDE THE REPOSITORY THAT MINTED IT. So an image is eligible
+only when its repository sits under `global.imagePrefix`; anything with its own `repository`
+elsewhere falls through to its own tag or the floor, exactly as before.
 
-EMPTY IS TODAY'S BEHAVIOUR EXACTLY — every deployed image resolves to `:latest` today and
-still does with the knob unset.
+THE FLOOR IS `global.defaultImageTag` (`latest`), NOT `Chart.AppVersion`: CI publishes
+`:<sha>` and `:latest` and nothing else, so falling through to AppVersion asks for
+`:2026.07.02`, which has never existed. Every values file was papering over that with an
+explicit `tag: "latest"` — which is also what made the pin unreachable, since a component tag
+beats a global one.
+
+EMPTY IS TODAY'S BEHAVIOUR EXACTLY — every image resolves to `:latest` with the knob unset.
+
+EVERY LINE INSIDE THE DEFINE IS DASH-TRIMMED. It renders inline as `image: {{ include ... }}`,
+so a single untrimmed newline produces `could not find expected ':'` in a file that has nothing
+wrong with it. Comments belong out here, not in there.
 */}}
-{{- $tag := .tag | default .root.Values.global.imageTag | default .root.Values.global.defaultImageTag -}}
+{{- define "invincible-agent.image" -}}
+{{- $repo := .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) -}}
+{{- $ours := hasPrefix (printf "%s/" .root.Values.global.imagePrefix) $repo -}}
+{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag -}}
 {{- if .registry -}}
-{{ .registry }}/{{ .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) }}:{{ $tag }}
-{{- else if .repository -}}
-{{ .root.Values.global.imageRegistry }}/{{ .repository }}:{{ $tag }}
+{{ .registry }}/{{ $repo }}:{{ $tag }}
 {{- else -}}
-{{ .root.Values.global.imageRegistry }}/{{ .root.Values.global.imagePrefix }}/{{ .name }}:{{ $tag }}
+{{ .root.Values.global.imageRegistry }}/{{ $repo }}:{{ $tag }}
 {{- end -}}
 {{- end }}
 

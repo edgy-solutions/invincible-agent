@@ -256,3 +256,70 @@ def test_the_targets_are_DERIVED_from_the_environment():
     body = ast.unparse(fn)
     assert "os.environ.items()" in body, "the target list is not derived from the environment"
     assert "_PUBLIC_URL" in body
+
+
+# ── the pin's REACH, which is what actually broke a cluster ──────────────────
+
+_ANY_IMAGE = re.compile(r"image: (ghcr\.io/[^ \n]+)")
+
+
+def _all_rendered(*extra: str) -> dict:
+    """EVERY image the chart renders, not just ours — `repo/name -> tag`.
+
+    The population this file originally derived was `.../invincible-agent/...` only, which
+    is why the defect below shipped: the test verified the images I own and was structurally
+    blind to the ones I do not. A scrape that answers "what did I mean" instead of "what does
+    this act on" cannot see a blast radius.
+    """
+    helm = shutil.which("helm")
+    if not helm:
+        pytest.skip("helm not on PATH")
+    proc = subprocess.run(
+        [helm, "template", "t", str(_CHART), "-f", str(_SANDBOX), *extra],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    out: dict = {}
+    for ref in _ANY_IMAGE.findall(proc.stdout):
+        repo, _, tag = ref.rpartition(":")
+        out[repo] = tag
+    assert len(out) >= 14, f"the render scrape found only {len(out)}: {sorted(out)}"
+    return out
+
+
+def test_the_pin_does_NOT_reach_images_other_repos_build():
+    """THE DEFECT THAT BROKE A LIVE CLUSTER, 2026-09-09.
+
+    `global.imageTag` was global over every image the chart renders. A commit pin therefore
+    took `cortex-ui/frontend`, `dag-tools/central-gateway`, `dag-tools/user-deployment` and
+    `pub-tools` to a sha their own repositories have never built — four deployments into
+    ImagePullBackOff, from a knob whose name says "image tag" and whose reach was every image.
+
+    **A COMMIT SHA ONLY MEANS SOMETHING INSIDE THE REPOSITORY THAT MINTED IT.**
+    """
+    tags = _all_rendered("--set", "global.imageTag=PINTEST")
+    foreign = sorted(r for r, t in tags.items() if t == "PINTEST" and "/invincible-agent/" not in r)
+    assert not foreign, (
+        f"the commit pin reached {len(foreign)} image(s) this repo does not build: {foreign} "
+        f"— those shas do not exist in their registries and the pods will not start"
+    )
+
+
+def test_the_pin_DOES_still_reach_all_of_ours():
+    """The control, and it is the half the original test had. Scoping the pin must not
+    quietly scope it to nothing — a knob that reaches no image passes the test above."""
+    tags = _all_rendered("--set", "global.imageTag=PINTEST")
+    ours = {r: t for r, t in tags.items() if "/invincible-agent/" in r}
+    assert len(ours) >= 12, f"only {len(ours)} of our images render at all: {sorted(ours)}"
+    missed = sorted(r for r, t in ours.items() if t != "PINTEST")
+    assert not missed, f"our own image(s) ignored the pin: {missed}"
+
+
+def test_foreign_images_keep_working_when_the_pin_is_set():
+    """Not merely 'not PINTEST' — they must resolve to something REAL. An image scoped out of
+    the pin and left with an empty or AppVersion tag is the same outage by another route."""
+    tags = _all_rendered("--set", "global.imageTag=PINTEST")
+    for repo, tag in sorted(tags.items()):
+        if "/invincible-agent/" in repo:
+            continue
+        assert tag and tag != "PINTEST", f"{repo} resolved to {tag!r}"
