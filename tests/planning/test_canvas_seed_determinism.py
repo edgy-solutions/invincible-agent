@@ -325,11 +325,15 @@ def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
 # the next time anyone seeds. These five ids ARE the recorded pre-prime observation from
 # 2026-09-09 (commit 08ddf94); reading them back is reading the record, not re-measuring it.
 _PRE_PRIME_BASELINE = [
-    "urn:li:answerArtifact:seal3-run-a-seed0-f55f0994",   # mesh:planSchedule
-    "urn:li:answerArtifact:seal3-run-a-seed1-c03024c5",   # mesh:planCostCurve
-    "urn:li:answerArtifact:seal3-run-a-seed2-3ebea304",   # mesh:planSiteLoad
-    "urn:li:answerArtifact:seal3-run-a-seed3-be62f7af",   # mesh:planFundingGap
-    "urn:li:answerArtifact:seal3-run-a-seed4-5d4b8787",   # mesh:planMaturityGrid
+    # Re-seeded 2026-09-10 on fleet `1d6756ce944a` (rev 106, census-uniform across all 17
+    # deployments) so the prime is the ONLY variable left. The previous baseline was taken on
+    # `95f78722` and run B on `686942e7` — three fleet versions for one comparison, which is
+    # what voided it.
+    "urn:li:answerArtifact:seal3-base-1d6756c-seed0-f45c96c4",   # mesh:planSchedule
+    "urn:li:answerArtifact:seal3-base-1d6756c-seed1-2db4cfcf",   # mesh:planCostCurve
+    "urn:li:answerArtifact:seal3-base-1d6756c-seed2-2521250d",   # mesh:planSiteLoad
+    "urn:li:answerArtifact:seal3-base-1d6756c-seed3-4a44c081",   # mesh:planFundingGap
+    "urn:li:answerArtifact:seal3-base-1d6756c-seed4-25be9a5d",   # mesh:planMaturityGrid
 ]
 
 # What the record says those five resolved to, so a baseline that reads back DIFFERENTLY is
@@ -350,7 +354,7 @@ _PRE_PRIME_BASELINE = [
 #
 # UPDATE THIS TOGETHER WITH THE IDS ABOVE. They are one record: five artifacts AND the fleet
 # that produced them. Changing one without the other reintroduces exactly this defect.
-_PRE_PRIME_FLEET_SHA = "95f78722d158b2a97227c048650d5962e1dcef74"
+_PRE_PRIME_FLEET_SHA = "1d6756ce944a68d836bbb86dd46f133b88339031"
 
 _PRE_PRIME_VERBS = [
     "mesh:planSchedule", "mesh:planCostCurve", "mesh:planSiteLoad",
