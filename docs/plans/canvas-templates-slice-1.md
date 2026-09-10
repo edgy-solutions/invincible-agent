@@ -469,3 +469,75 @@ negotiations, the "seeding is a PRE-WARM operation, not an on-stage one" ruling.
 correcting at its source in `gateway.py`'s RULING (b) comment, which is not this lane's file. The
 qualitative half of the ruling is untouched: sequential-not-parallel remains right, and the reason
 (`max_concurrent_runs: 2` plus a reaper gap) is unaffected by how long each ask takes.
+
+---
+
+## 2026-09-09 late — the prime never ran; run B deferred; baseline verified intact
+
+**Seed B was NOT run and must not be.** The prime did not happen, so there is no across-a-prime
+comparison to make. Verified independently rather than taken on report:
+
+| claim | checked |
+|---|---|
+| `k3s-worker6` down | **NotReady** |
+| Keycloak unschedulable | `iagent-keycloak-0` **Terminating** |
+| Weaviate also pinned to worker6 | `iagent-weaviate-0` **Terminating** |
+| Neo4j unaffected | `iagent-neo4j-0` **Running** |
+
+Two independent reasons seeding is impossible tonight, and the second is the one that would have
+cost a seed: **Keycloak is down, so no token can be minted at all** — and **Weaviate holds the
+`Predicate` collection** that class recall and predicate search read, so a seed would route
+against a vector store that is not there. The arm would VOID on it, correctly, *after* spending
+the seed.
+
+### The baseline is intact, verified through Neo4j rather than the route
+
+The route needs a Keycloak token, which does not exist tonight. Neo4j is up, so the control was
+verified from the store directly — all five pinned artifacts present, `complete`, and resolving
+to exactly what `08ddf94` recorded:
+
+```
+slot 0  mesh:planSchedule      slots={'group_by': 'initiative'}
+slot 1  mesh:planCostCurve     slots={}
+slot 2  mesh:planSiteLoad      slots={}
+slot 3  mesh:planFundingGap    slots={'group_by': 'org'}
+slot 4  mesh:planMaturityGrid  slots={}
+BASELINE INTACT: True
+```
+
+**A uniform-extreme false alarm, caught by its own rule.** The first read of that data returned
+`verb=None` for all five, which looks exactly like "the prime ate the control". It was the query:
+`verb_iri` lives at `routing_inline.action.iri` and `resolved_intent.verb_iri`, not at the top of
+`routing_inline`. Five-of-five null from a path that might not exist is the same tell as
+five-of-five absent from a label that did not exist, and it fired twice in this arc now.
+
+### The template's declared defaults are now MEASURED, not inferred
+
+The `accepted_slots` the running system recorded match `portfolio.yaml`'s declared slots **five
+for five**, including slot 3's `group_by: org`.
+
+That closes an assumption slice 1 carried from the start. The template declared each verb's
+defaults because §3's carry is blocked and *"a slice-1 template declaring those defaults
+explicitly is TRUE and produces the same board whether or not the carry has landed"* — read off
+Python signatures. It is no longer read off signatures: the artifacts record what the engine
+actually accepted, and it agrees. The one panel that was flagged as most likely to be wrong —
+`plan_funding_gap`, reworded 2026-08-28 to match a default — records `group_by: org`, exactly as
+declared.
+
+### A scope gap in my own arm, named
+
+ADR-0050 acceptance 3 scopes the comparison as **(verb, declared slots, slot role, ordinal)**. The
+live arm has compared **verb and ordinal only** — `panel_set` accepts slots, but the live path
+built every panel with `"slots": {}`. So it has been narrower than the seal it implements, and a
+slot-level divergence would have passed unseen.
+
+`resolved_intent.accepted_slots` carries them, so the fix is available and does not need the
+route. Widened here rather than left, because a seal that quietly checks a subset of its own
+stated scope is the decorative shape one layer in.
+
+### Standing state
+
+* Run A recorded and verified. Baseline pinned by id and confirmed intact.
+* Run B waits on: worker6 back → Weaviate and Keycloak scheduled → prime runs → **reregister hook
+  completes**. Four conditions, and only the last is the signal to start.
+* Nothing is wasted and nothing needs redoing.

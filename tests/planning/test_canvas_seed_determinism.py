@@ -388,6 +388,45 @@ def test_the_panel_set_survives_a_prime():
                   f"reading the wrong contract. Keys: {sorted(doc)}")
         return doc.get("verb_iri")
 
+    def _slots_of(aid: str) -> tuple:
+        """The SLOTS half of acceptance 3's scope, read from the graph's `resolved_intent`.
+
+        SCOPE GAP CLOSED 2026-09-09. Acceptance 3 scopes the comparison as
+        **(verb, declared slots, slot role, ordinal)**, and this arm compared verb and ordinal
+        only — every panel was built with `"slots": {}`, so a slot-level divergence across the
+        prime would have passed unseen. A seal that quietly checks a subset of its own stated
+        scope is the decorative shape one layer in.
+
+        Read from Neo4j rather than the route because the route does not expose
+        `accepted_slots`; the graph does, on `resolved_intent`. Verified against the pinned
+        baseline: the five recorded slot sets match `portfolio.yaml`'s declarations exactly,
+        including slot 3's `group_by: org`.
+
+        Returns () when the graph is unreachable rather than voiding — the slots half is an
+        ADDITION to a comparison whose verb half already works, and losing the graph should
+        narrow the seal with a warning rather than void a spent seed.
+        """
+        try:
+            import json as _json
+            from neo4j import GraphDatabase
+            uri = os.environ.get("NEO4J_URI")
+            pw = os.environ.get("NEO4J_PASSWORD")
+            if not (uri and pw):
+                return ()
+            drv = GraphDatabase.driver(uri, auth=(os.environ.get("NEO4J_USER", "neo4j"), pw))
+            try:
+                with drv.session() as s:
+                    rec = s.run("MATCH (a:AnswerArtifact {id: $i}) RETURN a.resolved_intent AS ri",
+                                i=aid).single()
+            finally:
+                drv.close()
+            if not rec or not rec["ri"]:
+                return ()
+            slots = (_json.loads(rec["ri"]) or {}).get("accepted_slots") or {}
+            return tuple(sorted((k, str(v)) for k, v in slots.items()))
+        except Exception:                                   # pragma: no cover - env-dependent
+            return ()
+
     # ── 1. THE BASELINE MUST READ BACK AS RECORDED, BEFORE ANYTHING IS SPENT ────────────────
     before = [_verb_of(aid, "baseline") for aid in _PRE_PRIME_BASELINE]
     if before != _PRE_PRIME_VERBS:
@@ -419,11 +458,25 @@ def test_the_panel_set_survives_a_prime():
     if unread:
         _void(f"panels {unread} seeded but recorded no verb_iri — a null is UNREAD, not equal")
 
-    # ── 3. THE COMPARISON ───────────────────────────────────────────────────────────────────
-    moved = [(i, b, a) for i, (b, a) in enumerate(zip(before, after)) if b != a]
+    # ── 3. THE COMPARISON — (verb, slots, ordinal), acceptance 3's full stated scope ────────
+    before_slots = [_slots_of(aid) for aid in _PRE_PRIME_BASELINE]
+    after_slots = [() if a is None else _slots_of(a) for a in ids]
+    slots_available = any(before_slots) or any(after_slots)
+
+    moved = [(i, (b, bs), (a, as_))
+             for i, (b, a, bs, as_) in enumerate(zip(before, after, before_slots, after_slots))
+             if b != a or (slots_available and bs != as_)]
+
+    if not slots_available:
+        # NARROWED, AND IT SAYS SO. A green from a verb-only comparison is a weaker claim than
+        # a green from the full scope, and the two must not read alike in a report.
+        print("\nWARNING: slots unavailable (no NEO4J_URI/NEO4J_PASSWORD) — this run compared "
+              "VERB AND ORDINAL ONLY, which is narrower than acceptance 3's stated scope. A "
+              "pass here does not cover slot-level divergence.")
+
     assert not moved, (
-        "SEAL 3 BIT ACROSS A PRIME — the same phrases resolved to different verbs after the "
-        "ontology moved. This is the measured case for declared verbs, and it is the finding "
-        "the original scoping was reaching for.\n"
+        "SEAL 3 BIT ACROSS A PRIME — the same phrases resolved differently after the ontology "
+        "moved. This is the measured case for declared verbs, and it is the finding the "
+        "original scoping was reaching for.\n"
         + "\n".join(f"  slot {i}: {b}  ->  {a}" for i, b, a in moved)
         + f"\n  unseeded this run: {unseeded or 'none'}")
