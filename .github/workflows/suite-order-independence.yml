@@ -37,6 +37,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
+      # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
+      # because its other 8 assertions would vacuously pass against a repo that is not there.
+      # BOTH 2026-08-20 runs failed on exactly this, and it is the only one of their five
+      # failures still live: the two board-drift failures were fixed 49 minutes later by
+      # 90ccaf9 (fetch-depth 0) and the two citation failures have since been repaired in
+      # the tree. The repo is PUBLIC, so the default token clones it and no secret is needed.
+      #
+      # CHECKED OUT THEN MOVED because actions/checkout refuses a `path` outside the
+      # workspace — and the workspace IS the repo directory, one level below where the test
+      # looks. Unpinned to its default branch on purpose for a first run; pin it once this
+      # job has been green twice and drift becomes the thing worth guarding.
+      - uses: actions/checkout@v4
+        with:
+          repository: edgy-solutions/iagent-mesh-sdk
+          path: _sibling-sdk
+      - name: place the SDK where the cross-repo contract looks for it
+        run: mv _sibling-sdk "$(dirname "$GITHUB_WORKSPACE")/iagent-mesh-sdk"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -61,6 +79,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
+      # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
+      # because its other 8 assertions would vacuously pass against a repo that is not there.
+      # BOTH 2026-08-20 runs failed on exactly this, and it is the only one of their five
+      # failures still live: the two board-drift failures were fixed 49 minutes later by
+      # 90ccaf9 (fetch-depth 0) and the two citation failures have since been repaired in
+      # the tree. The repo is PUBLIC, so the default token clones it and no secret is needed.
+      #
+      # CHECKED OUT THEN MOVED because actions/checkout refuses a `path` outside the
+      # workspace — and the workspace IS the repo directory, one level below where the test
+      # looks. Unpinned to its default branch on purpose for a first run; pin it once this
+      # job has been green twice and drift becomes the thing worth guarding.
+      - uses: actions/checkout@v4
+        with:
+          repository: edgy-solutions/iagent-mesh-sdk
+          path: _sibling-sdk
+      - name: place the SDK where the cross-repo contract looks for it
+        run: mv _sibling-sdk "$(dirname "$GITHUB_WORKSPACE")/iagent-mesh-sdk"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -89,6 +125,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
+      # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
+      # because its other 8 assertions would vacuously pass against a repo that is not there.
+      # BOTH 2026-08-20 runs failed on exactly this, and it is the only one of their five
+      # failures still live: the two board-drift failures were fixed 49 minutes later by
+      # 90ccaf9 (fetch-depth 0) and the two citation failures have since been repaired in
+      # the tree. The repo is PUBLIC, so the default token clones it and no secret is needed.
+      #
+      # CHECKED OUT THEN MOVED because actions/checkout refuses a `path` outside the
+      # workspace — and the workspace IS the repo directory, one level below where the test
+      # looks. Unpinned to its default branch on purpose for a first run; pin it once this
+      # job has been green twice and drift becomes the thing worth guarding.
+      - uses: actions/checkout@v4
+        with:
+          repository: edgy-solutions/iagent-mesh-sdk
+          path: _sibling-sdk
+      - name: place the SDK where the cross-repo contract looks for it
+        run: mv _sibling-sdk "$(dirname "$GITHUB_WORKSPACE")/iagent-mesh-sdk"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

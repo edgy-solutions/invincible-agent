@@ -236,7 +236,7 @@ _Coverage: **128 of 140 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: unassigned
   → [docs/plans/legacy-dns-guard-phantom-scope.md](plans/legacy-dns-guard-phantom-scope.md)
 
-- **no-ci-gate-on-the-suite** — CI runs exactly ONE test file (tests/test_telemetry.py). The 1543-test suite has no CI gate at all — which is why nine members of the borrowed-green class accumulated undetected for months. A workflow_dispatch-only draft exists at docs/proposals/suite-order-independence.yml.draft; it has never run on a GitHub runner.
+- **no-ci-gate-on-the-suite** — CI runs exactly ONE test file (tests/test_telemetry.py). The 1543-test suite has no CI gate at all — which is why nine members of the borrowed-green class accumulated undetected for months. The workflow exists at .github/workflows/suite-order-independence.yml. It ran TWICE on 2026-08-20 and both failed; nobody read the logs for twenty days. Diagnosed 2026-09-09 — four of five failures were already dead, the fifth (sibling SDK absent on the runner) is fixed. One dispatch away from its first data point.
   status: open · owner: unassigned
   → [docs/plans/no-ci-gate-on-the-suite.md](plans/no-ci-gate-on-the-suite.md)
 

@@ -5,7 +5,7 @@ owner:      unassigned
 blocked-on:
 closed-by:
 repo:       invincible-agent
-summary:    CI runs exactly ONE test file (tests/test_telemetry.py). The 1543-test suite has no CI gate at all — which is why nine members of the borrowed-green class accumulated undetected for months. A workflow_dispatch-only draft exists at docs/proposals/suite-order-independence.yml.draft; it has never run on a GitHub runner.
+summary:    CI runs exactly ONE test file (tests/test_telemetry.py). The 1543-test suite has no CI gate at all — which is why nine members of the borrowed-green class accumulated undetected for months. The workflow exists at .github/workflows/suite-order-independence.yml. It ran TWICE on 2026-08-20 and both failed; nobody read the logs for twenty days. Diagnosed 2026-09-09 — four of five failures were already dead, the fifth (sibling SDK absent on the runner) is fixed. One dispatch away from its first data point.
 ---
 
 # The 1543-test suite has no CI gate
@@ -40,11 +40,64 @@ for that run to happen.
    PARASITISM. **Six of the nine members needed this one, not the shuffle** — they were
    invisible to any whole-suite run in any order.
 
-It is `workflow_dispatch:` only, deliberately. **It has never executed on a GitHub runner.**
+It is `workflow_dispatch:` only, deliberately. **It has now executed twice — both red — and the diagnosis is below.**
 A never-executed job wired to `push` either burns minutes on every commit or goes red for
 environment reasons and trains people to ignore it — the flaky-red trap named in
 `tests/security/test_effect_write_gate.py`'s own skip-guard docstring. Run it by hand, twice
 green, THEN promote it to a gate.
+
+
+## It HAS run, and nobody read the runs — diagnosed 2026-09-09
+
+The line above said "never executed" for twenty days. It was wrong within an hour of being
+written: two `workflow_dispatch` runs on 2026-08-20, **both failed**, and neither was
+diagnosed. So the gate has not been blocked on effort — it has been blocked on **nobody
+opening the log**.
+
+    32326870277   2026-08-20T03:03Z   failure   3m56s
+    32327820668   2026-08-20T03:19Z   failure   4m21s
+
+Five failures in the second run. Four of them are already dead:
+
+| failure | cause | state |
+|---|---|---|
+| `test_board_drift` x2 | shallow clone — `closed-by 96f2657` could not resolve | **fixed 49 min later** by `90ccaf9` (`fetch-depth: 0`) |
+| `test_every_cited_docs_path_resolves` | `docs/architecture/endpoint-gating-audit.md` absent | **fixed** — the file exists today |
+| `test_relative_markdown_links_resolve` | absolute `C:/Users/...` link targets in a tests/ doc | **fixed** — zero such targets today, and `test_no_markdown_link_targets_an_absolute_machine_path` now guards it |
+| `test_sdk_is_present_for_this_contract` | the sibling SDK is not checked out on the runner | **was still live — fixed here** |
+
+**The board-drift fix landed at 04:08Z, forty-nine minutes after the second failure, and the
+workflow has not been run since.** Two of the five were therefore never real blockers; they
+were a first-run environment bug and its immediate repair, with no third run to show it.
+
+### The one that was structural, and why it is cheap
+
+`tests/test_cross_repo_contracts.py` resolves the SDK as `_REPO.parent / "iagent-mesh-sdk"` and
+**hard-fails** when it is absent. That is correct and must not be softened — its own docstring
+says it: the other eight assertions in that file would vacuously pass against a repo that is not
+there, and *skip-shaped failures are how a cross-repo pin quietly stops pinning*. Deselecting it
+in CI would buy a green by removing the only thing that knows the contract was checked.
+
+**`edgy-solutions/iagent-mesh-sdk` is PUBLIC**, so this needed no credential and no decision —
+the default token clones it. All three jobs now check it out and move it into place, because
+`actions/checkout` refuses a `path` outside the workspace and the workspace *is* the repo
+directory, one level below where the test looks.
+
+### What is actually left
+
+**One dispatch.** Everything above is reasoned from logs and file history, not from a runner —
+so the honest status is *"the known blockers are addressed"*, not *"it will pass"*. The three
+open unknowns below (runtime, skip count, `uv sync --locked`) have still never been observed on
+a runner, and a first green would answer all three at once.
+
+The local suite at `224fd86` is **1 failed / 3009 passed / 183 skipped**, and the one red is
+`test_chart_version_tracks_chart_content`, which clears with the next chart roll — so a runner
+red on anything else is new information and worth reading immediately rather than in twenty
+days.
+
+**Why this matters more than it looks:** with no gate, an enumeration seal only fires when
+someone remembers to run the suite. On 2026-09-09 `e66c063` landed two seals red on master
+because the suite was not run — the fifth omission of one of them.
 
 ## Known unknowns before it can be a gate
 
