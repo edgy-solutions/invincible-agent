@@ -14,7 +14,7 @@
   Mirrors two image groups, controlled by `-IncludeExternal`:
 
     1. iagent-owned (always mirrored)
-       ghcr.io/edgy-solutions/invincible-agent/* — the 13 engine fleet
+       ghcr.io/edgy-solutions/invincible-agent/* — the 14 engine fleet
          images, dagster runtimes, cortex-bff
        ghcr.io/edgy-solutions/cortex-ui/* — the React frontend
        ghcr.io/edgy-solutions/dag-tools/* — the central-gateway
@@ -94,7 +94,7 @@
   Print the commands without executing.
 
 .EXAMPLE
-  # Default: mirror only iagent-owned images (13 engines + cortex-ui + central-gateway = 15)
+  # Default: mirror only iagent-owned images (14 engines + cortex-ui + central-gateway = 16)
   .\mirror-to-artifactory.ps1 -RepoBase cbm-containers-dev-and.artifactory-and.rmd.ray.com
 
 .EXAMPLE
@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (13) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (14) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -199,6 +199,22 @@ $IagentImages = @(
     # which is the row's own point, that a lesson written beside a list does not maintain
     # the list. What maintained it was the derived check.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
+
+    # engine-lg / graph-host — the LangGraph host (ADR-0046 route C). FIFTH OMISSION OF
+    # THIS SHAPE, on the entry directly above whose comment already says a lesson written
+    # beside a list does not maintain the list. e66c063 rendered the chart four ways and
+    # wrote its four namespaces down; runbook §0's table names FOUR namespaces and at
+    # least SIX sites have seals, so the runbook is a SAMPLE of the population and the
+    # commit was faithful to it. Adding a sixth row is the move that has now failed five
+    # times — this list wants DERIVING from build-containers.yml, leaving _NOT_MIRRORED as
+    # the only hand-written list, because an EXCLUSION list fails loudly (you notice a
+    # missing image) where an inclusion list fails silently. Flagged, not done: this
+    # script cannot be executed or verified from the dev machine.
+    #
+    # NAME SPLIT, AGAIN: image `graph-host`, service `iagent-engine-lg`, values key
+    # `graphHost`. Mirrored although engineLG is default-off — default-off is a DEFAULT,
+    # not a guarantee, per the two entries above.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';           dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.

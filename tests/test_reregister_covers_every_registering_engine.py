@@ -56,6 +56,7 @@ _KEY_TO_AGENT_DIR = {
     "enginePlanning": "planning_agent",
     "engineFinance": "finance_agent",
     "engineCost": "cost_agent",
+    "graphHost": "graph_host",
     "dataAnalyst": "data_analyst",
 }
 
