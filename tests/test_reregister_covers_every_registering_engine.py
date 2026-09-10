@@ -56,6 +56,9 @@ _KEY_TO_AGENT_DIR = {
     "enginePlanning": "planning_agent",
     "engineFinance": "finance_agent",
     "engineCost": "cost_agent",
+    # engine-lg, the graph host. Registers one verb per RATIFIED ROW at startup, so it is a
+    # registering agent and belongs in the map rather than the waiver.
+    "graphHost": "graph_host",
     "dataAnalyst": "data_analyst",
 }
 

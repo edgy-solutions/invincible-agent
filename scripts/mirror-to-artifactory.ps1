@@ -14,7 +14,7 @@
   Mirrors two image groups, controlled by `-IncludeExternal`:
 
     1. iagent-owned (always mirrored)
-       ghcr.io/edgy-solutions/invincible-agent/* — the 13 engine fleet
+       ghcr.io/edgy-solutions/invincible-agent/* — the 14 engine fleet
          images, dagster runtimes, cortex-bff
        ghcr.io/edgy-solutions/cortex-ui/* — the React frontend
        ghcr.io/edgy-solutions/dag-tools/* — the central-gateway
@@ -94,7 +94,7 @@
   Print the commands without executing.
 
 .EXAMPLE
-  # Default: mirror only iagent-owned images (13 engines + cortex-ui + central-gateway = 15)
+  # Default: mirror only iagent-owned images (14 engines + cortex-ui + central-gateway = 16)
   .\mirror-to-artifactory.ps1 -RepoBase cbm-containers-dev-and.artifactory-and.rmd.ray.com
 
 .EXAMPLE
@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (13) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (14) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -199,6 +199,12 @@ $IagentImages = @(
     # which is the row's own point, that a lesson written beside a list does not maintain
     # the list. What maintained it was the derived check.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
+    # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
+    # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
+    # LIST. This row is a STOPGAP to get master green — Lane 1 is deriving this list from the
+    # CI build matrix, which is the actual fix, and this entry disappears with the hand-kept
+    # list rather than being migrated into it.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.
