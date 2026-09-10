@@ -96,10 +96,11 @@ held because everyone was reading their messages.
 
     git worktree add ../ia-<lane> -b lane/<lane>     # once per lane
     git -C ../ia-<lane> pull --rebase origin master   # rebase, do not merge master in
-    (cd ../ia-<lane> && uv sync)                      # ITS OWN VENV — not optional, see below
+    (cd ../ia-<lane> && uv sync --extra agent-fleet)   # ITS OWN VENV, WITH THE EXTRA
+    (cd ../ia-<lane> && .venv/Scripts/python -c "import iagent,os;print('SAME TREE?', os.getcwd() in iagent.__file__)")
 
-    # then once, standing in the new worktree:
-    python -c "import iagent,os;print('SAME TREE?', os.getcwd() in iagent.__file__)"
+The last line must print **True**. Two distinct hazards make those four commands necessary,
+and they fail in opposite directions.
 
 **`uv sync` IS NOT OPTIONAL AND ITS ABSENCE IS SILENT.** The root venv carries an EDITABLE
 install (`_editable_impl_iagent.pth`) hard-bound to the main checkout, so `import iagent` and
@@ -122,10 +123,29 @@ because a charter line is not a guard: *a comment that must be read to be obeyed
 objection this file already raises against the helm-timeout note. Found by
 `invincible-agent-32` within hours of adoption, and reproduced before it was written down.
 
-**Same class as the image-pin defect the same night** — `global.imageTag` reaching
-repositories that never built that sha, and a venv reaching a tree that never had your edit,
-are both A SCOPE THAT LOOKS LOCAL AND IS NOT. The pin produced four ImagePullBackOffs, which
-are loud. This produces a green test, which is silent, and silence costs more.
+**HAZARD 2 — A BARE `uv sync` GIVES YOU A VENV THAT IS REAL AND INCOMPLETE.** This repo keeps
+the whole fleet's runtime — langgraph, smolagents, restate-sdk, psycopg, litellm and fifteen
+more — in the OPTIONAL `agent-fleet` extra: 22 dependencies against 19 core. A bare sync
+installs none of them, and seals that pass in the main tree raise `ModuleNotFoundError` in the
+new worktree. Found by `invincible-agent-32` the same day, following these instructions as
+they were then written.
+
+**It bites in the OPPOSITE direction to hazard 1, and needs its own guard for that reason.**
+Hazard 1 produces a GREEN in the wrong tree — silent. This produces an ERROR, which is loud
+and therefore looks safe. Except for what a tired lane does with it: an ImportError in a
+brand-new worktree reads as *"my worktree is broken"*, not *"my venv is incomplete"*, and the
+natural repair is to abandon the worktree and go back to the shared tree. **A hazard that
+pushes people off the safe path costs the same as one that silently corrupts** — everyone back
+in one checkout with `git stash`, which is what this charter exists to end.
+
+`tests/test_the_suite_is_testing_THIS_tree.py` guards both, and asserts these very
+instructions still name `--extra agent-fleet` beside `worktree add`.
+
+**Three scopes that look local and are not, found in one day, in three different tools:**
+`global.imageTag` reaching repositories that never built that sha; an editable install
+reaching a tree that never had your edit; `uv sync` installing a dependency set that is not
+the one the suite needs. The first was loud (four ImagePullBackOffs), the second silent, the
+third loud-but-misleading. **Silence costs most; misdirection costs next.**
 
 **`git stash` STAYS BANNED** — it is banned for what it does to a *tree*, and a lane can still take
 its own tree hostage. Compare baselines with `git show HEAD:<path>` or a scratch copy.

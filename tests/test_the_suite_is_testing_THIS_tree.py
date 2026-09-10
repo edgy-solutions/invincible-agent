@@ -111,3 +111,66 @@ def test_the_worktree_hazard_is_NAMED_where_someone_will_meet_it():
         "the worktree instructions do not tell a lane to create its own venv — a lane that "
         "follows them lands on the main tree's src/ and gets a green that means nothing"
     )
+
+
+# ── the second worktree hazard: a venv that is REAL but INCOMPLETE ───────────
+
+def test_the_agent_fleet_extra_is_installed():
+    """`uv sync` alone does not install what this suite needs. It is `--extra agent-fleet`.
+
+    FOUND BY invincible-agent-32, 2026-09-09, following the charter as written. This repo keeps
+    the whole fleet's runtime — langgraph, smolagents, restate-sdk, psycopg, litellm and
+    fifteen more — in an OPTIONAL extra. A bare `uv sync` installs the 19 core dependencies
+    and none of the 22 in `agent-fleet`, so seals that pass in the main tree raise
+    `ModuleNotFoundError` in a brand-new worktree.
+
+    **IT BITES IN THE OPPOSITE DIRECTION TO THE EDITABLE-INSTALL HAZARD, AND THAT IS WHY IT
+    NEEDS ITS OWN GUARD.** That one produces a GREEN in the wrong tree — silent. This produces
+    an ERROR, which is loud and therefore looks safe. Except for what a tired lane does with
+    it: an ImportError in a fresh worktree reads as *"my worktree is broken"* rather than
+    *"my venv is incomplete"*, and the natural repair is to abandon the worktree and go back
+    to the shared tree. **A hazard that pushes people off the safe path costs the same as one
+    that silently corrupts** — everyone back in one checkout with `git stash`. 32's framing,
+    and it is the reason this is a test and not a footnote.
+
+    `fastapi` is the canary because it is declared IN the extra, its import name matches its
+    package name, and nothing in this suite runs without it — so its absence is exactly the
+    condition, with no false positives available.
+    """
+    import importlib.util
+    import tomllib
+
+    declared = tomllib.loads((_TREE / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = declared.get("project", {}).get("optional-dependencies", {})
+    assert "agent-fleet" in extras, (
+        "the `agent-fleet` extra is gone from pyproject.toml — this guard, and the charter "
+        "line it defends, are both now describing something that does not exist"
+    )
+    assert any(d.split("[")[0].strip() == "fastapi" for d in extras["agent-fleet"]), (
+        "fastapi is no longer in the agent-fleet extra, so it is no longer a canary for it — "
+        "pick another dependency that is IN the extra and whose import name matches"
+    )
+
+    assert importlib.util.find_spec("fastapi") is not None, (
+        "the `agent-fleet` extra is NOT installed in this venv.\n\n"
+        "You are probably in a worktree created with a bare `uv sync`. The suite needs:\n\n"
+        "    uv sync --extra agent-fleet\n\n"
+        "This is a venv that is real but incomplete — not a broken worktree. Do not abandon "
+        "the worktree over it."
+    )
+
+
+def test_the_charter_names_the_EXTRA_not_a_bare_sync():
+    """The charter said `uv sync` for half a day and 32 followed it into two failing seals.
+
+    Asserted on the instruction a lane will actually copy — the line beside `worktree add` —
+    because that is the one that gets run, not the prose around it.
+    """
+    charter = (_TREE / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+    i = charter.find("git worktree add")
+    assert i != -1, "the worktree charter is gone from AGENTS.md"
+    window = charter[i:i + 1200]
+    assert "uv sync --extra agent-fleet" in window, (
+        "the worktree instructions still say a bare `uv sync` — a lane following them gets a "
+        "venv missing 22 dependencies and reads the resulting ImportError as a broken worktree"
+    )
