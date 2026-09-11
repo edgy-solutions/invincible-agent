@@ -138,3 +138,32 @@ def test_each_registration_carries_the_whole_contract(booted):
         # resolver scores it 0.0 against its own label.
         for declared, wire in zip(m.slots, b["slots"]):
             assert wire.get("referent") == declared.referent
+
+
+def test_a_host_with_no_ratified_rows_REFUSES_TO_START(tmp_path, monkeypatch):
+    """The floor whose absence SHIPPED, sealed so it cannot come back.
+
+    rev 106 rolled engine-lg with `policy/graphs/` absent from the image. `load_graphs` failed
+    loud on a row it could not honour — that part was right — but not on NO ROWS, so the host
+    admitted zero graphs, registered zero verbs, and answered `status: ok` to every probe. It
+    took a live mesh query to notice. A graph host with no graphs is not a healthy graph host;
+    it is an unroutable pod with a green light.
+
+    The error must NAME THE DIRECTORY, because the cause is nearly always that the path is
+    wrong or the content never shipped, and "no graphs" without a path sends the reader to the
+    manifest instead of the image.
+    """
+    import sys
+    sys.path.insert(0, str(_ROOT))
+    empty = tmp_path / "graphs"
+    empty.mkdir()
+    monkeypatch.setenv("GRAPH_POLICY_DIR", str(empty))
+
+    import importlib
+    from agent_fleet.graph_host import main as host
+    importlib.reload(host)
+
+    with pytest.raises(RuntimeError) as exc:
+        host.load_graphs()
+    assert str(empty) in str(exc.value), "the refusal must name the directory it looked in"
+    assert "ratified" in str(exc.value).lower()
