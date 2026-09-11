@@ -28,8 +28,25 @@ USAGE
     uv run --frozen python scripts/version_census.py --namespace sandbox --expect HEAD
     uv run --frozen python scripts/version_census.py -n d4-sandbox --expect origin/master
 
-Exit code is 1 when `--expect` is given and any service disagrees with it, so this is
-usable as a post-roll gate rather than something to read and interpret.
+`--expect` DEFAULTS TO THE TAG THE RELEASE WAS ROLLED WITH (`global.imageTag`, read from
+helm), because the default question has to be the right one. `--expect HEAD` is the WRONG
+question and was asked twice in one day: you roll, commit something else, and HEAD has moved
+past the fleet — the census then reports 17 STALE services against a perfectly uniform fleet
+and the reader spends minutes disproving their own instrument. Pass `--expect` to override.
+
+FOUR EXIT CODES, BECAUSE A RUN-LEVEL CODE CANNOT CARRY A PER-CLAIM VERDICT. This census makes
+TWO claims — every service is at the expected sha, and no service predates the last prime —
+so one code would always be speaking for one of them:
+
+    0  every claim checked, every claim passed
+    1  a claim was checked and FAILED
+    2  could not look at all (no deployments, unresolvable ref)
+    3  checked what it could; at least one claim is UNCHECKED
+
+UNCHECKED is not a failure and not a pass. Failing on a missing prime mark would fail a claim
+that succeeded, so the unknown lives in the exit code's VOCABULARY rather than on the
+pass/fail axis — the same distinction as returning None for "could not look" instead of False
+for "the answer is no".
 
 IT SHELLS OUT TO kubectl ON PURPOSE — no in-cluster client, no kubeconfig parsing, no new
 dependency. It runs from a laptop against whatever context is current, which is where the
@@ -132,6 +149,34 @@ def _fleet_report(namespace: str, bff_deploy: str = "iagent-cortex-bff") -> Dict
     return report
 
 
+def _rolled_image_tag(namespace: str, release: str = "iagent") -> Optional[str]:
+    """The sha this helm release was actually rolled with, from `global.imageTag`.
+
+    The authoritative answer to "what is the fleet supposed to be running", and it lives in
+    the cluster rather than in anyone's working tree — so it stays correct when HEAD moves
+    after a roll, which is the case that produced a 17-service false STALE report.
+    """
+    rc, out = _kubectl_raw(["helm", "get", "values", release, "-n", namespace, "-o", "json"])
+    if rc != 0 or not out.strip().startswith("{"):
+        return None
+    try:
+        tag = (json.loads(out[out.index("{"):]).get("global") or {}).get("imageTag") or ""
+    except Exception:  # noqa: BLE001
+        return None
+    tag = tag.strip()
+    # A 40-hex sha is a pin; ':latest' or empty is not something to hold a fleet to.
+    return tag if len(tag) == 40 and all(c in "0123456789abcdef" for c in tag) else None
+
+
+def _kubectl_raw(argv: List[str]) -> Tuple[int, str]:
+    """Run a command verbatim (helm, not kubectl) and return (rc, stdout)."""
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        return p.returncode, p.stdout
+    except Exception:  # noqa: BLE001
+        return 1, ""
+
+
 def _last_prime_completion(namespace: str) -> Optional[float]:
     """Epoch seconds at which the most recent prime-substrate hook COMPLETED, or None.
 
@@ -203,12 +248,33 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # ── THE DEFAULT QUESTION IS THE RIGHT ONE. RULED 2026-09-11 ────────────
+    #
+    # `--expect HEAD` is the wrong question and it was asked twice in one day. You roll, then
+    # commit something else, and HEAD has moved past the sha the fleet is running — the census
+    # correctly reports 17 STALE services against a fleet that is perfectly uniform, and the
+    # reader spends minutes proving their own instrument wrong.
+    #
+    # THE CLUSTER ALREADY KNOWS WHAT WAS ROLLED. `helm get values` carries `global.imageTag`,
+    # which is the sha helm actually deployed — authoritative, needs no state file to go stale,
+    # and correct from any checkout at any commit. So that is the DEFAULT, and `--expect` is
+    # the override for "hold the fleet to this instead".
+    #
+    # The alternative considered and rejected: the roll script writing its sha to a file. That
+    # is a second source of truth about the same fact, which is the shape that drifts.
     expected = None
     if args.expect:
         expected = _git_sha(args.expect)
         if not expected:
             print(f"cannot resolve git ref {args.expect!r}", file=sys.stderr)
             return 2
+    else:
+        rolled = _rolled_image_tag(args.namespace)
+        if rolled:
+            expected = rolled
+            args.expect = rolled
+            print(f"(expecting {_short(rolled)} — the tag this release was rolled with; "
+                  f"pass --expect to override)")
 
     # ── ONE CALL FIRST ─────────────────────────────────────────────────────
     # Thirteen execs is a command nobody runs. The aggregator turns it into one, and the
