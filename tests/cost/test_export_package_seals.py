@@ -826,8 +826,17 @@ def emitted(state):
     from agent_fleet.cost_agent.measures import package_export
 
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
-        pytest.skip("the pinned runtime is not present")
-    return package_export(state, recipient_scope="notional-customer-alpha")
+        pytest.skip("VOID: the pinned runtime is absent - no package can be produced here")
+    try:
+        import duckdb  # noqa: F401
+    except ImportError:
+        pytest.skip("VOID: duckdb is absent, so the dataset half cannot be built - these seals "
+                    "assert about it and prove nothing without it")
+    # EXPLICIT, because the default is now OFF. These seals assert about the .duckdb and the
+    # Labor tab, so they must ASK for the package they describe rather than inherit a default
+    # that no longer produces it.
+    return package_export(state, recipient_scope="notional-customer-alpha",
+                          include_dataset=True)
 
 
 def test_the_verb_ROUTES_THROUGH_THE_SAME_BUILDER_as_the_script(state, monkeypatch):
@@ -840,6 +849,14 @@ def test_the_verb_ROUTES_THROUGH_THE_SAME_BUILDER_as_the_script(state, monkeypat
     Proven by breaking `build_cost_package.build_html` and requiring the verb to fail there. A
     copy would sail past.
     """
+    # PRECONDITION, NAMED. Without the pinned runtime `package_export` raises SourceUnavailable
+    # before it ever reaches build_html, so this seal would fail in any clean checkout for a
+    # reason that has nothing to do with what it asserts — which is how a seal trains people to
+    # ignore it. A skip here is a VOID, not a pass: the routing property is UNVERIFIED.
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("VOID: the pinned runtime is absent, so the verb refuses before reaching "
+                    "the builder - this seal proves nothing in this checkout")
+
     from agent_fleet.cost_agent.measures import package_export
 
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -858,6 +875,14 @@ def test_the_verb_ROUTES_THROUGH_THE_SAME_BUILDER_as_the_script(state, monkeypat
 
 def test_the_verb_APPLIES_THE_JAVASCRIPT_GATE(state, monkeypatch):
     """A verb that skipped it could report success over a page that is blank on open."""
+    # PRECONDITION, NAMED. Without the pinned runtime `package_export` raises SourceUnavailable
+    # before it ever reaches build_html, so this seal would fail in any clean checkout for a
+    # reason that has nothing to do with what it asserts — which is how a seal trains people to
+    # ignore it. A skip here is a VOID, not a pass: the routing property is UNVERIFIED.
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("VOID: the pinned runtime is absent, so the verb refuses before reaching "
+                    "the builder - this seal proves nothing in this checkout")
+
     from agent_fleet.cost_agent.entities import SourceUnavailable
     from agent_fleet.cost_agent.measures import package_export
 
@@ -1234,8 +1259,16 @@ def test_the_rendered_page_says_PROGRAM_and_LABOR():
 
     dest = ROOT / "dist" / "cost-validation-notional-customer-alpha.html"
     if not dest.exists():
-        pytest.skip("build the package first")
+        pytest.skip("VOID: no artifact on disk to read")
     html = dest.read_text(encoding="utf-8")
+    # WHICH BUILD IS THIS? The labor headings only exist in the dataset build, so reading a
+    # slice-1 artifact makes "the labor headings are gone entirely" a true statement about the
+    # wrong file. This test cannot distinguish a stale artifact from a regression, so it says
+    # so and voids rather than reporting a red it did not earn.
+    if "sepm-chart" not in html:
+        pytest.skip("VOID: the artifact on disk was built WITHOUT the dataset, so it has no "
+                    "labor headings by construction - rebuild with --with-dataset to assert "
+                    "this property")
     # Only OUR markup and script, never the vendored runtime, whose text is not ours to change.
     ours = html[:html.index('<script id="embedded-runtime"')]
     for form in ("programme", "labour", "colour"):

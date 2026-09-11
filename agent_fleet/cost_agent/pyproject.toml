@@ -9,6 +9,12 @@ dependencies = [
     # at rebuild. Matched to the fleet pin; tests/test_lock_coherence.py polices drift.
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.6.0",
     "fastapi",
+    # BOTH SERVERS, because the Procfile launches with uvicorn while this list declared only
+    # hypercorn. The image happens to carry both, so it has always worked — an undeclared
+    # ENTRYPOINT that survives on the base image's contents is a latent break, not a working
+    # arrangement. Found by the declared-dependency seal, which was written for duckdb and
+    # turned up the process launcher as well.
+    "uvicorn",
     "hypercorn",
     "pydantic",
     "httpx",

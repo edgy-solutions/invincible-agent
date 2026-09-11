@@ -670,7 +670,16 @@ def package_export(
         raise Unentitled(f"{scope!r} is not an entitled disclosure recipient; known: {scopes}")
 
     lots = lots_for_recipient(scope)
-    with_dataset = True if include_dataset is None else bool(include_dataset)
+    # DEFAULTS OFF, and the reason is the engine's own invariant rather than convenience.
+    # ADR-0048's slice-2 ruling: the database is the AUTHORING AND INTERCHANGE format, NOT the
+    # runtime one — the HTML package verifies entirely on its own. This engine's dependency
+    # list is deliberately thin and the deployed image has no duckdb, so defaulting ON made the
+    # verb's DEFAULT PATH the one path the deployment cannot serve. A verb whose default
+    # refuses is a badly specified verb, not a deployment problem.
+    #
+    # Asking for it explicitly still works wherever the dependency is present, and refuses BY
+    # NAME where it is not.
+    with_dataset = bool(include_dataset)
 
     import sys as _sys
 
@@ -695,6 +704,25 @@ def package_export(
 
     dataset_path = None
     if with_dataset:
+        # DUCKDB IS NOT AN ENGINE DEPENDENCY, and that is deliberate rather than an oversight
+        # to correct here. This engine's own dependency list says it is "DELIBERATELY THIN ...
+        # computes over an in-process notional model and speaks to nobody", and ADR-0048's
+        # slice-2 ruling says the database is the AUTHORING AND INTERCHANGE format, not the
+        # runtime one. I added this call without reading either.
+        #
+        # So the absence is REFUSED BY NAME rather than raised as an ImportError from three
+        # frames down. The deployed image has no duckdb today, `include_dataset` defaults to
+        # True, and an ImportError on a verb's DEFAULT path is the worst available failure:
+        # untyped, unattributable, and nothing in the response says which dependency.
+        try:
+            import duckdb  # noqa: F401
+        except ImportError:
+            raise SourceUnavailable(
+                "this deployment cannot build the .duckdb half: the `duckdb` package is not "
+                "installed, and it is not among engine-cost's declared dependencies. The HTML "
+                "package verifies on its own - call with include_dataset=false to produce it, "
+                "or install duckdb where the dataset is authored."
+            ) from None
         import build_cost_dataset as dataset_builder
 
         dataset_path = root / "dist" / f"cost-{scope}.duckdb"
