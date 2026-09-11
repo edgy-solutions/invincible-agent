@@ -363,6 +363,21 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
                             "share_of_total", "above_threshold", "value_unit"],
         "description": "Renders cost:SupplierConcentration as a CONTRIBUTION_RANKING - purchased value by party, ordered, with the bound each row was judged against carried alongside it",
     },
+    {
+        # HELD UNBOUND FOR FIVE DAYS, deliberately, and this is what the wait was for.
+        # `mesh:StepLadder` was declared in mesh_system.ttl before it existed in the graph, and
+        # Contract D refuses on an undeclared object end — a row added then would have joined
+        # the seven mesh:NamedHole failures and stopped the seals pointing at one lane's gap.
+        # Verified by ASK against the deployed Fuseki before adding this: StepLadder resolves.
+        #
+        # Unbound beat mis-bound in the meantime: a mis-binding renders something plausible and
+        # wrong, and the refusal was written down beside these rows rather than left as absence.
+        "subject_uri": "cost:PriceComposition",
+        "object_uri": "mesh:StepLadder",
+        "archetype": "STEP_LADDER",
+        "expected_fields": ["name", "rate", "basis", "amount", "running_total", "value_unit"],
+        "description": "Renders cost:PriceComposition as a STEP_LADDER - the ordered walk from base cost to price, each step naming the figure it was struck on and the running total after it. `basis` is what makes the walk checkable: overhead is struck on labor-plus-fringe, not on the previous running total, and a reader verifying the arithmetic cannot recover that from the amounts",
+    },
 ]
 
 
