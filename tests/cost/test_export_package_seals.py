@@ -366,6 +366,11 @@ def test_an_out_of_range_slope_falls_back_TO_THE_BASELINE_not_to_one(slice2):
 
 # ── SEAL 8 — the dataset hash bites when a row is altered ───────────────────
 def test_the_embedded_rows_and_the_duckdb_agree(slice2):
+    # duckdb IS NEEDED INDIRECTLY HERE - this test never writes `import duckdb`, it calls
+    # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
+    # first pass grepped for the import statement and missed every site that reaches it
+    # through a helper, which is the enumerate-the-population rule failing on a grep.
+    pytest.importorskip("duckdb")
     pkg, db = slice2
     assert X.datasets_agree(pkg["dataset"]["rows"], str(db)) == []
 
@@ -374,6 +379,11 @@ def test_the_agreement_check_BITES_on_an_altered_row(slice2, tmp_path):
     """Tamper with the shipped FILE — the case a hash-by-construction check cannot see."""
     import shutil
 
+    # VOID, NOT RED, when duckdb is absent. The engine deliberately does not declare it - the
+    # dataset is an authoring format, not a runtime one - so a deployment image correctly
+    # has none, and this seal failing there would be an unstated precondition failing for a
+    # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
+    pytest.importorskip("duckdb")
     import duckdb
     import scripts.build_cost_dataset as D
 
@@ -447,6 +457,11 @@ def test_the_ROW_hash_is_reproducible_and_the_FILE_hash_is_not(slice2):
     If this test ever fails on the second assertion, DuckDB has become reproducible and
     `duckdb_sha256` may then be used for data identity — which today it may NOT.
     """
+    # duckdb IS NEEDED INDIRECTLY HERE - this test never writes `import duckdb`, it calls
+    # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
+    # first pass grepped for the import statement and missed every site that reaches it
+    # through a helper, which is the enumerate-the-population rule failing on a grep.
+    pytest.importorskip("duckdb")
     import os
     import scripts.build_cost_dataset as D
 
@@ -1132,6 +1147,11 @@ def test_the_dataset_agreement_check_COVERS_PERIOD(slice2, tmp_path):
     """
     import shutil
 
+    # VOID, NOT RED, when duckdb is absent. The engine deliberately does not declare it - the
+    # dataset is an authoring format, not a runtime one - so a deployment image correctly
+    # has none, and this seal failing there would be an unstated precondition failing for a
+    # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
+    pytest.importorskip("duckdb")
     import duckdb
 
     pkg, db = slice2
@@ -1157,6 +1177,11 @@ def test_the_agreement_check_COMPARES_HOURS_too(slice2, tmp_path):
     """Hours were never compared: a file with wrong hours and right prices passed."""
     import shutil
 
+    # VOID, NOT RED, when duckdb is absent. The engine deliberately does not declare it - the
+    # dataset is an authoring format, not a runtime one - so a deployment image correctly
+    # has none, and this seal failing there would be an unstated precondition failing for a
+    # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
+    pytest.importorskip("duckdb")
     import duckdb
 
     pkg, db = slice2
@@ -1288,6 +1313,11 @@ def test_the_agreement_is_INDEPENDENT_OF_INSERTION_ORDER(slice2):
     in order. This feeds the SAME MULTISET in a different order, which a producer is free to do
     and nothing forbids. Measured: nine spurious differences over identical data.
     """
+    # duckdb IS NEEDED INDIRECTLY HERE - this test never writes `import duckdb`, it calls
+    # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
+    # first pass grepped for the import statement and missed every site that reaches it
+    # through a helper, which is the enumerate-the-population rule failing on a grep.
+    pytest.importorskip("duckdb")
     pkg, db = slice2
     rows = pkg["dataset"]["rows"]
     results = list(rows["results"])
