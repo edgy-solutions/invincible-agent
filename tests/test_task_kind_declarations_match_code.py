@@ -155,18 +155,16 @@ def test_the_undeclared_default_is_deliberately_narrowed():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BLOCKED ON THE SDK PIN. iagent_mesh.task_kinds ships after the pinned v0.5.0, so this "
-        "arm cannot run yet. STRICT on purpose: the day the pin bumps this XPASSes, strict "
-        "turns that into a failure, and whoever bumped it must delete this marker. A plain "
-        "skip would sit here green forever and the rows would never get validated at all."
-    ),
-)
 def test_declarations_validate_against_the_sdk_models():
-    """The arm that legitimately waits on the SDK pin — and FAILS LOUD, never skips, if the
-    module is present but the rows it is responsible for are invalid."""
+    """LIVE as of the v0.6.0 pin. Every seeded row validates against the models themselves, not
+    merely against the code table it replaces.
+
+    This arm spent one commit as a STRICT xfail while the pin still pointed at v0.5.0, which
+    predates the module. Strict was the point: the moment the pin moved it XPASSed, strict
+    turned that into a failure, and the failure is what removed the marker. A plain skip would
+    have sat here green and these rows would never have been validated at all — a seal that
+    skips is indistinguishable from one that passes at exactly the moment it matters.
+    """
     from iagent_mesh.task_kinds import load_task_kinds
 
     kinds = load_task_kinds(_DECL_DIR)
