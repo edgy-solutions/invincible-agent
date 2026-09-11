@@ -174,9 +174,24 @@ def test_THE_SPREAD_IS_COMPUTED_IN_DECIMAL_NOT_FLOAT(state, program_id):
     verb subtracts two figures near 10^7, which is the worst place in the fleet for drift
     because the FINDING is the difference rather than either operand.
 
-    WHAT MAKES THIS SEAL DISCRIMINATE rather than restate: the float path and the Decimal path
-    give different answers on this seed — 1662607.7097505666 against 1662607.71 — so a
-    regression to float arithmetic changes the asserted value rather than merely its type.
+    WHAT THIS SEAL DOES **NOT** DO, corrected after a reviewer cited the earlier claim as fact.
+
+    It does NOT discriminate on VALUE. This docstring used to say the float and Decimal paths
+    "give different answers on this seed — 1662607.7097505666 against 1662607.71". That was true
+    of an earlier commit and STOPPED being true two commits later, when the row floats were
+    quantized to the cent so the panel would stop disagreeing with its own caption. Quantizing
+    absorbs the difference: both paths now yield 1662607.71, measured, and TWO MUTATIONS THAT
+    SHOULD HAVE GONE RED DID NOT — reverting the spread to float subtraction, and computing the
+    indices by float division.
+
+    So what this asserts is the DERIVATION: the spread comes from the exact column and not from
+    the float edge. A regression to float changes where the number came from, not the number —
+    on this seed. The honest limit is recorded in
+    `test_THE_DECIMAL_PATH_IS_DEMONSTRABLY_EXACT_even_though_this_seed_cannot_show_it`, and the
+    second assertion below is explicitly labelled a coincidence check for the same reason.
+
+    A stale claim in a docstring is worse than no claim: a reviewer drafting an ADR read this
+    one as evidence and was about to publish it.
     """
     from decimal import Decimal
 
