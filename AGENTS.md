@@ -104,6 +104,37 @@ held because everyone was reading their messages.
 The last line must print **True**. Two distinct hazards make those four commands necessary,
 and they fail in opposite directions.
 
+### PUSH YOUR LANE BRANCH ON EVERY COMMIT. No permission, no asking. — RULED 2026-09-11
+
+    git push origin lane/<lane>      # after every commit. Always. This is not a gated action.
+
+**The gated action is MERGING TO MASTER, not pushing.** Those were the same thing under the
+old single-checkout arrangement and are not the same thing now, and the old rule survived the
+change unamended.
+
+**"Push only when asked" was written for one shared checkout on master**, where a push
+published every lane's work at once and could not be undone by the person who ran it. On a
+worktree, `git push origin lane/<x>` publishes **only that lane's commits and merges nothing**.
+The reason for the permission is gone; the permission outlived it.
+
+**IT HAS COST REAL TIME TWICE, BOTH TIMES THE SAME WAY.** A worktree rebases onto ORIGIN, so a
+lane's local commits are **invisible to every other lane by construction** — worse than the
+shared tree, where an uncommitted file was at least readable. `tests/_mesh_verbs.py` sat
+committed-and-unpushed for fifteen hours while the lane that had asked for it waited. Seal 3's
+result then sat on an unpushed branch while a phase gate said *"do not start 1.1 until the run
+B result is written down"* — it WAS written down, and nobody could read it.
+
+**A WORKTREE MAKES `committed` AND `shared` DIFFERENT STATES.** Before worktrees they were
+nearly the same; the charter that introduced worktrees did not follow that implication through.
+Pushing is now a precondition for anyone else being able to see your work at all, not hygiene.
+
+Corollaries:
+
+* **A sha quoted to another lane is a citation, and citations move only with an announcement.**
+  Rebase freely on a branch nobody has cited; say so when a cited sha moves.
+* **A result on an unpushed branch does not satisfy a gate that says "written down."** Written
+  down means readable by the person the gate protects.
+
 **`uv sync` IS NOT OPTIONAL AND ITS ABSENCE IS SILENT.** The root venv carries an EDITABLE
 install (`_editable_impl_iagent.pth`) hard-bound to the main checkout, so `import iagent` and
 `import iagent_pure` resolve to the MAIN TREE from inside any worktree that borrows it.
