@@ -258,6 +258,28 @@ retire-coupled-mechanisms-together rule, and the failure mode is the worse half 
 served `rendersAs` declaration that says how a task RENDERS while a code table still decides what
 it can DO.
 
+### A THIRD coupled item: group audiences, and the enumeration they force (added 2026-09-10)
+
+Same reason as the two tables above — a coupling that lives only in someone's head between an ADR and
+a milestone gets orphaned.
+
+`grant_to` is **users only** in all three grant namespaces (`policy/capability_grants.yaml:31`,
+`policy/ontology_compartments.yaml:32`, `policy/task_grants.yaml:26`), each naming group support as a
+deferred design decision for the same stated reason: groups split "who may act" across git and
+drifting membership, weakening the git-blame audit story. That deferral is sound and is not what this
+note reopens.
+
+**What it costs, now visible in a second consumer.** ADR-0051 §5 (sustainment safety) needs
+acceptance authority per risk level — and an authority level *is* a group. Unable to name one, it
+enumerates: one audience key per level, each re-listing the same people under adjacent keys. That is
+the constraint's workaround wearing a design's clothes, and it will read to a later author as a
+deliberate per-level model.
+
+**So when group audiences are ruled, this is scheduled work, not a discovery:** ADR-0051 §5 collapses
+to one row per level, and any other per-level enumeration standing at that time collapses with it.
+Nothing blocks on it in either direction — the enumerated audiences are correct under today's
+substrate, and the seals key on the audience rather than on how it is populated.
+
 ### Verbs belong in the step schema — an M3.2 absorption item, not a new invention
 `HumanAwaitStep` today carries `audience / subject_ref / title / summary / requested_by` and **no
 verbs, no completion, no claiming.** But a step's verbs are the same *kind* of fact as its quorum
