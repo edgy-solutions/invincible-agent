@@ -243,6 +243,17 @@ def test_the_501_branch_is_UNREACHABLE_TODAY_and_that_is_recorded():
     Recorded rather than fixed, because the fix is increment (1) of the ordering: once the seeder
     dispatches each panel's declared verb, a template will reach the 501 for a real reason, this
     goes red, and it should then be replaced by a call that asserts 501 with its reason named.
+
+    ── COUPLED TO `policy/canvases/program_finance.yaml`. DO NOT SPLIT THEM. ──────────────────
+    This holds only while `program_finance` stops at the 409, which requires that template to
+    declare `program` AND have its panels consume it. On a tree where it still carries
+    `shared_slots: []` and no `consumes`, that template passes the 409, REACHES the 501, and this
+    test FAILS — verified against `origin/master` (consumes-count 0) on 2026-09-11 rather than
+    reasoned about.
+
+    So the template change and this assertion land in ONE commit and must be cherry-picked,
+    reverted or backported TOGETHER. Neither file said so until now, which is exactly how a pair
+    like this gets separated by someone doing a reasonable thing with half of it.
     """
     from iagent.canvas_template import load_template, ratified_template_ids
 

@@ -36,6 +36,13 @@
 # `finEacCalculation`'s `method` stays PANEL-LOCAL and must not be promoted here — it is a
 # per-panel choice, not a board subject, and asking it once would answer a different question.
 #
+# ── COUPLED TO tests/planning/test_seed_canvas_takes_the_template_as_a_slot.py. ──────────────
+# Reverting `shared_slots`/`consumes` here makes this template reach the 501 branch again, which
+# REDS `test_the_501_branch_is_UNREACHABLE_TODAY_and_that_is_recorded` — and reds the 409
+# assertion in `test_an_UNSEEDABLE_template_refuses_BEFORE_the_clock_starts`, which expects 409
+# EXACTLY. The two files land, revert and backport together. Said on both sides on purpose: a
+# coupling noted in only one direction is found by whoever edits the other one.
+#
 # ── VERB EXISTENCE, CHECKED FROM THE MESH ────────────────────────────────────────────────────
 # All six verbs verified 2026-09-08 against the live sandbox mesh — present as Neo4j
 # relationship types AND in Weaviate with `registration_complete: true` and a resolving
