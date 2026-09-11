@@ -350,6 +350,25 @@ def main() -> int:
         return 1
     if expected:
         print(f"\nOK: all {len(rows)} service(s) at {args.expect} ({_short(expected)}).")
+
+    # THREE OUTCOMES, BECAUSE THERE ARE THREE. invincible-agent-91's resolution, and the
+    # reasoning is that a run-level exit code cannot carry a PER-CLAIM verdict. This census
+    # makes TWO claims — every service is at the expected sha, and no service predates the last
+    # prime — so one exit code means one of them is always being spoken for.
+    #
+    # FAILING ON A MISSING PRIME MARK WOULD FAIL A CLAIM THAT SUCCEEDED. The unknown belongs in
+    # the exit code's VOCABULARY, not on the pass/fail axis — the same distinction as returning
+    # None for "could not look" rather than False for "the answer is no", one level up.
+    #
+    #   0  every claim checked, every claim passed
+    #   1  a claim was checked and FAILED
+    #   2  could not look at all (no deployments, unresolvable ref)
+    #   3  checked what it could; at least one claim is UNCHECKED
+    if _primed_at is None:
+        print("NOTE: exit 3 — sha checked; registration recency UNCHECKED (no prime-substrate "
+              "completion found). The table is PARTIAL, and a reader taking 0 from it would be "
+              "taking a pass on a claim nobody made.")
+        return 3
     return 0
 
 
