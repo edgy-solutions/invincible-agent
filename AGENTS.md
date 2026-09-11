@@ -56,7 +56,9 @@ in a shared tree.** Stash silently reverts files another writer may be holding, 
 is an aborted pop whose contents survive only if someone notices. Compare baselines with
 `git show HEAD:<path>`, a scratch copy, or a second clone — never by mutating the shared tree.
 
-**Branch-per-agent was considered and REJECTED (2026-08-10)**, for a reason specific to this repo:
+**~~Branch-per-agent was considered and REJECTED (2026-08-10)~~ — SUPERSEDED; see the reversal immediately below, which is the rule in force. The original reasoning is kept because it names a real hazard the worktree charter still has to answer, NOT because it is still the instruction.**
+
+~~Rejected for a reason specific to this repo:~~
 branches split the working tree from the **generated** artifacts. Two agents on two branches each
 regenerate `BOARD.md` from divergent packet sets and then collide at merge on a generated file —
 strictly worse than colliding on a source file, because the correct resolution is not a merge but a
