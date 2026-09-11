@@ -268,6 +268,34 @@ MODIFIED with a zero-line diff and no content change. Read and write BYTES, and 
 with the file's own line ending: an anchor that matches zero times prints identically to a
 mutation that was killed, so a non-unique match must be fatal rather than reported.
 
+**NAME WHAT THE NUMBER COUNTS — ITS UNIT AND ITS SCOPE — OR RECORD THE COMMAND INSTEAD.**
+*(invincible-agent-5f + 01, 2026-09-11.)* A bare integer LOOKS like a measurement and carries no
+way to check what it measured. That is what makes it dangerous rather than merely vague: it reads
+as evidence and cannot be reproduced.
+
+Both lanes quoted `program_id` counts at each other for three messages and agreed loudly about
+different quantities. 5f said "26 occurrences" — it was 26 LINES in ONE FILE, because `grep -c`
+counts matching lines. 01 said "53" — neither lines-clean nor occurrences, but lines summed across
+a DIRECTORY with `.venv/` and `__pycache__` in it. Corrected and stated properly the two still
+disagree (51/57 against 48/54), and **that disagreement only became visible once someone named the
+unit and the scope.** Nobody was careless; the word "occurrences" was doing work neither number
+supported.
+
+*Defence:* state unit and scope at the point of quoting, or — better — **record the re-runnable
+command rather than its answer**. A number is true at one commit and rots silently; a command
+carries the population and moves with the tree.
+
+**And the part worth more than the rule: THE RULE WAS ALREADY WRITTEN DOWN AND DID NOT HOLD.** 5f
+had this in personal notes from 2026-08-28, including the exact mechanism — *"`grep -c` counts
+FILES with matches when you count its rows, and MATCHES when you sum its values"* — and broke it
+three times in one arc anyway. **A rule kept where only one agent reads it is a rule that binds
+nobody at the moment of use.** That is why it is here, in the repo, beside the work — the same
+argument this file makes for a comment that must be read to be obeyed.
+
+*What survived the confusion, and why:* the ZERO. `program_id` is absent from the planning engine,
+and zero has no unit problem — no lines, no occurrences, no scope, nothing vendored. The refusal
+that rested on it was never at risk. **Prefer a claim that survives every way of counting.**
+
 **A GREEN BELONGS TO A SHA, NOT TO A DIRECTORY.** *(invincible-agent-5f + 01, 2026-09-09 — a
 defect in how results are READ rather than how seals are written, and in a shared tree it is the
 default rather than the exception.)* Before believing a local pass, `git status`; when reporting
