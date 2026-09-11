@@ -317,6 +317,26 @@ kinds of object; a lane following the general form would have dropped
 half of a conjunctive eligibility read. Asserting on the neighbour of
 the thing you checked is the same defect one step out.
 
+**Guarded by what the text CONTAINS, not by what the test NEEDS.**
+invincible-agent-91, 2026-09-11, fixing six seals that failed rather
+than voided on a missing optional dependency. Their first fix grepped
+for `import duckdb` and guarded the three sites carrying that text.
+**Three tests still failed** — they reach duckdb *through helpers*
+(`datasets_agree` opens the database; `build_cost_dataset.build`
+imports it inside the function) and never write the import.
+
+**A grep is a sample of "files mentioning X". The population that
+matters is "tests that NEED X", and the two differ by every level of
+indirection.** Same law as deriving a population rather than naming
+one, failing at the tool people reach for first because it is cheap.
+
+**And only running the FAILING state reveals it.** In a clean checkout
+the fixture voids before the import is reached — 97 passed, 59
+skipped, nothing red, and the guard looks complete. The condition had
+to be reproduced deliberately (dist file present, duckdb absent) to
+see three seals still failing. **The state everyone runs by default is
+the state that cannot discriminate.**
+
 **And a derived population is only as complete as the thing it derives
 FROM.** invincible-agent-5f's refinement, measured the same day the
 rule was written. `_fleet_version_targets()` scans `ENGINE_*_PUBLIC_URL`

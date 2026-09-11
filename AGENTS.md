@@ -104,6 +104,28 @@ held because everyone was reading their messages.
 The last line must print **True**. Two distinct hazards make those four commands necessary,
 and they fail in opposite directions.
 
+### ⚠ WORKTREES HIDE MASTER. RULED 2026-09-11
+
+**A lane's seals pass in its worktree and are red on master, and the lane never learns it,
+because it runs them where they work.** That is a cost this charter did not price when it
+adopted worktrees, and it is the exact inverse of the hazard it did price: we guarded against a
+lane testing the MAIN tree's code by accident, and created a lane never testing master's state
+at all.
+
+**MEASURED.** `tests/cost/` stood at **8 failed and 4 errors on `origin/master`** while the lane
+that owns them was green in `ia-91` and had been for days. Two lanes then spent an hour
+attributing a fresh red to a merge — the only way to settle it was to count master directly, and
+the merge turned out to CLEAR fifteen of them. Eight of those were cortex's archetype sitting on
+master with no backend half behind it since the day it landed.
+
+**Until the suite runs on master in CI on every merge (the 1.4 gate), "my seals are green" means
+"green where I ran them" and nothing more.** Say it that way in reports. A lane reporting green
+from its own worktree is reporting a true fact about a tree nobody deploys.
+
+**The interim discipline, which is cheap:** before claiming an area is green, run that area's
+seals against `origin/master` as well as your branch — and when they differ, the difference is
+the finding.
+
 ### PUSH YOUR LANE BRANCH ON EVERY COMMIT. No permission, no asking. — RULED 2026-09-11
 
     git push origin lane/<lane>      # after every commit. Always. This is not a gated action.
