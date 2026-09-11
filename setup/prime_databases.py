@@ -491,6 +491,64 @@ def prime_jena() -> None:
 # Step 3: Upload canonical TTLs to MinIO so the dagster pipeline can ingest
 # ============================================================================
 
+def record_prime_run(wiped: bool = False) -> None:
+    """Write this prime's own row: when it finished, what code ran it, what it seeded.
+
+    Read by `scripts/version_census.py` to answer REGISTRATION RECENCY — an engine whose
+    process predates the newest PrimeRun is running against an ontology it has not re-read.
+    Before this existed the census could only report a sha and had to print `no-prime`, so its
+    recency column was permanently unchecked and its exit code was permanently 3.
+
+    NEVER FATAL. A prime that seeded correctly and failed to write its own receipt has still
+    seeded correctly, and taking the hook down over the receipt would turn a bookkeeping fault
+    into an outage. It prints loudly instead, because a silently absent record is exactly the
+    condition that produced this function.
+    """
+    import datetime as _dt
+
+    uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    user = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
+    password = os.getenv("NEO4J_PASSWORD", "")
+    sha = (os.getenv("IAGENT_GIT_SHA") or "").strip()
+    now = _dt.datetime.now(_dt.timezone.utc)
+    # `s3_key` is the identity the ingest consumes; `name` is for humans. Both are recorded
+    # because a reader asking "what did this prime seed" wants the names, and a reader
+    # diffing two primes wants the keys.
+    ontologies = sorted({str(e.get("s3_key") or e.get("name") or e)
+                         for e in CANONICAL_TTL_MANIFEST})
+
+    cypher = """
+    CREATE (p:PrimeRun {
+        completed_at:       $completed_at,
+        completed_at_epoch: $epoch,
+        image_sha:          $sha,
+        ontologies:         $ontologies,
+        ontology_count:     $n,
+        wiped:              $wiped
+    })
+    RETURN p.completed_at AS at
+    """
+    try:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        with driver.session() as session:
+            session.run(
+                cypher,
+                completed_at=now.isoformat(),
+                epoch=now.timestamp(),
+                sha=sha or "unstamped",
+                ontologies=ontologies,
+                n=len(ontologies),
+                wiped=wiped,
+            ).consume()
+        driver.close()
+        print(f"  [PrimeRun] recorded {now.isoformat()} sha={sha[:12] or 'unstamped'} "
+              f"ontologies={len(ontologies)} wiped={wiped}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [PrimeRun] !! COULD NOT RECORD THIS PRIME: {exc}")
+        print("  [PrimeRun] !! the substrate is primed; the census will report recency as "
+              "UNCHECKED (exit 3) until a prime records successfully.")
+
+
 def upload_canonical_ttls() -> None:
     """Push every TTL in CANONICAL_TTL_MANIFEST to MinIO.
 
@@ -1527,6 +1585,26 @@ def main() -> None:
     if args.trigger_ingest:
         trigger_ingest_jobs(wait=args.wait_for_ingest,
                             wait_timeout=args.ingest_timeout)
+
+    # ── THE PRIME WRITES ITS OWN RECORD. RULED 2026-09-11 ──────────────────
+    #
+    # Nothing durable said when the substrate was last primed. The hook Job is deleted by its
+    # hook-delete-policy and the Pod is reaped with it, so within the hour there is no evidence
+    # a prime ever ran — and `version_census.py` could therefore report a fleet's SHA but never
+    # its REGISTRATION RECENCY, which is the fact that actually matters. An engine running the
+    # right code against an ontology it has not re-read is the engine-o defect: /resolve
+    # answered from the maintenance ontology at 0.78, confidently, while the census called
+    # every service current.
+    #
+    # THE RECORD IS WRITTEN BY THE ACT, NOT ABOUT IT — the same principle as reading the rolled
+    # tag from `helm get values` rather than from a file someone maintains. A row a script
+    # writes when it finishes is evidence; a row written by anything else is a claim.
+    #
+    # Survives `--wipe` on purpose: wipe clears the reproducible routing substrate
+    # (OntologyClass and its edges, Weaviate collections, Jena graphs, MinIO TTLs) and
+    # preserves durability data. A prime's own history belongs with the second group — erasing
+    # the record of the last prime as part of priming would be self-defeating.
+    record_prime_run(wiped=bool(getattr(args, "wipe", False)))
 
     print("=== Prime complete ===")
     print(

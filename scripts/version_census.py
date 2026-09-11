@@ -177,6 +177,46 @@ def _kubectl_raw(argv: List[str]) -> Tuple[int, str]:
         return 1, ""
 
 
+def _prime_run_from_graph(namespace: str, bff_deploy: str = "iagent-cortex-bff"):
+    """The newest `:PrimeRun` row — epoch seconds, or None.
+
+    THE RECORD IS WRITTEN BY THE ACT. `setup/prime_databases.py` writes this row when it
+    finishes, so it is evidence rather than a claim — the same principle as reading the rolled
+    tag from `helm get values` instead of from a file somebody maintains.
+
+    It replaces reading the hook Job's completionTime, which could not work: the Job is deleted
+    by its hook-delete-policy and the Pod is reaped with it, so within the hour nothing in the
+    cluster remembered that a prime had happened at all.
+
+    Returns None — never 0, never "now" — when it cannot look. A wrong timestamp here marks
+    every engine as fresh, which is the one answer that must not be guessed.
+    """
+    pod = _pod_for(namespace, bff_deploy)
+    if not pod:
+        return None
+    snippet = (
+        "import os,json,base64,urllib.request as u;"
+        "usr=os.environ.get('NEO4J_USER') or os.environ.get('NEO4J_USERNAME') or 'neo4j';"
+        "tok=base64.b64encode((usr+':'+os.environ.get('NEO4J_PASSWORD','')).encode()).decode();"
+        "q={'statements':[{'statement':"
+        "'MATCH (p:PrimeRun) RETURN max(p.completed_at_epoch) AS t'}]};"
+        "r=u.Request('http://iagent-neo4j:7474/db/neo4j/tx/commit',"
+        "data=json.dumps(q).encode(),"
+        "headers={'Content-Type':'application/json','Authorization':'Basic '+tok});"
+        "d=json.load(u.urlopen(r,timeout=20));"
+        "print(json.dumps(d['results'][0]['data'][0]['row'][0] if d.get('results') "
+        "and d['results'][0]['data'] else None))"
+    )
+    rc, out = _kubectl(["-n", namespace, "exec", pod, "--", "python", "-c", snippet], timeout=90)
+    if rc != 0:
+        return None
+    try:
+        val = json.loads(out.strip().splitlines()[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    return float(val) if isinstance(val, (int, float)) else None
+
+
 def _last_prime_completion(namespace: str) -> Optional[float]:
     """Epoch seconds at which the most recent prime-substrate hook COMPLETED, or None.
 
@@ -351,7 +391,15 @@ def main() -> int:
     # predates the last prime runs the right code against an ontology it has not re-read,
     # which is the engine-o defect: /resolve answered from the maintenance ontology at 0.78,
     # CONFIDENTLY, while a sha-only census reported every service current.
-    _primed_at = _last_prime_completion(args.namespace)
+    # THE GRAPH FIRST, THE REAPED JOB AS A FALLBACK. The PrimeRun row is written BY the
+    # prime when it finishes, so it survives the hook-delete-policy that removes the Job
+    # and the Pod. The Job read stays only for clusters primed before that row existed —
+    # it answers for about an hour and then cannot.
+    _primed_at = _prime_run_from_graph(args.namespace)
+    _prime_src = "PrimeRun row"
+    if _primed_at is None:
+        _primed_at = _last_prime_completion(args.namespace)
+        _prime_src = "hook Job (legacy; reaped within the hour)"
     _now = _dt.datetime.now(_dt.timezone.utc).timestamp()
     if _primed_at is None:
         print("  (no prime-substrate completion found — registration recency NOT checked)")
