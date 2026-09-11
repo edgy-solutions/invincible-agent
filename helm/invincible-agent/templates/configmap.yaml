@@ -155,6 +155,24 @@ data:
   # svcDomain helper rather than a bare service name, because a bare name resolves
   # differently depending on where the reader stands.
   ENGINE_COST_PUBLIC_URL: "http://{{ .Release.Name }}-engine-cost{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineCost.port }}"
+  # engine-lg, the graph host — THE EIGHTH REGISTRY SITE, and the one that fails silently.
+  #
+  # `gateway._fleet_version_targets()` does not hold a fleet list; it DERIVES one by scanning
+  # `ENGINE_*_PUBLIC_URL`, precisely so nobody hand-maintains it. Its own docstring says a
+  # hardcoded list is "the shape this repo keeps paying for". It was incomplete anyway, because
+  # no variable existed here for engine-lg — so `version_census.py` printed a clean, uniform,
+  # seventeen-row table at exit 0 with one service verified by its SPEC rather than by being
+  # asked, and nothing in the output was wrong.
+  #
+  # A DERIVED POPULATION IS ONLY AS COMPLETE AS THE THING IT DERIVES FROM. An env var nobody
+  # set is invisible to a scan of env vars: deriving moved the hole from the list to the SOURCE
+  # of the list, it did not remove it. See
+  # docs/plans/adding-an-engine-has-more-registry-sites-than-the-runbook-names.md.
+  #
+  # Unlike the seven above this one carries NO PATH — engine-lg serves `/version` and `/health`
+  # at the root and the aggregator strips paths anyway. It is here to be SCANNED, not to be
+  # posted to; the graph host is reached through the mesh, not through a handler URL.
+  ENGINE_LG_PUBLIC_URL: "http://{{ .Release.Name }}-engine-lg{{ include "invincible-agent.svcDomain" . }}:{{ .Values.graphHost.port }}"
   # Engine O's SELF url — the endpoint it bakes into the mesh when it registers its OWN
   # mesh:resolveInstance provider for SUSTAINMENT.
   #
