@@ -140,6 +140,35 @@ def test_each_registration_carries_the_whole_contract(booted):
             assert wire.get("referent") == declared.referent
 
 
+def test_a_host_WITH_rows_still_starts_and_reports_ok(monkeypatch):
+    """THE FLOOR'S POSITIVE CONTROL. Without it, "refuses on zero rows" is indistinguishable
+    from "always refuses" — and a floor that rejects everything passes its own negative test
+    while taking the engine down.
+
+    Asserts the two things the floor could have broken: the real ratified directory still
+    loads, and /health still says ok WITH the admitted ids in it.
+    """
+    import asyncio
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(_ROOT))
+    # The module default is the CONTAINER path (/app/policy/graphs), so a local run must
+    # say where the seed is — otherwise this control fails on the PATH rather than on the
+    # floor, which is a control testing something other than its subject.
+    monkeypatch.setenv("GRAPH_POLICY_DIR", str(_POLICY))
+    from agent_fleet.graph_host import main as host
+
+    importlib.reload(host)
+    loaded = host.load_graphs()
+    assert loaded, "the real policy directory admits nothing — this control is inert"
+
+    host._LOADED = loaded
+    body = asyncio.run(host.health())
+    assert body["status"] == "ok"
+    assert body["graphs"] == sorted(loaded), "health must NAME what it admitted, not just say ok"
+
+
 def test_a_host_with_no_ratified_rows_REFUSES_TO_START(tmp_path, monkeypatch):
     """The floor whose absence SHIPPED, sealed so it cannot come back.
 

@@ -118,8 +118,10 @@ def load_graphs() -> dict[str, tuple[GraphManifest, Any]]:
             f"no ratified graph rows found under {GRAPH_POLICY_DIR} "
             f"(overlays: {[str(p) for p in GRAPH_OVERLAY_DIRS] or 'none'}). engine-lg admits "
             f"graphs ONLY from ratified rows, so with none it can serve nothing and register "
-            f"nothing. If the directory is missing from the image, that is the defect — see "
-            f"the policy/graphs COPY in Dockerfile.agent."
+            f"nothing. If the directory is missing from the image, that is the defect — and "
+            f"the COPY that ships it lives in the Dockerfile.agent HEREDOC inside "
+            f".github/workflows/build-containers.yml. There is NO Dockerfile.agent FILE in "
+            f"this repo, so one created with that name is never read."
         )
     out: dict[str, tuple[GraphManifest, Any]] = {}
     for m in rows:
