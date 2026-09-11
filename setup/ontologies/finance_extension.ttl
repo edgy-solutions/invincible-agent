@@ -129,6 +129,11 @@ fin:VarianceDecomposition a owl:Class ;
     rdfs:label "Variance Decomposition" ;
     rdfs:comment "A nested structure whose root figure equals the sum of its children, each child carrying its own children where a further level was required, and every node stating the reason its expansion stopped. Children below a materiality floor are collapsed into a stated residual so that every level still sums. Refuses a payload whose children do not reconcile to their parent. Every node also carries the PRODUCER'S VERDICT on whether its figure is favourable, because the sign alone does not say: NEGATIVE IS UNFAVOURABLE here, the standard's convention, and a shop that treats an under-run as unfavourable would emit the opposite verdict on the same number. A node stating no verdict is neutral rather than good. The signs on a single node can also disagree with each other - a favourable child inside an unfavourable parent has a positive figure and a negative share of that parent - which is why the verdict travels with the node instead of being read off either one. The only response shape here whose payload is RECURSIVE." .
 
+fin:EstimateAtCompletionComparison a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Estimate At Completion Comparison" ;
+    rdfs:comment "Every recognised method of forecasting a total cost at completion, computed side by side on one subject, each carrying its own formula, with the SPREAD BETWEEN THEM stated rather than left for the reader to subtract. The spread is the finding: the methods disagree materially on the same facts, and a panel showing one of them has made a choice on the reader's behalf that the number itself does not disclose. A method that cannot be computed KEEPS ITS ROW and says why, because dropping it turns a comparison of three into a comparison of two without appearing to. Distinct from a single estimate at completion, which answers what the finish will cost under one named method and is the right answer to a question that named one." .
+
 fin:EstimateAtCompletion a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Estimate At Completion" ;

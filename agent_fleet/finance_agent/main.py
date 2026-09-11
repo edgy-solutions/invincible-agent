@@ -108,6 +108,26 @@ VERBS: list[dict[str, Any]] = [
                           "how much money is left", "when do we run out"],
     },
     {
+        "fn": "fin_eac_comparison",
+        "verb": "mesh:finEacComparison",
+        "input_uri": FIN + "Program",
+        "desc": (
+            "All three recognised estimate-at-completion methods computed on one program at "
+            "once, each with its own formula, and the spread between them stated as a figure. "
+            "Answers WHICH FORECAST SHOULD I BELIEVE and HOW MUCH DO THE METHODS DISAGREE. "
+            "NOT a single forecast under a named method - that is finEacCalculation, which "
+            "REFUSES without one because choosing silently is choosing an answer. This verb "
+            "exists precisely because no choice is being made: it shows all of them. OWNS the "
+            "phrasings: compare the EAC methods, how much do the forecasts differ, show all "
+            "three estimates, which method should we use, what is the spread."
+        ),
+        "synonyms": ["compare the eac methods", "how much do the forecasts differ",
+                     "show all three estimates at completion", "what is the eac spread",
+                     "which eac method should we use"],
+        "anti_synonyms": ["what is the eac", "forecast the finish using CPI",
+                          "why are we over budget", "what is the burn rate"],
+    },
+    {
         "fn": "fin_eac_calculation",
         "verb": "mesh:finEacCalculation",
         "input_uri": FIN + "Program",
