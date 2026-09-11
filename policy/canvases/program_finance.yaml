@@ -19,13 +19,22 @@
 # to be the SECOND ROW that ADR-0050 §9.2 needs in order to decide whether a second registry
 # should exist at all. Do not wire it into a seed path expecting cards.
 #
-# WHAT UNBLOCKS IT: `program` as a TEMPLATE-LEVEL SHARED SLOT (§3 — "six cards from one ask",
-# and these six verbs are exactly why that is §3's worked case). `shared_slots` is empty here per
-# dispatch, because §3 is blocked on the dispatch boundary carrying slots
-# ([[slots-are-extracted-then-dropped-at-dispatch]]): nothing is extracted at all, so an ask
-# would cost a turn and bind nowhere. When the carry lands, `program` moves to `shared_slots`
-# and `finEacCalculation`'s `method` stays panel-local — it is a per-panel choice, not a board
-# subject, and promoting it to shared would ask one question to answer a different one.
+# `program` IS NOW DECLARED, 2026-09-11, and this template states its true shape for the first
+# time: one shared slot, six panels consuming it — §3's "six cards from one ask", and these six
+# verbs are exactly why that section names `program` specifically. All six take `program_id`
+# (26 occurrences in the finance engine against ZERO in planning, which is why the same slot is
+# REFUSED on `portfolio`: a shared slot is a parameter the panels' verbs actually take, not a
+# statement that the panels are about the same thing).
+#
+# WHAT DECLARING IT DOES TODAY: the seed route answers 409 — *"panel(s) consuming shared slot(s)
+# ['program'] that nothing binds yet"* (R-005). That is the ADR-0050 §3 carry reported honestly,
+# and it is BETTER than the previous state, where the truth lived only in this comment while the
+# machine-readable artifact said `shared_slots: []`. The template is now the record; the refusal
+# names the real reason. It was already unseedable behind the 501 gate, so nothing operational
+# changed.
+#
+# `finEacCalculation`'s `method` stays PANEL-LOCAL and must not be promoted here — it is a
+# per-panel choice, not a board subject, and asking it once would answer a different question.
 #
 # ── VERB EXISTENCE, CHECKED FROM THE MESH ────────────────────────────────────────────────────
 # All six verbs verified 2026-09-08 against the live sandbox mesh — present as Neo4j
@@ -46,13 +55,19 @@ description: >-
 
 # EMPTY PER DISPATCH, and the blocker is §3's, not seedCanvas's. See the header: `program`
 # belongs here and cannot be bound yet.
-shared_slots: []
+shared_slots:
+  - name: program
+    description: >-
+      Which program this board is about. Asked ONCE at load and bound into all six panels —
+      ADR-0050 3's worked case, and the reason that section names `program` specifically.
+    required: true
 
 panels:
   # ── SLOT 0 — the anchor ────────────────────────────────────────────────────────────────────
   - verb: mesh:finFundingStatus
     role: anchor
     slots: {}
+    consumes: [program]
     note: >-
       REQUIRES program_id, which has no default — this panel cannot seed until `program` is a
       bindable shared slot. `window` defaults to None, meaning the full span. Output is
@@ -62,6 +77,7 @@ panels:
   - verb: mesh:finBurnRate
     role: pair
     slots: {}
+    consumes: [program]
     note: >-
       REQUIRES program_id, no default. `window` defaults to None. Counts cash leaving, NOT value
       claimed — deliberately paired with finPerformanceIndices, which asks whether the money
@@ -71,6 +87,7 @@ panels:
   - verb: mesh:finPerformanceIndices
     role: pair
     slots: {}
+    consumes: [program]
     note: >-
       REQUIRES program_id, no default. `ca_id` and `window` default to None — program-wide, full
       span. A series rather than a point, by design: 0.84 falling from 0.95 is a different
@@ -79,6 +96,7 @@ panels:
   # ── SLOTS 3-4 — the second pair ────────────────────────────────────────────────────────────
   - verb: mesh:finVarianceAnalysis
     role: pair
+    consumes: [program]
     slots:
       variance_kind: cost
       materiality: 0.05
@@ -92,6 +110,7 @@ panels:
 
   - verb: mesh:finVarianceDrivers
     role: pair
+    consumes: [program]
     slots:
       variance_kind: cost
       level: control_account
@@ -104,6 +123,7 @@ panels:
   # ── SLOT 5 — the second pair's overflow; see the note on arity ─────────────────────────────
   - verb: mesh:finEacCalculation
     role: pair
+    consumes: [program]
     slots:
       method: CPI
     note: >-
