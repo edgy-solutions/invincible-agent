@@ -942,6 +942,35 @@ fixture asserted nothing) and read `tail`'s exit code instead of Python's throug
 absence is the weakest signal available — it depends on the reader remembering what should have been
 there.
 
+### The examples above are not enough — bash needs telling. RULED 2026-09-11
+
+**Three worked instances of this rule live in this file, and it happened a fourth time TODAY —
+inside the act of verifying a claim about it.** `census | tail -3` then `echo $?` reported
+**tail's** status, which said the census exited 0 when it exits 2. The wrong answer was used to
+"confirm" a colleague's claim; the right one only appeared on a second run without the pipe.
+
+**Reading the rule does not defend you, because the defect is in the shell's default and not in
+your attention.** So write the guard, every time:
+
+    set -o pipefail          # the whole pipeline fails if ANY stage does
+    cmd | tail -3            # $? is now the real status
+
+    cmd | tail -3            # or, without pipefail:
+    rc=${PIPESTATUS[0]}      # the status of cmd, not of tail
+
+    cmd > /tmp/out 2>&1; rc=$?   # or do not pipe at all when you need the code
+    tail -3 /tmp/out
+
+**And in a backgrounded run, put the real code in the OUTPUT**, because the task notification
+reports the *wrapper's* exit: a run ending `rc=$?; echo "EXIT=$rc"; exit $rc` propagates, and one
+ending in a pipeline flatters you. invincible-agent-91 was reported "completed (exit code 0)"
+by a background task whose pytest had exited **1**, and caught it only because they read the
+artifact rather than the summary.
+
+**A green wrapper around a red command is a uniform-positive tell** — and this section, which
+described the failure without showing the fix, is why the instances kept accruing. A charter
+example that reproduces the defect it warns about teaches the defect.
+
 So: **a proof asserts a POSITIVE ARTIFACT of the mechanism firing, never a status code alone.** Not
 *"the run exited non-zero"* but *"the run exited non-zero AND the output names the rule I
 disabled."* Seals already do this (the break-on-purpose message check); this extends the same
