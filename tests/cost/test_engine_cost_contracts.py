@@ -9,6 +9,7 @@ are runbook §9's and cannot run here; they are listed in the packet's completio
 """
 from __future__ import annotations
 
+import re
 import pathlib
 from decimal import Decimal
 
@@ -550,3 +551,64 @@ def test_the_catalogue_gives_every_verb_a_DISTINCT_mesh_verb_iri():
     iris = [e.values[[k.value for k in e.keys].index("verb")].value for e in node.value.elts]
     assert len(set(iris)) == len(iris), f"duplicate mesh verb IRIs: {iris}"
     assert len(iris) == len(measures.VERBS)
+
+
+def test_EVERY_MODULE_THE_ENGINE_IMPORTS_IS_A_DECLARED_DEPENDENCY():
+    """The defect this exists for shipped: `package_export` imports duckdb, the engine's own
+    dependency list does not have it, the deployed image does not have it, and
+    `include_dataset` DEFAULTS TO TRUE — so the verb's default path would ImportError in
+    production. Every local test passed, because duckdb happened to be installed here until
+    another lane's SDK bump triggered a sync that removed it.
+
+    THE COMMENT ABOVE THAT DEPENDENCY LIST SAYS "DELIBERATELY THIN ... speaks to nobody". The
+    answer was one file away from where the import was added and I never opened it.
+
+    WHAT THIS CANNOT DISTINGUISH: a module that is importable in THIS environment for any
+    reason — stdlib, a transitive dependency, or an incidental install — from one the image
+    will actually have. It reads the DECLARATION, which is the artifact the image is built
+    from, so an undeclared-but-locally-present module is exactly the case it catches.
+    """
+    import ast
+    import sys
+
+    agent = ROOT / "agent_fleet" / "cost_agent"
+    declared = set(re.findall(r'"([A-Za-z0-9_.-]+)(?:[\[@<>=!\s].*)?"',
+                              (agent / "pyproject.toml").read_text(encoding="utf-8")))
+    declared = {d.split("[")[0].strip().lower().replace("-", "_") for d in declared}
+    #: Modules the engine may import without declaring: its own siblings, the standard library,
+    #: and the build-time scripts that are NOT part of the image.
+    #: `utils` is not a distribution. In the image /app IS the agent directory and `utils` is a
+    #: sibling top-level module copied in beside it — the flat-vs-packaged layout the engine
+    #: runbook §5 describes. Declaring it would name a package that does not exist on PyPI.
+    local = ({p.stem for p in agent.glob("*.py")}
+             | {"build_cost_package", "build_cost_dataset", "utils"})
+    stdlib = set(sys.stdlib_module_names)
+
+    #: AN EXEMPTION IS A CLAIM. duckdb is imported only on the dataset path, which
+    #: `package_export` now defaults OFF and refuses by name where the package is absent —
+    #: ADR-0048 ruled the database an authoring format, not a runtime one, and this engine's
+    #: dependency list is deliberately thin. If that path ever becomes reachable by default,
+    #: delete this entry rather than widening it.
+    exempt = {"duckdb": "dataset path only; defaults off and refuses by name (ADR-0048)"}
+
+    undeclared = {}
+    for src in sorted(agent.glob("*.py")):
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module.split(".")[0]]
+            for name in names:
+                key = name.lower().replace("-", "_")
+                if (key in stdlib or key in local or key in declared
+                        or key in exempt or name == "agent_fleet"):
+                    continue
+                undeclared.setdefault(name, set()).add(src.name)
+
+    assert not undeclared, (
+        "modules imported by engine-cost that its pyproject.toml does not declare: "
+        + ", ".join(f"{k} (in {sorted(v)})" for k, v in sorted(undeclared.items()))
+        + ". The image is built from that declaration, so an import it omits fails only in "
+          "the deployment.")

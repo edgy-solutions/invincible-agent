@@ -30,12 +30,16 @@ ROOT = Path(__file__).resolve().parents[2]
 _CORTEX = ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
 
 _CONTRACTS = {
+    "STEP_LADDER": ("StepLadder.contract.ts", "StepLadderRow"),
     "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
     "MULTI_SERIES": ("MultiSeries.contract.ts", "MultiSeriesRow"),
     "DELTA_SET": ("DeltaSet.contract.ts", "DeltaEffect"),
 }
 
 _MIRROR = {
+    # `rate` and `basis` are NULLABLE — the seed step is an amount, not a factor struck on
+    # something — so they are optional in the contract and absent from this required set.
+    "STEP_LADDER": {"name", "amount", "running_total"},
     "CONTRIBUTION_RANKING": {"entity_id", "entity_name", "contribution"},
     "MULTI_SERIES": {"period"},
     "DELTA_SET": {"metric", "direction", "magnitude", "affected"},
@@ -43,7 +47,8 @@ _MIRROR = {
 
 #: Where each archetype's rows live in the payload. `DELTA_SET` calls them `effects`, which is
 #: its contract's word, not a synonym we chose.
-_ROW_KEY = {"CONTRIBUTION_RANKING": "rows", "MULTI_SERIES": "rows", "DELTA_SET": "effects"}
+_ROW_KEY = {"CONTRIBUTION_RANKING": "rows", "MULTI_SERIES": "rows", "DELTA_SET": "effects",
+            "STEP_LADDER": "steps"}
 
 #: One representative call per bound verb. Arguments only - the payload is the engine's.
 _CALLS = {
@@ -54,6 +59,7 @@ _CALLS = {
     "cost_rate_comparison": dict(lot=3, rate_vintage="2021-02-01"),
     "cost_category_breakdown": dict(lot=3),
     "cost_supplier_concentration": dict(lot=3),
+    "cost_price_composition": dict(lot=3, rate_vintage="2021-02-01"),
 }
 
 #: output class -> verb, derived from the engine's own table rather than restated.
@@ -127,13 +133,13 @@ def test_EVERY_cost_output_class_is_bound_or_REFUSED_IN_WRITING():
     bound = {b["subject_uri"].split(":", 1)[1] for b in COST_BINDINGS}
     every = {uri.rsplit("#", 1)[-1] for uri in measures.OUTPUT_URI.values()}
     unbound = every - bound
-    assert unbound == {"PriceComposition", "ExportPackage"}, (
+    assert unbound == {"ExportPackage"}, (
         f"unbound cost shapes changed: {sorted(unbound)}. Bind it, or record the refusal here "
         "and in capabilities.py beside the rows.")
-    src = Path(__file__).resolve().parents[2] / "agent_fleet" / "presentation_agent" / "capabilities.py"
-    text = src.read_text(encoding="utf-8")
-    assert "cost_price_composition` IS DELIBERATELY ABSENT" in text, (
-        "the refusal for PriceComposition is no longer written down beside the rows")
+    # PriceComposition IS NOW BOUND — mesh:StepLadder resolves in the graph, verified by ASK
+    # against the deployed Fuseki before the row was added. The refusal text that stood in its
+    # place is gone with it: a refusal kept after the thing is bound is a stale claim, which is
+    # what cortex's own exemption said about itself.
 
 
 def test_the_cost_prefix_EXPANDS(binding=None):

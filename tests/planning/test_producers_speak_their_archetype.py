@@ -57,21 +57,24 @@ _CONTRACTS = {
 #: CLAIM, and the coverage test below forces it to be written down rather than left as a gap
 #: nobody can see.
 _EXEMPT = {
-    # STEP_LADDER, 2026-09-06 — the SAME shape as DELTA_SET below, and exempt for the same
-    # stated reason rather than a new one. Its only producer is engine-cost's
-    # `cost_price_composition`; no planning or finance verb emits a build-up. Conformance
-    # belongs beside that engine, in tests/cost/test_cost_cards_conform.py, so that adding a
-    # cost verb does not require editing a planning test.
+    # STEP_LADDER — AMENDED 2026-09-11 RATHER THAN DELETED, and the difference is the point.
+    # cortex's entry said to DELETE it when the conformance case landed. I deleted it, and this
+    # seal went red: the instruction assumed the case would land HERE, and it landed in
+    # tests/cost/test_cost_cards_conform.py — which is where cortex's own text said it belonged.
+    # An instruction written for one outcome should not be followed into a different one.
     #
-    # THIS IS AN INTERIM AND NAMES ITS OWN END: engine-cost holds `cost:PriceComposition`
-    # unbound until the archetype exists — it now does — and has said they add the binding row
-    # AND the conformance case together. When that case lands this entry should be DELETED, not
-    # kept as a second claim about a producer that is by then covered. A stale exemption is a
-    # claim, which is what the DELTA_SET note below had to be amended for.
+    # So the exemption stays, now stating the true reason: no PLANNING producer emits a
+    # build-up, and the conformance for the only producer that does lives beside its engine.
     "STEP_LADDER": (
-        "no PLANNING producer emits it - it is engine-cost's cost_price_composition. "
-        "Conformance for that binding lands in tests/cost/test_cost_cards_conform.py with "
-        "the binding row; delete this entry then."
+        "no PLANNING producer emits a build-up - engine-cost's cost_price_composition does, "
+        "and its conformance case is in tests/cost/test_cost_cards_conform.py, which runs it "
+        "against cortex's StepLadder contract"
+    ),
+    # COMPETING_MEASURES, 2026-09-11. Same shape: its only producer is engine-fin's
+    # `fin_eac_comparison`, so conformance belongs beside that engine rather than here.
+    "COMPETING_MEASURES": (
+        "no PLANNING producer emits competing measures - engine-fin's fin_eac_comparison does, "
+        "and its seals are in tests/finance/test_eac_comparison.py"
     ),
     # AMENDED 2026-09-05: no longer true of the fleet, and a stale exemption is a claim.
     # `cost_rate_comparison` binds to DELTA_SET and IS a measure over seed state. It is exempt

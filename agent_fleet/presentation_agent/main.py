@@ -592,6 +592,23 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # reconcile is something that should not have reached a renderer at all. Dropping it here
     # would leave the card unable to tell a checked walk from an unchecked one, and it would
     # draw a confident-looking table either way.
+    # COMPETING_MEASURES, 2026-09-11. Rows are the methods; the PASSTHROUGH IS WHERE THE
+    # FINDING LIVES. R-001 says pinning one estimate hides the divergence that IS the finding,
+    # so `spread` and `spread_percent_of_bac` are not decoration — a card that receives three
+    # figures and no spread renders three numbers the reader must subtract, which is the
+    # failure the ruling names.
+    #
+    # `methods_compared` / `methods_answered` / `all_methods_answered` travel for the sibling
+    # reason: an undefined method KEEPS ITS ROW, and without these the card cannot say that
+    # three rows are not three answers. Dropping a row would turn a comparison of three into a
+    # comparison of two without appearing to.
+    #
+    # These are ENVELOPE facts, not per-row ones — a per-row copy of an envelope fact is a
+    # fact that can disagree with itself, and the card would have to choose a row to believe.
+    "COMPETING_MEASURES": ("rows", ("spread", "spread_percent_of_bac", "lowest_eac",
+                                    "highest_eac", "methods_compared", "methods_answered",
+                                    "all_methods_answered", "value_unit", "value_label",
+                                    "scope_label")),
     "STEP_LADDER": ("steps", ("price", "unit_price", "value_unit", "sums", "quantity", "rate_vintage", "scope_label")),
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),

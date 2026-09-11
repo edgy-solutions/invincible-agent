@@ -43,10 +43,50 @@ FIN = "http://invincible-agent/fin#"
 OUTPUT_URI: dict[str, str] = {
     "fin_variance_analysis":   FIN + "VarianceDecomposition",
     "fin_eac_calculation":     FIN + "EstimateAtCompletion",
+    "fin_eac_comparison":      FIN + "EstimateAtCompletionComparison",
     "fin_performance_indices": FIN + "PerformanceIndexSeries",
     "fin_burn_rate":           FIN + "BurnRateSeries",
     "fin_variance_drivers":    FIN + "VarianceDriverRanking",
     "fin_funding_status":      FIN + "FundingStatusGrid",
+}
+
+
+def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Envelope facts for `fin_eac_comparison`, COMPUTED FROM THE ROWS it summarises.
+
+    Same rule the `VERDICT` table follows: derived here rather than declared in a static table,
+    because a summary that could disagree with the rows beneath it is worse than none.
+
+    THE SPREAD IS THE FINDING (R-001). `spread_percent_of_bac` is carried because 1.66M means
+    nothing without the 12M it is a fraction of, and a card that shows three numbers and makes
+    the reader subtract has published the figures and withheld the finding.
+    """
+    answered = [r["eac"] for r in rows if r.get("eac") is not None]
+    if not answered:
+        return None
+    low, high = min(answered), max(answered)
+    bac = rows[0].get("bac")
+    return {
+        "methods_compared": len(rows),
+        "methods_answered": len(answered),
+        # STATED, so a panel cannot show three rows and imply all three were computable.
+        "all_methods_answered": len(answered) == len(rows),
+        "spread": high - low,
+        "spread_percent_of_bac": ((high - low) / bac) if bac else None,
+        "lowest_eac": low,
+        "highest_eac": high,
+        # STRUCTURAL NAMES FOR THE SUMMARY TOO. `lowest_eac` is a DERIVED SUMMARY NAME I coined,
+        # not domain vocabulary an analyst would recognise — so unlike `eac` it has no claim to
+        # stay, and the structural name is the one that should be preferred.
+        "lowest_value": low,
+        "highest_value": high,
+    }
+
+
+#: Envelope facts derived from a verb's own rows, merged into the response beside `verdict`.
+#: A verb absent from this table sends no summary — the absent-means-silent rule again.
+SUMMARY: dict[str, Any] = {
+    "fin_eac_comparison": _eac_comparison_summary,
 }
 
 #: DECLARED, NEVER INFERRED — the planning engine's absent-means-silent contract. A verb
@@ -56,6 +96,7 @@ OUTPUT_URI: dict[str, str] = {
 VALUE_UNIT: dict[str, str] = {
     "fin_variance_analysis":   "USD",
     "fin_eac_calculation":     "USD",
+    "fin_eac_comparison":      "USD",
     "fin_burn_rate":           "USD",
     "fin_variance_drivers":    "USD",
     "fin_funding_status":      "USD",
@@ -493,6 +534,116 @@ def fin_eac_calculation(
     }]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 2b. fin_eac_comparison  ->  fin:EstimateAtCompletionComparison   (FORECAST_MEASURE)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# R-001's CONSEQUENCE LINE. The ruling says all three methods belong on one panel because
+# "pinning hides the divergence that is the finding" — and it was UNSATISFIABLE from the day it
+# was ruled, because `fin_eac_calculation` takes one `method` Literal and refuses anything else.
+# One panel is one invocation is one method. A ruling with no verb that can satisfy it is a
+# ruling the system cannot keep, and the finance panel has been labelling `method: CPI` on
+# screen as a placeholder in the meantime.
+#
+# WHY THIS DOES NOT WEAKEN THE MANDATORY SLOT. R-001's own scope test is whether a reader shown
+# the panel would want to know a choice was made. Asked for ONE forecast, that reader would —
+# so `fin_eac_calculation` keeps refusing without a method. Asked for the COMPARISON, no choice
+# is being made on their behalf, and there is nothing to disclose. The two verbs answer
+# different questions and the slot is mandatory on exactly the one where a choice occurs.
+
+def fin_eac_comparison(
+    state: FinanceState,
+    *,
+    program_id: str,
+    window: Optional[list[FiscalPeriod]] = None,
+) -> list[dict[str, Any]]:
+    """All three estimates at completion, side by side, with the spread stated.
+
+    NO `method` SLOT, deliberately: this verb exists because choosing one is what R-001 refuses.
+
+    THE SPREAD IS CARRIED, NOT LEFT TO THE READER. On this engine's notional seed the three
+    methods span $13.13M / $14.15M / $14.79M against a $12.00M budget — about 14% of BAC. A
+    panel that shows three numbers and makes the reader subtract has published the figures and
+    withheld the finding.
+
+    AN UNDEFINED METHOD KEEPS ITS ROW. `fin_eac_calculation` raises when an index is missing,
+    which is right for a single answer. Here, dropping the row would silently turn a
+    three-method comparison into a two-method one — and the divergence is the point, so a
+    quietly shorter panel is the specific failure this verb exists to prevent. The row carries
+    `eac: null` and the reason it could not be computed.
+    """
+    program = _require_program(state, program_id)
+    periods = periods_in(window)
+    wp_ids = {w.wp_id for w in state.work_packages
+              if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
+    bcws, bcwp, acwp = _totals(state, wp_ids, periods)
+    bac = program.bac
+    cpi = _ratio(bcwp, acwp)
+    spi = _ratio(bcwp, bcws)
+
+    def compute(method: str) -> tuple[Optional[float], Optional[str]]:
+        if method == "REMAINING_AT_BUDGET":
+            return acwp + (bac - bcwp), None
+        if method == "CPI":
+            if not cpi:
+                return None, "no cost performance reported, so there is no CPI to project"
+            return bac / cpi, None
+        if not (cpi and spi):
+            missing = "CPI" if not cpi else "SPI"
+            return None, f"no {missing} could be derived from the reported periods"
+        return acwp + (bac - bcwp) / (cpi * spi), None
+
+    rows: list[dict[str, Any]] = []
+    for method in EAC_METHODS:
+        eac, why = compute(method)
+        rows.append({
+            "program_id": program.program_id,
+            "program_name": program.name,
+            # ONE ROW PER METHOD, each carrying its own formula — the half of the answer that
+            # makes the number interpretable, and the reason three rows read as three forecasts
+            # rather than as one figure repeated.
+            "method": method,
+            "formula": EAC_FORMULA[method],
+            "eac": eac,
+            # THE STRUCTURAL NAME BESIDE THE DOMAIN ONE — Engine F's own rule, and the reason
+            # cortex needed an alias: COMPETING_MEASURES is structurally named because three
+            # inflation indices want this card and none of them has an "eac". Emitting both
+            # means the card reads its own vocabulary and an analyst reading the payload still
+            # sees theirs, which is the translation layer ADR-0045 refused at the ontology
+            # layer for the same reason.
+            "value": eac,
+            "vac": (bac - eac) if eac is not None else None,
+            "etc": (eac - acwp) if eac is not None else None,
+            "unavailable_reason": why,
+            "bac": bac, "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
+            "cpi": cpi, "spi": spi,
+            "percent_complete": _ratio(bcwp, bac),
+            "as_of_period": periods[-1] if periods else None,
+            "reported_periods": len({f.period for f in state.facts_for(wp_ids, periods)}),
+            "value_unit": program.value_unit,
+            "scope_label": program.name,
+        })
+
+    answered = [r["eac"] for r in rows if r["eac"] is not None]
+    # THIS PANEL CANNOT COME BACK EMPTY, and the reason is worth stating rather than guarding.
+    # `REMAINING_AT_BUDGET` projects NO INDEX — it is ACWP + (BAC - BCWP), arithmetic over
+    # figures that always exist — so it is answerable whenever the program is. The other two
+    # divide by CPI or by CPI x SPI and can be undefined.
+    #
+    # I FIRST WROTE A REFUSAL FOR "every method undefined" AND IT WAS UNREACHABLE. A guard that
+    # cannot fire is the declared-but-unwired shape, and it reads as a safeguard to anyone
+    # maintaining this. The invariant is asserted instead, so if a future method makes it false
+    # the assertion names it at the point it breaks.
+    assert answered, (
+        "no method produced a figure, which should be impossible while REMAINING_AT_BUDGET "
+        "projects no index - a method list or a formula has changed"
+    )
+
+    # THE SPREAD IS AN ENVELOPE FACT AND LIVES THERE. It was copied onto every row, and
+    # cortex-ui-60 refused that with the right reason: a per-row copy of an envelope fact is a
+    # fact that can DISAGREE WITH ITSELF, and the card would then have to choose a row to
+    # believe. One number, one place. See `_eac_comparison_summary` below.
+    return rows
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. fin_performance_indices  ->  fin:PerformanceIndexSeries        (PERIOD_SERIES)
 # ─────────────────────────────────────────────────────────────────────────────
