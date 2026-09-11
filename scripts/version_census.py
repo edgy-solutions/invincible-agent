@@ -41,6 +41,7 @@ import argparse
 import json
 import subprocess
 import sys
+import datetime as _dt
 from typing import Any, Dict, List, Optional, Tuple
 
 #: The env var the images stamp. Read from the RUNNING process, never from the pod spec.
@@ -129,6 +130,40 @@ def _fleet_report(namespace: str, bff_deploy: str = "iagent-cortex-bff") -> Dict
     if doc.get("self"):
         report["cortex-bff"] = doc["self"]
     return report
+
+
+def _last_prime_completion(namespace: str) -> Optional[float]:
+    """Epoch seconds at which the most recent prime-substrate hook COMPLETED, or None.
+
+    RULED 2026-09-11 — registration-forces-restart is an INVARIANT, not a side-effect of the
+    weight-20 hook. An invariant that exists only because a hook happens to restart deployments
+    is one hook edit away from not existing, and its absence has no symptom: every engine keeps
+    reporting healthy while the router answers from the ontology it loaded before the prime.
+
+    MEASURED 2026-09-10. engine-o did not restart across a prime and /resolve answered
+    MaintenanceWorkOrderRecord at 0.78 with no planning class in the candidate pool, CONFIDENTLY,
+    while the census reported every service current. After the restart: idp#Portfolio at 0.95.
+    The census could not see the difference, because a sha is not a statement about WHEN the
+    process started reading the substrate.
+    """
+    rc, out = _kubectl([
+        "-n", namespace, "get", "job", "-l", "app.kubernetes.io/component=prime-substrate",
+        "-o", "jsonpath={range .items[*]}{.status.completionTime}{\"\n\"}{end}",
+    ], timeout=60)
+    if rc != 0:
+        return None
+    best = None
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            t = _dt.datetime.strptime(line, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=_dt.timezone.utc).timestamp()
+        except ValueError:
+            continue
+        best = t if best is None else max(best, t)
+    return best
 
 
 def _process_sha(namespace: str, pod: str) -> Optional[str]:
@@ -234,18 +269,39 @@ def main() -> int:
             "error": "error",
         }.get(state, "n/a" if args.skip_exec else "-")
         rows.append((name, spec_tag, _shown,
-                     (report or {}).get("repo") or "invincible-agent"))
+                     (report or {}).get("repo") or "invincible-agent",
+                     (report or {}).get("uptime_s")))
 
     if not rows:
         print(f"no {OUR_PREFIX} deployments in namespace {args.namespace!r}")
         return 2
 
     w = max(len(r[0]) for r in rows)
-    print(f"{'DEPLOYMENT':<{w}}  {'SPEC TAG':<14}  {'PROCESS SHA':<14}  VERDICT")
-    print("-" * (w + 50))
+    print(f"{'DEPLOYMENT':<{w}}  {'SPEC TAG':<14}  {'PROCESS SHA':<14}  {'SINCE PRIME':<12}  VERDICT")
+    print("-" * (w + 64))
 
+    # REGISTRATION RECENCY, BESIDE THE SHA. A sha says WHAT is running and nothing about
+    # WHEN that process last read the substrate — different facts. An engine whose process
+    # predates the last prime runs the right code against an ontology it has not re-read,
+    # which is the engine-o defect: /resolve answered from the maintenance ontology at 0.78,
+    # CONFIDENTLY, while a sha-only census reported every service current.
+    _primed_at = _last_prime_completion(args.namespace)
+    _now = _dt.datetime.now(_dt.timezone.utc).timestamp()
+    if _primed_at is None:
+        print("  (no prime-substrate completion found — registration recency NOT checked)")
+    stale_reg: List[str] = []
     bad: List[str] = []
-    for name, spec_tag, proc, repo in sorted(rows):
+    for name, spec_tag, proc, repo, uptime in sorted(rows):
+        # "-" IS HONEST ABSENCE, NOT A PASS. A service that reports no uptime cannot be
+        # placed against the prime, and calling that fresh is the vacuous green this
+        # column exists to prevent.
+        if _primed_at is None or uptime is None:
+            reg = "-"
+        else:
+            started = _now - float(uptime)
+            reg = "restarted" if started >= _primed_at else "BEFORE PRIME"
+            if reg == "BEFORE PRIME":
+                stale_reg.append(name)
         verdict = ""
         want = repo_head.get(repo)
         if want is None and repo != "invincible-agent":
@@ -272,7 +328,7 @@ def main() -> int:
                 # reporting it as passing is how a census becomes decoration.
                 verdict = "UNKNOWN (no stamp, unpinned tag)"
                 bad.append(name)
-        print(f"{name:<{w}}  {spec_tag:<14}  {_short(proc):<14}  {verdict}")
+        print(f"{name:<{w}}  {spec_tag:<14}  {_short(proc):<14}  {reg:<12}  {verdict}")
 
     unpinned = [r[0] for r in rows if r[1] == "latest"]
     if unpinned:

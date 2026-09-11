@@ -76,6 +76,36 @@ while every engine reported healthy.
 * and seal both directions, because a floor that always refuses passes the same negative test
   as a floor that works.
 
+## A probe whose only reachable value is healthy is not a probe
+
+**The gateway's `/health` returned `{"status": "ok"}` unconditionally** — in the component that
+reports on every other component. It had no expressible failure. That is the same defect
+engine-lg shipped, in the one service best placed to notice it, and it survived because a probe
+that always passes never looks broken.
+
+**And fixing it surfaced a distinction that is easy to collapse and expensive to get wrong.**
+Three service URLs carried hardcoded `getenv` fallbacks. Removing them meant deciding *when* the
+value is read, and there are two different questions wearing one variable:
+
+| question | when it must be read | who asks |
+|---|---|---|
+| **was this DECLARED at startup?** | fixed at **import** | readiness |
+| **where is that service right now?** | read **live** | the fleet aggregation |
+
+**One read cannot answer both.** Binding the aggregation to the import-time value broke the
+fleet report for any caller setting the variable afterwards; leaving readiness to a lazy
+per-request read meant an undeclared address was invisible until somebody happened to call the
+route that needed it — **a deploy fault that only surfaces on the request that needs it is a
+deploy fault nobody sees at deploy time.**
+
+Both halves were found by tests rather than by reasoning: the boundary case (*two of three
+declared must still refuse*) caught the first, and the existing fleet-report seal caught the
+second within one suite run.
+
+**The general form: when one value serves both a startup invariant and a runtime lookup, read
+it twice on purpose and say why at each site.** A single read is a guess about which question
+matters more, and the guess is invisible afterwards.
+
 Related: [[a-registration-is-not-a-reachable-call]],
 [[a-degradation-must-name-itself]],
 [[nobody-tried-is-not-a-kind-of-no]],
