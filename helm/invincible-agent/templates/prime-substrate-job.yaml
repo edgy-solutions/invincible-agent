@@ -266,6 +266,20 @@ spec:
             # naming differs.
             - name: ONTOLOGY_BUCKET
               value: "ontologies"
+            # THE PRIME'S OWN RECEIPT NEEDS THE DEPLOY, NOT ONLY THE CODE. RULED 2026-09-11.
+            #
+            # `IAGENT_GIT_SHA` says which CODE primed. It does not say which DEPLOY — and a
+            # reader three months from now, attributing a resolution shift to a prime, wants
+            # the pair. Two primes can run identical code from different releases with
+            # different values, and the sha cannot tell them apart.
+            #
+            # Added BEFORE the first :PrimeRun row is written, deliberately: adding it later
+            # would leave exactly one row without it, and that row is the earliest — the one a
+            # historical question reaches first.
+            - name: CHART_VERSION
+              value: {{ .Chart.Version | quote }}
+            - name: HELM_REVISION
+              value: {{ .Release.Revision | quote }}
             # DAGSTER_URL / DAGSTER_HOST: --trigger-ingest hits dagster's
             # GraphQL to launch ingest_ontology_job. Use the in-cluster
             # webserver endpoint. We publish under BOTH names because the

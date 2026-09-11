@@ -510,6 +510,11 @@ def record_prime_run(wiped: bool = False) -> None:
     user = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
     password = os.getenv("NEO4J_PASSWORD", "")
     sha = (os.getenv("IAGENT_GIT_SHA") or "").strip()
+    # WHICH CODE (sha) AND WHICH DEPLOY (chart + revision) are different facts. Two primes can
+    # run identical code from different releases with different values; the sha cannot tell
+    # them apart, and the pair is what a later reader attributing a resolution shift wants.
+    chart_version = (os.getenv("CHART_VERSION") or "").strip() or "unknown"
+    helm_revision = (os.getenv("HELM_REVISION") or "").strip() or "unknown"
     now = _dt.datetime.now(_dt.timezone.utc)
     # `s3_key` is the identity the ingest consumes; `name` is for humans. Both are recorded
     # because a reader asking "what did this prime seed" wants the names, and a reader
@@ -522,6 +527,8 @@ def record_prime_run(wiped: bool = False) -> None:
         completed_at:       $completed_at,
         completed_at_epoch: $epoch,
         image_sha:          $sha,
+        chart_version:      $chart_version,
+        helm_revision:      $helm_revision,
         ontologies:         $ontologies,
         ontology_count:     $n,
         wiped:              $wiped
@@ -536,12 +543,15 @@ def record_prime_run(wiped: bool = False) -> None:
                 completed_at=now.isoformat(),
                 epoch=now.timestamp(),
                 sha=sha or "unstamped",
+                chart_version=chart_version,
+                helm_revision=helm_revision,
                 ontologies=ontologies,
                 n=len(ontologies),
                 wiped=wiped,
             ).consume()
         driver.close()
         print(f"  [PrimeRun] recorded {now.isoformat()} sha={sha[:12] or 'unstamped'} "
+              f"chart={chart_version} rev={helm_revision} "
               f"ontologies={len(ontologies)} wiped={wiped}")
     except Exception as exc:  # noqa: BLE001
         print(f"  [PrimeRun] !! COULD NOT RECORD THIS PRIME: {exc}")
