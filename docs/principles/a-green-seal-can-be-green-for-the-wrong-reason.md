@@ -333,6 +333,19 @@ against an independent enumeration (here: deployments in the
 namespace, not variables in a ConfigMap) — for the same reason a
 scrape does.
 
+**A draft from outside the tree gets its NAMES wrong and its SHAPES
+right — spend verification on identifiers, not arguments.** Measured on
+the ADR-0051 draft: five names wrong, zero shapes wrong. The reasoning
+a competent author brings from outside survives contact with the repo;
+the file paths, symbol names, line numbers and IRIs do not, because
+those are the part that cannot be derived from understanding. So the
+review budget goes to the half that is cheap to check and likely
+wrong, not to the half that is expensive to check and likely right.
+
+Same family as the entries above, from the other side: a wrong
+identifier produces a confident negative (a 404, a zero, an empty
+grep) about a population that exists under another name.
+
 **And weight it by who receives it.** The realm one went to the USER,
 who has no instrument of their own to check it against. A fabricated
 finding costs least when it lands on someone who can reproduce it, and
