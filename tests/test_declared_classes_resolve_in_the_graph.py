@@ -18,9 +18,22 @@ with the suite, and when the cluster is unreachable it **VOIDS BY NAME** rather 
 because a check that silently succeeds when it cannot look is the uniform-positive tell this
 repo has now been bitten by four times.
 
-WHAT IT CANNOT DISTINGUISH, stated because a red here has two causes: a class that needs a prime
-from a class that is misspelled in the TTL. Both look like "declared and absent". The message
-carries both readings rather than asserting the likelier one.
+WHAT A RED MEANS, AND THE SEAL SEPARATES THE CASES RATHER THAN LISTING THEM. It first said it
+could not tell them apart and named two — and MISSED THE ONE THAT WAS ACTUALLY TRUE, that the
+class was declared on an unmerged lane branch. A prime reads TTLs baked into the image and CI
+builds pushed MASTER shas, so no prime can deliver a class that is not on master: the next step
+is a MERGE. "Outstanding on a prime" would have sent a reader to ask the prime owner for
+something no prime could do.
+
+So the failure text checks `origin/master` and says which of three it is:
+
+  * not on origin/master   -> merge, then CI -> roll -> prime. Ask whoever gates merges.
+  * on master, still absent -> the prime has not run since, OR the IRI is misspelled and never
+                               existed. Check the spelling BEFORE scheduling a prime.
+  * git could not answer    -> said so; read as the merged case.
+
+STILL UNDISTINGUISHED, and named so nobody assumes otherwise: a prime that has not run from an
+IRI that is misspelled. Both are "on master and absent", and only reading the TTL separates them.
 """
 from __future__ import annotations
 
@@ -113,22 +126,61 @@ def test_the_scan_ACTUALLY_FINDS_archetypes():
     assert len(found) >= 3, f"only {len(found)} archetypes parsed out of the TTLs: {sorted(found)}"
 
 
+def on_origin_master(curie: str) -> bool | None:
+    """Is this class declared on `origin/master`? None when git cannot answer.
+
+    THIS IS WHAT TURNS AN AMBIGUOUS RED INTO A PRECISE ONE. A prime reads the TTLs baked into
+    the image and CI builds pushed MASTER shas, so a class living only on a lane branch cannot
+    be primed at all — the next step is a MERGE, not a prime. The first version of this seal
+    listed two readings and missed the one that was actually true, which would have sent a
+    reader to ask the prime owner for something no prime could deliver.
+    """
+    local = curie.split(":", 1)[1]
+    try:
+        r = subprocess.run(
+            ["git", "show", f"origin/master:setup/ontologies/mesh_system.ttl"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return bool(re.search(rf"\b\w+:{re.escape(local)}\s+a\s+owl:Class", r.stdout))
+
+
 def test_EVERY_DECLARED_ARCHETYPE_RESOLVES_IN_THE_GRAPH(graph_reachable):
     """The check neither repo had.
 
-    A red here is NOT a code defect — it means the declaration has not reached the deployment.
-    Usually that is a prime that has not run; it can also be a misspelling in the TTL, and this
-    cannot tell them apart, so the message says both.
+    A red here is NOT a code defect — the declaration has not reached the deployment. There are
+    three reasons and the seal SEPARATES them rather than listing them, because "outstanding on
+    a prime" is one step short of true when the class is on an unmerged branch, and a reader a
+    week later would go asking the prime owner for something no prime can deliver.
     """
     absent = []
     for curie, iri in sorted(declared_archetypes().items()):
         if _ask(f"ASK {{ <{iri}> a <http://www.w3.org/2002/07/owl#Class> }}") is not True:
             absent.append(curie)
-    assert not absent, (
-        f"declared in a seeded TTL and ABSENT from the deployed graph: {absent}.\n"
-        "A binding naming one of these registers, reports ACCEPTED, and never matches — the "
-        "card falls through to KNOWLEDGE_DOCUMENT with 'No content available'.\n"
-        "Two readings and this check cannot separate them: (a) the declaration has not been "
-        "primed — merge, build, roll, prime; (b) the IRI is misspelled in the TTL and never "
-        "existed. Check the spelling before scheduling a prime."
-    )
+    if not absent:
+        return
+
+    unmerged, merged, unknown = [], [], []
+    for curie in absent:
+        where = on_origin_master(curie)
+        (unmerged if where is False else merged if where is True else unknown).append(curie)
+
+    lines = [f"declared in a seeded TTL and ABSENT from the deployed graph: {absent}.",
+             "A binding naming one of these registers, reports ACCEPTED, and never matches — "
+             "the card falls through to KNOWLEDGE_DOCUMENT with 'No content available'.", ""]
+    if unmerged:
+        lines += [f"  NOT ON origin/master: {unmerged}",
+                  "    A prime reads the TTLs baked into the image and CI builds pushed MASTER "
+                  "shas, so no prime can deliver these. The next step is a MERGE, then "
+                  "CI -> roll -> prime. Do not ask the prime owner; ask whoever gates merges."]
+    if merged:
+        lines += [f"  ON origin/master and still absent: {merged}",
+                  "    Either the prime has not run since that merge, or the IRI is misspelled "
+                  "in the TTL and never existed. Check the spelling BEFORE scheduling a prime."]
+    if unknown:
+        lines += [f"  could not check origin/master for: {unknown}",
+                  "    git could not answer — fetch, or read this as the merged case."]
+    assert False, "\n".join(lines)
