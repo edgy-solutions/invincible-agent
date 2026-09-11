@@ -1946,18 +1946,46 @@ async def canvas_seed(
     # So it refuses UP FRONT and says which slot is missing. This is the same ordering as the
     # arity precondition on the direct path: a turn that cannot succeed must not spend the
     # engine call to find out.
-    _unbound = sorted({
-        s.name for s in _template.shared_slots if s.required
-    } | {
-        c for p in _template.panels for c in p.consumes
-    })
+    # ── R-005: SHARED SLOTS ARE TEMPLATE-SCOPED, AND SCOPE IS WHAT A PANEL CONSUMES ──
+    #
+    # RULED 2026-09-11 — see docs/rulings/README.md#r-005-shared_slots-are-template-scoped.
+    #
+    # The previous gate unioned every REQUIRED shared slot with every panel's `consumes`, so a
+    # slot that was merely DECLARED blocked the seed even when no panel in that template
+    # consumed it. That made declaration global in effect: adding `program` to both templates
+    # so `program_finance` could carry it would have regressed `portfolio` — the only path that
+    # draws a board today — from seeding to 409. invincible-agent-5f refused that change twice
+    # on exactly this evidence rather than shipping the regression.
+    #
+    # A SharedSlot's answer "binds into every panel that CONSUMES it". So a declared slot no
+    # panel consumes cannot refuse anything, and must not gate anything. The population the
+    # seeder demands values for is the CONSUMED set, never the declared set.
+    _declared = {s.name for s in _template.shared_slots}
+    _consumed = {c for p in _template.panels for c in p.consumes}
+
+    # TWO DIFFERENT FAULTS, KEPT APART. A panel consuming a slot the template never declared is
+    # a broken TEMPLATE and no amount of binding fixes it; a declared-and-consumed slot with
+    # nothing to bind it is the ADR-0050 §3 carry. Collapsing them into one 409 told a reader
+    # to wait for a carry that would never satisfy a typo.
+    _undeclared = sorted(_consumed - _declared)
+    if _undeclared:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
+                f"{_undeclared} that the template does not declare. This is a fault in the "
+                f"template, not a missing binding — declaring them is the fix."
+            ),
+        )
+
+    _unbound = sorted(_consumed)
     if _unbound:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"template {_template.template_id!r} declares shared slot(s) {_unbound} that "
-                f"nothing binds yet, so every panel would refuse. This is the ADR-0050 §3 "
-                f"carry, not a fault in the template or the request."
+                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
+                f"{_unbound} that nothing binds yet, so those panels would refuse. This is "
+                f"the ADR-0050 §3 carry, not a fault in the template or the request."
             ),
         )
     if _template.template_id != "portfolio":

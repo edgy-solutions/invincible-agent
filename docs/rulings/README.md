@@ -1,0 +1,162 @@
+# Rulings register
+
+**A `RULED` line cites an entry here, or it is not a ruling.** That rule has been in force in
+the lane charter for some time and until 2026-09-11 it cited a file that did not exist —
+`invincible-agent-5f` found it by searching with a positive control, and correctly refused a
+dispatch item on the grounds that "per the ruling" named no register. Every ruling made in
+conversation was unshipped until this file existed.
+
+**What belongs here:** a decision that constrains future work and was not obvious from the code.
+**What does not:** anything derivable from the repo, and anything still under discussion — a
+proposal is not a ruling, and relaying one does not promote it.
+
+**How to cite:** `RULED <date> — see [rulings#r-00N](../rulings/README.md#r-00n-slug)`, placed
+**at the section it governs**, not collected at the top of a document. ADR-0047 established that
+house style and ADR-0051 follows it.
+
+**Status vocabulary.** `RULED` — decided, in force. `PROPOSED` — stated but not decided; must not
+be implemented. `SUPERSEDED` — struck at its first hit with a pointer to what replaced it, never
+deleted, because a stale statement left beside a live one reads as policy rather than history.
+
+---
+
+## R-001 — EAC: all three methods on one panel
+
+**RULED 2026-09-09.** Source: architect, on `program_finance`'s `finEacCalculation` panel.
+
+> *"my recommendation is all three methods on one panel; pinning hides the divergence that is
+> the finding."*
+
+EAC is spoken-mandatory **because** the three methods disagree materially — **$13.13M /
+$14.15M / $14.79M against a $12.00M budget**, on the engine's own seed. A template that
+silently picks one is **choosing the answer**, and the reader cannot tell a choice was made:
+the panel renders, the number is real, and the divergence that IS the finding is invisible.
+
+**Scope, so this does not over-reach:** it governs a **required slot whose value changes the
+answer materially**. `plan_schedule`'s optional `scope_initiative_id` filters a portfolio-wide
+answer and declaring it changes nothing about what the panel means; `portfolio.yaml` declaring
+its verbs' own defaults remains correct. The discriminator is whether a reader shown the panel
+would want to know a choice was made.
+
+**Not yet satisfiable.** `fin_eac_calculation` takes `method: EACMethod` — one Literal — and
+raises `MethodRequired` otherwise. One panel is one invocation is one method. **Honouring this
+needs an engine change** (the verb returning all three rows, or a sibling comparison verb).
+Until then `method: CPI` stands as a placeholder **and is explicitly NOT a considered choice**.
+5f verified this at `5a9def7` and stopped rather than shipping a placeholder that reads as
+settled — correct.
+
+**Related:** this is the template-level form of three rules the repo already enforces — a
+declared default that changes the card is a claim; an optimistic default is dishonest; a
+plausible value where an absence belongs is worse than the absence.
+
+---
+
+## R-002 — `lens` on the template schema
+
+**RULED 2026-09-11.** Source: architect, this thread. **Promoted from PROPOSED on this date** —
+until this entry existed it was a relay, and 5f was right to refuse it.
+
+`lens` is a field on the template schema. `program_finance` declares the **finance** lens.
+**Absent means portfolio.**
+
+**Consumers, and the ordering between them:**
+
+* **cortex-ui** reads the lens **from the board record**, never inferred. Until this entry
+  existed, cortex-60 was correct to leave it untouched.
+* **The template schema change is an ADR-0050 amendment** and wants that amendment written, not
+  a silent field addition.
+
+**Blocked behind [R-005](#r-005-shared_slots-are-template-scoped).** `lens` lands with the
+Phase 2 template work, which does not move until the seeder is scoped.
+
+---
+
+## R-003 — `template_id` is the field; `canvas_type` is read-only legacy
+
+**RULED 2026-09-10.** Source: architect. **Shipped** — cortex-ui `6168a39`.
+
+`template_id` is the field. `canvas_type` is honoured as read-only legacy **with a log line
+naming field, value and replacement**, fired **only when the legacy value was actually
+honoured** — when `template_id` is also present and wins, reporting that `canvas_type` "was
+honoured" would report an honouring that did not happen.
+
+**A silently-ignored field is indistinguishable from a field that still works**, which is why
+the notice is part of the ruling rather than an implementation detail.
+
+---
+
+## R-004 — ADR-0051 sustainment safety: four rulings
+
+**RULED 2026-09-10.** Source: architect. Recorded in place at the sections they govern
+(ADR-0051 §5:290, §5:312, §3:242, §9:435), per ADR-0047's house style.
+
+| # | ruling | where |
+|---|---|---|
+| a | **Author's visibility audience** — `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. The existence-oracle protects against **outsiders, not authors**; that sentence is the rule it instantiates. | §5:290 |
+| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
+| c | **`trendMishaps` → slice 3.** | §3:242 |
+| d | **SAFETY compartment deferred.** | §9:435 |
+
+**§10.3 is struck through rather than deleted**, so a reader can tell *answered* from *never
+asked*. Neither remaining §10 question blocks increments 0–4; **§10.2 gates a claim, not a
+build**.
+
+**These rulings must travel with the declaration, not with the code table.** `_VERBS_BY_KIND`
+and cortex-ui's `taskKindRegistry` are **interim by construction and retire together**. The SDK
+`TaskKind` row already carries `reason_required` as a field, validated as a subset of `accepts`
+— so R-004b is a property **of the declaration** from the first schema, and the cutover seal
+compares it row for row. Otherwise the bad half survives: a served declaration saying how a task
+renders while a code table still decides what it can do.
+
+---
+
+## R-005 — `shared_slots` are template-scoped
+
+**RULED 2026-09-11.** Source: architect, this thread. **Lane 1 owns the implementation.**
+
+Declaring `program` globally regresses `portfolio` to 409, because the seeder demands a value
+for **every declared slot**. The fix is **scope**:
+
+* `shared_slots` are **template-scoped**.
+* The seeder binds **only what the seeding template declares**.
+* **`portfolio` declares none**, so it is unaffected.
+
+**This is the critical path.** Nothing in Phase 2 moves until it lands, and Phase 2 gates slice 2
+and every safety template. It is `gateway.py` — Lane 1's file.
+
+**Prior refusals were correct and are now resolved by this entry.** 5f refused twice with code
+evidence (`gateway.py:1949/1954` 409 on unbound shared slots, `:1963` 501 on anything but
+`portfolio`) and named the ordering: (1) the seeder dispatches each panel's declared verb,
+(2) something binds a shared slot into panels, (3) then declare. This ruling is (2).
+
+---
+
+## R-006 — Engine B retirement
+
+**RULED 2026-09-06.** Source: ADR-0046 §8.4 / §8.5, route C.
+
+Engine B (LangGraph support) is retired. Its waiver in `_NOT_A_REGISTERING_AGENT` now reads *by
+design* rather than *by omission*: it registers nothing because there was nothing honest to
+register, its intended use case's principal input being read by no node. **Still waived, for the
+opposite reason**, until the chart block is removed and the key stops existing.
+
+---
+
+## R-007 — §9.2 — OPEN
+
+**Not yet ruled.** The architect decides §9.2; **slice 1 closes on that decision**. Recorded here
+as an open slot so that a `RULED` line citing it cannot be written before the decision exists.
+
+---
+
+## Why this file exists at all
+
+Two lanes independently refused work today on the grounds that a cited ruling could not be
+found, and both were right. The failure was not that the rulings were wrong — they were the
+architect's and they were sound — but that **a decision recorded in a conversation does not
+constrain anything.** It cannot be cited, cannot be checked, and reaches a lane as a relay that
+the lane is then obliged to treat as a proposal.
+
+Same shape as the mirror script's false promise, the stale charter clause, and the ADR comment
+that described a fix instead of making it: *a lesson written beside a list does not maintain the
+list*, and a ruling written beside a conversation does not govern a repo.
