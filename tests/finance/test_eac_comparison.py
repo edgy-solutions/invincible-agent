@@ -10,7 +10,7 @@ import pytest
 
 from agent_fleet.finance_agent import measures
 from agent_fleet.finance_agent.entities import MethodRequired, NotInModel
-from agent_fleet.finance_agent.measures import EAC_METHODS
+from agent_fleet.finance_agent.measures import EAC_METHODS, SUMMARY
 from agent_fleet.finance_agent.seed import build_seed
 
 
@@ -40,10 +40,11 @@ def test_THE_METHODS_ACTUALLY_DISAGREE(state, program_id):
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     values = {round(r["eac"], 2) for r in rows if r["eac"] is not None}
     assert len(values) == len(EAC_METHODS), f"methods do not diverge on this seed: {values}"
-    assert rows[0]["spread"] > 0
+    summary = SUMMARY["fin_eac_comparison"](rows)
+    assert summary["spread"] > 0
     # The ruling's own figure, to one decimal of BAC — if the seed drifts so far that the
     # spread stops being material, the ruling's premise has changed and should be re-argued.
-    assert rows[0]["spread_percent_of_bac"] > 0.05, (
+    assert summary["spread_percent_of_bac"] > 0.05, (
         "the spread is no longer material, so 'pinning hides the divergence' no longer holds "
         "on this data and R-001 needs re-examining rather than this test relaxing")
 
@@ -51,10 +52,15 @@ def test_THE_METHODS_ACTUALLY_DISAGREE(state, program_id):
 def test_THE_SPREAD_IS_CARRIED_not_left_to_the_reader(state, program_id):
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     answered = [r["eac"] for r in rows if r["eac"] is not None]
-    r = rows[0]
-    assert r["lowest_eac"] == min(answered) and r["highest_eac"] == max(answered)
-    assert abs(r["spread"] - (max(answered) - min(answered))) < 1e-6
-    assert r["all_methods_answered"] is True
+    s = SUMMARY["fin_eac_comparison"](rows)
+    assert s["lowest_eac"] == min(answered) and s["highest_eac"] == max(answered)
+    assert abs(s["spread"] - (max(answered) - min(answered))) < 1e-6
+    assert s["all_methods_answered"] is True
+    # THE ENVELOPE FACT LIVES IN ONE PLACE. A per-row copy is a fact that can disagree with
+    # itself, and the card would have to choose a row to believe.
+    for row in rows:
+        for key in ("spread", "lowest_eac", "highest_eac", "all_methods_answered"):
+            assert key not in row, f"{key} leaked back onto a row"
 
 
 def test_THE_COMPARISON_HAS_NO_METHOD_SLOT(state, program_id):
@@ -91,7 +97,7 @@ def test_AN_UNDEFINED_METHOD_KEEPS_ITS_ROW(state, program_id, monkeypatch):
     for r in blank:
         assert r["unavailable_reason"], f"{r['method']} is blank and does not say why"
         assert r["vac"] is None and r["etc"] is None, "derived figures on an absent forecast"
-    assert rows[0]["all_methods_answered"] is False
+    assert SUMMARY["fin_eac_comparison"](rows)["all_methods_answered"] is False
 
 
 def test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY(state, program_id, monkeypatch):
@@ -108,8 +114,9 @@ def test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY(state, program_id, monkeypatch):
     answered = [r for r in rows if r["eac"] is not None]
     assert [r["method"] for r in answered] == ["REMAINING_AT_BUDGET"], (
         "with every index zeroed, exactly the index-free method should still answer")
-    assert rows[0]["all_methods_answered"] is False
-    assert rows[0]["spread"] == 0, "one answer has no spread, and that is not a disagreement"
+    s = SUMMARY["fin_eac_comparison"](rows)
+    assert s["all_methods_answered"] is False
+    assert s["spread"] == 0, "one answer has no spread, and that is not a disagreement"
 
 
 def test_IT_IS_NOT_BOUND_TO_FORECAST_MEASURE():

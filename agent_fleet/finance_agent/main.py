@@ -645,6 +645,12 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
             if fn in measures.VERDICT and (_v := measures.VERDICT[fn](rows)) is not None
             else {}
         ),
+        # ENVELOPE FACTS DERIVED FROM THE ROWS. Merged rather than copied onto each row: a
+        # per-row copy of an envelope fact is a fact that can disagree with itself.
+        **(
+            measures.SUMMARY[fn](rows) or {}
+            if fn in measures.SUMMARY else {}
+        ),
         "rows": rows,
     }
 

@@ -50,6 +50,40 @@ OUTPUT_URI: dict[str, str] = {
     "fin_funding_status":      FIN + "FundingStatusGrid",
 }
 
+
+def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Envelope facts for `fin_eac_comparison`, COMPUTED FROM THE ROWS it summarises.
+
+    Same rule the `VERDICT` table follows: derived here rather than declared in a static table,
+    because a summary that could disagree with the rows beneath it is worse than none.
+
+    THE SPREAD IS THE FINDING (R-001). `spread_percent_of_bac` is carried because 1.66M means
+    nothing without the 12M it is a fraction of, and a card that shows three numbers and makes
+    the reader subtract has published the figures and withheld the finding.
+    """
+    answered = [r["eac"] for r in rows if r.get("eac") is not None]
+    if not answered:
+        return None
+    low, high = min(answered), max(answered)
+    bac = rows[0].get("bac")
+    return {
+        "methods_compared": len(rows),
+        "methods_answered": len(answered),
+        # STATED, so a panel cannot show three rows and imply all three were computable.
+        "all_methods_answered": len(answered) == len(rows),
+        "spread": high - low,
+        "spread_percent_of_bac": ((high - low) / bac) if bac else None,
+        "lowest_eac": low,
+        "highest_eac": high,
+    }
+
+
+#: Envelope facts derived from a verb's own rows, merged into the response beside `verdict`.
+#: A verb absent from this table sends no summary — the absent-means-silent rule again.
+SUMMARY: dict[str, Any] = {
+    "fin_eac_comparison": _eac_comparison_summary,
+}
+
 #: DECLARED, NEVER INFERRED — the planning engine's absent-means-silent contract. A verb
 #: absent from a table below emits no such key, and the renderer keeps showing a bare number
 #: rather than guessing a currency this payload never sent. Every finance verb IS in
@@ -593,16 +627,10 @@ def fin_eac_comparison(
         "projects no index - a method list or a formula has changed"
     )
 
-    low, high = min(answered), max(answered)
-    for row in rows:
-        row["methods_compared"] = len(EAC_METHODS)
-        row["methods_answered"] = len(answered)
-        row["spread"] = high - low
-        row["spread_percent_of_bac"] = (high - low) / bac if bac else None
-        row["lowest_eac"] = low
-        row["highest_eac"] = high
-        # STATED, so a panel cannot show three rows and imply all three were computable.
-        row["all_methods_answered"] = len(answered) == len(EAC_METHODS)
+    # THE SPREAD IS AN ENVELOPE FACT AND LIVES THERE. It was copied onto every row, and
+    # cortex-ui-60 refused that with the right reason: a per-row copy of an envelope fact is a
+    # fact that can DISAGREE WITH ITSELF, and the card would then have to choose a row to
+    # believe. One number, one place. See `_eac_comparison_summary` below.
     return rows
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. fin_performance_indices  ->  fin:PerformanceIndexSeries        (PERIOD_SERIES)
