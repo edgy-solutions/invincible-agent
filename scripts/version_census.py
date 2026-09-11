@@ -295,8 +295,16 @@ def main() -> int:
         # "-" IS HONEST ABSENCE, NOT A PASS. A service that reports no uptime cannot be
         # placed against the prime, and calling that fresh is the vacuous green this
         # column exists to prevent.
-        if _primed_at is None or uptime is None:
-            reg = "-"
+        # TWO DIFFERENT UNKNOWNS, TWO DIFFERENT MARKS. Collapsing them into one glyph
+        # loses which instrument failed: `no-prime` means WE cannot place anything (no
+        # prime timestamp exists), `no-uptime` means THIS service did not answer with one.
+        # invincible-agent-91's rule, from a seal that returns None for "could not look"
+        # and False for "the graph says no" — collapsing those is how a probe reports a
+        # finding when it simply could not look.
+        if _primed_at is None:
+            reg = "no-prime"
+        elif uptime is None:
+            reg = "no-uptime"
         else:
             started = _now - float(uptime)
             reg = "restarted" if started >= _primed_at else "BEFORE PRIME"
