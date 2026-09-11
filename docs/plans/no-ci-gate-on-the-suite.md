@@ -62,7 +62,7 @@ Five failures in the second run. Four of them are already dead:
 | failure | cause | state |
 |---|---|---|
 | `test_board_drift` x2 | shallow clone — `closed-by 96f2657` could not resolve | **fixed 49 min later** by `90ccaf9` (`fetch-depth: 0`) |
-| `test_every_cited_docs_path_resolves` | `docs/architecture/endpoint-gating-audit.md` absent | **fixed** — the file exists today |
+| `test_every_cited_docs_path_resolves` | `docs/architecture/endpoint-gating-audit.md` absent | **was NOT fixed — I read my own working directory.** The file existed UNTRACKED on this machine, so the seal passed locally and was red on master the whole time. Committed 2026-09-11. |
 | `test_relative_markdown_links_resolve` | absolute `C:/Users/...` link targets in a tests/ doc | **fixed** — zero such targets today, and `test_no_markdown_link_targets_an_absolute_machine_path` now guards it |
 | `test_sdk_is_present_for_this_contract` | the sibling SDK is not checked out on the runner | **was still live — fixed here** |
 

@@ -93,6 +93,36 @@ PHANTOM_CITATIONS = {
         "though it were on file.",
 }
 
+# WITHHELD CITATIONS — the file EXISTS and is deliberately kept OUT of the repo.
+#
+# A THIRD CATEGORY, and it is not a phantom. A phantom was never written and the debt is to
+# write it. A withheld file IS written, and the debt is the opposite: it must NOT be committed
+# until a precondition is met. Filing one under PHANTOM_CITATIONS would tell the next reader to
+# go and create it — which, for security findings held pending remediation, is the worst
+# possible instruction.
+#
+# FOUND THE HARD WAY 2026-09-11. The seal passed locally for everyone who had the file on disk
+# and was RED on master, because the file is gitignored. Reading `ls` and `pytest` gave a
+# confident wrong answer; `git cat-file` gave the right one. A GREEN BELONGS TO A SHA, NOT A
+# DIRECTORY. I then nearly `git add -f`'d it to "fix" the citation, which would have published
+# a severity-ordered list of live ungated endpoints to a public repo. The ignore rule stopped
+# me; nothing else would have.
+#
+# MECHANICALLY ENFORCED like PHANTOM_CITATIONS, by test_withheld_allowlist_is_honest below: an
+# entry is legal only if `.gitignore` actually matches the path AND the path is untracked. The
+# ignore rule has to exist, in the repo, where it can be read and argued with — so this list
+# cannot be used to hide a deletion, or a file someone merely forgot to add.
+WITHHELD_CITATIONS = {
+    "docs/architecture/endpoint-gating-audit.md":
+        "Severity-ordered findings for endpoints that are UNGATED RIGHT NOW, in a PUBLIC repo. "
+        ".gitignore:214 states the condition: 'Held locally pending remediation (detailed "
+        "findings) — publish as record-of-fixes once the ungated endpoints are patched.' Cited "
+        "by the tracked route manifest since 8f96094 and by docs/plans/no-ci-gate-on-the-suite"
+        ".md. DO NOT COMMIT IT to close this citation: the ignore rule is the decision, not an "
+        "oversight, and the citation resolving would mean the vulnerabilities were published.",
+}
+
+
 # Cross-repo relative links (../../../sibling-repo/...) — resolvable only when the sibling is
 # checked out beside this repo, which is an environment fact, not a repo defect. Skipped by
 # path shape rather than allowlisted by name, so a new sibling reference needs no maintenance.
@@ -132,9 +162,16 @@ def test_every_cited_docs_path_resolves():
     citations = _collect_citations()
     assert citations, "collected no docs/ citations at all — the scanner is broken, not the repo"
 
+    # `is_file()` IS NOT THE QUESTION FOR A WITHHELD PATH, and that is the whole finding. A
+    # gitignored file is present on the machine that wrote it and absent from the repo, so this
+    # scan passed for every lane that had it on disk while master was red. The allowlist is
+    # checked FIRST, before the filesystem, so the answer no longer depends on whose directory
+    # the suite runs in.
     dangling = {
         cited: sites for cited, sites in sorted(citations.items())
-        if not (ROOT / cited).is_file() and cited not in PHANTOM_CITATIONS
+        if cited not in PHANTOM_CITATIONS
+        and cited not in WITHHELD_CITATIONS
+        and not (ROOT / cited).is_file()
     }
     if dangling:
         report = "\n".join(
@@ -250,11 +287,49 @@ def test_relative_markdown_links_resolve():
     broken = [
         f"  {rel}:{lineno}  ->  {target}   (resolves to {repo_rel})"
         for rel, lineno, target, repo_rel in _iter_relative_links()
-        if repo_rel not in PHANTOM_CITATIONS and not (ROOT / repo_rel).is_file()
+        if repo_rel not in PHANTOM_CITATIONS
+        and repo_rel not in WITHHELD_CITATIONS
+        and not (ROOT / repo_rel).is_file()
     ]
     assert not broken, (
         "markdown link target(s) do not resolve — a move changed the file's DEPTH and its "
         "relative links were not re-based:\n" + "\n".join(sorted(broken))
+    )
+
+
+@pytest.mark.parametrize("path", sorted(WITHHELD_CITATIONS))
+def test_withheld_allowlist_is_honest(path):
+    """An entry is legal ONLY if `.gitignore` really matches it AND it is untracked.
+
+    The same discipline PHANTOM_CITATIONS gets, for the opposite precondition. Without it this
+    list is a place to park any citation someone could not be bothered to resolve — and unlike
+    the phantom list, "the file exists on my machine" would make every entry look justified to
+    whoever added it. The ignore RULE is the evidence, because the rule lives in the repo where
+    it can be read and argued with; a file on one disk is not evidence of anything.
+
+    `git check-ignore` is asked rather than `.gitignore` being parsed: negations, directory
+    rules and precedence are git's to decide, and a hand-rolled matcher would answer a slightly
+    different question than the one that actually governs the commit.
+    """
+    import subprocess
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", "--", path], cwd=ROOT, capture_output=True, text=True,
+    )
+    assert ignored.returncode == 0, (
+        f"{path} is in WITHHELD_CITATIONS but NOTHING IN .gitignore MATCHES IT. Either the "
+        f"ignore rule was removed — in which case commit the file and delete this entry — or "
+        f"the path is simply missing and this list is being used to silence a real dangling "
+        f"citation."
+    )
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", path],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert tracked.returncode != 0, (
+        f"{path} IS TRACKED and also listed as withheld. The withholding ended; delete the "
+        f"entry so the citation is checked normally again."
     )
 
 
