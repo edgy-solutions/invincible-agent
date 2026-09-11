@@ -624,3 +624,45 @@ nearly reported "routing is broken post-prime" from it. It is the documented col
 answering exactly as designed, and the probe simply carried no identity — the fifth time in two
 days I would have concluded about the subject from a failure of the instrument. What caught it was
 reading the response body rather than the status code: `no_verb_in_scope` named the gate.
+
+---
+
+## 2026-09-11 — SAME-WINDOW CONTROL: PASSED. Not the seal, and it is what makes the seal attributable.
+
+Baseline `seal3-base-1d6756c-*` versus one fresh seed, **same fleet `1d6756ce944a`, no prime
+between**. 5/5 seeded, 343s. Identical panel sets:
+
+```
+baseline: planSchedule  planCostCurve  planSiteLoad  planFundingGap  planMaturityGrid
+control : planSchedule  planCostCurve  planSiteLoad  planFundingGap  planMaturityGrid
+```
+
+**What this is evidence of, stated narrowly:** the classifier is deterministic on this fleet.
+It says **nothing** about phrase seeding — the same green the unamended seal produced three times
+on 2026-09-09, and read correctly this time because the run is labelled a control in its
+docstring, its log, and its own output line rather than in a report about it.
+
+**Why it reuses the pinned baseline instead of seeding two fresh runs.** A control should differ
+from the experiment in **exactly one way**. Two back-to-back seeds differ in two — no prime AND a
+different run-A — so a match would not establish that *the seal's own pair* is stable. Reusing
+the baseline isolates the prime as the single difference. Half the substrate time is a side
+effect, not the reason.
+
+**What it buys the real run:** if seal 3 differs across Phase 7.1's prime, the difference has ONE
+candidate cause. Without this, a difference would have had two — the prime, or a pair that was
+never stable — and run B already demonstrated how expensive a second candidate is.
+
+**Fourth timing observation:** 343s. With 398s, ~329s and 353s, RULING (b)'s ~25 minutes per seed
+stays ~4× pessimistic across four independent runs.
+
+### Standing state
+
+* Baseline pinned and verified on `1d6756ce944a`; the arm's same-fleet precondition is **proven
+  to bite** (break-on-purpose: voids before spending a seed).
+* Same-window control **passed** — substrate determinism established.
+* Seal 3 across a prime: **still unmeasured**, waiting on Phase 7.1's prime. The structural
+  result continues to carry the argument.
+* 2.1 (`program` in `shared_slots`) refused on evidence and unchanged: `gateway.py:1954` still
+  409s unbound shared slots, `:1963` still 501s anything but `portfolio`.
+* `lens` is a **proposal**, not a ruling — no rulings file exists (searched with a positive
+  control first).
