@@ -137,3 +137,31 @@ def test_IT_IS_NOT_BOUND_TO_FORECAST_MEASURE():
     assert "fin:EstimateAtCompletionComparison" not in bound, (
         "if this is now bound, delete this seal and add a conformance case - but check the "
         "archetype accepts more than one row first")
+
+
+def test_STRUCTURAL_NAMES_RIDE_BESIDE_THE_DOMAIN_ONES(state, program_id):
+    """COMPETING_MEASURES is structurally named — three inflation indices want this card and
+    none of them has an `eac`. cortex built an alias when my payload sent only domain names.
+
+    Engine F's own rule answers it without a rename: emit both. The card reads its vocabulary,
+    an analyst reading the payload still sees theirs, and neither side translates.
+
+    WHAT THIS CANNOT DISTINGUISH: whether cortex actually prefers the structural name. It
+    asserts the pair agrees, not which one is read.
+    """
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    for r in rows:
+        assert r["value"] == r["eac"], f"{r['method']}: the two names disagree"
+    s = SUMMARY["fin_eac_comparison"](rows)
+    assert s["lowest_value"] == s["lowest_eac"] and s["highest_value"] == s["highest_eac"]
+
+
+def test_AN_UNDEFINED_METHOD_IS_NULL_UNDER_BOTH_NAMES(state, program_id, monkeypatch):
+    """An alias that stays populated when its twin goes null is worse than no alias: the card
+    would read a stale figure for a method that could not be computed."""
+    monkeypatch.setattr(measures, "_ratio", lambda a, b: 0.0)
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    blank = [r for r in rows if r["eac"] is None]
+    assert blank, "no method is undefined here - this seal proves nothing"
+    for r in blank:
+        assert r["value"] is None, f"{r['method']}: `value` survived a null `eac`"

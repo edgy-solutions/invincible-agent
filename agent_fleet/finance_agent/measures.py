@@ -75,6 +75,11 @@ def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, An
         "spread_percent_of_bac": ((high - low) / bac) if bac else None,
         "lowest_eac": low,
         "highest_eac": high,
+        # STRUCTURAL NAMES FOR THE SUMMARY TOO. `lowest_eac` is a DERIVED SUMMARY NAME I coined,
+        # not domain vocabulary an analyst would recognise — so unlike `eac` it has no claim to
+        # stay, and the structural name is the one that should be preferred.
+        "lowest_value": low,
+        "highest_value": high,
     }
 
 
@@ -600,6 +605,13 @@ def fin_eac_comparison(
             "method": method,
             "formula": EAC_FORMULA[method],
             "eac": eac,
+            # THE STRUCTURAL NAME BESIDE THE DOMAIN ONE — Engine F's own rule, and the reason
+            # cortex needed an alias: COMPETING_MEASURES is structurally named because three
+            # inflation indices want this card and none of them has an "eac". Emitting both
+            # means the card reads its own vocabulary and an analyst reading the payload still
+            # sees theirs, which is the translation layer ADR-0045 refused at the ontology
+            # layer for the same reason.
+            "value": eac,
             "vac": (bac - eac) if eac is not None else None,
             "etc": (eac - acwp) if eac is not None else None,
             "unavailable_reason": why,
