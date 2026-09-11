@@ -22,6 +22,7 @@ Nothing proprietary, nothing derived from any real program.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Literal, Optional, get_args
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
@@ -51,6 +52,12 @@ OUTPUT_URI: dict[str, str] = {
 }
 
 
+def _money(d: Decimal) -> Decimal:
+    """Money to the cent. Rates and ratios are NOT quantized — a ratio is a factor, not an
+    amount, and rounding it would change the arithmetic rather than present it."""
+    return d.quantize(Decimal("0.01"))
+
+
 def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Envelope facts for `fin_eac_comparison`, COMPUTED FROM THE ROWS it summarises.
 
@@ -61,25 +68,32 @@ def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, An
     nothing without the 12M it is a fraction of, and a card that shows three numbers and makes
     the reader subtract has published the figures and withheld the finding.
     """
-    answered = [r["eac"] for r in rows if r.get("eac") is not None]
-    if not answered:
+    # THE SPREAD IS COMPUTED FROM THE EXACT FIGURES, never from the float edge. This is the
+    # subtraction the money ruling names, and reading `eac` here would have made the exact
+    # column decorative — carried, and then not used by the one calculation that needed it.
+    exact = [Decimal(r["eac_exact"]) for r in rows if r.get("eac_exact") is not None]
+    if not exact:
         return None
-    low, high = min(answered), max(answered)
+    low, high = min(exact), max(exact)
     bac = rows[0].get("bac")
+    d_bac = Decimal(str(bac)) if bac else None
     return {
         "methods_compared": len(rows),
-        "methods_answered": len(answered),
+        "methods_answered": len(exact),
         # STATED, so a panel cannot show three rows and imply all three were computable.
-        "all_methods_answered": len(answered) == len(rows),
-        "spread": high - low,
-        "spread_percent_of_bac": ((high - low) / bac) if bac else None,
-        "lowest_eac": low,
-        "highest_eac": high,
+        "all_methods_answered": len(exact) == len(rows),
+        "spread_exact": str(_money(high - low)),
+        "spread": float(high - low),
+        "spread_percent_of_bac": float((high - low) / d_bac) if d_bac else None,
+        "lowest_eac": float(low),
+        "highest_eac": float(high),
+        "lowest_exact": str(_money(low)),
+        "highest_exact": str(_money(high)),
         # STRUCTURAL NAMES FOR THE SUMMARY TOO. `lowest_eac` is a DERIVED SUMMARY NAME I coined,
         # not domain vocabulary an analyst would recognise — so unlike `eac` it has no claim to
         # stay, and the structural name is the one that should be preferred.
-        "lowest_value": low,
-        "highest_value": high,
+        "lowest_value": float(low),
+        "highest_value": float(high),
     }
 
 
@@ -581,17 +595,31 @@ def fin_eac_comparison(
     cpi = _ratio(bcwp, acwp)
     spi = _ratio(bcwp, bcws)
 
-    def compute(method: str) -> tuple[Optional[float], Optional[str]]:
+    # DECIMAL, BECAUSE THIS VERB SUBTRACTS. The money ruling scopes exactness to producers and
+    # to any consumer that SUBTRACTS OR COMPARES, and the spread below is a subtraction of two
+    # figures near 10^7 — the worst place in the fleet for float drift, because the finding IS
+    # the difference rather than either operand.
+    #
+    # MEASURED BEFORE RELIED ON: all 108 money facts in this seed are exactly representable —
+    # `Decimal(v) == Decimal(str(v))` for every one — so converting at this boundary is lossless
+    # and not exactness painted over inputs that already drifted. If the seed ever carries a
+    # value that fails that check, this conversion becomes a lie and the seal below says so.
+    _D = lambda x: Decimal(str(x))          # noqa: E731 - one-line boundary conversion
+    d_bac, d_bcws, d_bcwp, d_acwp = _D(bac), _D(bcws), _D(bcwp), _D(acwp)
+    d_cpi = (d_bcwp / d_acwp) if d_acwp else Decimal("0")
+    d_spi = (d_bcwp / d_bcws) if d_bcws else Decimal("0")
+
+    def compute(method: str) -> tuple[Optional[Decimal], Optional[str]]:
         if method == "REMAINING_AT_BUDGET":
-            return acwp + (bac - bcwp), None
+            return d_acwp + (d_bac - d_bcwp), None
         if method == "CPI":
-            if not cpi:
+            if not d_cpi:
                 return None, "no cost performance reported, so there is no CPI to project"
-            return bac / cpi, None
-        if not (cpi and spi):
-            missing = "CPI" if not cpi else "SPI"
+            return d_bac / d_cpi, None
+        if not (d_cpi and d_spi):
+            missing = "CPI" if not d_cpi else "SPI"
             return None, f"no {missing} could be derived from the reported periods"
-        return acwp + (bac - bcwp) / (cpi * spi), None
+        return d_acwp + (d_bac - d_bcwp) / (d_cpi * d_spi), None
 
     rows: list[dict[str, Any]] = []
     for method in EAC_METHODS:
@@ -604,16 +632,26 @@ def fin_eac_comparison(
             # rather than as one figure repeated.
             "method": method,
             "formula": EAC_FORMULA[method],
-            "eac": eac,
+            # THE EXACT FIGURE AND THE EDGE FIGURE, both, which is the cost engine's pattern:
+            # the authoritative money is a quantized Decimal STRING and the float is what a
+            # renderer that only displays may take. A card bound to `eac`/`value` keeps working;
+            # anything that SUBTRACTS should read `eac_exact`.
+            "eac_exact": None if eac is None else str(_money(eac)),
+            # QUANTIZED, like the summary that reads it. Money displays to the cent, and a
+            # row float carrying more precision than the summary derived from it is the
+            # card disagreeing with its own caption.
+            "eac": None if eac is None else float(_money(eac)),
             # THE STRUCTURAL NAME BESIDE THE DOMAIN ONE — Engine F's own rule, and the reason
             # cortex needed an alias: COMPETING_MEASURES is structurally named because three
             # inflation indices want this card and none of them has an "eac". Emitting both
             # means the card reads its own vocabulary and an analyst reading the payload still
             # sees theirs, which is the translation layer ADR-0045 refused at the ontology
             # layer for the same reason.
-            "value": eac,
-            "vac": (bac - eac) if eac is not None else None,
-            "etc": (eac - acwp) if eac is not None else None,
+            "value": None if eac is None else float(_money(eac)),
+            "vac_exact": None if eac is None else str(_money(d_bac - eac)),
+            "etc_exact": None if eac is None else str(_money(eac - d_acwp)),
+            "vac": None if eac is None else float(_money(d_bac - eac)),
+            "etc": None if eac is None else float(_money(eac - d_acwp)),
             "unavailable_reason": why,
             "bac": bac, "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
             "cpi": cpi, "spi": spi,

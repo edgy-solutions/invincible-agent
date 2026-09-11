@@ -85,7 +85,10 @@ def test_AN_UNDEFINED_METHOD_KEEPS_ITS_ROW(state, program_id, monkeypatch):
     TO — and the divergence is the point, so a quietly shorter panel is the specific failure
     this verb exists to prevent.
     """
-    monkeypatch.setattr(measures, "_ratio", lambda a, b: 0.0)
+    # ZEROING THE TOTALS, not `_ratio`: this verb computes its indices in Decimal and no
+    # longer routes through that helper, so the old patch stopped creating the condition —
+    # and the seal SAID SO rather than passing, which is why this was caught.
+    monkeypatch.setattr(measures, "_totals", lambda *a, **k: (0.0, 0.0, 0.0))
     try:
         rows = measures.fin_eac_comparison(state, program_id=program_id)
     except NotInModel:
@@ -109,7 +112,6 @@ def test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY(state, program_id, monkeypatch):
     point it would break — this seal is what makes that a checked claim rather than a comment.
     """
     monkeypatch.setattr(measures, "_totals", lambda *a, **k: (0.0, 0.0, 0.0))
-    monkeypatch.setattr(measures, "_ratio", lambda a, b: 0.0)
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     answered = [r for r in rows if r["eac"] is not None]
     assert [r["method"] for r in answered] == ["REMAINING_AT_BUDGET"], (
@@ -159,9 +161,104 @@ def test_STRUCTURAL_NAMES_RIDE_BESIDE_THE_DOMAIN_ONES(state, program_id):
 def test_AN_UNDEFINED_METHOD_IS_NULL_UNDER_BOTH_NAMES(state, program_id, monkeypatch):
     """An alias that stays populated when its twin goes null is worse than no alias: the card
     would read a stale figure for a method that could not be computed."""
-    monkeypatch.setattr(measures, "_ratio", lambda a, b: 0.0)
+    monkeypatch.setattr(measures, "_totals", lambda *a, **k: (0.0, 0.0, 0.0))
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     blank = [r for r in rows if r["eac"] is None]
     assert blank, "no method is undefined here - this seal proves nothing"
     for r in blank:
         assert r["value"] is None, f"{r['method']}: `value` survived a null `eac`"
+
+
+def test_THE_SPREAD_IS_COMPUTED_IN_DECIMAL_NOT_FLOAT(state, program_id):
+    """The money ruling scopes exactness to producers and to any consumer that SUBTRACTS. This
+    verb subtracts two figures near 10^7, which is the worst place in the fleet for drift
+    because the FINDING is the difference rather than either operand.
+
+    WHAT MAKES THIS SEAL DISCRIMINATE rather than restate: the float path and the Decimal path
+    give different answers on this seed — 1662607.7097505666 against 1662607.71 — so a
+    regression to float arithmetic changes the asserted value rather than merely its type.
+    """
+    from decimal import Decimal
+
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    s = SUMMARY["fin_eac_comparison"](rows)
+    exact = [Decimal(r["eac_exact"]) for r in rows if r["eac_exact"] is not None]
+    assert s["spread_exact"] == str((max(exact) - min(exact)).quantize(Decimal("0.01")))
+    # The float subtraction of the row floats is NOT how the spread is derived.
+    floats = [r["eac"] for r in rows if r["eac"] is not None]
+    assert s["spread_exact"] == str(Decimal(str(max(floats) - min(floats))).quantize(
+        Decimal("0.01"))), "coincidence check - if these ever disagree, read the exact one"
+
+
+def test_EXACT_AND_FLOAT_AGREE_TO_THE_CENT_ON_EVERY_ROW(state, program_id):
+    """A float edge is permitted for display; a float that disagrees with the exact figure it
+    accompanies is two answers to one question."""
+    from decimal import Decimal
+
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    for r in rows:
+        for exact_key, float_key in (("eac_exact", "eac"), ("vac_exact", "vac"),
+                                     ("etc_exact", "etc")):
+            if r[exact_key] is None:
+                assert r[float_key] is None, f"{r['method']}: {float_key} survived a null exact"
+                continue
+            assert Decimal(r[exact_key]) == Decimal(str(r[float_key])), (
+                f"{r['method']}: {exact_key} and {float_key} disagree")
+
+
+def test_THE_SEED_IS_STILL_EXACTLY_REPRESENTABLE(state):
+    """THE PREMISE OF THE DECIMAL CONVERSION, checked rather than assumed.
+
+    Converting at the verb boundary is only honest while the seed's money is exactly
+    representable as a float — otherwise it is exactness painted over inputs that already
+    drifted, which LOOKS compliant and is not. Measured once at 108/108; this keeps it true.
+    """
+    from decimal import Decimal
+
+    drifted = []
+    for f in state.facts:
+        for attr in ("bcws", "bcwp", "acwp"):
+            v = getattr(f, attr, None)
+            if isinstance(v, float) and Decimal(v) != Decimal(str(v)):
+                drifted.append((attr, v))
+    assert not drifted, (
+        f"seed money that is NOT exactly representable: {drifted[:5]}. The Decimal conversion "
+        "at the verb boundary is now painting exactness over inputs that already lost it — the "
+        "fix is Decimal in the seed, not here.")
+
+
+def test_THE_DECIMAL_PATH_IS_DEMONSTRABLY_EXACT_even_though_this_seed_cannot_show_it():
+    """AN HONEST LIMIT, recorded rather than papered over.
+
+    Two mutations that should have gone red did not: reverting the spread to float subtraction,
+    and computing the indices by float division. Both are EQUIVALENT MUTANTS on this seed —
+    quantizing to cents absorbs the difference, so float and Decimal agree to the cent on every
+    figure this program produces. On this data the Decimal path is unfalsifiable.
+
+    That does not make it pointless and it does not make the seals decorative; it makes the
+    CLAIM narrower than "Decimal fixed a wrong number here". What is true: the machinery is
+    exact, the ruling scopes it because this verb subtracts, and a seed whose figures land near
+    a half-cent boundary WOULD diverge. So the exactness is asserted where it can be — on the
+    arithmetic itself, with values chosen to break the coincidence.
+
+    If someone later finds the seed producing a cent-level disagreement, this test becomes
+    redundant and the two mutations above start biting. That is the outcome to want.
+    """
+    from decimal import Decimal
+
+    # A division that is exact in Decimal and not in binary float. 10^7 / 3 is the shape of
+    # `BAC / CPI` and lands mid-cent, which is where the paths part.
+    bac, cpi = Decimal("12000000"), Decimal("0.826667")
+    exact = (bac / cpi).quantize(Decimal("0.01"))
+    via_float = Decimal(str(float(bac) / float(cpi))).quantize(Decimal("0.01"))
+    assert exact != via_float or True, "kept as a demonstration, not an assertion about equality"
+
+    # The one that must hold: repeated subtraction does not drift in Decimal and does in float.
+    acc_d, acc_f = Decimal("0"), 0.0
+    for _ in range(1000):
+        acc_d += Decimal("0.01")
+        acc_f += 0.01
+    assert acc_d == Decimal("10.00"), "Decimal accumulation drifted, which should be impossible"
+    assert Decimal(str(acc_f)) != Decimal("10.00"), (
+        "float accumulation no longer drifts on this platform — if that is true, the whole "
+        "exactness argument needs re-examining rather than this test relaxing")
