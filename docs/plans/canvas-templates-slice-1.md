@@ -666,3 +666,48 @@ stays ~4× pessimistic across four independent runs.
   409s unbound shared slots, `:1963` still 501s anything but `portfolio`.
 * `lens` is a **proposal**, not a ruling — no rulings file exists (searched with a positive
   control first).
+
+---
+
+## 2026-09-11 — the "phantom" was WITHHELD, and my cause was wrong while my evidence was right
+
+I reported `docs/architecture/endpoint-gating-audit.md` as a **phantom** — cited but never
+written — because `git log -S` found the citing text and no commit ever added the target. The
+evidence was sound and **the characterisation was wrong**: the file exists, is gitignored at
+`.gitignore:216`, and is deliberately withheld because it is a severity-ordered list of endpoints
+that are **ungated right now**, in a public repo. Never-written and withheld look identical from
+history, and they are opposite debts: one says *go write it*, the other says *do not publish it*.
+
+Recording the correction where the claim was made. My commit message on the third baseline says
+"a phantom target that never existed" — that sentence is wrong in the way above.
+
+**The instrument decided the answer, and that is the reusable part.** Lane 1 ran `ls` and
+`pytest`, got a present file and 12 passed, and was composing a correction to me. I ran
+`git log -S` and `git cat-file`, got absent-from-history and a red seal. **Same question, opposite
+answers, differing only in which instrument was asked** — and the seal was red on `origin/master`
+the whole time while passing for everyone who happened to have the file locally. *A green belongs
+to a SHA, not a directory*, landing on its own author.
+
+### Their fix, verified here rather than accepted
+
+A third category, `WITHHELD_CITATIONS` — distinct from phantom (never written; debt is to write
+it) and from resolved (in the repo; which here would mean the vulnerabilities are published).
+
+Checked independently, from the side that matters — **this worktree does not have the file**, so
+these runs are the origin-truth case rather than the local-copy one:
+
+| check | result |
+|---|---|
+| target tracked on `origin/master`? | **no** — still withheld, correctly |
+| ignored, per git rather than a parsed `.gitignore`? | yes, `.gitignore:216` |
+| seal on a disk WITHOUT the file | **13 passed** |
+| **a real dangling citation still rejected?** | **yes — seal goes red** |
+
+That last row is the one worth having: I wrote a throwaway doc citing a path that is neither
+ignored nor present, and the seal failed. So the allowlist cannot be used to silence a genuine
+dead link, which is the failure mode an allowlist invites.
+
+**And the near-miss underneath it all:** their first repair was `git add` — close the dangling
+citation by committing the file. Git refused because of the ignore rule. That would have published
+live vulnerabilities to make a documentation seal go green. **The process did not catch it; the
+ignore rule did** — a guard placed for one reason stopping a different and worse mistake.
