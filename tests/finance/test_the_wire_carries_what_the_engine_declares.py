@@ -26,6 +26,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -290,3 +292,69 @@ def test_every_archetype_cortex_can_draw_has_SOME_projector_path():
         f"{orphans}. Each degrades to KNOWLEDGE_DOCUMENT silently. Add a projector entry, or "
         f"add it to the hardened-renderer set in this test if a BAML renderer serves it."
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE VOID PATH ITSELF — because it had NEVER EXECUTED
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_THE_SKIP_PATH_ACTUALLY_WORKS(monkeypatch):
+    """A VOID PATH THAT ONLY EXECUTES WHERE THE VOID IS NEEDED IS UNTESTED BY CONSTRUCTION.
+
+    This file called `pytest.skip(...)` in two places and never imported pytest. Every lane has
+    cortex-ui checked out beside the repo, so that branch had **never once run** — and on a CI
+    runner, where cortex-ui is absent, it raised `NameError: name 'pytest' is not defined`.
+    **A test written to VOID instead FAILED, and only in the condition the void exists for.**
+    It took down all three jobs of the first full suite run in 22 days.
+
+    So the branch is forced here, on a machine that HAS cortex-ui, by making the parser return
+    what it returns when the sibling repo is missing. Without this the import is fixed until the
+    next person writes a skip the same way, and nothing in the suite can tell.
+
+    WHAT THIS CANNOT DISTINGUISH: a skip that fires for the right reason from one that fires for
+    any reason. It asserts the mechanism raises Skipped rather than NameError — which is the
+    failure that actually happened — not that the condition was correctly judged.
+    """
+    # BOTH SKIPPING TESTS, by name and derived from the source rather than listed: a third one
+    # written the same way tomorrow is the case this is guarding against.
+    src = Path(__file__).read_text(encoding="utf-8")
+    # NAMED VIA chr(10), NOT AN ESCAPE. A backslash-n written into a patch script run
+    # through a heredoc collapses into a real newline and splits the string literal — the
+    # same collapse that has cost this lane three times. Name the character.
+    _NL = chr(10)
+    bodies = src.split(_NL + 'def ')
+    # ZERO-ARGUMENT TESTS ONLY, and not this one. A test taking fixtures cannot be called
+    # directly, and this test's own body names pytest.skip — including itself would make it
+    # recurse into a TypeError that looks like the defect rather than the filter.
+    skippers = []
+    for b in bodies:
+        if not b.startswith('test_') or 'pytest.skip(' not in b:
+            continue
+        name, _, rest = b.partition('(')
+        if name == 'test_THE_SKIP_PATH_ACTUALLY_WORKS':
+            continue
+        if rest.split(')', 1)[0].strip():
+            continue          # takes fixtures - not directly callable
+        skippers.append(name)
+    assert skippers, "no test in this file skips - this seal has gone vacuous"
+
+    monkeypatch.setattr(sys.modules[__name__], "_cortex_declared_archetypes", lambda: {})
+    for name in skippers:
+        fn = getattr(sys.modules[__name__], name)
+        with pytest.raises(pytest.skip.Exception):
+            fn()
+
+
+def test_EVERY_pytest_SKIP_IN_THIS_FILE_HAS_ITS_IMPORT():
+    """THE GENERAL FORM, cheap and derived. A file naming `pytest.skip` without importing pytest
+    is a void that becomes a NameError in exactly the environment it was written for.
+
+    Scanned from the source rather than trusted to review, because the defect is invisible on
+    every machine where the branch does not fire.
+    """
+    src = Path(__file__).read_text(encoding="utf-8")
+    if "pytest." in src:
+        assert re.search(r"^import pytest$", src, re.M), (
+            "this file calls into pytest and never imports it — the skip path raises NameError "
+            "in the only condition it exists to handle"
+        )
