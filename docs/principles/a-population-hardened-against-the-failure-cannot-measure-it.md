@@ -37,9 +37,19 @@ often by the same people, often for good reasons, often months earlier. The repa
 system working — someone found a drift and fixed it. What it destroys is that item's value as
 evidence, permanently and silently.
 
-**So the diagnostic question is: has anything in this population ever been changed in response
-to the failure I am testing for?** If yes, that item is a regression check, not a measurement.
-The two are different instruments and only one of them can support a decision.
+**So the diagnostic question is: has anything in this population been touched in response to
+this failure mode — ever, by anyone, for any reason?** If yes, that item is a regression check,
+not a measurement. The two are different instruments and only one of them can support a
+decision.
+
+**The phrasing of that question is load-bearing, and the obvious shorter version is wrong.**
+"Did someone harden this for my test?" answers *no* here, honestly, and leaves the sample
+repaired. Slot 3 was reworded eight months before seal 3 was scoped, by someone fixing a card
+that was lying to a viewer — an independent and entirely good reason, with no test in view.
+**The hardening does not have to be intentional, contemporaneous, or aware that a measurement
+would ever exist.** A question that asks about intent will clear a repaired population every
+time; only a question about the population's *history* catches it. (invincible-agent-5f, who
+caught this reading of their own law.)
 
 ## What it did to the argument, which is the useful part
 
