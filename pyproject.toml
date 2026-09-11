@@ -3,6 +3,32 @@ name = "iagent"
 requires-python = ">=3.12,<3.13"
 version = "0.1.0"
 dependencies = [
+    # DECLARED 2026-09-11 — imported DIRECTLY by this repo and previously arriving only
+    # transitively. A DEPENDENCY THAT ARRIVES TRANSITIVELY IS UNDECLARED, AND UNDECLARED
+    # MEANS IT CAN LEAVE WITHOUT NOTICE: `dagster` broke a CI runner with
+    # "cannot import name 'Definitions' from 'dagster' (unknown location)" — the
+    # NAMESPACE existed, contributed by dagster-postgres/-webserver/-dg-cli, while the core
+    # distribution did not. Nothing was shadowing it; the name resolved BECAUSE the core
+    # was absent. Same class as uvicorn (survived on the base image) and duckdb (survived
+    # on a build the deployment did not have). All three passed locally.
+    #
+    # FLOORS READ OUT OF uv.lock, NOT INVENTED. These state the resolution that was already
+    # green rather than moving it — a fresh constraint would relock to a different fleet
+    # than the one under test. Sealed by tests/test_every_import_is_a_declared_dependency.py.
+    "botocore>=1.43.24",
+    "dagster>=1.12.20",
+    "acryl-datahub>=1.7.0",
+    "jsonschema>=4.26.0",
+    # Imported directly and legitimately: scripts/probes/probe_ambient.py manipulates OTel
+    # ambient-context semantics (the provenance-telemetry wrapper IS the subject there), and
+    # tests/test_replay_safe_boundary.py needs InMemorySpanExporter from the SDK. Only -api
+    # and -sdk are imported; the four exporter/proto distributions are not.
+    "opentelemetry-api>=1.40.0",
+    "opentelemetry-sdk>=1.40.0",
+    "pydantic>=2.12.5",
+    "starlette>=1.0.0",
+    "urllib3>=2.6.3",
+    "PyYAML>=6.0.3",
     "dagster-postgres",
     "psycopg2-binary",
     "httpx",
