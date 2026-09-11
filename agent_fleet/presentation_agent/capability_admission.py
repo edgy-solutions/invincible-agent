@@ -128,6 +128,14 @@ KNOWN_ARCHETYPES = frozenset({
     # stay red until it lands, and it needs a prime window.
     "NAMED_HOLE",
     "STEP_LADDER",
+    # COMPETING_MEASURES (cortex + engine-fin, R-001's consequence line). SIXTH TIME the
+    # instruction above was available; the third archetype in a row to be declared by the
+    # frontend before this registry knew the name. The seals caught it within one run each
+    # time, so this is not a detection gap — it is that the FIX PATH is rediscovered every
+    # time, by whoever happens to be holding the red. Written down now in the
+    # adding-an-engine runbook as its own population: adding an ARCHETYPE has more sites
+    # than adding a verb, and they are not the same sites.
+    "COMPETING_MEASURES",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that
