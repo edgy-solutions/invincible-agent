@@ -49,6 +49,48 @@ signal is about the TEST SUITE, not the implementation. The implementation was n
 of the experiment: the experiment asked whether the guard discriminates, and "no" says nothing
 about which side of the guard is correct.
 
+## A THIRD reading: the mutant may be EQUIVALENT on this data
+
+**RULED 2026-09-11**, from invincible-agent-91's Decimal conversion of `fin_eac_comparison`.
+
+Two mutations that should have gone red did not: **reverting the spread to float subtraction**,
+and **computing the indices by float division**. Neither is a missing seal and neither is a
+defect. **Quantizing to cents absorbs the difference**, so float and Decimal agree to the cent
+on every figure that seed produces. **On that data the Decimal path is unfalsifiable.**
+
+So the readings are three, not two:
+
+| the mutation survived because… | what to do |
+|---|---|
+| the guard does not discriminate | fix the guard |
+| the mutated line is not load-bearing | delete the line, or the seal |
+| **the mutant is EQUIVALENT on this fixture** | **narrow the claim; do not weaken the seal** |
+
+**THE TEST THAT SEPARATES THEM IS WHETHER A DIFFERENT FIXTURE MAKES IT BITE.** A seed landing
+near a half-cent boundary would diverge, and the mutations would start failing. That is what
+makes it equivalence rather than blindness — the guard is fine, the *data* cannot express the
+difference.
+
+**The correct response is 91's, and it is neither of the obvious two.** They did not weaken the
+seal, and they did not claim a result they had not earned:
+
+* they asserted exactness **where it can be asserted** — on the arithmetic itself, with values
+  chosen to break the coincidence;
+* they recorded that when someone finds a seed producing a cent-level disagreement, those two
+  mutations start biting and **that narrower seal becomes redundant**;
+* and they said plainly what they were **not** claiming — that the conversion fixed a wrong
+  number. It did not, on that seed. *"Decimal landed in finance"* would have stood as a
+  correctness result it had not earned.
+
+**Verifying the premise first is what made the bound honest.** Before converting, they measured
+that all 108 money facts in the seed satisfy `Decimal(v) == Decimal(str(v))` — converting at a
+verb boundary is only meaningful while its inputs are exact, and a seal keeps that true. The
+remedy if it fails is Decimal in the **seed**, not more conversion at the boundary: **exactness
+painted over drifted inputs looks compliant and is not.**
+
 Related: [[a-green-check-proves-only-its-scope]] — a green check proves only what it exercised,
 and a mutation that survives is that same blindness measured from the other direction.
 [[naming-a-class-is-not-a-guard]] — the guard has to assert the behaviour, not describe it.
+[[a-population-hardened-against-the-failure-cannot-measure-it]] — the sibling case, where the
+data cannot express the failure because someone repaired it rather than because the arithmetic
+absorbs it.
