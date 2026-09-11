@@ -65,6 +65,7 @@ _DOCUMENTED: dict[str, str] = {
     "src/iagent/defs/dynamic_supervisor.py": "LANGGRAPH_SUPPORT_SVC_URL and synthesize_stateful — the remaining caller",
     "tests/test_agent_router_triggers_send_a_body.py": "docstring names Engine B as one of the three original defects; history, trim when convenient",
     "tests/test_chart_renders_on_bare_defaults.py": "the workload assertion and the residue control",
+    "tests/test_the_census_population_covers_every_engine.py": "the engine-b entry in _NOT_CENSUSED, waiving it from the census; delete WITH the engineB row in engines.yaml, since that seal derives its population from that list and the waiver goes stale the moment the row does",
     "tests/test_endpoint_gating_manifest.py": "drop the langgraph_support SERVICE_FILES row",
     "tests/test_reregister_covers_every_registering_engine.py": "drop engineB from _KEY_TO_AGENT_DIR and the _NOT_A_REGISTERING_AGENT waiver",
     "tests/test_service_urls_are_real.py": "drop the langgraph-support row",

@@ -43,7 +43,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -367,6 +367,12 @@ def _fleet_version_targets() -> dict:
     # each one announces itself as, so a silent service still lands under the right row.
     _add("engine-o", _DAGSONTOLOGY_SVC_URL)
     _add("engine-f", _PRESENTATION_AGENT_SVC_URL)
+    # READ LIVE, not from the import-time constant. The two reads serve different questions:
+    # readiness asks "was this DECLARED at startup" and must be fixed at import, while this
+    # aggregation asks "where is engine-d right now" and must reflect the current environment.
+    # Binding this one to the import-time value silently broke the fleet report under any
+    # caller that sets the variable after import — caught by
+    # tests/routing/test_the_fleet_report_has_four_states.py, which is exactly its job.
     _add("engine-d", os.getenv("DATAHUB_WRAPPER_URL", ""))
     return out
 
@@ -473,7 +479,47 @@ async def fleet_version() -> dict:
     }
 
 
-_DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-service:8084")
+#: Service URLs that were NOT declared, recorded so readiness can refuse.
+#:
+#: RULED 2026-09-11 — a missing ConfigMap entry for a service URL is a DEPLOY FAULT and must
+#: fail readiness. It must NOT fall back to an in-cluster address that happens to work.
+#:
+#: This is the fail-open default in its quietest form. `version_census.py` derives the fleet by
+#: scanning these variables; with a fallback, a service whose URL nobody declared still gets
+#: asked at the hardcoded address, still answers, and still reports a REAL sha — so the census
+#: prints a green row for an address that exists nowhere in the chart. The day the service
+#: moves, the map is fiction with a green check beside it.
+#:
+#: Recorded rather than raised at import: a crash-loop cannot tell anyone WHY. A pod that runs,
+#: refuses readiness, and names the missing variable is diagnosable; one that dies during module
+#: import is not. Same distinction engine-lg's floor draws — see
+#: docs/principles/a-host-with-nothing-admitted-is-not-ready.md.
+_UNDECLARED_SERVICE_URLS: dict[str, str] = {}
+
+
+def _required_service_url(var: str, *, used_for: str) -> str:
+    """Read a service URL that the chart is REQUIRED to declare. No fallback.
+
+    Returns "" when undeclared, and records it. Callers get an empty string — which every
+    consumer here already treats as "cannot reach" — while readiness gains the reason.
+    """
+    raw = (os.getenv(var) or "").strip()
+    if not raw:
+        _UNDECLARED_SERVICE_URLS[var] = used_for
+    return raw
+
+
+_DAGSONTOLOGY_SVC_URL = _required_service_url(
+    "ONTOLOGY_SERVICE_URL", used_for="engine-o — routing, and the census target for engine-o"
+)
+#: READ AT IMPORT, not per request, and that is the point. Its two consumers both read it
+#: lazily, so an undeclared DATAHUB_WRAPPER_URL was invisible to readiness until someone
+#: happened to call lineage — a deploy fault that only surfaces on the request that needs it
+#: is a deploy fault nobody sees at deploy time. Caught by this file's own boundary test
+#: (two of three declared must still refuse), which is the case that would otherwise slip.
+_DATAHUB_WRAPPER_URL = _required_service_url(
+    "DATAHUB_WRAPPER_URL", used_for="engine-d — lineage_edges, and the census target"
+)
 _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
 @app.get("/mesh/config")
@@ -2288,7 +2334,19 @@ async def canvas_lineage_edges(
     from urllib.parse import urlparse
     ent = current_user.entitlements
     entitled_domains = sorted({c.domain for c in ent.cells})
-    u = urlparse(os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085"))
+    # NO FALLBACK — see _required_service_url. A hardcoded in-cluster address here would make
+    # this route work against a service the chart never declared, which is the exact condition
+    # readiness is now required to refuse.
+    _dh = _DATAHUB_WRAPPER_URL
+    if not _dh:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "DATAHUB_WRAPPER_URL is not declared, so engine-d cannot be reached. This is a "
+                "deploy fault, not a request fault — the ConfigMap entry is missing."
+            ),
+        )
+    u = urlparse(_dh)
     target = f"{u.scheme}://{u.netloc}/lineage_edges"
     payload = {
         "subjects": body.subjects,
@@ -2882,8 +2940,9 @@ from .direct_dispatch import dispatch_pre_resolved  # noqa: E402
 #: from; this is the running total so a single log line answers "is it happening at all".
 _DIRECT_FALLBACKS: dict[str, int] = {}
 
-_PRESENTATION_AGENT_SVC_URL = os.getenv(
-    "PRESENTATION_AGENT_SVC_URL", "http://iagent-engine-f:8087"
+_PRESENTATION_AGENT_SVC_URL = _required_service_url(
+    "PRESENTATION_AGENT_SVC_URL",
+    used_for="engine-f — /render_ui, and the census target for engine-f",
 )
 
 
@@ -6099,6 +6158,28 @@ async def compile_bpmn(
 
 @app.get("/health")
 async def health():
+    """READINESS REFUSES WHEN A SERVICE URL WAS NEVER DECLARED. RULED 2026-09-11.
+
+    This handler previously returned `{"status": "ok"}` unconditionally — it could not express
+    any other answer, which is the same defect engine-lg shipped: a probe whose only reachable
+    value is the healthy one is not a probe. See
+    docs/principles/a-host-with-nothing-admitted-is-not-ready.md.
+
+    A missing ConfigMap entry for a service URL is a DEPLOY fault. It must not be papered over
+    by an in-cluster default that happens to resolve today, because the census derives the fleet
+    from those variables: with a fallback the undeclared service still answers and still reports
+    a real sha, so the census prints a green row for an address that exists nowhere in the chart.
+    """
+    if _UNDECLARED_SERVICE_URLS:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "service": "cortex-orchestrator-proxy",
+                "reason": "service URL(s) undeclared — deploy fault, not a runtime fault",
+                "undeclared": dict(sorted(_UNDECLARED_SERVICE_URLS.items())),
+            },
+        )
     return {
         "status": "ok",
         "service": "cortex-orchestrator-proxy",
