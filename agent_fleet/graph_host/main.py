@@ -106,8 +106,23 @@ def load_graphs() -> dict[str, tuple[GraphManifest, Any]]:
     and be missing exactly one verb — the failure mode with no symptom, and the one this
     project has paid for most often.
     """
+    rows = compose(GRAPH_POLICY_DIR, GRAPH_OVERLAY_DIRS)
+    if not rows:
+        # THE FLOOR THAT WAS MISSING, and its absence shipped. `load_graphs` already failed
+        # loud on a row it could not honour — but NOT on no rows at all, so an empty or absent
+        # policy directory produced a host that admitted zero graphs, registered zero verbs and
+        # answered `status: ok` to every probe. A graph host with no graphs is not a healthy
+        # graph host; it is an unroutable pod with a green light, which is the failure mode
+        # with no symptom this engine exists to refuse.
+        raise RuntimeError(
+            f"no ratified graph rows found under {GRAPH_POLICY_DIR} "
+            f"(overlays: {[str(p) for p in GRAPH_OVERLAY_DIRS] or 'none'}). engine-lg admits "
+            f"graphs ONLY from ratified rows, so with none it can serve nothing and register "
+            f"nothing. If the directory is missing from the image, that is the defect — see "
+            f"the policy/graphs COPY in Dockerfile.agent."
+        )
     out: dict[str, tuple[GraphManifest, Any]] = {}
-    for m in compose(GRAPH_POLICY_DIR, GRAPH_OVERLAY_DIRS):
+    for m in rows:
         builder = _load_builder(m)
         graph = builder()
         # The CHECKPOINTER IS THE HOST'S TO HONOUR, which is why a row names a builder rather
@@ -229,6 +244,18 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
 
 @app.get("/health")
 async def health() -> dict:
+    """Liveness, and it must not say `ok` while admitting nothing.
+
+    Reporting healthy with an empty graph set is what let rev 106 serve zero verbs behind a
+    green probe. The boot floor in `load_graphs` should make this unreachable — it is kept
+    because a probe that cannot express "up but useless" is how the first one was missed.
+    """
+    if not _LOADED:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "no-graphs-admitted", "engine": COMPONENT,
+                    "reason": f"zero ratified rows under {GRAPH_POLICY_DIR}"},
+        )
     return {"status": "ok", "engine": COMPONENT, "graphs": sorted(_LOADED)}
 
 

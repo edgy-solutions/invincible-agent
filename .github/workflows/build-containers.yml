@@ -339,6 +339,19 @@ jobs:
           # another line here, and forgetting it fails SILENTLY (different values, no error). Copying
           # the whole directory is the durable fix and is filed with the normalization item.
           COPY policy/vendor_aliases.yaml /app/policy/vendor_aliases.yaml
+          # RATIFIED GRAPH ROWS (ADR-0046). engine-lg admits a graph ONLY from a row here, so
+          # without this line the host ships with its graph MODULES and none of its contracts:
+          # it boots, admits zero graphs, registers zero verbs and answers healthy. That is
+          # exactly what happened on rev 106, and the comment four lines up had already named
+          # the mechanism — "the per-file COPY is itself the fragile part: the next
+          # shared-policy file will need" this. policy/graphs/ was that next file.
+          #
+          # BAKED IS RIGHT FOR TODAY AND WRONG THE MOMENT AN OVERLAY EXISTS. ADR-0036 has the
+          # host read the COMPOSED directory (seed + work-side overlay); a baked seed means
+          # engine-lg silently ignores every overlay, so a customer's tombstone deleting a
+          # seeded graph would leave it registered. The composed dir must be MOUNTED and
+          # GRAPH_POLICY_DIR pointed at it before any overlay is real. Filed, not built.
+          COPY policy/graphs/ /app/policy/graphs/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/
