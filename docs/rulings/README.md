@@ -203,3 +203,71 @@ the lane is then obliged to treat as a proposal.
 Same shape as the mirror script's false promise, the stale charter clause, and the ADR comment
 that described a fix instead of making it: *a lesson written beside a list does not maintain the
 list*, and a ruling written beside a conversation does not govern a repo.
+
+## R-014 — ADR-0037 is NEXT after the harvest; its deferral reason is dissolved; `explains` edges are IRIs that resolve
+
+**RULED 2026-09-11.** Source: architect, this thread, relayed by `invincible-agent-91`.
+
+> **Numbering note.** R-009 – R-013 were **not present in this register** when this entry was
+> written, and nothing in the tree claimed them. The architect specified 014; several rulings
+> were made in conversation today that other lanes are presumably numbering. **The gap is not
+> lost entries** — if it is still a gap when those land, they take 009–013 and this stays 014.
+
+### 1. ADR-0037 is next after the harvest, not deferred past it
+
+ADR-0037 has read **"NOT started, and deliberately not next"** since 2026-08-15. **That call is
+the architect's and it changes.** The deferral's stated reason was that its first build task
+lands in `doc-tools`, whose CI is silent on push — *"a first task that lands in a repo whose CI
+is silent is not packet-sized."*
+
+**That is a CI fix, not an architecture problem**, and it is step 0 (`doc-tools-7f`). The fact
+the deferral was made against has also changed: **there is now a customer producing leaves.**
+Their runbooks are the same shape — frontmatter, `explains` edges, ingested as an overlay corpus
+beside the platform's.
+
+**Sequence:** harvest + frontmatter backfill this week · doc-tools CI in parallel · ADR-0037
+slice 1 dispatched the moment both are true.
+
+### 2. `explains` edges are IRIs THAT RESOLVE. Nothing is minted.
+
+The drafted step 2 read *"every IRI the page names — a class, a verb, a seal, a registry site —
+becomes an `explains` edge."* **Struck.** A seal is a test function name; a registry site is a
+Python frozenset or a dict. **Neither has a graph identity**, and a rule requiring every named
+thing to carry an edge would manufacture exactly the IRIs ADR-0037 §1's invented-IRI rule
+refuses.
+
+The refusal is already recorded in the corpus by the two pages that got it right:
+`adding-an-engine.md` states there is no `mesh:registerEngine` and that minting one *"to make
+the edge look tidy is precisely what the gate exists to refuse"*; `adding-an-archetype.md` names
+**six sites and twelve seals** and honestly explains **one** IRI, `mesh:Archetype`.
+
+> **Edge count is not a quality signal. One page explaining one IRI is the rule working.**
+
+**The surviving seal is one-directional:** an `explains` edge to an IRI that does not resolve
+goes **red**. The reverse — *every named thing must have an edge* — is **struck**, and the reason
+belongs in the ADR rather than only here, because a future reader will propose it again.
+
+**Note this is a `resolve` check, not a `declared` check** — the two came apart three times in
+eight days. The instrument is a SPARQL `ASK` against the deployed graph, not a grep of a TTL.
+
+### 3. OPEN, for the ADR's author — a literal is not an IRI
+
+May a `DocPage` carry a seal name or site name as a **literal property** — searchable text, not
+a graph identity — so *"which runbook names `test_every_bound_archetype…`"* is answerable
+without minting a node for a test?
+
+**Permitted-in-principle, and the ADR's author may refuse it.** The architect's position: *"I'd
+rather it be refused on the page than assumed."* If it reads as the same temptation wearing a
+literal's clothes, **the refusal goes in the ADR with its reason** — which is the outcome either
+way, since an unrecorded refusal is indistinguishable from an oversight.
+
+### 4. Prerequisite, and it is not optional
+
+**Backfill the frontmatter on the existing corpus before any page is ingested.** Verified
+2026-09-11: of three real runbook pages, **one** carried the doc model.
+`adding-an-archetype.md` carried an invented shape (`title`/`status`/`date`/`adr`) and
+`rolling-a-service.md` carried none. Priming that corpus would produce **no `DocPage` for a
+third of it, silently** — the invisible-absence failure the whole doc model exists to prevent.
+
+*(`adding-an-archetype.md` fixed in `3c9582a`. `rolling-a-service.md` still open.)*
+
