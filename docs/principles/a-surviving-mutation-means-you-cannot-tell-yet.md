@@ -134,3 +134,43 @@ found at all, since by construction it never asks for attention.
 Related: [[a-guard-that-cannot-fire]] — the dead seal is that law's regex-shaped instance;
 [[reachability-is-a-property-of-a-path]] — born dead, orphaned, shadowed, and premise-true-purpose-defeated.
 
+## A THIRD WAY THE HARNESS LIES: a mutation aimed at AN occurrence rather than THE occurrence
+
+**RULED 2026-09-12**, from `invincible-agent-22`, who caught their own harness before filing the
+finding it would have produced.
+
+Proving a registration-payload test bites, they mutated `"slots": [s.model_dump(...)]` — a line
+that appears **twice**, in `manifest_ref` and in `registration_payload` — with a
+`replace(..., 1)` that took **the first**. Six tests passed, and they were one keystroke from
+recording *"the seal does not bite."*
+
+**The mutation landed in a function the test does not exercise.** So the green said nothing about
+either site: not about the one that was mutated, and not about the one the test covers.
+
+| the harness is wrong because… | what a green means |
+|---|---|
+| the baseline was already RED | every mutation "died" trivially — nothing measured |
+| the mutation hit **an** occurrence, not **the** one | the subject was never perturbed at all |
+
+**This is the sample-is-not-the-population defect living inside the instrument** — the same shape
+as a scan that greps `docs/` and reports on the repo, except here the sample is *one textual
+occurrence of a line* standing in for *the site under test*. The technique: **locate the enclosing
+`def` first, then mutate within it.** Aim at the subject, not at a string that appears in it.
+
+### And the mis-aim found a real gap, which is the part worth copying
+
+Re-aimed correctly, both payload tests went red — and the detour surfaced something no test had
+said: **dropping `referent` from `manifest_ref`'s hash basis passes all 15 SDK tests.** So the ref
+does not demonstrably cover the referent, and a row could change a slot's referent while keeping
+the same ref — making *"which version of this contract is registered?"* answerable **wrongly**.
+
+The seal that should have caught it, `test_ref_covers_the_contract_and_ignores_cosmetics`, varies
+`required` and `arity` and **never** `referent`. **It asserts the property for two fields and is
+read as asserting it for the contract** — which is
+[[a-green-seal-can-be-green-for-the-wrong-reason]] arriving through a partial population, and the
+remedy is the same one: vary EVERY hashed field, derived from the hash basis rather than listed.
+
+*The gap was found by a mistake in the harness, not by the harness working. That is worth saying
+plainly: the value came from investigating an anomaly rather than from the instrument reporting
+one.*
+
