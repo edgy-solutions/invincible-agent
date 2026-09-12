@@ -206,6 +206,24 @@ invisible by construction.** Verifying a merge resolution by counting what the r
 row, one map entry, the right totals — cannot see what it dropped, because nothing in the merged
 file points at absent text. Diff against BOTH parents, not against expectations.
 
+**AND THE GENERAL FORM, which took a second instance from a different mechanism to see: A CHECK
+THAT LOOKS AT THE ENDPOINT CANNOT SEE WHAT HAPPENED IN BETWEEN.** *(01 + 5f, 2026-09-11.)*
+
+| the check | endpoint it compares | what it cannot see |
+|---|---|---|
+| verifying a merge by counting what the result ADDED | the merged file | what the resolution DROPPED |
+| `git status --porcelain` before and after a suite run | the working tree | a file mutated and then **restored exactly** |
+
+The second is the one that shows it is not about diffs. A clean before/after supports *"the tree
+ended where it started"* — **never** *"the run did not touch the tree."* Harmless for the run's
+own result; **not harmless in a shared checkout**, where the restore may have written over a
+neighbour's in-flight edit and left no evidence anything was overwritten. That is lane-to-lane
+data loss a green gate reports nothing about.
+
+*Disposal:* where the trajectory matters, **instrument the act, not the outcome** — or record the
+bound and stop the claim at what the endpoint supports. Both instances above were caught by
+someone saying out loud what their green did **not** cover.
+
 
 ## The one sentence that covers all fourteen
 
