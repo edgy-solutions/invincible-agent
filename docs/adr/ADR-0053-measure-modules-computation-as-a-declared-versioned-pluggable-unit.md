@@ -61,14 +61,18 @@ like a grant.
 **AND THE ALTERNATIVE IS SIX TABLES, NOT ONE.** A cost measure must appear in `VERBS`,
 `OUTPUT_URI`, `INPUT_URI`, `CATALOGUE` and `_DESCRIPTIONS`, with slot declarations the only one
 *derived*. A boot check refuses startup unless all six agree — and it **compared four until it was
-widened**, because `CATALOGUE` and `_DESCRIPTIONS` had drifted. Its own comment names the failure:
+widened**, after a verb was added that landed in `VERBS` and **not** in `CATALOGUE`. Its own
+comment names the failure:
 a verb in `VERBS` and absent from `CATALOGUE` is *"servable by direct call and INVISIBLE TO THE
 MESH — the engine boots, reports healthy, answers when addressed by name, and is never routed to"*,
 and it points at the reregister hook's hand-kept directory map as the same shape.
 
 **Six hand-kept rows per measure is a far stronger case for a declared row than one dict was**,
-and the boot check is the evidence: someone already had to build a guard whose whole job is to
-notice that six hand-kept lists disagree.
+and the boot check is the evidence — but the exact form of the evidence matters and it is better
+than it first looks. That comment is **not a designer's foresight. It is a lesson written at the
+moment someone paid for it**: the guard was widened *after* the drift happened, not in
+anticipation of it. **A guard built reactively is proof the failure already occurred**, which is
+stronger than any argument that it might.
 
 **ONE WAY GRAPHS AND MEASURES DIFFER, and it does not break the shape — it names the harder half.**
 A graph is **already a declared artifact on disk**, and its row makes it *visible*. A measure is a
