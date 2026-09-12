@@ -39,6 +39,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     from entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
+    from pricing import CompositionError
     from seed import build_state, check_consistency
     from utils.subject_coverage import assert_subject_coverage as _assert_coverage
 except ImportError:
@@ -48,6 +49,7 @@ except ImportError:
     from agent_fleet.cost_agent.entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
+    from agent_fleet.cost_agent.pricing import CompositionError
     from agent_fleet.cost_agent.seed import build_state, check_consistency
     from agent_fleet.utils.subject_coverage import assert_subject_coverage as _assert_coverage
 
@@ -534,8 +536,23 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
             **({"options": options} if options else {}),
         )
 
+    # ⚠ AN UNDECLARED PARAM USED TO BE A 500. The branch above checks that mandatory slots are
+    # PRESENT and nothing checked that supplied ones are DECLARED, so a param this verb does
+    # not take reached `fn(**params)` and raised TypeError — the exact shape that branch's own
+    # comment says it exists to prevent, arriving from the opposite direction.
+    #
+    # DROPPED RATHER THAN REFUSED, and the response says which. Once bound slots accumulate
+    # across an interview's hops, a chain that answered `rate_vintage` for one verb will
+    # legitimately carry it into a neighbour that has no such slot; refusing there would turn
+    # a correct interview into a dead end. Silently dropping would be worse than either — the
+    # answer would not reflect the question asked, with nothing to show for it.
+    declared = {d["name"] for d in slot_decls.slots_for(fn_name)}
+    accepted = {k: v for k, v in req.params.items() if k in declared}
+    ignored = sorted(set(req.params) - declared)
+
     try:
-        return {"refused": False, **fn(STATE, **req.params)}
+        out = fn(STATE, **accepted)
+        return {"refused": False, **out, **({"ignored_params": ignored} if ignored else {})}
     except VintageRequired as e:
         return _refusal("vintage_required", str(e), available=e.available)
     except NotInModel as e:
@@ -544,6 +561,22 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         return _refusal("unentitled", str(e))
     except SourceUnavailable as e:
         return _refusal("unavailable", str(e))
+    except CompositionError as e:
+        # ⚠ A WELL-FORMED VALUE FOR THE WRONG LOT USED TO BE A 500, AND IT REACHED A USER.
+        #
+        # Measured on a live card 2026-09-12: the ask said "Which rate vintage?" with a free
+        # text box, the answer `2021-02-01` was typed because that is what the PREVIOUS
+        # question used, and lot 4 is FY2022. `rates_for` raised CompositionError, nothing
+        # caught it, and the card rendered EMPTY. An unhandled exception is the one refusal
+        # shape this engine promised never to produce — ADR-0049 Ruling 4 exists so a
+        # composing verb can tell refusals apart, and a 500 tells it nothing at all.
+        #
+        # THE OPTIONS ARE RECOMPUTED FOR THE REFUSAL rather than echoed back, because the
+        # caller's value was WRONG — repeating it is what produced the loop. `available` is
+        # what this lot actually accepts, which for lot 4 is a single vintage. Same key as
+        # VintageRequired above, so a consumer reads one field for "what may I say instead".
+        available = measures.options_for(STATE, fn_name, "rate_vintage", req.params) or []
+        return _refusal("not_in_model", str(e), available=available)
 
 
 @app.get("/verbs")
