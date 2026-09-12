@@ -30,11 +30,13 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
+    from measure_modules import variance_driver_ranking
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
+    from agent_fleet.finance_agent.measure_modules import variance_driver_ranking
 
 FIN = "http://invincible-agent/fin#"
 
@@ -871,8 +873,10 @@ def fin_variance_drivers(
     for entity_id, name, wp_ids, extra in units:
         bcws, bcwp, acwp = _totals(state, wp_ids, periods)
         contribution = _variance(variance_kind, bcws, bcwp, acwp)
-        if contribution == 0:
-            continue  # a contributor of nothing is not a driver
+        # THE ZERO DROP MOVED TO THE MODULE with the rest of the ordering rules — "a
+        # contributor of nothing is not a driver" is a ranking decision, not a gathering one.
+        # Rows are now built for zero contributors and dropped by `rank_drivers`: more work
+        # for a handful of rows, and the rule lives with the three it belongs beside.
         technique = extra.get("technique")
         row: dict[str, Any] = {
             # INSTANCES_BY_PROPERTY's generic keys, so the archetype can draw this without
@@ -891,7 +895,7 @@ def fin_variance_drivers(
             "entity_name": name,
             "variance_kind": variance_kind,
             "contribution": contribution,
-            "share_of_total": (contribution / total) if total else None,
+            "share_of_total": variance_driver_ranking.share_of_total(contribution, total),
             # VIA THE CONVENTION, not `contribution > 0`. The inline sign test was correct and
             # unmaintainable: it agreed with `_variance`'s stated convention by coincidence of
             # both being written the same day, and nothing tied the two together. Now one
@@ -910,19 +914,11 @@ def fin_variance_drivers(
             )
         scored.append(row)
 
-    scored.sort(key=lambda r: abs(r["contribution"]), reverse=True)
-    ranked = scored[:top_n]
-    for i, row in enumerate(ranked, start=1):
-        row["rank"] = i
-    # THE TAIL IS DECLARED WHERE IT IS TRUNCATED. `top_n` hiding contributors without saying
-    # so is the same defect as the depth limit in the decomposition above: a partial list
-    # that looks complete.
-    if len(scored) > len(ranked):
-        withheld = sum(r["contribution"] for r in scored[top_n:])
-        for row in ranked:
-            row["withheld_contributors"] = len(scored) - len(ranked)
-            row["withheld_contribution"] = withheld
-    return ranked
+    # THE MEASURE. Drop non-contributors, order by absolute contribution, truncate, and
+    # declare the withheld tail — ADR-0053 §1, extracted 2026-09-12 behaviour-preserving.
+    # This verb gathers; the module computes. That seam is what makes the module's "no I/O"
+    # true rather than aspirational.
+    return variance_driver_ranking.rank_drivers(scored, top_n=top_n)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
