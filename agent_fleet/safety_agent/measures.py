@@ -326,4 +326,47 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         f"DRAFTED. Accepting this risk requires an authority in '{audience}'. "
         "This engine cannot accept it; the acceptance is a task disposition with a required reason."
     )
+
+    # ── THE REVIEW REQUEST — everything the gateway needs to open the acceptance,
+    # and NOTHING THIS ENGINE MAY DO ITSELF.
+    #
+    # THE ENGINE DOES NOT CALL `register_task`, AND THAT IS THE ARCHITECTURE RATHER THAN
+    # AN OMISSION. `register_task` is the gateway's (`gateway.py:644`); it resolves the
+    # audience's actors from Topaz and materializes the queue rows. An engine that wrote
+    # tasks would be mutating the plane it reads — the two-planes violation ADR-0035
+    # rules on — and would put the acceptance substrate behind an engine's availability.
+    #
+    # So the draft carries a request the gateway can hand to `register_task` VERBATIM.
+    # The keys are that function's keyword arguments deliberately: a shape that needs
+    # translating is a shape that can be translated wrongly, and the translation would
+    # live in whichever caller happened to write it first.
+    #
+    # THE PAYLOAD IS CLEARANCE-BOUNDED (§5): a reference and a clearance-safe summary,
+    # never compartmented content, because the queue itself must not become the leak. The
+    # citations travel because an acceptance without its evidence is the signature this
+    # ADR exists to prevent; the hazard's full narrative does not.
+    out["review_request"] = {
+        "kind": f"risk_acceptance_{level.lower()}",
+        "task_id": f"risk-acceptance-{h.hazard_id}",
+        "audience": audience,
+        "title": f"Accept {level} risk — {h.hazard_id}",
+        "summary": (
+            f"{h.description} Severity {h.severity}, probability {h.probability}, "
+            f"resolved {level} from the ratified matrix. "
+            f"{'No owned, field-verified mitigation.' if out.get('orphan_reason') else ''}"
+        ).strip(),
+        "requested_by": "engine-safety",
+        "subject_ref": h.hazard_id,
+        "payload": {
+            "hazard_id": h.hazard_id,
+            "severity": h.severity,
+            "probability": h.probability,
+            "risk_level": level,
+            "citations": citations,
+            "derived_from": derived_from,
+            # STATED IN THE PAYLOAD, not only in this ADR: the disposer must see that a
+            # reason is required before they act, not discover it from a refusal.
+            "reason_required": ["accepted", "rejected"],
+        },
+    }
     return out
