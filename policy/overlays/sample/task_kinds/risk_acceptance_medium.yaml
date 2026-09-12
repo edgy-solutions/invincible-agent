@@ -34,24 +34,7 @@
 # global `_REASON_REQUIRED` as belt-and-braces (R-004(f)), and `rejected` deliberately does not,
 # because that set is kind-blind and a global entry would change three other species' behaviour.
 
-kind: risk_acceptance_high
-renders_as:
-  badge: ACCEPT-H
-  title: High risk acceptance
-  archetype: APPROVAL_TASK
-accepts: [accepted, rejected, returned_for_rework]
-reason_required: [accepted, rejected]
 
----
-kind: risk_acceptance_serious
-renders_as:
-  badge: ACCEPT-S
-  title: Serious risk acceptance
-  archetype: APPROVAL_TASK
-accepts: [accepted, rejected, returned_for_rework]
-reason_required: [accepted, rejected]
-
----
 kind: risk_acceptance_medium
 renders_as:
   badge: ACCEPT-M
@@ -59,45 +42,3 @@ renders_as:
   archetype: APPROVAL_TASK
 accepts: [accepted, rejected, returned_for_rework]
 reason_required: [accepted, rejected]
-
----
-kind: risk_acceptance_low
-renders_as:
-  badge: ACCEPT-L
-  title: Low risk acceptance
-  archetype: APPROVAL_TASK
-accepts: [accepted, rejected, returned_for_rework]
-reason_required: [accepted, rejected]
-
----
-# classifyWriteUp PROPOSES a link and never creates a hazard (ADR-0051 §7). Three write-ups of one
-# condition must resolve to ONE hazard and two links rather than three hazards, and a human makes
-# that call. GROUPED_REVIEW rather than APPROVAL_TASK because one decision resolves N proposals —
-# the `mesh:DispositionReview` shape this ADR already adopts.
-#
-# `linked` and `new_hazard` are verbs the structural seed has never heard of, which is the second
-# thing an overlay row must be able to do. `dismissed` is reason-required: dismissing a reported
-# hazard with no stated rationale is the erasure this domain cares about most, one rung below an
-# acceptance.
-kind: hazard_link_review
-renders_as:
-  badge: LINK
-  title: Hazard link review
-  archetype: GROUPED_REVIEW
-accepts: [linked, new_hazard, dismissed]
-reason_required: [dismissed, new_hazard]
-
-# ── NOT DECLARED HERE: `risk_assessment_author` ──────────────────────────────────────────────
-#
-# R-004(a) rules a view-only audience so the drafting engineer can see the assessment they raised
-# and cannot accept. **It is not expressible on today's substrate, and a species here would be a
-# lie rather than a step toward it.**
-#
-# `task_audience` in the Topaz model declares exactly one permission — `can_act: actor`. There is
-# no `can_view`. A caller receives a task because `register_task` materializes ONE QUEUE ROW PER
-# ACTOR, and `list_tasks_for` filters `recipient_id = caller`. So on this substrate SEEING a task
-# and being able to ACT on it are the same grant: see ⟺ can_act.
-#
-# Declaring `risk_assessment_author` as a species would mint a kind NO TASK IS EVER OF — no row
-# is materialized under it, the author still sees nothing, and the register would carry a ruling
-# that reads as implemented. Raised rather than papered over; see ADR-0051 §5.

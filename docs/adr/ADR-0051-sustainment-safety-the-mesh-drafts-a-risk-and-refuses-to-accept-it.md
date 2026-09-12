@@ -1,12 +1,14 @@
 # ADR-0051 — Sustainment safety assessment: the mesh drafts a risk and refuses to accept it
 
-**Status:** Proposed (2026-09-10). **Written before the build, so the wrong build is refusable before
+**Status:** Proposed (2026-09-10). **§10 CLOSED 2026-09-12 — no open questions for a domain owner.** **Written before the build, so the wrong build is refusable before
 the right one starts.** **Four rulings recorded 2026-09-10**, each marked RULED in place with its
 source rather than collected at the top: §3 (`trendMishaps` deferred to slice 3), §5 (the author's
 visibility audience; `rejected` joins `accepted` as reason-required), §9 (the SAFETY compartment
-deferred, not refused). **Two questions remain open and belong to a domain owner rather than an
-architect** — §10.1 (which systems hold the hazard log) and §10.2 (who ratifies the matrix).
-**Increments 0 through 4 need neither, so the lane can start.**
+deferred, not refused). **§10's two questions are CLOSED as of 2026-09-12 and neither needed a
+domain owner**: §10.1 was a connector fact rather than a design decision (the engine never sees a
+source), and §10.2 is answered by the standard — the seeded matrix is MIL-STD-882E Table III and
+cites it, so only a programme's own *tailoring* needs a named ratifier. **Nothing in this ADR now
+blocks any increment.**
 **Date:** 2026-09-10
 **Deciders:** Architect
 **Related:** ADR-0005 (domain vs platform namespaces), ADR-0007 (survey before mint), ADR-0029
@@ -609,21 +611,66 @@ taxonomy and the card must not imply otherwise.
   pending acceptances, recent write-ups. Deferred until two verbs are live, because a template whose
   verbs cannot be named is a board that is not ready to be declared.
 
-## §10 — Open, and answerable only by a domain owner
+## §10 — CLOSED 2026-09-12. No open questions for a domain owner.
 
-1. **Which systems hold the hazard log, the write-up stream, the critical items list, and work-order
-   deferrals on the work side.** This is the overlay row (ADR-0036 §3) and the platform repo never
-   names them. **Engine S with no overlay refuses every verb with "no source declared for
-   `<class>`" — it does not return an empty answer**, because an empty hazard list is the single
-   most dangerous wrong answer this engine could give.
-2. **Who ratifies the risk matrix and the authority ladder**, and therefore whose identity fills the
-   `prov:wasDerivedFrom` that ships empty.
+**Both questions are struck through rather than deleted, so a reader can tell *answered* from
+*never asked*. Following the standard is what closed the second one, which is what following a
+standard was supposed to buy.**
 
-   **What the ratifier is actually deciding, in one concrete row** — added 2026-09-11 from the
-   seeded matrix, because "ratify the matrix" is too abstract to act on. Take **I/E**:
-   catastrophic severity, improbable. `safety_risk_matrix.ttl` seeds it **Medium**, and flags it
-   in-file as the row most likely to be wrong. Some programmes hold that a **catastrophic outcome
-   never falls below Serious** whatever the odds, because the acceptance decision should reach a
+~~1. **Which systems hold the hazard log, the write-up stream, the critical items list, and
+   work-order deferrals on the work side.**~~ **ANSWERED BY CONSTRUCTION — it was never an ADR
+   decision.** The engine reads typed `safety:` objects from the graph and **never sees a source**:
+   there is no code path in which a verb knows whether a hazard arrived from a spreadsheet, an
+   Access database or Dataverse. Where a real log lives matters only at the moment one is
+   connected, and the answer at that moment is the existing dlt → DataHub pattern — **a dataset URN
+   in the overlay row**, whatever the source is. For sandbox it is the seeded fixture, which is
+   already answered. **Increment 5 does not wait on this.**
+
+   What survives from the original framing is the refusal, and it is unchanged: Engine S with no
+   overlay refuses by name rather than returning an empty answer, because an empty hazard list is
+   the single most dangerous wrong answer this engine could give.
+~~2. **Who ratifies the risk matrix and the authority ladder**, and therefore whose identity fills
+   the `prov:wasDerivedFrom` that ships empty.~~ **ANSWERED BY THE STANDARD — the seed's
+   provenance is a citation, not a pending person.**
+
+   MIL-STD-882E §4.3.7 requires that risks "be accepted by the appropriate authority as defined in
+   DoDI 5000.02", and DoDI 5000.02 names the levels — High to the component acquisition executive,
+   Serious to the PEO, Medium and Low to the program manager. **That is the seed ladder, and it is
+   why the audiences were built per level rather than as one grant with a level field.** The matrix
+   itself is Table III. So `prov:wasDerivedFrom` cites the standard and is no longer empty.
+
+   **What a programme ratifies is only its TAILORING.** 882E §4.3.3.d permits a tailored matrix
+   "formally approved in accordance with DoD Component policy", and the SSPP is where a programme
+   says *our catastrophic-improbable never falls below Serious*. **The ratifier is that SSPP's
+   signatory — the programme's person, not ours** — and they are required only for an overlay row
+   that departs from the standard. A cell matching Table III already has its authority.
+
+   > **⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
+   > The MATRIX was transcribed from 882E's own PDF cell by cell (see below). The LADDER is not in
+   > 882E at all — the standard defers and names no authority — so the High/Serious/Medium/Low
+   > assignment above is attributed to DoDI 5000.02 and **has not been read from source by this
+   > lane**. It is recorded as attributed in the TTL rather than borrowing the matrix's citation.
+   > Verifying it is a half-hour somebody should spend before a real acceptance routes on it.
+
+   **AND THE READING WAS WRONG IN FIVE OF TWENTY CELLS.** The seeded matrix was labelled "the
+   agent's reading of MIL-STD-882 convention", which was an honest label on a table nobody had
+   checked. Transcribing it found II/E, III/B, III/D, III/E and IV/B all wrong — **every one of
+   them too permissive.** A remembered table does not fail randomly; it drifts toward what sounds
+   reasonable, and in this domain that direction understates the risk and **routes the acceptance
+   to a more junior authority than the standard requires**. That is a failure with no symptom: the
+   queue works, the card renders, and the wrong person signs. `test_matrix_matches_mil_std_882e_table_iii.py`
+   now pins the transcription cell by cell, with a separate directional assertion because the
+   permissive direction is the one nobody complains about.
+
+   Probability level **F (Eliminated)** is Table III's sixth row and is deliberately absent here:
+   it is a hazard STATE, not a risk band, and in this vocabulary it is `hazardStatus` `closed`.
+
+   **What the tailoring decision looks like, in one concrete row** — kept because "ratify the
+   matrix" is too abstract to act on, and **corrected 2026-09-12**. Take **I/E**: catastrophic
+   severity, improbable. The file seeds it **Medium**, which is **Table III's own value** — it was
+   previously flagged here as "most likely to be wrong" and it is not wrong, it is the row **most
+   commonly tailored upward**. Some programmes hold that a **catastrophic outcome never falls below
+   Serious** whatever the odds, because the acceptance decision should reach a
    senior authority regardless of probability.
    
    Both readings are defensible; only one is this programme's. And the consequence is not
@@ -634,15 +681,29 @@ taxonomy and the card must not imply otherwise.
    **That is a row edit with a ratifier's name on it, not an engine change** — which is §2's whole
    claim, stated as something a safety authority can actually say yes or no to.
 
-~~3. Whether the drafter's visibility audience is wanted.~~ **CLOSED 2026-09-10 — ruled in §5**:
-   `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. Struck here rather than
-   deleted, so a reader of the open list can tell *answered* from *never asked*.
+~~3. Whether the drafter's visibility audience is wanted.~~ **CLOSED 2026-09-10, then CORRECTED
+   2026-09-12.** Ruled as `risk_assessment_author:SUSTAINMENT`, view-only — and the substrate has
+   no view-only state for a task, so the ruling could not be implemented as written (§5). **Ruled
+   again 2026-09-12: option (a) — the author sees what they can act on and nothing more**, because
+   `see ⟺ can_act` is the substrate's shape rather than a gap in an implementation. A `viewer`
+   relation with `can_view` is filed as platform work with a real use case behind it: **a safety
+   officer who must see every open acceptance and dispose none is a standard role.** It is simply
+   not this increment's to build.
 
-**Neither 1 nor 2 blocks increments 0 through 4.** The vocabulary, the engine, the acceptance path
-and the exemplar all run against a fixture graph and a seed matrix. What 1 gates is increment 5 (the
-overlay row is the cluster's first real source) and what 2 gates is nothing at all — it gates a
-*claim*: until it is answered `prov:wasDerivedFrom` ships empty, the matrix reads as SEED, and the
-seals report exactly that rather than papering over it.
+   **Seal 7 keeps its three legs by running two assessments instead of one** — a High that alice
+   disposes and bob and carol cannot see, and a Medium that bob disposes and alice and carol cannot
+   see. That discriminates *cannot see* from *not on this tier* without a permission the model does
+   not have, and it is the **stronger** seal rather than merely the available one: it proves the
+   ladder ROUTES. A single assessment with one disposer is consistent with a ladder that always
+   routes to alice.
+
+---
+
+**NOTHING IN §10 BLOCKS ANY INCREMENT, INCLUDING 5.** That was not true when this section was
+written, and the change is the point: §10.1 dissolved once it was seen to be a connector fact
+rather than a design decision, and §10.2 dissolved into a citation. **Following the standard is
+what bought that** — a seeded matrix that cites Table III needs no local ratifier, and only a
+programme's tailoring does.
 
 ## Indicators for revisiting
 

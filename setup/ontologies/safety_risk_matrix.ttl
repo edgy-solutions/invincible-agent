@@ -19,15 +19,40 @@ THIS IS THE LOAD-BEARING DECISION OF ADR-0051 (§2). The matrix and the ladder a
 differs between programmes. In code, the second customer is a fork of the drafting engine; as
 ratifiable data, the second customer is an overlay file and a re-prime.
 
-v1 is the AGENT'S READING of MIL-STD-882 convention. Every row's prov:wasDerivedFrom is
-DELIBERATELY EMPTY until a domain owner maps it to the governing clause of the programme's own
-system-safety plan and ratifies it. That emptiness is honest, not a TODO — and no seal can tell a
-wrong severity table from a right one, which is why ratification is a named human act rather than
-a test.
+THE MATRIX CITES ITS SOURCE AS OF 2026-09-12 AND IS NO LONGER A READING. v1 was "the agent's
+reading of MIL-STD-882 convention" with prov:wasDerivedFrom deliberately empty. It was then
+TRANSCRIBED from the standard, and FIVE OF TWENTY CELLS WERE WRONG — all five too permissive.
+So the emptiness was honest and the content was not, which is the pairing worth remembering: an
+honest label on a wrong table still routes a real acceptance to the wrong authority.
+
+**THE TWO HALVES OF THIS FILE HAVE DIFFERENT PROVENANCE AND MUST NOT SHARE A CITATION.**
+
+  THE MATRIX (severity x probability -> risk level)
+      MIL-STD-882E, Table III "Risk assessment matrix", document page 12, in the 4.3.3
+      risk-assessment text. VERIFIED against the standard's own PDF, cell by cell.
+      882E 4.3.3.d: "The definitions in Tables I and II, and the RACs in Table III shall be
+      used, unless tailored alternative definitions and/or a tailored matrix are formally
+      approved in accordance with DoD Component policy."
+
+  THE ACCEPTANCE LADDER (risk level -> who may accept)
+      NOT IN 882E. 4.3.7 says only that "the risks shall be accepted by the appropriate
+      authority as defined in DoDI 5000.02" — the standard defers, and names no authority.
+      The seeded ladder below (High / Serious / Medium / Low) reflects DoDI 5000.02's
+      assignment as reported by the architect; THIS LANE HAS NOT READ THAT DOCUMENT, so the
+      ladder is attributed and not verified, and says so rather than borrowing the matrix's
+      citation. Verifying it is a half-hour someone should spend before a real acceptance
+      routes on it.
+
+WHAT A PROGRAMME RATIFIES IS ITS TAILORING, NOT THE STANDARD. A cell that matches Table III needs
+no local ratifier; it has one already. An OVERLAY row that departs from Table III does, and the
+ratifier is the signatory of that programme's System Safety Program Plan. That is the only place
+a named human is required, and it is the programme's person rather than ours.
 
 KEEP THIS A FLAT TABLE. Never a rule language: nesting, expressions and priorities are
 code-as-policy's revenge, and the neighbouring disposition rules file says so from experience.""" ;
-    safety:ratificationStatus "unratified: agent's reading of MIL-STD-882 convention, pending domain-owner sign-off" .
+    prov:wasDerivedFrom <https://cdn.ymaws.com/system-safety.org/resource/resmgr/documents/MIL-STD-882E.pdf> ;
+    safety:derivedFromStandard "MIL-STD-882E, Table III (Risk assessment matrix), document page 12, section 4.3.3" ;
+    safety:ratificationStatus "matrix: TRANSCRIBED AND VERIFIED against MIL-STD-882E Table III 2026-09-12, no local ratifier required for cells matching the standard. Acceptance ladder: attributed to DoDI 5000.02 per 882E 4.3.7, NOT verified from source by this lane. Tailoring: an overlay row departing from Table III requires the programme SSPP signatory." .
 
 # ---------------------------------------------------------------------------
 # SEVERITY — the closed vocabulary. A value outside it is a REFUSAL at draft
@@ -83,9 +108,19 @@ safety:Low a safety:RiskLevel ;
     safety:acceptanceAudience "risk_acceptance_low:SUSTAINMENT" .
 
 # ---------------------------------------------------------------------------
-# THE MATRIX — one flat row per (severity, probability) cell. All twenty are
-# present: a missing cell must be a REFUSAL a reader can see, not a gap the
-# drafter fills by interpolating between neighbours.
+# THE MATRIX — TRANSCRIBED FROM MIL-STD-882E TABLE III, NOT REMEMBERED.
+#
+# CORRECTED 2026-09-12 AGAINST THE STANDARD, AND FIVE OF TWENTY CELLS WERE WRONG.
+# v1 was labelled "the agent's reading of MIL-STD-882 convention", which was an
+# honest label for something written from memory — and memory got a quarter of the
+# table wrong. The five: II/E was Low (is Medium), III/B was Medium (is Serious),
+# III/D was Low (is Medium), III/E was Low (is Medium), IV/B was Low (is Medium).
+# EVERY ERROR WAS IN THE SAME DIRECTION — too permissive. A remembered matrix does
+# not fail randomly; it drifts toward "that sounds about right", and in this domain
+# that direction understates risk and routes the acceptance to a junior authority.
+#
+# All twenty are present: a missing cell must be a REFUSAL a reader can see, not a
+# gap the drafter fills by interpolating between neighbours.
 # ---------------------------------------------------------------------------
 [] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:High .
 [] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:High .
@@ -97,28 +132,50 @@ safety:Low a safety:RiskLevel ;
 [] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:High .
 [] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Serious .
 [] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Medium .
-[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Low .
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Medium .
 
 [] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:Serious .
-[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Serious .
 [] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Medium .
-[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Low .
-[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Low .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Medium .
 
 [] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:Medium .
-[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Low .
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Medium .
 [] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Low .
 [] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Low .
 [] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Low .
 
 # ---------------------------------------------------------------------------
-# THE ROW MOST LIKELY TO BE WRONG, FLAGGED IN-FILE — the same courtesy
-# qualification_status_vocabulary.ttl paid with `qualifying`.
+# PROBABILITY LEVEL F (ELIMINATED) IS DELIBERATELY ABSENT, AND THAT IS STATED
+# RATHER THAN LEFT TO BE NOTICED.
 #
-# I/E (catastrophic but improbable) is seeded Medium. Programmes disagree about
-# this cell more than any other: some hold that a catastrophic outcome never
-# falls below Serious regardless of probability, because the acceptance decision
-# should reach a senior authority whatever the odds. If this programme is one of
-# those, this is the row to change first, and changing it moves the audience the
-# acceptance routes to — which is the whole point of the ladder being data.
+# Table III has a SIXTH probability row — Eliminated (F) — whose entire row reads
+# "Eliminated" rather than a risk level. It is not a risk band; it is the state a
+# hazard reaches when it no longer exists, and 4.3.4's goal is "always to eliminate
+# the hazard if possible."
+#
+# It is omitted here because an eliminated hazard is not ASSESSED, and this file is
+# the assessment table. In this vocabulary that state is `safety:hazardStatus`
+# `closed`, not a probability. Recorded so a later reader can tell a considered
+# omission from a transcription that stopped at E — the same distinction §1's
+# survey header draws between "surveyed and absent" and "never surveyed".
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# I/E — CORRECTED FRAMING 2026-09-12. It was flagged here as "the row most likely
+# to be wrong". It is not wrong: Medium IS Table III's own value for
+# Catastrophic/Improbable.
+#
+# What it is, is THE ROW MOST COMMONLY TAILORED UPWARD. Some programmes hold that a
+# catastrophic outcome never falls below Serious regardless of probability, because
+# the acceptance decision should reach a senior authority whatever the odds. 882E
+# 4.3.3.d permits exactly that — "unless tailored alternative definitions and/or a
+# tailored matrix are formally approved in accordance with DoD Component policy",
+# with alternates derived from Tables I through III.
+#
+# So this is the row a programme changes first, it changes it in an OVERLAY rather
+# than here, and changing it moves the audience the acceptance routes to — which is
+# the whole point of the ladder being data. A tailored cell is the one place a named
+# ratifier is genuinely required, because it departs from the standard.
 # ---------------------------------------------------------------------------
