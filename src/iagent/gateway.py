@@ -1994,7 +1994,7 @@ async def canvas_seed(
     # engine call to find out.
     # ── R-005: SHARED SLOTS ARE TEMPLATE-SCOPED, AND SCOPE IS WHAT A PANEL CONSUMES ──
     #
-    # RULED 2026-09-11 — see docs/rulings/README.md#r-005-shared_slots-are-template-scoped.
+    # RULED 2026-09-11 — see docs/rulings/README.md#r-005--shared_slots-are-template-scoped.
     #
     # The previous gate unioned every REQUIRED shared slot with every panel's `consumes`, so a
     # slot that was merely DECLARED blocked the seed even when no panel in that template

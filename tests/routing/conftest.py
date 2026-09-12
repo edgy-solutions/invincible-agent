@@ -87,3 +87,54 @@ def pytest_configure(config):
         "requires_engine_o: integration test needing a live Engine O; SKIPS when unreachable, "
         "runs and FAILS normally when it is up.",
     )
+
+
+# ---------------------------------------------------------------------------------------
+# A HANG OUTRANKS A RED. Added 2026-09-11.
+#
+# `pytest tests/routing/` was exiting 124 on a CLEAN master tree — confirmed by
+# invincible-agent-81 with none of either lane's changes applied, so it is not lane-local.
+# Individually the suspected files pass in under a second, which is what makes a hang worse
+# than a failure: a RED SAYS SOMETHING and a HANG SAYS NOTHING. It also eats the whole CI
+# budget and reports a number that names nothing.
+#
+# The probe above answers "is the service up?" and cannot answer "did a test that got a
+# connection then wait forever for a body?" — a socket that ACCEPTS and never replies passes
+# the precondition and stalls the run. That is the gap this closes.
+#
+# `faulthandler` rather than pytest-timeout, which is not a declared dependency (and adding
+# one to diagnose a hang is how a diagnosis becomes a dependency). `dump_traceback_later`
+# prints EVERY thread's stack, so the output NAMES the line that stalled instead of leaving
+# a bisect for the next reader.
+# ---------------------------------------------------------------------------------------
+import faulthandler
+import sys
+
+#: Generous on purpose. This is not a performance budget — it is the boundary past which a
+#: test is no longer running, it is stuck. Override for a deliberately slow probe with
+#: `IAGENT_ROUTING_TEST_TIMEOUT_S`.
+_STALL_SECONDS = float(os.environ.get("IAGENT_ROUTING_TEST_TIMEOUT_S", "120"))
+
+
+@pytest.fixture(autouse=True)
+def _name_the_test_that_stalls(request):
+    """Dump every thread's stack if a single test runs past the stall boundary.
+
+    Deliberately does NOT kill the run. `exit=True` would turn one stalled probe into a
+    dead suite and lose every result after it — trading a hang for a truncation, which
+    answers a different question than the one asked. The traceback names the stall; the
+    remaining tests still report.
+    """
+    if _STALL_SECONDS <= 0:                      # explicitly disabled
+        yield
+        return
+    sys.stderr.write("")                          # ensure the stream exists under capture
+    faulthandler.dump_traceback_later(
+        _STALL_SECONDS, repeat=False, exit=False,
+        file=sys.__stderr__,                      # the REAL stderr — pytest's capture would
+    )                                             # swallow the dump for the hanging test
+    sys.__stderr__.flush()
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()

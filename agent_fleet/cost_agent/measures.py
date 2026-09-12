@@ -118,6 +118,67 @@ def _require_vintage(state: CostState, fiscal_year: int, rate_vintage: Optional[
     )
 
 
+#: Legal values for a mandatory slot, computed from the slots the caller DID supply.
+#:
+#: ── WHY THIS EXISTS: THE BETTER REFUSAL WAS UNREACHABLE ──────────────────────────────────
+#: `_require_vintage` above carries `available` — the two vintages, by name — precisely so the
+#: caller's next question is answerable. IT CANNOT FIRE THROUGH THE HTTP ROUTE. `rate_vintage`
+#: is a spoken-mandatory slot, so `/measure/{fn}` returns `slot_required` BEFORE the verb is
+#: ever called, and the caller is told "needs rate_vintage" with no way to learn what a
+#: vintage looks like. Measured on the wire 2026-09-11, not reasoned about: the refusal
+#: carried `missing` and `declarations` and no values at all.
+#:
+#: A refusal that withholds the options is a dead end wearing a refusal's clothes — the walk
+#: sheet's own standard, written before anyone had looked at the payload.
+#:
+#: KEYED ON (verb, slot) AND CONTEXT-DEPENDENT BY DESIGN. The vintages are a property of the
+#: LOT's fiscal year, so there is no static enum to declare — which is exactly why this slot
+#: fell through `_ENUM_VALUES` and `_REFERENT_KIND` both, and why nothing could enumerate it.
+def _vintage_options(state: CostState, params: dict[str, Any]) -> Optional[list[str]]:
+    lot_number = params.get("lot")
+    if lot_number is None:
+        return None
+    try:
+        return state.vintages(state.lot(int(lot_number)).fiscal_year)
+    except (NotInModel, TypeError, ValueError):
+        # AN UNKNOWN LOT IS NOT AN OPTIONS PROBLEM. The caller gets `slot_required` for the
+        # vintage; that the lot is also wrong belongs to the lot's own refusal, and guessing
+        # here would attach a second diagnosis to the first one's message.
+        return None
+
+
+#: Keyed on the SLOT NAME, and applied to EVERY verb that declares it.
+#:
+#: ⚠ THIS WAS KEYED ON (verb, slot) AND HELD ONE ENTRY, WHICH MADE THE FIX A SAMPLE.
+#: `cost_rate_comparison` got its options; `cost_lot_breakdown` and `cost_price_composition`
+#: declare the SAME mandatory `rate_vintage` and got none. Measured on a live card 2026-09-12:
+#: the ask rendered "Which rate vintage?" as a bare text box, because the refusal it came from
+#: carried no options for cortex to draw. I had fixed the verb I was looking at.
+#:
+#: KEYED BY SLOT BECAUSE THE SLOT IS WHAT HAS OPTIONS. A rate vintage means the same thing in
+#: every verb that takes one, and the source reads `params` so it adapts to the lot in hand.
+#: This is not a tidier registry — it is a registry that CANNOT be a sample: a tenth verb
+#: declaring `rate_vintage` is covered by the commit that adds it, with nothing to remember.
+_SLOT_OPTION_SOURCES: dict[str, Any] = {
+    "rate_vintage": _vintage_options,
+}
+
+
+def options_for(state: CostState, fn_name: str, slot: str,
+                params: dict[str, Any]) -> Optional[list[str]]:
+    """Legal values for a missing slot, or None when the engine cannot compute them.
+
+    NONE AND [] MEAN DIFFERENT THINGS and the route keeps them apart: None is "not computable
+    from what you supplied"; [] would be "there are genuinely none". Collapsing them is how a
+    caller reads "no vintages exist" from "you did not name a lot".
+
+    `fn_name` is accepted and deliberately unused: the contract is per-slot, and taking the
+    verb keeps the door open for a verb-specific override without changing every call site.
+    """
+    source = _SLOT_OPTION_SOURCES.get(slot)
+    return source(state, params) if source else None
+
+
 def _applied_rates(state: CostState, lot_number: int, rate_vintage: Optional[str]):
     lot = state.lot(lot_number)
     vintage = _require_vintage(state, lot.fiscal_year, rate_vintage)
@@ -429,7 +490,17 @@ def cost_rate_assumptions(
     return {
         "output_uri": OUTPUT_URI["cost_rate_assumptions"],
         "rows": _rows,
-        "series": [{"key": f, "label": f.replace("_", " ").title(), "unit": None}
+        # ⚠ THIS DERIVED THE LABEL FROM THE KEY AND PUT "G And A" ON A LIVE CHART.
+        # `_RATE_LABELS` already holds the human names — `cost_rate_comparison` reads it at
+        # line 325 — and this series builder title-cased the key instead, so ONE verb spoke
+        # the domain's vocabulary and its neighbour invented a second one for the same six
+        # factors. A renderer cannot tell a derived label from an authored one; it drew
+        # exactly what was sent.
+        #
+        # `.title()` on an identifier is the tell: it is a plausible label for every key and
+        # a correct one only for keys that happen to be ordinary words.
+        "series": [{"key": f, "label": _RATE_LABELS.get(f, f.replace("_", " ").title()),
+                    "unit": None}
                    for f in _factors],
         "value_label": "Rate",
         "scope_label": state.program_name,

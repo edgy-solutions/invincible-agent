@@ -192,8 +192,22 @@ ADDRESS; if you cannot state the address you do not have a lane, you have a hope
     git fetch
     git log origin/master..origin/lane/* --name-only -- <path>
 
-**It tells you which unmerged lane branches have a pushed change on that file**, which is the
-question you actually have and cannot answer by reading master.
+**It tells you which unmerged lane branches have a pushed change on that file.**
+
+**AND THAT IS ONLY HALF THE QUESTION — CORRECTED 2026-09-11.** The command above answers
+*"who has UNMERGED work here"*. It answers **nothing** about a path contested by a commit that
+has **already landed on master**, and it was stated as if it answered both. Add:
+
+    git log --oneline HEAD..origin/master -- <path>     # touched since YOUR base
+    git branch -a --contains <sha>                      # where a specific commit actually is
+
+**The worked example is how the gap was found.** `invincible-agent-81` ran the first command on
+the cost walk sheet, got **nothing**, and edited — while `93e42e8` had already been merged to
+master and their lane was **12 commits behind**. The collision was real and the instrument said
+clean, because they had asked the question the command answers rather than the question they had.
+
+*Two different questions: "who else is working on this right now" and "what has happened to this
+since I last looked". A lane that is behind needs the second and the first will reassure it.*
 
 **THE GAP IS MEASURED, NOT THEORETICAL.** On 2026-09-11 invincible-agent-91 and Lane 1 fixed the
 frontmatter of `docs/runbooks/adding-an-archetype.md` **independently, hours apart, on different

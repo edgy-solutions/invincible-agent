@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **130 of 142 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **131 of 143 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -47,6 +47,10 @@ _Coverage: **130 of 142 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-rebind-does-not-replace** — REBINDING A SUBJECT TO A DIFFERENT ARCHETYPE LEAVES THE OLD BINDING LIVE, AND THE OLD ONE WINS. The presentation registration NAME encodes the archetype — `presentation_{archetype}_for_{slug}__{frontend_id}` — so it becomes a different tool_urn, and the compensate-on-rescope sweep (keyed on tool_urn + verb_iri) never sees the predecessor. Measured 2026-09-02 after rebinding two fin classes from PERIOD_SERIES to MULTI_SERIES: BOTH menus now hold BOTH bindings, all four rows `registration_complete: True`, and `select_archetype` returns the FIRST match — which is the stale PERIOD_SERIES. So the rebind materialised perfectly and changed nothing a card can see. The verb path does NOT have this defect: the same sweep correctly deleted `fin#Program` when finBurnRate's subject moved, because a verb's name does not encode its input_uri. TWO SECONDARY FINDINGS: the gateway's inline slug puts a COLON inside a DataHub URN (`presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop`) — the same defect fixed in the presentation agent and only there — and the BFF logged `failed_count: 2, gateway-rejected-REFUSED` for two registrations the registrar logged as SUCCEEDED.
   status: open · owner: agent (Engine F lane) — rows deleted; identity change ruled and pending a window · blocked-on: a quiet window for the urn migration (every presentation row moves)
   → [docs/plans/a-rebind-does-not-replace.md](plans/a-rebind-does-not-replace.md)
+
+- **a-refusal-carrying-options-still-reads-as-a-missing-parameter** — The VALUES half is fixed and the WORDING half is not. A slot_required refusal now carries `options: {"rate_vintage": ["2021-02-01", "2021-08-01"]}` while its `reason` still reads "cost_rate_comparison needs rate_vintage" — a missing-parameter statement attached to a payload that is offering a choice. The message is generic across every verb in the engine, so it cannot say what the options mean. Minimum fix: say "choose a rate vintage" when `options` is non-empty. Better fix: let the verb supply its own reason, the same way it now supplies its own options. Small, cortex-adjacent. Ruled a ticket rather than a walk-blocker by the architect 2026-09-11.
+  status: open · owner: unassigned · blocked-on: the cost card walk (do it after, not before — the walk is what says whether the values render at all)
+  → [docs/plans/a-refusal-carrying-options-still-reads-as-a-missing-parameter.md](plans/a-refusal-carrying-options-still-reads-as-a-missing-parameter.md)
 
 - **a-registration-property-must-be-enumerated-seven-times** — THE CHECKLIST, written once so the next feature does not rediscover it four hops at a time. A new registration property reaches the router only if it is named at SEVEN sites, each of which enumerates fields BY NAME. An enumeration that omits a key is SILENT BY CONSTRUCTION - no error, no warning, and the symptom is a verb that appears to declare nothing. Adding `mesh_slots` cost a day and two false "this is the single gate" claims, because four of the seven were found only after an earlier one had been declared complete. Carries two laws: a fix is not finished until you have READ the consumer of what you fixed; and walk the path for embedded DSLs - lift the real string, substitute its parameters, execute it against the real engine, BEFORE deploying.
   status: open · owner: unassigned
