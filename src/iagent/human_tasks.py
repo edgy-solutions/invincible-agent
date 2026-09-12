@@ -554,9 +554,20 @@ def _ordered(verbs) -> "tuple[str, ...]":
     BEFORE the pin rather than after. A `frozenset(...)` wrap here would have silently thrown
     the ordering fix away and left the bump looking applied.
 
-    An unordered source is SORTED rather than passed through: a frozenset's iteration order is
-    arbitrary but not random, so passing it through would produce a stable-looking order that
-    nobody chose — which reads as meaningful and is not.
+    An unordered source is SORTED rather than passed through, and the reason is stronger than
+    tidiness: **Python randomises string hashing per process**, so a frozenset of verbs iterates
+    in a DIFFERENT order in every pod. Measured by `iagent-mesh-sdk-ca` across three interpreters
+    on identical input::
+
+        ('returned_for_rework', 'accepted', 'rejected')
+        ('accepted', 'rejected', 'returned_for_rework')
+        ('accepted', 'returned_for_rework', 'rejected')
+
+    Passing it through would reshuffle a task card's buttons on every restart with nothing in the
+    diff to explain it. Sorting is the only deterministic option available, not merely the tidier
+    one. (This docstring previously said a frozenset's order was "arbitrary but not random" — the
+    decision was right and the mechanism was wrong, which is the more durable kind of error: the
+    code cannot fail, so the false premise survives to be reused somewhere the code WOULD fail.)
     """
     from collections.abc import Sequence  # noqa: PLC0415
     items = [str(v) for v in (verbs or ())]

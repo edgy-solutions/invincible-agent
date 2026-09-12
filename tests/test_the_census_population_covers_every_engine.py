@@ -19,6 +19,20 @@ whether a workload exists.
 THE EIGHTH REGISTRY SITE, and this seal is in front of the safety engine so the NINTH cannot
 repeat it: adding a row to `$engines` without a URL variable turns this red, naming the engine.
 
+WHAT THIS SEAL CANNOT SEE, AND IT IS BY CONSTRUCTION. Its independent enumeration is the chart's
+`$engines` list **on this branch**. An engine that exists only on an unmerged lane branch is
+therefore invisible to it: not a hole to be plugged, because the merge is precisely the act that
+lands the engine, and a seal cannot enumerate a population that has not arrived. What matters is
+that nobody reads this green as covering a lane branch — it asserts that every engine THE CHART
+DECLARES is censused, never that every engine SOMEONE IS BUILDING is. The check that closes the
+gap is the merge itself turning this red, which is the intended order: the engine and its
+registry sites land together, or the seal names what is missing.
+
+**This seal is the eighth site's own instrument, so it inherits that site's lesson one level up.**
+`_COMPONENT_TO_URL_VAR` below is itself a registry site — the tenth — and a component absent from
+it fails by SKIP unless `_NOT_CENSUSED` names it, which is why the map demands one or the other
+rather than tolerating silence.
+
 Run: uv run --frozen pytest tests/test_the_census_population_covers_every_engine.py -v
 """
 from __future__ import annotations
