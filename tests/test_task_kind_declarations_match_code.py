@@ -103,7 +103,23 @@ def test_every_declared_kind_not_in_the_code_table_restates_the_default():
 
 
 def test_reason_required_agrees_with_the_code():
-    """The third code table nobody counts: which verbs are empty without a stated reason."""
+    """The third code table nobody counts: which verbs are empty without a stated reason.
+
+    THIS ARM ENCODES TODAY'S SEMANTICS, WHICH ARE NOT THE DECLARATION'S. ``validate_decision``
+    checks ``decision in _REASON_REQUIRED`` WITHOUT reference to ``kind`` — so reason-required is
+    currently a property OF A VERB, global wherever it appears. The declaration makes it a
+    property OF A ROW. Parity with today therefore means comparing verb SETS, which is what this
+    does; per-species enforcement arrives with the cutover and is a CHANGE, not a restatement.
+
+    Two things follow, both worth knowing before anyone leans on the field:
+      * a declared ``reason_required`` does NOTHING at runtime yet — nothing here reads
+        declarations, so the property is declared and unenforced, which is the shape that
+        already cost us once with an exported predicate nobody consumed;
+      * when the cutover lands, THIS ARM IS THE ONE THAT MUST CHANGE — from comparing verb sets
+        to asserting per-row enforcement. It is not a passive casualty of the move; it is the
+        assertion that has to be rewritten, and leaving it as-is would keep asserting a global
+        rule the code no longer has.
+    """
     decls = _declarations()
     declared = {
         v
