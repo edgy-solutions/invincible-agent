@@ -1,6 +1,7 @@
 @prefix safety: <http://internal/sustainment/safety#> .
 @prefix s3kl:  <http://www.lksoft.com/s3kl#> .
 @prefix ps:    <http://internal/sustainment/product#> .
+@prefix mesh:  <http://internal/mesh#> .
 @prefix owl:   <http://www.w3.org/2002/07/owl#> .
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
@@ -138,6 +139,50 @@ safety:AcceptanceAuthority a owl:Class ;
     rdfs:comment """The ROLE that may accept residual risk at a given level — never a person.
 MINTED: S3000L's AuthorityToOperate is authority to OPERATE and SubtaskAcceptanceParameter is
 acceptance of a subtask; neither is the authority that takes on residual risk.""" .
+
+# ---------------------------------------------------------------------------
+# RESPONSE CLASSES — every verb's `output_uri`, DECLARED HERE BEFORE ANYTHING
+# REGISTERS.
+#
+# ADDED 2026-09-12, AND THE OMISSION WAS THE EXACT DEFECT THIS ADR OPENS WITH.
+# `engine-safety` registered two verbs in `eecb7c4` naming `safety:OrphanedHazardSet`
+# and `safety:DeferralRiskCard` as their outputs, and NO TTL declared either. That is
+# `mesh:proposeDisposition`'s failure repeated: it named its output class from the day
+# it woke, the class existed only because a sandbox seeding script MERGEd it into being,
+# and every fresh cluster's registrar — which MATCHes, correctly, and must never invent
+# ontology — refused the edge with a Contract D 422 telling the exact truth. Nine of
+# Engine A's ten verbs registered and that one could not, permanently.
+#
+# Caught here by running this ADR's own seal 1 against this engine rather than by a
+# cluster refusing it later. `tests/safety/test_output_classes_are_declared.py` now
+# DERIVES the population from VERBS, so a verb added without its class goes red offline.
+#
+# subClassOf mesh:Response to inherit the grounding-pool exclusion (ADR-0046) — a
+# response is an answer, and an answer must not become a subject the router grounds on.
+# ---------------------------------------------------------------------------
+
+safety:OrphanedHazardSet a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Orphaned Hazard Set" ;
+    rdfs:comment """Output of findOrphanedHazards: live hazards with no owned, field-verified
+mitigation, each carrying the MECHANISM that orphaned it, plus the not-assessed hazards reported
+separately and never counted among them.""" .
+
+safety:DeferralRiskCard a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Deferral Risk Card" ;
+    rdfs:comment """Output of assessDeferralRisk: whether a deferred work order's item is
+safety-critical, which hazard the deferral re-opens, and the drafted severity and probability
+carried from that hazard. Resolves no risk level and no acceptance.""" .
+
+safety:RiskAssessmentDraft a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Risk Assessment Draft" ;
+    rdfs:comment """Output of draftRiskAssessment: a DRAFTED severity/probability statement over a
+hazard, with a citation for every figure, the risk level resolved from the ratified matrix, and the
+acceptance audience that level implies. Carries acceptance_status `drafted` and nothing else — the
+engine cannot write `accepted` (ADR-0051 §7), which is a HumanTask disposition by an entitled
+authority.""" .
 
 # ---------------------------------------------------------------------------
 # RELATIONSHIPS — the cause side points OUT of this file, on purpose

@@ -25,6 +25,7 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
         Scope,
         Severity,
     )
+    from matrix import resolve_risk_level
 except ImportError:
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
         BY_HAZARD_ID,
@@ -36,6 +37,7 @@ except ImportError:
         Scope,
         Severity,
     )
+    from agent_fleet.safety_agent.matrix import resolve_risk_level  # type: ignore[no-redef]
 
 
 #: A hazard is LIVE if it is open or mitigated. `not_assessed` is neither, and
@@ -223,4 +225,105 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
             "Severity and probability are carried from the hazard; the risk level and its "
             "acceptance authority are resolved from the ratified matrix, and neither is set here."
         )
+    return out
+
+
+def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any]:
+    """Draft a risk assessment for one hazard: severity, probability, level, authority, citations.
+
+    THE VERB THIS WHOLE ADR IS ABOUT, AND THE ONE IT MOST CAREFULLY LIMITS.
+
+    It drafts. `acceptance_status` is `drafted` and this function contains no path that writes
+    anything else — asserted by seal 2's AST half, not by this sentence. Acceptance is a HumanTask
+    disposition by an authority entitled at the level the draft IMPLIES (ADR-0051 §5, §7).
+
+    THE RISK LEVEL COMES FROM THE RATIFIED MATRIX, NOT FROM HERE. `resolve_risk_level` reads
+    `safety_risk_matrix.ttl`; this function only carries what it is told. That is §2's whole claim
+    and seal 4 is what makes it true of the build rather than of the ADR: change one row in the TTL
+    and the drafted level changes with no code edit.
+
+    CITE-OR-OMIT (seal 11). Every figure in the draft names the source object it came from. A
+    severity this engine cannot source is reported as `not_assessed` with the gap named — never
+    inferred from a neighbouring hazard, never defaulted to the bottom of the matrix, which reads as
+    assessed-and-negligible.
+    """
+    if not hazard_id:
+        return {"refused": True, "reason": "which hazard?"}
+
+    h = BY_HAZARD_ID.get(hazard_id)
+    if h is None:
+        # An unknown hazard REFUSES. Returning an empty draft would be a risk assessment
+        # asserting nothing about a hazard that does not exist, which is worse than a refusal
+        # because it renders as a completed assessment.
+        return {"refused": True, "reason": f"unknown hazard '{hazard_id}'"}
+
+    # DERIVED_FROM: every source object this draft actually read. Seal 10 asserts each one
+    # resolves; a fabricated entry must go red, which is why they are collected as they are used
+    # rather than declared up front from a list someone remembered.
+    derived_from: List[str] = [h.hazard_id]
+    citations: Dict[str, str] = {}
+
+    out: Dict[str, Any] = {
+        "refused": False,
+        "hazard_id": h.hazard_id,
+        "hazard": h.description,
+        "tail": h.tail,
+        "platform": h.platform,
+        # THE ONE VALUE THIS VERB MAY WRITE.
+        "acceptance_status": "drafted",
+    }
+
+    if h.severity is None or h.probability is None:
+        # NOT ASSESSED, AND SAID SO. The matrix is not consulted, no level is invented, and the
+        # gap names which half is missing so the reader knows what to go and get.
+        out["assessment"] = "not_assessed"
+        out["severity"] = h.severity
+        out["probability"] = h.probability
+        out["gap"] = (
+            "severity" if h.severity is None else "probability"
+        ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
+        out["derived_from"] = derived_from
+        out["citations"] = citations
+        return out
+
+    out["severity"] = h.severity
+    out["probability"] = h.probability
+    citations["severity"] = f"hazard {h.hazard_id}"
+    citations["probability"] = f"hazard {h.hazard_id}"
+
+    level, audience, source = resolve_risk_level(h.severity, h.probability)
+    if level is None:
+        # An unrecognized pair REFUSES LOUDLY, naming the vocabulary and its file (seal 5).
+        return {
+            "refused": True,
+            "reason": (
+                f"severity '{h.severity}' / probability '{h.probability}' is not a cell in the "
+                f"ratified matrix ({source})"
+            ),
+        }
+    out["risk_level"] = level
+    out["acceptance_audience"] = audience
+    citations["risk_level"] = source
+    citations["acceptance_audience"] = source
+    derived_from.append(source)
+
+    # The mitigation picture, cited per mitigation rather than summarised — a summary cannot be
+    # traced back to which mitigation it described.
+    mitigations = []
+    for m in h.mitigations:
+        mitigations.append({
+            "mitigation_id": m.mitigation_id,
+            "owner": m.owner,
+            "verified_in_field": m.verified_in_field,
+        })
+        derived_from.append(m.mitigation_id)
+    out["mitigations"] = mitigations
+    out["orphan_reason"] = _orphan_reason(h)
+
+    out["derived_from"] = derived_from
+    out["citations"] = citations
+    out["note"] = (
+        f"DRAFTED. Accepting this risk requires an authority in '{audience}'. "
+        "This engine cannot accept it; the acceptance is a task disposition with a required reason."
+    )
     return out

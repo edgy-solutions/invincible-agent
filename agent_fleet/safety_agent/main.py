@@ -91,6 +91,32 @@ VERBS: List[Dict[str, Any]] = [
             "accept this risk", "who signs off on this",
         ],
     },
+    {
+        "fn": "draft_risk_assessment",
+        "verb": "mesh:draftRiskAssessment",
+        "input_uri": SAFETY + "Hazard",
+        "output_uri": SAFETY + "RiskAssessmentDraft",
+        "desc": (
+            "A DRAFTED severity and probability statement over one hazard, with a citation for "
+            "every figure, the risk level resolved from the ratified matrix, and the acceptance "
+            "authority that level implies. Answers WHAT IS THE RISK and WHO HAS TO ACCEPT IT. "
+            "DRAFTS ONLY - it cannot accept, reject or close anything; acceptance is a human "
+            "task disposition by an entitled authority and this verb opens that review rather "
+            "than resolving it. A hazard whose severity or probability is not assessed is "
+            "reported as not_assessed with the missing half named, never inferred from a "
+            "neighbour and never defaulted. NOT a list of what is unattended - that is "
+            "findOrphanedHazards. OWNS the phrasings: assess this hazard, what is the risk "
+            "level, who has to accept this, draft the risk assessment."
+        ),
+        "synonyms": [
+            "assess this hazard", "what is the risk level", "draft a risk assessment",
+            "who has to accept this risk", "what authority accepts this",
+        ],
+        "anti_synonyms": [
+            "accept this risk", "sign off on this hazard", "close this hazard",
+            "what hazards are unattended", "can we defer this work order",
+        ],
+    },
 ]
 
 BY_FN = {v["fn"]: v for v in VERBS}

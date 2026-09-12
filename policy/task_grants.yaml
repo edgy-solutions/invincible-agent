@@ -207,3 +207,98 @@ audiences:
   # the WHOLE _DISPOSITION_QUEUE map and fails on any queue that resolves to zero actors. The
   # probe converts this from a defect that waits for a reviewer into one that is visible now.
   # Grant it when a ruling names the buyer.
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADR-0051 — SUSTAINMENT SAFETY. Risk acceptance, ONE AUDIENCE PER AUTHORITY LEVEL.
+  #
+  # WHY FOUR KEYS AND NOT ONE WITH A LEVEL FIELD. MIL-STD-882 ties who may accept a
+  # risk to the risk's LEVEL, and the level is resolved from the ratified matrix
+  # (setup/ontologies/safety_risk_matrix.ttl), which carries each level's
+  # `acceptanceAudience` as data. An authority level IS a group — and `grant_to` is
+  # USERS ONLY here, so the group is enumerated by hand. That is the constraint's
+  # workaround wearing a design's clothes, it is recorded as such on the M3 list, and
+  # when group audiences are ruled these four collapse to one row per level.
+  #
+  # THE SANDBOX LADDER IS DELIBERATELY SPLIT SO THE SEAL CAN DISCRIMINATE.
+  # alice holds the two senior levels; bob holds the two junior ones and is also the
+  # DRAFTING author; carol holds nothing. On a High-risk assessment that yields the
+  # three-caller shape ADR-0051 seal 7 needs, with all three legs live rather than
+  # asserted: alice disposes, bob SEES AND CANNOT, carol neither sees nor acts.
+  # Honest-denial-as-demo-asset, the same posture as the promotion fixture above.
+  #
+  # SAMPLE VALUES. At work these bind to the programme's own acceptance authorities,
+  # and the split between levels is whatever that programme's system-safety plan says
+  # — which is exactly why the ladder is data in the matrix rather than code here.
+  risk_acceptance_high:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Who may ACCEPT a High residual risk in the SUSTAINMENT compartment.
+      Acceptance is a task disposition, never a verb (§7) — the engine drafts and
+      cannot accept. `accepted` and `rejected` are BOTH reason-required (R-004 b/e):
+      an authority taking on residual risk with no stated rationale is the one act in
+      this domain whose record IS the reason. Sandbox = alice, the senior authority.
+    grant_to:
+      - alice@example.com
+
+  risk_acceptance_serious:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Serious residual risk. Same senior authority as High in sandbox,
+      and deliberately NOT bob — a caller one tier down must be refused, or seal 7
+      cannot tell a working ladder from a single undifferentiated grant.
+    grant_to:
+      - alice@example.com
+
+  risk_acceptance_medium:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Medium residual risk, accepted a tier lower. Sandbox = bob, who is
+      also the drafting author below — which is correct and is the point: an engineer
+      may accept a Medium risk they drafted and may NOT accept a High one.
+    grant_to:
+      - bob@example.com
+
+  risk_acceptance_low:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Low residual risk. Sandbox = bob.
+    grant_to:
+      - bob@example.com
+
+  # THE AUTHOR'S VISIBILITY AUDIENCE — R-004(a), RULED, and it does not happen for free.
+  #
+  # `can_view` is deny-by-default and task EXISTENCE is sensitive (existence-oracle), so
+  # without this row the engineer who drafted an assessment cannot see their own pending
+  # item — they would file a bug and they would be right. THE EXISTENCE-ORACLE PROTECTS
+  # AGAINST OUTSIDERS, NOT AGAINST AUTHORS.
+  #
+  # VIEW-ONLY BY INTENT. This audience exists so the drafter can watch the item they
+  # raised; it must not confer can_act, or it silently becomes a fifth acceptance tier
+  # that no matrix row points at.
+  risk_assessment_author:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5 / R-004(a). The drafting safety engineer's VIEW of a risk assessment
+      they raised and cannot themselves accept at that level. Sandbox = bob: he drafts,
+      sees every pending assessment, and is refused on High and Serious — which is the
+      middle leg of seal 7 and the only one a lazy implementation gets wrong, because
+      "sees and cannot act" and "cannot see" look identical from the outside.
+    grant_to:
+      - bob@example.com
+
+  # Hazard LINK review — classifyWriteUp PROPOSES a link and never creates a hazard
+  # (ADR-0051 §7). Three write-ups of one condition must resolve to one hazard and two
+  # links rather than three hazards, and a human makes that call.
+  hazard_link_review:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Who may confirm that a write-up describes an EXISTING hazard rather
+      than a new one. Lower stakes than acceptance and deliberately a different
+      audience: the safety engineer who knows the fleet makes this call, not the
+      authority who accepts residual risk. Sandbox = bob.
+    grant_to:
+      - bob@example.com
+
+  # NOT GRANTED, DELIBERATELY: carol. She is the third leg of seal 7 — a caller who
+  # neither sees nor may act. Recorded here rather than left as an absence, because an
+  # absence is indistinguishable from an oversight, and this one is load-bearing.
