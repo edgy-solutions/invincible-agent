@@ -260,6 +260,10 @@ def _prime_run_from_graph(namespace: str, bff_deploy: str = "iagent-cortex-bff")
 #: diff go away.
 _VERB_SNAPSHOT = Path.home() / ".iagent" / "verb_snapshot.json"
 
+#: The sources `_declared_verbs` actually walked on its last call, so an UNATTRIBUTED verb can
+#: name the DIRECTION this census is blind in rather than reporting a number.
+_WALKED_SOURCES: "list[str]" = []
+
 
 def _declared_verbs(repo: Path) -> "dict[str, str]":
     """`mesh:verb -> where it is declared`, from BOTH sources. Derived, never listed.
@@ -278,14 +282,21 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
     function about is reported **UNATTRIBUTED** — loudly, by name — rather than omitted.
     """
     out: "dict[str, str]" = {}
-    for pyf in sorted((repo / "agent_fleet").glob("*/main.py")):
+    walked: "list[str]" = []
+    _cat = sorted((repo / "agent_fleet").glob("*/main.py"))
+    _rows = sorted((repo / "policy" / "graphs").glob("*.yaml"))
+    walked.append(f"engine catalogues (agent_fleet/*/main.py, {len(_cat)} file(s))")
+    walked.append(f"ratified graph rows (policy/graphs/*.yaml, {len(_rows)} file(s))")
+    _WALKED_SOURCES.clear()
+    _WALKED_SOURCES.extend(walked)
+    for pyf in _cat:
         try:
             text = pyf.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for m in re.finditer(r'"verb"\s*:\s*"(mesh:[A-Za-z_][A-Za-z0-9_]*)"', text):
             out.setdefault(m.group(1), f"catalogue: {pyf.parent.name}")
-    for row in sorted((repo / "policy" / "graphs").glob("*.yaml")):
+    for row in _rows:
         try:
             text = row.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -366,12 +377,23 @@ def report_verb_delta(namespace: str, repo: Path) -> int:
                 print(f"       ADDED    {t}   <- UNATTRIBUTED")
                 unattributed.append(t)
         if unattributed:
+            # NAME THE DIRECTION, NOT THE COUNT. "+1, unattributed" reads as a limitation of
+            # COUNTING and never as a source the census cannot see — and it degrades: seen
+            # twice it looks like arithmetic. An instrument reporting its own gap as a small
+            # number is the most expensive way to report a gap, because it looks like
+            # PRECISION. Same shape as the abstention diagnostic that printed `source` where
+            # `domains` belonged. Listing what WAS walked makes the omission legible: a reader
+            # can see that their source is not on the list.
             print(
-                f"\n       {len(unattributed)} addition(s) could not be attributed to a "
-                f"declaration this census knows how to read: {', '.join(unattributed)}.\n"
-                f"       That is a SOURCE THIS CENSUS IS BLIND TO, not a limitation of "
-                f"counting. Structural edges (HAS_PART, INSTANCE_OF) are expected here; a "
-                f"camelCase verb is not."
+                f"\n       {len(unattributed)} addition(s) matched NO declaration in any "
+                f"source this census walks: {', '.join(unattributed)}."
+            )
+            for src in _WALKED_SOURCES:
+                print(f"           walked: {src}")
+            print(
+                "       If a verb above is real and declared somewhere else, THIS CENSUS IS "
+                "BLIND IN THAT DIRECTION and the list above is what it can see. Structural "
+                "edges (HAS_PART, INSTANCE_OF) belong here; a camelCase verb does not."
             )
 
     _VERB_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
