@@ -56,13 +56,18 @@ data:
   set. This also makes the overlay branch execute for the first time, with nothing to overlay,
   which is the cheapest possible exercise of it.
 
-  `TASK_KIND_OVERLAY_DIRS` is DELIBERATELY NOT SET HERE — see policy/overlays/README.md. It
-  would make the task-kind gate fire, and `pcn_grouped_review` has 2 live rows in sandbox
-  while being on the FORBIDDEN list in tests/test_cross_repo_contracts.py. Wiring it before
-  that name is migrated or retired turns two live tasks dead as a side effect of a config
-  line. That is a decision, not a consequence. */}}
+  `TASK_KIND_OVERLAY_DIRS` WAS HELD BACK UNTIL THE DATA WAS SAFE, and the order mattered:
+  overlay directory -> migration -> env var -> gate. Reversed, it kills tasks for a config
+  line. `pcn_grouped_review` had 2 live rows while being on the FORBIDDEN list in
+  tests/test_cross_repo_contracts.py; they were re-keyed to `grouped_review` (same species,
+  retired prefix) by scripts/migrate_pcn_grouped_review_rows.py on 2026-09-12, taking that
+  kind 25 -> 27. Every one of the 55 live rows now falls under a declared kind, so setting
+  this refuses nothing that exists. */}}
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "GRAPH_OVERLAY_DIRS") }}
   GRAPH_OVERLAY_DIRS: "/app/policy/overlays/sample/graphs"
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
+  TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds"
   {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
