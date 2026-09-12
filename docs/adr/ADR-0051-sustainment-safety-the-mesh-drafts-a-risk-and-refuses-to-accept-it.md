@@ -528,6 +528,21 @@ taxonomy and the card must not imply otherwise.
 2. **Who ratifies the risk matrix and the authority ladder**, and therefore whose identity fills the
    `prov:wasDerivedFrom` that ships empty.
 
+   **What the ratifier is actually deciding, in one concrete row** — added 2026-09-11 from the
+   seeded matrix, because "ratify the matrix" is too abstract to act on. Take **I/E**:
+   catastrophic severity, improbable. `safety_risk_matrix.ttl` seeds it **Medium**, and flags it
+   in-file as the row most likely to be wrong. Some programmes hold that a **catastrophic outcome
+   never falls below Serious** whatever the odds, because the acceptance decision should reach a
+   senior authority regardless of probability.
+   
+   Both readings are defensible; only one is this programme's. And the consequence is not
+   cosmetic: the risk level resolves to an `acceptanceAudience`, so **changing that one cell moves
+   which authority the acceptance routes to** — `risk_acceptance_medium:SUSTAINMENT` becomes
+   `risk_acceptance_serious:SUSTAINMENT`, and a different set of people can dispose it.
+   
+   **That is a row edit with a ratifier's name on it, not an engine change** — which is §2's whole
+   claim, stated as something a safety authority can actually say yes or no to.
+
 ~~3. Whether the drafter's visibility audience is wanted.~~ **CLOSED 2026-09-10 — ruled in §5**:
    `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. Struck here rather than
    deleted, so a reader of the open list can tell *answered* from *never asked*.
