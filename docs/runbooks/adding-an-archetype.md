@@ -1,5 +1,15 @@
 ---
-title: Adding an archetype
+iri: docs:runbook-adding-an-archetype
+# DELIBERATELY SHORT, by the invented-IRI rule (ADR-0037 §1). The page names six SITES — a
+# Python registry, a projector row, a conformance case, an exemption — and NONE of those is a
+# graph IRI. Minting `mesh:addArchetype` or an IRI per registry to make this list look complete
+# is exactly what the gate refuses, and it is the same refusal adding-an-engine.md records for
+# `mesh:registerEngine`. One edge, to the one class this page explains at contract depth.
+explains:
+  - mesh:Archetype
+doc_kind: how-to
+audience_hint: ARCHITECT
+# ── not part of the doc model; kept because they were here first ──
 status: WRITTEN FROM THREE CONSECUTIVE REDISCOVERIES — StepLadder, NamedHole, CompetingMeasures
 date: 2026-09-11
 adr: ADR-0042 (arrangement is UI-master) — cited, not amended
