@@ -56,9 +56,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
+import time
 import datetime as _dt
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 #: The env var the images stamp. Read from the RUNNING process, never from the pod spec.
@@ -250,6 +253,136 @@ def _prime_run_from_graph(namespace: str, bff_deploy: str = "iagent-cortex-bff")
     except Exception:  # noqa: BLE001
         return None
     return float(val) if isinstance(val, (int, float)) else None
+
+
+#: Where the snapshot lives. Beside the census rather than in the repo tree: it is a RECORD OF
+#: WHAT WAS SEEN, not a declaration, and committing it would invite someone to edit it to make a
+#: diff go away.
+_VERB_SNAPSHOT = Path.home() / ".iagent" / "verb_snapshot.json"
+
+
+def _declared_verbs(repo: Path) -> "dict[str, str]":
+    """`mesh:verb -> where it is declared`, from BOTH sources. Derived, never listed.
+
+    TWO SOURCES, AND READING ONLY THE FIRST IS THE DEFECT THIS EXISTS TO CLOSE.
+    `invincible-agent-22` measured it: they diffed live `db.relationshipTypes()` against verbs
+    derived from every engine's `CATALOGUE` and `finProgramBrief` came back **unaccounted** —
+    not because it is undeclared, but because **a graph-host verb comes from a RATIFIED ROW in
+    `policy/graphs/`, and there is nowhere in an engine catalogue for it to be.** Any derivation
+    reading catalogues alone is blind to it *by construction*, and that blindness grows with
+    every graph engine-lg admits.
+
+    THIS IS AN EXCLUSION, NOT AN INCLUSION LIST, AND THE DIFFERENCE IS WHICH WAY IT FAILS. A
+    hardcoded entry for graph-host verbs would make today's answer right and go silently blind on
+    the third graph. Deriving from the sources means a verb from a source nobody taught this
+    function about is reported **UNATTRIBUTED** — loudly, by name — rather than omitted.
+    """
+    out: "dict[str, str]" = {}
+    for pyf in sorted((repo / "agent_fleet").glob("*/main.py")):
+        try:
+            text = pyf.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r'"verb"\s*:\s*"(mesh:[A-Za-z_][A-Za-z0-9_]*)"', text):
+            out.setdefault(m.group(1), f"catalogue: {pyf.parent.name}")
+    for row in sorted((repo / "policy" / "graphs").glob("*.yaml")):
+        try:
+            text = row.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = re.search(r'^\s*verb:\s*(mesh:[A-Za-z_][A-Za-z0-9_]*)\s*$', text, re.M)
+        if m:
+            out.setdefault(m.group(1), f"ratified row: policy/graphs/{row.name}")
+    return out
+
+
+def _live_relationship_types(namespace: str) -> "Optional[list[str]]":
+    """Every relationship type in the graph, or None if it could not be read."""
+    pod = _pod_for(namespace, "iagent-cortex-bff")
+    if not pod:
+        return None
+    snippet = (
+        "import os,json,base64,urllib.request as u;"
+        "usr=os.environ.get('NEO4J_USER') or os.environ.get('NEO4J_USERNAME') or 'neo4j';"
+        "tok=base64.b64encode((usr+':'+os.environ.get('NEO4J_PASSWORD','')).encode()).decode();"
+        "q={'statements':[{'statement':'CALL db.relationshipTypes()'}]};"
+        "r=u.Request('http://iagent-neo4j:7474/db/neo4j/tx/commit',"
+        "data=json.dumps(q).encode(),"
+        "headers={'Content-Type':'application/json','Authorization':'Basic '+tok});"
+        "d=json.load(u.urlopen(r,timeout=20));"
+        "print(json.dumps([x['row'][0] for x in d['results'][0]['data']]))"
+    )
+    rc, out = _kubectl(["-n", namespace, "exec", pod, "--", "python", "-c", snippet], timeout=90)
+    if rc != 0:
+        return None
+    try:
+        return json.loads(out.strip().splitlines()[-1])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def report_verb_delta(namespace: str, repo: Path) -> int:
+    """Name what the verb set gained or lost since the last run, and attribute each addition.
+
+    **A COUNT THAT MOVED AND CANNOT BE ATTRIBUTED IS THE NO-OP-PIN FINDING IN A NEW COSTUME.**
+    `db.relationshipTypes()` went 63 -> 64 and nobody could say which verb the 64th was, which
+    is a fact nobody can act on. So this reports BY NAME and says where each new verb was
+    declared.
+
+    Returns 0 (nothing new, or everything attributed), 2 (could not look), or 3 (an addition
+    this function cannot attribute — a source it does not know how to read).
+    """
+    live = _live_relationship_types(namespace)
+    if live is None:
+        print("VERBS: could not read db.relationshipTypes() — NOT a clean sweep, a blind one.")
+        return 2
+    live_set = sorted(set(live))
+
+    previous: "Optional[list[str]]" = None
+    try:
+        previous = json.loads(_VERB_SNAPSHOT.read_text(encoding="utf-8")).get("types")
+    except Exception:  # noqa: BLE001
+        previous = None
+
+    declared = _declared_verbs(repo)
+    print(f"\nVERBS: {len(live_set)} relationship type(s) live.")
+
+    if previous is None:
+        print("       No previous snapshot — this run establishes the baseline. A first run "
+              "cannot report a delta and must not pretend to.")
+    else:
+        added = [t for t in live_set if t not in set(previous)]
+        removed = [t for t in previous if t not in set(live_set)]
+        if not added and not removed:
+            print("       unchanged since the last snapshot.")
+        for t in removed:
+            print(f"       REMOVED  {t}")
+        unattributed = []
+        for t in added:
+            src = declared.get(t) or declared.get(f"mesh:{t}")
+            if src:
+                print(f"       ADDED    {t}   <- {src}")
+            else:
+                print(f"       ADDED    {t}   <- UNATTRIBUTED")
+                unattributed.append(t)
+        if unattributed:
+            print(
+                f"\n       {len(unattributed)} addition(s) could not be attributed to a "
+                f"declaration this census knows how to read: {', '.join(unattributed)}.\n"
+                f"       That is a SOURCE THIS CENSUS IS BLIND TO, not a limitation of "
+                f"counting. Structural edges (HAS_PART, INSTANCE_OF) are expected here; a "
+                f"camelCase verb is not."
+            )
+
+    _VERB_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+    _VERB_SNAPSHOT.write_text(
+        json.dumps({"types": live_set, "at": time.time()}, indent=2), encoding="utf-8")
+    if previous is not None and any(
+        not (declared.get(t) or declared.get(f"mesh:{t}"))
+        for t in live_set if t not in set(previous)
+    ):
+        return 3
+    return 0
 
 
 def _last_prime_completion(namespace: str) -> Optional[float]:
@@ -497,12 +630,22 @@ def main() -> int:
             f"\n{len(unpinned)} of {len(rows)} on ':latest' — the spec tag identifies "
             f"nothing. Pin with `--set global.imageTag=$(git rev-parse HEAD)`."
         )
+    # THE VERB DELTA RUNS BEFORE THE SHA VERDICT RETURNS, so it is reported even on a FAILED
+    # census. A fleet at the wrong sha is exactly when you most want to know which verbs moved,
+    # and folding this after an early `return 1` would make the report available only when
+    # nothing was wrong.
+    verb_rc = report_verb_delta(args.namespace, Path(__file__).resolve().parents[1])
+
     if expected and bad:
         print(f"\nFAILED: {len(bad)} service(s) not at {args.expect} ({_short(expected)}): "
               f"{', '.join(sorted(bad))}")
         return 1
     if expected:
         print(f"\nOK: all {len(rows)} service(s) at {args.expect} ({_short(expected)}).")
+    if verb_rc == 3:
+        print("\nNOTE: exit 3 — sha checked and PASSED; a verb addition could not be "
+              "attributed to any declaration this census reads.")
+        return 3
 
     # THREE OUTCOMES, BECAUSE THERE ARE THREE. invincible-agent-91's resolution, and the
     # reasoning is that a run-level exit code cannot carry a PER-CLAIM verdict. This census
