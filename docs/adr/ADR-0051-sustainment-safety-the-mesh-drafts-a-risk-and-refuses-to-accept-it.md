@@ -481,6 +481,14 @@ where red was expected is a signal about the seal, not about the code.
     the safety kinds do not go live, because a risk acceptance reachable through a generic approval
     card is §7's refusal defeated from outside the engine.
 
+    **IT MUST ASSERT THE RENDER, NEVER THE PREDICATE** — sharpened 2026-09-11 by Lane 1, and this is
+    the part that decides whether the seal is real. `isRegisteredKind` having no caller outside its
+    own tests is **not a missing wire-up; it is a GREEN SEAL OVER AN ABSENT CONSUMER**: the predicate
+    is tested, it passes, and it guards nothing, so the suite reports the protection as present while
+    the bug is live. A test that calls `isRegisteredKind` directly is therefore **green today, with an
+    undeclared kind still being handed Approve/Reject.** Only a test that drives the render can tell
+    those two states apart, which is exactly the discrimination this seal is for.
+
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
 `prov:wasDerivedFrom` empty until it happens. Also unseen: whether the hazard taxonomy

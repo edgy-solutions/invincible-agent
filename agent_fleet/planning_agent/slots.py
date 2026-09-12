@@ -33,19 +33,24 @@ already imply it.
 """
 from __future__ import annotations
 
-import inspect
-import types
-import typing
-from typing import Any, Dict, List
+from typing import Dict, List
 
 try:  # flat in the image (/app), packaged in the repo — see
     # tests/test_agent_modules_survive_flat_layout.py, which seals this dual form. A bare
     # `from . import measures` imports fine here and dies at container start.
+    #
+    # `utils` is a SIBLING TOP-LEVEL module in the image — `COPY agent_fleet/utils/ /app/utils/`
+    # in build-containers.yml — which is what makes the shared derivation importable here at
+    # all (runbook §5). FLAT FIRST: getting this order backwards cost Engine P a full roll,
+    # where the import failed, the registration helper became None, and twelve registrations
+    # were skipped while the engine reported perfectly healthy.
     import measures
     from entities import FISCAL_PERIODS
+    from utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 except ImportError:
     from agent_fleet.planning_agent import measures
     from agent_fleet.planning_agent.entities import FISCAL_PERIODS
+    from agent_fleet.utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 
 #: Injected by the route, never spoken. MIRRORS the `params[...] = ...` sites in main.py's
 #: run_measure, and `test_slot_handles_match_the_routes_injection_sites` fails if the two
@@ -64,54 +69,19 @@ HANDLE_SLOTS: Dict[str, set] = {
 CEREMONY_VERBS = {"plan_commit_scenario"}
 
 #: The measure's own state handle. Never a parameter in any sense a caller would recognise.
-_NOT_A_SLOT = {"state"}
+#: The shared default says the same thing; bound here so the engine still names its own fact.
+_NOT_A_SLOT = NOT_A_SLOT
 
-SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
-
-
-def _is_union(origin: Any) -> bool:
-    """`Optional[X]` and `X | None` have DIFFERENT origins (`typing.Union` and
-    `types.UnionType`), and this module must treat both as unwrappable — otherwise the same
-    annotation declares differently depending on which syntax the author used."""
-    if origin is typing.Union:
-        return True
-    UnionType = getattr(types, "UnionType", None)  # 3.10+; absent on older runtimes
-    return UnionType is not None and origin is UnionType
-
-
-def _type_of(annotation: Any) -> tuple[str, List[str] | None]:
-    """(type-name, enum-values) read from the annotation — never from a remembered list."""
-    if annotation is inspect.Parameter.empty:
-        return "unknown", None
-    origin = typing.get_origin(annotation)
-    if origin is typing.Literal:
-        return "enum", [str(v) for v in typing.get_args(annotation)]
-    if origin is not None:
-        args = [a for a in typing.get_args(annotation) if a is not type(None)]
-        # Optional[X] / X | None — unwrap to the single remaining arm.
-        if _is_union(origin):
-            if len(args) == 1:
-                return _type_of(args[0])
-            return "union", None
-        # A REAL CONTAINER, AND THE CONTAINER IS PART OF THE CONTRACT.
-        #
-        # The unwrap rule above was written for Optional and silently ate this case:
-        # `Optional[list[str]]` unwrapped to `list[str]`, then unwrapped AGAIN to `str`, so
-        # `plan_site_load.window` was declared a scalar. Measured consequence, on real
-        # bytes: a router filling that slot from "in FY26-Q4" sends the STRING, the measure
-        # iterates it, and the engine refuses with
-        #   422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4
-        # — a message that names characters and blames the engine for the declaration's
-        # lie. `window=["FY26-Q4"]` returns the one period that was asked for.
-        #
-        # So the container is reported. Enum values, if any, come from INSIDE it
-        # (`list[Literal[...]]` is a multi-select over a closed vocabulary), because the
-        # values are a fact about what may be said, not about how many may be said.
-        inner_name, inner_values = _type_of(args[0]) if args else ("unknown", None)
-        cname = getattr(origin, "__name__", None) or str(origin)
-        return f"{cname}[{inner_name}]", inner_values
-    name = getattr(annotation, "__name__", None)
-    return (name or str(annotation)), None
+# `SLOT_KINDS`, `_is_union` and `_type_of` MOVED 2026-09-11 to
+# `agent_fleet/utils/slot_declarations.py`, at the third consumer (Engine S, ADR-0051 §4) and
+# on the trigger Engine F's own FILED-NOT-FIXED note named. `SLOT_KINDS` is re-exported above
+# so every existing `from slots import SLOT_KINDS` keeps working and there is still exactly one
+# definition of the vocabulary.
+#
+# The two asymmetries this module paid for in measured failures — `eval_str=True`, and
+# unwrapping `Optional[X]` but STOPPING at a real container — moved WITH their evidence and
+# are sealed in `tests/utils/test_slot_declarations_extraction.py`. If you are here because a
+# declaration looks wrong, read that file: the derivation is no longer in this one.
 
 
 #: A spoken slot whose value is an OPAQUE ID, mapped to the kind of thing it identifies.
@@ -202,70 +172,52 @@ def _resolve_period_to_date() -> dict:
     return {label: iv.end for label, iv in FISCAL_PERIODS.items()}
 
 
+def _attach_period_vocabulary(rec: dict, *, name: str, prm, kind: str, values):
+    """Engine P's own enrichment, passed to the shared derivation as its `decorate` hook.
+
+    THIS IS THE PART THAT IS NOT SHARED, and it is not shared because it is a fact about a
+    CALENDAR rather than about a signature — `Optional[list[str]]` says the shape and nothing
+    about which strings are periods.
+
+    WHAT KIND OF PERIOD THIS SLOT TAKES — declared, because `str` does not say, and the two
+    vocabularies are different. The filler needs it to offer a date where a date is wanted
+    rather than free text; the router needs it to know which values it may check.
+    """
+    if kind.startswith("spoken") and name in _PERIOD_KIND:
+        rec["period"] = _PERIOD_KIND[name]
+        # A date-taking period slot carries the label->date boundaries it can resolve, so the
+        # router can turn "FY26-Q4" into the date the measure actually compares against.
+        # Without it the label is forwarded and the measure's LEXICAL compare silently admits
+        # everything: ('9999-12-31' <= 'FY26-Q4') is True.
+        # BOTH period kinds carry the calendar, for different reasons. A `date` slot needs it
+        # to RESOLVE a label to a date. A `fiscal-period` slot needs it so the router can work
+        # out which period contains today — the ANCHOR that makes "this quarter" answerable —
+        # without holding a second copy of the calendar.
+        rec["period_end"] = _resolve_period_to_date()
+    if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
+        values = list(FISCAL_PERIODS)
+    return values
+
+
 def slots_for(fn_name: str) -> List[dict]:
-    """The slot declarations for one measure, derived from its signature."""
+    """The slot declarations for one measure, derived from its signature.
+
+    The derivation itself lives in `utils/slot_declarations.py` (extracted at the third
+    consumer). What stays here is what is Engine P's: which parameters the route injects,
+    which verb is a ceremony, which names are referents and to what classes, and the fiscal
+    calendar the signature cannot carry.
+    """
     fn = getattr(measures, fn_name, None)
     if fn is None:
         return []
-    handles = HANDLE_SLOTS.get(fn_name, set())
-    ceremony = fn_name in CEREMONY_VERBS
-    out: List[dict] = []
-    # `eval_str=True` because measures.py uses `from __future__ import annotations`, which makes
-    # every annotation a STRING. Without it `Literal["org","initiative"]` arrives as the literal
-    # text `"Literal['org', 'initiative']"` — the enum values reduced to prose, which is exactly
-    # the hand-maintained shape this module exists to avoid, arriving through the back door.
-    # Falls back to the unevaluated signature if a forward reference will not resolve; a slot
-    # typed "unknown" is honest, a slot whose values were parsed out of a string is not.
-    try:
-        sig = inspect.signature(fn, eval_str=True)
-    except Exception:  # noqa: BLE001 - an unresolvable annotation must not break registration
-        sig = inspect.signature(fn)
-    for name, prm in sig.parameters.items():
-        if name in _NOT_A_SLOT:
-            continue
-        required = prm.default is inspect.Parameter.empty
-        type_name, values = _type_of(prm.annotation)
-        if name in handles:
-            kind = "handle"
-        elif ceremony:
-            kind = "ceremony"
-        elif required:
-            kind = "spoken-mandatory"
-        else:
-            kind = "spoken-optional"
-        rec: dict = {"name": name, "kind": kind, "type": type_name, "required": required}
-        # WHAT KIND OF THING THIS SLOT NAMES, when it names one. Present only on spoken
-        # slots: a route-supplied handle is resolved by the dispatcher and needs no
-        # referent hint. Absent means "a literal the speaker supplies", which is the
-        # common case and needs no resolution.
-        if kind.startswith("spoken") and name in _REFERENT_KIND:
-            rec["referent"] = _REFERENT_KIND[name]
-        # A period slot's vocabulary is a fact about the calendar, not about the signature —
-        # `Optional[list[str]]` says the shape and nothing about which strings are periods.
-        # WHAT KIND OF PERIOD THIS SLOT TAKES — declared, because `str` does not say, and the
-        # two vocabularies are different. The filler needs it to offer a date where a date is
-        # wanted rather than free text; the router needs it to know which values it may check.
-        if kind.startswith("spoken") and name in _PERIOD_KIND:
-            rec["period"] = _PERIOD_KIND[name]
-            # A date-taking period slot carries the label->date boundaries it can resolve, so
-            # the router can turn "FY26-Q4" into the date the measure actually compares
-            # against. Without it, the label is forwarded and the measure's LEXICAL compare
-            # silently admits everything: ('9999-12-31' <= 'FY26-Q4') is True.
-            # BOTH period kinds carry the calendar, for different reasons. A `date` slot
-            # needs it to RESOLVE a label to a date. A `fiscal-period` slot needs it so the
-            # router can work out which period contains today — the ANCHOR that makes "this
-            # quarter" answerable — without holding a second copy of the calendar.
-            rec["period_end"] = _resolve_period_to_date()
-        if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
-            values = list(FISCAL_PERIODS)
-        if values is not None:
-            rec["values"] = values
-        if not required and prm.default is not None:
-            rec["default"] = prm.default if isinstance(
-                prm.default, (str, int, float, bool)
-            ) else str(prm.default)
-        out.append(rec)
-    return out
+    return derive_slots(
+        fn,
+        handles=HANDLE_SLOTS.get(fn_name, set()),
+        ceremony=fn_name in CEREMONY_VERBS,
+        referents=_REFERENT_KIND,
+        not_a_slot=_NOT_A_SLOT,
+        decorate=_attach_period_vocabulary,
+    )
 
 
 def arity_for(fn_name: str) -> str | None:
