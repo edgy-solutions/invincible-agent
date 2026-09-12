@@ -338,6 +338,25 @@ reported perfectly healthy.** `tests/test_agent_modules_survive_flat_layout.py` 
 cd agent_fleet/<engine>_agent && PYTHONPATH= python -c "import main; print(len(main.VERBS))"
 ```
 
+> **FILED DEFECT 2026-09-11 — THE COMMAND ABOVE FAILS ON UNMODIFIED MASTER. Do not read its first
+> failure as yours.** Measured on `73e308e`: it dies at `agent_fleet/planning_agent/main.py:316`
+> (`from agent_fleet.utils.version_endpoint import mount_version`) before reaching anything a lane
+> changed. With `PYTHONPATH` cleared, a checkout can resolve **neither** the flat name `utils` nor
+> the packaged `agent_fleet.utils` — `utils` is only a flat sibling *inside the image*
+> (`build-containers.yml:356`). So the check cannot pass here for any engine that imports `utils` at
+> module level, and it fails identically whether the import order is right or wrong.
+>
+> Until it is fixed, reproduce the image's `sys.path` instead — this discriminates correctly and was
+> used to verify the slot-declarations extraction:
+>
+> ```bash
+> cd agent_fleet/<engine>_agent && PYTHONPATH=../../agent_fleet python -c "import main; print(len(main.VERBS))"
+> ```
+>
+> Packet: [`runbook-5s-pre-build-check-fails-on-the-baseline`](../plans/runbook-5s-pre-build-check-fails-on-the-baseline.md).
+> **The replacement must be shown RED against a deliberately inverted try/except order before it is
+> trusted**, or a red that means nothing has been swapped for a green that means nothing.
+
 ---
 
 ## §6 — Keycloak: the identity, and the law that costs a silent 401

@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **130 of 142 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **131 of 143 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -311,6 +311,10 @@ _Coverage: **130 of 142 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
+
+- **runbook-5s-pre-build-check-fails-on-the-baseline** — Runbook §5 tells you to verify the flat import before building an image, with `cd agent_fleet/<engine>_agent && PYTHONPATH= python -c "import main"`. That command FAILS on unmodified master — `agent_fleet/planning_agent/main.py:316` imports `agent_fleet.utils.version_endpoint` at module level, and `utils` is only a flat sibling inside the image. So the check cannot pass in a checkout for any engine importing `utils` at module level, and the first thing a lane sees when running it is a pre-existing failure they will read as their own. Fix is a check that reproduces the image's sys.path, not a ninth caveat.
+  status: open · owner: unassigned
+  → [docs/plans/runbook-5s-pre-build-check-fails-on-the-baseline.md](plans/runbook-5s-pre-build-check-fails-on-the-baseline.md)
 
 - **sandbox-document-objects-are-not-reproducible** — A recoverability audit (2026-09-10, during worker6's storage failure) found sandbox reproducible from the repo EXCEPT for MinIO document objects — the sample PDFs are seeded by nothing and exist only on one failing disk. The bucket-init job creates buckets and uploads nothing. Fix is a manifest of source URLs + sha256 and a fetch/upload script; the bytes must NOT be committed. Also: tests/fixtures/iads_40051_demo is in the repo but wired only to one test, not to any seed path.
   status: open · owner: unassigned

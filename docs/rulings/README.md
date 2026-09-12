@@ -96,10 +96,23 @@ the notice is part of the ruling rather than an implementation detail.
 | b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
+| e | **The acceptance verb is `accepted`, NOT the seed's `approved`.** RULED 2026-09-11, architect. A risk is *accepted* by an authority — MIL-STD-882's word, and the ADR's whole claim. `approved` is the generic seed's verb for generic things. A queue showing both side by side is showing **two different acts, correctly**; the declaration row's label makes it explicit. The SDK constrains verb strings nowhere, deliberately, so this is expressible without asking anyone's permission. | §5 |
+| f | **Belt and braces until the cutover.** RULED 2026-09-11, architect. The safety kinds declare `reason_required` on the row **and** the verbs go into the global `_REASON_REQUIRED`, because a declared `reason_required` does **nothing at runtime today** — `validate_decision` consults a kind-blind global set and declarations are not wired into `human_tasks` at all. Declared-and-unenforced is the `isRegisteredKind` shape. The global entry is the enforcement until the declaration is read, and the cutover's parity arm asserts the row property when the global goes away. | §5 |
 
 **§10.3 is struck through rather than deleted**, so a reader can tell *answered* from *never
 asked*. Neither remaining §10 question blocks increments 0–4; **§10.2 gates a claim, not a
 build**.
+
+**ON (f), WHAT LANDED AND WHAT DID NOT, because the ruling says "both verbs" and only one is in:**
+`accepted` is in the global set as of `lane/74`. **`rejected` is not, and the reason is measured
+rather than stylistic.** That set is kind-blind, and `rejected` is in `accepts` for
+`access_request`, `grouped_review` and `workflow_ack` — so a global entry makes **every rejection in
+the fleet** reason-required, changing three other species' behaviour from the safety lane, to
+enforce a property for a kind that does not exist yet. `accepted` has the opposite profile: no
+existing species accepts it, so the entry is **inert until the safety kinds land**, which is exactly
+what makes it safe to add ahead of them. `rejected` lands with those kinds in increment 3, so the
+cost arrives with the benefit. Raise it if the sequencing is wrong — the ruling is not in dispute,
+only the hour it takes effect.
 
 **These rulings must travel with the declaration, not with the code table.** `_VERBS_BY_KIND`
 and cortex-ui's `taskKindRegistry` are **interim by construction and retire together**. The SDK
