@@ -26,14 +26,18 @@ in starlette.run_in_threadpool.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 import psycopg2
 import psycopg2.extras
+
+logger = logging.getLogger(__name__)
 
 # The Electric-replicated Postgres — same DSN the projector uses.
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
@@ -400,7 +404,80 @@ class InvalidDecisionForKind(ValueError):
     """The verb is not in this task species' vocabulary (or its reason is missing)."""
 
 
+#: Where the ratified species live. The DECLARED set, not the per-kind table: three of the
+#: four declared kinds are absent from `_VERBS_BY_KIND` and correctly ride `_DEFAULT_VERBS`,
+#: so "not in the table" and "not declared anywhere" are different facts.
+_DECL_DIR = Path(__file__).resolve().parents[2] / "policy" / "task_kinds"
+
+#: `None` until read once. `frozenset()` would be indistinguishable from "read it and there
+#: were none", which is the exact ambiguity the fallback below turns on.
+_DECLARED_KINDS_CACHE: "frozenset[str] | None" = None
+
+
+def _declared_kinds() -> "frozenset[str] | None":
+    """Every ratified task kind, or **None** if the declarations could not be read.
+
+    NONE IS NOT AN EMPTY SET, AND CONFLATING THEM IS THE DANGEROUS DIRECTION HERE. An empty
+    set means "nothing is declared", which makes every kind undeclared and refuses every
+    decision in the fleet. A missing directory, an unreadable file or an absent SDK would
+    then take the whole task rail down while looking like a security improvement.
+
+    So an unreadable registry falls back to TODAY'S behaviour and says so loudly. That is the
+    opposite of the `getenv`-default rule (R-012) on purpose: there, a default silently
+    supplied a value nobody chose; here, refusing to default would silently withdraw an
+    affordance everyone depends on. The asymmetry is which error is recoverable.
+    """
+    global _DECLARED_KINDS_CACHE
+    if _DECLARED_KINDS_CACHE is not None:
+        return _DECLARED_KINDS_CACHE
+    try:
+        from iagent_mesh.task_kinds import load_task_kinds  # noqa: PLC0415
+        kinds = load_task_kinds(_DECL_DIR)
+        names = frozenset(str(getattr(k, "kind", "") or "") for k in kinds) - {""}
+        if not names:
+            logger.warning(
+                "task-kind declarations at %s loaded but named nothing — treating the "
+                "registry as UNREADABLE rather than empty, so undeclared kinds keep today's "
+                "verbs. An empty registry and an unreadable one are not the same fact.",
+                _DECL_DIR,
+            )
+            return None
+        _DECLARED_KINDS_CACHE = names
+        return names
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "could not read task-kind declarations at %s (%s: %s) — undeclared kinds keep "
+            "today's verbs. This is a FALLBACK, not a decision: an unreadable registry must "
+            "not refuse every decision in the fleet.",
+            _DECL_DIR, type(exc).__name__, exc,
+        )
+        return None
+
+
 def verbs_for_kind(kind: str) -> frozenset[str]:
+    """The verbs this species accepts. **An UNDECLARED kind accepts nothing.**
+
+    THE DEFECT THIS CLOSES. An unknown kind fell through to `_DEFAULT_VERBS` and was handed
+    `approved`/`rejected` — so a caller bypassing the card could dispose a species nobody
+    declared. cortex-ui closed the render half (`21b2bae`: the verb block is gated on
+    `isRegisteredKind`, which finally has a caller, and the fixture asserts `buttons()` is
+    EMPTY). This is the gateway half, and until it lands the state is a UI offering nothing
+    over an API that would still take the answer.
+
+    FOR A RISK ACCEPTANCE THAT IS ADR-0051 §7's REFUSAL DEFEATED FROM OUTSIDE THE ENGINE:
+    an acceptance reachable through a generic approval verb, with no authority tier and no
+    required reason.
+
+    **This makes no task deader than it already is on screen.** The card already offers
+    nothing for these kinds; this stops the API accepting what the card refuses.
+
+    NOT IN `_VERBS_BY_KIND` IS NOT THE SAME AS NOT DECLARED. Three of the four ratified kinds
+    are absent from that table and correctly ride `_DEFAULT_VERBS` — the table is an interim
+    per-kind override, not the registry.
+    """
+    declared = _declared_kinds()
+    if declared is not None and kind not in declared:
+        return frozenset()
     return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
 
 
