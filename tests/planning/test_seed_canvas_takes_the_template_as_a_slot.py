@@ -210,45 +210,61 @@ async def test_an_UNSEEDABLE_template_refuses_BEFORE_the_clock_starts():
     An assertion loose enough to accept either could not tell which one fired, so it could not
     see one of them being turned off. The reason a request is refused is the thing a reader
     acts on; accepting a set of statuses discards exactly that.
+
+    **UPDATED 2026-09-11: THE STATUS MOVED, THE PROPERTY DID NOT.** `program_finance` now
+    declares `program` and all six panels consume it, so R-005's 409 fires FIRST and the 501 is
+    never reached for this template. The assertion stays EXACT for the same reason it was exact
+    before — a set of acceptable statuses cannot see one of its members being turned off.
     """
     status, detail = await _seed(template_id="program_finance")
-    assert status == 501, f"expected the not-yet-seedable refusal, got {status}: {detail}"
-    assert "program_finance" in detail and "not yet seedable" in detail
+    assert status == 409, f"expected the unbound-shared-slot refusal, got {status}: {detail}"
+    assert "program_finance" in detail and "program" in detail and "nothing binds" in detail
 
 
-def test_the_unbound_shared_slot_refusal_is_UNREACHABLE_TODAY_and_that_is_recorded():
-    """THE HONEST BOUND ON THE TEST ABOVE.
+def test_the_501_branch_is_UNREACHABLE_TODAY_and_that_is_recorded():
+    """THE HONEST BOUND ON THE TEST ABOVE — and the branches have SWAPPED.
 
-    The route also refuses (409) a template declaring shared slots nothing binds. No ratified
-    template exercises it: `shared_slots` is empty in both, by dispatch, until ADR-0050 §3's
-    carry lands. So the branch is DEAD CODE TODAY — correct, forward-looking, and untested by
-    any request that can currently be made.
+    This test used to record that the 409 (unbound shared slot) was unreachable, because every
+    ratified template declared none. R-005 changed the gate to key on what a panel CONSUMES, and
+    `program_finance` now declares `program` with all six panels consuming it, so the 409 is
+    reachable and IS asserted above by calling the route and naming the slot — the replacement
+    the old clause asked for, in its own words.
 
-    Recording that here is the point. A guard nobody can reach, sitting behind a test that
-    looks like it covers it, is how an unreachable branch is believed to be exercised.
+    The same slot stays REFUSED on `portfolio`: its five planning verbs take `program_id` zero
+    times against the finance engine's twenty-six, so declaring it there would name a parameter
+    none of its panels accept AND move the one template that seeds into a refusal.
 
-    **IT MUST GO RED WHEN THE CARRY LANDS, NOT WHEN A TEMPLATE DECLARES A SLOT THE CARRY
-    CANNOT SERVE** — corrected by invincible-agent-5f, 2026-09-09, who was asked to declare
-    `program` today and refused. Declaring the slot first would satisfy this test's LETTER
-    and defeat its PURPOSE: the 409 branch would still be unreachable in effect, just behind
-    a refusal nobody wanted, and its replacement assertion would be written against a state
-    we manufactured rather than reached. Worse, it would move the one template that seeds
-    from SEEDS to REFUSES.
+    **AND THE DEFECT NOW POINTS THE OTHER WAY, which is why this test survives rather than being
+    deleted.** With `portfolio` seeding and `program_finance` stopping at the 409, NO RATIFIED
+    TEMPLATE REACHES THE 501 ANY MORE. That is precisely the shape recorded here before — a
+    guard nobody can reach, sitting behind a suite that looks like it covers it — with the two
+    branches exchanged.
 
-    So the trigger is the carry, and the order is: the seeder dispatches declared verbs, then
-    something binds the answer, THEN the slot is declared and this goes red for the right
-    reason.
+    Recorded rather than fixed, because the fix is increment (1) of the ordering: once the seeder
+    dispatches each panel's declared verb, a template will reach the 501 for a real reason, this
+    goes red, and it should then be replaced by a call that asserts 501 with its reason named.
+
+    ── COUPLED TO `policy/canvases/program_finance.yaml`. DO NOT SPLIT THEM. ──────────────────
+    This holds only while `program_finance` stops at the 409, which requires that template to
+    declare `program` AND have its panels consume it. On a tree where it still carries
+    `shared_slots: []` and no `consumes`, that template passes the 409, REACHES the 501, and this
+    test FAILS — verified against `origin/master` (consumes-count 0) on 2026-09-11 rather than
+    reasoned about.
+
+    So the template change and this assertion land in ONE commit and must be cherry-picked,
+    reverted or backported TOGETHER. Neither file said so until now, which is exactly how a pair
+    like this gets separated by someone doing a reasonable thing with half of it.
     """
     from iagent.canvas_template import load_template, ratified_template_ids
 
-    with_shared = [
+    reaches_501 = [
         tid for tid in ratified_template_ids()
-        if load_template(tid).shared_slots or any(p.consumes for p in load_template(tid).panels)
+        if tid != "portfolio" and not any(p.consumes for p in load_template(tid).panels)
     ]
-    assert not with_shared, (
-        f"{with_shared} now declare shared slots — the route's 409 branch is reachable at "
-        f"last. Replace this test with one that CALLS the route for that template and "
-        f"asserts 409 with the slot named."
+    assert not reaches_501, (
+        f"{reaches_501} now reach the 501 branch — it is exercisable at last. Replace this "
+        f"with one that CALLS the route for that template and asserts 501 with the "
+        f"not-yet-seedable reason named."
     )
 
 

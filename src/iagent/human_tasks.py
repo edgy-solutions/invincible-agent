@@ -438,6 +438,11 @@ _OVERLAY_DIRS_ENV = "TASK_KIND_OVERLAY_DIRS"
 #: were none", which is the exact ambiguity the fallback below turns on.
 _DECLARED_KINDS_CACHE: "frozenset[str] | None" = None
 
+#: `kind -> the composed TaskKind row`. The DECLARATION is authoritative where it exists; the
+#: code tables below are the fallback for kinds no declaration covers. Filled by
+#: `_declared_kinds()` on the same pass, so membership and content can never disagree.
+_DECLARED_ROWS: "dict[str, object]" = {}
+
 
 def _declared_kinds() -> "frozenset[str] | None":
     """Every ratified task kind, or **None** if the declarations could not be read.
@@ -517,6 +522,11 @@ def _declared_kinds() -> "frozenset[str] | None":
                 _DECL_DIR, overlays,
             )
             return None
+        _DECLARED_ROWS.clear()
+        for k in kinds:
+            name = str(getattr(k, "kind", "") or "")
+            if name:
+                _DECLARED_ROWS[name] = k
         _DECLARED_KINDS_CACHE = names
         return names
     except Exception as exc:  # noqa: BLE001
@@ -549,11 +559,58 @@ def verbs_for_kind(kind: str) -> frozenset[str]:
     NOT IN `_VERBS_BY_KIND` IS NOT THE SAME AS NOT DECLARED. Three of the four ratified kinds
     are absent from that table and correctly ride `_DEFAULT_VERBS` — the table is an interim
     per-kind override, not the registry.
+
+    **THE DECLARATION IS AUTHORITATIVE WHERE IT EXISTS.** The first cut read the registry for
+    MEMBERSHIP and never for CONTENT: a declared kind passed the gate and was then handed the
+    generic vocabulary from the code table. Measured on the merged tree —
+    `risk_acceptance_high` declares `accepted, rejected, returned_for_rework` and was given
+    `approved, rejected`.
+
+    **That is R-004(e)'s inversion, live.** A risk is ACCEPTED by an authority — MIL-STD-882's
+    word — and `approved` is the generic seed's verb for generic things. The concurrence kinds
+    were worse: `concurred` was refused outright, so §4.3.7's two-act sequence could not be
+    performed through the gate at all.
+
+    **READING the declaration is not gated on the M3.3 cutover; DELETING `_VERBS_BY_KIND` is.**
+    So the consumer half lands now and the deletion waits for cortex-ui-ba's parity seal, as
+    sequenced. The code tables become the fallback for kinds no declaration covers — which is
+    belt-and-braces in the direction R-004(f) meant, rather than a table that silently outranks
+    a ratified row.
     """
     declared = _declared_kinds()
     if declared is not None and kind not in declared:
         return frozenset()
+    row = _DECLARED_ROWS.get(kind)
+    if row is not None:
+        accepts = frozenset(str(v) for v in (getattr(row, "accepts", None) or ()))
+        if accepts:
+            return accepts
+        # A row declaring NO verbs is a declaration nobody can act on. Falling back to the
+        # table here would hand it the generic pair and call that the row's meaning.
+        return frozenset()
     return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
+
+
+def reason_required_for(kind: str) -> frozenset[str]:
+    """Verbs whose meaning is empty without a stated reason, for THIS species.
+
+    Same precedence as `verbs_for_kind`: the declaration where it exists, the kind-blind global
+    set otherwise. R-004(b) makes BOTH `accepted` and `rejected` reason-required on the safety
+    rows, which the global set cannot express — it is kind-blind, so adding `rejected` there
+    would change three other species' behaviour from the safety lane. That limitation is the
+    argument for the cutover, and this is the half of it that needs no parity seal.
+    """
+    # LOAD THE ROWS BEFORE READING THEM. `_DECLARED_ROWS` is filled as a side effect of
+    # `_declared_kinds()`, so calling this function FIRST — before any `verbs_for_kind` — read
+    # an empty dict and silently returned the kind-blind global set. An ordering dependency
+    # that produces a plausible answer rather than an error, found by this function's own seal.
+    _declared_kinds()
+    row = _DECLARED_ROWS.get(kind)
+    if row is not None:
+        declared = getattr(row, "reason_required", None)
+        if declared is not None:
+            return frozenset(str(v) for v in (declared or ()))
+    return _REASON_REQUIRED
 
 
 def validate_decision(kind: str, decision: str, comment: str = "") -> None:
@@ -565,7 +622,7 @@ def validate_decision(kind: str, decision: str, comment: str = "") -> None:
             f"{sorted(allowed)}. Recording it would write a decision the task's own "
             f"semantics cannot represent."
         )
-    if decision in _REASON_REQUIRED and not (comment or "").strip():
+    if decision in reason_required_for(kind) and not (comment or "").strip():
         raise InvalidDecisionForKind(
             f"{decision!r} on a {kind!r} task REQUIRES a reason — an unexplained "
             f"acknowledgement erases the difference between the outcomes it covers."

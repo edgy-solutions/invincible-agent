@@ -629,3 +629,155 @@ nearly reported "routing is broken post-prime" from it. It is the documented col
 answering exactly as designed, and the probe simply carried no identity — the fifth time in two
 days I would have concluded about the subject from a failure of the instrument. What caught it was
 reading the response body rather than the status code: `no_verb_in_scope` named the gate.
+
+---
+
+## 2026-09-11 — SAME-WINDOW CONTROL: PASSED. Not the seal, and it is what makes the seal attributable.
+
+Baseline `seal3-base-1d6756c-*` versus one fresh seed, **same fleet `1d6756ce944a`, no prime
+between**. 5/5 seeded, 343s. Identical panel sets:
+
+```
+baseline: planSchedule  planCostCurve  planSiteLoad  planFundingGap  planMaturityGrid
+control : planSchedule  planCostCurve  planSiteLoad  planFundingGap  planMaturityGrid
+```
+
+**What this is evidence of, stated narrowly:** the classifier is deterministic on this fleet.
+It says **nothing** about phrase seeding — the same green the unamended seal produced three times
+on 2026-09-09, and read correctly this time because the run is labelled a control in its
+docstring, its log, and its own output line rather than in a report about it.
+
+**Why it reuses the pinned baseline instead of seeding two fresh runs.** A control should differ
+from the experiment in **exactly one way**. Two back-to-back seeds differ in two — no prime AND a
+different run-A — so a match would not establish that *the seal's own pair* is stable. Reusing
+the baseline isolates the prime as the single difference. Half the substrate time is a side
+effect, not the reason.
+
+**What it buys the real run:** if seal 3 differs across Phase 7.1's prime, the difference has ONE
+candidate cause. Without this, a difference would have had two — the prime, or a pair that was
+never stable — and run B already demonstrated how expensive a second candidate is.
+
+**Fourth timing observation:** 343s. With 398s, ~329s and 353s, RULING (b)'s ~25 minutes per seed
+stays ~4× pessimistic across four independent runs.
+
+### Standing state
+
+* Baseline pinned and verified on `1d6756ce944a`; the arm's same-fleet precondition is **proven
+  to bite** (break-on-purpose: voids before spending a seed).
+* Same-window control **passed** — substrate determinism established.
+* Seal 3 across a prime: **still unmeasured**, waiting on Phase 7.1's prime. The structural
+  result continues to carry the argument.
+* 2.1 (`program` in `shared_slots`) refused on evidence and unchanged: `gateway.py:1954` still
+  409s unbound shared slots, `:1963` still 501s anything but `portfolio`.
+* `lens` is a **proposal**, not a ruling — no rulings file exists (searched with a positive
+  control first).
+
+---
+
+## 2026-09-11 — the "phantom" was WITHHELD, and my cause was wrong while my evidence was right
+
+I reported `docs/architecture/endpoint-gating-audit.md` as a **phantom** — cited but never
+written — because `git log -S` found the citing text and no commit ever added the target. The
+evidence was sound and **the characterisation was wrong**: the file exists, is gitignored at
+`.gitignore:216`, and is deliberately withheld because it is a severity-ordered list of endpoints
+that are **ungated right now**, in a public repo. Never-written and withheld look identical from
+history, and they are opposite debts: one says *go write it*, the other says *do not publish it*.
+
+Recording the correction where the claim was made. My commit message on the third baseline says
+"a phantom target that never existed" — that sentence is wrong in the way above.
+
+**The instrument decided the answer, and that is the reusable part.** Lane 1 ran `ls` and
+`pytest`, got a present file and 12 passed, and was composing a correction to me. I ran
+`git log -S` and `git cat-file`, got absent-from-history and a red seal. **Same question, opposite
+answers, differing only in which instrument was asked** — and the seal was red on `origin/master`
+the whole time while passing for everyone who happened to have the file locally. *A green belongs
+to a SHA, not a directory*, landing on its own author.
+
+### Their fix, verified here rather than accepted
+
+A third category, `WITHHELD_CITATIONS` — distinct from phantom (never written; debt is to write
+it) and from resolved (in the repo; which here would mean the vulnerabilities are published).
+
+Checked independently, from the side that matters — **this worktree does not have the file**, so
+these runs are the origin-truth case rather than the local-copy one:
+
+| check | result |
+|---|---|
+| target tracked on `origin/master`? | **no** — still withheld, correctly |
+| ignored, per git rather than a parsed `.gitignore`? | yes, `.gitignore:216` |
+| seal on a disk WITHOUT the file | **13 passed** |
+| **a real dangling citation still rejected?** | **yes — seal goes red** |
+
+That last row is the one worth having: I wrote a throwaway doc citing a path that is neither
+ignored nor present, and the seal failed. So the allowlist cannot be used to silence a genuine
+dead link, which is the failure mode an allowlist invites.
+
+**And the near-miss underneath it all:** their first repair was `git add` — close the dangling
+citation by committing the file. Git refused because of the ignore rule. That would have published
+live vulnerabilities to make a documentation seal go green. **The process did not catch it; the
+ignore rule did** — a guard placed for one reason stopping a different and worse mistake.
+
+---
+
+## 2026-09-11 — SEAL 3 ACROSS A PRIME: **PASSED**. Measured at last, and it does not say what the ADR expected.
+
+Run B, rev 108, 334s, one variable. Verified from the graph rather than from the test's verdict:
+
+| slot | baseline (pre-prime) | run B (post-prime) | slots |
+|---|---|---|---|
+| 0 | `mesh:planSchedule` | `mesh:planSchedule` | `group_by: initiative` both |
+| 1 | `mesh:planCostCurve` | `mesh:planCostCurve` | `{}` both |
+| 2 | `mesh:planSiteLoad` | `mesh:planSiteLoad` | `{}` both |
+| 3 | `mesh:planFundingGap` | `mesh:planFundingGap` | `group_by: org` both |
+| 4 | `mesh:planMaturityGrid` | `mesh:planMaturityGrid` | `{}` both |
+
+Identical in verb AND slots — the full scope acceptance 3 states, after the scope gap was closed.
+
+**Images constant across the prime** (all 30 at `74d6f638f4f5`, censused both sides); **processes
+fresh**, because the reregister hook restarts every registering deployment. That restart was
+ruled IN as part of the prime rather than a second variable, on evidence: a prime whose engines
+never restart leaves routing answering from the maintenance ontology at 0.78 — diagnosed here on
+2026-09-10 and confirmed by the fix. **The restart is how a prime reaches the routers**; a prime
+without it is not a cleaner control, it is the broken state.
+
+### What this establishes, stated no wider than the evidence
+
+**These five phrases, across this prime, did not move.** Pre-registered before the run and it
+still holds: this is not "phrase seeding survives primes".
+
+**And the motivating instability did not reproduce even where it was recorded.** The seeder's
+comment cites *"where are we over budget"* moving **Portfolio 0.86 → Site 0.75 across a single
+prime** — a phrase that is NOT among the five seeded. Resolved post-prime under alice's identity
+it returns **Portfolio @0.97**, the original correct answer at higher confidence than when it
+drifted.
+
+**The limit on that last reading, because it is exactly the shape I have been catching all week:**
+it is a single POST-prime observation with no before-reading from today. It cannot show the phrase
+did not move — only that it currently sits on the right answer. Treat it as "not reproducible
+today", never as "shown stable".
+
+### So the case for declared verbs rests where it always did
+
+ADR-0050 called seal 3 *"the one seal phrase-based seeding cannot pass"*. It has now passed the
+same-window version three times and the across-a-prime version once, correctly scoped, with one
+variable. **The empirical argument is not there.**
+
+The **structural** result is untouched and carries the whole weight: today's seeder declares five
+PHRASES and no verb, so a panel set is **not expressible until after the seed completes**. That is
+a property of the design, true on every substrate, and it does not depend on catching a drift.
+
+**A reading worth more than either result:** the five seeded phrases may be stable *because they
+were curated to be*. Slot 3 was deliberately reworded on 2026-08-28 to match a verb default after
+returning eleven organisations. So the seal measures a hardened list — and the hardening is
+exactly what a declared verb makes unnecessary. **Nobody curates the sixth phrase someone adds
+next month, and nothing in the phrase path would tell them to.**
+
+### Owed
+
+* **The uncovered control:** determinism across a process RESTART with the ontology held still.
+  The same-window control established it within a process; nothing establishes it across a
+  restart. A `rollout restart` plus one seed would close it — worth calling only if a future run
+  differs.
+* **The experiment that could still bite:** seed a list that INCLUDES a documented-unstable
+  phrase across a prime. Today's five were the wrong population to catch drift with, which is
+  itself the finding.

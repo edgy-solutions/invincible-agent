@@ -40,7 +40,7 @@ from imagination** — see the authoring rule below.
 | You have data somewhere and want it **in the mesh** — catalogued, addressable, askable | — | not written |
 | You want to publish what you have as a **data product** others can find and depend on | — | not written |
 | You have a dataset and want to **ask questions of it** in English — and to know when the answer is honest | partial: [`../corpus/cortex-capabilities-primer.md`](../corpus/cortex-capabilities-primer.md) explains *what exists* (a `reference` doc, not a how-to) | not written |
-| You want a **dashboard** — a board of answers rather than one answer | — | not written |
+| You want a **dashboard** — a board of answers rather than one answer | [`adding-a-canvas-template.md`](adding-a-canvas-template.md) | **WRITTEN** — the five sites and the five seals. Honest bound stated in the page: **every seal goes green on a template that cannot seed**, because only `portfolio` has an execution path today (501) and a template declaring consumed shared slots refuses (409). Covers the mechanism, not which panels belong on a board |
 | Someone needs **access** to a persona · domain cell | partial: the git rail is `policy/` in-repo; the live Topaz write is a **human action**, not an agent one | not written |
 
 ## Not runbooks, though they are named like one
