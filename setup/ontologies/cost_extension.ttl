@@ -154,6 +154,22 @@ cost:ExportPackage a owl:Class ;
     rdfs:label "Export Package" ;
     rdfs:comment "The record of a governed disclosure: which party was shown which quantities, produced by which version of the pricing algorithm, identified by the content hash of what was released and the hashes of the modules and data it carried. A payload describing an emission that has already happened, not the released material itself - it names and fingerprints the artifact so a disclosure can be spoken about, compared and audited without being reopened. Questions asking what was released to a party, whether a release can be reproduced, or which algorithm version produced a released figure target this shape." .
 
+# DECLARED 2026-09-12 for engine-lg's SECOND hosted graph (ADR-0046 slice 1, phase 5.4).
+# A COMPOSED shape, deliberately distinct from the per-measure classes above: LotCostBreakdown,
+# PriceComposition and RateComparison each describe ONE measure's output, and a review that
+# carries all three with the vintage they were computed under is not any of them.
+#
+# WHY NOT REUSE mesh:StatefulSupportResponse, which engine-lg's first graph already declares.
+# That class is named for per-thread durable memory, and this graph declares `checkpointer:
+# false` — it holds no state between calls. Borrowing it would be the Engine B defect exactly:
+# a component describing itself with a noun that belongs to a different capability, which is
+# what let a card selector key on "some agent answered" and render a fabricated panel. A host
+# that lets its second graph borrow the first's output class would make that the default.
+cost:LotCostingReview a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Lot Costing Review" ;
+    rdfs:comment "One production lot's cost read three ways under a single rate vintage: the five-bucket decomposition, the ordered build-up from base cost to final price, and the applied-versus-estimating rate comparison, each carrying the artifact it came from. Answers whether a lot's costing hangs together and where the three views disagree. NOT any single one of those measures - it is the composition, and the vintage it was computed under is part of the answer rather than a parameter to it." .
+
 # =============================================================================
 # Standard-vocabulary bindings - REFERENCE, do not redeclare
 #
