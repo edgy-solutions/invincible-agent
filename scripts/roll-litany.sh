@@ -44,6 +44,19 @@ probe_path() {
     # non-exempt; an empty body is rejected 422 on the route's own terms, which
     # is a gauge line either way. NOT /measure/<fn>: those run a measure.
     iagent-engine-p)       echo "POST /resolve_instance" ;;
+    # engine-cost was the THIRD unmapped service and it surfaced the only way an unmapped
+    # service ever does: leg 5 said "NO PROBE PATH MAPPED" on the 2026-09-11 roll, after
+    # engine-cost had been serving for nine days. The map is not self-maintaining -- a
+    # service added to the fleet is UNCHECKED by this litany until someone adds a row, and
+    # the leg reporting that honestly is the only thing that makes the gap visible.
+    #
+    # Routes verified off the LIVE app object in the serving pod, per this map's own rule:
+    #   GET /version · POST /resolve_instance · POST /enumerate_instances
+    #   POST /measure/{fn_name} · GET /verbs · GET /health (exempt)
+    # /resolve_instance for the same reason as engine-p and engine-fin: real, cheap,
+    # non-exempt, and an empty body is refused 422 on the route's own terms -- a gauge line
+    # either way. NOT /measure/{fn}, which would RUN a measure.
+    iagent-engine-cost)    echo "POST /resolve_instance" ;;
     # engine-fin was the OTHER unmapped service, and the only one besides engine-p:
     # diffing sandbox deployments against this map found 15 unmapped, of which
     # exactly ONE announces a posture (leg 4's criterion, and so the litany's real

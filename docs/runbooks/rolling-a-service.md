@@ -45,6 +45,37 @@ And after every roll, in this order:
 
 `scripts/roll-litany.sh` does all three. Raw `kubectl rollout restart` does none of them.
 
+## THE RELEASE RECORD IS THE TRUTH THE CENSUS TRUSTS — so every roll updates it
+
+**RULED 2026-09-11, after a roll that worked and a census that lied about it.**
+
+`kubectl set image` changes the cluster and **not** the Helm release. The version census reads
+`helm get values` as its expectation — correctly, because a release record is the only
+fleet-wide statement of what *should* be running — so a roll that bypasses Helm makes the record
+false and the census reports against the false record.
+
+**What it looked like:** three engines rolled to master, all six litany legs green, code
+confirmed inside the serving pods — and the census called those three **STALE**, because they
+differed from a record that had not been told. The three newest pods in the fleet, labelled
+behind. A reader acting on that label rolls the fix backwards.
+
+**So a code-only roll goes through Helm:**
+
+    helm upgrade <release> <chart> -n <ns>       --reuse-values --set global.imageTag=<sha> --no-hooks
+
+`--no-hooks` is what makes this a *roll* rather than an upgrade: **it touches no hook and no PV**,
+so it does not wake the prime, the ontology seed, or the reregister job, and it cannot stall at
+hook weight 2 behind a pinned volume. It updates the deployments and the record together.
+
+**`kubectl set image` remains correct for one thing only** — a deliberate, announced, temporary
+divergence you intend to revert. Then say so in the handoff log, because the census will report
+it and the next reader needs to know the report is expected.
+
+> **The census's own fix, same day:** a sha that differs from the record is now reported as
+> **AHEAD** or **STALE**, decided by git ancestry rather than assumed. The exit code is nonzero
+> either way — divergence from the record is the thing it exists to report — but the operator is
+> told which direction, **because the remedies are opposite.**
+
 ## Why, three failures deep
 
 Each of these happened this week, to people being careful.
