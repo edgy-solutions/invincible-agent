@@ -240,7 +240,7 @@ output type** (ADR-0030). Every output class is declared in a TTL that primes, b
 | `safety:draftRiskAssessment` | hazard (single or set) | `hazard_id` \| `scope` | risk assessment artifact | drafts severity/probability with a citation for every figure; records the implied authority level; opens the acceptance review. **Cannot set accepted.** |
 
 `safety:trendMishaps` is **named and deferred to slice 3** — **RULED 2026-09-10 — see
-[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (c)**: a trend
+[rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (c)**: a trend
 needs a threshold, a threshold is overlay policy, and
 shipping it before §2's matrix has a ratifier would put the one number a program office argues about
 into an engine parameter. Deferring it costs one verb; shipping it early costs the §2 precedent.
@@ -289,7 +289,7 @@ level — which is precisely what the audience key convention expresses:
 - `hazard_link_review:SUSTAINMENT` for `classifyWriteUp`'s proposals.
 - **`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**
   **RULED 2026-09-10 — see
-  [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (a)**
+  [rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (a)**
   (source: architect's disposition of §10.3, this ADR's review). Deny-by-default
   `can_view` means the drafter cannot otherwise see their own pending item — they would file a bug and
   they would be right. **The existence-oracle protects against outsiders, not against authors**, and
@@ -312,7 +312,7 @@ correct under today's substrate, and the seals key on the audience, not on how i
 
 Decision verbs are `accepted` / `rejected` / `returned_for_rework`, and **BOTH `accepted` and
 `rejected` are reason-required** — **RULED 2026-09-10 — see
-[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (b)** (source:
+[rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (b)** (source:
 architect's review of this ADR, extending the ADR's own proposal, which named only `accepted`). A bare acceptance erases the
 rationale, which in this domain *is* the artifact; **a bare rejection erases exactly the same thing**,
 and "parts entered in the legacy system" versus "notice withdrawn by the vendor" — the file's own
@@ -509,7 +509,7 @@ taxonomy and the card must not imply otherwise.
   artifact a safety authority must be able to point at.
 - **The matrix in code.** Rejected in §2; the second customer is a fork.
 - **A new SAFETY compartment instead of SUSTAINMENT.** **Deferred, not refused — RULED 2026-09-10 —
-  see [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (d)**
+  see [rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (d)**
   (source: architect's review of this ADR). Safety data is more restricted than sustainment data in
   some programs and identical in others; splitting on a guess costs a re-prime and a grants
   migration. Revisit on the first customer whose safety office is a separate authority from its

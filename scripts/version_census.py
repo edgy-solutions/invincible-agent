@@ -84,6 +84,41 @@ def _git_sha(ref: str) -> Optional[str]:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
+def _divergence(deployed: str, expected: str) -> str:
+    """AHEAD or STALE — a sha that differs from the record is not automatically behind.
+
+    ADDED 2026-09-11, after the census called the three NEWEST pods in the fleet STALE.
+    Three engines had been rolled to master while the Helm release still recorded the
+    previous tag, so they diverged from the record by being *in front of it*, and the label
+    said the opposite of what was true.
+
+    **A LABEL THAT CAN ONLY SAY "BEHIND" WILL SAY IT ABOUT EVERYTHING THAT DIFFERS**, and a
+    reader acting on it would have rolled the fix backwards. The exit code is unchanged in
+    either direction — divergence from the record is what this census exists to report, and
+    being ahead of the record is still a lie in the record — but the OPERATOR needs to know
+    which way, because the remedies are opposite.
+
+    Ancestry from git, not string comparison: if the expected sha is an ancestor of what is
+    deployed, the deployment is ahead. Unknown shas (a build from a branch nobody has, a
+    shallow clone) report neither rather than guessing.
+    """
+    import subprocess
+    if not deployed or not expected or deployed.startswith(expected[:12]):
+        return ""
+    def _known(sha: str) -> bool:
+        return subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+                              capture_output=True).returncode == 0
+    if not (_known(deployed) and _known(expected)):
+        return "DIVERGED"          # both real, ancestry unknowable here
+    anc = subprocess.run(["git", "merge-base", "--is-ancestor", expected, deployed],
+                         capture_output=True).returncode == 0
+    if anc:
+        return "AHEAD"
+    rev = subprocess.run(["git", "merge-base", "--is-ancestor", deployed, expected],
+                         capture_output=True).returncode == 0
+    return "STALE" if rev else "DIVERGED"
+
+
 def _short(sha: str) -> str:
     return sha[:12] if sha and len(sha) > 12 else (sha or "")
 
@@ -437,12 +472,16 @@ def main() -> int:
             # still stale — that is the case this census exists to catch.
             if proc not in ("-", "n/a"):
                 ok = proc.startswith(expected[:12]) or expected.startswith(proc[:12])
-                verdict = "current" if ok else f"STALE (wants {_short(expected)})"
+                verdict = "current" if ok else (
+                    f"{_divergence(proc, expected) or 'STALE'} of record "
+                    f"({_short(expected)})")
                 if not ok:
                     bad.append(name)
             elif spec_tag not in ("latest", "?"):
                 ok = expected.startswith(spec_tag[:12]) or spec_tag.startswith(expected[:12])
-                verdict = "current (by tag)" if ok else f"STALE (wants {_short(expected)})"
+                verdict = "current (by tag)" if ok else (
+                    f"{_divergence(spec_tag, expected) or 'STALE'} of record "
+                    f"({_short(expected)}, by tag)")
                 if not ok:
                     bad.append(name)
             else:

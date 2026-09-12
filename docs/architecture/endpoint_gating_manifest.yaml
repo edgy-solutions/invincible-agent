@@ -936,7 +936,8 @@ services:
   cost_agent:
     inbound_transport_auth: engine-cost
     notes: |
-      engine-cost — six deterministic production-cost verbs over notional lot data
+      engine-cost — nine deterministic production-cost verbs over notional lot data, plus
+      mesh:resolveInstance and mesh:enumerateInstances providers
       (docs/plans/register-cost-tool-as-engine.md). Every response carries `output_uri` and
       rows and NAMES NO ARCHETYPE.
 
@@ -1001,11 +1002,46 @@ services:
         exposes: production-cost-rows
         consumers: [cortex-bff, mesh routing]
         class: releasable_by_design
-        justification: "the six cost verbs — lot breakdown, unit-price trend, rate comparison,
-          labour composition, price composition and rate assumptions. Releasable ONLY because
-          the model is the notional seed; THIS IS THE ROW TO REVISIT FIRST when real program
-          data arrives, and the price-composition and rate-assumption responses are the two
-          that would carry the most sensitive content."
+        justification: "the nine cost verbs — lot breakdown, unit-price trend, rate comparison,
+          labor composition, price composition, rate assumptions, category breakdown, supplier
+          concentration and package export. Releasable ONLY because the model is the notional
+          seed; THIS IS THE ROW TO REVISIT FIRST when real program data arrives, and the
+          price-composition, rate-assumption and supplier-concentration responses are the
+          three that would carry the most sensitive content. (Said SIX until 2026-09-11, when
+          three verbs had already shipped — a stale count in a justification is a claim that
+          reads as checked, and this is the file where that is least affordable.)"
+      # THE INSTANCE PROVIDER, declared in the same change that registers it. Engine F shipped
+      # ABSENT from this manifest and the absence is the failure this file exists to prevent.
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: instance-candidates
+        consumers: [engine-o resolver fan-out]
+        class: releasable_by_design
+        justification: "mesh:resolveInstance provider. Returns scored candidates — instance_id,
+          label, class_uri, score — over notional cost entities: lot numbers, invented supplier
+          names, cost-category labels, rate-table vintages and disclosure-recipient scopes.
+          WHAT IT EXPOSES IS THE NAME LIST, NOT THE FIGURES: no rate, price or hour is
+          reachable through this route. Same fleet-wide contract gap as engine-fin's and
+          engine-p's resolve — `{identifier, query}` carries no identity, a mesh-level decision
+          rather than this engine's. The supplier names are colours and the recipients are
+          notional scopes; WHEN THIS ENGINE READS A GOVERNED DATASET this row re-classifies
+          with the rest, and it re-classifies HARDER than a figures route, because a supplier
+          list is a disclosure even when no amount is attached to it."
+      - method: POST
+        path: /enumerate_instances
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: instance-menu
+        consumers: [engine-o enumerate fan-out, slot disposition]
+        class: releasable_by_design
+        justification: "mesh:enumerateInstances provider. Returns members / too_many /
+          unsupported over notional entities so an elicitation can offer a menu. The menu for
+          cost:DisclosureRecipient LISTS THE RECIPIENT SCOPES — notional today, and the one
+          member list here that becomes sensitive the moment real parties are named, because
+          who a program discloses to is itself disclosable. Flagged now rather than found
+          later: this is the row that re-classifies FIRST, ahead of the figures."
 
   finance_agent:
     inbound_transport_auth: engine-fin

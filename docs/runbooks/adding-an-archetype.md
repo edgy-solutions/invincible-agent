@@ -1,11 +1,28 @@
 ---
-title: Adding an archetype
-status: WRITTEN FROM THREE CONSECUTIVE REDISCOVERIES — StepLadder, NamedHole, CompetingMeasures
-date: 2026-09-11
-adr: ADR-0042 (arrangement is UI-master) — cited, not amended
+iri: docs:runbook-adding-an-archetype
+# The ONE IRI this page honestly explains. Verified present at
+# setup/ontologies/mesh_system.ttl:252 (`mesh:Archetype a owl:Class`) rather than taken from the
+# ADR — the invented-IRI rule (ADR-0037 section 1) refuses a target that is not in the graph, and
+# reading it out of the ADR would check the wrong artifact. Deliberately one: there is no verb
+# that binds an archetype, so nothing else here reaches contract depth.
+explains:
+  - mesh:Archetype
+doc_kind: how-to
+# From policy/personas.yaml, in its own casing (R-017: the corpus normalises TO the policy
+# file, never the reverse). Binding a card type is a platform-builder act.
+audience_hint: ARCHITECT
 ---
 
 # Adding an archetype
+
+> **Written 2026-09-11, from three consecutive rediscoveries** — `STEP_LADDER`, `NAMED_HOLE`,
+> `COMPETING_MEASURES`. Cites **ADR-0042** (arrangement is UI-master); it does not amend it.
+>
+> *These four facts were `title`/`status`/`date`/`adr` frontmatter until 2026-09-11. They moved
+> into the body when the corpus settled on one frontmatter shape —* `iri`/`explains`/`doc_kind`/
+> `audience_hint`, *the shape `_TEMPLATE.md` declares and doc ingest enforces. This page had
+> neither an* `iri` *nor an* `explains` *target, so the corpus could not admit the page that got
+> the content right. An exemption would have taught the next author the shape was optional.*
 
 **This is not adding an engine.** Adding a *verb* touches the engine's own tables; adding an
 *archetype* touches six shared registries in four repositories' worth of layers, and

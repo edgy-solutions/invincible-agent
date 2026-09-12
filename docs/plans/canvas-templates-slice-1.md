@@ -66,6 +66,11 @@ job is seconds of hermetic pure Python over ~200 lines of YAML, with no cluster,
 no network. **The fallback is pre-committed: one environment-caused red and it demotes to
 `workflow_dispatch`.** The standing rule loses to an argument only until it wins on evidence.
 
+**RULED 2026-09-08 — see [rulings#r-010](../rulings/README.md#r-010--canvas-template-ci-on-pull_request-is-a-blessed-exemption).**
+The departure argued for here is now blessed and citable rather than self-asserted. It is an
+**exemption, not a new convention**: it licenses this job, and a second `pull_request` job must
+carry its own argument. The pre-committed demotion is part of the ruling, not a courtesy.
+
 ## Two corrections the build made to its own inputs
 
 **The generator must not import through the `iagent` package.** `src/iagent/__init__.py` imports

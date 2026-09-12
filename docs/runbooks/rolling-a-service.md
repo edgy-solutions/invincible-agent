@@ -1,3 +1,33 @@
+---
+iri: docs:runbook-rolling-a-service
+# EXPLAINS IS DELIBERATELY EMPTY, AND THE EMPTINESS IS THE MEASUREMENT, NOT AN OMISSION.
+# The invented-IRI rule (ADR-0037 section 1) refuses a target minted to make an edge look tidy,
+# and adding-an-engine.md already keeps its list short for that reason. This page goes one step
+# further because the graph has nothing it can honestly point at.
+#
+# Derived from setup/ontologies/mesh_system.ttl rather than recalled: the mesh declares FOUR
+# lowercase verbs -- enumerateInstances, proposeDisposition, rendersAs, resolveInstance -- and
+# 72 classes. NOT ONE of either concerns deployment, rolling, images, versions or health. A
+# roll is an infrastructure act; the mesh does not model it, so there is no contract-depth
+# target and inventing `mesh:rollService` is exactly the move the gate exists to refuse.
+#
+# RULED 2026-09-11 (register R-015), after this page raised the question: an edgeless runbook IS
+# admitted. A page with no honest graph target is still a corpus page -- reachable by audience
+# and by text, just not by an `explains` edge. Ingest requiring at least one target would refuse
+# every operational runbook, and this page is the proof. So: ZERO OR MORE edges, and a page with
+# none says so EXPLICITLY with the `none` sentinel below -- which is distinguishable from a
+# missing key (author forgot) and from an empty list (author was unsure). This is a decision.
+explains: none
+doc_kind: how-to
+# From policy/personas.yaml, IN ITS OWN CASING -- the canonical enum (PORTFOLIO_LEAD,
+# DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST,
+# COST_ANALYST), read out of the file rather than recalled. RULED 2026-09-11 (R-017): the
+# corpus normalises TO the policy file, never the reverse -- a ratified config outranks prose.
+# The validator matches case-insensitively and lints to canonical case.
+# Rolling a service is a platform act, so: ARCHITECT.
+audience_hint: ARCHITECT
+---
+
 # Rolling a service
 
 **Ruled 2026-09-06, after a fix silently regressed out of a running deployment.**
@@ -14,6 +44,37 @@ And after every roll, in this order:
 3. **Grep a symbol that commit introduced, inside that pod.**
 
 `scripts/roll-litany.sh` does all three. Raw `kubectl rollout restart` does none of them.
+
+## THE RELEASE RECORD IS THE TRUTH THE CENSUS TRUSTS — so every roll updates it
+
+**RULED 2026-09-11, after a roll that worked and a census that lied about it.**
+
+`kubectl set image` changes the cluster and **not** the Helm release. The version census reads
+`helm get values` as its expectation — correctly, because a release record is the only
+fleet-wide statement of what *should* be running — so a roll that bypasses Helm makes the record
+false and the census reports against the false record.
+
+**What it looked like:** three engines rolled to master, all six litany legs green, code
+confirmed inside the serving pods — and the census called those three **STALE**, because they
+differed from a record that had not been told. The three newest pods in the fleet, labelled
+behind. A reader acting on that label rolls the fix backwards.
+
+**So a code-only roll goes through Helm:**
+
+    helm upgrade <release> <chart> -n <ns>       --reuse-values --set global.imageTag=<sha> --no-hooks
+
+`--no-hooks` is what makes this a *roll* rather than an upgrade: **it touches no hook and no PV**,
+so it does not wake the prime, the ontology seed, or the reregister job, and it cannot stall at
+hook weight 2 behind a pinned volume. It updates the deployments and the record together.
+
+**`kubectl set image` remains correct for one thing only** — a deliberate, announced, temporary
+divergence you intend to revert. Then say so in the handoff log, because the census will report
+it and the next reader needs to know the report is expected.
+
+> **The census's own fix, same day:** a sha that differs from the record is now reported as
+> **AHEAD** or **STALE**, decided by git ancestry rather than assumed. The exit code is nonzero
+> either way — divergence from the record is the thing it exists to report — but the operator is
+> told which direction, **because the remedies are opposite.**
 
 ## Why, three failures deep
 

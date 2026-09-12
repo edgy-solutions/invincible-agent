@@ -148,6 +148,84 @@ B result is written down"* — it WAS written down, and nobody could read it.
 
 **A WORKTREE MAKES `committed` AND `shared` DIFFERENT STATES.** Before worktrees they were
 nearly the same; the charter that introduced worktrees did not follow that implication through.
+
+### THE ROSTER — fixed rows, so a restart does not rebuild it by asking
+
+**RECORDED 2026-09-11**, after every `invincible-agent` session restarted at once and the
+session↔lane mapping was lost. Rebuilding it cost thirteen messages and an hour.
+
+| role | address | repo / tree | branch |
+|---|---|---|---|
+| orchestrator | `invincible-agent-01` | `ia-01` | `lane/01` |
+| architecture seat — **lane-less by R-019** | `invincible-agent-ad` | shared master; routes, never commits shared docs | — |
+| docs / ADR | `invincible-agent-5f` | `ia-5f` | `lane/5f` |
+| engine-lg / graph host | `invincible-agent-22` | `ia-32` | `lane/32` |
+| safety / ADR-0051 | `invincible-agent-28` | `ia-74` | `lane/74` |
+| engine-cost | `invincible-agent-81` | `ia-91` | `lane/91` |
+| M3.3 / task kinds | `iagent-mesh-sdk-ca` | `iagent-mesh-sdk` — **commits in this repo** | — |
+| cortex | `cortex-ui-60` | `cortex-ui` | deploy branch (**R-009**) |
+| doc-tools | `doc-tools-7f` | `doc-tools` | — |
+| unassigned | remaining sessions | shared master | **no work until assigned BY NAME** |
+
+**THE ADDRESS COLUMN IS THE LEAST DURABLE THING IN THIS TABLE, and knowing that is the point.**
+A session name changes on restart — the orchestrator answered to `invincible-agent-01` when this
+table was ruled and to `-65` an hour later, with the same worktree and the same branch throughout.
+**The tree and the branch are the identity; the address is how you reach it today.** When an
+address stops resolving, the row is still true — re-derive the address by asking the roster, never
+by inferring a lane from the work it seems to be doing.
+
+**THREE WAYS THAT INFERENCE HAS FAILED**, all on 2026-09-11, all the same root:
+
+1. a worktree named after a **domain** (`ia-safety`) resolves to no session;
+2. the session doing a lane's work may be **in no worktree row at all** — on shared master;
+3. **the lane for a repo's work may not be a session of that repo** (M3.3 spans this repo from an
+   `iagent-mesh-sdk` session).
+
+*We infer identity from the work instead of asking the roster. A dispatch names its lane's
+ADDRESS; if you cannot state the address you do not have a lane, you have a hope.*
+
+### THE READ HALF OF THE PUSH RULE — before editing a shared file, ASK WHO ELSE HAS TOUCHED IT
+
+**RULED 2026-09-11 (R-017).** Pushing made a lane's fixes *publishable*. **Nothing made them
+*discoverable*.** One command closes that, and it belongs to the push rule rather than beside it:
+
+    git fetch
+    git log origin/master..origin/lane/* --name-only -- <path>
+
+**It tells you which unmerged lane branches have a pushed change on that file.**
+
+**AND THAT IS ONLY HALF THE QUESTION — CORRECTED 2026-09-11.** The command above answers
+*"who has UNMERGED work here"*. It answers **nothing** about a path contested by a commit that
+has **already landed on master**, and it was stated as if it answered both. Add:
+
+    git log --oneline HEAD..origin/master -- <path>     # touched since YOUR base
+    git branch -a --contains <sha>                      # where a specific commit actually is
+
+**The worked example is how the gap was found.** `invincible-agent-81` ran the first command on
+the cost walk sheet, got **nothing**, and edited — while `93e42e8` had already been merged to
+master and their lane was **12 commits behind**. The collision was real and the instrument said
+clean, because they had asked the question the command answers rather than the question they had.
+
+*Two different questions: "who else is working on this right now" and "what has happened to this
+since I last looked". A lane that is behind needs the second and the first will reassure it.*
+
+**THE GAP IS MEASURED, NOT THEORETICAL.** On 2026-09-11 invincible-agent-91 and Lane 1 fixed the
+frontmatter of `docs/runbooks/adding-an-archetype.md` **independently, hours apart, on different
+branches**. 91's fix was committed *and pushed*, exactly as R-008 requires, and was still
+invisible to Lane 1 — who read master, where it is not merged. Both landed the same `iri`, the
+same single `explains` target, and the same reasoning about why it is one.
+
+**It cost an hour, and it only cost an hour because the two answers AGREED.** Had they differed,
+the merge would have decided it silently, by whoever went second. That is the real exposure: not
+duplicated work, but **a disagreement resolved by merge order rather than by a person**.
+
+**WORKTREES HIDE MASTER, AND THEY ALSO HIDE EACH OTHER.** The section above covers the first;
+this covers the second, and the second has no natural symptom — a lane editing a file another
+lane has already fixed sees nothing unusual at any point.
+
+*Not a substitute for judgement: "check every lane branch before editing" as a habit is too
+expensive to keep. This is one command against one path, run at the moment you are about to
+change a file you do not exclusively own.*
 Pushing is now a precondition for anyone else being able to see your work at all, not hygiene.
 
 Corollaries:
