@@ -87,13 +87,30 @@ def test_composition_yields_every_safety_kind_with_its_own_verbs():
 
     for kind, (accepts, reasons) in _EXPECTED.items():
         row = composed[kind]
-        # COMPARED AS SETS, AND THAT IS A FINDING RATHER THAN A CONVENIENCE. The composer does
-        # not preserve declared order: `[accepted, rejected, returned_for_rework]` comes back as
-        # `['returned_for_rework', 'accepted', 'rejected']`. Asserting order would be asserting an
-        # implementation detail the SDK does not guarantee, and the seal would break on an
-        # unrelated change. Recorded because cortex renders buttons FROM `accepts`, so **button
-        # order is not expressible in a declaration today** — if it ever needs to be, that is an
-        # SDK change and not something a row can say.
+        # COMPARED AS SETS, AND THIS NOTE HAS AN EXPIRY — READ IT BEFORE TRUSTING IT.
+        #
+        # Found 2026-09-12: the composer did not preserve declared order.
+        # `[accepted, rejected, returned_for_rework]` came back as
+        # `['returned_for_rework', 'accepted', 'rejected']`, so asserting order would have been
+        # asserting an implementation detail the SDK did not guarantee. It matters because cortex
+        # renders buttons FROM `accepts`, and on a risk acceptance the three verbs are not
+        # interchangeable.
+        #
+        # FIXED UPSTREAM THE SAME DAY — `accepts` is now `tuple[str, ...]` rather than
+        # `frozenset[str]` (iagent-mesh-sdk master `d45105e`). It is a BREAKING change riding the
+        # next MINOR and **is not released**: the fleet is pinned at v0.6.0, so composition here
+        # still shuffles and this set comparison is still the correct assertion.
+        #
+        # ⚠️ **THE TRIGGER: when the mesh-SDK pin moves off v0.6.0, change this to an ordered
+        # assertion.** At that point order is guaranteed rather than incidental, and a set
+        # comparison would silently stop checking something the SDK now promises. This comment is
+        # the only thing that will say so — a claim that was true when written is the shape this
+        # lane has already been bitten by twice.
+        #
+        # `reason_required` below stays a SET PERMANENTLY, and that asymmetry is deliberate in the
+        # SDK model rather than an oversight: order is meaningless for a membership test, and the
+        # difference now carries information — a surface may read `accepts` as a sequence and must
+        # not read `reason_required` as one.
         assert set(_verbs(row)) == set(accepts), (
             f"{kind}: accepts is {sorted(_verbs(row))}, declared {sorted(accepts)}. A field-level "
             "merge would hand it the seed's verbs here and look correct."
