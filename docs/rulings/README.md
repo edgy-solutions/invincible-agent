@@ -208,10 +208,18 @@ list*, and a ruling written beside a conversation does not govern a repo.
 
 **RULED 2026-09-11.** Source: architect, this thread, relayed by `invincible-agent-91`.
 
-> **Numbering note.** R-009 – R-013 were **not present in this register** when this entry was
-> written, and nothing in the tree claimed them. The architect specified 014; several rulings
-> were made in conversation today that other lanes are presumably numbering. **The gap is not
-> lost entries** — if it is still a gap when those land, they take 009–013 and this stays 014.
+> **Numbering note — SUPERSEDED 2026-09-11, and left rather than deleted.** This read: *"R-009 –
+> R-013 were not present in this register when this entry was written, and nothing in the tree
+> claimed them."* **True when written; false within the hour.** All five are on `lane/01` at
+> `c78a240` — R-009 cortex-ui's deploy branch, **R-010 an explicit hole** (allocated, content not
+> in hand, entered so a jump from 009 to 011 does not read as complete), R-011 readiness fails on
+> GAVE-UP, R-012 no `getenv` defaults for service URLs, R-013 seal 3 as a regression seal.
+>
+> **Kept as history because striking it is the entry's own subject.** A note saying five rulings
+> are missing, read a day later, sends someone hunting for nothing — which is
+> [`a-figure-outlives-the-measurement-that-produced-it`](../principles/a-figure-outlives-the-measurement-that-produced-it.md)
+> committed inside a register whose job is to stop exactly that. **The gap was real for one hour
+> and is not a gap now.**
 
 ### 1. ADR-0037 is next after the harvest, not deferred past it
 
