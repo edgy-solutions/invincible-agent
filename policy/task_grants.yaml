@@ -265,26 +265,33 @@ audiences:
     grant_to:
       - bob@example.com
 
-  # THE AUTHOR'S VISIBILITY AUDIENCE — R-004(a), RULED, and it does not happen for free.
+  # ── R-004(a)'s AUTHOR VISIBILITY AUDIENCE WAS HERE AND IS WITHDRAWN. ────────────────────
   #
-  # `can_view` is deny-by-default and task EXISTENCE is sensitive (existence-oracle), so
-  # without this row the engineer who drafted an assessment cannot see their own pending
-  # item — they would file a bug and they would be right. THE EXISTENCE-ORACLE PROTECTS
-  # AGAINST OUTSIDERS, NOT AGAINST AUTHORS.
+  # WITHDRAWN 2026-09-12, one day after being added, because IT COULD NOT HAVE WORKED and an
+  # inert grant is worse than no grant: it reads as protection that exists.
   #
-  # VIEW-ONLY BY INTENT. This audience exists so the drafter can watch the item they
-  # raised; it must not confer can_act, or it silently becomes a fifth acceptance tier
-  # that no matrix row points at.
-  risk_assessment_author:SUSTAINMENT:
-    granted_by: cnogradi
-    reason: >-
-      ADR-0051 §5 / R-004(a). The drafting safety engineer's VIEW of a risk assessment
-      they raised and cannot themselves accept at that level. Sandbox = bob: he drafts,
-      sees every pending assessment, and is refused on High and Serious — which is the
-      middle leg of seal 7 and the only one a lazy implementation gets wrong, because
-      "sees and cannot act" and "cannot see" look identical from the outside.
-    grant_to:
-      - bob@example.com
+  # THE SUBSTRATE HAS NO VIEW-ONLY STATE FOR A TASK. `task_audience` in the Topaz model
+  # (`topaz-configmap.yaml:226`) declares exactly one permission — `can_act: actor`. There is no
+  # `can_view` anywhere in code; the only two occurrences in this repo are prose, in this file's
+  # own header and in the comment I wrote here yesterday. A caller receives a task because
+  # `register_task` materializes ONE QUEUE ROW PER ACTOR, and `list_tasks_for` filters
+  # `recipient_id = caller`. So on this substrate:
+  #
+  #     SEEING a task and being able to ACT on it are the SAME grant.  see <=> can_act
+  #
+  # The row therefore granted bob `can_act` on a kind NO TASK IS EVER OF — nothing is
+  # materialized under it, he saw nothing, and the register carried a ruling that read as
+  # implemented. I propagated this file's own header claim about `can_view` without checking the
+  # model, and then wrote it into a ruling.
+  #
+  # WHAT THIS COSTS, STATED PLAINLY: seal 7's middle leg — "sees and cannot dispose" — is not
+  # achievable today, and not because an implementation is lazy. bob DOES get the honest partial
+  # version for free: he is an actor on Medium and Low, so he sees and disposes those, and
+  # genuinely cannot see High or Serious. That is the substrate's real shape and it may well be
+  # the right answer; what it is not is R-004(a). Raised in ADR-0051 §5 for the architect.
+  #
+  # Re-add this row only when `task_audience` gains a `viewer` relation and a `can_view`
+  # permission, and `register_task` materializes rows for viewers with the act gate still closed.
 
   # Hazard LINK review — classifyWriteUp PROPOSES a link and never creates a hazard
   # (ADR-0051 §7). Three write-ups of one condition must resolve to one hazard and two

@@ -287,7 +287,32 @@ level — which is precisely what the audience key convention expresses:
   the §2 ladder names. The ladder is data; the audiences are the git-asserted grants that implement
   it, and the drafter records which one an assessment implies.
 - `hazard_link_review:SUSTAINMENT` for `classifyWriteUp`'s proposals.
-- **`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**
+- **⚠️ NOT EXPRESSIBLE ON TODAY'S SUBSTRATE — R-004(a) cannot be implemented as ruled, found
+  2026-09-12 while writing the overlay rows.** `task_audience` declares exactly one permission,
+  `can_act: actor` (`topaz-configmap.yaml:226`). There is **no `can_view`** in the model or in any
+  code — the only two occurrences in the repo are prose, in `policy/task_grants.yaml`'s header and
+  in a comment this lane wrote. A caller receives a task because `register_task` materializes **one
+  queue row per ACTOR**, and `list_tasks_for` filters `recipient_id = caller`. So **seeing a task
+  and being able to act on it are the same grant: see ⟺ can_act.**
+
+  The audience row was added and then **withdrawn one day later**, because it granted `can_act` on
+  a kind no task is ever of: nothing materialized under it, the author saw nothing, and the
+  register carried a ruling that read as implemented. An inert grant is worse than none — it reads
+  as protection that exists. **This lane propagated the header's `can_view` claim without checking
+  the model and then wrote it into a ruling**, which is the stale-claim-is-pre-authenticated shape
+  one layer up from where it usually bites.
+
+  **What it costs:** seal 7's middle leg — *sees and cannot dispose* — is not achievable today, and
+  not because an implementation is lazy. **The honest partial version is free and may be the right
+  answer**: the drafter is an actor on the lower tiers, so they see and dispose Medium and Low and
+  genuinely cannot see High or Serious. That is the substrate's real shape. What it is not is
+  R-004(a). **Three options, for the architect rather than this lane:** (a) accept the partial
+  version and amend R-004(a) to match the substrate; (b) platform work — give `task_audience` a
+  `viewer` relation and a `can_view` permission, and materialize rows for viewers with the act gate
+  closed; (c) leave the author blind and say so in the ADR. Until one is ruled, seal 7 runs with two
+  legs and reports the third VOID.
+
+- ~~**`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**~~
   **RULED 2026-09-10 — see
   [rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (a)**
   (source: architect's disposition of §10.3, this ADR's review). Deny-by-default
