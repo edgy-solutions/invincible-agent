@@ -19,7 +19,7 @@ doc_kind: how-to
 # tool refuses a grant against. NOT one of ADR-0037 §1's original three (data-engineer |
 # reviewer | leader): two of those are not personas in this system and none is a platform
 # builder. That list is superseded — see the ⛔ CORRECTED 2026-08-30 block in ADR-0037 §1.
-audience_hint: architect
+audience_hint: ARCHITECT
 ---
 
 # Runbook — adding an engine

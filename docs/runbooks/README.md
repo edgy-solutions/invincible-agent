@@ -1,8 +1,8 @@
 # Runbooks — index
 
 **You have a task and you want the page that gets you through it.** Every entry below says *you
-want this when…* and whether it exists. **Nine of eleven do not exist yet, and are listed anyway**
-— an index of names with one page behind it is honest and useful; eleven stub pages would be the
+want this when…* and whether it exists. **Most of them do not exist yet, and are listed anyway**
+— an index of names with a few pages behind it is honest and useful; a stub page each would be the
 stub-mill [ADR-0037 §5](../adr/ADR-0037-ratified-docs-corpus-help-surface-grounding.md) refuses.
 A name here is a slot waiting, not a promise.
 
@@ -22,10 +22,12 @@ You are adding a capability to the mesh itself.
 | You are standing up a **new engine** — domain ontology, typed verbs, registration, deployment, the four namespaces its name occupies | [`adding-an-engine.md`](adding-an-engine.md) | **written** — §0–§10 + appendix, worked from Engine F, corrected by a run |
 | You have an engine and are **adding one verb to it** — no new deployment, no new identity, but registration is still Contract D and still atomic | — | not written |
 | You have a verb whose output nothing can **draw**, and you need a card type / archetype binding | [`adding-an-archetype.md`](adding-an-archetype.md) | **written** — six sites, each paired with the seal that names its absence, written from three consecutive rediscoveries (`STEP_LADDER`, `NAMED_HOLE`, `COMPETING_MEASURES`). **The cross-repo note this row used to carry was stale**: the binding table is `PRESENTATION_CAPABILITIES` in `agent_fleet/presentation_agent/capabilities.py`, in THIS repo. `cortex-ui` holds the component contracts the conformance cases read. |
+| You need a **new species of human task** — its card, and which verbs it accepts | [`adding-a-task-kind.md`](adding-a-task-kind.md) | **written** — five sites, worked from the M3.3 declaration layer. **This row is NEW, not a slot that was waiting**: no entry named this task, which is worth knowing about an index whose honesty is its best property. The page **describes an INTERVAL** — two of its five sites are code tables that disappear at the M3.3 cutover — and its *cannot distinguish* section carries a **live defect**: an undeclared kind is handed Approve/Reject on both sides today |
 | Your agent runs and you cannot see **what it did** — traces, spans, the identity a span carries | — | not written |
 | You are adding a **whole domain** — a new vocabulary graph, its prime-manifest entry, its partition | partial: [`personas-and-domains.md` §Adding a domain](../architecture/personas-and-domains.md) covers the *policy* half (config, no recompile). The ontology + manifest half is in [`adding-an-engine.md`](adding-an-engine.md) §1–§2. Neither is a task page. | not written |
 | You are adding a **persona** | partial: [`personas-and-domains.md` §Adding a persona](../architecture/personas-and-domains.md) — a real how-to living inside an architecture doc | not written *as a runbook* |
 | You are authoring a **workflow definition** — the process documentation that is also the process | — | not written · wakes on the first definition a process owner authors (ADR-0037 §1, gate granularity) |
+| You shipped a fix and need to **roll it into a running service** — and to know the pod serving traffic actually has it | [`rolling-a-service.md`](rolling-a-service.md) | **written** — ruled 2026-09-06 after a fix silently regressed out of a deployment; three failures deep. **ROW ADDED 2026-09-11, not filled**: the page existed and this index had no row for it, so it was a written runbook the index did not admit to. Its `explains` list is deliberately EMPTY — the mesh declares four verbs and 72 classes and not one concerns deployment, so there is no honest target and minting one is what ADR-0037 §1 refuses. |
 
 ## Consumer-side — things done WITH the platform
 
@@ -99,7 +101,12 @@ rather than a migration, and the vector index (ADR-0037 §3, rung 2) picks them 
 projection of a corpus they are already in.
 
 **`audience_hint` takes a value from [`policy/personas.yaml`](../../policy/personas.yaml),
-lowercased** — `PORTFOLIO_LEAD, DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST`. That
+IN THAT FILE'S OWN CASING** — `ARCHITECT`, not `architect`. **RULED 2026-09-11 (R-017):** the
+corpus normalises **to** the policy file, never the reverse; a ratified config outranks prose.
+The frontmatter validator matches case-insensitively and **lints to canonical case**, so a
+lowercase value is accepted and corrected rather than refused. *This sentence said
+"lowercased" until 2026-09-11 and three pages carried `architect` because of it — the index
+taught the defect, which is why the sweep was three files and not one.* — `PORTFOLIO_LEAD, DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST`. That
 file is the canonical enum and the vocabulary the Topaz sync tool refuses a grant against.
 ADR-0037 §1's original `data-engineer | reviewer | leader` **is superseded** — two of the three are
 not personas in this system, and a hint carrying `reviewer` would be display-routing on a persona

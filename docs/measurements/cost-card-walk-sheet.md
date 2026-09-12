@@ -36,14 +36,15 @@ card on screen.
 >
 > The questions below are **unchanged**, and are now parsed directly out of this file by
 > `tests/cost/test_the_walk_sheet_resolves_to_cost_lots.py`: **reword one and the seal moves
-> with it; add a fifth and it is covered by the commit that adds it.**
+> with it. Q5 became TWO prompts on master while this banner was being written, and the seal's
+> own count is what caught it — five prompts, four questions, both Q5 steps sealed.**
 >
 > *Nine verbs are registered now, not eight — `package_export` landed after the line above was
 > written, and the instance provider adds two registrations that are not verbs.*
 
 ---
 
-## READ THIS BEFORE THE FIRST QUESTION — three ways a CORRECT card looks broken
+## READ THIS BEFORE THE FIRST QUESTION — four ways a CORRECT result looks broken
 
 I chose the lot and year for each question deliberately, because my first picks would have
 produced correct cards that look like failures. If you deviate from the parameters below, check
@@ -57,6 +58,12 @@ this list before scoring anything red.
    point looks broken and is right. Question 7 uses **FY2021**, which gives two.
 3. **`cost_price_composition` is deliberately UNBOUND and SHOULD refuse.** It is not in this
    walk. If it appears and draws, that is a finding in the other direction.
+4. **Q5's FIRST response is a REFUSAL, and the refusal is the correct answer.** `rate_vintage`
+   is a **required** slot (`cost_rate_comparison(state, *, lot: int, rate_vintage: str)`) and
+   `_require_vintage` raises **unconditionally** when it is absent — not only when the year has
+   two vintages. The question as written names no vintage, so **`VintageRequired` fires every
+   time.** Scoring that red would fail the engine for doing the one thing it was built to do:
+   it is the analogue of Engine F's mandatory EAC method. See Q5's two steps below.
 
 ---
 
@@ -81,9 +88,33 @@ this list before scoring anything red.
 
 ---
 
-## Q5 — Rate comparison  ⚠ **use lot 3, vintage 2021-02-01**
+## Q5 — Rate comparison  ⚠ **TWO STEPS — a refusal, then the card**
+
+**The `⚠` here used to read `use lot 3, vintage 2021-02-01`, which is not something the walker
+can do in one question — the phrasing below carries no vintage and there is nowhere to put one.
+It was a PREDICTION about which vintage the answer would use, written as an INSTRUCTION.**
+
+### Step 1 — ask it as written, and expect a REFUSAL
 
 > **"did the rates move against the estimate on lot 3"**
+
+**Expect: `VintageRequired` — *not* a card, and this is a PASS.**
+
+The phrasing routes correctly (`"did the rates move"` is a declared synonym of
+`mesh:costRateComparison`), and then the verb refuses because `rate_vintage` is required and
+absent. **Checks that matter, and nothing has ever confirmed these render:**
+
+- **The refusal DRAWS AT ALL.** A designed refusal that renders as generalist prose, or as
+  `No content available`, is the same defect as a card that will not draw — and it is the one
+  failure this walk was most likely to mislabel.
+- **It names BOTH vintages — `2021-02-01` and `2021-08-01`.** The exception carries `available`
+  precisely so the caller's next question is answerable. A refusal that withholds them is a dead
+  end wearing a refusal's clothes.
+- **It says WHY**, in terms of the basis rather than of a missing parameter.
+
+### Step 2 — name the vintage, and expect the card
+
+> **"did the rates move against the estimate on lot 3, using the 2021-02-01 vintage"**
 
 **Expect: `DELTA_SET`, titled `Lot 3 - applied vs estimating rates`, six effects.**
 
@@ -160,6 +191,7 @@ this list before scoring anything red.
 | card draws, **one column blank** | a passthrough field is missing. **`expected_fields` gates nothing** — every archetype but CHART_WIDGET returns `NOT_EVALUATED` — so this draws happily and is the easiest failure to score as a pass |
 | no card, no refusal, **generalist prose** | routing did not reach a cost verb. **NOT a registration problem** — all eight are registered; look at scope, preemption, or phrasing |
 | routed to `fin:WBSElement` | instance preemption. The post-preemption check is rolled, so this should now **abstain** instead |
+| a **refusal** where the sheet expects a card | check whether the verb has a REQUIRED slot the question does not fill. Q5 is the known case; a refusal there is a **pass**, not a fail. A refusal is only a fail when the slot WAS supplied |
 
 > **"The card drew" is not "the payload was right."** Only the per-row checks above distinguish
 > the two, and only for the fields they name.

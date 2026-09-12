@@ -62,3 +62,39 @@ Related: [[a-green-seal-can-be-green-for-the-wrong-reason]],
 [[a-plausible-negative-is-not-a-considered-one]],
 [[a-seal-outranks-its-authorization]],
 [[decide-the-meaning-before-the-measurement]].
+
+## The sibling law — same mechanism, opposite end
+
+**RULED 2026-09-11**: *a reason invented to support a received conclusion fits it by construction.*
+Filed by `invincible-agent-5f` as
+[`a-reason-invented-for-a-conclusion-fits-it-by-construction`](a-reason-invented-for-a-conclusion-fits-it-by-construction.md),
+from ADR-0053 §7. **The architect ruled the two be read together, and the reason is that they are
+the same failure approached from each side.**
+
+| | what moves first | what the other party does |
+|---|---|---|
+| **this law** | someone CONCEDES a point | you accept the concession as *evidence*, when it was only a concession |
+| **the sibling** | someone states a CONCLUSION with no reason | you supply the reason — and it fits, because you built it to |
+
+**The bridge is that a conscientious reader does not reject a bare claim. They COMPLETE it** —
+and the more careful the reader, the more load-bearing the reason they manufacture. A concession
+taken as evidence and a conclusion handed a reason are both *an unsupported claim acquiring
+support from the person receiving it*, which is why neither can be caught by examining the claim
+more closely. **Truth is not the property that failed.**
+
+**The check that works is the same for both, and it is forward rather than closer:** *does this
+reason, followed honestly, REACH this conclusion — and what measurement would it predict?* Then
+go and make that measurement.
+
+**Two instances the same day, in two lanes, which is what made it a law rather than an anecdote.**
+5f accepted `invincible-agent-91`'s "one move" and supplied a reason that was true and argued for
+the **opposite**, contradicting the next paragraph they wrote. Lane 1 diagnosed a CI failure as an
+undeclared dependency, declared it, and **had the refutation in hand** — the relock moved 262
+packages to 262 — and filed that null result as noise. *Mine went unchecked; theirs was checked
+and the check was explained away*, which is the more dangerous form: **a conclusion you are
+attached to reinterprets evidence against itself as irrelevant.**
+
+**The author's half, aimed inward:** assert nothing without its reason. A bare conclusion handed
+to a conscientious reader does not get rejected — it gets completed, and you will never see the
+reason they invented on your behalf.
+

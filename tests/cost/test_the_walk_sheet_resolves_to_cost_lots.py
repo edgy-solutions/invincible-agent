@@ -58,10 +58,21 @@ def test_the_walk_sheet_still_holds_the_questions_these_seals_are_derived_from()
     that document changed, the regex would find NOTHING, every parameterized seal would
     collapse to zero cases, and pytest would report green for a suite that asserted nothing.
     That is the failure this file is most exposed to, so it is checked directly.
+
+    ── FIVE PROMPTS, FOUR QUESTIONS, AND THE COUNT TRACKS PROMPTS ──────────────────────
+    It said FOUR until 2026-09-11, when lane/01 split Q5 into two steps on master: the verb
+    refuses first (`rate_vintage` is required and the phrasing names none), and the second
+    prompt supplies the vintage. **The refusal is a PASS**, so both steps are real prompts a
+    walker types and both must resolve to lot 3.
+
+    THE COUNT DOING ITS JOB IS WHY THIS NOTE EXISTS. The merge changed the sheet under a
+    seal derived from it, and this assertion is what said so — naming the parsed five rather
+    than passing quietly. A `>=` here would have absorbed the change silently, which is the
+    whole failure it was written against.
     """
     questions = walk_sheet_questions()
-    assert len(questions) == 4, (
-        f"expected the walk sheet's four questions, parsed {len(questions)}: {questions}. "
+    assert len(questions) == 5, (
+        f"expected the walk sheet's five prompts, parsed {len(questions)}: {questions}. "
         f"If the sheet legitimately gained or lost one, update this count — it is here so "
         f"the parser cannot silently match nothing."
     )

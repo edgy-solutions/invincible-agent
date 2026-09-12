@@ -181,6 +181,63 @@ class RouteCase:
 
 TEST_CASES: list[RouteCase] = [
     # --- Engine A (DataHub catalog) ---
+    # --- Engine F (finance) + engine-lg (the hosted graph) -------------------------
+    # ADDED 2026-09-11 as ADR-0046 §9's routing regression gate. The question these four
+    # rows exist to answer is NOT "does finance route" — it is WHETHER ADMITTING A HOSTED
+    # GRAPH ON fin:Program MOVED ANYTHING THAT WAS ALREADY THERE.
+    #
+    # `finProgramBrief` (engine-lg) registered on fin:Program, taking that subject's
+    # eligible set from 7 verbs to 8. Every row below was MEASURED against the live fleet
+    # at rev 107 / 74d6f638f4f5 before being written here, so these are the observed
+    # behaviour rather than the hoped-for one — a regression gate written from hope seals
+    # in the wish, not the baseline.
+    #
+    # THE LOAD-BEARING PROPERTY IS THE FIRST ROW, NOT THE LAST. The variance question
+    # resolves to fin:Program, sees finProgramBrief among its 8 eligible verbs, and does
+    # NOT pick it. A graph admitted onto a busy subject that quietly captured its
+    # neighbours' questions would look like a working graph and a broken engine, and
+    # nothing else in the suite would notice.
+    RouteCase(
+        query="why are we over budget on this program",
+        expected_subject_substring="fin#Program",
+        expected_verb_iri="mesh:finVarianceAnalysis",
+        min_confidence=0.85,
+        domain="PROGRAM_FINANCE",
+        entitled_domains=("PROGRAM_FINANCE",),
+        expect_classify_called=True,
+    ),
+    RouteCase(
+        query="how fast are we spending",
+        # Resolves to the BASELINE, not the program — what the verb MEASURES rather than
+        # what a person names. Two eligible verbs here, so the pick is a real choice.
+        expected_subject_substring="fin#PerformanceMeasurementBaseline",
+        expected_verb_iri="mesh:finBurnRate",
+        min_confidence=0.85,
+        domain="PROGRAM_FINANCE",
+        entitled_domains=("PROGRAM_FINANCE",),
+        expect_classify_called=True,
+    ),
+    RouteCase(
+        query="how much funding is obligated",
+        expected_subject_substring="fin#FundingLine",
+        expected_verb_iri="mesh:finFundingStatus",
+        min_confidence=0.85,
+        domain="PROGRAM_FINANCE",
+        entitled_domains=("PROGRAM_FINANCE",),
+        expect_classify_called=True,
+    ),
+    # THE HOSTED GRAPH TAKES ITS OWN QUESTION, and it has to win against seven siblings on
+    # the same subject to do it. ADR-0046 slice 1's whole claim is that a graph is admitted
+    # as an ordinary verb; this row is that claim measured rather than asserted.
+    RouteCase(
+        query="give me a brief on how this program is doing",
+        expected_subject_substring="fin#Program",
+        expected_verb_iri="mesh:finProgramBrief",
+        min_confidence=0.85,
+        domain="PROGRAM_FINANCE",
+        entitled_domains=("PROGRAM_FINANCE",),
+        expect_classify_called=True,
+    ),
     RouteCase(
         query="What tables do you have?",
         expected_subject_substring=None,  # subject ambiguous; verb is the load-bearing check

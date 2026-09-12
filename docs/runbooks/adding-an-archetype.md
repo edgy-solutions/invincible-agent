@@ -8,8 +8,9 @@ iri: docs:runbook-adding-an-archetype
 explains:
   - mesh:Archetype
 doc_kind: how-to
-# From policy/personas.yaml, lowercased. Binding a card type is a platform-builder act.
-audience_hint: architect
+# From policy/personas.yaml, in its own casing (R-017: the corpus normalises TO the policy
+# file, never the reverse). Binding a card type is a platform-builder act.
+audience_hint: ARCHITECT
 ---
 
 # Adding an archetype
