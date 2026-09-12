@@ -653,6 +653,24 @@ standing in. See R-020, which is that collision resolved.
 whole of it. The fork is fixed today by a merge, and merges are not a mechanism — the register
 will fork again the moment two lanes both hold unmerged work, which is its normal state.
 
+### ALLOCATION AND PLACEMENT ARE TWO WAYS AN ENTRY LANDS WRONG
+
+**Added 2026-09-12**, after the second one bit.
+
+**Allocation** is which number an entry takes, and it is settled above: only `lane/01` allocates,
+because a registry whose allocation depends on the reader's checkout cannot allocate.
+
+**Placement is where the entry goes in the file, and it is a separate failure.** R-025 was
+inserted by anchoring on the NEXT heading (`## R-005`) and landed between R-004 and R-005 — a
+correctly-allocated number in the wrong place. The same move produced a **duplicate R-014** on an
+earlier merge: one branch appended after *"Why this file exists at all"*, the other inserted in
+numeric order, and git kept both because they were different regions of the file.
+
+**ANCHOR ON THE END, NEVER ON THE NEXT HEADING.** The end is stable; the next heading is whatever
+happens to follow today, so an anchor on it silently relocates the entry every time the
+neighbourhood changes — and a register out of numeric order reads as *a gap where there is none*,
+which is the one thing this file may not do.
+
 ### What this does NOT do
 
 It does not make Lane 1 the author of anyone's ruling. **The text, the reasoning and the
