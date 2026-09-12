@@ -40,7 +40,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 # ── the contract: from the SDK, never local ────────────────────────────────────────────────
-from iagent_mesh.graph_manifest import GraphManifest, compose, registration_payload
+from iagent_mesh.graph_manifest import (
+    GraphManifest,
+    RefusalViolation,
+    compose,
+    enforce_refusal,
+    registration_payload,
+)
 
 # ── flat in the image (/app), packaged in the repo — §5, and the order is load-bearing ──────
 try:
@@ -269,46 +275,20 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
 
 
 def _enforce_refusal(m: GraphManifest, out: Any) -> Any:
-    """THE HOST ENFORCES THE ROW. Ruled 2026-09-12.
+    """Adapt the SDK's `enforce_refusal` to an HTTP answer.
 
-    A row declaring `refusal: fail` meant nothing until now: its module could return partial
-    results and nothing anywhere went red. The declaration described behaviour it did not
-    constrain — the Engine B shape moved from a class name to a contract clause. **The host is
-    the party that holds both the row and the output, so the host is where it is checked.**
+    THE RULE ITSELF MOVED TO THE SDK in v0.7.0 and this host no longer owns it. It was
+    implemented here first, on the ruling that the host holds both the row and the output —
+    which was right and not sufficient: a convention only one host implements is one route C
+    will not inherit. A team hosting their own graphs now imports the same function.
 
-    THE ENFORCEABLE RULE, and it is deliberately the only one the host can know generically:
-    the host cannot tell how many findings a given graph *should* produce, but a graph that
-    reports a HOLE has told the host it narrowed its answer. So:
-
-        refusal: named-hole   holes are the declared disposition — passed through
-        refusal: fail         a hole is a CONTRACT VIOLATION — rejected, naming which
-
-    `holes` is therefore part of the host's output contract with a graph, not an accident of
-    the two graphs that exist. A compliant `fail` module raises instead (see
-    cost_lot_costing_review's RefusedInner) and never reaches here.
-
-    FILED, NOT BUILT: this convention belongs in `iagent_mesh.graph_manifest` beside the
-    `refusal` field, so a route-C host running its own graphs enforces it too. It is enforced
-    HERE first because the ruling is that the host holds the row — but a convention only one
-    host implements is one route C will not inherit.
+    What stays here is the only part that is genuinely this host's: turning the violation into
+    a 502. A route-C host may answer differently; the CHECK must not differ.
     """
-    if m.refusal != "fail":
-        return out
-    holes = (out or {}).get("holes") if isinstance(out, dict) else None
-    if holes:
-        sources = [h.get("source", "?") for h in holes if isinstance(h, dict)]
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"{m.graph_id} declares refusal=fail and returned {len(holes)} hole(s) "
-                f"({', '.join(sources)}). Its row says a partial answer is not an answer for "
-                f"this verb, so the output is REJECTED rather than passed to a caller who would "
-                f"read it as whole. Either the module should have failed at the refusal, or the "
-                f"row should declare named-hole — this is a contract disagreement between them, "
-                f"not a runtime error."
-            ),
-        )
-    return out
+    try:
+        return enforce_refusal(m, out)
+    except RefusalViolation as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/health")
