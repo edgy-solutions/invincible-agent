@@ -13,8 +13,33 @@ card on screen.
 **Runs last in the browser session**, after the finance board and the §9.2 decision.
 
 **Fleet state assumed:** rev 108, all 17 at `74d6f638f4f5`, all eight cost verbs registered
-(confirmed from `db.relationshipTypes()`). **So a card that does not draw is a PRESENTATION
-problem, not a registration one.** That distinction is the whole point of this walk.
+(confirmed from `db.relationshipTypes()`).
+
+> ## ⚠ WALKED 2026-09-11, AND ALL FOUR ABSTAINED BEFORE ANY CARD WAS REACHED
+>
+> **This sheet said: "a card that does not draw is a PRESENTATION problem, not a registration
+> one." It was NEITHER, and the walk is what proved it.** A two-way split left no name for what
+> actually happened — the questions never reached this engine at all.
+>
+> `"lot 4"` was captured by engine-fin's instance provider at **exactly 0.500**, matching the
+> **bare digit** against a WBS element's `instance_id`; `banana 4` reproduces the hit, and
+> `lot four` produces nothing. That override discarded a correct `cost:Supplier` classification
+> **at 0.92**, and Engine O's post-preemption check then abstained — correctly, and for the
+> first time in production.
+>
+> **So the third state is ROUTING, and it is the one this sheet could not name.** Full chain and
+> the controls: [`lot-4-resolves-to-program-support-2026-09-11.md`](lot-4-resolves-to-program-support-2026-09-11.md).
+>
+> **PREREQUISITE BEFORE WALKING AGAIN**, or all four abstain identically: engine-cost's own
+> instance provider (`cost_agent/instances.py`, shipped `d446a15`) must be **registered in the
+> graph** — a roll and a prime, not a commit — and Lane 1's scope rule must be in force.
+>
+> The questions below are **unchanged**, and are now parsed directly out of this file by
+> `tests/cost/test_the_walk_sheet_resolves_to_cost_lots.py`: **reword one and the seal moves
+> with it; add a fifth and it is covered by the commit that adds it.**
+>
+> *Nine verbs are registered now, not eight — `package_export` landed after the line above was
+> written, and the instance provider adds two registrations that are not verbs.*
 
 ---
 
