@@ -1,8 +1,18 @@
 # ADR-0053 — Measure modules: computation as a declared, versioned, pluggable unit
 
-**Status:** Proposed — decision recorded 2026-09-11, **after review by `invincible-agent-91` against the tree** (one claim wrong, one false; both corrected in place, neither softened). **ADR and seal skeleton only; no engine
-changes.** The finance extractions continue under R-001 and the money ruling as already sequenced,
-in another lane.
+**Status:** **ACCEPTED 2026-09-11** — ratified by the architect as **R-017** in
+[`docs/rulings/README.md`](../rulings/README.md), verified present on `origin/master` at `dffa6a3`
+before this line was written. Proposed earlier the same day, **after review by
+`invincible-agent-91` against the tree** (one claim wrong, one false; both corrected in place,
+neither softened). **ADR and seal skeleton only; no engine changes.** The finance extractions
+continue under R-001 and the money ruling as already sequenced, in another lane.
+
+**THE CITATION ABOVE CARRIES NO `#r-017` FRAGMENT, AND THAT IS DELIBERATE.**
+`tests/test_citation_paths.py` resolves the PATH half of a citation and never the fragment, so a
+truncated anchor is green in every tree. Filed by this lane on 2026-09-11 with two live instances
+(`#r-005-shared`, truncated under **both** candidate slug rules). Until the checker can say no
+about the fragment, this ADR names the ruling in prose and links the file — the half that is
+actually sealed.
 
 **READ THE TREE FIRST, AND IT CORRECTS THE SKETCH IN ONE PLACE THAT MATTERS.** The dispatch
 describes "a measure is a pure, versioned module" as the pattern *as built*. Half of it is built
@@ -266,15 +276,29 @@ and after**; a green only after is a rewrite wearing a refactor's name.
 > **fits it by construction**, and mine contradicted the very next paragraph I wrote. 91 caught
 > it and inverted their own call.
 
-## Open — for the architect, deliberately not decided here
+## Open — BOTH DECIDED 2026-09-11 by R-017. Kept as questions, answered in place.
 
-1. **Is method ratification per-program or per-deployment?** Per-deployment is simpler and makes a
-   method a property of the install; per-program allows two programs to use different EAC methods,
-   which someone will eventually ask for and which multiplies the provenance a figure must carry.
-2. **May a customer module live outside the platform repo?** The architect's recommendation is
-   **yes** — an overlay-referenced package with its own seal, exactly as a graph is. Recorded as the
-   recommendation and not as the ruling, because it decides whether the platform can verify what it
-   executes.
+Neither is deleted. The reasoning that made them open is what makes the answers legible, and a
+resolved question read later is evidence the decision was *made* rather than assumed.
+
+1. **Is method ratification per-program or per-deployment?** **BOTH, and the split is the ruling.**
+   The **registry** — which methods exist, at which version, derived from what — is a property of
+   the **install**, ratified once and reviewed like a grant. **Selection** is a **per-program
+   overlay row** choosing among those. Same shape as the risk matrix (ratified per deployment) and
+   the SSPP (which method this program applies).
+
+   **It answers the objection this question was raised on rather than overruling it.** The worry
+   was that per-program ratification *multiplies the provenance a figure must carry*. It does not:
+   §5 already puts **method name and version beside the figure regardless of who selected it**, so
+   two programs on different EAC methods are **two overlay rows, not two registries**.
+2. **May a customer module live outside the platform repo?** **Yes — and the condition is what
+   makes this a ruling rather than the recommendation it was.** The row carries the **module's
+   sha**, the way the export manifest already carries `modules (name → sha)`, and the **purity and
+   resolution seals run against the customer package AT REGISTRATION**. The boot check refuses a
+   module that fails them, exactly as it refuses a graph without a row.
+
+   That is what *"the platform can verify what it executes"* means concretely: it verifies the
+   **artifact it resolved**, not the repository it came from.
 
 ## Non-goals
 
