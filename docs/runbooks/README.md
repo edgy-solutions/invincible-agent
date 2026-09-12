@@ -100,7 +100,12 @@ rather than a migration, and the vector index (ADR-0037 §3, rung 2) picks them 
 projection of a corpus they are already in.
 
 **`audience_hint` takes a value from [`policy/personas.yaml`](../../policy/personas.yaml),
-lowercased** — `PORTFOLIO_LEAD, DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST`. That
+IN THAT FILE'S OWN CASING** — `ARCHITECT`, not `architect`. **RULED 2026-09-11 (R-017):** the
+corpus normalises **to** the policy file, never the reverse; a ratified config outranks prose.
+The frontmatter validator matches case-insensitively and **lints to canonical case**, so a
+lowercase value is accepted and corrected rather than refused. *This sentence said
+"lowercased" until 2026-09-11 and three pages carried `architect` because of it — the index
+taught the defect, which is why the sweep was three files and not one.* — `PORTFOLIO_LEAD, DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST`. That
 file is the canonical enum and the vocabulary the Topaz sync tool refuses a grant against.
 ADR-0037 §1's original `data-engineer | reviewer | leader` **is superseded** — two of the three are
 not personas in this system, and a hint carrying `reviewer` would be display-routing on a persona

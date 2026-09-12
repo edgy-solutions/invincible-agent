@@ -321,6 +321,68 @@ judgement either of them got wrong.**
 
 ---
 
+## R-017 — ADR-0053 RATIFIED; registry per-deployment, selection per-program; external modules under sha-pinned resolution
+
+**RULED 2026-09-11.** Source: architect thread, after a full read of the text as
+`invincible-agent-91` reviewed it (`lane/5f` at `effc365`).
+
+**ADR-0053 is ratified**, and its two deliberately-open questions are decided.
+
+### 1. Ratification is PER-DEPLOYMENT; selection is PER-PROGRAM
+
+The registry — *which methods exist, at which version, derived from what* — is a **property of
+the install**, ratified once, reviewed like a grant. Which method a given program *uses* is a
+**per-program overlay row selecting among those**.
+
+Same split as the risk matrix (ratified per deployment) and the SSPP (which method this program
+applies). **It does not multiply provenance:** the figure carries method name and version
+regardless of who selected it. Two programs on different EAC methods is **two overlay rows, not
+two registries**.
+
+### 2. A customer module MAY live outside the platform repo — on the condition that makes it a ruling
+
+The row carries **the module's sha**, the way the export manifest already carries
+`modules (name → sha)`. The **purity and resolution seals run against the customer package at
+registration**, and the boot check refuses a module that fails them — exactly as it refuses a
+graph without a row.
+
+**That is what "the platform can verify what it executes" means concretely:** it verifies *the
+sha it resolved and the properties it sealed*, and **nothing else about the package**. Same as a
+graph — stated rather than assumed.
+
+### Consequences recorded
+
+- **91 is unblocked on `fin_variance_drivers`** — extraction first, against the seal **as it
+  stands**, with its age recorded via §7's three fields (`seal_path`, `seal_last_commit`,
+  `seal_age_days`) as commands rather than as typed numbers.
+- §4's correction stands: **the envelope generalises, the domain section does not**, and *"one
+  export class"* means the envelope. `{case_id, inputs, expected, intermediates}` with a
+  domain-opaque algorithm description is the design.
+- §6's Decimal retraction is **kept verbatim** — an ADR recording that one of its own claims was
+  false until review is the thing this register exists to make ordinary.
+
+### And two corpus rules ruled alongside it
+
+**PERSONA CASE.** `policy/personas.yaml` is canonical — **`ARCHITECT`, not `architect`.** The
+corpus normalises **to** the policy file, **never the reverse**; the frontmatter validator matches
+**case-insensitively** and **lints to canonical case**. ***A ratified config outranks prose.***
+The index sentence had said *"lowercased"*, and three pages carried the wrong case because of it
+— **the index taught the defect**, which is why the sweep was three files rather than one.
+
+**THE READ HALF OF THE PUSH RULE.** R-008 made a lane's fixes *publishable*; nothing made them
+*discoverable*. Before editing a shared file:
+
+    git fetch
+    git log origin/master..origin/lane/* --name-only -- <path>
+
+Recorded in `AGENTS.md` beside the push rule. The gap is measured, not theoretical: 91 and Lane 1
+fixed one page's frontmatter independently, hours apart, on different branches, and **91's pushed
+fix was still invisible** because Lane 1 read master. It cost an hour *only because the two
+answers agreed* — had they differed, **the merge would have decided it silently, by whoever went
+second**. Worktrees hide master; they also hide each other, and the second has no symptom.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

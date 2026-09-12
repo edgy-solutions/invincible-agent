@@ -148,6 +148,35 @@ B result is written down"* — it WAS written down, and nobody could read it.
 
 **A WORKTREE MAKES `committed` AND `shared` DIFFERENT STATES.** Before worktrees they were
 nearly the same; the charter that introduced worktrees did not follow that implication through.
+
+### THE READ HALF OF THE PUSH RULE — before editing a shared file, ASK WHO ELSE HAS TOUCHED IT
+
+**RULED 2026-09-11 (R-017).** Pushing made a lane's fixes *publishable*. **Nothing made them
+*discoverable*.** One command closes that, and it belongs to the push rule rather than beside it:
+
+    git fetch
+    git log origin/master..origin/lane/* --name-only -- <path>
+
+**It tells you which unmerged lane branches have a pushed change on that file**, which is the
+question you actually have and cannot answer by reading master.
+
+**THE GAP IS MEASURED, NOT THEORETICAL.** On 2026-09-11 invincible-agent-91 and Lane 1 fixed the
+frontmatter of `docs/runbooks/adding-an-archetype.md` **independently, hours apart, on different
+branches**. 91's fix was committed *and pushed*, exactly as R-008 requires, and was still
+invisible to Lane 1 — who read master, where it is not merged. Both landed the same `iri`, the
+same single `explains` target, and the same reasoning about why it is one.
+
+**It cost an hour, and it only cost an hour because the two answers AGREED.** Had they differed,
+the merge would have decided it silently, by whoever went second. That is the real exposure: not
+duplicated work, but **a disagreement resolved by merge order rather than by a person**.
+
+**WORKTREES HIDE MASTER, AND THEY ALSO HIDE EACH OTHER.** The section above covers the first;
+this covers the second, and the second has no natural symptom — a lane editing a file another
+lane has already fixed sees nothing unusual at any point.
+
+*Not a substitute for judgement: "check every lane branch before editing" as a habit is too
+expensive to keep. This is one command against one path, run at the moment you are about to
+change a file you do not exclusively own.*
 Pushing is now a precondition for anyone else being able to see your work at all, not hygiene.
 
 Corollaries:

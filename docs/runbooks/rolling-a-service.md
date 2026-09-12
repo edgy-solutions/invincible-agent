@@ -19,10 +19,13 @@ iri: docs:runbook-rolling-a-service
 # missing key (author forgot) and from an empty list (author was unsure). This is a decision.
 explains: none
 doc_kind: how-to
-# From policy/personas.yaml, lowercased -- the canonical enum (PORTFOLIO_LEAD, DATA_STEWARD,
-# DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST, COST_ANALYST), read out
-# of the file rather than recalled. Rolling a service is a platform act, so: architect.
-audience_hint: architect
+# From policy/personas.yaml, IN ITS OWN CASING -- the canonical enum (PORTFOLIO_LEAD,
+# DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST,
+# COST_ANALYST), read out of the file rather than recalled. RULED 2026-09-11 (R-017): the
+# corpus normalises TO the policy file, never the reverse -- a ratified config outranks prose.
+# The validator matches case-insensitively and lints to canonical case.
+# Rolling a service is a platform act, so: ARCHITECT.
+audience_hint: ARCHITECT
 ---
 
 # Rolling a service
