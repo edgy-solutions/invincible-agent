@@ -944,6 +944,37 @@ written for — a root-venv CI run without the engine extra, which is precisely 
 mismatch would otherwise surface three tests down from its cause. *Over-marking shrinks the
 always-runs half, which is the thing the split exists to protect.*
 
+
+### What had ALREADY happened when this was filed — verified, not inferred
+
+**`lane/74` reached master VIA `lane/01`, not by merging first**, and this ruling was written
+describing an ordering that was already overtaken. `invincible-agent-28` caught it and checked the
+right thing: **master's copy of the file, not the branch name.**
+
+    94efdf6  "Merge remote-tracking branch 'origin/lane/74' into lane/01"   ancestor of origin/master
+    f703774  the v0.8.0 pin                                                 NOT on origin/master
+
+    master's pyproject pin              v0.7.1
+    master's seal 6: set comparisons    PRESENT
+                     ordering tripwire  PRESENT
+                     ordered comparisons / coupling guard   ABSENT
+
+**The dangerous combination this ruling names — guard without pin — did not occur**, because what
+merged was an older `lane/01` predating `f703774`. Master is internally consistent at v0.7.1.
+
+**THE RULING IS UNCHANGED AND STILL BINDING FOR WHAT REMAINS**, with the roles as stated: 74's
+remaining commits carry no precondition and go first; `lane/01`'s carry the pin and go second. The
+merge that already happened is not a counter-example to it — **it is an instance of the safe case
+reached by accident**, which is the more dangerous way to be right and exactly why the ordering is
+now written down rather than reconstructed each time.
+
+**The check that settled it is the transferable part:** *branch names describe intent; file contents
+describe state.* "`lane/74` is 22 ahead" and "`lane/74` is 2 ahead" were both true an hour apart,
+and neither answered whether the pin and the guard were in the same tree. Reading master's copy of
+the file did.
+
+Cf. [[regenerate-then-stage]] — *a green belongs to a SHA, not a directory* — and R-025.
+
 Related: [[a-guard-that-cannot-fire]] (the marked-dark case), [[prime-then-roll-then-read-the-edges]].
 
 ---
