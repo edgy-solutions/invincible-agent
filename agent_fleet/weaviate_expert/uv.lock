@@ -676,8 +676,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.7.1"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.7.1#b19c0cc6c154dffde58d03ada6e9f0d7e5de38a4" }
+version = "0.8.0"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.8.0#120d04cc33445141f9145988fc8ae5c252fe3e1d" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "fastapi" },
@@ -1799,7 +1799,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.7.1" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.8.0" },
     { name = "langfuse", specifier = ">=3.0.0" },
     { name = "litellm" },
     { name = "packaging" },

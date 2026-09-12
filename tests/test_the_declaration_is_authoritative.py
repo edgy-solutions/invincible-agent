@@ -153,22 +153,42 @@ def test_EVERY_BRANCH_RETURNS_THE_SAME_CONTAINER_TYPE():
 
 
 def test_THE_DECLARATIONS_ORDER_SURVIVES_and_is_not_re_sorted():
-    """SDK v0.8.0 makes `accepts` a tuple; this must carry the row's order without another edit.
+    """SDK v0.8.0 makes `accepts` a tuple; the row's order must carry through untouched.
 
-    Written BEFORE the pin deliberately: a `frozenset(...)` wrap here would silently discard
-    the ordering fix and leave the bump looking applied. Today the SDK stores a frozenset, so
-    the assertion is about SHAPE — that nothing re-sorts — rather than about a specific order.
+    **THE FIXTURE IS THE WHOLE SEAL, AND THE OBVIOUS ONE IS VACUOUS.** Written first against
+    `risk_acceptance_high`, whose row declares `[accepted, rejected, returned_for_rework]` —
+    which is ALREADY ALPHABETICAL, so `sorted()` and pass-through produce the identical tuple
+    and the assertion could not tell the rejected rule from the intended one. It passed, and it
+    measured nothing.
+
+    `hazard_link_review` declares `[linked, new_hazard, dismissed]`. Sorted that is
+    `[dismissed, linked, new_hazard]` — a different tuple — so this fixture, and in the sample
+    overlay ONLY this fixture, can fail. The discrimination is asserted below rather than
+    assumed, because a later edit that alphabetised that row would quietly restore the vacuum.
     """
     import iagent_mesh.task_kinds as tk
     declared = tk.TaskKind.model_fields["accepts"].annotation
-    verbs = ht.verbs_for_kind("risk_acceptance_high")
-    assert isinstance(verbs, tuple), f"order cannot survive a {type(verbs).__name__}"
-    if "frozenset" not in str(declared):
-        # v0.8.0+: the row is ordered, so the row's order must come through untouched.
-        row = ht._DECLARED_ROWS["risk_acceptance_high"]
-        assert verbs == tuple(str(v) for v in row.accepts), (
-            f"the declaration's order was not preserved: {verbs} vs {tuple(row.accepts)}"
-        )
+    assert "frozenset" not in str(declared), (
+        f"the SDK still stores `accepts` as {declared} — the fleet pin did not move to v0.8.0, "
+        f"and order cannot survive a set no matter what this module does"
+    )
+
+    got = ht.verbs_for_kind("hazard_link_review")   # also populates _DECLARED_ROWS
+    assert isinstance(got, tuple), f"order cannot survive a {type(got).__name__}"
+
+    row = ht._DECLARED_ROWS["hazard_link_review"]
+    want = tuple(str(v) for v in row.accepts)
+    assert want != tuple(sorted(want)), (
+        f"the fixture no longer discriminates: {want} is in sorted order, so this seal would "
+        f"pass under the very `sorted()` wrap it exists to refuse. Pick a row whose declared "
+        f"order is not alphabetical, or this assertion is decoration."
+    )
+
+    assert got == want, (
+        f"the declaration's order was not preserved: got {got}, the row declares {want}. "
+        f"A `sorted(...)` or `frozenset(...)` on this path discards v0.8.0's fix while leaving "
+        f"the version bump looking applied."
+    )
 
 
 def test_the_refusal_payload_does_not_RE_SORT_what_the_row_declared():
