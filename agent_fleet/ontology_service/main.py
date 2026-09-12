@@ -1540,6 +1540,25 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
     _INSTANCE_RESOLVERS_CACHE_TS = now
+
+    # UNSCOPED PROVIDERS ARE NAMED, NOT SILENTLY TOLERATED. RULED 2026-09-11.
+    #
+    # Domain scoping treats a provider declaring NO domains as unscoped rather than
+    # excluded — absence of a declaration is not evidence of a boundary, and defaulting the
+    # other way would silently mute a provider that simply never declared. But it is
+    # evidence of an UNDECLARED PROVIDER, and that is a third state rather than a tidy
+    # binary: declared-and-matching, declared-and-not, and never-declared.
+    #
+    # So the registry names them at discovery, so the list can be driven to zero and the
+    # NEXT provider registered without domains is a review question rather than a silent
+    # default. An unscoped provider can still override a same-domain answer, which is the
+    # defect this whole arc is about — it is simply not fixable by guessing its domain.
+    _unscoped = sorted(d["provider"] for d in discovered if not d.get("domains"))
+    if _unscoped:
+        print(
+            f"[Engine O] UNSCOPED instance providers ({len(_unscoped)}), exempt from domain "
+            f"scoping until they declare `domains` at registration: {', '.join(_unscoped)}"
+        )
     print(
         f"Discovered {len(_INSTANCE_RESOLVERS_CACHE)} mesh:resolveInstance "
         f"providers (TTL={_INSTANCE_RESOLVERS_TTL_S}s): "
@@ -1619,7 +1638,7 @@ async def _call_resolver(
 
 
 async def _resolve_instance(
-    identifier: str, query: str
+    identifier: str, query: str, asked_domains: list | None = None
 ) -> tuple[str | None, dict]:
     """Run the instance-resolution pre-step.
 
@@ -1658,9 +1677,92 @@ async def _resolve_instance(
         *tasks, return_exceptions=False
     )
 
+    # AN OUT-OF-DOMAIN HIT IS A CANDIDATE, NOT AN AUTHORITY. RULED 2026-09-11.
+    #
+    # Measured by invincible-agent-81 across all 33 cost instances against all 28 finance
+    # instances, AFTER the bare-digit fix closed the numeric collisions:
+    #
+    #     'Notional Program Meridian'  -> cost 'Notional Production Program Vermilion'  0.533
+    #     'Program Support'            -> cost 'Notional Production Program Vermilion'  0.500
+    #     'Program Management'         -> cost 'Notional Production Program Vermilion'  0.500
+    #
+    # NO DIGITS. Neither scorer is wrong — each is confident about its own vocabulary and
+    # "program" is genuinely a word in both. NOTHING INSIDE A SINGLE ENGINE'S SCORING CAN
+    # RESOLVE THIS, which is why it is fixed here and not there: the only thing separating
+    # the two readings is which domain the question was asked in.
+    #
+    # Tightening either engine's overlap tier until the cross-domain hit falls below the
+    # floor would make that engine worse at its OWN job — when the question IS a cost
+    # question, "the notional program" is the right answer — and would solve a cross-domain
+    # problem at a layer where the next engine has to rediscover it.
+    #
+    # SCOPE BY THE ASKED DOMAIN, NOT BY SCORE. The original failure was not that a provider
+    # answered; it was that a CROSS-DOMAIN hit overrode a SAME-DOMAIN 0.92. A score rule
+    # fixes neither case: 0.533 still beats nothing, because the other engine had no
+    # competing claim on that name and never will.
+    _asked = {d for d in (asked_domains or []) if d}
+    _provider_domains = {r.get("provider"): set(r.get("domains") or [])
+                         for r in resolvers}
     candidates: list[_IRCandidate] = []
+    demoted: list[dict] = []
     for o in outcomes:
+        owns = _provider_domains.get(o.provider) or set()
+        # Empty `_asked` = the caller named no domain, so there is nothing to scope
+        # against and every provider keeps its standing. A provider declaring no domains
+        # is likewise unscoped rather than silently excluded — absence of a declaration
+        # is not evidence of a boundary.
+        if _asked and owns and not (owns & _asked):
+            demoted.append({"provider": o.provider, "provider_domains": sorted(owns),
+                            "n_candidates": len(o.candidates)})
+            continue
         candidates.extend(o.candidates)
+
+    # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
+    #
+    # The scoping above removes the CROSS-domain override. It cannot help when both
+    # claimants are legitimately in the asked domain — and then neither provider is wrong,
+    # so choosing by score is choosing by an accident of each engine's tokeniser. The
+    # architect's shape: *"Notional Program Meridian: the finance program or the cost
+    # program?"* — the question goes back to the person who asked it.
+    #
+    # Abstaining here rather than emitting a card: the ENGINE's job is to refuse to guess
+    # and to hand back what the competing readings ARE. Rendering the choice is cortex's.
+    # An abstention carrying the options is actionable; a silent winner is not.
+    # NO SCORE THRESHOLD HERE, AND THAT IS THE RULING RATHER THAN AN OVERSIGHT.
+    # A first cut gated this on `_INSTANCE_RESOLVE_MIN_SCORE` (0.7) and the ask could then
+    # never fire on the case that produced it: 81 measured finance at 0.9 against cost at
+    # 0.533, so the cost claim sat below the gate and the ask was written for a situation
+    # that cannot occur. That is the same defect as a walk sheet specifying a refusal the
+    # wire never sends.
+    #
+    # THE REASON THERE IS NO THRESHOLD: cross-engine scores are NOT COMPARABLE. 0.9 from
+    # finance and 0.533 from cost were computed by different scorers over different
+    # vocabularies; the gap between them measures tokeniser behaviour, not relative
+    # confidence. Picking the larger number is picking by an accident of implementation.
+    # A provider RETURNING a candidate at all is its own assertion that the name means
+    # something in its vocabulary, and that is the only comparable signal available.
+    _claimants = {c.provider for c in candidates}
+    _subjects = {c.class_uri for c in candidates if c.class_uri}
+    _above = candidates
+    if len(_claimants) > 1 and len(_subjects) > 1:
+        return None, {
+            "instance_resolved": False,
+            "instance_match": "ambiguous_in_domain",
+            "instance_n": len(_above),
+            "instance_asked_domains": sorted(_asked),
+            # Named so the caller can FORM the question. A refusal that withholds the
+            # competing readings is a dead end wearing a refusal's clothes — the same
+            # defect as a slot refusal that will not say what a valid value looks like.
+            "instance_ambiguous_options": sorted(
+                {(c.provider, c.class_uri, c.label) for c in _above},
+                key=lambda t: (t[0], t[1]),
+            ),
+            "instance_provider_outcomes": [
+                {"provider": o.provider, "status": o.status,
+                 "n_candidates": len(o.candidates), "elapsed_s": round(o.elapsed_s, 3)}
+                for o in outcomes
+            ],
+        }
 
     decision = _ir_decide(
         candidates,
@@ -1673,6 +1775,11 @@ async def _resolve_instance(
         identifier=identifier,
     )
     provenance = dict(decision.provenance)
+    if demoted:
+        # Recorded rather than silent: "nobody knew this name" and "somebody knew it, in
+        # another domain" are different answers and the trace must distinguish them.
+        provenance["instance_out_of_domain_demoted"] = demoted
+        provenance["instance_asked_domains"] = sorted(_asked)
 
     # Per-provider audit so the trace shows which phone book said what.
     provenance["instance_provider_outcomes"] = [
@@ -2122,7 +2229,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     if not candidates and request.entity_refs:
         for entity_ref in request.entity_refs:
             instance_subject, instance_provenance = await _resolve_instance(
-                identifier=entity_ref, query=request.query
+                identifier=entity_ref, query=request.query,
+                asked_domains=request.domains or ([request.domain] if request.domain else []),
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
@@ -2206,6 +2314,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         instance_subject, instance_provenance = await _resolve_instance(
             identifier=identifier,
             query=request.query,
+            asked_domains=request.domains or ([request.domain] if request.domain else []),
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
@@ -3152,6 +3261,10 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if not isinstance(spoken_value, str):
             continue
 
+        # DELIBERATELY UNSCOPED. This path builds a MENU of what anything knows by that
+        # name, and the comment below already rules that candidates are not filtered by the
+        # slot's referent class for the same reason. Scoping here would hide the very
+        # cross-domain match a person needs to see when disambiguating.
         _subject, prov = await _resolve_instance(spoken_value, request.query)
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them

@@ -28,6 +28,17 @@ on:
 jobs:
   ordered:
     runs-on: ubuntu-latest
+    # THE CEILING ON A HANG. Added 2026-09-11. `tests/routing/` exits 124 when the cluster
+    # is unreachable, saturated or mid-roll, because parts of it call the deployed
+    # classifier (classify_latency_s = 10.41 measured against it). Without this, a stalled
+    # probe runs to GitHub's 6-hour default and reports a number that names nothing.
+    #
+    # The conftest fixture NAMES the staller by dumping every thread's stack past its
+    # boundary; this bounds the job so the run still ENDS. Two halves of one rule: a hang
+    # outranks a red, because a red says something and a hang says nothing while burning
+    # the runner. 30 is generous against a ~2.5 minute suite — it is a stall boundary, not
+    # a performance budget.
+    timeout-minutes: 30
     steps:
       # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
       # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone
@@ -70,6 +81,17 @@ jobs:
 
   shuffled:
     runs-on: ubuntu-latest
+    # THE CEILING ON A HANG. Added 2026-09-11. `tests/routing/` exits 124 when the cluster
+    # is unreachable, saturated or mid-roll, because parts of it call the deployed
+    # classifier (classify_latency_s = 10.41 measured against it). Without this, a stalled
+    # probe runs to GitHub's 6-hour default and reports a number that names nothing.
+    #
+    # The conftest fixture NAMES the staller by dumping every thread's stack past its
+    # boundary; this bounds the job so the run still ENDS. Two halves of one rule: a hang
+    # outranks a red, because a red says something and a hang says nothing while burning
+    # the runner. 30 is generous against a ~2.5 minute suite — it is a stall boundary, not
+    # a performance budget.
+    timeout-minutes: 30
     steps:
       # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
       # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone
@@ -116,6 +138,17 @@ jobs:
 
   standalone:
     runs-on: ubuntu-latest
+    # THE CEILING ON A HANG. Added 2026-09-11. `tests/routing/` exits 124 when the cluster
+    # is unreachable, saturated or mid-roll, because parts of it call the deployed
+    # classifier (classify_latency_s = 10.41 measured against it). Without this, a stalled
+    # probe runs to GitHub's 6-hour default and reports a number that names nothing.
+    #
+    # The conftest fixture NAMES the staller by dumping every thread's stack past its
+    # boundary; this bounds the job so the run still ENDS. Two halves of one rule: a hang
+    # outranks a red, because a red says something and a hang says nothing while burning
+    # the runner. 30 is generous against a ~2.5 minute suite — it is a stall boundary, not
+    # a performance budget.
+    timeout-minutes: 30
     steps:
       # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
       # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone

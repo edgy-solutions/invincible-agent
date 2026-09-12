@@ -45,14 +45,37 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import importlib.util
+
 import pytest
+
+
+def _load_module_by_path(alias: str, path, *, reason: str):
+    """Import `path` under `alias`, or skip — never binding the bare module name."""
+    spec = importlib.util.spec_from_file_location(alias, str(path))
+    if spec is None or spec.loader is None:
+        pytest.skip(reason)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # noqa: BLE001 — an absent engine dep is a skip, not a red
+        pytest.skip(f"{reason} ({type(exc).__name__}: {exc})")
+    return mod
 
 _REPO = Path(__file__).resolve().parents[2]
 _FIN = _REPO / "agent_fleet" / "finance_agent"
 if str(_FIN) not in sys.path:
     sys.path.insert(0, str(_FIN))
 
-main = pytest.importorskip("main", reason="finance_agent not importable here")
+# LOADED UNDER A UNIQUE NAME, NOT AS `main`. Both this seal and
+# `test_an_out_of_domain_hit_is_a_candidate_not_an_authority.py` reach a module FILE called
+# `main.py` in different engines. A plain `import main` binds `sys.modules["main"]` to
+# whichever ran first, so in a full-suite run one of the two seals silently exercises the
+# OTHER engine — 11 reds that are not about the code. Same shape as the dagster stub that
+# broke the standalone CI job: a shared module name in sys.modules, resolved by import order.
+main = _load_module_by_path("finance_agent_main_under_test", _FIN / "main.py",
+                            reason="finance_agent not importable here")
 
 
 def _resolved(query: str, class_uri: str | None = None):
