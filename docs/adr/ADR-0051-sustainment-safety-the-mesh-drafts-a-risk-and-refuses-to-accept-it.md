@@ -239,8 +239,9 @@ output type** (ADR-0030). Every output class is declared in a TTL that primes, b
 | `safety:classifyWriteUp` | write-up (single or set) | `write_up_id` \| `since` | classification + link **proposal** | maps narrative to the hazard taxonomy and **proposes** a link to an existing hazard or a new one. Proposes. Does not create. |
 | `safety:draftRiskAssessment` | hazard (single or set) | `hazard_id` \| `scope` | risk assessment artifact | drafts severity/probability with a citation for every figure; records the implied authority level; opens the acceptance review. **Cannot set accepted.** |
 
-`safety:trendMishaps` is **named and deferred to slice 3** — **RULED 2026-09-10** (source:
-architect's review of this ADR): a trend needs a threshold, a threshold is overlay policy, and
+`safety:trendMishaps` is **named and deferred to slice 3** — **RULED 2026-09-10 — see
+[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (c)**: a trend
+needs a threshold, a threshold is overlay policy, and
 shipping it before §2's matrix has a ratifier would put the one number a program office argues about
 into an engine parameter. Deferring it costs one verb; shipping it early costs the §2 precedent.
 
@@ -287,7 +288,9 @@ level — which is precisely what the audience key convention expresses:
   it, and the drafter records which one an assessment implies.
 - `hazard_link_review:SUSTAINMENT` for `classifyWriteUp`'s proposals.
 - **`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**
-  **RULED 2026-09-10** (source: architect's disposition of §10.3, this ADR's review). Deny-by-default
+  **RULED 2026-09-10 — see
+  [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (a)**
+  (source: architect's disposition of §10.3, this ADR's review). Deny-by-default
   `can_view` means the drafter cannot otherwise see their own pending item — they would file a bug and
   they would be right. **The existence-oracle protects against outsiders, not against authors**, and
   that sentence is the rule this audience instantiates, not an exception to it.
@@ -307,23 +310,79 @@ stops re-listing the same people under adjacent keys. Recorded on the M3 list so
 scheduled work rather than a discovery. Nothing here blocks on it: the per-level audiences are
 correct under today's substrate, and the seals key on the audience, not on how it is populated.
 
-Decision verbs in `_VERBS_BY_KIND` (`src/iagent/human_tasks.py:388`):
-`accepted` / `rejected` / `returned_for_rework`, and **BOTH `accepted` and `rejected` go in
-`_REASON_REQUIRED` (`:396`)** — **RULED 2026-09-10** (source: architect's review of this ADR,
-extending the ADR's own proposal, which named only `accepted`). A bare acceptance erases the
+Decision verbs are `accepted` / `rejected` / `returned_for_rework`, and **BOTH `accepted` and
+`rejected` are reason-required** — **RULED 2026-09-10 — see
+[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (b)** (source:
+architect's review of this ADR, extending the ADR's own proposal, which named only `accepted`). A bare acceptance erases the
 rationale, which in this domain *is* the artifact; **a bare rejection erases exactly the same thing**,
 and "parts entered in the legacy system" versus "notice withdrawn by the vendor" — the file's own
-argument for `acknowledged` at `:394` — is the same distinction one level over. Sealed by
-`tests/test_task_kind_declarations_match_code.py`, extended rather than copied.
+argument for `acknowledged` at `human_tasks.py:394` — is the same distinction one level over. Sealed
+against the declaration, by extending the existing declarations-match-code seal rather than copying
+it.
 
-**These rows are INTERIM BY CONSTRUCTION and the lane must know it.** `_VERBS_BY_KIND` is one of the
-two per-kind tables that **retire together at M3.3** with cortex-ui's `taskKindRegistry`
-(`docs/reference/m3-grouped-review-definition-design.md` §"TWO interim per-kind tables now, and they
-retire TOGETHER", and the M3.3 sequencing bullet, which names `_VERBS_BY_KIND` explicitly). Adding
-safety rows to it is correct today and is **not** a new permanent mechanism; when `rendersAs` triples
-are served, these rows move with the others. Naming only one of the two tables at retirement orphans
-the other — the retire-coupled-mechanisms-together rule, whose bad half is a served declaration
-saying how a task RENDERS while a code table still decides what it can DO.
+**AMENDED 2026-09-11 — do NOT add rows to `_VERBS_BY_KIND`; the declaration path landed while this
+ADR was being written.** Source: the M3.3 lane (`iagent-mesh-sdk-ca`), verified in the tree rather
+than taken on report. `policy/task_kinds/` exists with four declared species
+(`access_request`, `extraction_refusal`, `grouped_review`, `workflow_ack`), each a YAML carrying
+`kind` / `renders_as` / `accepts`; `iagent-mesh` v0.6.0 is pinned fleet-wide (`pyproject.toml:62`,
+`values.yaml:666` `meshSdkVersion`) and its `TaskKind` row carries `reason_required` as a field
+validated as a subset of `accepts`. `_VERBS_BY_KIND` still stands at `human_tasks.py:388` **only
+because its deletion is gated on cortex-ui's parity seal**, not because it is still the way in.
+
+**So the safety kinds are DECLARATIONS, and R-004(b) is a property of the declaration, not of a code
+table** — `reason_required: [accepted, rejected]` on the row, which is where it survives the cutover.
+
+**BUT `reason_required` ON THE ROW DOES NOTHING TODAY, and a seal that accepts the declaration as
+evidence would be asserting a property the runtime does not have.** Corrected 2026-09-11 by the M3.3
+lane against its own R-004 note, traced rather than remembered: `validate_decision` checks
+`if decision in _REASON_REQUIRED and not comment.strip()`, and `_REASON_REQUIRED` is a **global set of
+verb strings** consulted **without reference to `kind`**. Reason-required is therefore a property of a
+VERB everywhere it appears, and declarations are not wired into `human_tasks` at all — that is the
+ungated half of the cutover. **Declared-and-unenforced is precisely the shape that produced the
+`isRegisteredKind` defect**, and for a risk acceptance it is the gap this ADR exists to close. So
+seal 6 asserts the **runtime refusal** — a disposition with an empty comment is rejected — and treats
+the declaration as the thing under test, never as the evidence. Per-species semantics (a reason
+required for a safety acceptance and not for an access request) are expressible only after the
+cutover; until then the global rule is what parity means, and the seal says which one it measured.
+
+**The row's shape**, from the SDK's own model: `kind` as a snake token with **no colon** (a colon
+separates an authz audience key from a render contract, and the two have been spelled alike before);
+`renders_as` with `badge` ≤12 chars, `title` ≤80, and `archetype` from a closed vocabulary; `accepts`
+**required, no default, possibly empty** — an empty `accepts` is a read-only species; `reason_required`
+a **subset of `accepts`**, which raises otherwise. An overlay row is a **full replacement, not a field
+merge**, and may declare a verb the seed never heard of. Deletion is a tombstone, and a tombstone for
+a kind the seed does not ship is an **error, not a no-op**.
+
+**The verb stays `accepted`, not `approved` — RULED here, and deliberately not a synonym.** The
+platform seed spells the ordinary pair `approved`/`rejected`, and the SDK constrains verb strings
+nowhere (a closed verb vocabulary would be the next code table). Two spellings will therefore appear
+in one queue, and that is the point rather than the cost: **an approval says the artifact is in order;
+an acceptance says a named authority is taking the residual risk onto themselves.** MIL-STD-882 calls
+that act risk *acceptance*, this ADR's audiences, authority ladder and §7 refusal are all built on the
+word, and collapsing it to `approved` would make the one irreversible act in the domain read like
+document sign-off. The row carries this sentence as its reason, so the next reader finds a choice
+rather than a drift.
+
+**And they are domain species, so they do NOT go in `policy/task_kinds/`.** That directory's own
+header rules it: *"Structural only; NO domain names may enter this directory. A deployment's own
+species live in a work-side OVERLAY (ADR-0036), which is what keeps the generic/domain boundary
+STRUCTURAL rather than lexical: there is no row here to put one in."* Safety acceptance is
+`grouped_review`-shaped — one approval resolving N affected items, which is exactly the
+`mesh:DispositionReview` fan-out this ADR already adopts — so the platform repo gains **nothing** and
+the overlay carries the species with its own `accepts` and `reason_required`. **No inheritance**: an
+overlay row that omits `accepts` is refused, because `accepts` is required precisely so a domain
+species cannot silently borrow a structural one's verbs.
+
+**A LIVE BUG THAT LANDS ON THIS ADR'S REFUSAL, reported by the M3.3 lane and independently
+confirmable.** An **undeclared** task kind is handed Approve/Reject on both sides today: cortex-ui's
+default archetype renders an approval card unconditionally, and `isRegisteredKind` — the predicate
+written to prevent exactly this — has no caller outside its own tests. For every other species that
+is a rendering defect. **For this one it is §7's refusal defeated from the outside**: a risk
+acceptance reachable through a generic approval card, dispositioned by whoever the default surface
+admits, with no authority tier and no required reason. **Seal 14** (below) exists for it, and the
+safety kinds must not go live before cortex-ui's parity seal lands — the cutover's safer direction
+(an unknown species renders dead rather than actionable) is only safe once `declared: false` actually
+renders as *unknown species here*, which is the half that failed to be consumed last time.
 
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
@@ -387,9 +446,10 @@ where red was expected is a signal about the seal, not about the code.
    seal is the whole of §2; without it §2 is an intention.
 5. **An unrecognized severity or probability refuses loudly**, naming the vocabulary and its source
    file. Control: a recognized one passes the same path.
-6. **Task-kind declarations match code**, extended from the existing seal; **both `accepted` and
-   `rejected` are reason-required**. Mutation: drop each from `_REASON_REQUIRED` **separately** → two
-   reds. One mutation covering both would pass with one of them still wired.
+6. **The declaration carries the verbs**, extended from the existing declarations-match-code seal;
+   **both `accepted` and `rejected` are reason-required ON THE ROW**, so the property survives the
+   `_VERBS_BY_KIND` cutover. Mutation: drop each from the declaration's `reason_required`
+   **separately** → two reds. One mutation covering both would pass with one of them still wired.
 7. **Three-caller walk, asserting the existence-oracle.** The authority-tier caller disposes; the
    author under `risk_assessment_author:SUSTAINMENT` **sees and cannot dispose**; the unentitled
    caller **does not see the task at all** — asserted as non-visibility, not merely as a refusal,
@@ -412,6 +472,14 @@ where red was expected is a signal about the seal, not about the code.
 13. **Registry census across all eight §0 sites**, derived from the site list rather than a
     hand-written one, so the list shrinks as the work lands. Site 6 specifically: assert the key is
     **present**, since its failure mode is a skip.
+14. **An undeclared safety kind must NOT render an actionable card** (added 2026-09-11, against the
+    live defect in §5). Assert that a kind absent from the declarations renders as *unknown species*
+    and offers **no** disposition verbs — not that it renders "correctly", which today's default
+    archetype also satisfies while handing out Approve/Reject. Control: the declared kind renders its
+    own `accepts` in the same run, or the seal cannot tell a working narrowing from a dead renderer.
+    **This seal belongs to cortex-ui's parity work and this lane consumes it** — if it is not green,
+    the safety kinds do not go live, because a risk acceptance reachable through a generic approval
+    card is §7's refusal defeated from outside the engine.
 
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
@@ -432,7 +500,8 @@ taxonomy and the card must not imply otherwise.
   is no accountable human decision record. The HumanTask substrate already produces exactly the
   artifact a safety authority must be able to point at.
 - **The matrix in code.** Rejected in §2; the second customer is a fork.
-- **A new SAFETY compartment instead of SUSTAINMENT.** **Deferred, not refused — RULED 2026-09-10**
+- **A new SAFETY compartment instead of SUSTAINMENT.** **Deferred, not refused — RULED 2026-09-10 —
+  see [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (d)**
   (source: architect's review of this ADR). Safety data is more restricted than sustainment data in
   some programs and identical in others; splitting on a guess costs a re-prime and a grants
   migration. Revisit on the first customer whose safety office is a separate authority from its
@@ -490,9 +559,10 @@ precedents §2 copies); `setup/ontologies/mesh_system.ttl:169-183`;
 `src/iagent/human_tasks.py:380-420`; `policy/task_grants.yaml` (the header, in full);
 `tests/_mesh_verbs.py`; `agent_fleet/planning_agent/slots.py`.
 
-**Increment 0 — names, one commit.** Run §0's grep for the candidate. Write the four names down.
-Confirm a free port. If any is taken, **stop and re-name before writing code** — this is an hour now
-or a fleet-wide outage later.
+**Increment 0 — names. DONE 2026-09-11 by Lane 1 (`invincible-agent-01`) on `1331e01`**, re-verified
+rather than trusted from this ADR: all five candidate strings match exactly one file each — this ADR
+— and ports 8091–8094 and 8099 are free. Start at increment 1. (Kept here rather than deleted: a
+reader needs to know the check was RUN, and against which sha.)
 
 **Increment 1 — survey, then vocabulary. No cluster.** ADR-0007 survey against the primed graph for
 every term in §1's list; record found *and* not-found in the TTL header. Mint only the remainder, in
@@ -506,11 +576,32 @@ with its control, each mutation actually run.
 the fleet helper with the REQUIRED retry/readiness. `findOrphanedHazards` and `assessDeferralRisk`
 against a fixture graph. Seals 2, 8, 9, 12.
 
+> **THE EXTRACTION'S TERMS — approved by Lane 1 (`invincible-agent-01`) 2026-09-11, with one addition
+> that is now binding.** Today: `planning_agent/slots.py` 313 lines (Lane 1's, sealed by five files
+> under `tests/planning/`), `finance_agent/slots.py` 267 lines, `utils/slot_declarations.py` absent
+> — all four facts re-verified in the tree, and Lane 1 is not mid-work (last touch `2f45f00`, clean).
+>
+> **Green-before-and-after is NOT sufficient, and this is the addition.** It cannot distinguish
+> *behaviour preserved* from *both call sites now import a module that behaves like neither*. So
+> **run at least one MUTATION against the extracted module and require the five planning seals to go
+> RED.** If they stay green, the seals are no longer reaching the code — the failure shape this repo
+> hit four times in one day, and the reason an extraction can land looking perfect while silently
+> unsealing its own subject.
+>
+> **Two known asymmetries must survive, each with its own seal** (runbook §4, and Lane 1's first
+> version got the second one wrong): `eval_str=True` on `inspect.signature`, because
+> `from __future__ import annotations` turns every `Literal` into its literal text; and unwrapping
+> `Optional[X]` but **stopping at a real container**, because unwrapping twice declares a
+> multi-valued slot a scalar.
+
 **Increment 3 — the acceptance path.** Three audience families in `policy/task_grants.yaml` —
 per-level acceptance, `hazard_link_review:SUSTAINMENT`, and `risk_assessment_author:SUSTAINMENT`
-(view-only, §5's ruling) — verbs in `_VERBS_BY_KIND`, **both `accepted` and `rejected` in
-`_REASON_REQUIRED`**. `draftRiskAssessment` opens the review in the one-review-fans-out shape.
-Seals 6, 7, 10, 11. Note the deploy step the M3.1 rename paid for: **between the git edit and
+(view-only, R-004a) — and the task kinds as **work-side overlay declarations** carrying their own
+`accepts` and `reason_required: [accepted, rejected]`. **Not** `policy/task_kinds/` (structural
+species only, no domain names) and **not** `_VERBS_BY_KIND` (mid-retirement).
+`draftRiskAssessment` opens the review in the one-review-fans-out shape. Seals 6, 7, 10, 11 — and
+**seal 14 is a precondition for going live, not a deliverable of this increment**: it is cortex-ui's
+parity seal, and until it is green an undeclared kind still renders an actionable approval card. Note the deploy step the M3.1 rename paid for: **between the git edit and
 `task_grant_sync` running, a new audience routes to NOBODY** — `register_task` materializes zero rows
 → `NoEntitledRecipients` → 422. Run the sync in the same window and re-drive one draft to witness it.
 
