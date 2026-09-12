@@ -222,3 +222,49 @@ def test_the_ordering_tripwire():
     assert isinstance(getattr(row, "reason_required"), (frozenset, set)), (
         "`reason_required` changed container type — it is specified to stay unordered"
     )
+
+
+def test_at_least_one_declared_row_can_actually_PROVE_order():
+    """THE DISCRIMINATION GUARD for the ordered assertion — from `invincible-agent-65`'s finding.
+
+    They wrote an order seal against `risk_acceptance_high`, whose verbs are
+    `[accepted, rejected, returned_for_rework]` — **already alphabetical**, so a composer that
+    sorted and a composer that preserved order return the IDENTICAL tuple. The seal passed and
+    measured nothing.
+
+    IT IS WORSE IN THIS FILE THAN IN THEIRS. Seven of the eight rows in the sample overlay declare
+    alphabetical verb lists:
+
+        risk_acceptance_{high,serious,medium,low}   accepted, rejected, returned_for_rework
+        risk_acceptance_concurrence_{high,serious}  concurred, not_concurred, returned_for_rework
+        pcn_disposition                             approved, rejected
+        hazard_link_review                          linked, new_hazard, dismissed   <- the only one
+
+    **MOST NATURAL VERB LISTS ARE ALPHABETICAL BY ACCIDENT, WHICH IS EXACTLY WHY THIS HIDES.**
+    Nobody chooses the order to be sortable; it just is, because `accept` precedes `reject` in
+    both meaning and spelling.
+
+    So this asserts the SAMPLE retains a row that can fail. Without it, reordering
+    `hazard_link_review`'s verbs alphabetically — a tidy-up nobody would flag in review — would
+    silently convert every ordered assertion in this file into decoration, and no seal would say
+    so. That is the same shape as the tripwire two tests up: a property that quietly stops being
+    checked, with nothing that runs to announce it.
+    """
+    composed = _by_kind(compose(_SEED, [str(_OVERLAY)]))
+    discriminating = {
+        kind: accepts
+        for kind, (accepts, _reasons) in _EXPECTED.items()
+        if list(accepts) != sorted(accepts)
+    }
+    assert discriminating, (
+        "EVERY declared row's verbs are in alphabetical order, so an ordered comparison cannot "
+        "distinguish a composer that preserves order from one that sorts. The ordering assertions "
+        "in this file are decorative until a row declares a non-alphabetical order — give one of "
+        "them the order a card should actually show."
+    )
+    # And the discriminating row must still be IN the composed set, or the guard passes on a
+    # declaration the composition never returned.
+    for kind in discriminating:
+        assert kind in composed, (
+            f"{kind} is the only row that can prove order and it is not in the composed set"
+        )

@@ -29,9 +29,16 @@ asserts the seed equals the standard exactly.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from agent_fleet.safety_agent import matrix
+
+from ._engine_extra import requires_rdflib
+
+_MATRIX_TTL = Path(__file__).resolve().parents[2] / "setup" / "ontologies" / "safety_risk_matrix.ttl"
 
 #: MIL-STD-882E Table III, verbatim. Row order is the standard's own (by probability).
 #: Written out rather than computed: a rule that generated it would be a second reading of
@@ -54,6 +61,7 @@ def _clean_cache():
     matrix.reset_cache()
 
 
+@requires_rdflib
 @pytest.mark.parametrize("probability", sorted(TABLE_III))
 def test_each_probability_row_matches_the_standard(probability):
     """One test per row, so a failure names the row rather than the whole table."""
@@ -66,6 +74,7 @@ def test_each_probability_row_matches_the_standard(probability):
         )
 
 
+@requires_rdflib
 def test_no_cell_is_more_permissive_than_the_standard():
     """THE DIRECTIONAL CHECK, because the five real errors all leaned the same way.
 
@@ -86,6 +95,7 @@ def test_no_cell_is_more_permissive_than_the_standard():
     )
 
 
+@requires_rdflib
 def test_the_comparison_can_fail():
     """THE CONTROL. A table-equality test that never sees a mismatch has not been shown able to
     detect one — and every assertion above passing is equally consistent with `resolve_risk_level`
@@ -101,6 +111,7 @@ def test_the_comparison_can_fail():
     )
 
 
+@requires_rdflib
 def test_probability_f_is_absent_and_that_is_deliberate():
     """F (Eliminated) is Table III's sixth row and is intentionally not a cell here.
 
@@ -113,4 +124,73 @@ def test_probability_f_is_absent_and_that_is_deliberate():
         assert level is None, f"{severity}/F resolved to {level!r}; F is not a risk band"
     assert len(matrix.known_cells()) == 20, (
         "the matrix has cells beyond the 4x5 assessment grid"
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE ALWAYS-RUNS HALF — the coverage claim, read as TEXT.
+#
+# This is the assertion that must survive `rdflib` being legitimately absent. It does not prove
+# the ENGINE resolves a cell correctly (that is the parsing half above, which skips); it proves
+# the FILE declares MIL-STD-882E Table III's twenty cells with the standard's own values.
+#
+# Those are different claims and neither implies the other: a correct file can be read by a broken
+# resolver, and a correct resolver can read a file that drifted. The second is the one that went
+# wrong on 2026-09-12 — five cells, all too permissive — and it is the one asserted here, where no
+# optional dependency can take it dark.
+# ---------------------------------------------------------------------------
+
+def test_the_TTL_TEXT_declares_table_iii_exactly():
+    """Twenty cells, parsed from the file's own lines by regex. No rdflib, no graph."""
+    text = _MATRIX_TTL.read_text(encoding="utf-8")
+    rows = re.findall(
+        r'safety:whenSeverity\s+"(\w+)"\s*;\s*safety:whenProbability\s+"(\w+)"\s*;\s*'
+        r'safety:yieldsRiskLevel\s+safety:(\w+)\s*\.',
+        text,
+    )
+    assert rows, "no matrix cells parsed from the TTL text — instrument failure, not an empty file"
+    declared = {(sev, prob): level for sev, prob, level in rows}
+
+    expected = {
+        (sev, prob): TABLE_III[prob][i]
+        for prob in TABLE_III
+        for i, sev in enumerate(_SEVERITIES)
+    }
+    assert declared == expected, (
+        "the TTL's declared cells differ from MIL-STD-882E Table III: "
+        + "; ".join(
+            f"{s}/{p}: file says {declared.get((s, p))!r}, standard says {v!r}"
+            for (s, p), v in sorted(expected.items())
+            if declared.get((s, p)) != v
+        )
+    )
+
+
+def test_the_TEXT_reader_can_say_no():
+    """THE CONTROL for the always-runs half. A regex that silently matches nothing looks exactly
+    like one that matched everything it was asked about."""
+    sample = (
+        '[] a safety:MatrixCell ; safety:whenSeverity "I" ; '
+        'safety:whenProbability "A" ; safety:yieldsRiskLevel safety:Low .'
+    )
+    rows = re.findall(
+        r'safety:whenSeverity\s+"(\w+)"\s*;\s*safety:whenProbability\s+"(\w+)"\s*;\s*'
+        r'safety:yieldsRiskLevel\s+safety:(\w+)\s*\.',
+        sample,
+    )
+    assert rows == [("I", "A", "Low")], "the text reader cannot read a cell it was handed"
+    assert rows[0][2] != TABLE_III["A"][0], (
+        "the control's deliberately-wrong value matches the standard — it is not discriminating"
+    )
+
+
+def test_probability_F_is_absent_from_the_TEXT_too():
+    """The deliberate omission, asserted where no dependency can hide it."""
+    text = _MATRIX_TTL.read_text(encoding="utf-8")
+    assert 'safety:whenProbability "F"' not in text, (
+        "an F cell is declared; F (Eliminated) is a hazard STATE, not a risk band"
+    )
+    assert "Eliminated" in text, (
+        "F's deliberate absence is not explained in the file — a considered omission and a "
+        "transcription that stopped at E look identical without the note"
     )
