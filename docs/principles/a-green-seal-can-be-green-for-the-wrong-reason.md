@@ -115,6 +115,18 @@ populated that field — it was `{}` on every ask regardless. **Asserting
 on a field the path does not fill is asserting on a neighbour.** See
 [[assert-on-the-claim-not-its-neighbour]].
 
+*And the reason the AUTHOR is worst placed to catch it (01, 2026-09-11).* A seal written for an
+import fix asserted `defs is not None`. The fix had silently changed a public export — `from
+iagent import defs` returned a **module** where it had returned a `Definitions` object — and a
+module is not None, so the seal passed through the regression. It was written **twenty minutes
+after its author recorded neighbour-assertion as their own most frequent defect**.
+
+**The asymmetry is the finding: the author knows what they MEANT, so a green reads as
+confirmation of the intent rather than of the assertion.** A reviewer has only the assertion, and
+is therefore the better instrument for exactly this class. It is the strongest argument in this
+file for source-of-truth review by someone who did not write the fix. *(Repaired by asserting the
+TYPE, which goes red under the old code.)*
+
 **10. A fixture that agrees with the bug.** `/artifacts/{id}` read `current_user.authz_id`
 while the writer stamped `current_user.id`; **285 of one user's 286 artifacts were
 permanently unreadable by their own producer.** Nine tests passed over it, because the test
@@ -295,6 +307,27 @@ argument this file makes for a comment that must be read to be obeyed.
 *What survived the confusion, and why:* the ZERO. `program_id` is absent from the planning engine,
 and zero has no unit problem — no lines, no occurrences, no scope, nothing vendored. The refusal
 that rested on it was never at risk. **Prefer a claim that survives every way of counting.**
+
+**A SUITE RUN MEASURES THE TREE AS IT STOOD FOR THE WHOLE RUN — SO DO NOT EDIT DURING ONE.**
+*(01, 2026-09-11; not previously named here.)* A seal that spawns a subprocess importing a module
+**from disk** reads whatever is on disk at the moment the subprocess starts, not what was there
+when the run began. Break-on-purpose mutations applied to that file while the full suite ran in
+the background were read by the suite's copy of the seal, and **the run reported a failure that
+belonged to the editing rather than to the code. The run was invalid and it looked like a
+result.**
+
+Any seal that reads the tree rather than the imported module has this property. The disposal is
+not cleverness, it is sequencing: **let a run finish, or start it again afterwards.** And when it
+happens, **re-run clean rather than reasoning about which failures were yours** — reasoning about
+it is supplying an explanation, which is the thing
+[`a reason invented for a conclusion`](a-reason-invented-for-a-conclusion-fits-it-by-construction.md)
+warns is free and fits.
+
+**It has a sibling pointing the other way, and the pair is the general form.** Running a suite
+here can *mutate* tracked files (a generator invoked by a positive control, a break-on-purpose
+whose restore is byte-inexact). So: a run can change the tree, and changing the tree can invalidate
+a run. **A measurement and its subject must not both be moving**, and in a shared checkout the
+default is that both are.
 
 **A GREEN BELONGS TO A SHA, NOT TO A DIRECTORY.** *(invincible-agent-5f + 01, 2026-09-09 — a
 defect in how results are READ rather than how seals are written, and in a shared tree it is the
