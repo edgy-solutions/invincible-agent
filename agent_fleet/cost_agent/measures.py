@@ -147,8 +147,20 @@ def _vintage_options(state: CostState, params: dict[str, Any]) -> Optional[list[
         return None
 
 
-OPTION_SOURCES: dict[tuple[str, str], Any] = {
-    ("cost_rate_comparison", "rate_vintage"): _vintage_options,
+#: Keyed on the SLOT NAME, and applied to EVERY verb that declares it.
+#:
+#: ⚠ THIS WAS KEYED ON (verb, slot) AND HELD ONE ENTRY, WHICH MADE THE FIX A SAMPLE.
+#: `cost_rate_comparison` got its options; `cost_lot_breakdown` and `cost_price_composition`
+#: declare the SAME mandatory `rate_vintage` and got none. Measured on a live card 2026-09-12:
+#: the ask rendered "Which rate vintage?" as a bare text box, because the refusal it came from
+#: carried no options for cortex to draw. I had fixed the verb I was looking at.
+#:
+#: KEYED BY SLOT BECAUSE THE SLOT IS WHAT HAS OPTIONS. A rate vintage means the same thing in
+#: every verb that takes one, and the source reads `params` so it adapts to the lot in hand.
+#: This is not a tidier registry — it is a registry that CANNOT be a sample: a tenth verb
+#: declaring `rate_vintage` is covered by the commit that adds it, with nothing to remember.
+_SLOT_OPTION_SOURCES: dict[str, Any] = {
+    "rate_vintage": _vintage_options,
 }
 
 
@@ -159,8 +171,11 @@ def options_for(state: CostState, fn_name: str, slot: str,
     NONE AND [] MEAN DIFFERENT THINGS and the route keeps them apart: None is "not computable
     from what you supplied"; [] would be "there are genuinely none". Collapsing them is how a
     caller reads "no vintages exist" from "you did not name a lot".
+
+    `fn_name` is accepted and deliberately unused: the contract is per-slot, and taking the
+    verb keeps the door open for a verb-specific override without changing every call site.
     """
-    source = OPTION_SOURCES.get((fn_name, slot))
+    source = _SLOT_OPTION_SOURCES.get(slot)
     return source(state, params) if source else None
 
 
@@ -475,7 +490,17 @@ def cost_rate_assumptions(
     return {
         "output_uri": OUTPUT_URI["cost_rate_assumptions"],
         "rows": _rows,
-        "series": [{"key": f, "label": f.replace("_", " ").title(), "unit": None}
+        # ⚠ THIS DERIVED THE LABEL FROM THE KEY AND PUT "G And A" ON A LIVE CHART.
+        # `_RATE_LABELS` already holds the human names — `cost_rate_comparison` reads it at
+        # line 325 — and this series builder title-cased the key instead, so ONE verb spoke
+        # the domain's vocabulary and its neighbour invented a second one for the same six
+        # factors. A renderer cannot tell a derived label from an authored one; it drew
+        # exactly what was sent.
+        #
+        # `.title()` on an identifier is the tell: it is a plausible label for every key and
+        # a correct one only for keys that happen to be ordinary words.
+        "series": [{"key": f, "label": _RATE_LABELS.get(f, f.replace("_", " ").title()),
+                    "unit": None}
                    for f in _factors],
         "value_label": "Rate",
         "scope_label": state.program_name,
