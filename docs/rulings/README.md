@@ -92,7 +92,7 @@ the notice is part of the ruling rather than an implementation detail.
 
 | # | ruling | where |
 |---|---|---|
-| a | **Author's visibility audience** — `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. The existence-oracle protects against **outsiders, not authors**; that sentence is the rule it instantiates. | §5:290 |
+| a | **The author sees what they can act on, and nothing more.** ⟺ **AMENDED 2026-09-12.** `see ⟺ can_act` is **the substrate's shape**, not a gap in an implementation — the projection materialises one row per authorized ACTOR, so viewability and act-ability derive from one Topaz answer and cannot diverge. The earlier reading described a view-only author audience as though it were available; it is not, and saying so plainly is the honest version. **The inert grant is withdrawn** — see the note below. | §5:290 |
 | b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
@@ -128,6 +128,32 @@ and cortex-ui's `taskKindRegistry` are **interim by construction and retire toge
 — so R-004b is a property **of the declaration** from the first schema, and the cutover seal
 compares it row for row. Otherwise the bad half survives: a served declaration saying how a task
 renders while a code table still decides what it can do.
+
+
+### On (a): what was filed, and what the withdrawn grant teaches
+
+**OPTION (b) IS REAL PLATFORM WORK AND IS FILED WITH ITS USE CASE** — a `viewer` relation with
+`can_view`, and rows materialised with the act gate closed. **A safety officer who must see every
+open acceptance and dispose none is a standard role**, so this will be needed; it is simply not
+increment 3's to build.
+
+**Option (c) — a blind author — is refused.** It is a design nobody would choose on purpose.
+
+**THE WITHDRAWN GRANT IS THE ✅ REGISTERED SHAPE, IN POLICY.** It read as protection and protected
+nothing: same defect as a registration that reports success and routes nowhere, moved from the
+mesh into the authorization rail. It belongs in this register rather than only in a commit,
+because **the next person to read that grant would have read it as coverage.**
+
+**AND SEAL 7 KEEPS THREE LEGS WITHOUT A PERMISSION THE MODEL DOES NOT HAVE**, by running **two
+assessments instead of one**:
+
+    a HIGH   — alice disposes; bob and carol see nothing
+    a MEDIUM — bob disposes;   alice and carol see nothing
+
+That discriminates *"cannot see"* from *"not on this tier"*, which the middle-leg version could
+not. **It is the stronger seal rather than merely the available one: it proves the ladder ROUTES**,
+where a single assessment with one disposer is equally consistent with a ladder that always routes
+to alice.
 
 ---
 
@@ -710,6 +736,25 @@ RATIFIED ROW, not from an engine's `CATALOGUE`.** Any declared-set derivation th
 catalogues is blind to `finProgramBrief` **by construction**, and that blindness grows with every
 graph engine-lg admits. So the census reads **the graph** and reports additions **by name** since
 its last run — both sources or none, or engine-lg's verbs read as orphans forever.
+
+## R-025 — A claim in a file's own prose is PRE-AUTHENTICATED
+
+**RULED 2026-09-12.** From a false claim traced through three hops by `invincible-agent-28`:
+
+    prose in a policy header  ->  repeated in a comment  ->  carried into a RULED line
+
+**This is the stale-docstring family, worse-placed.** A docstring is read by whoever opens the
+function. **A policy header is read by whoever is deciding what the policy MEANS** — so the claim
+arrives already carrying the file's authority, and the next reader *cites* it rather than checking
+it. That is one layer up from where this shape usually bites, and it is why it travelled as far as
+a `RULED` line: every hop made it more official and none of them made it more true.
+
+**The check is the same as for any inherited claim and it is cheap:** the artifact the code
+PRODUCED outranks the file's description of itself. A grant's effect is a Topaz answer, not a
+sentence above it.
+
+Related: [[a-docstring-is-not-evidence]] — the reading half, and the instance where the author
+wrote one into a seal's justification.
 
 ---
 
