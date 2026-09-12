@@ -56,9 +56,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
+import time
 import datetime as _dt
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 #: The env var the images stamp. Read from the RUNNING process, never from the pod spec.
@@ -82,6 +85,41 @@ def _git_sha(ref: str) -> Optional[str]:
         ["git", "rev-parse", ref], capture_output=True, text=True
     )
     return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _divergence(deployed: str, expected: str) -> str:
+    """AHEAD or STALE — a sha that differs from the record is not automatically behind.
+
+    ADDED 2026-09-11, after the census called the three NEWEST pods in the fleet STALE.
+    Three engines had been rolled to master while the Helm release still recorded the
+    previous tag, so they diverged from the record by being *in front of it*, and the label
+    said the opposite of what was true.
+
+    **A LABEL THAT CAN ONLY SAY "BEHIND" WILL SAY IT ABOUT EVERYTHING THAT DIFFERS**, and a
+    reader acting on it would have rolled the fix backwards. The exit code is unchanged in
+    either direction — divergence from the record is what this census exists to report, and
+    being ahead of the record is still a lie in the record — but the OPERATOR needs to know
+    which way, because the remedies are opposite.
+
+    Ancestry from git, not string comparison: if the expected sha is an ancestor of what is
+    deployed, the deployment is ahead. Unknown shas (a build from a branch nobody has, a
+    shallow clone) report neither rather than guessing.
+    """
+    import subprocess
+    if not deployed or not expected or deployed.startswith(expected[:12]):
+        return ""
+    def _known(sha: str) -> bool:
+        return subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+                              capture_output=True).returncode == 0
+    if not (_known(deployed) and _known(expected)):
+        return "DIVERGED"          # both real, ancestry unknowable here
+    anc = subprocess.run(["git", "merge-base", "--is-ancestor", expected, deployed],
+                         capture_output=True).returncode == 0
+    if anc:
+        return "AHEAD"
+    rev = subprocess.run(["git", "merge-base", "--is-ancestor", deployed, expected],
+                         capture_output=True).returncode == 0
+    return "STALE" if rev else "DIVERGED"
 
 
 def _short(sha: str) -> str:
@@ -215,6 +253,158 @@ def _prime_run_from_graph(namespace: str, bff_deploy: str = "iagent-cortex-bff")
     except Exception:  # noqa: BLE001
         return None
     return float(val) if isinstance(val, (int, float)) else None
+
+
+#: Where the snapshot lives. Beside the census rather than in the repo tree: it is a RECORD OF
+#: WHAT WAS SEEN, not a declaration, and committing it would invite someone to edit it to make a
+#: diff go away.
+_VERB_SNAPSHOT = Path.home() / ".iagent" / "verb_snapshot.json"
+
+#: The sources `_declared_verbs` actually walked on its last call, so an UNATTRIBUTED verb can
+#: name the DIRECTION this census is blind in rather than reporting a number.
+_WALKED_SOURCES: "list[str]" = []
+
+
+def _declared_verbs(repo: Path) -> "dict[str, str]":
+    """`mesh:verb -> where it is declared`, from BOTH sources. Derived, never listed.
+
+    TWO SOURCES, AND READING ONLY THE FIRST IS THE DEFECT THIS EXISTS TO CLOSE.
+    `invincible-agent-22` measured it: they diffed live `db.relationshipTypes()` against verbs
+    derived from every engine's `CATALOGUE` and `finProgramBrief` came back **unaccounted** —
+    not because it is undeclared, but because **a graph-host verb comes from a RATIFIED ROW in
+    `policy/graphs/`, and there is nowhere in an engine catalogue for it to be.** Any derivation
+    reading catalogues alone is blind to it *by construction*, and that blindness grows with
+    every graph engine-lg admits.
+
+    THIS IS AN EXCLUSION, NOT AN INCLUSION LIST, AND THE DIFFERENCE IS WHICH WAY IT FAILS. A
+    hardcoded entry for graph-host verbs would make today's answer right and go silently blind on
+    the third graph. Deriving from the sources means a verb from a source nobody taught this
+    function about is reported **UNATTRIBUTED** — loudly, by name — rather than omitted.
+    """
+    out: "dict[str, str]" = {}
+    walked: "list[str]" = []
+    _cat = sorted((repo / "agent_fleet").glob("*/main.py"))
+    _rows = sorted((repo / "policy" / "graphs").glob("*.yaml"))
+    walked.append(f"engine catalogues (agent_fleet/*/main.py, {len(_cat)} file(s))")
+    walked.append(f"ratified graph rows (policy/graphs/*.yaml, {len(_rows)} file(s))")
+    _WALKED_SOURCES.clear()
+    _WALKED_SOURCES.extend(walked)
+    for pyf in _cat:
+        try:
+            text = pyf.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r'"verb"\s*:\s*"(mesh:[A-Za-z_][A-Za-z0-9_]*)"', text):
+            out.setdefault(m.group(1), f"catalogue: {pyf.parent.name}")
+    for row in _rows:
+        try:
+            text = row.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = re.search(r'^\s*verb:\s*(mesh:[A-Za-z_][A-Za-z0-9_]*)\s*$', text, re.M)
+        if m:
+            out.setdefault(m.group(1), f"ratified row: policy/graphs/{row.name}")
+    return out
+
+
+def _live_relationship_types(namespace: str) -> "Optional[list[str]]":
+    """Every relationship type in the graph, or None if it could not be read."""
+    pod = _pod_for(namespace, "iagent-cortex-bff")
+    if not pod:
+        return None
+    snippet = (
+        "import os,json,base64,urllib.request as u;"
+        "usr=os.environ.get('NEO4J_USER') or os.environ.get('NEO4J_USERNAME') or 'neo4j';"
+        "tok=base64.b64encode((usr+':'+os.environ.get('NEO4J_PASSWORD','')).encode()).decode();"
+        "q={'statements':[{'statement':'CALL db.relationshipTypes()'}]};"
+        "r=u.Request('http://iagent-neo4j:7474/db/neo4j/tx/commit',"
+        "data=json.dumps(q).encode(),"
+        "headers={'Content-Type':'application/json','Authorization':'Basic '+tok});"
+        "d=json.load(u.urlopen(r,timeout=20));"
+        "print(json.dumps([x['row'][0] for x in d['results'][0]['data']]))"
+    )
+    rc, out = _kubectl(["-n", namespace, "exec", pod, "--", "python", "-c", snippet], timeout=90)
+    if rc != 0:
+        return None
+    try:
+        return json.loads(out.strip().splitlines()[-1])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def report_verb_delta(namespace: str, repo: Path) -> int:
+    """Name what the verb set gained or lost since the last run, and attribute each addition.
+
+    **A COUNT THAT MOVED AND CANNOT BE ATTRIBUTED IS THE NO-OP-PIN FINDING IN A NEW COSTUME.**
+    `db.relationshipTypes()` went 63 -> 64 and nobody could say which verb the 64th was, which
+    is a fact nobody can act on. So this reports BY NAME and says where each new verb was
+    declared.
+
+    Returns 0 (nothing new, or everything attributed), 2 (could not look), or 3 (an addition
+    this function cannot attribute — a source it does not know how to read).
+    """
+    live = _live_relationship_types(namespace)
+    if live is None:
+        print("VERBS: could not read db.relationshipTypes() — NOT a clean sweep, a blind one.")
+        return 2
+    live_set = sorted(set(live))
+
+    previous: "Optional[list[str]]" = None
+    try:
+        previous = json.loads(_VERB_SNAPSHOT.read_text(encoding="utf-8")).get("types")
+    except Exception:  # noqa: BLE001
+        previous = None
+
+    declared = _declared_verbs(repo)
+    print(f"\nVERBS: {len(live_set)} relationship type(s) live.")
+
+    if previous is None:
+        print("       No previous snapshot — this run establishes the baseline. A first run "
+              "cannot report a delta and must not pretend to.")
+    else:
+        added = [t for t in live_set if t not in set(previous)]
+        removed = [t for t in previous if t not in set(live_set)]
+        if not added and not removed:
+            print("       unchanged since the last snapshot.")
+        for t in removed:
+            print(f"       REMOVED  {t}")
+        unattributed = []
+        for t in added:
+            src = declared.get(t) or declared.get(f"mesh:{t}")
+            if src:
+                print(f"       ADDED    {t}   <- {src}")
+            else:
+                print(f"       ADDED    {t}   <- UNATTRIBUTED")
+                unattributed.append(t)
+        if unattributed:
+            # NAME THE DIRECTION, NOT THE COUNT. "+1, unattributed" reads as a limitation of
+            # COUNTING and never as a source the census cannot see — and it degrades: seen
+            # twice it looks like arithmetic. An instrument reporting its own gap as a small
+            # number is the most expensive way to report a gap, because it looks like
+            # PRECISION. Same shape as the abstention diagnostic that printed `source` where
+            # `domains` belonged. Listing what WAS walked makes the omission legible: a reader
+            # can see that their source is not on the list.
+            print(
+                f"\n       {len(unattributed)} addition(s) matched NO declaration in any "
+                f"source this census walks: {', '.join(unattributed)}."
+            )
+            for src in _WALKED_SOURCES:
+                print(f"           walked: {src}")
+            print(
+                "       If a verb above is real and declared somewhere else, THIS CENSUS IS "
+                "BLIND IN THAT DIRECTION and the list above is what it can see. Structural "
+                "edges (HAS_PART, INSTANCE_OF) belong here; a camelCase verb does not."
+            )
+
+    _VERB_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+    _VERB_SNAPSHOT.write_text(
+        json.dumps({"types": live_set, "at": time.time()}, indent=2), encoding="utf-8")
+    if previous is not None and any(
+        not (declared.get(t) or declared.get(f"mesh:{t}"))
+        for t in live_set if t not in set(previous)
+    ):
+        return 3
+    return 0
 
 
 def _last_prime_completion(namespace: str) -> Optional[float]:
@@ -437,12 +627,16 @@ def main() -> int:
             # still stale — that is the case this census exists to catch.
             if proc not in ("-", "n/a"):
                 ok = proc.startswith(expected[:12]) or expected.startswith(proc[:12])
-                verdict = "current" if ok else f"STALE (wants {_short(expected)})"
+                verdict = "current" if ok else (
+                    f"{_divergence(proc, expected) or 'STALE'} of record "
+                    f"({_short(expected)})")
                 if not ok:
                     bad.append(name)
             elif spec_tag not in ("latest", "?"):
                 ok = expected.startswith(spec_tag[:12]) or spec_tag.startswith(expected[:12])
-                verdict = "current (by tag)" if ok else f"STALE (wants {_short(expected)})"
+                verdict = "current (by tag)" if ok else (
+                    f"{_divergence(spec_tag, expected) or 'STALE'} of record "
+                    f"({_short(expected)}, by tag)")
                 if not ok:
                     bad.append(name)
             else:
@@ -458,12 +652,22 @@ def main() -> int:
             f"\n{len(unpinned)} of {len(rows)} on ':latest' — the spec tag identifies "
             f"nothing. Pin with `--set global.imageTag=$(git rev-parse HEAD)`."
         )
+    # THE VERB DELTA RUNS BEFORE THE SHA VERDICT RETURNS, so it is reported even on a FAILED
+    # census. A fleet at the wrong sha is exactly when you most want to know which verbs moved,
+    # and folding this after an early `return 1` would make the report available only when
+    # nothing was wrong.
+    verb_rc = report_verb_delta(args.namespace, Path(__file__).resolve().parents[1])
+
     if expected and bad:
         print(f"\nFAILED: {len(bad)} service(s) not at {args.expect} ({_short(expected)}): "
               f"{', '.join(sorted(bad))}")
         return 1
     if expected:
         print(f"\nOK: all {len(rows)} service(s) at {args.expect} ({_short(expected)}).")
+    if verb_rc == 3:
+        print("\nNOTE: exit 3 — sha checked and PASSED; a verb addition could not be "
+              "attributed to any declaration this census reads.")
+        return 3
 
     # THREE OUTCOMES, BECAUSE THERE ARE THREE. invincible-agent-91's resolution, and the
     # reasoning is that a run-level exit code cannot carry a PER-CLAIM verdict. This census
@@ -482,6 +686,39 @@ def main() -> int:
         print("NOTE: exit 3 — sha checked; registration recency UNCHECKED (no prime-substrate "
               "completion found). The table is PARTIAL, and a reader taking 0 from it would be "
               "taking a pass on a claim nobody made.")
+        return 3
+
+    # THE SECOND CLAIM WAS BEING COLLECTED AND THROWN AWAY. Found 2026-09-12, on the first
+    # uniform roll this census was built for: `stale_reg` was populated at the row loop and
+    # referenced NOWHERE ELSE, so `BEFORE PRIME` printed in a column and reached no exit code.
+    # A dead variable is a guard that cannot fire, and this one sat inside the instrument whose
+    # whole purpose is to notice that elsewhere.
+    #
+    # IT IS 3 AND NOT 1, AND THE REASON IS THE POPULATION. The engine-reregister hook restarts
+    # only the engines that REGISTER — ten of them. `engine-o` and `cortex-bff` are not on that
+    # list and are not meant to be: they read the graph rather than registering into it, and
+    # engine-o's resolver cache carries a 30s TTL precisely so it does not need a restart to see
+    # a new provider. So a service predating the prime is a FAILURE for a registering engine and
+    # ROUTINE for those two, and this census cannot tell which it is looking at.
+    #
+    # Reporting it as a failure would cry wolf on every clean roll. Reporting nothing is what it
+    # did. Naming them and exiting 3 says the true thing: the claim was looked at, and for these
+    # services it could not be settled here.
+    if stale_reg:
+        print("")
+        print(
+            f"NOTE: exit 3 — sha checked and PASSED; registration recency UNSETTLED for "
+            f"{len(stale_reg)} service(s): {', '.join(sorted(stale_reg))}."
+        )
+        print(
+            "      Each started BEFORE the last prime completed. That is a DEFECT for an "
+            "engine that registers at startup and ROUTINE for one that does not — and this "
+            "census cannot tell them apart."
+        )
+        print(
+            "      Check against the engine-reregister hook's own list: a name on it that "
+            "appears here did not get its restart."
+        )
         return 3
     return 0
 

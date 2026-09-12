@@ -1,0 +1,197 @@
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix safety: <http://internal/sustainment/safety#> .
+
+<http://internal/sustainment/safety/matrix> a owl:Ontology ;
+    rdfs:label "Safety risk matrix and acceptance ladder — SEED policy (pending domain-owner ratification)" ;
+    rdfs:comment """The severity x probability -> risk level table, and the risk level -> acceptance
+authority ladder. POLICY AS DATA, on pcn_disposition_rules.ttl's exact precedent: the MECHANISM
+(resolve a hazard's severity and probability to a level, resolve the level to the authority the
+acceptance requires, refuse loudly on an unrecognized value) lives in the engine; the ROWS live
+here, versioned and reproducible through the manifest partition like every other standards
+artifact, so the drift-check covers policy too. Change the programme's matrix -> edit this file ->
+re-ingest -> the drafter follows source, no code deploy.
+
+THIS IS THE LOAD-BEARING DECISION OF ADR-0051 (§2). The matrix and the ladder are exactly what
+differs between programmes. In code, the second customer is a fork of the drafting engine; as
+ratifiable data, the second customer is an overlay file and a re-prime.
+
+THE MATRIX CITES ITS SOURCE AS OF 2026-09-12 AND IS NO LONGER A READING. v1 was "the agent's
+reading of MIL-STD-882 convention" with prov:wasDerivedFrom deliberately empty. It was then
+TRANSCRIBED from the standard, and FIVE OF TWENTY CELLS WERE WRONG — all five too permissive.
+So the emptiness was honest and the content was not, which is the pairing worth remembering: an
+honest label on a wrong table still routes a real acceptance to the wrong authority.
+
+**THE TWO HALVES OF THIS FILE HAVE DIFFERENT PROVENANCE AND MUST NOT SHARE A CITATION.**
+
+  THE MATRIX (severity x probability -> risk level)
+      MIL-STD-882E, Table III "Risk assessment matrix", document page 12, in the 4.3.3
+      risk-assessment text. VERIFIED against the standard's own PDF, cell by cell.
+      882E 4.3.3.d: "The definitions in Tables I and II, and the RACs in Table III shall be
+      used, unless tailored alternative definitions and/or a tailored matrix are formally
+      approved in accordance with DoD Component policy."
+
+  THE ACCEPTANCE LADDER (risk level -> who may accept)
+      NOT IN 882E. 4.3.7, read verbatim from the standard: "the risks shall be accepted by
+      the appropriate authority as defined in DoDI 5000.02" — it defers, and names nobody.
+
+      CORROBORATED BUT NOT READ FROM PRIMARY, 2026-09-12. The current issue appears to be
+      DoDI 5000.88 (the 2020 reissue moved engineering content out of 5000.02), and
+      5000.88 PARA 3.6.e.(1)(b)1 is cited as assigning: Component or Defense Acquisition
+      Executive -> High, PEO-level -> Serious, PM -> Medium and Low. That MATCHES the seeded
+      ladder. But esd.whs.mil returns HTTP 403 to this environment and the corroboration is
+      a search summary plus a secondary page, NOT the document.
+
+      SO THE LADDER'S EVIDENCE IS WEAKER THAN THE MATRIX'S AND THE TWO MUST NOT BE READ AS
+      EQUALLY SOURCED. The matrix was transcribed cell by cell from 882E's own PDF; this was
+      not. Anyone with access should open 5000.88 3.6.e.(1)(b)1, confirm the tiers, and
+      replace this paragraph with the verbatim quote. Until then the ladder remains a
+      FIXTURE: it exercises routing and authorises nothing.
+
+      AND THE DOCUMENT MAY HAVE MOVED BETWEEN ISSUES. DoDI 5000.02 as reissued in 2015 carried
+      these definitions; the 2020 reissue pushed engineering content into DoDI 5000.88, and
+      which issue currently names the tiers is NOT established here. Read the current one, cite
+      the section beside the Table III line above, and IF THE TIERS DIFFER FROM CAE/PEO/PM THAT
+      IS A SECOND TRANSCRIPTION ERROR OF THE SAME SHAPE — and it gets the same treatment,
+      including a directional assertion, because a ladder naming a more junior tier than the
+      standard fails the same silent way a permissive matrix cell does.
+
+WHAT A PROGRAMME RATIFIES IS ITS TAILORING, NOT THE STANDARD. A cell that matches Table III needs
+no local ratifier; it has one already. An OVERLAY row that departs from Table III does, and the
+ratifier is the signatory of that programme's System Safety Program Plan. That is the only place
+a named human is required, and it is the programme's person rather than ours.
+
+KEEP THIS A FLAT TABLE. Never a rule language: nesting, expressions and priorities are
+code-as-policy's revenge, and the neighbouring disposition rules file says so from experience.""" ;
+    prov:wasDerivedFrom <https://cdn.ymaws.com/system-safety.org/resource/resmgr/documents/MIL-STD-882E.pdf> ;
+    safety:derivedFromStandard "MIL-STD-882E, Table III (Risk assessment matrix), document page 12, section 4.3.3" ;
+    safety:ratificationStatus "matrix: TRANSCRIBED AND VERIFIED against MIL-STD-882E Table III 2026-09-12, no local ratifier required for cells matching the standard. Acceptance ladder: attributed to DoDI 5000.02 per 882E 4.3.7, NOT verified from source by this lane. Tailoring: an overlay row departing from Table III requires the programme SSPP signatory." .
+
+# ---------------------------------------------------------------------------
+# SEVERITY — the closed vocabulary. A value outside it is a REFUSAL at draft
+# time, naming this file, never a coerced default (the qualification-status
+# vocabulary's rule, applied here).
+# ---------------------------------------------------------------------------
+safety:Catastrophic a safety:SeverityCategory ;
+    rdfs:label "Catastrophic" ; safety:severityCode "I"   ; safety:severityRank 1 ;
+    rdfs:comment "Could result in death, permanent total disability, or irreversible environmental damage." .
+safety:Critical a safety:SeverityCategory ;
+    rdfs:label "Critical" ; safety:severityCode "II"  ; safety:severityRank 2 ;
+    rdfs:comment "Could result in permanent partial disability or severe injury." .
+safety:Marginal a safety:SeverityCategory ;
+    rdfs:label "Marginal" ; safety:severityCode "III" ; safety:severityRank 3 ;
+    rdfs:comment "Could result in injury or occupational illness resulting in lost workdays." .
+safety:Negligible a safety:SeverityCategory ;
+    rdfs:label "Negligible" ; safety:severityCode "IV" ; safety:severityRank 4 ;
+    rdfs:comment "Could result in injury or illness not resulting in lost workdays." .
+
+# ---------------------------------------------------------------------------
+# PROBABILITY — likewise closed.
+# ---------------------------------------------------------------------------
+safety:Frequent a safety:ProbabilityLevel ;
+    rdfs:label "Frequent" ; safety:probabilityCode "A" ; safety:probabilityRank 1 .
+safety:Probable a safety:ProbabilityLevel ;
+    rdfs:label "Probable" ; safety:probabilityCode "B" ; safety:probabilityRank 2 .
+safety:Occasional a safety:ProbabilityLevel ;
+    rdfs:label "Occasional" ; safety:probabilityCode "C" ; safety:probabilityRank 3 .
+safety:Remote a safety:ProbabilityLevel ;
+    rdfs:label "Remote" ; safety:probabilityCode "D" ; safety:probabilityRank 4 .
+safety:Improbable a safety:ProbabilityLevel ;
+    rdfs:label "Improbable" ; safety:probabilityCode "E" ; safety:probabilityRank 5 .
+
+# ---------------------------------------------------------------------------
+# RISK LEVELS, and the AUTHORITY each one's acceptance requires.
+#
+# The audience key is what policy/task_grants.yaml grants against, and it is
+# recorded HERE rather than in code because the ladder is the half a programme
+# re-negotiates. ADR-0051 §5: one audience per level, because an authority
+# level IS a group and `grant_to` cannot name one yet.
+# ---------------------------------------------------------------------------
+safety:High a safety:RiskLevel ;
+    rdfs:label "High" ; safety:riskRank 1 ;
+    safety:acceptanceAudience "risk_acceptance_high:SUSTAINMENT" .
+safety:Serious a safety:RiskLevel ;
+    rdfs:label "Serious" ; safety:riskRank 2 ;
+    safety:acceptanceAudience "risk_acceptance_serious:SUSTAINMENT" .
+safety:Medium a safety:RiskLevel ;
+    rdfs:label "Medium" ; safety:riskRank 3 ;
+    safety:acceptanceAudience "risk_acceptance_medium:SUSTAINMENT" .
+safety:Low a safety:RiskLevel ;
+    rdfs:label "Low" ; safety:riskRank 4 ;
+    safety:acceptanceAudience "risk_acceptance_low:SUSTAINMENT" .
+
+# ---------------------------------------------------------------------------
+# THE MATRIX — TRANSCRIBED FROM MIL-STD-882E TABLE III, NOT REMEMBERED.
+#
+# CORRECTED 2026-09-12 AGAINST THE STANDARD, AND FIVE OF TWENTY CELLS WERE WRONG.
+# v1 was labelled "the agent's reading of MIL-STD-882 convention", which was an
+# honest label for something written from memory — and memory got a quarter of the
+# table wrong. The five: II/E was Low (is Medium), III/B was Medium (is Serious),
+# III/D was Low (is Medium), III/E was Low (is Medium), IV/B was Low (is Medium).
+# EVERY ERROR WAS IN THE SAME DIRECTION — too permissive. A remembered matrix does
+# not fail randomly; it drifts toward "that sounds about right", and in this domain
+# that direction understates risk and routes the acceptance to a junior authority.
+#
+# All twenty are present: a missing cell must be a REFUSAL a reader can see, not a
+# gap the drafter fills by interpolating between neighbours.
+# ---------------------------------------------------------------------------
+[] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:High .
+[] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:High .
+[] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:High .
+[] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Serious .
+[] a safety:MatrixCell ; safety:whenSeverity "I"   ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Medium .
+
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:High .
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:High .
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Serious .
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "II"  ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Medium .
+
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:Serious .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Serious .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Medium .
+
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "A" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Medium .
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "C" ; safety:yieldsRiskLevel safety:Low .
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "D" ; safety:yieldsRiskLevel safety:Low .
+[] a safety:MatrixCell ; safety:whenSeverity "IV"  ; safety:whenProbability "E" ; safety:yieldsRiskLevel safety:Low .
+
+# ---------------------------------------------------------------------------
+# PROBABILITY LEVEL F (ELIMINATED) IS DELIBERATELY ABSENT, AND THAT IS STATED
+# RATHER THAN LEFT TO BE NOTICED.
+#
+# Table III has a SIXTH probability row — Eliminated (F) — whose entire row reads
+# "Eliminated" rather than a risk level. It is not a risk band; it is the state a
+# hazard reaches when it no longer exists, and 4.3.4's goal is "always to eliminate
+# the hazard if possible."
+#
+# It is omitted here because an eliminated hazard is not ASSESSED, and this file is
+# the assessment table. In this vocabulary that state is `safety:hazardStatus`
+# `closed`, not a probability. Recorded so a later reader can tell a considered
+# omission from a transcription that stopped at E — the same distinction §1's
+# survey header draws between "surveyed and absent" and "never surveyed".
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# I/E — CORRECTED FRAMING 2026-09-12. It was flagged here as "the row most likely
+# to be wrong". It is not wrong: Medium IS Table III's own value for
+# Catastrophic/Improbable.
+#
+# What it is, is THE ROW MOST COMMONLY TAILORED UPWARD. Some programmes hold that a
+# catastrophic outcome never falls below Serious regardless of probability, because
+# the acceptance decision should reach a senior authority whatever the odds. 882E
+# 4.3.3.d permits exactly that — "unless tailored alternative definitions and/or a
+# tailored matrix are formally approved in accordance with DoD Component policy",
+# with alternates derived from Tables I through III.
+#
+# So this is the row a programme changes first, it changes it in an OVERLAY rather
+# than here, and changing it moves the audience the acceptance routes to — which is
+# the whole point of the ladder being data. A tailored cell is the one place a named
+# ratifier is genuinely required, because it departs from the standard.
+# ---------------------------------------------------------------------------

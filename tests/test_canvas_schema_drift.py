@@ -97,16 +97,24 @@ def test_schema_matches_the_models():
 
 def test_the_check_can_actually_fail():
     """BREAK-ON-PURPOSE. A seal that has never gone red is not yet a check."""
-    original = _SCHEMA.read_text(encoding="utf-8")
+    # BYTES FOR SAVE AND RESTORE. `write_text` on Windows re-emits CRLF for content read
+    # with universal newlines, so a "restored" file shows MODIFIED with a ZERO-LINE DIFF
+    # — observed 2026-09-11 in a fresh worktree, where this test left the schema dirty
+    # after PASSING. In a shared tree that noise hides real changes and invites someone
+    # to stage a line-ending churn. AGENTS.md names this hazard; here it is, in my file.
+    original = _SCHEMA.read_bytes()
     try:
-        doc = json.loads(original)
+        doc = json.loads(original.decode("utf-8"))
         doc["properties"]["fabricated_field"] = {"type": "string"}
-        _SCHEMA.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        # chr(10), not a written escape: this line was first patched through a heredoc and the
+        # escape COLLAPSED into a real newline, breaking the file it was fixing. Name the
+        # character, never write it — the third instance of that in this repo.
+        _SCHEMA.write_bytes((json.dumps(doc, indent=2, sort_keys=True) + chr(10)).encode("utf-8"))
         assert _run("--check").returncode != 0, (
             "--check PASSED against a schema carrying a field the models do not declare — it is "
             "not comparing what it claims to compare")
     finally:
-        _SCHEMA.write_text(original, encoding="utf-8")
+        _SCHEMA.write_bytes(original)
     assert _run("--check").returncode == 0, "schema was not restored after the break-on-purpose"
 
 

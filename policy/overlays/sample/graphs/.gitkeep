@@ -1,0 +1,11 @@
+# SAMPLE — OVERLAY layer (ADR-0036), deliberately EMPTY.
+#
+# An existing empty directory is a CLAIM: "this deployment declares no domain graphs."
+# That is a different statement from an UNSET overlay variable, which means "nobody told me
+# where to look" and leaves the composed set unknowable.
+#
+# The distinction is load-bearing rather than pedantic: a gate that cannot tell those apart
+# either refuses a species it was never shown (the 18-row outage) or trusts a set it cannot
+# see. So the directory exists, empty, and GRAPH_OVERLAY_DIRS points at it — which also means
+# `compose(GRAPH_POLICY_DIR, GRAPH_OVERLAY_DIRS)` executes its overlay branch for the first
+# time since it was written, even when there is nothing to overlay.

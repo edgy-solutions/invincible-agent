@@ -184,6 +184,81 @@ by inferring a lane from the work it seems to be doing.
 *We infer identity from the work instead of asking the roster. A dispatch names its lane's
 ADDRESS; if you cannot state the address you do not have a lane, you have a hope.*
 
+### A GATE THAT PRINTS ITS CONDITION AND RUNS ANYWAY IS THE `✅ Registered` LINE AS A SCRIPT
+
+**RULED 2026-09-12.** A settle-check printed how many pods were unsettled — and then ran the
+census regardless, because the command did not *depend* on the number it had just shown.
+
+**IT REPORTS THE CHECK INSTEAD OF BEING THE CHECK**, and the output reads exactly like a guard.
+Same family as a registration that logs success and routes nowhere, and as `expected_fields`
+returning `NOT_EVALUATED` while a card draws: *the reassuring line is produced by something that
+did not do the work.*
+
+    WRONG   echo "$(count_unsettled)"; run_the_measurement
+    RIGHT   until [ "$(count_unsettled)" = 0 ]; do sleep 15; done; run_the_measurement
+
+**TWO DEFECTS, AND THE SECOND IS THE SUBTLER ONE.** The condition itself was insufficient: it
+counted pods **not** in `Running`, so during a rollout **old and new pods both `Running` read as
+settled**. The right condition is *terminating-count PLUS non-running-count*.
+
+**THE COST WAS A PLAUSIBLE WRONG NUMBER, WHICH IS THE EXPENSIVE KIND.** The unsettled run
+reported **11 services BEFORE PRIME**; the settled run reported **2** — exactly the pair the
+reregister hook excludes by design. Nine of eleven were an artifact of measuring mid-rollout, and
+nothing about the output looked wrong. A number that looks right is acted on.
+
+Related: the moving-tree rule — *a suite running on a tree that changed during the run measures
+neither version*. Same root, one layer out: **the fleet was moving while being measured.**
+
+### A REPORTED RESULT CARRIES THE SHA IT RAN AT — AND AN UNCOMMITTED FILE HAS NO SHA
+
+**RULED 2026-09-12**, from a result reported upward while the code producing it existed on no
+branch.
+
+*"CENSUS EXIT CODE = 3"* was measured, correct, and reported to the architect — and the change
+that produced it sat **uncommitted in a working tree for hours**, invisible to `git log`, to
+every lane, and to any rerun. Found incidentally by `git status` while attributing an unrelated
+test failure. **Nothing was looking for it.**
+
+**This is the R-010 shape and it is the expensive one.** A ruling written into a working copy by
+a session that moved on before committing took three days and seven lanes to recover, and it was
+only found because someone was asked to identify themselves. *An uncommitted file in a working
+tree is not a draft in progress; it is a change that does not exist yet.*
+
+**THE RULE: a result you report names the sha it ran at.** Not as ceremony — as the thing that
+makes it reproducible by someone who was not there. A result with no sha is a claim, and the
+person receiving it cannot tell which.
+
+    measured -> commit -> report, with the sha
+    never:  measured -> report -> (commit, maybe)
+
+**And the failure mode is that the number is RIGHT.** Nothing about exit 3 was wrong; it was
+simply unreproducible, which is a property no one can see from the outside. That is what makes
+this worth a rule rather than more care — care does not detect it, and neither does a green
+suite.
+
+*Corollary, same root: the tree you measured must be the tree you commit. See the moving-tree
+rule — a suite running on a tree that changed during the run measures neither version.*
+
+### COMMIT MESSAGES COME FROM A FILE. NEVER `-m` WITH BACKTICKS
+
+**RULED 2026-09-12, from a command that deleted its own examples.**
+
+    git commit -F - <<'MSG'      # correct — quoted heredoc, nothing expands
+    ...
+    MSG
+
+    git commit -m "... `foo` ..."   # WRONG — the shell runs `foo` as a command
+
+A commit message in this repo routinely quotes identifiers in backticks, and **a backtick inside
+a double-quoted shell argument is command substitution.** The message does not arrive mangled and
+obvious — the substituted text is *replaced by the output of running it*, which is usually empty.
+**The examples silently vanish and the message still reads as prose**, so the defect is invisible
+at the moment it is made and permanent afterwards.
+
+Same shape as the escapes-in-a-template-of-a-template hazard: the layer that eats the character
+is not the layer you are writing in. Use `-F -` with a **quoted** heredoc (`<<'MSG'`, not
+`<<MSG`) so the shell expands nothing at all.
+
 ### THE READ HALF OF THE PUSH RULE — before editing a shared file, ASK WHO ELSE HAS TOUCHED IT
 
 **RULED 2026-09-11 (R-017).** Pushing made a lane's fixes *publishable*. **Nothing made them
@@ -192,8 +267,22 @@ ADDRESS; if you cannot state the address you do not have a lane, you have a hope
     git fetch
     git log origin/master..origin/lane/* --name-only -- <path>
 
-**It tells you which unmerged lane branches have a pushed change on that file**, which is the
-question you actually have and cannot answer by reading master.
+**It tells you which unmerged lane branches have a pushed change on that file.**
+
+**AND THAT IS ONLY HALF THE QUESTION — CORRECTED 2026-09-11.** The command above answers
+*"who has UNMERGED work here"*. It answers **nothing** about a path contested by a commit that
+has **already landed on master**, and it was stated as if it answered both. Add:
+
+    git log --oneline HEAD..origin/master -- <path>     # touched since YOUR base
+    git branch -a --contains <sha>                      # where a specific commit actually is
+
+**The worked example is how the gap was found.** `invincible-agent-81` ran the first command on
+the cost walk sheet, got **nothing**, and edited — while `93e42e8` had already been merged to
+master and their lane was **12 commits behind**. The collision was real and the instrument said
+clean, because they had asked the question the command answers rather than the question they had.
+
+*Two different questions: "who else is working on this right now" and "what has happened to this
+since I last looked". A lane that is behind needs the second and the first will reassure it.*
 
 **THE GAP IS MEASURED, NOT THEORETICAL.** On 2026-09-11 invincible-agent-91 and Lane 1 fixed the
 frontmatter of `docs/runbooks/adding-an-archetype.md` **independently, hours apart, on different

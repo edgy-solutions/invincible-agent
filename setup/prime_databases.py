@@ -252,6 +252,30 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "sustainment/qualification_status_vocabulary.ttl",
         "path": "ontologies/qualification_status_vocabulary.ttl",
     },
+    # ADR-0051 §1 — the MIL-STD-882 half of safety assessment, laid over S3000L's reliability
+    # half. The ADR-0007 survey is recorded IN the file's header (found AND not-found, by IRI),
+    # and its headline result is a citation rather than a mint: a hazard's CAUSE is
+    # s3kl:FailureMode, so `safety:Cause` does not exist. Surveyed from SOURCE, because
+    # engine-o's /classes requires rdfs:label and S3000L declares none on any of its 761
+    # classes — see docs/plans/s3000l-is-primed-and-invisible.md.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "safety_extension",
+        "s3_key": "sustainment/safety_extension.ttl",
+        "path": "ontologies/safety_extension.ttl",
+    },
+    # ADR-0051 §2 — the severity x probability matrix and the risk-level -> acceptance-authority
+    # ladder, as POLICY AS DATA on pcn_disposition_rules.ttl's exact precedent. SEED = the
+    # agent's reading of MIL-STD-882 convention; every row's prov:wasDerivedFrom is empty
+    # pending domain-owner ratification, and the I/E cell ships flagged in-file as the row most
+    # likely to be wrong. In code the second customer is a fork of the drafting engine; as data
+    # the second customer is an overlay file and a re-prime.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "safety_risk_matrix",
+        "s3_key": "sustainment/safety_risk_matrix.ttl",
+        "path": "ontologies/safety_risk_matrix.ttl",
+    },
 
     # ----- LAYER 3: DATA_ENGINEERING (idp catalog / lineage) -----
     # The semantic domain is DATA_ENGINEERING, not IDP.

@@ -115,6 +115,25 @@ populated that field — it was `{}` on every ask regardless. **Asserting
 on a field the path does not fill is asserting on a neighbour.** See
 [[assert-on-the-claim-not-its-neighbour]].
 
+*And the reason the AUTHOR is worst placed to catch it (01, 2026-09-11).* A seal written for an
+import fix asserted `defs is not None`. The fix had silently changed a public export — `from
+iagent import defs` returned a **module** where it had returned a `Definitions` object — and a
+module is not None, so the seal passed through the regression. It was written **twenty minutes
+after its author recorded neighbour-assertion as their own most frequent defect**.
+
+**The asymmetry is the finding: the author knows what they MEANT, so a green reads as
+confirmation of the intent rather than of the assertion.** A reviewer has only the assertion, and
+is therefore the better instrument for exactly this class. It is the strongest argument in this
+file for source-of-truth review by someone who did not write the fix. *(Repaired by asserting the
+TYPE, which goes red under the old code.)*
+
+**AND THE PRACTICE THAT FOLLOWS, taken by the lane that reads every other lane's greens:
+ASK FOR THE ASSERTION, NOT THE COLOUR.** A green confirms that *the assertion its author chose*
+passed — not that the thing was done. To the reader the author's intent is invisible, which is
+precisely what makes them the right instrument, and asking *"did your seal pass?"* throws that
+advantage away. Ask what it asserts. 01's own framing, and a role change rather than a
+resolution.
+
 **10. A fixture that agrees with the bug.** `/artifacts/{id}` read `current_user.authz_id`
 while the writer stamped `current_user.id`; **285 of one user's 286 artifacts were
 permanently unreadable by their own producer.** Nine tests passed over it, because the test
@@ -186,6 +205,24 @@ neighbouring line.
 invisible by construction.** Verifying a merge resolution by counting what the result ADDED — one
 row, one map entry, the right totals — cannot see what it dropped, because nothing in the merged
 file points at absent text. Diff against BOTH parents, not against expectations.
+
+**AND THE GENERAL FORM, which took a second instance from a different mechanism to see: A CHECK
+THAT LOOKS AT THE ENDPOINT CANNOT SEE WHAT HAPPENED IN BETWEEN.** *(01 + 5f, 2026-09-11.)*
+
+| the check | endpoint it compares | what it cannot see |
+|---|---|---|
+| verifying a merge by counting what the result ADDED | the merged file | what the resolution DROPPED |
+| `git status --porcelain` before and after a suite run | the working tree | a file mutated and then **restored exactly** |
+
+The second is the one that shows it is not about diffs. A clean before/after supports *"the tree
+ended where it started"* — **never** *"the run did not touch the tree."* Harmless for the run's
+own result; **not harmless in a shared checkout**, where the restore may have written over a
+neighbour's in-flight edit and left no evidence anything was overwritten. That is lane-to-lane
+data loss a green gate reports nothing about.
+
+*Disposal:* where the trajectory matters, **instrument the act, not the outcome** — or record the
+bound and stop the claim at what the endpoint supports. Both instances above were caught by
+someone saying out loud what their green did **not** cover.
 
 
 ## The one sentence that covers all fourteen
@@ -267,6 +304,55 @@ Windows re-emits CRLF for text read with universal newlines — so a "restored" 
 MODIFIED with a zero-line diff and no content change. Read and write BYTES, and build anchors
 with the file's own line ending: an anchor that matches zero times prints identically to a
 mutation that was killed, so a non-unique match must be fatal rather than reported.
+
+**NAME WHAT THE NUMBER COUNTS — ITS UNIT AND ITS SCOPE — OR RECORD THE COMMAND INSTEAD.**
+*(invincible-agent-5f + 01, 2026-09-11.)* A bare integer LOOKS like a measurement and carries no
+way to check what it measured. That is what makes it dangerous rather than merely vague: it reads
+as evidence and cannot be reproduced.
+
+Both lanes quoted `program_id` counts at each other for three messages and agreed loudly about
+different quantities. 5f said "26 occurrences" — it was 26 LINES in ONE FILE, because `grep -c`
+counts matching lines. 01 said "53" — neither lines-clean nor occurrences, but lines summed across
+a DIRECTORY with `.venv/` and `__pycache__` in it. Corrected and stated properly the two still
+disagree (51/57 against 48/54), and **that disagreement only became visible once someone named the
+unit and the scope.** Nobody was careless; the word "occurrences" was doing work neither number
+supported.
+
+*Defence:* state unit and scope at the point of quoting, or — better — **record the re-runnable
+command rather than its answer**. A number is true at one commit and rots silently; a command
+carries the population and moves with the tree.
+
+**And the part worth more than the rule: THE RULE WAS ALREADY WRITTEN DOWN AND DID NOT HOLD.** 5f
+had this in personal notes from 2026-08-28, including the exact mechanism — *"`grep -c` counts
+FILES with matches when you count its rows, and MATCHES when you sum its values"* — and broke it
+three times in one arc anyway. **A rule kept where only one agent reads it is a rule that binds
+nobody at the moment of use.** That is why it is here, in the repo, beside the work — the same
+argument this file makes for a comment that must be read to be obeyed.
+
+*What survived the confusion, and why:* the ZERO. `program_id` is absent from the planning engine,
+and zero has no unit problem — no lines, no occurrences, no scope, nothing vendored. The refusal
+that rested on it was never at risk. **Prefer a claim that survives every way of counting.**
+
+**A SUITE RUN MEASURES THE TREE AS IT STOOD FOR THE WHOLE RUN — SO DO NOT EDIT DURING ONE.**
+*(01, 2026-09-11; not previously named here.)* A seal that spawns a subprocess importing a module
+**from disk** reads whatever is on disk at the moment the subprocess starts, not what was there
+when the run began. Break-on-purpose mutations applied to that file while the full suite ran in
+the background were read by the suite's copy of the seal, and **the run reported a failure that
+belonged to the editing rather than to the code. The run was invalid and it looked like a
+result.**
+
+Any seal that reads the tree rather than the imported module has this property. The disposal is
+not cleverness, it is sequencing: **let a run finish, or start it again afterwards.** And when it
+happens, **re-run clean rather than reasoning about which failures were yours** — reasoning about
+it is supplying an explanation, which is the thing
+[`a reason invented for a conclusion`](a-reason-invented-for-a-conclusion-fits-it-by-construction.md)
+warns is free and fits.
+
+**It has a sibling pointing the other way, and the pair is the general form.** Running a suite
+here can *mutate* tracked files (a generator invoked by a positive control, a break-on-purpose
+whose restore is byte-inexact). So: a run can change the tree, and changing the tree can invalidate
+a run. **A measurement and its subject must not both be moving**, and in a shared checkout the
+default is that both are.
 
 **A GREEN BELONGS TO A SHA, NOT TO A DIRECTORY.** *(invincible-agent-5f + 01, 2026-09-09 — a
 defect in how results are READ rather than how seals are written, and in a shared tree it is the

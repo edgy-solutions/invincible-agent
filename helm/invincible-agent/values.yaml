@@ -520,6 +520,33 @@ engineCost:
       cpu: 500m
       memory: 512Mi
 
+# Engine S — sustainment safety assessment (ADR-0051). THE FOUR NAMES DIFFER AND THAT IS NORMAL:
+# values key `engineSafety`, component/service `engine-safety`, image `safety-agent`, Keycloak
+# client `iagent-safety-agent`. Grepping any ONE of them finds part of the wiring, which is the
+# runbook §0 lesson and the reason this engine's eight registry sites were done as one commit.
+#
+# DEFAULT-OFF like engine-cost and engine-fin: it is enabled per deployment, and default-off is a
+# DEFAULT rather than a guarantee — it is still built and still mirrored.
+#
+# `env: {}` DELIBERATELY EMPTY. A container's `env:` OVERRIDES `envFrom`, so a value placed here
+# shadows the ConfigMap the whole fleet is configured through (runbook §7) — the failure looks
+# like a setting that will not take effect no matter how many times the chart is corrected.
+engineSafety:
+  enabled: false
+  replicas: 1
+  image:
+    name: safety-agent
+    tag: ""
+  port: 8099
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 engineD:
   enabled: true
   replicas: 1
@@ -663,7 +690,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.6.0"
+  meshSdkVersion: "v0.7.1"
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
@@ -1169,6 +1196,11 @@ primeSubstrate:
       - engine-e
       - engine-w
       - engine-f
+      # engine-safety self-registers three verbs on startup (ADR-0051). Omitted here it would
+      # never restart on a re-prime, so it would never re-register, and the graph would come back
+      # missing exactly those three while every other verb returned — the failure mode this list
+      # exists for, and the one data-analyst paid for once already.
+      - engine-safety
       # Data Analyst self-registers mesh:analyzeDataset on startup — it was
       # omitted here, so wipe+reprime left analyzeDataset unregistered while
       # every other catalog verb came back (the graph showed 8 of 9 verbs on
@@ -1783,6 +1815,17 @@ keycloak:
       authzId: "svc:finance-agent"
       secretRef: "financeAgentClientSecret"
 
+    # engine-safety's registration identity (ADR-0051). IDENTITY IS AN ARGUMENT, never derived
+    # from the component name (runbook §6): the client id follows the IMAGE (`safety-agent`)
+    # while the env var follows the SERVICE (`ENGINE_SAFETY_CLIENT_SECRET`). Engine P's provider
+    # registration was first written with a neighbour's deployment name copied in and minting
+    # failed 401 while the verb registrations beside it succeeded — a half-registered engine,
+    # silently. A service that appears without an identity is one that flips
+    # REQUIRE_TRANSPORT_AUTH from working to broken.
+    - clientId: "iagent-safety-agent"
+      authzId: "svc:safety-agent"
+      secretRef: "safetyAgentClientSecret"
+
     # engine-cost's registration identity. Same contract as every engine above, and given
     # one even though the engine is DEFAULT-OFF for the reason stated there: a service that
     # appears later without an identity is a service that flips REQUIRE_TRANSPORT_AUTH from
@@ -1817,6 +1860,11 @@ keycloak:
   # value feeds BOTH the realm import's `secret` and ENGINE_FIN_CLIENT_SECRET in the Secret,
   # so the two cannot drift.
   financeAgentClientSecret: "sandbox-finance-agent-secret"
+  # engine-safety's service-account client secret (iagent-safety-agent). PLACEHOLDER in the
+  # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
+  # `secret` and ENGINE_SAFETY_CLIENT_SECRET in the Secret, so the two cannot drift — which is
+  # the failure that costs a silent 401 on registration while every probe stays green.
+  safetyAgentClientSecret: "sandbox-safety-agent-secret"
   # engine-cost's service-account client secret (iagent-cost-agent). PLACEHOLDER in the
   # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
   # `secret` and ENGINE_COST_CLIENT_SECRET in the Secret, so the two cannot drift.

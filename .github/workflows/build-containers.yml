@@ -81,6 +81,15 @@ jobs:
           - service: cost-agent
             path: agent_fleet/cost_agent
             port: "8097"
+          # engine-safety, sustainment safety assessment (ADR-0051). Image name is safety-agent;
+          # the SERVICE it runs as is engine-safety; the values key is engineSafety. Port must
+          # match the chart's engineSafety.port, or the readiness probe hits a closed port.
+          # WITHOUT THIS ENTRY NO IMAGE IS EVER BUILT at any pinned sha — the omission with no
+          # error message, because nothing fails until a deploy asks for a tag that was never
+          # produced.
+          - service: safety-agent
+            path: agent_fleet/safety_agent
+            port: "8099"
           # engine-lg, the graph host. RIDES Dockerfile.agent, which already carries
           # ARG GIT_SHA / ENV IAGENT_GIT_SHA and is built with --build-arg
           # GIT_SHA=${{ github.sha }} — so no new stage and no new build-arg are needed, and
@@ -352,6 +361,21 @@ jobs:
           # seeded graph would leave it registered. The composed dir must be MOUNTED and
           # GRAPH_POLICY_DIR pointed at it before any overlay is real. Filed, not built.
           COPY policy/graphs/ /app/policy/graphs/
+          # THE OVERLAY LAYER (ADR-0036), and this is the THIRD time the comment twenty lines
+          # up has come true. It said "the next shared-policy file will need another line here,
+          # and forgetting it fails SILENTLY". policy/graphs/ was the second — rev 106 shipped
+          # engine-lg with its graph MODULES and none of its contracts, booting healthy with
+          # zero graphs registered. policy/overlays/ is the third.
+          #
+          # The failure here would be the quietest yet: a missing overlay directory does not
+          # error, it composes to SILENCE. GRAPH_OVERLAY_DIRS would point at a path that is not
+          # there, the host would compose the seed alone, and every deployment would read as
+          # "no domain graphs declared" whether or not any were. The same shape took 18 live
+          # task rows from actionable to dead in a gate written the same day.
+          #
+          # cortex-bff does NOT need a line: its image copies the whole repo (see its own
+          # comment above), which is why /app/policy is complete there and per-file here.
+          COPY policy/overlays/ /app/policy/overlays/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/

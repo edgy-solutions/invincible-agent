@@ -129,6 +129,20 @@ It was a PREDICTION about which vintage the answer would use, written as an INST
 
 ### Step 1 — ask it as written, and expect a REFUSAL
 
+> **SECOND-WALK EXPECTATION, set 2026-09-12 by cortex-ui-60 and worth reading before you score.**
+> The refusal must show **two option chips and NO text box — and NO UI change between the two
+> walks.** The menu branch was always a ternary on `options.length > 0`; the card was correct and
+> the PAYLOAD was empty, because `OPTION_SOURCES` was keyed `(verb, slot)` with a single entry so
+> two verbs declaring the same mandatory `rate_vintage` carried nothing. The re-key by slot
+> (engine-cost's) is the whole fix; no cortex code changed.
+>
+> **So "it looks the same as last time" is the PASS, and a text box is a DATA finding, not a
+> render one.** That is a better check than "did it change", because it can only pass one way —
+> and cortex deliberately did not build a second code path, which would have made this walk
+> verify a rendering the producer never emits.
+
+
+
 > **"did the rates move against the estimate on lot 3"**
 
 **Expect: `outcome: "slot_required"` — *not* a card, and this is a PASS.**

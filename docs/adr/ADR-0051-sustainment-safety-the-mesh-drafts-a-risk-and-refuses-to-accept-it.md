@@ -1,12 +1,14 @@
 # ADR-0051 — Sustainment safety assessment: the mesh drafts a risk and refuses to accept it
 
-**Status:** Proposed (2026-09-10). **Written before the build, so the wrong build is refusable before
+**Status:** Proposed (2026-09-10). **§10 CLOSED 2026-09-12 — no open questions for a domain owner.** **Written before the build, so the wrong build is refusable before
 the right one starts.** **Four rulings recorded 2026-09-10**, each marked RULED in place with its
 source rather than collected at the top: §3 (`trendMishaps` deferred to slice 3), §5 (the author's
 visibility audience; `rejected` joins `accepted` as reason-required), §9 (the SAFETY compartment
-deferred, not refused). **Two questions remain open and belong to a domain owner rather than an
-architect** — §10.1 (which systems hold the hazard log) and §10.2 (who ratifies the matrix).
-**Increments 0 through 4 need neither, so the lane can start.**
+deferred, not refused). **§10's two questions are CLOSED as of 2026-09-12 and neither needed a
+domain owner**: §10.1 was a connector fact rather than a design decision (the engine never sees a
+source), and §10.2 is answered by the standard — the seeded matrix is MIL-STD-882E Table III and
+cites it, so only a programme's own *tailoring* needs a named ratifier. **Nothing in this ADR now
+blocks any increment.**
 **Date:** 2026-09-10
 **Deciders:** Architect
 **Related:** ADR-0005 (domain vs platform namespaces), ADR-0007 (survey before mint), ADR-0029
@@ -240,7 +242,7 @@ output type** (ADR-0030). Every output class is declared in a TTL that primes, b
 | `safety:draftRiskAssessment` | hazard (single or set) | `hazard_id` \| `scope` | risk assessment artifact | drafts severity/probability with a citation for every figure; records the implied authority level; opens the acceptance review. **Cannot set accepted.** |
 
 `safety:trendMishaps` is **named and deferred to slice 3** — **RULED 2026-09-10 — see
-[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (c)**: a trend
+[rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (c)**: a trend
 needs a threshold, a threshold is overlay policy, and
 shipping it before §2's matrix has a ratifier would put the one number a program office argues about
 into an engine parameter. Deferring it costs one verb; shipping it early costs the §2 precedent.
@@ -283,13 +285,100 @@ it survives containerisation. A third copy is refused by name.
 **Audiences, one per authority level**, because MIL-STD-882 ties acceptance authority to the risk
 level — which is precisely what the audience key convention expresses:
 
+> **⚠️ THE LADDER IS ATTRIBUTED, NOT VERIFIED, AND NO REAL ACCEPTANCE MAY ROUTE ON IT YET.**
+> MIL-STD-882E **§4.3.7 defers and names no authority**: risks "shall be accepted by the appropriate
+> authority as defined in DoDI 5000.02". The High → component acquisition executive, Serious → PEO,
+> Medium and Low → program manager triple the seed assumes comes from that instruction and **has not
+> been read from source by this lane**. The matrix's Table III citation does **not** cover it, and
+> the TTL records the two separately for exactly that reason.
+>
+> **AND THE DOCUMENT MAY HAVE MOVED.** DoDI 5000.02 as reissued in 2015 carried these definitions;
+> the 2020 reissue pushed engineering content into **DoDI 5000.88**, and which document currently
+> names the tiers is not established here. So the half-hour is: read the **current** issue, cite the
+> section in `safety_risk_matrix.ttl` beside the Table III line, and **if the tiers differ from the
+> CAE/PEO/PM triple, that is a second transcription error of exactly the same shape** — and it gets
+> the same treatment, including the directional assertion, because a ladder that names a more junior
+> tier than the standard fails the same silent way a permissive matrix cell does.
+>
+> **UPDATE 2026-09-12 — corroborated, still not read from primary.** The current issue appears to be
+> **DoDI 5000.88** (the 2020 reissue moved engineering content out of 5000.02), and **¶3.6.e.(1)(b)1**
+> is cited as assigning Component/Defense Acquisition Executive → High, PEO-level → Serious, PM →
+> Medium and Low. **That matches the seeded ladder.** But `esd.whs.mil` returns **HTTP 403** to this
+> environment, so the corroboration is a search summary and a secondary page, not the document. The
+> matrix was transcribed cell by cell from 882E's own PDF; this was not, and **the two must not be
+> read as equally sourced.** Anyone with access should open ¶3.6.e.(1)(b)1 and replace the note with
+> the verbatim quote.
+>
+> Until that is done the sandbox ladder is a fixture. It exercises the routing, the audiences and the
+> three-caller walk; it does not authorise anything.
+
+### §5.1 — A Serious or High acceptance needs TWO human acts, and this design models one
+
+**Found 2026-09-12 by reading MIL-STD-882E §4.3.7 from source**, which is the half of the
+half-hour that paid. Verbatim:
+
+> "The user representative shall be part of this process throughout the life-cycle of the system and
+> shall provide **formal concurrence before all Serious and High risk acceptance decisions**."
+
+And §3.2.49: "the user representative will be at a **peer level equivalent to the risk acceptance
+authority**."
+
+**So the standard requires a concurrence that precedes the acceptance, by someone who is not the
+accepting authority and not a rubber stamp.** ADR-0051 as built has one disposer per assessment:
+the authority in `risk_acceptance_<level>:SUSTAINMENT` accepts, and that is the whole act. For
+Medium and Low that is correct. **For Serious and High it is incomplete, and incomplete in the
+direction that matters** — it would let a High risk be accepted with no record that the user
+representative ever concurred, which is exactly the "who signed, on what evidence" question this
+ADR exists to make answerable.
+
+**This is a design gap, not a bug, and it is named rather than quietly absorbed.** Three things it
+implies, for a ruling rather than for this lane to decide:
+
+1. A **second task kind** — concurrence is a distinct act with a distinct audience, not a second
+   actor on the acceptance audience. The audience-per-level convention extends naturally
+   (`risk_concurrence_high:SUSTAINMENT`), and the peer-level requirement means its grants are not
+   the acceptance grants.
+2. **Ordering is part of the requirement** — "before" is in the standard's sentence. An acceptance
+   task that can be disposed while concurrence is outstanding satisfies the letter of neither.
+3. It applies to **Serious and High only**, so the drafter must route differently by level — which
+   the matrix already tells it, since the level is what selects the audience.
+
+**Not built in increment 3 or 4, and the ADR says so rather than letting the exemplar imply
+completeness.** A walk that shows a High risk accepted by one authority, with no concurrence step,
+demonstrates something the standard does not permit.
+
 - `risk_acceptance_high:SUSTAINMENT`, `risk_acceptance_serious:SUSTAINMENT`, … one audience per level
   the §2 ladder names. The ladder is data; the audiences are the git-asserted grants that implement
   it, and the drafter records which one an assessment implies.
 - `hazard_link_review:SUSTAINMENT` for `classifyWriteUp`'s proposals.
-- **`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**
+- **⚠️ NOT EXPRESSIBLE ON TODAY'S SUBSTRATE — R-004(a) cannot be implemented as ruled, found
+  2026-09-12 while writing the overlay rows.** `task_audience` declares exactly one permission,
+  `can_act: actor` (`topaz-configmap.yaml:226`). There is **no `can_view`** in the model or in any
+  code — the only two occurrences in the repo are prose, in `policy/task_grants.yaml`'s header and
+  in a comment this lane wrote. A caller receives a task because `register_task` materializes **one
+  queue row per ACTOR**, and `list_tasks_for` filters `recipient_id = caller`. So **seeing a task
+  and being able to act on it are the same grant: see ⟺ can_act.**
+
+  The audience row was added and then **withdrawn one day later**, because it granted `can_act` on
+  a kind no task is ever of: nothing materialized under it, the author saw nothing, and the
+  register carried a ruling that read as implemented. An inert grant is worse than none — it reads
+  as protection that exists. **This lane propagated the header's `can_view` claim without checking
+  the model and then wrote it into a ruling**, which is the stale-claim-is-pre-authenticated shape
+  one layer up from where it usually bites.
+
+  **What it costs:** seal 7's middle leg — *sees and cannot dispose* — is not achievable today, and
+  not because an implementation is lazy. **The honest partial version is free and may be the right
+  answer**: the drafter is an actor on the lower tiers, so they see and dispose Medium and Low and
+  genuinely cannot see High or Serious. That is the substrate's real shape. What it is not is
+  R-004(a). **Three options, for the architect rather than this lane:** (a) accept the partial
+  version and amend R-004(a) to match the substrate; (b) platform work — give `task_audience` a
+  `viewer` relation and a `can_view` permission, and materialize rows for viewers with the act gate
+  closed; (c) leave the author blind and say so in the ADR. Until one is ruled, seal 7 runs with two
+  legs and reports the third VOID.
+
+- ~~**`risk_assessment_author:SUSTAINMENT`, view-only, granted to the drafter at draft time.**~~
   **RULED 2026-09-10 — see
-  [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (a)**
+  [rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (a)**
   (source: architect's disposition of §10.3, this ADR's review). Deny-by-default
   `can_view` means the drafter cannot otherwise see their own pending item — they would file a bug and
   they would be right. **The existence-oracle protects against outsiders, not against authors**, and
@@ -312,7 +401,7 @@ correct under today's substrate, and the seals key on the audience, not on how i
 
 Decision verbs are `accepted` / `rejected` / `returned_for_rework`, and **BOTH `accepted` and
 `rejected` are reason-required** — **RULED 2026-09-10 — see
-[rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (b)** (source:
+[rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (b)** (source:
 architect's review of this ADR, extending the ADR's own proposal, which named only `accepted`). A bare acceptance erases the
 rationale, which in this domain *is* the artifact; **a bare rejection erases exactly the same thing**,
 and "parts entered in the legacy system" versus "notice withdrawn by the vendor" — the file's own
@@ -374,15 +463,31 @@ overlay row that omits `accepts` is refused, because `accepts` is required preci
 species cannot silently borrow a structural one's verbs.
 
 **A LIVE BUG THAT LANDS ON THIS ADR'S REFUSAL, reported by the M3.3 lane and independently
-confirmable.** An **undeclared** task kind is handed Approve/Reject on both sides today: cortex-ui's
-default archetype renders an approval card unconditionally, and `isRegisteredKind` — the predicate
-written to prevent exactly this — has no caller outside its own tests. For every other species that
+confirmable.** An **undeclared** task kind was handed Approve/Reject on **both** sides: cortex-ui's
+default archetype rendered an approval card unconditionally, and `isRegisteredKind` — the predicate
+written to prevent exactly this — had no caller outside its own tests. For every other species that
 is a rendering defect. **For this one it is §7's refusal defeated from the outside**: a risk
 acceptance reachable through a generic approval card, dispositioned by whoever the default surface
-admits, with no authority tier and no required reason. **Seal 14** (below) exists for it, and the
-safety kinds must not go live before cortex-ui's parity seal lands — the cutover's safer direction
-(an unknown species renders dead rather than actionable) is only safe once `declared: false` actually
-renders as *unknown species here*, which is the half that failed to be consumed last time.
+admits, with no authority tier and no required reason.
+
+**AMENDED 2026-09-12 — the render half is CLOSED and the claim above is now half false.** As of
+cortex-ui `21b2bae`, `isRegisteredKind` has a caller and the fixture asserts `buttons()` is empty.
+The live gap is **one-sided**: a UI that offers nothing, over an API that would still take the
+answer. Verified in this repo rather than accepted on report — `verbs_for_kind`
+(`human_tasks.py:420`) returns `_DEFAULT_VERBS` for any unknown kind,
+`tests/test_task_verbs_by_kind.py:76` asserts `{approved, rejected}` for `"some_future_kind"`,
+`gateway.py:2429` serves that set as `allowed`, and `validate_decision` consults the same function.
+
+**So the refusal is still defeatable from outside the engine, through ONE door rather than two**,
+and the remaining door is the API. The architect has ruled the gateway half closes early, separately
+from M3.3's cutover. **Seal 14** (below) stays as written; only its justification shrinks, and it
+must be scoped to the subject's own element — see the seal for why a body-wide assertion on a card
+that prints its kind in a header cannot fail.
+
+The safety kinds must not go live before both halves are closed. The cutover's safer direction — an
+unknown species rendering dead rather than actionable — is only safe once `declared: false` actually
+renders as *unknown species here*, which is the half that failed to be consumed last time, and is
+now the half that landed first.
 
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
@@ -419,6 +524,33 @@ compartmented content — because the queue itself must not become the leak.
   refuses rather than returning the intersection it happens to be allowed.
 - **A defaulted verdict anywhere.**
 
+### §7.1 — An orphaned-hazard list is a DISCLOSURE before a severity is attached
+
+**Written 2026-09-12, deliberately while the fixture is still invented and this sentence is cheap.**
+
+Engine S's `/analyze` is declared `releasable_by_design` in the endpoint-gating manifest, and that
+classification is **true only because every hazard, tail and owner it serves is made up**
+(`agent_fleet/safety_agent/entities.py`). The rule that governs when it stops being true, stated now
+rather than derived later:
+
+> **The moment ADR-0051 §10.1's overlay names a real hazard log, `/analyze` is `gated`**, identity
+> moves to the **initiator** (ADR-0049 Ruling 1 — never the engine's service identity), and the read
+> goes through a per-request minted ticket carrying the caller's identity (ADR-0044). §9's
+> compartment question reopens in the same moment.
+
+**And the reason it re-classifies HARDER than a figures engine:** a finance row discloses a number.
+An orphaned-hazard list discloses *which identifiable tails carry unresolved safety defects that
+nobody owns* — which is a disclosure **before any severity is attached to it**, and remains one for
+a hazard later assessed as negligible. The severity is not what makes the row sensitive; the
+existence of the row is.
+
+**Why this is written today and not when it bites.** Today it costs one paragraph over a synthetic
+fixture. On the day the overlay lands it is a change to a **live authorization surface, made under
+pressure, by someone who must first reconstruct why it was ever releasable** — and a trigger of this
+kind is obvious while you are holding it and invisible six weeks later. This is the same discipline
+the manifest row itself carries; it is repeated here because the ADR is what a later reader opens
+first, and a rule recorded only in a YAML justification is a rule most readers never meet.
+
 This engine is not a replacement for the safety engineer's assessment. The artifact says *drafted* in
 its own metadata and the card shows it.
 
@@ -444,6 +576,29 @@ where red was expected is a signal about the seal, not about the code.
 4. **The matrix is data.** Change one row in `safety_risk_matrix.ttl`, re-prime, and the drafted
    risk level changes **with no code edit**. Mutation: hardcode the matrix in the engine → red. This
    seal is the whole of §2; without it §2 is an intention.
+
+4a. **The matrix IS Table III, cell for cell** — and separately, **no cell is more permissive than
+   the standard.** Added 2026-09-12 after seal 4 passed green over a table that was wrong in five
+   of twenty cells.
+
+   **THE PAIRING THIS EXISTS FOR: a correct instrument on a wrong subject.** Seal 4 proved the
+   engine faithfully follows the file. The file was wrong. Labelling a table `SEED` and leaving
+   `prov:wasDerivedFrom` empty was an honest label, and **an honest label on a wrong table still
+   routes a real acceptance to the wrong authority.** Every seal in this repo is worth checking
+   once against that shape: *what does this prove about the mechanism, and what does it assume
+   about the content?*
+
+   **WHY THE DIRECTIONAL ASSERTION IS SEPARATE, AND WHY IT IS DOMAIN-SPECIFIC.** Pinning the
+   transcription catches the next drift. The directional check catches **the direction the drift
+   always takes** — all five errors leaned the same way, toward what sounds reasonable. And in
+   safety the two directions are not symmetric:
+
+   > **A conservative error produces a COMPLAINT. A permissive error produces a SIGNATURE.**
+
+   Over-escalate and someone says so within a day. Under-escalate and the queue works, the card
+   renders, and a more junior authority signs an acceptance that was never theirs to sign —
+   a failure with no symptom, which is the class this repo keeps paying for. That asymmetry is
+   why the two assertions are not one.
 5. **An unrecognized severity or probability refuses loudly**, naming the vocabulary and its source
    file. Control: a recognized one passes the same path.
 6. **The declaration carries the verbs**, extended from the existing declarations-match-code seal;
@@ -481,6 +636,37 @@ where red was expected is a signal about the seal, not about the code.
     the safety kinds do not go live, because a risk acceptance reachable through a generic approval
     card is §7's refusal defeated from outside the engine.
 
+    **IT MUST ASSERT THE RENDER, NEVER THE PREDICATE** — sharpened 2026-09-11 by Lane 1, and this is
+    the part that decides whether the seal is real. `isRegisteredKind` having no caller outside its
+    own tests is **not a missing wire-up; it is a GREEN SEAL OVER AN ABSENT CONSUMER**: the predicate
+    is tested, it passes, and it guards nothing, so the suite reports the protection as present while
+    the bug is live. A test that calls `isRegisteredKind` directly is therefore **green today, with an
+    undeclared kind still being handed Approve/Reject.** Only a test that drives the render can tell
+    those two states apart, which is exactly the discrimination this seal is for.
+
+    **AND IT MUST BE SCOPED TO THE SUBJECT'S OWN ELEMENT — added 2026-09-12, before writing it,
+    from cortex-ui's measured near-miss.** Their first refusal test asserted the kind name appeared
+    in `document.body`. **The card header prints the kind two lines above the refusal**, so a
+    mutation that stripped the name out of the refusal *still passed*: the instrument read the
+    subject's NEIGHBOUR and reported success. Fixed by scoping to `[data-undeclared-kind]`.
+    A safety card is very likely to print its kind in a header too, so: **assert inside the
+    subject's own element, never page-wide. A body-wide assertion on a page that names the thing
+    twice cannot fail.** Same law as seal 2's split — the instrument and the subject must not
+    share a surface — but applied before it cost anything rather than after.
+
+    **THE CLAIM THIS SEAL WAS WRITTEN AGAINST IS NOW NARROWER, AND HALF OF IT IS CLOSED.**
+    *"An undeclared kind is handed Approve/Reject on both sides"* was true when §5 was written and
+    is **false on the render side** as of cortex-ui `21b2bae`: `isRegisteredKind` finally has a
+    caller and the fixture asserts `buttons()` is empty. The live gap is **one-sided** — a UI
+    offering nothing over an API that would still take the answer, because
+    `verbs_for_kind` returns `_DEFAULT_VERBS` for any unknown kind. Verified here rather than
+    taken on report: `human_tasks.py:420` defaults to `{approved, rejected}`,
+    `tests/test_task_verbs_by_kind.py:76` asserts exactly that for `"some_future_kind"`,
+    `gateway.py:2429` serves it as `allowed`, and `validate_decision` consults the same function.
+    So a risk acceptance is still reachable from outside the engine, **through one door rather
+    than two**, until the gateway half closes — which the architect has ruled happens early and
+    separately from M3.3's cutover. The seal stays as written; only its justification shrinks.
+
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
 `prov:wasDerivedFrom` empty until it happens. Also unseen: whether the hazard taxonomy
@@ -501,7 +687,7 @@ taxonomy and the card must not imply otherwise.
   artifact a safety authority must be able to point at.
 - **The matrix in code.** Rejected in §2; the second customer is a fork.
 - **A new SAFETY compartment instead of SUSTAINMENT.** **Deferred, not refused — RULED 2026-09-10 —
-  see [rulings#r-004](../rulings/README.md#r-004-adr-0051-sustainment-safety-four-rulings) (d)**
+  see [rulings#r-004--adr-0051-sustainment-safety-four-rulings](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (d)**
   (source: architect's review of this ADR). Safety data is more restricted than sustainment data in
   some programs and identical in others; splitting on a guess costs a re-prime and a grants
   migration. Revisit on the first customer whose safety office is a separate authority from its
@@ -510,25 +696,99 @@ taxonomy and the card must not imply otherwise.
   pending acceptances, recent write-ups. Deferred until two verbs are live, because a template whose
   verbs cannot be named is a board that is not ready to be declared.
 
-## §10 — Open, and answerable only by a domain owner
+## §10 — CLOSED 2026-09-12. No open questions for a domain owner.
 
-1. **Which systems hold the hazard log, the write-up stream, the critical items list, and work-order
-   deferrals on the work side.** This is the overlay row (ADR-0036 §3) and the platform repo never
-   names them. **Engine S with no overlay refuses every verb with "no source declared for
-   `<class>`" — it does not return an empty answer**, because an empty hazard list is the single
-   most dangerous wrong answer this engine could give.
-2. **Who ratifies the risk matrix and the authority ladder**, and therefore whose identity fills the
-   `prov:wasDerivedFrom` that ships empty.
+**Both questions are struck through rather than deleted, so a reader can tell *answered* from
+*never asked*. Following the standard is what closed the second one, which is what following a
+standard was supposed to buy.**
 
-~~3. Whether the drafter's visibility audience is wanted.~~ **CLOSED 2026-09-10 — ruled in §5**:
-   `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. Struck here rather than
-   deleted, so a reader of the open list can tell *answered* from *never asked*.
+~~1. **Which systems hold the hazard log, the write-up stream, the critical items list, and
+   work-order deferrals on the work side.**~~ **ANSWERED BY CONSTRUCTION — it was never an ADR
+   decision.** The engine reads typed `safety:` objects from the graph and **never sees a source**:
+   there is no code path in which a verb knows whether a hazard arrived from a spreadsheet, an
+   Access database or Dataverse. Where a real log lives matters only at the moment one is
+   connected, and the answer at that moment is the existing dlt → DataHub pattern — **a dataset URN
+   in the overlay row**, whatever the source is. For sandbox it is the seeded fixture, which is
+   already answered. **Increment 5 does not wait on this.**
 
-**Neither 1 nor 2 blocks increments 0 through 4.** The vocabulary, the engine, the acceptance path
-and the exemplar all run against a fixture graph and a seed matrix. What 1 gates is increment 5 (the
-overlay row is the cluster's first real source) and what 2 gates is nothing at all — it gates a
-*claim*: until it is answered `prov:wasDerivedFrom` ships empty, the matrix reads as SEED, and the
-seals report exactly that rather than papering over it.
+   What survives from the original framing is the refusal, and it is unchanged: Engine S with no
+   overlay refuses by name rather than returning an empty answer, because an empty hazard list is
+   the single most dangerous wrong answer this engine could give.
+~~2. **Who ratifies the risk matrix and the authority ladder**, and therefore whose identity fills
+   the `prov:wasDerivedFrom` that ships empty.~~ **ANSWERED BY THE STANDARD — the seed's
+   provenance is a citation, not a pending person.**
+
+   MIL-STD-882E §4.3.7 requires that risks "be accepted by the appropriate authority as defined in
+   DoDI 5000.02", and DoDI 5000.02 names the levels — High to the component acquisition executive,
+   Serious to the PEO, Medium and Low to the program manager. **That is the seed ladder, and it is
+   why the audiences were built per level rather than as one grant with a level field.** The matrix
+   itself is Table III. So `prov:wasDerivedFrom` cites the standard and is no longer empty.
+
+   **What a programme ratifies is only its TAILORING.** 882E §4.3.3.d permits a tailored matrix
+   "formally approved in accordance with DoD Component policy", and the SSPP is where a programme
+   says *our catastrophic-improbable never falls below Serious*. **The ratifier is that SSPP's
+   signatory — the programme's person, not ours** — and they are required only for an overlay row
+   that departs from the standard. A cell matching Table III already has its authority.
+
+   > **⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
+   > The MATRIX was transcribed from 882E's own PDF cell by cell (see below). The LADDER is not in
+   > 882E at all — the standard defers and names no authority — so the High/Serious/Medium/Low
+   > assignment above is attributed to DoDI 5000.02 and **has not been read from source by this
+   > lane**. It is recorded as attributed in the TTL rather than borrowing the matrix's citation.
+   > Verifying it is a half-hour somebody should spend before a real acceptance routes on it.
+
+   **AND THE READING WAS WRONG IN FIVE OF TWENTY CELLS.** The seeded matrix was labelled "the
+   agent's reading of MIL-STD-882 convention", which was an honest label on a table nobody had
+   checked. Transcribing it found II/E, III/B, III/D, III/E and IV/B all wrong — **every one of
+   them too permissive.** A remembered table does not fail randomly; it drifts toward what sounds
+   reasonable, and in this domain that direction understates the risk and **routes the acceptance
+   to a more junior authority than the standard requires**. That is a failure with no symptom: the
+   queue works, the card renders, and the wrong person signs. `test_matrix_matches_mil_std_882e_table_iii.py`
+   now pins the transcription cell by cell, with a separate directional assertion because the
+   permissive direction is the one nobody complains about.
+
+   Probability level **F (Eliminated)** is Table III's sixth row and is deliberately absent here:
+   it is a hazard STATE, not a risk band, and in this vocabulary it is `hazardStatus` `closed`.
+
+   **What the tailoring decision looks like, in one concrete row** — kept because "ratify the
+   matrix" is too abstract to act on, and **corrected 2026-09-12**. Take **I/E**: catastrophic
+   severity, improbable. The file seeds it **Medium**, which is **Table III's own value** — it was
+   previously flagged here as "most likely to be wrong" and it is not wrong, it is the row **most
+   commonly tailored upward**. Some programmes hold that a **catastrophic outcome never falls below
+   Serious** whatever the odds, because the acceptance decision should reach a
+   senior authority regardless of probability.
+   
+   Both readings are defensible; only one is this programme's. And the consequence is not
+   cosmetic: the risk level resolves to an `acceptanceAudience`, so **changing that one cell moves
+   which authority the acceptance routes to** — `risk_acceptance_medium:SUSTAINMENT` becomes
+   `risk_acceptance_serious:SUSTAINMENT`, and a different set of people can dispose it.
+   
+   **That is a row edit with a ratifier's name on it, not an engine change** — which is §2's whole
+   claim, stated as something a safety authority can actually say yes or no to.
+
+~~3. Whether the drafter's visibility audience is wanted.~~ **CLOSED 2026-09-10, then CORRECTED
+   2026-09-12.** Ruled as `risk_assessment_author:SUSTAINMENT`, view-only — and the substrate has
+   no view-only state for a task, so the ruling could not be implemented as written (§5). **Ruled
+   again 2026-09-12: option (a) — the author sees what they can act on and nothing more**, because
+   `see ⟺ can_act` is the substrate's shape rather than a gap in an implementation. A `viewer`
+   relation with `can_view` is filed as platform work with a real use case behind it: **a safety
+   officer who must see every open acceptance and dispose none is a standard role.** It is simply
+   not this increment's to build.
+
+   **Seal 7 keeps its three legs by running two assessments instead of one** — a High that alice
+   disposes and bob and carol cannot see, and a Medium that bob disposes and alice and carol cannot
+   see. That discriminates *cannot see* from *not on this tier* without a permission the model does
+   not have, and it is the **stronger** seal rather than merely the available one: it proves the
+   ladder ROUTES. A single assessment with one disposer is consistent with a ladder that always
+   routes to alice.
+
+---
+
+**NOTHING IN §10 BLOCKS ANY INCREMENT, INCLUDING 5.** That was not true when this section was
+written, and the change is the point: §10.1 dissolved once it was seen to be a connector fact
+rather than a design decision, and §10.2 dissolved into a citation. **Following the standard is
+what bought that** — a seeded matrix that cites Table III needs no local ratifier, and only a
+programme's tailoring does.
 
 ## Indicators for revisiting
 

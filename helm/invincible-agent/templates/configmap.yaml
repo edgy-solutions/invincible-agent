@@ -42,6 +42,33 @@ data:
   # serves /api/v3/directory/*.
   TOPAZ_DIRECTORY_URL: {{ .Values.externalTopaz.url | quote }}
   {{- end }}
+  {{- /* ADR-0036 OVERLAY LAYER — the composition branch that had never executed.
+
+  Measured 2026-09-12: `GRAPH_OVERLAY_DIRS` defaulted to "" and was set in no chart and no
+  configmap, so `compose(GRAPH_POLICY_DIR, GRAPH_OVERLAY_DIRS)` ran with ZERO overlays on
+  every deployment that has ever existed. The seed path is well covered; the overlay path was
+  a branch nothing took — which is the shape two defects grew in this week, both of them
+  reading a seed as if it were the whole set.
+
+  POINTED AT AN EXISTING, EMPTY DIRECTORY ON PURPOSE. An empty overlay dir is the CLAIM "this
+  deployment declares no domain graphs"; an UNSET variable means "nobody said where to look".
+  They are different facts and the composition can only tell them apart if the variable is
+  set. This also makes the overlay branch execute for the first time, with nothing to overlay,
+  which is the cheapest possible exercise of it.
+
+  `TASK_KIND_OVERLAY_DIRS` WAS HELD BACK UNTIL THE DATA WAS SAFE, and the order mattered:
+  overlay directory -> migration -> env var -> gate. Reversed, it kills tasks for a config
+  line. `pcn_grouped_review` had 2 live rows while being on the FORBIDDEN list in
+  tests/test_cross_repo_contracts.py; they were re-keyed to `grouped_review` (same species,
+  retired prefix) by scripts/migrate_pcn_grouped_review_rows.py on 2026-09-12, taking that
+  kind 25 -> 27. Every one of the 55 live rows now falls under a declared kind, so setting
+  this refuses nothing that exists. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "GRAPH_OVERLAY_DIRS") }}
+  GRAPH_OVERLAY_DIRS: "/app/policy/overlays/sample/graphs"
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
+  TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds"
+  {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
   these for split topologies; the hasKey guards keep the rendered CM
@@ -155,6 +182,13 @@ data:
   # svcDomain helper rather than a bare service name, because a bare name resolves
   # differently depending on where the reader stands.
   ENGINE_COST_PUBLIC_URL: "http://{{ .Release.Name }}-engine-cost{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineCost.port }}"
+  # engine-safety, sustainment safety assessment (ADR-0051) — SITE 8, the one that fails
+  # SILENTLY. The registration BAKES this value into the mesh as the endpoint a verb resolves
+  # to, so a missing or wrong entry does not error: the engine registers against whatever its
+  # default happens to be, every probe stays green, and the verb resolves to an address nothing
+  # is listening on. FQDN through the svcDomain helper, never a bare service name, because a
+  # bare name resolves differently depending on where the reader stands.
+  ENGINE_SAFETY_PUBLIC_URL: "http://{{ .Release.Name }}-engine-safety{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineSafety.port }}"
   # engine-lg, the graph host — THE EIGHTH REGISTRY SITE, and the one that fails silently.
   #
   # `gateway._fleet_version_targets()` does not hold a fleet list; it DERIVES one by scanning

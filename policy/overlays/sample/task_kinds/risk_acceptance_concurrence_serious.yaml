@@ -1,0 +1,27 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0051 §5.1. MIL-STD-882E §4.3.7, verbatim: "The user representative shall be part of this
+# process throughout the life-cycle of the system and shall provide formal concurrence BEFORE all
+# Serious and High risk acceptance decisions." §3.2.49 adds that the user representative is "at a
+# peer level equivalent to the risk acceptance authority."
+#
+# SO A SERIOUS OR HIGH ACCEPTANCE IS TWO HUMAN ACTS, ORDERED — and only those two levels.
+# Medium and Low remain single-act, which is not a simplification: the standard requires
+# concurrence for Serious and High and says nothing about the others, and inventing a concurrence
+# step where none is required would be as wrong as omitting one where it is.
+#
+# PEER-LEVEL IS WHY THIS IS A SEPARATE AUDIENCE RATHER THAN A SECOND ACTOR ON THE ACCEPTANCE ONE.
+# The user representative is not the accepting authority and is not that authority's subordinate.
+# An audience whose actors could accept AND concur would collapse the two acts into one signature
+# with two names on it, which is precisely what "formal concurrence" is not.
+#
+# ORDERING IS STRUCTURAL, NOT ADVISORY (§5.1): the acceptance task for a hazard is NOT materialised
+# until this one is disposed `concurred`. "Before" is in the standard's sentence, and a design where
+# both tasks sit in queues at once satisfies neither the letter nor the point.
+kind: risk_acceptance_concurrence_serious
+renders_as:
+  badge: CONCUR-S
+  title: Serious risk concurrence
+  archetype: APPROVAL_TASK
+accepts: [concurred, not_concurred, returned_for_rework]
+reason_required: [concurred, not_concurred]

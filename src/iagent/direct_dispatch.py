@@ -166,6 +166,7 @@ def dispatch_pre_resolved(
     *,
     pre_resolved: Dict[str, Any],
     bound_slots: Dict[str, Any],
+    chain_slots: Optional[Dict[str, Any]] = None,
     spoken_answer: str,
     user_query: str,
     entitled_domains: List[str],
@@ -230,7 +231,32 @@ def dispatch_pre_resolved(
 
     # ── 3. SLOTS. Validated against the menu that offered them, not splatted ────────────
     _declared = predicate.get("slots") or []
-    _supplied = dict(bound_slots or {})
+
+    # ── THE CHAIN'S ALREADY-ANSWERED SLOTS ARE THE BASE LAYER ───────────────────────────
+    #
+    # MEASURED 2026-09-12 by invincible-agent-81: a two-slot verb took FOUR hops —
+    # 1m15 → 1m42 → 2m07 → 2m34 — against 1m16 in a single hop when both values were in the
+    # question, and every hop took the full path rather than this 535ms one. The cause was
+    # that each turn carried ONLY its own answer, so a slot answered at hop 1 was absent by
+    # hop 3 and got asked again.
+    #
+    # THIS TURN'S ANSWER WINS. A person who answers the same slot twice meant the second
+    # answer; the chain is a floor, not an override.
+    #
+    # CARRYING A PICK FORWARD DOES NOT LAUNDER IT PAST THE MENU CHECK, and the reason is the
+    # recorded SOURCE rather than trust. A slot bound as `picked` was validated against the
+    # menu AT THE HOP THAT BOUND IT — `validate_bound_slots` ran then, against the menu that
+    # existed then. Re-validating at hop 3 would re-refuse a pick whose menu has since become
+    # `too_many`, punishing the user for answering. What must never happen is a pick arriving
+    # with NO hop that validated it, which is why `_accumulated_slots` refuses any entry whose
+    # source it does not recognise instead of defaulting it.
+    #
+    # UNDECLARED SLOTS ARE NOT FILTERED HERE. `accept_slots` below is the one site that
+    # projects onto the declaration, and it already returns a Refusal per dropped slot which
+    # reaches the routing record. Adding a filter here would be a second copy of that rule —
+    # the same defect as three engines with three behaviours, one layer up.
+    _chain = {k: v.get("value") for k, v in (chain_slots or {}).items() if isinstance(v, dict)}
+    _supplied = {**_chain, **dict(bound_slots or {})}
 
     # ── THE SPOKEN ANSWER IS AN ANSWER, and this path was DROPPING IT ───────────────────
     #
@@ -292,6 +318,45 @@ def dispatch_pre_resolved(
         resolution=getattr(acceptance, "resolution", {}) or {},
         enumerate_class=None,
     )
+
+    # ── THE RE-ASK GUARD. A chain that asks for what it already holds is a DEFECT ────────
+    #
+    # Not a slow path to tolerate: asking a person for a value they already gave this chain
+    # is the loop made visible, and it is the shape a user experiences as the system not
+    # listening. The measured case reached FOUR hops on a two-slot verb; it should have
+    # stopped at three with a reason.
+    #
+    # THIS FIRES ONLY WHEN THE CHAIN HOLDS THE SLOT AND THE DISPOSITION STILL ASKS FOR IT,
+    # which means the value was carried in and then REJECTED — by the declaration, by a type
+    # check, or by the menu. That is not the same as never having it, and the difference is
+    # the whole diagnostic: a re-ask after a rejection is a contract problem between the
+    # chain and the verb, and re-asking hides it behind a question.
+    #
+    # It REPORTS rather than refuses the turn. A refusal here would replace a slow answer
+    # with no answer, and the user did nothing wrong — the record is what the next reader
+    # needs, and `decide_disposition` keeps its say.
+    # `Disposition.slot` is SINGULAR — one ask asks about one slot (slot_disposition.py:159).
+    # The first draft read `.slots`, a field that does not exist, and `getattr` would have
+    # returned None forever: a guard that cannot fire, written into the commit that adds a
+    # guard. Read off the NamedTuple rather than assumed.
+    # REPORTED INTO THE ROUTING RECORD, NOT INTO A LOG. This module deliberately carries no
+    # logger — it takes `post` and `on_stage` and stays dependency-light — and the record is
+    # the better home regardless: the hop that bound the slot ends up in the artifact a reader
+    # opens, rather than in a line nobody greps for.
+    _asked_slot = str(disposition.slot or "")
+    if _asked_slot and _asked_slot in _chain and disposition.action != _ROUTE:
+        _rec = (chain_slots or {}).get(_asked_slot) or {}
+        refusals.append({
+            "name": _asked_slot,
+            # NAMES THE HOP, which is the whole diagnostic. "Asked again" is a symptom;
+            # "bound at hop 1 by a pick and asked again at hop 3" says where to look.
+            "reason": (
+                f"re_ask_of_bound_slot: bound at hop {_rec.get('hop')} "
+                f"(source={_rec.get('source')}, artifact={_rec.get('artifact_id')}); "
+                f"disposition says {disposition.reason or 'unfilled'}"
+            ),
+            "spoken": str(_rec.get("value") or ""),
+        })
 
     # ONE BUILDER, TWO EXECUTION SHAPES. The content comes from
     # `iagent_pure.routing_record` — the same function the supervisor's op calls — and only

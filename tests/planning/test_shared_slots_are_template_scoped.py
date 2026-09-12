@@ -1,6 +1,6 @@
 """R-005 — a shared slot gates the seed only where a PANEL CONSUMES it.
 
-RULED 2026-09-11, `docs/rulings/README.md#r-005-shared_slots-are-template-scoped`.
+RULED 2026-09-11, `docs/rulings/README.md#r-005--shared_slots-are-template-scoped`.
 
 THE REGRESSION THIS PREVENTS, and it was refused twice before it could ship. The gate used to
 union every REQUIRED shared slot with every panel's `consumes`, so a slot that was merely

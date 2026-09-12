@@ -26,14 +26,18 @@ in starlette.run_in_threadpool.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 import psycopg2
 import psycopg2.extras
+
+logger = logging.getLogger(__name__)
 
 # The Electric-replicated Postgres — same DSN the projector uses.
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
@@ -393,15 +397,220 @@ _DEFAULT_VERBS = frozenset({"approved", "rejected"})
 # Verbs whose meaning is empty without a stated reason. "Parts entered in the legacy system"
 # and "notice withdrawn by the vendor" are entirely different facts about the pipeline, and a
 # bare acknowledgement erases the difference — which is precisely the evidence ADR-0034 needs.
-_REASON_REQUIRED = frozenset({"acknowledged"})
+#
+# `accepted` ADDED 2026-09-11 for ADR-0051 (sustainment safety), belt-and-braces alongside the
+# declaration's own `reason_required`. A declared `reason_required` does NOTHING at runtime today:
+# this set is consulted by `validate_decision` WITHOUT reference to `kind`, and declarations are
+# not wired into this module at all. Declared-and-unenforced is the `isRegisteredKind` shape, and
+# for a RISK ACCEPTANCE it is precisely the gap ADR-0051 exists to close — an authority taking on
+# residual risk with no stated rationale is the one act in that domain whose record IS the reason.
+# This entry is the enforcement until the declaration is read; the cutover's parity arm asserts the
+# row property when this global goes away.
+#
+# NO EXISTING SPECIES ACCEPTS `accepted`, so this entry is inert until the safety kinds land —
+# which is the whole reason it is safe to add ahead of them. `rejected` is NOT added here and the
+# reason is measured, not stylistic: it is in `accepts` for access_request, grouped_review and
+# workflow_ack, and this set is kind-blind, so adding it would make EVERY rejection in the fleet
+# reason-required — three other species' behaviour changed from the safety lane, to enforce a
+# property for a kind that does not exist yet. It lands with the safety kinds in ADR-0051
+# increment 3, so the cost arrives with the benefit.
+_REASON_REQUIRED = frozenset({"acknowledged", "accepted"})
 
 
 class InvalidDecisionForKind(ValueError):
     """The verb is not in this task species' vocabulary (or its reason is missing)."""
 
 
+#: THE SEED HALF ONLY, AND THAT IS THE WHOLE PROBLEM WITH GATING ON IT ALONE.
+#:
+#: `policy/task_kinds/` ships STRUCTURAL species. Domain species live in a work-side ADR-0036
+#: overlay and MAY NOT enter this repo — `test_no_domain_name_entered_the_platform_seed` fails
+#: the build if one does. So a kind's absence from this directory is **required by the design**
+#: rather than evidence nobody declared it.
+_DECL_DIR = Path(__file__).resolve().parents[2] / "policy" / "task_kinds"
+
+#: Where the deployment's OWN species are declared, colon-separated, from config. Absent in a
+#: platform-only deployment — and absent means "this deployment has no domain species", which
+#: is a different fact from "I was not told where to look". See `_declared_kinds`.
+_OVERLAY_DIRS_ENV = "TASK_KIND_OVERLAY_DIRS"
+
+#: `None` until read once. `frozenset()` would be indistinguishable from "read it and there
+#: were none", which is the exact ambiguity the fallback below turns on.
+_DECLARED_KINDS_CACHE: "frozenset[str] | None" = None
+
+#: `kind -> the composed TaskKind row`. The DECLARATION is authoritative where it exists; the
+#: code tables below are the fallback for kinds no declaration covers. Filled by
+#: `_declared_kinds()` on the same pass, so membership and content can never disagree.
+_DECLARED_ROWS: "dict[str, object]" = {}
+
+
+def _declared_kinds() -> "frozenset[str] | None":
+    """Every ratified task kind, or **None** if the declarations could not be read.
+
+    NONE IS NOT AN EMPTY SET, AND CONFLATING THEM IS THE DANGEROUS DIRECTION HERE. An empty
+    set means "nothing is declared", which makes every kind undeclared and refuses every
+    decision in the fleet. A missing directory, an unreadable file or an absent SDK would
+    then take the whole task rail down while looking like a security improvement.
+
+    So an unreadable registry falls back to TODAY'S behaviour and says so loudly. That is the
+    opposite of the `getenv`-default rule (R-012) on purpose: there, a default silently
+    supplied a value nobody chose; here, refusing to default would silently withdraw an
+    affordance everyone depends on. The asymmetry is which error is recoverable.
+
+    THE SEED ALONE IS NOT THE SET, AND GATING ON IT REFUSED 18 OF 55 LIVE ROWS. Measured by
+    `iagent-mesh-sdk-ca` against sandbox's `human_task_projection` before this reached master::
+
+        grouped_review      25   in the seed        ok
+        pcn_disposition     16   NOT in the seed    would have been REFUSED
+        extraction_refusal   9   in the seed        ok
+        workflow_ack         3   in the seed        ok
+        pcn_grouped_review   2   NOT in the seed    would have been REFUSED
+
+    `pcn_disposition` is minted live (`dispatch_plan.py:107`) and is absent from the seed
+    **because the design requires it to be** — domain species live in a work-side overlay and
+    a test fails the build if one enters this repo. **Refusing on absence from a partial set is
+    a searched zero read as a structural zero**, and it is the same mistake as reading "not in
+    `_VERBS_BY_KIND`" as "not declared", one level up.
+
+    SO THE GATE RESOLVES AGAINST THE COMPOSED SET, and **returns None when no overlay path is
+    configured** — because then this process genuinely cannot tell "undeclared" from "declared
+    somewhere I was not told to look", and in that state refusing is the dangerous direction.
+    A deployment with no domain species composes to exactly the seed, so nothing changes for
+    it; a deployment WITH them must say where they are before the gate can be trusted to fire.
+    """
+    global _DECLARED_KINDS_CACHE
+    if _DECLARED_KINDS_CACHE is not None:
+        return _DECLARED_KINDS_CACHE
+    raw = (os.getenv(_OVERLAY_DIRS_ENV) or "").strip()
+    if not raw:
+        logger.warning(
+            "%s is unset, so the task-kind set is the SEED HALF ONLY and cannot be trusted to "
+            "be complete — undeclared kinds keep today's verbs. Set it to the deployment's "
+            "overlay directory (empty string is not the same as 'no domain species'; point it "
+            "at an empty dir to assert there are none).",
+            _OVERLAY_DIRS_ENV,
+        )
+        return None
+    overlays = [p for p in (s.strip() for s in raw.split(os.pathsep)) if p]
+
+    # A CONFIGURED PATH THAT IS NOT THERE IS UNREADABLE, NOT EMPTY — and `compose` will not
+    # tell you. It composes a missing overlay directory to silence, so a TYPO in this variable
+    # yields the seed set and the gate fires on it: exactly the 18-row outage, arriving through
+    # a mistyped path instead of a missing feature. The difference between "you told me where
+    # to look and there was nothing there" and "you told me where to look and the place does
+    # not exist" is the whole safety property here, so it is checked rather than inferred.
+    missing = [p for p in overlays if not Path(p).is_dir()]
+    if missing:
+        logger.warning(
+            "%s names %s, which %s not exist — the declared set cannot be known, so undeclared "
+            "kinds keep today's verbs. A path that is not there is UNREADABLE, not empty; "
+            "point the variable at an existing (possibly empty) directory to assert this "
+            "deployment has no domain species.",
+            _OVERLAY_DIRS_ENV, missing, "does" if len(missing) == 1 else "do",
+        )
+        return None
+
+    try:
+        from iagent_mesh.task_kinds import compose  # noqa: PLC0415
+        kinds = compose(_DECL_DIR, overlays)
+        names = frozenset(str(getattr(k, "kind", "") or "") for k in kinds) - {""}
+        if not names:
+            logger.warning(
+                "task-kind composition over %s + %s named nothing — treating the registry as "
+                "UNREADABLE rather than empty. An empty registry and an unreadable one are "
+                "not the same fact.",
+                _DECL_DIR, overlays,
+            )
+            return None
+        _DECLARED_ROWS.clear()
+        for k in kinds:
+            name = str(getattr(k, "kind", "") or "")
+            if name:
+                _DECLARED_ROWS[name] = k
+        _DECLARED_KINDS_CACHE = names
+        return names
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "could not compose task-kind declarations from %s + %s (%s: %s) — undeclared "
+            "kinds keep today's verbs. This is a FALLBACK, not a decision: an unreadable "
+            "registry must not refuse every decision in the fleet.",
+            _DECL_DIR, overlays, type(exc).__name__, exc,
+        )
+        return None
+
+
 def verbs_for_kind(kind: str) -> frozenset[str]:
+    """The verbs this species accepts. **An UNDECLARED kind accepts nothing.**
+
+    THE DEFECT THIS CLOSES. An unknown kind fell through to `_DEFAULT_VERBS` and was handed
+    `approved`/`rejected` — so a caller bypassing the card could dispose a species nobody
+    declared. cortex-ui closed the render half (`21b2bae`: the verb block is gated on
+    `isRegisteredKind`, which finally has a caller, and the fixture asserts `buttons()` is
+    EMPTY). This is the gateway half, and until it lands the state is a UI offering nothing
+    over an API that would still take the answer.
+
+    FOR A RISK ACCEPTANCE THAT IS ADR-0051 §7's REFUSAL DEFEATED FROM OUTSIDE THE ENGINE:
+    an acceptance reachable through a generic approval verb, with no authority tier and no
+    required reason.
+
+    **This makes no task deader than it already is on screen.** The card already offers
+    nothing for these kinds; this stops the API accepting what the card refuses.
+
+    NOT IN `_VERBS_BY_KIND` IS NOT THE SAME AS NOT DECLARED. Three of the four ratified kinds
+    are absent from that table and correctly ride `_DEFAULT_VERBS` — the table is an interim
+    per-kind override, not the registry.
+
+    **THE DECLARATION IS AUTHORITATIVE WHERE IT EXISTS.** The first cut read the registry for
+    MEMBERSHIP and never for CONTENT: a declared kind passed the gate and was then handed the
+    generic vocabulary from the code table. Measured on the merged tree —
+    `risk_acceptance_high` declares `accepted, rejected, returned_for_rework` and was given
+    `approved, rejected`.
+
+    **That is R-004(e)'s inversion, live.** A risk is ACCEPTED by an authority — MIL-STD-882's
+    word — and `approved` is the generic seed's verb for generic things. The concurrence kinds
+    were worse: `concurred` was refused outright, so §4.3.7's two-act sequence could not be
+    performed through the gate at all.
+
+    **READING the declaration is not gated on the M3.3 cutover; DELETING `_VERBS_BY_KIND` is.**
+    So the consumer half lands now and the deletion waits for cortex-ui-ba's parity seal, as
+    sequenced. The code tables become the fallback for kinds no declaration covers — which is
+    belt-and-braces in the direction R-004(f) meant, rather than a table that silently outranks
+    a ratified row.
+    """
+    declared = _declared_kinds()
+    if declared is not None and kind not in declared:
+        return frozenset()
+    row = _DECLARED_ROWS.get(kind)
+    if row is not None:
+        accepts = frozenset(str(v) for v in (getattr(row, "accepts", None) or ()))
+        if accepts:
+            return accepts
+        # A row declaring NO verbs is a declaration nobody can act on. Falling back to the
+        # table here would hand it the generic pair and call that the row's meaning.
+        return frozenset()
     return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
+
+
+def reason_required_for(kind: str) -> frozenset[str]:
+    """Verbs whose meaning is empty without a stated reason, for THIS species.
+
+    Same precedence as `verbs_for_kind`: the declaration where it exists, the kind-blind global
+    set otherwise. R-004(b) makes BOTH `accepted` and `rejected` reason-required on the safety
+    rows, which the global set cannot express — it is kind-blind, so adding `rejected` there
+    would change three other species' behaviour from the safety lane. That limitation is the
+    argument for the cutover, and this is the half of it that needs no parity seal.
+    """
+    # LOAD THE ROWS BEFORE READING THEM. `_DECLARED_ROWS` is filled as a side effect of
+    # `_declared_kinds()`, so calling this function FIRST — before any `verbs_for_kind` — read
+    # an empty dict and silently returned the kind-blind global set. An ordering dependency
+    # that produces a plausible answer rather than an error, found by this function's own seal.
+    _declared_kinds()
+    row = _DECLARED_ROWS.get(kind)
+    if row is not None:
+        declared = getattr(row, "reason_required", None)
+        if declared is not None:
+            return frozenset(str(v) for v in (declared or ()))
+    return _REASON_REQUIRED
 
 
 def validate_decision(kind: str, decision: str, comment: str = "") -> None:
@@ -413,7 +622,7 @@ def validate_decision(kind: str, decision: str, comment: str = "") -> None:
             f"{sorted(allowed)}. Recording it would write a decision the task's own "
             f"semantics cannot represent."
         )
-    if decision in _REASON_REQUIRED and not (comment or "").strip():
+    if decision in reason_required_for(kind) and not (comment or "").strip():
         raise InvalidDecisionForKind(
             f"{decision!r} on a {kind!r} task REQUIRES a reason — an unexplained "
             f"acknowledgement erases the difference between the outcomes it covers."

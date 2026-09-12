@@ -40,7 +40,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 # ── the contract: from the SDK, never local ────────────────────────────────────────────────
-from iagent_mesh.graph_manifest import GraphManifest, compose, registration_payload
+from iagent_mesh.graph_manifest import (
+    GraphManifest,
+    RefusalViolation,
+    compose,
+    enforce_refusal,
+    registration_payload,
+)
 
 # ── flat in the image (/app), packaged in the repo — §5, and the order is load-bearing ──────
 try:
@@ -237,11 +243,52 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
     # which is what makes that true by construction rather than by discipline.
     identity = {h: v for h in _IDENTITY_HEADERS
                 if (v := http_request.headers.get(h)) is not None}
+
+    # ── ADMISSION: AN UNIDENTIFIED CALL IS REFUSED BEFORE THE FIRST NODE RUNS ───────────────
+    # Ruled 2026-09-12. The third-caller case is an UNENTITLED caller, who is identified and
+    # gets an answer shaped by what they may see. An UNIDENTIFIED call is a different thing and
+    # gets nothing, named: there is no subject to scope a governed read to, and this host holds
+    # no standing credential to fall back on.
+    #
+    # TWO LAYERS, AND THE INNER ONE IS THE ONE THAT MATTERS IF THIS REGRESSES. Each graph's
+    # nodes ALSO refuse to call out without an initiator (see fin_program_brief's `_fetch`), so
+    # a wrapper failure cannot launder access — that is the property the fixture harness's
+    # fourth outcome proves, and this check is what makes that outcome unreachable in
+    # production rather than merely handled.
+    if not identity.get("authorization"):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"{graph_id} runs as the INITIATOR and this request carries no identity "
+                f"(expected Authorization, plus X-Originator-Sub/Email). Refused before the "
+                f"first node: a graph composing governed reads under no subject has nothing to "
+                f"scope them to, and this host holds no credential of its own to use instead."
+            ),
+        )
+
     state = dict(request.params)
     state["identity"] = identity
     config: dict = {"configurable": {"thread_id": request.thread_id or graph_id,
                                      "user_id": request.user_id}}
-    return await graph.ainvoke(state, config=config)
+    out = await graph.ainvoke(state, config=config)
+    return _enforce_refusal(m, out)
+
+
+def _enforce_refusal(m: GraphManifest, out: Any) -> Any:
+    """Adapt the SDK's `enforce_refusal` to an HTTP answer.
+
+    THE RULE ITSELF MOVED TO THE SDK in v0.7.0 and this host no longer owns it. It was
+    implemented here first, on the ruling that the host holds both the row and the output —
+    which was right and not sufficient: a convention only one host implements is one route C
+    will not inherit. A team hosting their own graphs now imports the same function.
+
+    What stays here is the only part that is genuinely this host's: turning the violation into
+    a 502. A route-C host may answer differently; the CHECK must not differ.
+    """
+    try:
+        return enforce_refusal(m, out)
+    except RefusalViolation as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/health")

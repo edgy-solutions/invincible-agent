@@ -207,3 +207,147 @@ audiences:
   # the WHOLE _DISPOSITION_QUEUE map and fails on any queue that resolves to zero actors. The
   # probe converts this from a defect that waits for a reviewer into one that is visible now.
   # Grant it when a ruling names the buyer.
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADR-0051 — SUSTAINMENT SAFETY. Risk acceptance, ONE AUDIENCE PER AUTHORITY LEVEL.
+  #
+  # WHY FOUR KEYS AND NOT ONE WITH A LEVEL FIELD. MIL-STD-882 ties who may accept a
+  # risk to the risk's LEVEL, and the level is resolved from the ratified matrix
+  # (setup/ontologies/safety_risk_matrix.ttl), which carries each level's
+  # `acceptanceAudience` as data. An authority level IS a group — and `grant_to` is
+  # USERS ONLY here, so the group is enumerated by hand. That is the constraint's
+  # workaround wearing a design's clothes, it is recorded as such on the M3 list, and
+  # when group audiences are ruled these four collapse to one row per level.
+  #
+  # THE SANDBOX LADDER IS DELIBERATELY SPLIT SO THE SEAL CAN DISCRIMINATE.
+  # alice holds the two senior levels; bob holds the two junior ones and is also the
+  # DRAFTING author; carol holds nothing. On a High-risk assessment that yields the
+  # three-caller shape ADR-0051 seal 7 needs, with all three legs live rather than
+  # asserted: alice disposes, bob SEES AND CANNOT, carol neither sees nor acts.
+  # Honest-denial-as-demo-asset, the same posture as the promotion fixture above.
+  #
+  # SAMPLE VALUES. At work these bind to the programme's own acceptance authorities,
+  # and the split between levels is whatever that programme's system-safety plan says
+  # — which is exactly why the ladder is data in the matrix rather than code here.
+  risk_acceptance_high:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Who may ACCEPT a High residual risk in the SUSTAINMENT compartment.
+      Acceptance is a task disposition, never a verb (§7) — the engine drafts and
+      cannot accept. `accepted` and `rejected` are BOTH reason-required (R-004 b/e):
+      an authority taking on residual risk with no stated rationale is the one act in
+      this domain whose record IS the reason. Sandbox = alice, the senior authority.
+    grant_to:
+      - alice@example.com
+
+  risk_acceptance_serious:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Serious residual risk. Same senior authority as High in sandbox,
+      and deliberately NOT bob — a caller one tier down must be refused, or seal 7
+      cannot tell a working ladder from a single undifferentiated grant.
+    grant_to:
+      - alice@example.com
+
+  risk_acceptance_medium:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Medium residual risk, accepted a tier lower. Sandbox = bob, who is
+      also the drafting author below — which is correct and is the point: an engineer
+      may accept a Medium risk they drafted and may NOT accept a High one.
+    grant_to:
+      - bob@example.com
+
+  risk_acceptance_low:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Low residual risk. Sandbox = bob.
+    grant_to:
+      - bob@example.com
+
+  # ── R-004(a)'s AUTHOR VISIBILITY AUDIENCE WAS HERE AND IS WITHDRAWN. ────────────────────
+  #
+  # WITHDRAWN 2026-09-12, one day after being added, because IT COULD NOT HAVE WORKED and an
+  # inert grant is worse than no grant: it reads as protection that exists.
+  #
+  # THE SUBSTRATE HAS NO VIEW-ONLY STATE FOR A TASK. `task_audience` in the Topaz model
+  # (`topaz-configmap.yaml:226`) declares exactly one permission — `can_act: actor`. There is no
+  # `can_view` anywhere in code; the only two occurrences in this repo are prose, in this file's
+  # own header and in the comment I wrote here yesterday. A caller receives a task because
+  # `register_task` materializes ONE QUEUE ROW PER ACTOR, and `list_tasks_for` filters
+  # `recipient_id = caller`. So on this substrate:
+  #
+  #     SEEING a task and being able to ACT on it are the SAME grant.  see <=> can_act
+  #
+  # The row therefore granted bob `can_act` on a kind NO TASK IS EVER OF — nothing is
+  # materialized under it, he saw nothing, and the register carried a ruling that read as
+  # implemented. I propagated this file's own header claim about `can_view` without checking the
+  # model, and then wrote it into a ruling.
+  #
+  # WHAT THIS COSTS, STATED PLAINLY: seal 7's middle leg — "sees and cannot dispose" — is not
+  # achievable today, and not because an implementation is lazy. bob DOES get the honest partial
+  # version for free: he is an actor on Medium and Low, so he sees and disposes those, and
+  # genuinely cannot see High or Serious. That is the substrate's real shape and it may well be
+  # the right answer; what it is not is R-004(a). Raised in ADR-0051 §5 for the architect.
+  #
+  # Re-add this row only when `task_audience` gains a `viewer` relation and a `can_view`
+  # permission, and `register_task` materializes rows for viewers with the act gate still closed.
+
+  # Hazard LINK review — classifyWriteUp PROPOSES a link and never creates a hazard
+  # (ADR-0051 §7). Three write-ups of one condition must resolve to one hazard and two
+  # links rather than three hazards, and a human makes that call.
+  hazard_link_review:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5. Who may confirm that a write-up describes an EXISTING hazard rather
+      than a new one. Lower stakes than acceptance and deliberately a different
+      audience: the safety engineer who knows the fleet makes this call, not the
+      authority who accepts residual risk. Sandbox = bob.
+    grant_to:
+      - bob@example.com
+
+  # NOT GRANTED, DELIBERATELY: carol. She is the third leg of seal 7 — a caller who
+  # neither sees nor may act. Recorded here rather than left as an absence, because an
+  # absence is indistinguishable from an oversight, and this one is load-bearing.
+
+  # ── CONCURRENCE (ADR-0051 §5.1) — the SECOND human act on a Serious or High risk. ────────
+  #
+  # MIL-STD-882E §4.3.7: the user representative "shall provide formal concurrence BEFORE all
+  # Serious and High risk acceptance decisions", and §3.2.49 puts them "at a peer level
+  # equivalent to the risk acceptance authority".
+  #
+  # PEER-LEVEL IS WHY THESE ARE SEPARATE AUDIENCES AND NOT MORE ACTORS ON THE ACCEPTANCE ONES.
+  # An audience whose actors could both concur and accept would turn two independent acts into
+  # one signature wearing two names — which is exactly what a formal concurrence is not.
+  #
+  # SANDBOX ROLES, chosen so seal 7 discriminates on a HIGH assessment with all legs live:
+  #     alice   ACCEPTS High and Serious            (the authority)
+  #     carol   CONCURS on High and Serious         (the user representative — NOT alice)
+  #     bob     accepts Medium and Low only         (sees NEITHER on a High: the third leg)
+  #
+  # carol was previously granted nothing, as seal 7's "neither sees nor acts" leg. She now holds a
+  # real role and BOB takes that leg on a High assessment, which is a better fixture than an
+  # identity that exists only to be refused: bob is refused because he is the WRONG TIER, which is
+  # the refusal a real fleet produces, rather than because he was never given anything.
+  risk_acceptance_concurrence_high:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5.1 / MIL-STD-882E §4.3.7. The user representative's formal concurrence, required
+      BEFORE a High risk acceptance decision. Disposed `concurred` or `not_concurred`, both
+      reason-required: a concurrence with no stated basis is the rubber stamp the standard's
+      peer-level requirement exists to prevent. Sandbox = carol, deliberately NOT alice, who
+      accepts at this level — one person holding both acts is the failure this audience prevents.
+    grant_to:
+      - carol@example.com
+
+  risk_acceptance_concurrence_serious:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5.1 / MIL-STD-882E §4.3.7. As above, for Serious. Sandbox = carol.
+      NO CONCURRENCE AUDIENCE EXISTS FOR MEDIUM OR LOW, and that is the standard rather than an
+      omission: §4.3.7 requires concurrence for Serious and High and says nothing about the
+      others. Inventing a step where none is required would be as wrong as omitting one where it
+      is — and `test_every_risk_level_in_the_matrix_has_a_granted_audience` would fail if a
+      concurrence audience were expected for a level that has none.
+    grant_to:
+      - carol@example.com

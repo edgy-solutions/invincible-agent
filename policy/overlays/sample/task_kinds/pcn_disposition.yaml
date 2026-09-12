@@ -1,0 +1,21 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THIS ROW IS NOT HYPOTHETICAL: `pcn_disposition` is minted live at
+# `agent_fleet/restate_analyst/dispatch_plan.py:107` and had 16 rows in sandbox's
+# `human_task_projection` on 2026-09-12. It is absent from `policy/task_kinds/` BY DESIGN —
+# that directory ships structural species and `test_no_domain_name_entered_the_platform_seed`
+# fails the build if a domain name enters it.
+#
+# So this is the first overlay row in the repo's history and it declares a species the platform
+# already runs. A gate resolving only the seed refused it, which is what made the overlay
+# location urgent rather than tidy.
+#
+# `accepts` is the full set for this species — an overlay row is a FULL REPLACEMENT by key, not
+# a field-level merge, which is what lets a domain species declare a verb the structural seed
+# has never heard of.
+kind: pcn_disposition
+renders_as:
+  badge: DISPOSE
+  title: PCN disposition
+  archetype: APPROVAL_TASK
+accepts: [approved, rejected]

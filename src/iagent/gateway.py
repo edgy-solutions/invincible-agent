@@ -1994,7 +1994,7 @@ async def canvas_seed(
     # engine call to find out.
     # ── R-005: SHARED SLOTS ARE TEMPLATE-SCOPED, AND SCOPE IS WHAT A PANEL CONSUMES ──
     #
-    # RULED 2026-09-11 — see docs/rulings/README.md#r-005-shared_slots-are-template-scoped.
+    # RULED 2026-09-11 — see docs/rulings/README.md#r-005--shared_slots-are-template-scoped.
     #
     # The previous gate unioned every REQUIRED shared slot with every panel's `consumes`, so a
     # slot that was merely DECLARED blocked the seed even when no panel in that template
@@ -3702,6 +3702,26 @@ MATCH (a:AnswerArtifact {id: $artifact_id})-[:PRODUCED_FOR]->(:Actor {actor_id: 
 RETURN a.resolved_intent AS resolved_intent
 """
 
+# EVERY ARTIFACT IN THIS CHAIN, NEAREST FIRST, ALL OF THEM THE CALLER'S OWN.
+#
+# `DERIVED_FROM` is the ask lineage: each answer points at the ask it answered. Walking it
+# backwards is how a slot bound at hop 1 is still known at hop 3.
+#
+# THE OWNERSHIP EDGE IS ON **EVERY** NODE IN THE PATH, not only the one the caller named.
+# Requiring it solely on the entry point would let a caller name their own artifact whose
+# ancestor is somebody else's and inherit that stranger's bound values — an authorization
+# hole wearing a convenience's clothes. This is the same rule `_pre_resolved_from_ask`
+# states for the route, applied to the thing the route carries.
+#
+# Depth-bounded at 12. A chain longer than that is a loop, and a loop is the defect this
+# whole change exists to stop rather than something to follow patiently.
+_CHAIN_SLOTS_CYPHER = """
+MATCH path = (a:AnswerArtifact {id: $artifact_id})-[:DERIVED_FROM*0..12]->(h:AnswerArtifact)
+WHERE ALL(n IN nodes(path) WHERE (n)-[:PRODUCED_FOR]->(:Actor {actor_id: $user_id}))
+RETURN h.id AS id, h.resolved_intent AS resolved_intent, length(path) AS hops
+ORDER BY hops ASC
+"""
+
 
 def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
     """The (subject, verb) an earlier ask already established, or `{}`.
@@ -3745,6 +3765,94 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
         # above, which exists to stop an undispatchable route.
         "owner_persona": str(intent.get("owner_persona") or ""),
     }
+
+
+#: How a slot's value came to be known. THE SOURCE IS CARRIED, NOT JUST THE VALUE, and the
+#: whole merge depends on it. `validate_bound_slots` refuses a PICK for a slot whose menu was
+#: `too_many` — nothing was offered, so nothing can be picked — while accepting a
+#: CALLER-SUPPLIED id for that same slot, which is a legitimate API call. One field cannot
+#: carry both rules, so flattening these into a single dict would make the loop disappear and
+#: silently delete that refusal. If a future change cannot express this distinction, the change
+#: is wrong however clean the chain looks afterward.
+SLOT_SOURCE_PICKED = "picked"        # chosen from a menu this system offered
+SLOT_SOURCE_SPOKEN = "spoken"        # typed in answer to a RESPEAK ask (no menu existed)
+SLOT_SOURCE_SUPPLIED = "supplied"    # sent by an API caller with the request
+SLOT_SOURCE_FILLED = "filled"        # extracted from the question by the slot filler
+
+_SLOT_SOURCES = (
+    SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED,
+)
+
+
+def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
+    """Every slot this chain has already bound: `{slot: {"value": v, "source": s, "hop": n}}`.
+
+    THE DEFECT THIS EXISTS FOR, measured 2026-09-12 by invincible-agent-81 on the rolled
+    fleet: a two-slot verb took FOUR hops, 1m15 → 1m42 → 2m07 → 2m34, against 1m16 in a
+    single hop when both values were in the question. Each hop carried only the latest answer,
+    so a slot answered at hop 1 was simply absent by hop 3 and got asked again.
+
+    `{}` ON EVERY UNCERTAINTY, exactly as `_pre_resolved_from_ask` does — unknown id, an
+    artifact that is not the caller's, an ancestor that is not, an unreachable graph. Every
+    one of those means "ask the ordinary way", which is slow and correct. There is no failure
+    here that should produce a BOUND VALUE, because a half-known binding is worse than a
+    re-ask: it dispatches a verb against a value nobody confirmed.
+
+    NEAREST HOP WINS. A person who answers the same slot twice meant the second answer; the
+    ordering in the Cypher is what makes that true rather than incidental.
+    """
+    if not artifact_id or not user_id:
+        return {}
+    try:
+        with neo4j_driver.session() as session:
+            rows = session.run(
+                _CHAIN_SLOTS_CYPHER, artifact_id=artifact_id, user_id=user_id
+            ).data()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chain-slot lookup failed for %s: %s", artifact_id, exc)
+        return {}
+    out: dict = {}
+    for row in rows or []:
+        try:
+            intent = json.loads(row.get("resolved_intent") or "{}") or {}
+        except (ValueError, TypeError):
+            continue
+        for slot, rec in (intent.get("bound_slot_sources") or {}).items():
+            if slot in out:
+                continue                       # nearer hop already answered it
+            if not isinstance(rec, dict):
+                continue                       # malformed: refuse rather than guess a source
+            source = str(rec.get("source") or "")
+            if source not in _SLOT_SOURCES:
+                # AN UNKNOWN SOURCE IS NOT A DEFAULT. Admitting it as "supplied" would launder
+                # a pick past the menu check, which is the one thing the split protects.
+                logger.warning(
+                    "chain slot %r carries unknown source %r; refusing to carry it", slot, source
+                )
+                continue
+            if "value" not in rec:
+                continue
+            out[slot] = {
+                "value": rec["value"],
+                "source": source,
+                "hop": int(row.get("hops") or 0),
+                "artifact_id": str(row.get("id") or ""),
+            }
+    return out
+
+
+# NO SECOND PROJECTION IS ADDED HERE, AND THAT IS THE POINT.
+#
+# The first draft of this change grew a `project_onto_declared()` helper before reading far
+# enough: `accept_slots(spoken, declared)` in `iagent_pure.slot_acceptance` ALREADY filters
+# supplied slots down to what the verb declares, already returns a `Refusal` per dropped slot
+# rather than raising, and its result already reaches the routing record through
+# `direct_dispatch`. A parallel projection would have been a second place for one rule to
+# live, which is the defect the gateway-side ruling exists to remove — three engines with
+# three behaviours was the same shape one layer down.
+#
+# So the accumulated set is fed INTO the existing projection as its base layer, and the
+# naming of what was dropped is already built.
 
 
 _ARTIFACT_BY_ID_CYPHER = """
@@ -4471,6 +4579,21 @@ async def generate_dagster_stream(
             _answering_artifact_id, session_id,
         )
 
+    # WHAT THIS CHAIN HAS ALREADY ANSWERED. Read here, beside the route and under the same
+    # ownership edge, because it is the same kind of fact: something an earlier ask
+    # established, which the client may CLAIM a lineage for but must never SUPPLY.
+    #
+    # The route was already carried across hops and the answers were not — that asymmetry is
+    # the whole loop. A two-slot verb took four hops because hop 3 could not see what hop 1
+    # had bound.
+    _chain_slots = _accumulated_slots(_answering_artifact_id or "", user_id)
+    if _chain_slots:
+        logger.info(
+            "chain %s carries %d already-bound slot(s) for run %s: %s",
+            _answering_artifact_id, len(_chain_slots), session_id,
+            {k: v["source"] for k, v in _chain_slots.items()},
+        )
+
     mode: str
     entity_refs: list[str] = []
     intent_extraction: dict = {}
@@ -4713,6 +4836,11 @@ async def generate_dagster_stream(
                     dispatch_pre_resolved,
                     pre_resolved=_pre_resolved,
                     bound_slots=request.bound_slots or {},
+                    # Read from the graph under the caller's ownership edge, never from the
+                    # request body — the same rule as `pre_resolved`, because it is the same
+                    # kind of fact: something an earlier ask established in THIS caller's
+                    # chain. A client that could SUPPLY these could answer its own asks.
+                    chain_slots=_chain_slots,
                     spoken_answer=request.spoken_answer or "",
                     user_query=user_query,
                     entitled_domains=entitled_domains or [],
