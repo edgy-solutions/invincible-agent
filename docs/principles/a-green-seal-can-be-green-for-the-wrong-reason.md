@@ -127,6 +127,13 @@ is therefore the better instrument for exactly this class. It is the strongest a
 file for source-of-truth review by someone who did not write the fix. *(Repaired by asserting the
 TYPE, which goes red under the old code.)*
 
+**AND THE PRACTICE THAT FOLLOWS, taken by the lane that reads every other lane's greens:
+ASK FOR THE ASSERTION, NOT THE COLOUR.** A green confirms that *the assertion its author chose*
+passed — not that the thing was done. To the reader the author's intent is invisible, which is
+precisely what makes them the right instrument, and asking *"did your seal pass?"* throws that
+advantage away. Ask what it asserts. 01's own framing, and a role change rather than a
+resolution.
+
 **10. A fixture that agrees with the bug.** `/artifacts/{id}` read `current_user.authz_id`
 while the writer stamped `current_user.id`; **285 of one user's 286 artifacts were
 permanently unreadable by their own producer.** Nine tests passed over it, because the test
