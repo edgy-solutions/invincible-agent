@@ -1,3 +1,33 @@
+---
+iri: docs:runbook-rolling-a-service
+# EXPLAINS IS DELIBERATELY EMPTY, AND THE EMPTINESS IS THE MEASUREMENT, NOT AN OMISSION.
+# The invented-IRI rule (ADR-0037 section 1) refuses a target minted to make an edge look tidy,
+# and adding-an-engine.md already keeps its list short for that reason. This page goes one step
+# further because the graph has nothing it can honestly point at.
+#
+# Derived from setup/ontologies/mesh_system.ttl rather than recalled: the mesh declares FOUR
+# lowercase verbs -- enumerateInstances, proposeDisposition, rendersAs, resolveInstance -- and
+# 72 classes. NOT ONE of either concerns deployment, rolling, images, versions or health. A
+# roll is an infrastructure act; the mesh does not model it, so there is no contract-depth
+# target and inventing `mesh:rollService` is exactly the move the gate exists to refuse.
+#
+# RULED 2026-09-11 (register R-015), after this page raised the question: an edgeless runbook IS
+# admitted. A page with no honest graph target is still a corpus page -- reachable by audience
+# and by text, just not by an `explains` edge. Ingest requiring at least one target would refuse
+# every operational runbook, and this page is the proof. So: ZERO OR MORE edges, and a page with
+# none says so EXPLICITLY with the `none` sentinel below -- which is distinguishable from a
+# missing key (author forgot) and from an empty list (author was unsure). This is a decision.
+explains: none
+doc_kind: how-to
+# From policy/personas.yaml, IN ITS OWN CASING -- the canonical enum (PORTFOLIO_LEAD,
+# DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST,
+# COST_ANALYST), read out of the file rather than recalled. RULED 2026-09-11 (R-017): the
+# corpus normalises TO the policy file, never the reverse -- a ratified config outranks prose.
+# The validator matches case-insensitively and lints to canonical case.
+# Rolling a service is a platform act, so: ARCHITECT.
+audience_hint: ARCHITECT
+---
+
 # Rolling a service
 
 **Ruled 2026-09-06, after a fix silently regressed out of a running deployment.**
