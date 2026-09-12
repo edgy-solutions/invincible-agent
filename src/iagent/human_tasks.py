@@ -539,7 +539,33 @@ def _declared_kinds() -> "frozenset[str] | None":
         return None
 
 
-def verbs_for_kind(kind: str) -> frozenset[str]:
+def _ordered(verbs) -> "tuple[str, ...]":
+    """A verb sequence, PRESERVING declaration order where the source has any.
+
+    ONE RETURN TYPE FROM BOTH BRANCHES, WHICH IS THE POINT. `verbs_for_kind` reads either a
+    declared row or a code table, and if those returned different container types a caller that
+    worked in a deployment WITH an overlay would break in one without — a defect that only
+    appears where nobody tests.
+
+    ORDER IS PRESERVED WHERE IT EXISTS AND IMPOSED WHERE IT DOES NOT. Today the SDK stores
+    `accepts` as a `frozenset`, so there is no declared order to keep and sorting is the only
+    deterministic choice. SDK v0.8.0 makes it a `tuple` — at which point this function starts
+    carrying the row's own order without another edit, which is why it is written this way
+    BEFORE the pin rather than after. A `frozenset(...)` wrap here would have silently thrown
+    the ordering fix away and left the bump looking applied.
+
+    An unordered source is SORTED rather than passed through: a frozenset's iteration order is
+    arbitrary but not random, so passing it through would produce a stable-looking order that
+    nobody chose — which reads as meaningful and is not.
+    """
+    from collections.abc import Sequence  # noqa: PLC0415
+    items = [str(v) for v in (verbs or ())]
+    if isinstance(verbs, Sequence) and not isinstance(verbs, (str, bytes)):
+        return tuple(items)          # ordered source: the declaration's own order
+    return tuple(sorted(items))      # set-like: no order to keep, so impose a stable one
+
+
+def verbs_for_kind(kind: str) -> "tuple[str, ...]":
     """The verbs this species accepts. **An UNDECLARED kind accepts nothing.**
 
     THE DEFECT THIS CLOSES. An unknown kind fell through to `_DEFAULT_VERBS` and was handed
@@ -579,16 +605,20 @@ def verbs_for_kind(kind: str) -> frozenset[str]:
     """
     declared = _declared_kinds()
     if declared is not None and kind not in declared:
-        return frozenset()
+        # `()` NOT `frozenset()`. This branch was missed when the others became tuples, and
+        # a function returning two container types depending on which branch it takes is the
+        # defect iagent-mesh-sdk-ca flagged for the pin — a caller that works in a deployment
+        # WITH an overlay breaking in one without. Found by printing the type, not by reading.
+        return ()
     row = _DECLARED_ROWS.get(kind)
     if row is not None:
-        accepts = frozenset(str(v) for v in (getattr(row, "accepts", None) or ()))
-        if accepts:
-            return accepts
+        declared = getattr(row, "accepts", None)
+        if declared:
+            return _ordered(declared)
         # A row declaring NO verbs is a declaration nobody can act on. Falling back to the
         # table here would hand it the generic pair and call that the row's meaning.
-        return frozenset()
-    return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
+        return ()
+    return _ordered(_VERBS_BY_KIND.get(kind, _DEFAULT_VERBS))
 
 
 def reason_required_for(kind: str) -> frozenset[str]:

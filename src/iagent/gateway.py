@@ -2426,7 +2426,15 @@ async def act_on_human_task(
         raise HTTPException(status_code=422, detail={
             "error": "invalid_decision_for_kind",
             "kind": match.get("kind"),
-            "allowed": sorted(human_tasks.verbs_for_kind(match.get("kind") or "")),
+            # `list(...)` NOT `sorted(...)`. `verbs_for_kind` returns the declaration's own
+            # order, and re-sorting here reproduces — one surface over — the exact defect the
+            # SDK's ordering fix exists to close: a caller reading `allowed` for a safety
+            # species would see alphabetical order regardless of what the row declared.
+            #
+            # `sorted()` looks like tidiness rather than a decision, which is why it survived
+            # unexamined. Flagged by iagent-mesh-sdk-ca from the call sites rather than from
+            # reasoning about them.
+            "allowed": list(human_tasks.verbs_for_kind(match.get("kind") or "")),
             "message": str(exc),
         })
 

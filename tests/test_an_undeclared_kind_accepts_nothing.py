@@ -110,7 +110,7 @@ def test_WITH_NO_OVERLAY_CONFIGURED_the_gate_does_not_fire(monkeypatch):
 def test_a_LIVE_domain_species_keeps_its_verbs_when_no_overlay_is_configured(monkeypatch, kind):
     """The 18 rows, by name. `pcn_disposition` alone is 16 of them."""
     _fresh(monkeypatch, None)
-    assert ht.verbs_for_kind(kind) == ht._DEFAULT_VERBS, (
+    assert set(ht.verbs_for_kind(kind)) == set(ht._DEFAULT_VERBS), (
         f"{kind!r} is live in sandbox and absent from the seed BY DESIGN; refusing it makes "
         f"those tasks dead while they still render"
     )
@@ -133,7 +133,7 @@ def test_AN_UNDECLARED_KIND_ACCEPTS_NOTHING_once_the_set_is_knowable(monkeypatch
     """THE SEAL. `risk_acceptance` is ADR-0051's species and does not exist yet."""
     _fresh(monkeypatch, _overlay(tmp_path, "pcn_disposition"))
     for kind in ("risk_acceptance", "totally_made_up", ""):
-        assert ht.verbs_for_kind(kind) == frozenset(), (
+        assert tuple(ht.verbs_for_kind(kind)) == (), (
             f"{kind!r} is declared nowhere and was handed "
             f"{sorted(ht.verbs_for_kind(kind))}"
         )
@@ -151,7 +151,7 @@ def test_THE_CONTROL_every_SEEDED_kind_still_gets_its_verbs(monkeypatch, tmp_pat
 def test_THE_CONTROL_an_OVERLAY_kind_gets_its_verbs(monkeypatch, tmp_path):
     """THE CONTROL for outage 2, and the reason the gate composes at all."""
     _fresh(monkeypatch, _overlay(tmp_path, "pcn_disposition"))
-    assert ht.verbs_for_kind("pcn_disposition") == frozenset({"approved", "rejected"})
+    assert set(ht.verbs_for_kind("pcn_disposition")) == {"approved", "rejected"}
 
 
 def test_DEFAULT_VERBS_IS_NOT_EMPTIED_and_that_is_the_point():
@@ -176,7 +176,7 @@ def test_an_UNREADABLE_overlay_falls_back_rather_than_refusing_everything(monkey
     """
     _fresh(monkeypatch, str(_REPO / "policy" / "no_such_directory_here"))
     assert ht._declared_kinds() is None, "an unreadable overlay reported itself as EMPTY"
-    assert ht.verbs_for_kind("grouped_review") == ht._DEFAULT_VERBS, (
+    assert set(ht.verbs_for_kind("grouped_review")) == set(ht._DEFAULT_VERBS), (
         "an unreadable overlay refused a declared kind — a deployment accident would take "
         "every task in the fleet with it"
     )
