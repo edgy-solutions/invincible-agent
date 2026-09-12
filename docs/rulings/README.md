@@ -512,28 +512,17 @@ second**. Worktrees hide master; they also hide each other, and the second has n
 
 ---
 
-## R-018 — The `pcn_disposition` overlay row is WORK-SIDE; the ruling is delivered, the row is not
+## R-018 — ~~The `pcn_disposition` overlay row is WORK-SIDE~~ — SUPERSEDED BY R-020
 
-**RULED 2026-09-11.** Source: architect thread.
+**STRUCK 2026-09-11, same day it was written.** The architecture seat had already recorded this
+subject more fully, on master, as the entry now numbered [R-020](#r-020--task-kinds-two-after-cutover-items-on-two-lanes-and-a-row-that-was-never-created).
+Both were written from the same architect correction, an hour apart, by two seats that could not
+see each other's register.
 
-**The overlay row was never created, and it cannot live in this repo.** It is a work-side
-artifact — a domain overlay under ADR-0036 — so the platform seed carries the *structural*
-species and the domain species live in the work-side overlay.
-
-**The distinction this entry exists to preserve:** *the ruling is delivered; the row is
-outstanding.* Those are not the same state and collapsing them is how a decision reads as
-implemented. Nothing in this repo will ever show the row, so nothing here can go red about its
-absence — which makes the written record the only place the gap is visible.
-
-**Two items commonly folded into this one and correctly separate:**
-
-| item | owner | when |
-|---|---|---|
-| the `pcn_disposition` **string rename** | M3.3 lane (`iagent-mesh-sdk-ca`) | **after** the cutover — its own increment, expand/contract with a dual-read interval |
-| the **groups** ruling (`task_grants.yaml`) | **Lane 1** | scheduled after the cutover |
-
-The groups ruling is real and is not the M3.3 lane's. Bundling the rename into the cutover was
-refused when M3.3 proposed it, and generic-at-birth is satisfied **structurally** instead.
+**Struck rather than deleted, per R-019: a ruling is retired by a ruling, with its replacement
+named.** Deleting it would leave the duplication invisible, and the duplication is the evidence —
+**two seats independently wrote the same ruling because the register was forked.** R-020 is the
+one to cite; it carries the three-namespace `grant_to` detail this entry did not.
 
 ---
 
@@ -553,6 +542,67 @@ precisely the state that cost a day: a citation resolving differently depending 
 later conversation seems to assume otherwise. A ruling is retired by a ruling — struck in place,
 with its replacement named — which is why R-014's numbering note is *struck and kept* rather than
 deleted.
+
+---
+
+## R-020 — Task kinds: two after-cutover items on two lanes, and a row that was never created
+
+> **RENUMBERED FROM R-011 ON MERGE, 2026-09-11, and the collision is the point.** The
+> architecture seat allocated `R-011` against **master's copy, which held eight entries**;
+> Lane 1 had allocated the same number against the fuller register on `lane/01`. Neither seat
+> was careless — **the register was forked five ways and each picked the next free number it
+> could see.** The number allocated with less information yields. Nothing cited either one
+> outside this file, checked before renumbering. The RULING is unchanged; only its label moved.
+
+**RULED 2026-09-11.** Source: architect, correcting their own M3.3 dispatch. Governs the
+task-kind declaration layer ([`policy/task_kinds/`](../../policy/task_kinds/) and
+[`adding-a-task-kind.md`](../runbooks/adding-a-task-kind.md)) and the register's lane assignment.
+
+Recorded here rather than relayed, because the lane it was addressed to (`invincible-agent-01`)
+had ended by the time the correction was ready to send. That is this file's own thesis arriving
+on schedule: **a decision recorded in a conversation does not constrain anything — and a decision
+addressed to a session address does not survive the session.**
+
+**(a) The two after-cutover items belong to DIFFERENT lanes.** The dispatch put both on the
+task-kinds lane.
+
+| item | lane | why |
+|---|---|---|
+| the **groups ruling** — `grant_to` is users-only | whoever owns `task_grants.yaml` | a grant-rail decision, not a declaration one |
+| the **`pcn_disposition` string rename** | the task-kinds lane | expand/contract with a dual-read interval |
+
+The groups constraint is declared **verbatim in three namespaces** —
+[`capability_grants.yaml`](../../policy/capability_grants.yaml),
+[`ontology_compartments.yaml`](../../policy/ontology_compartments.yaml),
+[`task_grants.yaml`](../../policy/task_grants.yaml) — each deferring group audiences for the same
+reason; two state outright that `validate_policy` REFUSES a `grant_to` absent from `users.yaml`.
+**ADR-0051 §5's one-audience-per-authority-level is the workaround that constraint forces**, not a
+design preference. It was scheduled after the M3.3 cutover because the declaration is what groups
+would attach to — a real dependency, which is what made the misattribution plausible.
+
+The rename is the task-kinds lane's, because the kind string is simultaneously a live value in
+`human_task_projection` rows and a UI render contract: it moves with a dual-read interval or it
+strands rows. **It is deliberately NOT bundled into M3.3** — one migration at a time.
+
+**(b) The overlay `pcn_disposition` row was never created HERE, by design — and the ruling is the
+deliverable, not the row.** The dispatch listed the row as an artifact. It cannot exist in this
+repo: `test_no_domain_name_entered_the_platform_seed` fails the build on a domain token in
+`policy/task_kinds/`, which holds exactly four structural rows. What was delivered is the RULING
+that the row lives work-side carrying its own `accepts`. The architect's framing: *a name for
+something that cannot exist where it was put* — the same shape as the Engine S draft.
+
+Record the ruling as delivered and the row as work-side, never created here. **A register carrying
+a phantom deliverable is worse than one admitting a gap** — the same principle that had the
+task-kind runbook's index row marked ROW ADDED rather than quietly filled.
+
+**(c) Roster consequence, because this ruling was nearly lost to it.** `iagent-mesh-sdk-ca` is the
+M3.3 / task-kinds lane, working in `iagent-mesh-sdk` **with commits in `invincible-agent`**. An
+engine-repo search never finds it; `doc-tools-7f` and the cortex session are the same shape.
+**The role-to-address map in `AGENTS.md` must carry the REPO beside the address** — and an address
+alone is insufficient regardless, since session addresses churn hourly and `invincible-agent-01`
+is already gone. A roster keyed only on them reproduces the failure it exists to prevent.
+
+---
 
 ---
 
