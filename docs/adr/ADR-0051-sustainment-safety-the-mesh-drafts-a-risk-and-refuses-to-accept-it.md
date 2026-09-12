@@ -374,15 +374,31 @@ overlay row that omits `accepts` is refused, because `accepts` is required preci
 species cannot silently borrow a structural one's verbs.
 
 **A LIVE BUG THAT LANDS ON THIS ADR'S REFUSAL, reported by the M3.3 lane and independently
-confirmable.** An **undeclared** task kind is handed Approve/Reject on both sides today: cortex-ui's
-default archetype renders an approval card unconditionally, and `isRegisteredKind` — the predicate
-written to prevent exactly this — has no caller outside its own tests. For every other species that
+confirmable.** An **undeclared** task kind was handed Approve/Reject on **both** sides: cortex-ui's
+default archetype rendered an approval card unconditionally, and `isRegisteredKind` — the predicate
+written to prevent exactly this — had no caller outside its own tests. For every other species that
 is a rendering defect. **For this one it is §7's refusal defeated from the outside**: a risk
 acceptance reachable through a generic approval card, dispositioned by whoever the default surface
-admits, with no authority tier and no required reason. **Seal 14** (below) exists for it, and the
-safety kinds must not go live before cortex-ui's parity seal lands — the cutover's safer direction
-(an unknown species renders dead rather than actionable) is only safe once `declared: false` actually
-renders as *unknown species here*, which is the half that failed to be consumed last time.
+admits, with no authority tier and no required reason.
+
+**AMENDED 2026-09-12 — the render half is CLOSED and the claim above is now half false.** As of
+cortex-ui `21b2bae`, `isRegisteredKind` has a caller and the fixture asserts `buttons()` is empty.
+The live gap is **one-sided**: a UI that offers nothing, over an API that would still take the
+answer. Verified in this repo rather than accepted on report — `verbs_for_kind`
+(`human_tasks.py:420`) returns `_DEFAULT_VERBS` for any unknown kind,
+`tests/test_task_verbs_by_kind.py:76` asserts `{approved, rejected}` for `"some_future_kind"`,
+`gateway.py:2429` serves that set as `allowed`, and `validate_decision` consults the same function.
+
+**So the refusal is still defeatable from outside the engine, through ONE door rather than two**,
+and the remaining door is the API. The architect has ruled the gateway half closes early, separately
+from M3.3's cutover. **Seal 14** (below) stays as written; only its justification shrinks, and it
+must be scoped to the subject's own element — see the seal for why a body-wide assertion on a card
+that prints its kind in a header cannot fail.
+
+The safety kinds must not go live before both halves are closed. The cutover's safer direction — an
+unknown species rendering dead rather than actionable — is only safe once `declared: false` actually
+renders as *unknown species here*, which is the half that failed to be consumed last time, and is
+now the half that landed first.
 
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
@@ -418,6 +434,33 @@ compartmented content — because the queue itself must not become the leak.
 - **Cross-compartment aggregation.** Entitlement scope is the compartment; a query spanning two
   refuses rather than returning the intersection it happens to be allowed.
 - **A defaulted verdict anywhere.**
+
+### §7.1 — An orphaned-hazard list is a DISCLOSURE before a severity is attached
+
+**Written 2026-09-12, deliberately while the fixture is still invented and this sentence is cheap.**
+
+Engine S's `/analyze` is declared `releasable_by_design` in the endpoint-gating manifest, and that
+classification is **true only because every hazard, tail and owner it serves is made up**
+(`agent_fleet/safety_agent/entities.py`). The rule that governs when it stops being true, stated now
+rather than derived later:
+
+> **The moment ADR-0051 §10.1's overlay names a real hazard log, `/analyze` is `gated`**, identity
+> moves to the **initiator** (ADR-0049 Ruling 1 — never the engine's service identity), and the read
+> goes through a per-request minted ticket carrying the caller's identity (ADR-0044). §9's
+> compartment question reopens in the same moment.
+
+**And the reason it re-classifies HARDER than a figures engine:** a finance row discloses a number.
+An orphaned-hazard list discloses *which identifiable tails carry unresolved safety defects that
+nobody owns* — which is a disclosure **before any severity is attached to it**, and remains one for
+a hazard later assessed as negligible. The severity is not what makes the row sensitive; the
+existence of the row is.
+
+**Why this is written today and not when it bites.** Today it costs one paragraph over a synthetic
+fixture. On the day the overlay lands it is a change to a **live authorization surface, made under
+pressure, by someone who must first reconstruct why it was ever releasable** — and a trigger of this
+kind is obvious while you are holding it and invisible six weeks later. This is the same discipline
+the manifest row itself carries; it is repeated here because the ADR is what a later reader opens
+first, and a rule recorded only in a YAML justification is a rule most readers never meet.
 
 This engine is not a replacement for the safety engineer's assessment. The artifact says *drafted* in
 its own metadata and the card shows it.
@@ -488,6 +531,29 @@ where red was expected is a signal about the seal, not about the code.
     the bug is live. A test that calls `isRegisteredKind` directly is therefore **green today, with an
     undeclared kind still being handed Approve/Reject.** Only a test that drives the render can tell
     those two states apart, which is exactly the discrimination this seal is for.
+
+    **AND IT MUST BE SCOPED TO THE SUBJECT'S OWN ELEMENT — added 2026-09-12, before writing it,
+    from cortex-ui's measured near-miss.** Their first refusal test asserted the kind name appeared
+    in `document.body`. **The card header prints the kind two lines above the refusal**, so a
+    mutation that stripped the name out of the refusal *still passed*: the instrument read the
+    subject's NEIGHBOUR and reported success. Fixed by scoping to `[data-undeclared-kind]`.
+    A safety card is very likely to print its kind in a header too, so: **assert inside the
+    subject's own element, never page-wide. A body-wide assertion on a page that names the thing
+    twice cannot fail.** Same law as seal 2's split — the instrument and the subject must not
+    share a surface — but applied before it cost anything rather than after.
+
+    **THE CLAIM THIS SEAL WAS WRITTEN AGAINST IS NOW NARROWER, AND HALF OF IT IS CLOSED.**
+    *"An undeclared kind is handed Approve/Reject on both sides"* was true when §5 was written and
+    is **false on the render side** as of cortex-ui `21b2bae`: `isRegisteredKind` finally has a
+    caller and the fixture asserts `buttons()` is empty. The live gap is **one-sided** — a UI
+    offering nothing over an API that would still take the answer, because
+    `verbs_for_kind` returns `_DEFAULT_VERBS` for any unknown kind. Verified here rather than
+    taken on report: `human_tasks.py:420` defaults to `{approved, rejected}`,
+    `tests/test_task_verbs_by_kind.py:76` asserts exactly that for `"some_future_kind"`,
+    `gateway.py:2429` serves it as `allowed`, and `validate_decision` consults the same function.
+    So a risk acceptance is still reachable from outside the engine, **through one door rather
+    than two**, until the gateway half closes — which the architect has ruled happens early and
+    separately from M3.3's cutover. The seal stays as written; only its justification shrinks.
 
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
