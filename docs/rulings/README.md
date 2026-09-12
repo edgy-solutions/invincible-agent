@@ -110,9 +110,17 @@ rather than stylistic.** That set is kind-blind, and `rejected` is in `accepts` 
 the fleet** reason-required, changing three other species' behaviour from the safety lane, to
 enforce a property for a kind that does not exist yet. `accepted` has the opposite profile: no
 existing species accepts it, so the entry is **inert until the safety kinds land**, which is exactly
-what makes it safe to add ahead of them. `rejected` lands with those kinds in increment 3, so the
-cost arrives with the benefit. Raise it if the sequencing is wrong — the ruling is not in dispute,
-only the hour it takes effect.
+what makes it safe to add ahead of them.
+
+**RESOLVED 2026-09-11, architect — `rejected` is NOT added globally, and that is the ruling rather
+than a deferral.** It becomes reason-required **on the safety declaration row**, enforced when
+M3.3's cutover reads rows. R-004(f) therefore stays half-landed **on purpose**, and the register
+records the kind-blindness as the reason.
+
+**This is now an argument FOR the cutover rather than a consequence of it.** The global set cannot
+express a per-kind property, and this is the first time that limit cost anything real: a verb that
+must carry a reason for a risk acceptance and must not for an access request is **not expressible**
+until the declaration is what `validate_decision` reads.
 
 **These rulings must travel with the declaration, not with the code table.** `_VERBS_BY_KIND`
 and cortex-ui's `taskKindRegistry` are **interim by construction and retire together**. The SDK

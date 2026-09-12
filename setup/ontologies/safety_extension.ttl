@@ -1,0 +1,225 @@
+@prefix safety: <http://internal/sustainment/safety#> .
+@prefix s3kl:  <http://www.lksoft.com/s3kl#> .
+@prefix ps:    <http://internal/sustainment/product#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+
+# ============================================================================
+# SUSTAINMENT SAFETY VOCABULARY (ADR-0051 §1)
+#
+# THE THESIS: safety assessment is MIL-STD-882's shape — hazard, severity,
+# probability, mitigation, risk acceptance by a named authority — laid over a
+# RELIABILITY vocabulary that already exists. S3000L carries the reliability
+# half in depth and carries none of the 882 half. So this file mints the 882
+# concepts and CITES S3000L for causes rather than re-inventing them.
+#
+# ── THE ADR-0007 SURVEY, RUN 2026-09-11 AND RECORDED HERE IN FULL ───────────
+# Recorded found AND not-found, because a later reader cannot otherwise tell
+# *surveyed and absent* from *never surveyed*.
+#
+# SOURCES SURVEYED, AND HOW — this matters, because the obvious instrument is
+# BLIND:
+#   * S3000L  <http://www.lksoft.com/s3kl#>  — 761 owl:Class, read FROM SOURCE
+#     (semanticstep.org, the URL in the prime manifest).
+#   * IOF Core <https://spec.industrialontologies.org/ontology/construct/>
+#     — 195 terms, read FROM SOURCE (iofoundry/ontology master Core.rdf).
+#
+#   NOT surveyed through engine-o's /classes, ON PURPOSE. That endpoint requires
+#   `?cls a owl:Class ; rdfs:label ?label` and **S3000L declares ZERO rdfs:label
+#   on any of its classes** — so all 761 are invisible to it and a survey run
+#   that way returns a confident, uniform "not found". The instrument's own
+#   control: /classes returns 100 for SUSTAINMENT, 128 MAINTENANCE, 6
+#   DATA_ENGINEERING, 5 PORTFOLIO_PLANNING — so it is not truncating, it simply
+#   cannot see an unlabelled class. Filed as a platform defect
+#   (docs/plans/s3000l-is-primed-and-invisible.md); it is NOT this file's to fix.
+#
+# ── NOT MINTED, BECAUSE THE STANDARD ALREADY HAS IT ─────────────────────────
+# CAUSE. ADR-0051 §1 listed "its causes" as a concept to express. S3000L owns
+# this outright and `safety:Cause` is therefore NOT minted. Confirmed present:
+#   s3kl:FailureMode, s3kl:LSAFailureMode, s3kl:TechnicalFailureMode,
+#   s3kl:FunctionalFailure, s3kl:FailureModeEffect, s3kl:LocalFailureModeEffect,
+#   s3kl:HigherFailureModeEffect, s3kl:FailureModeEffectLevel,
+#   s3kl:FailureAnalysisItem, s3kl:FailureModeThresholdDefinition,
+#   s3kl:LSACandidateFailureModeAndEffectAnalysisActivity (FMECA),
+#   s3kl:FailureRate, s3kl:MeanTimeBetweenFailure, s3kl:FailuresPerOperatingHour
+# Minting a parallel cause vocabulary over that is the exact mistake
+# product_structure_extension.ttl recorded NOT making — inventing a name and
+# silently forfeiting the citation while looking standards-aligned.
+#
+# ── FOUND, CONSIDERED, AND DELIBERATELY NOT REUSED ──────────────────────────
+# Each of these matched a search and is a DIFFERENT CONCEPT. Named here so a
+# reader can see it was considered rather than missed:
+#   s3kl:HardwarePartHazardousClass      hazardous MATERIAL classification
+#                                        (hazmat), not a condition that can
+#                                        cause a mishap. Not safety:Hazard.
+#   s3kl:FunctionalFailureEffectCriticality,
+#   s3kl:TaskPersonnelSafetyCriticality,
+#   s3kl:TaskProductIntegrityCriticality criticality of a failure effect or of a
+#                                        TASK. Ordinal and adjacent, but not
+#                                        882 SEVERITY, which classifies a
+#                                        mishap outcome.
+#   s3kl:FailureModeDetectionAbilityRating_*Likelihood,
+#   s3kl:LSAFailureModeDistributionRating_*Likelihood
+#                                        ordinal likelihood scales rating
+#                                        DETECTION ABILITY and DISTRIBUTION,
+#                                        not mishap probability.
+#   s3kl:SpecialEventOccurrenceRating_reasonablyProbable
+#                                        an occurrence-probability rating on a
+#                                        special event. Closest match found;
+#                                        still not a hazard's probability.
+#   s3kl:AuthorityToOperate, s3kl:AuthorityDrivenTaskRequirement,
+#   s3kl:TaskRequirementAuthoritySourceType, s3kl:SubtaskAcceptanceParameter
+#                                        authority to OPERATE and acceptance of
+#                                        a SUBTASK. Not the authority that
+#                                        accepts residual risk.
+#
+# ── NOT FOUND IN EITHER SOURCE (the mint list, and its evidence) ────────────
+# Searched both sources for each; zero matches unless noted above:
+#   mishap · severity · mitigation · corrective · deficiency · discrepancy ·
+#   consequence          -> zero matches in S3000L AND zero in IOF Core
+#   hazard · risk · probability · critical · safety · accept · authority
+#                        -> zero in IOF Core; in S3000L only the adjacent-but-
+#                           different terms listed above
+# IOF Core scored ZERO on all eleven concepts, read from source, so that
+# negative is not a labelling artifact either.
+# ============================================================================
+
+safety: a owl:Ontology ;
+    rdfs:label "Sustainment safety assessment (MIL-STD-882 shape)" ;
+    rdfs:comment """The 882 half of safety assessment, over S3000L's reliability half.
+Causes are s3kl:FailureMode and are NOT re-minted here. Every verdict-shaped property
+carries an explicit not-assessed value: a hazard nobody has assessed is not_assessed,
+never the bottom of the matrix, which reads as assessed-and-negligible.""" ;
+    prov:wasDerivedFrom <http://www.lksoft.com/s3kl#> .
+
+# ---------------------------------------------------------------------------
+# CLASSES
+# ---------------------------------------------------------------------------
+
+safety:Hazard a owl:Class ;
+    rdfs:label "Hazard" ;
+    rdfs:comment """A condition that can cause a mishap. MINTED: S3000L's only hazard-shaped
+term is HardwarePartHazardousClass, which classifies hazardous MATERIAL and is a different
+concept. Carries severity, probability and a status that includes not_assessed.""" ;
+    skos:example "Chafed wiring loom in the aft equipment bay can short the primary bus." .
+
+safety:Mitigation a owl:Class ;
+    rdfs:label "Mitigation" ;
+    rdfs:comment """A control on a hazard, with an owner and a field-verification state.
+MINTED: neither source has any mitigation, corrective-action, or hazard-control concept —
+S3000L's `control` matches are logistics control numbers and trade-security controls.""" ;
+    skos:example "Loom re-routed and clamped per TCTO 12-3; verified on 41 of 44 tails." .
+
+safety:SafetyCriticalItem a owl:Class ;
+    rdfs:label "Safety-critical item" ;
+    rdfs:comment """A part, procedure or inspection whose failure or omission opens a hazard.
+MINTED, though S3000L's TaskPersonnelSafetyCriticality is adjacent: that rates a TASK's
+personnel-safety criticality, and this identifies the ITEM whose failure opens a hazard.""" .
+
+safety:WriteUp a owl:Class ;
+    rdfs:label "Write-up" ;
+    rdfs:comment """A deficiency report, hazard report or mishap narrative as ingested — typed,
+not chunked (ADR-0041). MINTED: `deficiency` and `discrepancy` return zero in both sources;
+S3000L's only report term is DocumentType_TechnicalReport, a document TYPE.""" .
+
+safety:RiskAssessment a owl:Class ;
+    rdfs:label "Risk assessment" ;
+    rdfs:comment """A DRAFTED severity/probability statement over a hazard, with its evidence,
+its acceptance state, and the authority level its risk level implies. The engine drafts these
+and cannot accept them (ADR-0051 §7). acceptance_status is drafted | accepted | rejected and is
+never defaulted.""" .
+
+safety:AcceptanceAuthority a owl:Class ;
+    rdfs:label "Acceptance authority" ;
+    rdfs:comment """The ROLE that may accept residual risk at a given level — never a person.
+MINTED: S3000L's AuthorityToOperate is authority to OPERATE and SubtaskAcceptanceParameter is
+acceptance of a subtask; neither is the authority that takes on residual risk.""" .
+
+# ---------------------------------------------------------------------------
+# RELATIONSHIPS — the cause side points OUT of this file, on purpose
+# ---------------------------------------------------------------------------
+
+safety:hasCause a owl:ObjectProperty ;
+    rdfs:label "has cause" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range s3kl:FailureMode ;
+    rdfs:comment """THE CITATION THAT MADE THE SURVEY WORTH RUNNING. A hazard's cause is an
+S3000L failure mode, not a minted class. The range is deliberately the standard's own term.""" ;
+    prov:wasDerivedFrom s3kl:FailureMode .
+
+safety:mitigatedBy a owl:ObjectProperty ;
+    rdfs:label "mitigated by" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range safety:Mitigation .
+
+safety:opensHazard a owl:ObjectProperty ;
+    rdfs:label "opens hazard" ;
+    rdfs:domain safety:SafetyCriticalItem ;
+    rdfs:range safety:Hazard .
+
+safety:reportsHazard a owl:ObjectProperty ;
+    rdfs:label "reports hazard" ;
+    rdfs:domain safety:WriteUp ;
+    rdfs:range safety:Hazard .
+
+safety:assesses a owl:ObjectProperty ;
+    rdfs:label "assesses" ;
+    rdfs:domain safety:RiskAssessment ;
+    rdfs:range safety:Hazard .
+
+safety:criticalItemFor a owl:ObjectProperty ;
+    rdfs:label "critical item for" ;
+    rdfs:domain safety:SafetyCriticalItem ;
+    rdfs:range ps:Part ;
+    rdfs:comment "Binds the safety plane to the canonical product structure rather than to a second parts vocabulary." ;
+    prov:wasDerivedFrom ps:Part .
+
+# ---------------------------------------------------------------------------
+# DATA PROPERTIES — every verdict-shaped one has an explicit not-assessed value
+# ---------------------------------------------------------------------------
+
+safety:hazardStatus a owl:DatatypeProperty ;
+    rdfs:label "hazard status" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range xsd:string ;
+    rdfs:comment """open | mitigated | closed | not_assessed. NO DEFAULT. A hazard nobody has
+assessed is not_assessed; defaulting it to anything else is the optimistic-default dishonesty
+the `favourable` ruling already refused one domain over.""" .
+
+safety:verifiedInField a owl:DatatypeProperty ;
+    rdfs:label "verified in field" ;
+    rdfs:domain safety:Mitigation ;
+    rdfs:range xsd:string ;
+    rdfs:comment """true | false | not_verified. Three-state for the same reason: a mitigation
+closed on paper and never verified in the field is the second of ADR-0051's four failures, and
+a boolean cannot say it.""" .
+
+safety:acceptanceStatus a owl:DatatypeProperty ;
+    rdfs:label "acceptance status" ;
+    rdfs:domain safety:RiskAssessment ;
+    rdfs:range xsd:string ;
+    rdfs:comment """drafted | accepted | rejected. The engine writes only `drafted`; the other
+two are HumanTask dispositions by an entitled authority (ADR-0051 §5) and no verb may set
+them.""" .
+
+safety:severity a owl:DatatypeProperty ;
+    rdfs:label "severity" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Validated against safety_risk_matrix.ttl. Unrecognized values are a loud refusal, never coerced." .
+
+safety:probability a owl:DatatypeProperty ;
+    rdfs:label "probability" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Validated against safety_risk_matrix.ttl. Unrecognized values are a loud refusal, never coerced." .
+
+safety:acceptanceAuthorityLevel a owl:DatatypeProperty ;
+    rdfs:label "acceptance authority level" ;
+    rdfs:domain safety:RiskAssessment ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The level the drafted risk IMPLIES, resolved from the matrix. Records what the draft would require, not what anyone granted." .
