@@ -29,6 +29,24 @@ So the ADR contained a true premise, the opposite conclusion, and its own refuta
 screen. **It survived a full exchange between two lanes** — and it survived precisely because it
 read as analysis rather than as assent.
 
+## A second instance, a different lane, the same day — and it carries the sharpest tell
+
+`invincible-agent-01` diagnosed a CI failure as **an undeclared dependency**, declared it,
+**watched the failure persist**, and then wrote the invented cause into a seal's docstring as a
+worked example — with a mechanism (sibling distributions contributing a namespace package) that
+is *entirely plausible and never happened*. The real cause was a test's own stub in
+`sys.modules`. The retraction is now in that file rather than a deletion, because the error
+string is genuinely ambiguous between the two causes and the next reader is tempted the same way.
+
+**THE TELL HERE IS WORSE THAN A MISSING CHECK: THE FALSIFYING MEASUREMENT WAS ALREADY IN HAND.**
+Run forwards, *"dagster is undeclared"* reaches *"declaring it changes the resolution"* — and the
+relock moved **262 packages to 262**. That number refuted the diagnosis at the moment it was
+produced, and was read as noise.
+
+So a conclusion you are attached to does not merely go unchecked; it **reinterprets evidence
+against itself as irrelevant**. Two lanes, one day, one shape — which is why this is a law and
+not an anecdote.
+
 ## Why examining the reason does not catch it
 
 The usual check — *is this reason true?* — passes. Truth is not the property that failed.
