@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.graph_host._engine_deps import needs_langgraph
+
 _ROOT = Path(__file__).resolve().parents[2]
 _POLICY = _ROOT / "policy" / "graphs"
 _IDENT = {"Authorization": "Bearer caller-token", "X-Originator-Email": "alice@example.com"}
@@ -72,6 +74,7 @@ def _stub_graph(returns: dict):
     return _G()
 
 
+@needs_langgraph
 def test_both_dispositions_are_present_to_be_distinguished(client):
     """POSITIVE CONTROL, first. With both rows declaring the same disposition, every assertion
     below is satisfied by a host that treats them identically — which is the defect."""
@@ -83,6 +86,7 @@ def test_both_dispositions_are_present_to_be_distinguished(client):
     )
 
 
+@needs_langgraph
 def test_a_FAIL_row_returning_holes_is_REJECTED(client):
     c, host = client
     m, _real = host._LOADED["cost_lot_costing_review"]
@@ -106,6 +110,7 @@ def test_a_FAIL_row_returning_holes_is_REJECTED(client):
     )
 
 
+@needs_langgraph
 def test_a_NAMED_HOLE_row_returning_the_SAME_holes_PASSES(client):
     """THE CONTROL. Without it, the test above is satisfied by a host that rejects partial
     output from every graph — which would break fin_program_brief, whose declared disposition
@@ -128,6 +133,7 @@ def test_a_NAMED_HOLE_row_returning_the_SAME_holes_PASSES(client):
     assert r.json()["holes"], "the hole was stripped from an output whose row declares it"
 
 
+@needs_langgraph
 def test_an_UNIDENTIFIED_call_is_refused_BEFORE_the_first_node(client):
     c, host = client
 
@@ -152,6 +158,7 @@ def test_an_UNIDENTIFIED_call_is_refused_BEFORE_the_first_node(client):
     assert "INITIATOR" in r.json()["detail"]
 
 
+@needs_langgraph
 def test_an_IDENTIFIED_caller_still_gets_through(client):
     """The admission check's own positive control — otherwise "unidentified is refused" is
     indistinguishable from "everything is refused", which passes the test above."""
