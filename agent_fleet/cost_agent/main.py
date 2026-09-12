@@ -39,6 +39,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     from entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
+    from pricing import CompositionError
     from seed import build_state, check_consistency
     from utils.subject_coverage import assert_subject_coverage as _assert_coverage
 except ImportError:
@@ -48,6 +49,7 @@ except ImportError:
     from agent_fleet.cost_agent.entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
+    from agent_fleet.cost_agent.pricing import CompositionError
     from agent_fleet.cost_agent.seed import build_state, check_consistency
     from agent_fleet.utils.subject_coverage import assert_subject_coverage as _assert_coverage
 
@@ -442,14 +444,31 @@ class ResolveRequest(BaseModel):
 
 class EnumerateRequest(BaseModel):
     class_uri: str
-    #: THE FLEET'S DEFAULT, AND THIS ENGINE HAS NINE LOTS. `cost:ProductionLot` therefore
-    #: answers `too_many` at the default bound — correct by the contract (the bound is the
-    #: CALLER's declaration of what fits) and worth knowing, because nine is a perfectly
-    #: renderable menu. The `count` is carried precisely so an ask can raise its own limit
-    #: rather than falling back to free text. Left at 8 rather than tuned upward here: a
-    #: provider that quietly disagrees with its neighbours about the default is how the next
-    #: reader picks the wrong one.
-    limit: int = 8
+    #: ⚠ THIS WAS 8 — THE FLEET DEFAULT — AND IT PUT "9 exist" ON A CARD WITH NO MENU.
+    #:
+    #: Measured on the live fleet 2026-09-12, walking Q5: the lot ask rendered as free text
+    #: saying "9 exist". That string is this engine's own `count`, and the members list beside
+    #: it was EMPTY, because nine lots against a bound of eight answers `too_many`.
+    #:
+    #: I PREDICTED THIS IN THIS COMMENT AND SHIPPED IT ANYWAY, reasoning that the bound is the
+    #: caller's declaration of what fits and that diverging from the neighbours was the worse
+    #: error. Both halves were wrong. The caller OMITS the limit, so the provider's default is
+    #: what applies — the "fleet default" was never a caller's judgement about what fits, it
+    #: was a number each provider invented for itself. And a provider knows its own
+    #: cardinality where the caller cannot.
+    #:
+    #: TWO OF SIX CLASSES REFUSED AT 8, which is what makes it a defect rather than a taste:
+    #: ProductionLot (9) and RateTable (12). `too_many` is for a class that is GENUINELY
+    #: larger than a menu; using it for nine turns a refusal designed to protect an ask into
+    #: the reason the ask has nothing to show.
+    #:
+    #: 25 covers this engine's largest class with headroom and stays small enough to be a menu
+    #: rather than a dump. If a class ever exceeds it, that is a real signal.
+    #:
+    #: THE DURABLE FIX IS NOT MINE: the disposition should SEND the limit it can render, and
+    #: then this default stops mattering. Raised here because the card is broken today and a
+    #: correct-by-contract refusal is no comfort to the person looking at it.
+    limit: int = 25
 
 
 @app.post("/resolve_instance")
@@ -517,8 +536,23 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
             **({"options": options} if options else {}),
         )
 
+    # ⚠ AN UNDECLARED PARAM USED TO BE A 500. The branch above checks that mandatory slots are
+    # PRESENT and nothing checked that supplied ones are DECLARED, so a param this verb does
+    # not take reached `fn(**params)` and raised TypeError — the exact shape that branch's own
+    # comment says it exists to prevent, arriving from the opposite direction.
+    #
+    # DROPPED RATHER THAN REFUSED, and the response says which. Once bound slots accumulate
+    # across an interview's hops, a chain that answered `rate_vintage` for one verb will
+    # legitimately carry it into a neighbour that has no such slot; refusing there would turn
+    # a correct interview into a dead end. Silently dropping would be worse than either — the
+    # answer would not reflect the question asked, with nothing to show for it.
+    declared = {d["name"] for d in slot_decls.slots_for(fn_name)}
+    accepted = {k: v for k, v in req.params.items() if k in declared}
+    ignored = sorted(set(req.params) - declared)
+
     try:
-        return {"refused": False, **fn(STATE, **req.params)}
+        out = fn(STATE, **accepted)
+        return {"refused": False, **out, **({"ignored_params": ignored} if ignored else {})}
     except VintageRequired as e:
         return _refusal("vintage_required", str(e), available=e.available)
     except NotInModel as e:
@@ -527,6 +561,22 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         return _refusal("unentitled", str(e))
     except SourceUnavailable as e:
         return _refusal("unavailable", str(e))
+    except CompositionError as e:
+        # ⚠ A WELL-FORMED VALUE FOR THE WRONG LOT USED TO BE A 500, AND IT REACHED A USER.
+        #
+        # Measured on a live card 2026-09-12: the ask said "Which rate vintage?" with a free
+        # text box, the answer `2021-02-01` was typed because that is what the PREVIOUS
+        # question used, and lot 4 is FY2022. `rates_for` raised CompositionError, nothing
+        # caught it, and the card rendered EMPTY. An unhandled exception is the one refusal
+        # shape this engine promised never to produce — ADR-0049 Ruling 4 exists so a
+        # composing verb can tell refusals apart, and a 500 tells it nothing at all.
+        #
+        # THE OPTIONS ARE RECOMPUTED FOR THE REFUSAL rather than echoed back, because the
+        # caller's value was WRONG — repeating it is what produced the loop. `available` is
+        # what this lot actually accepts, which for lot 4 is a single vintage. Same key as
+        # VintageRequired above, so a consumer reads one field for "what may I say instead".
+        available = measures.options_for(STATE, fn_name, "rate_vintage", req.params) or []
+        return _refusal("not_in_model", str(e), available=available)
 
 
 @app.get("/verbs")

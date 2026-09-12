@@ -1,7 +1,7 @@
 # Reachability is a property of a path, not a function
 
 **Named by the architect, 2026-09-11**, after a designed refusal that had never once reached the
-caller it was written for.
+caller it was written for. **Extended 2026-09-12 with a fourth kind**, named by invincible-agent-65 against a check it had written itself, after an end-to-end measurement separated the question that check asks from the question it was built for.
 
 **Ask "can this fire?" by reading the code and the answer is yes. Ask it by reading the payload
 the consumer actually receives and the answer is no.** Both readings are competent. Only one of
@@ -26,17 +26,36 @@ It never ran. `rate_vintage` is spoken-mandatory, so `/measure/{fn}` returns a g
 **No values at all.** The caller is told what is absent and given no way to learn what a valid
 one looks like.
 
-**This is the third and least visible kind of guard that cannot fire:**
+**This is the third of four kinds of guard that does not protect what it appears to:**
 
-| kind | why it never runs | how it is usually found |
+| kind | what goes wrong | how it is usually found |
 |---|---|---|
 | **born dead** | no input can reach the branch | a mutation cannot produce the state it claims to protect against |
 | **orphaned** | its callers changed | a reachability sweep, long after |
 | **shadowed** | a **generic guard upstream answers first** | **only by reading the wire** |
+| **weakened** | **it runs, its premise is TRUE, and it answers a weaker question than the one it was built for** | **only by a case where the guard passes and the outcome still fails** |
 
 The first two are visible in the file. **The third is not visible in either file**, because both
 are correct and they agree with each other. The specific guard is reachable in principle and by
 direct call; only the request path shows it is unreachable in fact.
+
+**The fourth is the hardest, because the guard is GREEN.** Named 2026-09-12 by the lane that
+wrote the check, against its own work. Engine O's post-preemption check abstains when the
+resolved class *carries no verb in the asked domains*. An instance override replaced
+`cost:Supplier` with `cost:ProductionLot`; `ProductionLot` carries **four** verbs, so the premise
+held and the check passed — **and not one of the four answers the question that was asked.**
+
+> **A guard whose premise is true and whose purpose is defeated.**
+
+The check was built to mean *"can this subject answer this question?"* and implements
+*"does this subject have any verb at all?"* Those coincide until the day they do not, and on that
+day the guard reports success. **Nothing about the guard is wrong in isolation** — which is why a
+test of the guard passes, a review of the guard passes, and only an end-to-end case separates the
+question it asks from the question it was for.
+
+**The tell:** a guard phrased with *any*, *some*, or a bare existence check standing in for a
+*matching* one. Ask what the guard is FOR in one sentence, then ask whether its condition is that
+sentence or a cheaper neighbour of it.
 
 ## The corollary that cost the most
 
@@ -70,6 +89,10 @@ The sheet was not careless. It was written from the code, and the code agreed wi
   `options` are two computations of one truth by paths that never meet: the verb's refusal is
   invisible to endpoint tests, the route's options to direct calls. Assert them equal in one
   test; reversing either must go red.
+- **For the weakened kind, the test must be END-TO-END and it must be a case where the guard
+  PASSES.** A test of the guard cannot find it: the guard is correct. Only an outcome that fails
+  while the check reports success separates the question asked from the question intended — which
+  is why this one was found by walking five real prompts and not by any seal in either repo.
 
 **Sibling of [`a-registration-is-not-a-reachable-call`](a-registration-is-not-a-reachable-call.md)**
 — there a registration described an edge and said nothing about the payload the consumer sends;

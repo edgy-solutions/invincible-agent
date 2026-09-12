@@ -44,6 +44,39 @@ card on screen.
 
 ---
 
+## WALKED 2026-09-12 — THREE CARDS DREW, ONE DID NOT, AND THE WALK FOUND FIVE DEFECTS NO SEAL HAD
+
+**The engine's own suite was green through every one of these.** That is the entry worth reading:
+each defect below was reachable only by a person typing a question into a browser.
+
+| | question | result |
+|---|---|---|
+| **Q5** | rate comparison, vintage named | ✅ **`DELTA_SET` drew.** Both checks a payload could not reach passed — the two neutral rows render in their own `NO MATERIAL CHANGE` section rather than identically to improved, so the card reads the producer's `direction` instead of inferring it from the sign; and Escalation's affected list is visibly longer at six steps. |
+| **Q6** | labor split on lot 4 | ✅ **`CONTRIBUTION_RANKING` drew**, contributions matching this sheet to the decimal — 62.4 / 23.8 / 13.8 against 0.6236 / 0.2385 / 0.1379. |
+| **Q7** | rates in FY2021 | ✅ **`MULTI_SERIES` drew with BOTH vintages plotted**, not the single point trap §1 of the list below warns about. |
+| **Q4** | supplier concentration | ❌ **Routed to `cost_lot_breakdown`.** Not a card defect — the instance override replaces the subject, and `cost_supplier_concentration` becomes unreachable. Lane 1 owns it; see [`the-instance-override-survived-its-own-fix`](the-instance-override-survived-its-own-fix-2026-09-12.md). |
+
+**Five defects, and the engine owns four of them** — all fixed in `dedbede`, `4a8c209`,
+**none deployed** (the fleet runs `2803900`, which predates them, so Q4's re-walk and the
+refusal's re-walk both wait on a roll):
+
+1. **A vintage valid for another lot was a 500** and reached the screen as an **empty card**.
+   Lot 4 is FY2022; `2021-02-01` was typed because the previous question used it.
+2. **An undeclared param was a 500 on every verb** — and the loop's own fix, merging bound slots
+   across hops, would have triggered it on the first multi-verb interview.
+3. **The options fix was a sample**: two other verbs declare the same mandatory `rate_vintage`
+   and offered nothing, so the ask had no values for cortex to draw *even if cortex consumed
+   them*.
+4. **`"G And A"` was in the engine's payload**, not cortex's rendering — two verbs over the same
+   six factors spoke two vocabularies.
+5. **`"9 exist"` with no menu** — the engine's own count with an empty member list.
+
+**Cortex-side, and the split this sheet defines held every time:** the refusal renders as free
+text rather than a menu; `CONTRIBUTION_RANKING` drops the `hours` and `rate` columns the payload
+carries; and `+$4.9M` puts a delta's sign on a share of a total.
+
+---
+
 ## READ THIS BEFORE THE FIRST QUESTION — four ways a CORRECT result looks broken
 
 I chose the lot and year for each question deliberately, because my first picks would have

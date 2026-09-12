@@ -239,18 +239,44 @@ def test_enumeration_refuses_an_unheld_class_as_unsupported_not_as_empty():
 
 
 def test_too_many_carries_its_count():
-    """"Too many" without a number is indistinguishable from "I did not look".
-
-    This engine has nine lots against the fleet's default bound of eight, so the primary
-    class answers `too_many` at the default. That is correct by the contract — the bound is
-    the CALLER's declaration of what fits — and it is only safe because `count` lets the ask
-    raise its own limit rather than fall back to free text.
-    """
-    out = I.enumerate_class(STATE, LOT, limit=8)
+    """"Too many" without a number is indistinguishable from "I did not look"."""
+    out = I.enumerate_class(STATE, LOT, limit=4)
     assert out["outcome"] == "too_many"
     assert out["count"] == len(STATE.lot_numbers) == 9
-    assert out["bound"] == 8
+    assert out["bound"] == 4
     assert I.enumerate_class(STATE, LOT, limit=20)["outcome"] == "members"
+
+
+def test_EVERY_class_this_engine_holds_ENUMERATES_at_the_default_bound():
+    """THE DEFAULT MUST NOT REFUSE A CLASS THIS ENGINE CAN LIST COMPLETELY.
+
+    Walking Q5 on the live fleet put **"9 exist"** on the card with no menu beside it. That
+    string is this engine's own `count`, and the members list was EMPTY: nine lots against
+    the then-default bound of eight answered `too_many`. The ask had nothing to render and
+    degraded to free text — a refusal designed to PROTECT an ask became the reason the ask
+    was useless.
+
+    ASSERTED OVER EVERY CLASS, NOT JUST THE LOT THAT BROKE. `RateTable` has twelve members
+    and would have been the second one found, one walk later. A fix aimed only at the class
+    that surfaced is a fix aimed at the sample.
+
+    This seal reads the DEFAULT off the request model rather than restating it, so raising or
+    lowering it moves the check with it — and a class growing past it fails here, in CI, and
+    not on a card.
+    """
+    from agent_fleet.cost_agent.main import EnumerateRequest
+
+    default = EnumerateRequest(class_uri=LOT).limit
+    refused = {
+        uri.split("#")[-1]: len(I.members_of(STATE, uri))
+        for uri in I._RESOLVABLE
+        if I.enumerate_class(STATE, uri, default)["outcome"] != "members"
+    }
+    assert not refused, (
+        f"at the default bound of {default} these classes cannot produce a menu: {refused}. "
+        f"`too_many` is for a class GENUINELY larger than a menu; using it here is how "
+        f'"N exist" reaches a card with nothing beside it'
+    )
 
 
 def test_a_FINANCE_program_name_still_reaches_this_provider_and_that_is_NOT_fixed_here():
