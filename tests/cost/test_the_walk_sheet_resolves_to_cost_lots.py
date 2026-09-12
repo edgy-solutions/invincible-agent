@@ -253,6 +253,45 @@ def test_too_many_carries_its_count():
     assert I.enumerate_class(STATE, LOT, limit=20)["outcome"] == "members"
 
 
+def test_a_FINANCE_program_name_still_reaches_this_provider_and_that_is_NOT_fixed_here():
+    """AN HONEST LIMIT, ASSERTED SO IT CANNOT BE MISTAKEN FOR AN OVERSIGHT.
+
+    Measured 2026-09-11 across all 33 cost instances against all 28 finance instances:
+
+        'Notional Program Meridian'  -> cost 'Notional Production Program Vermilion'  0.533
+        'Program Support'            -> cost 'Notional Production Program Vermilion'  0.500
+        'Program Management'         -> cost 'Notional Production Program Vermilion'  0.500
+
+    **A finance name resolves to a cost program, above the floor, with NO DIGIT INVOLVED.**
+    The bare-digit fix — here and in engine-fin — cannot see this one, because neither
+    scorer is misbehaving: each is confident about its own vocabulary and "program" is
+    genuinely in both.
+
+    DELIBERATELY NOT FIXED IN THIS SCORER. Tightening the overlap tier until Meridian falls
+    below the floor would make engine-cost worse at its own job — when the question IS a
+    cost question, "the notional program" is the right answer — and it would solve a
+    cross-domain problem inside one engine, where the next engine has to rediscover it. The
+    separation belongs to the router's domain scope, which is the asked question's domain.
+
+    SO THIS SEAL ASSERTS THE COLLISION EXISTS, not that it does not. If someone later
+    narrows the tier and this goes red, that is a decision to make deliberately rather than
+    a regression: read this docstring first, and move the boundary in the scope rule if the
+    collision genuinely needs to die here.
+    """
+    hit = I.resolve(STATE, "Notional Program Meridian")
+    assert hit, (
+        "the cross-domain collision is GONE. That may be an improvement, but it was a "
+        "stated limit with a reason — see this docstring before deleting the test"
+    )
+    assert hit[0]["class_uri"] == COST + "ProductionProgram"
+    assert hit[0]["score"] >= I.RESOLVE_FLOOR
+
+    # AND THE PART THAT MAKES IT A LIMIT RATHER THAN A DEFECT: no LOT is offered. The
+    # collision is confined to the one class whose label shares generic nouns with finance's;
+    # it does not leak into the class this engine is actually asked about.
+    assert not any(c["class_uri"] == LOT for c in hit)
+
+
 def test_the_category_labels_have_not_drifted_from_the_measures_module():
     """`instances` keeps its own copy of the bucket labels. Sealed, since it is a copy.
 
