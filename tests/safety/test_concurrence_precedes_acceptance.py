@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from ._engine_extra import requires_rdflib
 from agent_fleet.safety_agent import entities, matrix, measures
 
 _HIGH_OR_SERIOUS = ("High", "Serious")
@@ -50,6 +51,7 @@ def _one_hazard_at(levels) -> str:
 # The requirement
 # ---------------------------------------------------------------------------
 
+@requires_rdflib
 def test_a_serious_or_high_draft_opens_the_CONCURRENCE_not_the_acceptance():
     """The first task is the concurrence, and the acceptance does not exist yet."""
     hazard_id = _one_hazard_at(_HIGH_OR_SERIOUS)
@@ -67,6 +69,7 @@ def test_a_serious_or_high_draft_opens_the_CONCURRENCE_not_the_acceptance():
     assert rr["payload"]["unblocks_acceptance_audience"] == draft["acceptance_audience"]
 
 
+@requires_rdflib
 def test_no_acceptance_request_is_obtainable_without_a_concurred_record():
     """THE CORE ASSERTION. Every non-concurred state refuses, and they refuse DISTINCTLY."""
     hazard_id = _one_hazard_at(_HIGH_OR_SERIOUS)
@@ -88,6 +91,7 @@ def test_no_acceptance_request_is_obtainable_without_a_concurred_record():
     )
 
 
+@requires_rdflib
 def test_an_unexplained_concurrence_does_not_unlock_the_acceptance():
     """`concurred` is reason-required on the declaration, and the declaration does not bind at
     runtime yet (R-004(f)) — so it is enforced here too. An acceptance built on an unexplained
@@ -101,6 +105,7 @@ def test_an_unexplained_concurrence_does_not_unlock_the_acceptance():
     assert "no stated basis" in out["reason"]
 
 
+@requires_rdflib
 def test_a_concurred_record_yields_an_acceptance_carrying_BOTH_names():
     """THE LINEAGE IS THE POINT, NOT THE GATE.
 
@@ -132,6 +137,7 @@ def test_a_concurred_record_yields_an_acceptance_carrying_BOTH_names():
 # The control, and the mutation
 # ---------------------------------------------------------------------------
 
+@requires_rdflib
 def test_medium_reaches_acceptance_in_ONE_act():
     """THE CONTROL. Without it this file passes on an implementation that refuses everything.
 
@@ -150,6 +156,7 @@ def test_medium_reaches_acceptance_in_ONE_act():
     assert rr["audience"] == draft["acceptance_audience"]
 
 
+@requires_rdflib
 def test_mutation_opening_both_tasks_at_once_is_caught(monkeypatch):
     """THE MUTATION THE RULING NAMES, run rather than described.
 

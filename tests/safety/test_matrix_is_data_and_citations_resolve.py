@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from ._engine_extra import requires_rdflib
 from agent_fleet.safety_agent import entities, matrix, measures
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -30,6 +31,7 @@ def _clean_matrix_cache():
 # SEAL 4 — the matrix is DATA
 # ---------------------------------------------------------------------------
 
+@requires_rdflib
 def test_the_seeded_matrix_resolves_the_cell_the_file_declares():
     """Forward: I/D is Serious in the shipped file, so the draft says Serious."""
     level, audience, source = matrix.resolve_risk_level("I", "D")
@@ -37,6 +39,7 @@ def test_the_seeded_matrix_resolves_the_cell_the_file_declares():
     assert source == "safety_risk_matrix.ttl"
 
 
+@requires_rdflib
 def test_changing_one_row_in_the_ttl_changes_the_drafted_level_with_no_code_edit(tmp_path, monkeypatch):
     """SEAL 4. The mutation is to the FILE. If the level does not move, the table is in the code.
 
@@ -66,6 +69,7 @@ def test_changing_one_row_in_the_ttl_changes_the_drafted_level_with_no_code_edit
     assert after_aud == "risk_acceptance_serious:SUSTAINMENT"
 
 
+@requires_rdflib
 def test_an_unrecognised_pair_refuses_loudly_and_names_the_file(tmp_path, monkeypatch):
     """SEAL 5, beside seal 4 because they share an instrument. Never coerced to a neighbour."""
     level, audience, source = matrix.resolve_risk_level("Z", "Q")
@@ -73,6 +77,7 @@ def test_an_unrecognised_pair_refuses_loudly_and_names_the_file(tmp_path, monkey
     assert source == "safety_risk_matrix.ttl", "a refusal must name the vocabulary it consulted"
 
 
+@requires_rdflib
 def test_an_empty_matrix_raises_rather_than_refusing_every_hazard(tmp_path, monkeypatch):
     """THE INSTRUMENT-FAILURE CONTROL. An empty parse must not flow into "not a cell".
 
@@ -88,6 +93,7 @@ def test_an_empty_matrix_raises_rather_than_refusing_every_hazard(tmp_path, monk
         matrix.resolve_risk_level("I", "A")
 
 
+@requires_rdflib
 def test_every_matrix_cell_is_present_so_a_gap_is_a_refusal_not_an_interpolation():
     """All twenty. A missing cell must be visible as a refusal, never filled by a neighbour."""
     cells = matrix.known_cells()
@@ -110,6 +116,7 @@ def _resolvable_ids() -> set[str]:
     return ids
 
 
+@requires_rdflib
 def test_every_derived_from_entry_resolves_to_something_that_exists():
     """SEAL 10, across every hazard rather than one — a single-hazard check cannot see a source
     that only appears on the branch it did not take."""
@@ -122,6 +129,7 @@ def test_every_derived_from_entry_resolves_to_something_that_exists():
         assert not dangling, f"{h.hazard_id}: DERIVED_FROM names things that do not exist: {dangling}"
 
 
+@requires_rdflib
 def test_a_fabricated_provenance_entry_is_caught(monkeypatch):
     """THE CONTROL FOR SEAL 10. A checker that has only seen real ids has not been shown able to
     reject a fabricated one."""
@@ -130,6 +138,7 @@ def test_a_fabricated_provenance_entry_is_caught(monkeypatch):
     assert fabricated not in resolvable, "the resolvable set is not discriminating"
 
 
+@requires_rdflib
 def test_the_draft_cites_every_figure_it_states():
     """SEAL 11 — cite-or-omit. A figure without a citation is a claim the reader cannot trace."""
     draft = measures.draft_risk_assessment(hazard_id="HAZ-1001")
@@ -139,6 +148,7 @@ def test_the_draft_cites_every_figure_it_states():
         assert draft["citations"].get(field), f"{field} is stated with no citation"
 
 
+@requires_rdflib
 def test_an_unassessed_hazard_states_the_gap_and_invents_nothing():
     """SEAL 11's other half, and the one a lazy implementation fails.
 
@@ -154,6 +164,7 @@ def test_an_unassessed_hazard_states_the_gap_and_invents_nothing():
     assert "severity" in draft["gap"]
 
 
+@requires_rdflib
 def test_the_draft_never_writes_an_acceptance_on_any_fixture_hazard():
     """§7's refusal, exercised rather than asserted from the source.
 

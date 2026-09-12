@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ._engine_extra import requires_rdflib
 from agent_fleet.safety_agent import entities, matrix, measures
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -56,6 +57,7 @@ def _drafts():
             yield h.hazard_id, d
 
 
+@requires_rdflib
 def test_the_fixture_produces_at_least_one_openable_review():
     """Guard against a vacuous pass. Every assertion below is over drafts that exist, so a
     fixture producing none would make this file green and meaningless."""
@@ -63,6 +65,7 @@ def test_the_fixture_produces_at_least_one_openable_review():
     assert drafts, "no hazard produced a review request — every assertion here would be vacuous"
 
 
+@requires_rdflib
 def test_every_drafted_audience_is_actually_granted():
     """The audience the matrix resolves must have actors, or the review opens into silence."""
     granted = _granted_audiences()
@@ -79,6 +82,7 @@ def test_every_drafted_audience_is_actually_granted():
         )
 
 
+@requires_rdflib
 def test_every_risk_level_in_the_matrix_has_a_granted_audience():
     """WIDER THAN THE FIXTURE, AND THAT IS THE POINT.
 
@@ -95,6 +99,7 @@ def test_every_risk_level_in_the_matrix_has_a_granted_audience():
     )
 
 
+@requires_rdflib
 def test_every_drafted_kind_is_a_declared_species():
     """The kind must exist in the COMPOSED set, not merely in the overlay file.
 
@@ -115,6 +120,7 @@ def test_every_drafted_kind_is_a_declared_species():
         )
 
 
+@requires_rdflib
 def test_the_kind_and_the_audience_agree():
     """`<task_kind>:<compartment>` is the audience convention, so the two cannot disagree.
 
@@ -129,6 +135,7 @@ def test_the_kind_and_the_audience_agree():
         )
 
 
+@requires_rdflib
 def test_the_review_request_matches_register_tasks_signature():
     """The request is handed to `register_task` VERBATIM, so its keys are that function's
     parameters. A shape that needs translating can be translated wrongly."""
@@ -144,6 +151,7 @@ def test_the_review_request_matches_register_tasks_signature():
         )
 
 
+@requires_rdflib
 def test_the_payload_carries_the_evidence_but_not_the_narrative():
     """CLEARANCE-BOUNDED (§5). The queue must not become the leak.
 
@@ -167,4 +175,54 @@ def test_the_payload_carries_the_evidence_but_not_the_narrative():
         assert payload["reason_required"] == expected, (
             f"{hazard_id}: the disposer must be told a reason is required BEFORE they act, not "
             f"discover it from a refusal (kind {draft['review_request']['kind']})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# THE ALWAYS-RUNS HALF — the coverage claim, from the TTL text and the YAML.
+#
+# Every assertion above needs a DRAFT, which parses the matrix through rdflib. This one asks the
+# same question of the two FILES directly: does every audience the matrix can name have a grant?
+# It is the claim that must not go dark when an engine's optional extra is absent, because it is
+# the one that catches a tailored cell routing into silence — and a tailored cell is a thing a
+# programme does to the FILE, which is exactly what is readable here without the engine.
+# ---------------------------------------------------------------------------
+
+def test_every_audience_the_MATRIX_TEXT_names_is_granted():
+    """No rdflib: the audiences are read out of the TTL's own lines, the grants out of the YAML."""
+    import re
+
+    ttl = (_REPO / "setup" / "ontologies" / "safety_risk_matrix.ttl").read_text(encoding="utf-8")
+    named = set(re.findall(r'safety:acceptanceAudience\s+"([^"]+)"', ttl))
+    assert named, "no acceptanceAudience declared in the matrix — instrument failure"
+
+    granted = _granted_audiences()
+    missing = sorted(a for a in named if a not in granted)
+    assert not missing, (
+        f"the matrix names audience(s) with no grant in task_grants.yaml: {missing} — a hazard "
+        "reaching that level drafts a review that opens into silence"
+    )
+    for a in named:
+        assert granted[a].get("grant_to"), f"{a} is granted to nobody"
+
+
+def test_every_concurrence_audience_the_OVERLAY_declares_is_granted():
+    """The same coverage question for §5.1's second act, and it has a DIFFERENT failure mode:
+    a concurrence audience routing to nobody blocks the acceptance FOREVER, because the
+    acceptance task is not materialised until the concurrence is disposed."""
+    import re
+
+    granted = _granted_audiences()
+    kinds = set()
+    for y in (_OVERLAY).glob("risk_acceptance_concurrence_*.yaml"):
+        m = re.search(r"^kind:\s*(\S+)", y.read_text(encoding="utf-8"), re.M)
+        if m:
+            kinds.add(m.group(1))
+    assert kinds, "no concurrence kinds declared — §5.1's second act does not exist"
+    for kind in kinds:
+        audience = f"{kind}:SUSTAINMENT"
+        assert audience in granted, (
+            f"{kind} is declared but {audience} is granted to nobody — the concurrence never "
+            "reaches a user representative, and because the acceptance is gated on it the hazard "
+            "can never be accepted at all"
         )
