@@ -94,17 +94,29 @@ the endstate and it arrives with the cutover; a row written in anticipation is i
 I told another lane this property was "free". It is not, and for a disposition that must carry a
 reason, declared-and-unenforced is the whole gap.
 
-**And the one where the obvious repair was the harmful one.** The render table's default carries
-a comment stating it *"now renders the card in a NO-VERB read-only mode … so an unregistered
-kind degrades visibly"*. **No such mode exists.** `ApprovalTaskCard` renders Approve/Reject
-unconditionally; `isRegisteredKind`, the predicate written to prevent exactly this, is exported,
-documented, and has **no caller outside its own tests**. So an undeclared kind is handed
-Approve/Reject on both sides right now.
+**And the one where the obvious repair was the harmful one.** The render table's default used to
+carry a comment stating it *"now renders the card in a NO-VERB read-only mode … so an
+unregistered kind degrades visibly"*. **No such mode existed.** `ApprovalTaskCard` rendered
+Approve/Reject unconditionally, and `isRegisteredKind` — the predicate written to prevent exactly
+this — was exported, documented, and had **no caller outside its own tests**.
 
 I repeated that comment as fact — in a module docstring, a test name, and a commit message —
 until another lane traced the render. **The tell transfers: an exported helper whose only callers
 are its own tests, and a note whose subject is a cause while its claim is about an effect.** The
 lane that owns a registry is the least likely to check it, precisely because it is theirs.
+
+> **⚠ CORRECTED 2026-09-12 — the render half is FIXED, and the gap it leaves is narrower and
+> one-sided.** `ApprovalTaskCard` now default-denies: `const declared = isRegisteredKind(...)`
+> gates the verb block, an undeclared kind gets a refusal naming the species rather than a
+> disabled button, and `isRegisteredKind` finally has a caller. **The gateway half is still
+> open**: `verbs_for_kind` returns `_DEFAULT_VERBS` for any kind it does not know, so an
+> undeclared kind still ACCEPTS `approved`/`rejected` over the API.
+>
+> So the state is now a UI that offers nothing sitting over an API that would take the answer —
+> defence on the surface only, and a caller bypassing the card can still dispose a species nobody
+> declared. **My cutover closes it**; until then this is the live half. Kept rather than deleted,
+> because a page that quietly dropped a defect once it was half-fixed would be the same failure
+> as the comment above, inverted.
 
 > This is why site 5 is listed with **no seal** rather than omitted. Absence of a check is a fact
 > about the route; a row that quietly stopped at site 4 would read as complete coverage.
@@ -131,6 +143,7 @@ Everything else is order-free.
 | Bumped the SDK pin in one `pyproject.toml`; `test_domain_broker_sdk_version_matches_the_fleet_pin` went red with *"the fleet's own SDK pins disagree"* | A coherence seal firing on **your** change is the seal working. 14 pyprojects, 16 locks and one Helm value move together, because `uv lock --check` is what the build asks via `--locked` |
 | Reported my own commit as unpushed and held; a peer checked `git merge-base --is-ancestor` and it was pushed | **A lane's account of its own state is not evidence.** A lane that believes its work unpushed either redoes it or sits on it, and neither is visible from outside |
 | Needed an arm that could not run until a dependency shipped, and did not want a skip | `xfail(strict=True)`: the day the dependency lands it XPASSes, strict turns that into a failure, and **the failure is what removes the marker**. A plain skip sits green forever and the rows never get validated |
+| *(cortex-ui's, worth stealing)* A refusal test asserted the kind name appeared in `document.body` — but the card header prints the kind two lines above the refusal, so a mutation stripping the name **out of the refusal** still passed | **Scope the assertion to the element under test, never the page.** When the instrument and the subject share a surface, the instrument reads the subject's neighbour and reports success. Their fix asserts against `[data-undeclared-kind]`. Any seal for a card that also prints its kind in a header has this trap |
 
 ## The shortest correct sequence
 

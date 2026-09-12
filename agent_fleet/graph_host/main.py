@@ -237,11 +237,78 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
     # which is what makes that true by construction rather than by discipline.
     identity = {h: v for h in _IDENTITY_HEADERS
                 if (v := http_request.headers.get(h)) is not None}
+
+    # ── ADMISSION: AN UNIDENTIFIED CALL IS REFUSED BEFORE THE FIRST NODE RUNS ───────────────
+    # Ruled 2026-09-12. The third-caller case is an UNENTITLED caller, who is identified and
+    # gets an answer shaped by what they may see. An UNIDENTIFIED call is a different thing and
+    # gets nothing, named: there is no subject to scope a governed read to, and this host holds
+    # no standing credential to fall back on.
+    #
+    # TWO LAYERS, AND THE INNER ONE IS THE ONE THAT MATTERS IF THIS REGRESSES. Each graph's
+    # nodes ALSO refuse to call out without an initiator (see fin_program_brief's `_fetch`), so
+    # a wrapper failure cannot launder access — that is the property the fixture harness's
+    # fourth outcome proves, and this check is what makes that outcome unreachable in
+    # production rather than merely handled.
+    if not identity.get("authorization"):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"{graph_id} runs as the INITIATOR and this request carries no identity "
+                f"(expected Authorization, plus X-Originator-Sub/Email). Refused before the "
+                f"first node: a graph composing governed reads under no subject has nothing to "
+                f"scope them to, and this host holds no credential of its own to use instead."
+            ),
+        )
+
     state = dict(request.params)
     state["identity"] = identity
     config: dict = {"configurable": {"thread_id": request.thread_id or graph_id,
                                      "user_id": request.user_id}}
-    return await graph.ainvoke(state, config=config)
+    out = await graph.ainvoke(state, config=config)
+    return _enforce_refusal(m, out)
+
+
+def _enforce_refusal(m: GraphManifest, out: Any) -> Any:
+    """THE HOST ENFORCES THE ROW. Ruled 2026-09-12.
+
+    A row declaring `refusal: fail` meant nothing until now: its module could return partial
+    results and nothing anywhere went red. The declaration described behaviour it did not
+    constrain — the Engine B shape moved from a class name to a contract clause. **The host is
+    the party that holds both the row and the output, so the host is where it is checked.**
+
+    THE ENFORCEABLE RULE, and it is deliberately the only one the host can know generically:
+    the host cannot tell how many findings a given graph *should* produce, but a graph that
+    reports a HOLE has told the host it narrowed its answer. So:
+
+        refusal: named-hole   holes are the declared disposition — passed through
+        refusal: fail         a hole is a CONTRACT VIOLATION — rejected, naming which
+
+    `holes` is therefore part of the host's output contract with a graph, not an accident of
+    the two graphs that exist. A compliant `fail` module raises instead (see
+    cost_lot_costing_review's RefusedInner) and never reaches here.
+
+    FILED, NOT BUILT: this convention belongs in `iagent_mesh.graph_manifest` beside the
+    `refusal` field, so a route-C host running its own graphs enforces it too. It is enforced
+    HERE first because the ruling is that the host holds the row — but a convention only one
+    host implements is one route C will not inherit.
+    """
+    if m.refusal != "fail":
+        return out
+    holes = (out or {}).get("holes") if isinstance(out, dict) else None
+    if holes:
+        sources = [h.get("source", "?") for h in holes if isinstance(h, dict)]
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{m.graph_id} declares refusal=fail and returned {len(holes)} hole(s) "
+                f"({', '.join(sources)}). Its row says a partial answer is not an answer for "
+                f"this verb, so the output is REJECTED rather than passed to a caller who would "
+                f"read it as whole. Either the module should have failed at the refusal, or the "
+                f"row should declare named-hole — this is a contract disagreement between them, "
+                f"not a runtime error."
+            ),
+        )
+    return out
 
 
 @app.get("/health")

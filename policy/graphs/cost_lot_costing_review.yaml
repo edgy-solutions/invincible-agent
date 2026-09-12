@@ -1,0 +1,72 @@
+# THE SECOND GRAPH, AND IT EXISTS TO BE EVIDENCE (ADR-0046 slice 1, phase 5.4).
+#
+# The ADR's claim is that engine-lg is a HOST — a place a team plugs a graph in — and not one
+# graph with extra steps around it. The only thing that can settle that is a second graph
+# admitted WITHOUT TOUCHING THE HOST. `tests/graph_host/test_a_second_graph_is_a_row_only.py`
+# asserts exactly that as a diff, because "I didn't need to change main.py" is a claim and the
+# file list is the evidence.
+#
+# IT DIFFERS FROM fin_program_brief IN EVERY WAY THE ROW CONTROLS, deliberately. A second graph
+# that matched the first on subject, domain, engine, refusal and checkpointer would demonstrate
+# that the host can load two files, not that a row is a contract:
+#
+#   subject     cost#ProductionLot      (vs fin#Program)
+#   domain      PRODUCTION_COST         (vs PROGRAM_FINANCE)
+#   inner calls engine-cost             (vs engine-fin) — the host is not finance-specific
+#   refusal     fail                    (vs named-hole)
+#   checkpointer false                  (vs true)
+#   slots       TWO mandatory           (vs one)
+graph_id: cost_lot_costing_review
+module: graphs.cost_lot_costing_review
+builder: build
+
+verb: mesh:costLotCostingReview
+name: engine_lg_lot_costing_review
+description: >-
+  One production lot's cost read three ways under a single rate vintage: the five-bucket
+  decomposition, the ordered build-up from base cost to final price, and the applied-versus-
+  estimating rate comparison, each citing the artifact it came from. Answers whether a lot's
+  costing hangs together and where the three views disagree. NOT any single one of those
+  measures — it composes them, and it calls costLotBreakdown, costPriceComposition and
+  costRateComparison to do it. OWNS the phrasings: review this lot's costing, does the costing
+  hang together, walk me through this lot's cost, check the lot's pricing.
+input_uri: http://invincible-agent/cost#ProductionLot
+output_uri: http://invincible-agent/cost#LotCostingReview
+owner_persona: COST_ANALYST
+domains: [PRODUCTION_COST]
+cost_class: high
+requires_human_approval: false
+timeout_s: 120
+synonyms: ["review this lot's costing", "does the costing hang together",
+           "walk me through this lot's cost", "check the lot's pricing"]
+anti_synonyms: ["what is the unit price trend", "which suppliers are concentrated",
+                "how fast are we spending"]
+
+slots:
+  - name: lot
+    kind: spoken-mandatory
+    type: integer
+    required: true
+    referent: http://invincible-agent/cost#ProductionLot
+  # THE SECOND MANDATORY SLOT IS THE POINT OF THIS ROW'S SLOT SECTION. engine-cost's own
+  # module calls `rate_vintage` its designed refusal — "a refusal the router cannot see is a
+  # refusal that never fires" — so a graph composing its verbs must declare it too, or the
+  # graph becomes the place that refusal is lost. Two mandatory slots also means the ask path
+  # has to name WHICH one is missing rather than asking generically.
+  - name: rate_vintage
+    kind: spoken-mandatory
+    type: string
+    required: true
+
+arity: single             # forced: `lot` is both required and a referent
+
+# `fail`, NOT `named-hole`, and the difference is a judgement about what the answer MEANS. A
+# brief missing one of three findings is still a brief with a hole named in it. A costing review
+# missing one of its three views is not a review — the whole claim is that the three AGREE, and
+# two of three cannot support it. Declared per row precisely so this is a design decision and
+# not a runtime accident.
+refusal: fail
+
+# No state between calls: this reads a lot under a vintage and answers. A checkpointer here
+# would be storage nobody reads, which is the defect that retired Engine B.
+checkpointer: false
