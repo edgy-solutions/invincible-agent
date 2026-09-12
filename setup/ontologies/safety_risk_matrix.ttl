@@ -35,13 +35,21 @@ honest label on a wrong table still routes a real acceptance to the wrong author
       approved in accordance with DoD Component policy."
 
   THE ACCEPTANCE LADDER (risk level -> who may accept)
-      NOT IN 882E. 4.3.7 says only that "the risks shall be accepted by the appropriate
-      authority as defined in DoDI 5000.02" — the standard defers, and names no authority.
-      The seeded ladder below (High / Serious / Medium / Low) reflects DoDI 5000.02's
-      assignment as reported by the architect; THIS LANE HAS NOT READ THAT DOCUMENT, so the
-      ladder is attributed and not verified, and says so rather than borrowing the matrix's
-      citation. Verifying it is a half-hour someone should spend before a real acceptance
-      routes on it.
+      NOT IN 882E. 4.3.7, read verbatim from the standard: "the risks shall be accepted by
+      the appropriate authority as defined in DoDI 5000.02" — it defers, and names nobody.
+
+      CORROBORATED BUT NOT READ FROM PRIMARY, 2026-09-12. The current issue appears to be
+      DoDI 5000.88 (the 2020 reissue moved engineering content out of 5000.02), and
+      5000.88 PARA 3.6.e.(1)(b)1 is cited as assigning: Component or Defense Acquisition
+      Executive -> High, PEO-level -> Serious, PM -> Medium and Low. That MATCHES the seeded
+      ladder. But esd.whs.mil returns HTTP 403 to this environment and the corroboration is
+      a search summary plus a secondary page, NOT the document.
+
+      SO THE LADDER'S EVIDENCE IS WEAKER THAN THE MATRIX'S AND THE TWO MUST NOT BE READ AS
+      EQUALLY SOURCED. The matrix was transcribed cell by cell from 882E's own PDF; this was
+      not. Anyone with access should open 5000.88 3.6.e.(1)(b)1, confirm the tiers, and
+      replace this paragraph with the verbatim quote. Until then the ladder remains a
+      FIXTURE: it exercises routing and authorises nothing.
 
       AND THE DOCUMENT MAY HAVE MOVED BETWEEN ISSUES. DoDI 5000.02 as reissued in 2015 carried
       these definitions; the 2020 reissue pushed engineering content into DoDI 5000.88, and

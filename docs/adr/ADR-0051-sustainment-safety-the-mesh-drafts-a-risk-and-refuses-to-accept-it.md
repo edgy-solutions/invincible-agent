@@ -300,8 +300,52 @@ level — which is precisely what the audience key convention expresses:
 > the same treatment, including the directional assertion, because a ladder that names a more junior
 > tier than the standard fails the same silent way a permissive matrix cell does.
 >
+> **UPDATE 2026-09-12 — corroborated, still not read from primary.** The current issue appears to be
+> **DoDI 5000.88** (the 2020 reissue moved engineering content out of 5000.02), and **¶3.6.e.(1)(b)1**
+> is cited as assigning Component/Defense Acquisition Executive → High, PEO-level → Serious, PM →
+> Medium and Low. **That matches the seeded ladder.** But `esd.whs.mil` returns **HTTP 403** to this
+> environment, so the corroboration is a search summary and a secondary page, not the document. The
+> matrix was transcribed cell by cell from 882E's own PDF; this was not, and **the two must not be
+> read as equally sourced.** Anyone with access should open ¶3.6.e.(1)(b)1 and replace the note with
+> the verbatim quote.
+>
 > Until that is done the sandbox ladder is a fixture. It exercises the routing, the audiences and the
 > three-caller walk; it does not authorise anything.
+
+### §5.1 — A Serious or High acceptance needs TWO human acts, and this design models one
+
+**Found 2026-09-12 by reading MIL-STD-882E §4.3.7 from source**, which is the half of the
+half-hour that paid. Verbatim:
+
+> "The user representative shall be part of this process throughout the life-cycle of the system and
+> shall provide **formal concurrence before all Serious and High risk acceptance decisions**."
+
+And §3.2.49: "the user representative will be at a **peer level equivalent to the risk acceptance
+authority**."
+
+**So the standard requires a concurrence that precedes the acceptance, by someone who is not the
+accepting authority and not a rubber stamp.** ADR-0051 as built has one disposer per assessment:
+the authority in `risk_acceptance_<level>:SUSTAINMENT` accepts, and that is the whole act. For
+Medium and Low that is correct. **For Serious and High it is incomplete, and incomplete in the
+direction that matters** — it would let a High risk be accepted with no record that the user
+representative ever concurred, which is exactly the "who signed, on what evidence" question this
+ADR exists to make answerable.
+
+**This is a design gap, not a bug, and it is named rather than quietly absorbed.** Three things it
+implies, for a ruling rather than for this lane to decide:
+
+1. A **second task kind** — concurrence is a distinct act with a distinct audience, not a second
+   actor on the acceptance audience. The audience-per-level convention extends naturally
+   (`risk_concurrence_high:SUSTAINMENT`), and the peer-level requirement means its grants are not
+   the acceptance grants.
+2. **Ordering is part of the requirement** — "before" is in the standard's sentence. An acceptance
+   task that can be disposed while concurrence is outstanding satisfies the letter of neither.
+3. It applies to **Serious and High only**, so the drafter must route differently by level — which
+   the matrix already tells it, since the level is what selects the audience.
+
+**Not built in increment 3 or 4, and the ADR says so rather than letting the exemplar imply
+completeness.** A walk that shows a High risk accepted by one authority, with no concurrence step,
+demonstrates something the standard does not permit.
 
 - `risk_acceptance_high:SUSTAINMENT`, `risk_acceptance_serious:SUSTAINMENT`, … one audience per level
   the §2 ladder names. The ladder is data; the audiences are the git-asserted grants that implement
