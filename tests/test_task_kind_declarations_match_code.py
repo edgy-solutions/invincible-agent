@@ -161,8 +161,32 @@ def test_the_undeclared_default_is_deliberately_narrowed():
     is written down. It fails the day someone re-widens the default, which would reopen the hole
     silently.
     """
-    assert _DEFAULT_VERBS == frozenset({"approved", "rejected"}), (
-        "the code default moved — re-read the cutover note before changing this"
+    # TWO LEGAL STATES, AND THIS ARM CANNOT TELL THEM APART BY ITSELF — so it names both rather
+    # than reporting a bare inequality. `{approved, rejected}` is the pre-narrowing state.
+    # `frozenset()` is the post-narrowing one, and the gateway half is scheduled to be closed
+    # EARLY AND SEPARATELY from the M3.3 cutover by another lane.
+    #
+    # ⚠ EMPTYING THIS SET ALONE IS AN OUTAGE, and the arm that proves it is
+    # `test_every_declared_kind_not_in_the_code_table_restates_the_default`. `_DEFAULT_VERBS` is
+    # NOT "the unknown-kind fallback" — `verbs_for_kind` returns it for every kind absent from
+    # `_VERBS_BY_KIND`, which today includes three DECLARED, legitimate species (`grouped_review`,
+    # `access_request`, `workflow_ack`). Empty the default and all three accept nothing: every
+    # grouped review becomes unactionable, rendering as an ordinary card. That is precisely the
+    # dead-task failure the whole cutover ordering exists to prevent, arriving by the side door.
+    #
+    # To close the gateway half safely and early, list those three explicitly in `_VERBS_BY_KIND`
+    # FIRST, then empty the default. The parity arms then hold in both directions and the change
+    # is honest: "unknown" finally means unknown rather than "not enumerated".
+    #
+    # Written this way because the previous assertion could not distinguish an intended NARROWING
+    # from an accidental RE-WIDENING: both are "not equal to the wide set", and a lane hitting the
+    # red would have had to guess which. A seal whose failure has two opposite causes must name
+    # both or it is a tripwire pointed at whoever arrives first.
+    assert _DEFAULT_VERBS in (frozenset({"approved", "rejected"}), frozenset()), (
+        f"_DEFAULT_VERBS is {sorted(_DEFAULT_VERBS)}, which is neither legal state. "
+        f"Expected {{approved, rejected}} before the gateway half is narrowed, or an EMPTY set "
+        f"after. Anything else re-opens the hole: an undeclared species would accept a verb "
+        f"nobody declared for it, over an API the card already refuses."
     )
     declared_kinds = set(_declarations())
     assert "undeclared" not in declared_kinds, (
