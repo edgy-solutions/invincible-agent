@@ -2132,14 +2132,24 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # returns need it: a check on one is silent by construction on the other,
                 # and this branch is the one that fires when class recall found NOTHING,
                 # so it is the LEAST likely to have a servable subject.
+                # THE DOMAINS ARE COMPUTED ONCE AND NAMED, so the log line can print the
+                # VALUE. It used to interpolate nothing and emit the expression's SOURCE
+                # TEXT verbatim — `no verb in request.domains or ([request.domain] if
+                # request.domain else [])` — because that fragment sits outside the
+                # f-string's braces. A diagnostic that cannot say WHICH domains were
+                # checked is why four abstaining cost questions reached a human as
+                # "the cards are not routing".
+                _checked_domains = request.domains or (
+                    [request.domain] if request.domain else [])
                 if await _preempted_subject_is_unanswerable(
-                    instance_subject, request.domains or ([request.domain] if request.domain else [])
+                    instance_subject, _checked_domains
                 ):
                     instance_provenance["abstention_reason"] = "no_compatible_verbs"
                     instance_provenance["unanswerable_subject"] = instance_subject
+                    instance_provenance["domains_checked"] = _checked_domains
                     print(f"[Engine O] post-preemption check ABSTAINED: "
                           f"{entity_ref!r} resolved to {instance_subject} which carries "
-                          f"no verb in request.domains or ([request.domain] if request.domain else [])")
+                          f"no verb in domains={_checked_domains!r}")
                     return SemanticResolutionResponse(
                         resolved_uri="UNKNOWN",
                         confidence_score=0.0,
@@ -2204,14 +2214,19 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             # engine-cost lane measured: 10 of 18 draws overridden onto fin:WBSElement.
             # `candidates` is carried into the abstention too, so the decision path can
             # still show the class contest that ran before the override.
+            # Site 2 of 2 — same fix as site 1. A check on one is silent by construction
+            # on the other, which is why both carry it.
+            _checked_domains = request.domains or (
+                [request.domain] if request.domain else [])
             if await _preempted_subject_is_unanswerable(
-                instance_subject, request.domains or ([request.domain] if request.domain else [])
+                instance_subject, _checked_domains
             ):
                 instance_provenance["abstention_reason"] = "no_compatible_verbs"
                 instance_provenance["unanswerable_subject"] = instance_subject
+                instance_provenance["domains_checked"] = _checked_domains
                 print(f"[Engine O] post-preemption check ABSTAINED: "
                       f"{identifier!r} resolved to {instance_subject} which carries "
-                      f"no verb in request.domains or ([request.domain] if request.domain else [])")
+                      f"no verb in domains={_checked_domains!r}")
                 return SemanticResolutionResponse(
                     resolved_uri="UNKNOWN",
                     confidence_score=0.0,

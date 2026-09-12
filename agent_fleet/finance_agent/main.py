@@ -855,6 +855,17 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
     needle = text.strip().lower()
     if not needle:
         return []
+
+    # A BARE NUMBER IS NOT A NAME UNLESS SOMETHING ELSE ESTABLISHED THE CLASS.
+    # Unscoped `"4"` hit the EXACT tier (`needle == hay_id`) and returned 1.0 -- the
+    # maximum-authority answer in the system, from a token carrying no evidence of WHICH
+    # collection it indexes. Every domain's instances are numbered; a digit alone cannot
+    # choose between them, and answering 1.0 is how a phone-book hit outranks a 0.92
+    # classifier match. WITH `class_uri` the same needle is a legitimate 1.0, because the
+    # caller supplied the class and the digit is then a genuine index into it.
+    if class_uri is None and needle.isdigit():
+        return []
+
     out: list[dict[str, Any]] = []
     for uri in _RESOLVABLE:
         if class_uri and class_uri != uri:
@@ -873,12 +884,49 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
             elif needle in hay_label or needle in hay_id:
                 score = 0.75
             else:
+                # WORDS ESTABLISH, DIGITS CORROBORATE. Measured 2026-09-11 by
+                # invincible-agent-81: the previous line was
+                #     tokens_h = set(hay_label.split()) | {hay_id}
+                # which put the BARE INSTANCE ID into the token set, so a needle sharing
+                # nothing but a digit scored 0.4 + 0.2*(1/2) = EXACTLY 0.500 -- the floor,
+                # and the gate is `>=`. Measured, not reasoned:
+                #     'lot 4'    -> Program Support (instance_id 4)  0.500
+                #     'banana 4' -> Program Support                  0.500   <- fabricated
+                #     'xyzzy 4'  -> Program Support                  0.500   <- fabricated
+                #     'lot four' -> nothing
+                # `banana 4` resolved and `lot four` did not. THE BLAST RADIUS WAS NOT
+                # FINANCE: any query in any domain containing a bare integer N was eligible
+                # to be preempted onto WBS element N, because Recipe v2 lets a phone-book
+                # class override `resolved_uri` -- so 0.500 on nonsense outranked 0.92 from
+                # the classifier. See docs/measurements/lot-4-resolves-to-program-support-2026-09-11.md
                 tokens_n = set(needle.split())
-                tokens_h = set(hay_label.split()) | {hay_id}
-                overlap = tokens_n & tokens_h
-                if not overlap:
+                words_n = {t for t in tokens_n if not t.isdigit()}
+                digits_n = tokens_n - words_n
+                words_h = {t for t in hay_label.split() if not t.isdigit()}
+
+                # (1) A CONTRADICTED DIGIT DISQUALIFIES. `lot 9` against Lot 4 shares the
+                #     word `lot` and would otherwise score 0.6 -- a confident WRONG lot,
+                #     which is worse than abstaining.
+                if digits_n and hay_id.isdigit() and hay_id not in digits_n:
                     continue
+
+                # (2) A BARE DIGIT IS NOT AN IDENTIFIER. The id joins the haystack only
+                #     once a WORD has already matched; something other than the digit has
+                #     to establish the class. This is the line `banana 4` dies on.
+                word_overlap = words_n & words_h
+                if not word_overlap:
+                    continue
+                tokens_h = words_h | ({hay_id} if hay_id.isdigit() else set())
+                overlap = tokens_n & tokens_h
                 score = 0.4 + 0.2 * (len(overlap) / max(len(tokens_n), 1))
+
+                # (3) A HIT AT THE FLOOR IS NOT AUTHORITY. The overlap tier is the
+                #     least-confident tier and must not be able to LAND ON the gate: a
+                #     boundary-value hit that ties the threshold is indistinguishable from
+                #     a deliberate pass, and `>=` resolves that tie in favour of the
+                #     weakest evidence in the system.
+                if score <= _RESOLVE_FLOOR:
+                    continue
             out.append({
                 # `instance_id`, NEVER `identity`. Engine O parses
                 # `c.get("instance_id")` and coerces a miss to "" — so the wrong key
