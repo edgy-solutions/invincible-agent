@@ -184,6 +184,31 @@ by inferring a lane from the work it seems to be doing.
 *We infer identity from the work instead of asking the roster. A dispatch names its lane's
 ADDRESS; if you cannot state the address you do not have a lane, you have a hope.*
 
+### A GATE THAT PRINTS ITS CONDITION AND RUNS ANYWAY IS THE `✅ Registered` LINE AS A SCRIPT
+
+**RULED 2026-09-12.** A settle-check printed how many pods were unsettled — and then ran the
+census regardless, because the command did not *depend* on the number it had just shown.
+
+**IT REPORTS THE CHECK INSTEAD OF BEING THE CHECK**, and the output reads exactly like a guard.
+Same family as a registration that logs success and routes nowhere, and as `expected_fields`
+returning `NOT_EVALUATED` while a card draws: *the reassuring line is produced by something that
+did not do the work.*
+
+    WRONG   echo "$(count_unsettled)"; run_the_measurement
+    RIGHT   until [ "$(count_unsettled)" = 0 ]; do sleep 15; done; run_the_measurement
+
+**TWO DEFECTS, AND THE SECOND IS THE SUBTLER ONE.** The condition itself was insufficient: it
+counted pods **not** in `Running`, so during a rollout **old and new pods both `Running` read as
+settled**. The right condition is *terminating-count PLUS non-running-count*.
+
+**THE COST WAS A PLAUSIBLE WRONG NUMBER, WHICH IS THE EXPENSIVE KIND.** The unsettled run
+reported **11 services BEFORE PRIME**; the settled run reported **2** — exactly the pair the
+reregister hook excludes by design. Nine of eleven were an artifact of measuring mid-rollout, and
+nothing about the output looked wrong. A number that looks right is acted on.
+
+Related: the moving-tree rule — *a suite running on a tree that changed during the run measures
+neither version*. Same root, one layer out: **the fleet was moving while being measured.**
+
 ### A REPORTED RESULT CARRIES THE SHA IT RAN AT — AND AN UNCOMMITTED FILE HAS NO SHA
 
 **RULED 2026-09-12**, from a result reported upward while the code producing it existed on no
