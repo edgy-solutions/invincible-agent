@@ -640,6 +640,79 @@ its author*.
 
 ---
 
+## R-022 — The gateway-side projection ALREADY EXISTED; feed the accumulation into it
+
+**RULED 2026-09-12.** Amends the author's own earlier ruling, which said the undeclared-param
+filter *"lives in the gateway, once"*. **The "once" already existed.**
+
+`accept_slots(spoken, declared)` filters supplied slots down to what the verb declares, returns
+a `Refusal` per dropped slot rather than raising, and that result already reaches the routing
+record through `direct_dispatch`. The accumulated chain slots are fed **into** it as a base
+layer; no second projection is built.
+
+**The rule this is an instance of:** *a second site for one rule is the defect, even when the
+second site is the one you were told to build.* Same move that killed the parallel
+materialisation emitter. Three engines with three behaviours for undeclared params — engine-cost
+500, finance 400, planning 404 — was that defect one layer down; adding a fourth copy at the
+gateway would have been it one layer up.
+
+**What the ruling was right about stands:** engines keep their own guards as belt-and-braces, and
+the gateway is the site that makes a multi-verb interview survivable, because it is the only one
+holding both the accumulated set and the declaration.
+
+---
+
+## R-023 — The colon sweep is WITHDRAWN; the anchor lint handles what it was for
+
+**RULED 2026-09-12**, withdrawing an earlier ruling of the architect's own. Recorded with its
+reason **so nobody proposes the colon again.**
+
+The withdrawn ruling: strip the em dash from register headings (`## R-0NN: title`) because two
+slug rules disagree only on a space-surrounded em dash, so removing it would make eight
+coin-flip citations correct *under either renderer without choosing one*.
+
+**ITS PREMISE EXPIRED BETWEEN THE RULING AND ITS EXECUTION.** The rule was then settled by
+measurement rather than argument — a POST to GitHub's own renderer returns
+`r-005--shared_slots-are-template-scoped`, double hyphen — and the eight citations were rewritten
+to it. **Applying the sweep now would break exactly what it was written to fix**: a colon heading
+slugs to a SINGLE hyphen. The stated gain (eight become correct, none edited) was true against
+the single-hyphen corpus and is false against this one.
+
+`invincible-agent-f3` had the sweep built and verified — 20 headings, both rules agreeing on all
+20, break-on-purpose run twice — and **did not apply it**, because the reasoning no longer held.
+That is the behaviour this register exists to make possible: a ruling is citable, so its premise
+is checkable.
+
+**The residual is ergonomic and is already handled.** `--` looks like a typo and invites the
+well-meant single-hyphen "fix" that broke eight citations in the first place — but
+`tests/test_citation_anchors_resolve.py` reds any citation whose anchor does not match the slug
+the measured rule generates from the heading. **The edit fails before it lands. No migration.**
+
+---
+
+## R-024 — `cost:LotCostingReview` rides the NEXT prime, not a prime of its own
+
+**RULED 2026-09-12.** `invincible-agent-22`'s second graph (`972232a`) needs its output class in
+the graph before the ratified row can register — Contract D refuses atomically, so the row cannot
+land without the class.
+
+**One prime, both declarations.** The next prime is already owed: safety's `main.py` registration
+lands and seal 1 needs a fresh prime regardless. A separate prime for one class would be an
+infra action bought with no information.
+
+### And the census SNAPSHOTS the verb set, naming additions
+
+Ruled this morning when `db.relationshipTypes()` moved 63 → 64 and **nobody could name the 64th**.
+*A count that moved and cannot be attributed is the no-op-pin finding in a new costume.*
+
+**22's finding sharpens why a derived answer will not do it: a graph-host verb comes from a
+RATIFIED ROW, not from an engine's `CATALOGUE`.** Any declared-set derivation that reads engine
+catalogues is blind to `finProgramBrief` **by construction**, and that blindness grows with every
+graph engine-lg admits. So the census reads **the graph** and reports additions **by name** since
+its last run — both sources or none, or engine-lg's verbs read as orphans forever.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
