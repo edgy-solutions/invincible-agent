@@ -352,6 +352,21 @@ jobs:
           # seeded graph would leave it registered. The composed dir must be MOUNTED and
           # GRAPH_POLICY_DIR pointed at it before any overlay is real. Filed, not built.
           COPY policy/graphs/ /app/policy/graphs/
+          # THE OVERLAY LAYER (ADR-0036), and this is the THIRD time the comment twenty lines
+          # up has come true. It said "the next shared-policy file will need another line here,
+          # and forgetting it fails SILENTLY". policy/graphs/ was the second — rev 106 shipped
+          # engine-lg with its graph MODULES and none of its contracts, booting healthy with
+          # zero graphs registered. policy/overlays/ is the third.
+          #
+          # The failure here would be the quietest yet: a missing overlay directory does not
+          # error, it composes to SILENCE. GRAPH_OVERLAY_DIRS would point at a path that is not
+          # there, the host would compose the seed alone, and every deployment would read as
+          # "no domain graphs declared" whether or not any were. The same shape took 18 live
+          # task rows from actionable to dead in a gate written the same day.
+          #
+          # cortex-bff does NOT need a line: its image copies the whole repo (see its own
+          # comment above), which is why /app/policy is complete there and per-file here.
+          COPY policy/overlays/ /app/policy/overlays/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/

@@ -42,6 +42,28 @@ data:
   # serves /api/v3/directory/*.
   TOPAZ_DIRECTORY_URL: {{ .Values.externalTopaz.url | quote }}
   {{- end }}
+  {{- /* ADR-0036 OVERLAY LAYER — the composition branch that had never executed.
+
+  Measured 2026-09-12: `GRAPH_OVERLAY_DIRS` defaulted to "" and was set in no chart and no
+  configmap, so `compose(GRAPH_POLICY_DIR, GRAPH_OVERLAY_DIRS)` ran with ZERO overlays on
+  every deployment that has ever existed. The seed path is well covered; the overlay path was
+  a branch nothing took — which is the shape two defects grew in this week, both of them
+  reading a seed as if it were the whole set.
+
+  POINTED AT AN EXISTING, EMPTY DIRECTORY ON PURPOSE. An empty overlay dir is the CLAIM "this
+  deployment declares no domain graphs"; an UNSET variable means "nobody said where to look".
+  They are different facts and the composition can only tell them apart if the variable is
+  set. This also makes the overlay branch execute for the first time, with nothing to overlay,
+  which is the cheapest possible exercise of it.
+
+  `TASK_KIND_OVERLAY_DIRS` is DELIBERATELY NOT SET HERE — see policy/overlays/README.md. It
+  would make the task-kind gate fire, and `pcn_grouped_review` has 2 live rows in sandbox
+  while being on the FORBIDDEN list in tests/test_cross_repo_contracts.py. Wiring it before
+  that name is migrated or retired turns two live tasks dead as a side effect of a config
+  line. That is a decision, not a consequence. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "GRAPH_OVERLAY_DIRS") }}
+  GRAPH_OVERLAY_DIRS: "/app/policy/overlays/sample/graphs"
+  {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
   these for split topologies; the hasKey guards keep the rendered CM
