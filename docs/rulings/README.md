@@ -96,10 +96,31 @@ the notice is part of the ruling rather than an implementation detail.
 | b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
+| e | **The acceptance verb is `accepted`, NOT the seed's `approved`.** RULED 2026-09-11, architect. A risk is *accepted* by an authority — MIL-STD-882's word, and the ADR's whole claim. `approved` is the generic seed's verb for generic things. A queue showing both side by side is showing **two different acts, correctly**; the declaration row's label makes it explicit. The SDK constrains verb strings nowhere, deliberately, so this is expressible without asking anyone's permission. | §5 |
+| f | **Belt and braces until the cutover.** RULED 2026-09-11, architect. The safety kinds declare `reason_required` on the row **and** the verbs go into the global `_REASON_REQUIRED`, because a declared `reason_required` does **nothing at runtime today** — `validate_decision` consults a kind-blind global set and declarations are not wired into `human_tasks` at all. Declared-and-unenforced is the `isRegisteredKind` shape. The global entry is the enforcement until the declaration is read, and the cutover's parity arm asserts the row property when the global goes away. | §5 |
 
 **§10.3 is struck through rather than deleted**, so a reader can tell *answered* from *never
 asked*. Neither remaining §10 question blocks increments 0–4; **§10.2 gates a claim, not a
 build**.
+
+**ON (f), WHAT LANDED AND WHAT DID NOT, because the ruling says "both verbs" and only one is in:**
+`accepted` is in the global set as of `lane/74`. **`rejected` is not, and the reason is measured
+rather than stylistic.** That set is kind-blind, and `rejected` is in `accepts` for
+`access_request`, `grouped_review` and `workflow_ack` — so a global entry makes **every rejection in
+the fleet** reason-required, changing three other species' behaviour from the safety lane, to
+enforce a property for a kind that does not exist yet. `accepted` has the opposite profile: no
+existing species accepts it, so the entry is **inert until the safety kinds land**, which is exactly
+what makes it safe to add ahead of them.
+
+**RESOLVED 2026-09-11, architect — `rejected` is NOT added globally, and that is the ruling rather
+than a deferral.** It becomes reason-required **on the safety declaration row**, enforced when
+M3.3's cutover reads rows. R-004(f) therefore stays half-landed **on purpose**, and the register
+records the kind-blindness as the reason.
+
+**This is now an argument FOR the cutover rather than a consequence of it.** The global set cannot
+express a per-kind property, and this is the first time that limit cost anything real: a verb that
+must carry a reason for a risk acceptance and must not for an access request is **not expressible**
+until the declaration is what `validate_decision` reads.
 
 **These rulings must travel with the declaration, not with the code table.** `_VERBS_BY_KIND`
 and cortex-ui's `taskKindRegistry` are **interim by construction and retire together**. The SDK
@@ -208,17 +229,44 @@ simply **cheaper than deploying from the wrong branch** — and naming that trad
 
 ---
 
-## R-010 — NOT RECORDED — the number is allocated and its content is not in hand
+## R-010 — Canvas-template CI on `pull_request` is a blessed exemption
 
-**A GAP, ENTERED DELIBERATELY.** The architect's dispatch said "commit R-009 through R-013"; the
-rulings supplied were R-011, R-012 and R-013, and R-009 arrived separately through cortex-ui-60.
-**No content for R-010 reached Lane 1.**
+**RULED 2026-09-08.** Source: architect thread. Governs
+[`.github/workflows/validate-canvas-templates.yml`](../../.github/workflows/validate-canvas-templates.yml);
+the job and its reasoning are in [`canvas-templates-slice-1`](../plans/canvas-templates-slice-1.md).
 
-Recorded as an explicit hole rather than skipped, because a register that silently jumps from
-R-009 to R-011 reads as complete — and the next lane to want a number would take R-010 and create
-a genuine collision with whatever it already is. **An absent entry that looks deliberate is the
-failure this file was built to stop.** If R-010 was never allocated, strike this and say so; if it
-was, it needs writing down before it can be cited.
+**It overrides [`no-ci-gate-on-the-suite`](../plans/no-ci-gate-on-the-suite.md)**, which makes CI
+jobs `workflow_dispatch`-only because a never-executed job wired to `push` burns minutes, goes red
+for environment reasons, and trains people to ignore it. That reasoning is unchanged and still
+governs everything else.
+
+**Why this job is the exception:** ADR-0050 §1.3 requires an invalid template to fail **at merge**.
+A `workflow_dispatch`-only job does not deliver merge-time failure, so shipping one and calling
+§1.3 satisfied would be precisely the decorative seal ADR-0050 is written against — a check whose
+green means only that nobody ran it.
+
+**Why the convention's cost does not apply here:** the job is seconds of hermetic pure Python over
+~200 lines of YAML — **no cluster, no database, no network**. The failure mode the convention
+protects against (environment-caused reds that train people to ignore a gate) has no purchase on a
+job with no environment.
+
+**The demotion is pre-committed, not promised.** One environment-caused red and it goes to
+`workflow_dispatch`. The standing rule loses to an argument only until it wins on evidence.
+
+**Scope — this is an exemption, not a new convention.** It licenses this one job. A second
+`pull_request` job cites its own argument or does not ship; "R-010 did it" is not that argument.
+The discriminator is the pair: **a decision-bearing gate whose whole value is merge-time refusal,
+AND a check with no environment to be flaky about.** A job missing either half is governed by
+`no-ci-gate-on-the-suite` as before.
+
+> **HOW THIS ENTRY WAS MISSING FOR THREE DAYS, recorded because the mechanism outlives it.** It
+> was written on 2026-09-08 into the **shared master tree's working copy and never committed** —
+> the session that drafted it restarted first. It was therefore invisible to `git log`, to every
+> lane branch, and to the architect, who correctly remembered ruling it and reported it as sent.
+> The register carried `R-010 — NOT RECORDED` for a day while the text sat forty lines above that
+> placeholder in a different tree. **An uncommitted file in a shared checkout is not a draft in
+> progress; it is a ruling that does not exist yet**, and nothing in the tree distinguishes the
+> two. Found independently by five lanes within ten minutes of being asked to identify themselves.
 
 ---
 
@@ -270,6 +318,87 @@ documented-unstable phrase, run only when a future run differs.
 **Law recorded by this ruling:** *a population hardened against the failure cannot measure the
 failure.* The seal was not lying — the population it ran against could no longer express the
 defect it was written to catch, which is indistinguishable from the defect being absent.
+
+---
+
+
+
+---
+
+## R-014 — ADR-0037 is NEXT after the harvest; its deferral reason is dissolved; `explains` edges are IRIs that resolve
+
+**RULED 2026-09-11.** Source: architect, this thread, relayed by `invincible-agent-91`.
+
+> **Numbering note — SUPERSEDED 2026-09-11, and left rather than deleted.** This read: *"R-009 –
+> R-013 were not present in this register when this entry was written, and nothing in the tree
+> claimed them."* **True when written; false within the hour.** All five are on `lane/01` at
+> `c78a240` — R-009 cortex-ui's deploy branch, **R-010 an explicit hole** (allocated, content not
+> in hand, entered so a jump from 009 to 011 does not read as complete), R-011 readiness fails on
+> GAVE-UP, R-012 no `getenv` defaults for service URLs, R-013 seal 3 as a regression seal.
+>
+> **Kept as history because striking it is the entry's own subject.** A note saying five rulings
+> are missing, read a day later, sends someone hunting for nothing — which is
+> [`a-figure-outlives-the-measurement-that-produced-it`](../principles/a-figure-outlives-the-measurement-that-produced-it.md)
+> committed inside a register whose job is to stop exactly that. **The gap was real for one hour
+> and is not a gap now.**
+
+### 1. ADR-0037 is next after the harvest, not deferred past it
+
+ADR-0037 has read **"NOT started, and deliberately not next"** since 2026-08-15. **That call is
+the architect's and it changes.** The deferral's stated reason was that its first build task
+lands in `doc-tools`, whose CI is silent on push — *"a first task that lands in a repo whose CI
+is silent is not packet-sized."*
+
+**That is a CI fix, not an architecture problem**, and it is step 0 (`doc-tools-7f`). The fact
+the deferral was made against has also changed: **there is now a customer producing leaves.**
+Their runbooks are the same shape — frontmatter, `explains` edges, ingested as an overlay corpus
+beside the platform's.
+
+**Sequence:** harvest + frontmatter backfill this week · doc-tools CI in parallel · ADR-0037
+slice 1 dispatched the moment both are true.
+
+### 2. `explains` edges are IRIs THAT RESOLVE. Nothing is minted.
+
+The drafted step 2 read *"every IRI the page names — a class, a verb, a seal, a registry site —
+becomes an `explains` edge."* **Struck.** A seal is a test function name; a registry site is a
+Python frozenset or a dict. **Neither has a graph identity**, and a rule requiring every named
+thing to carry an edge would manufacture exactly the IRIs ADR-0037 §1's invented-IRI rule
+refuses.
+
+The refusal is already recorded in the corpus by the two pages that got it right:
+`adding-an-engine.md` states there is no `mesh:registerEngine` and that minting one *"to make
+the edge look tidy is precisely what the gate exists to refuse"*; `adding-an-archetype.md` names
+**six sites and twelve seals** and honestly explains **one** IRI, `mesh:Archetype`.
+
+> **Edge count is not a quality signal. One page explaining one IRI is the rule working.**
+
+**The surviving seal is one-directional:** an `explains` edge to an IRI that does not resolve
+goes **red**. The reverse — *every named thing must have an edge* — is **struck**, and the reason
+belongs in the ADR rather than only here, because a future reader will propose it again.
+
+**Note this is a `resolve` check, not a `declared` check** — the two came apart three times in
+eight days. The instrument is a SPARQL `ASK` against the deployed graph, not a grep of a TTL.
+
+### 3. OPEN, for the ADR's author — a literal is not an IRI
+
+May a `DocPage` carry a seal name or site name as a **literal property** — searchable text, not
+a graph identity — so *"which runbook names `test_every_bound_archetype…`"* is answerable
+without minting a node for a test?
+
+**Permitted-in-principle, and the ADR's author may refuse it.** The architect's position: *"I'd
+rather it be refused on the page than assumed."* If it reads as the same temptation wearing a
+literal's clothes, **the refusal goes in the ADR with its reason** — which is the outcome either
+way, since an unrecorded refusal is indistinguishable from an oversight.
+
+### 4. Prerequisite, and it is not optional
+
+**Backfill the frontmatter on the existing corpus before any page is ingested.** Verified
+2026-09-11: of three real runbook pages, **one** carried the doc model.
+`adding-an-archetype.md` carried an invented shape (`title`/`status`/`date`/`adr`) and
+`rolling-a-service.md` carried none. Priming that corpus would produce **no `DocPage` for a
+third of it, silently** — the invisible-absence failure the whole doc model exists to prevent.
+
+*(`adding-an-archetype.md` fixed in `3c9582a`. `rolling-a-service.md` still open.)*
 
 ---
 
