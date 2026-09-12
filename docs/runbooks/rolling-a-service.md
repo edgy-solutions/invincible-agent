@@ -11,12 +11,13 @@ iri: docs:runbook-rolling-a-service
 # roll is an infrastructure act; the mesh does not model it, so there is no contract-depth
 # target and inventing `mesh:rollService` is exactly the move the gate exists to refuse.
 #
-# CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER: if doc ingest requires at least one
-# `explains` target, this page is REFUSED. That refusal is the correct outcome -- the only way
-# to be admitted would be a minted IRI, and a page admitted on a fabricated edge is worse than
-# a page the corpus does not carry. If the rule is meant to admit edgeless how-tos, that is a
-# doc-tools decision and this comment is where to record it.
-explains: []
+# RULED 2026-09-11 (register R-015), after this page raised the question: an edgeless runbook IS
+# admitted. A page with no honest graph target is still a corpus page -- reachable by audience
+# and by text, just not by an `explains` edge. Ingest requiring at least one target would refuse
+# every operational runbook, and this page is the proof. So: ZERO OR MORE edges, and a page with
+# none says so EXPLICITLY with the `none` sentinel below -- which is distinguishable from a
+# missing key (author forgot) and from an empty list (author was unsure). This is a decision.
+explains: none
 doc_kind: how-to
 # From policy/personas.yaml, lowercased -- the canonical enum (PORTFOLIO_LEAD, DATA_STEWARD,
 # DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST, COST_ANALYST), read out

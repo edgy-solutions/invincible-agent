@@ -273,6 +273,54 @@ defect it was written to catch, which is indistinguishable from the defect being
 
 ---
 
+## R-015 — An edgeless runbook IS admitted; a page with no honest target carries `explains: none`
+
+**RULED 2026-09-11.** Source: architect thread, raised by `rolling-a-service.md`.
+
+A runbook with no honest graph target **is still a corpus page** — reachable by audience and by
+text, just not by an `explains` edge. **Requiring at least one target would refuse every
+operational runbook**, and `rolling-a-service.md` is the proof: the mesh declares four lowercase
+verbs and 72 classes and not one concerns deployment, rolling, images, versions or health.
+
+So the rule is **zero or more edges**, and a page with none says so with an explicit sentinel:
+
+    explains: none
+
+**The sentinel is the ruling, not the emptiness.** `none` is distinguishable from a *missing key*
+(the author forgot) and from an empty list (the author was unsure). It records a decision that
+someone made and can be held to, which neither of the other two states can.
+
+**This supersedes nothing and narrows one thing:** it does not license an absent target where an
+honest one exists. The invented-IRI rule (ADR-0037 §1) is untouched — the only reason to write
+`none` is that the graph genuinely has nothing to point at, derived from the ontology rather than
+from not having looked. Feeds ADR-0037 slice 1; see [[R-014]] on `explains` edges resolving.
+
+---
+
+## R-016 — One frontmatter shape for runbooks; the archetype page is SWEPT, not exempted
+
+**RULED 2026-09-11.** Source: architect thread.
+
+One shape, and it is `_TEMPLATE.md`'s: `iri` / `explains` / `doc_kind` / `audience_hint`.
+
+`adding-an-archetype.md` carried `title` / `status` / `date` / `adr` — **a third shape, with no
+`iri` and no `explains`, so doc ingest could not admit it.** The page the index names as *the one
+that got it right* was the page invisible to the corpus it belongs to. It now declares
+`explains: [mesh:Archetype]`, the single IRI it honestly explains, verified present at
+`setup/ontologies/mesh_system.ttl:252` rather than read out of the ADR. Its four old fields moved
+into the body rather than being deleted.
+
+**Why a sweep and not an exemption, which is the whole ruling:** *an exemption for the page that
+got the CONTENT right teaches the next author that the SHAPE is optional.* The page's authority is
+exactly what makes exempting it expensive — it is the one people copy.
+
+Found independently by two lanes an hour apart (invincible-agent-5f and iagent-mesh-sdk-ca), each
+following the template as dispatched and each correctly reporting the conflict rather than
+resolving it locally. **A conflict two lanes hit separately is a defect in the instruction, not a
+judgement either of them got wrong.**
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
