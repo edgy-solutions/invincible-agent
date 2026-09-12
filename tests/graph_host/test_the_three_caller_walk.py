@@ -52,6 +52,8 @@ from socketserver import TCPServer
 
 import pytest
 
+from tests.graph_host._engine_deps import needs_langgraph
+
 _ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -113,6 +115,7 @@ def _run_brief(stub_url: str, identity: dict) -> dict:
 _IDENT = {"authorization": "Bearer caller-token", "x-originator-email": "alice@example.com"}
 
 
+@needs_langgraph
 def test_the_stub_is_actually_reached(engine_fin_stub):
     """POSITIVE CONTROL, first, and REWRITTEN because the first version controlled nothing.
 
@@ -130,6 +133,7 @@ def test_the_stub_is_actually_reached(engine_fin_stub):
     )._SOURCES], "the graph did not call the stub for each declared source, in order"
 
 
+@needs_langgraph
 def test_ENTITLED_gets_three_findings_and_no_holes(engine_fin_stub):
     url, verdicts, seen = engine_fin_stub
     out = _run_brief(url, _IDENT)
@@ -150,6 +154,7 @@ def test_ENTITLED_gets_three_findings_and_no_holes(engine_fin_stub):
     assert "PGM-001" in out.get("summary", ""), "the brief does not name the program it is about"
 
 
+@needs_langgraph
 def test_PARTIALLY_ENTITLED_gets_the_missing_finding_NAMED(engine_fin_stub):
     url, verdicts, seen = engine_fin_stub
     verdicts["fin_burn_rate"] = 403
@@ -184,6 +189,7 @@ def test_PARTIALLY_ENTITLED_gets_the_missing_finding_NAMED(engine_fin_stub):
     assert len(seen) == 3, "a refused inner verb stopped the graph; this row declares named-hole"
 
 
+@needs_langgraph
 def test_UNENTITLED_gets_all_holes_AND_the_brief_says_it_answered_NOTHING(engine_fin_stub):
     """The third caller, and the assertion is about HONESTY rather than refusal.
 
@@ -207,6 +213,7 @@ def test_UNENTITLED_gets_all_holes_AND_the_brief_says_it_answered_NOTHING(engine
     )
 
 
+@needs_langgraph
 def test_NO_IDENTITY_is_a_hole_and_the_host_credential_is_never_used(engine_fin_stub):
     """The fourth case, and it is the one that would be a security defect rather than a gap.
 

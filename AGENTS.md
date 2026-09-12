@@ -184,6 +184,36 @@ by inferring a lane from the work it seems to be doing.
 *We infer identity from the work instead of asking the roster. A dispatch names its lane's
 ADDRESS; if you cannot state the address you do not have a lane, you have a hope.*
 
+### A REPORTED RESULT CARRIES THE SHA IT RAN AT — AND AN UNCOMMITTED FILE HAS NO SHA
+
+**RULED 2026-09-12**, from a result reported upward while the code producing it existed on no
+branch.
+
+*"CENSUS EXIT CODE = 3"* was measured, correct, and reported to the architect — and the change
+that produced it sat **uncommitted in a working tree for hours**, invisible to `git log`, to
+every lane, and to any rerun. Found incidentally by `git status` while attributing an unrelated
+test failure. **Nothing was looking for it.**
+
+**This is the R-010 shape and it is the expensive one.** A ruling written into a working copy by
+a session that moved on before committing took three days and seven lanes to recover, and it was
+only found because someone was asked to identify themselves. *An uncommitted file in a working
+tree is not a draft in progress; it is a change that does not exist yet.*
+
+**THE RULE: a result you report names the sha it ran at.** Not as ceremony — as the thing that
+makes it reproducible by someone who was not there. A result with no sha is a claim, and the
+person receiving it cannot tell which.
+
+    measured -> commit -> report, with the sha
+    never:  measured -> report -> (commit, maybe)
+
+**And the failure mode is that the number is RIGHT.** Nothing about exit 3 was wrong; it was
+simply unreproducible, which is a property no one can see from the outside. That is what makes
+this worth a rule rather than more care — care does not detect it, and neither does a green
+suite.
+
+*Corollary, same root: the tree you measured must be the tree you commit. See the moving-tree
+rule — a suite running on a tree that changed during the run measures neither version.*
+
 ### COMMIT MESSAGES COME FROM A FILE. NEVER `-m` WITH BACKTICKS
 
 **RULED 2026-09-12, from a command that deleted its own examples.**

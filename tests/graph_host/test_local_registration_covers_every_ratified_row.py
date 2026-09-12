@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.graph_host._engine_deps import needs_langgraph
+
 _ROOT = Path(__file__).resolve().parents[2]
 _POLICY = _ROOT / "policy" / "graphs"
 
@@ -99,7 +101,38 @@ def test_there_is_something_to_register():
     )
 
 
-def test_every_ratified_row_produces_a_registration(booted):
+
+def test_every_ratified_row_produces_a_registration_PAYLOAD():
+    """THE COVERAGE CLAIM, and it runs in EVERY environment.
+
+    Split out from the booted test so that a missing engine dependency cannot take the
+    population check dark. One payload per ratified row, derived through the SDK — if a row
+    cannot produce one, that verb can never reach the mesh however healthy the host looks.
+
+    This is the half that must never skip. `test_the_host_actually_POSTS_one_per_row` below
+    proves the wire delivery and needs the engine's deps; this proves there is something
+    correct TO deliver.
+    """
+    from iagent_mesh.graph_manifest import load_manifests, registration_payload
+
+    manifests = load_manifests(_POLICY)
+    assert manifests, f"no ratified rows under {_POLICY} — the claim below is vacuous"
+    for m in manifests:
+        p = registration_payload(m, endpoint_url=f"http://host:8098/graphs/{m.graph_id}")
+        assert p["name"] == m.name
+        assert p["verb_iri"] == m.verb
+        assert p["input_uri"] == m.input_uri
+        assert p["output_uri"] == m.output_uri
+        assert p["arity"] == m.arity
+        assert p["required_args"] == [s.name for s in m.slots if s.required]
+        assert [s["name"] for s in p["slots"]] == [s.name for s in m.slots]
+        for declared, wire in zip(m.slots, p["slots"]):
+            assert wire.get("referent") == declared.referent
+        assert p["endpoint_url"].endswith(f"/graphs/{m.graph_id}")
+
+
+@needs_langgraph
+def test_the_host_actually_POSTS_one_per_row(booted):
     manifests, loaded, captured = booted
 
     assert loaded == sorted(m.graph_id for m in manifests), (
@@ -115,6 +148,7 @@ def test_every_ratified_row_produces_a_registration(booted):
     )
 
 
+@needs_langgraph
 def test_each_registration_carries_the_whole_contract(booted):
     """Named fields, not a count. A count passes when one field is swapped for another, and
     these are the ones Contract D and the eligibility gate actually read."""
@@ -140,6 +174,7 @@ def test_each_registration_carries_the_whole_contract(booted):
             assert wire.get("referent") == declared.referent
 
 
+@needs_langgraph
 def test_a_host_WITH_rows_still_starts_and_reports_ok(monkeypatch):
     """THE FLOOR'S POSITIVE CONTROL. Without it, "refuses on zero rows" is indistinguishable
     from "always refuses" — and a floor that rejects everything passes its own negative test
@@ -169,6 +204,7 @@ def test_a_host_WITH_rows_still_starts_and_reports_ok(monkeypatch):
     assert body["graphs"] == sorted(loaded), "health must NAME what it admitted, not just say ok"
 
 
+@needs_langgraph
 def test_a_host_with_no_ratified_rows_REFUSES_TO_START(tmp_path, monkeypatch):
     """The floor whose absence SHIPPED, sealed so it cannot come back.
 

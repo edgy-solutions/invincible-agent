@@ -26,14 +26,18 @@ in starlette.run_in_threadpool.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 import psycopg2
 import psycopg2.extras
+
+logger = logging.getLogger(__name__)
 
 # The Electric-replicated Postgres — same DSN the projector uses.
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
@@ -417,7 +421,138 @@ class InvalidDecisionForKind(ValueError):
     """The verb is not in this task species' vocabulary (or its reason is missing)."""
 
 
+#: THE SEED HALF ONLY, AND THAT IS THE WHOLE PROBLEM WITH GATING ON IT ALONE.
+#:
+#: `policy/task_kinds/` ships STRUCTURAL species. Domain species live in a work-side ADR-0036
+#: overlay and MAY NOT enter this repo — `test_no_domain_name_entered_the_platform_seed` fails
+#: the build if one does. So a kind's absence from this directory is **required by the design**
+#: rather than evidence nobody declared it.
+_DECL_DIR = Path(__file__).resolve().parents[2] / "policy" / "task_kinds"
+
+#: Where the deployment's OWN species are declared, colon-separated, from config. Absent in a
+#: platform-only deployment — and absent means "this deployment has no domain species", which
+#: is a different fact from "I was not told where to look". See `_declared_kinds`.
+_OVERLAY_DIRS_ENV = "TASK_KIND_OVERLAY_DIRS"
+
+#: `None` until read once. `frozenset()` would be indistinguishable from "read it and there
+#: were none", which is the exact ambiguity the fallback below turns on.
+_DECLARED_KINDS_CACHE: "frozenset[str] | None" = None
+
+
+def _declared_kinds() -> "frozenset[str] | None":
+    """Every ratified task kind, or **None** if the declarations could not be read.
+
+    NONE IS NOT AN EMPTY SET, AND CONFLATING THEM IS THE DANGEROUS DIRECTION HERE. An empty
+    set means "nothing is declared", which makes every kind undeclared and refuses every
+    decision in the fleet. A missing directory, an unreadable file or an absent SDK would
+    then take the whole task rail down while looking like a security improvement.
+
+    So an unreadable registry falls back to TODAY'S behaviour and says so loudly. That is the
+    opposite of the `getenv`-default rule (R-012) on purpose: there, a default silently
+    supplied a value nobody chose; here, refusing to default would silently withdraw an
+    affordance everyone depends on. The asymmetry is which error is recoverable.
+
+    THE SEED ALONE IS NOT THE SET, AND GATING ON IT REFUSED 18 OF 55 LIVE ROWS. Measured by
+    `iagent-mesh-sdk-ca` against sandbox's `human_task_projection` before this reached master::
+
+        grouped_review      25   in the seed        ok
+        pcn_disposition     16   NOT in the seed    would have been REFUSED
+        extraction_refusal   9   in the seed        ok
+        workflow_ack         3   in the seed        ok
+        pcn_grouped_review   2   NOT in the seed    would have been REFUSED
+
+    `pcn_disposition` is minted live (`dispatch_plan.py:107`) and is absent from the seed
+    **because the design requires it to be** — domain species live in a work-side overlay and
+    a test fails the build if one enters this repo. **Refusing on absence from a partial set is
+    a searched zero read as a structural zero**, and it is the same mistake as reading "not in
+    `_VERBS_BY_KIND`" as "not declared", one level up.
+
+    SO THE GATE RESOLVES AGAINST THE COMPOSED SET, and **returns None when no overlay path is
+    configured** — because then this process genuinely cannot tell "undeclared" from "declared
+    somewhere I was not told to look", and in that state refusing is the dangerous direction.
+    A deployment with no domain species composes to exactly the seed, so nothing changes for
+    it; a deployment WITH them must say where they are before the gate can be trusted to fire.
+    """
+    global _DECLARED_KINDS_CACHE
+    if _DECLARED_KINDS_CACHE is not None:
+        return _DECLARED_KINDS_CACHE
+    raw = (os.getenv(_OVERLAY_DIRS_ENV) or "").strip()
+    if not raw:
+        logger.warning(
+            "%s is unset, so the task-kind set is the SEED HALF ONLY and cannot be trusted to "
+            "be complete — undeclared kinds keep today's verbs. Set it to the deployment's "
+            "overlay directory (empty string is not the same as 'no domain species'; point it "
+            "at an empty dir to assert there are none).",
+            _OVERLAY_DIRS_ENV,
+        )
+        return None
+    overlays = [p for p in (s.strip() for s in raw.split(os.pathsep)) if p]
+
+    # A CONFIGURED PATH THAT IS NOT THERE IS UNREADABLE, NOT EMPTY — and `compose` will not
+    # tell you. It composes a missing overlay directory to silence, so a TYPO in this variable
+    # yields the seed set and the gate fires on it: exactly the 18-row outage, arriving through
+    # a mistyped path instead of a missing feature. The difference between "you told me where
+    # to look and there was nothing there" and "you told me where to look and the place does
+    # not exist" is the whole safety property here, so it is checked rather than inferred.
+    missing = [p for p in overlays if not Path(p).is_dir()]
+    if missing:
+        logger.warning(
+            "%s names %s, which %s not exist — the declared set cannot be known, so undeclared "
+            "kinds keep today's verbs. A path that is not there is UNREADABLE, not empty; "
+            "point the variable at an existing (possibly empty) directory to assert this "
+            "deployment has no domain species.",
+            _OVERLAY_DIRS_ENV, missing, "does" if len(missing) == 1 else "do",
+        )
+        return None
+
+    try:
+        from iagent_mesh.task_kinds import compose  # noqa: PLC0415
+        kinds = compose(_DECL_DIR, overlays)
+        names = frozenset(str(getattr(k, "kind", "") or "") for k in kinds) - {""}
+        if not names:
+            logger.warning(
+                "task-kind composition over %s + %s named nothing — treating the registry as "
+                "UNREADABLE rather than empty. An empty registry and an unreadable one are "
+                "not the same fact.",
+                _DECL_DIR, overlays,
+            )
+            return None
+        _DECLARED_KINDS_CACHE = names
+        return names
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "could not compose task-kind declarations from %s + %s (%s: %s) — undeclared "
+            "kinds keep today's verbs. This is a FALLBACK, not a decision: an unreadable "
+            "registry must not refuse every decision in the fleet.",
+            _DECL_DIR, overlays, type(exc).__name__, exc,
+        )
+        return None
+
+
 def verbs_for_kind(kind: str) -> frozenset[str]:
+    """The verbs this species accepts. **An UNDECLARED kind accepts nothing.**
+
+    THE DEFECT THIS CLOSES. An unknown kind fell through to `_DEFAULT_VERBS` and was handed
+    `approved`/`rejected` — so a caller bypassing the card could dispose a species nobody
+    declared. cortex-ui closed the render half (`21b2bae`: the verb block is gated on
+    `isRegisteredKind`, which finally has a caller, and the fixture asserts `buttons()` is
+    EMPTY). This is the gateway half, and until it lands the state is a UI offering nothing
+    over an API that would still take the answer.
+
+    FOR A RISK ACCEPTANCE THAT IS ADR-0051 §7's REFUSAL DEFEATED FROM OUTSIDE THE ENGINE:
+    an acceptance reachable through a generic approval verb, with no authority tier and no
+    required reason.
+
+    **This makes no task deader than it already is on screen.** The card already offers
+    nothing for these kinds; this stops the API accepting what the card refuses.
+
+    NOT IN `_VERBS_BY_KIND` IS NOT THE SAME AS NOT DECLARED. Three of the four ratified kinds
+    are absent from that table and correctly ride `_DEFAULT_VERBS` — the table is an interim
+    per-kind override, not the registry.
+    """
+    declared = _declared_kinds()
+    if declared is not None and kind not in declared:
+        return frozenset()
     return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
 
 

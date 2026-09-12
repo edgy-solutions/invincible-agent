@@ -522,6 +522,39 @@ def main() -> int:
               "completion found). The table is PARTIAL, and a reader taking 0 from it would be "
               "taking a pass on a claim nobody made.")
         return 3
+
+    # THE SECOND CLAIM WAS BEING COLLECTED AND THROWN AWAY. Found 2026-09-12, on the first
+    # uniform roll this census was built for: `stale_reg` was populated at the row loop and
+    # referenced NOWHERE ELSE, so `BEFORE PRIME` printed in a column and reached no exit code.
+    # A dead variable is a guard that cannot fire, and this one sat inside the instrument whose
+    # whole purpose is to notice that elsewhere.
+    #
+    # IT IS 3 AND NOT 1, AND THE REASON IS THE POPULATION. The engine-reregister hook restarts
+    # only the engines that REGISTER — ten of them. `engine-o` and `cortex-bff` are not on that
+    # list and are not meant to be: they read the graph rather than registering into it, and
+    # engine-o's resolver cache carries a 30s TTL precisely so it does not need a restart to see
+    # a new provider. So a service predating the prime is a FAILURE for a registering engine and
+    # ROUTINE for those two, and this census cannot tell which it is looking at.
+    #
+    # Reporting it as a failure would cry wolf on every clean roll. Reporting nothing is what it
+    # did. Naming them and exiting 3 says the true thing: the claim was looked at, and for these
+    # services it could not be settled here.
+    if stale_reg:
+        print("")
+        print(
+            f"NOTE: exit 3 — sha checked and PASSED; registration recency UNSETTLED for "
+            f"{len(stale_reg)} service(s): {', '.join(sorted(stale_reg))}."
+        )
+        print(
+            "      Each started BEFORE the last prime completed. That is a DEFECT for an "
+            "engine that registers at startup and ROUTINE for one that does not — and this "
+            "census cannot tell them apart."
+        )
+        print(
+            "      Check against the engine-reregister hook's own list: a name on it that "
+            "appears here did not get its restart."
+        )
+        return 3
     return 0
 
 
