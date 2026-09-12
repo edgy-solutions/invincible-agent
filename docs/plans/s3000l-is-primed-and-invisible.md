@@ -1,7 +1,7 @@
 ---
 id:         s3000l-is-primed-and-invisible
 status:     open
-owner:      lane-1
+owner:      doc-tools-7f
 blocked-on:
 closed-by:
 repo:       invincible-agent
@@ -11,7 +11,17 @@ summary:    S3000L is in the prime manifest, loads, and contributes 761 owl:Clas
 # S3000L is primed, reproducible, and invisible to every menu
 
 **Found 2026-09-11 during ADR-0051's ADR-0007 survey**, by the survey nearly recording a false
-negative. Routed to Lane 1: this is a prime-step change, not safety work.
+negative.
+
+**ROUTED TO `doc-tools-7f`, corrected 2026-09-12.** It was first routed to Lane 1 as "a prime-step
+change", which was half right: the *symptom* is visible here, but `ingest_ontology_to_jena` lives in
+**doc-tools**, and this repo names it only in docs and `values-sandbox.yaml`. The build is
+doc-tools'. **Lane 1 files it, and does not build it.**
+
+**The two controls stay in THIS repo**, because they assert what a consumer sees rather than what
+the ingest wrote: the SUSTAINMENT class count as a floor reporting its own delta, and an authored
+label surviving and being marked `authored`. A seal that runs only where the fix lands cannot see
+the thing the fix was for.
 
 ## The measurement
 
