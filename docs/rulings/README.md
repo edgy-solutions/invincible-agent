@@ -66,7 +66,7 @@ until this entry existed it was a relay, and 5f was right to refuse it.
 * **The template schema change is an ADR-0050 amendment** and wants that amendment written, not
   a silent field addition.
 
-**Blocked behind [R-005](#r-005-shared_slots-are-template-scoped).** `lens` lands with the
+**Blocked behind [R-005](#r-005--shared_slots-are-template-scoped).** `lens` lands with the
 Phase 2 template work, which does not move until the seeder is scoped.
 
 ---
@@ -603,6 +603,46 @@ alone is insufficient regardless, since session addresses churn hourly and `invi
 is already gone. A roster keyed only on them reproduces the failure it exists to prevent.
 
 ---
+
+---
+
+## R-021 — ONLY `lane/01` ALLOCATES RULING NUMBERS. Authors route text and get a number back
+
+**RULED 2026-09-11.** Source: architect thread, closing the class that R-020's renumbering
+opened.
+
+**Nobody allocates against the copy of the register they happen to have.** An author with a
+ruling to record — the architecture seat, a lane, anyone — **routes the text to Lane 1 and
+receives a number.** Lane 1 writes the entry.
+
+### Why this is the rule that makes two seats and one register work
+
+R-019 established two seats writing into one file. **That is only coherent if exactly one of them
+allocates**, and the failure it prevents was measured the same day rather than imagined:
+
+| seat | allocated against | took |
+|---|---|---|
+| architecture seat | `origin/master` — **8 entries** | R-011 |
+| Lane 1 | `lane/01` — **16 entries** | R-011 |
+
+**Neither was careless. Each took the next free number it could see**, and the register was forked
+five ways, so *"the next free number"* was a different number depending on which tree you were
+standing in. See R-020, which is that collision resolved.
+
+**A REGISTRY WHOSE ALLOCATION DEPENDS ON THE READER'S CHECKOUT CANNOT ALLOCATE.** That is the
+whole of it. The fork is fixed today by a merge, and merges are not a mechanism — the register
+will fork again the moment two lanes both hold unmerged work, which is its normal state.
+
+### What this does NOT do
+
+It does not make Lane 1 the author of anyone's ruling. **The text, the reasoning and the
+authority stay with whoever ruled it** — R-020 is the architecture seat's entry in the seat's own
+words, renumbered and nothing else. Allocation is a clerical monopoly, deliberately: the scarce
+resource is the *number*, not the judgement.
+
+Nor does it gate recording a decision. **A ruling with no number yet is still a ruling** — route
+the text, act on it, and cite it once the number comes back. What it may not be is *numbered by
+its author*.
 
 ---
 
