@@ -1,6 +1,6 @@
 """Every third-party module this repo imports must be a DECLARED dependency.
 
-PROMOTED FROM A COST-ENGINE SEAL TO A REPO SEAL, 2026-09-11, after the class reached three
+PROMOTED FROM A COST-ENGINE SEAL TO A REPO SEAL, 2026-09-11, after the class reached two
 instances in two days:
 
     uvicorn   the Procfile launched `uvicorn main:app` while the engine declared only
@@ -10,16 +10,28 @@ instances in two days:
               did not have it, and `include_dataset` DEFAULTED TO TRUE. Every local test
               passed, because duckdb was incidentally installed until another lane's SDK bump
               triggered a sync that removed it.
-    dagster   `from dagster import Definitions`, with only `dagster-postgres`,
-              `dagster-webserver` and `dagster-dg-cli` declared. On a CI runner the resolution
-              differed enough that the `dagster` NAMESPACE existed — contributed by those
-              sibling distributions — while the core package did not:
-                  ImportError: cannot import name 'Definitions' from 'dagster' (unknown location)
-              `(unknown location)` is the tell for a namespace package with no `__init__.py`.
-              NOTHING WAS SHADOWING IT; the name resolved because the core was ABSENT.
+A THIRD INSTANCE WAS LISTED HERE AND IT WAS NOT ONE. RETRACTED 2026-09-11. This file
+originally cited a CI failure reading
+
+    ImportError: cannot import name 'Definitions' from 'dagster' (unknown location)
+
+as an undeclared-dependency case, on the theory that sibling distributions
+(`dagster-postgres`, `dagster-webserver`) contributed a `dagster` NAMESPACE while the core
+package was absent. **That never happened.** dagster core is in `uv.lock` and always was;
+declaring it relocked 262 packages to 262 packages and did not change the failure. The real
+cause was a TEST'S OWN STUB — a bare `types.ModuleType("dagster")` in `sys.modules`, reached
+because `iagent/__init__.py` coupled every leaf import to the Dagster graph. `(unknown
+location)` is the tell for a module object with no `__file__`, which a stub satisfies just as
+well as a namespace package. Sealed instead by
+`tests/test_a_leaf_import_does_not_boot_dagster.py`.
+
+The retraction is kept rather than deleted because the error string is genuinely ambiguous
+between the two causes, and the next reader to meet it will be tempted down the same path:
+**`(unknown location)` does not distinguish "the distribution is missing" from "somebody put a
+fake there", and only one of those is fixed by declaring a dependency.**
 
 **A DEPENDENCY THAT ARRIVES TRANSITIVELY IS UNDECLARED, AND UNDECLARED MEANS IT CAN LEAVE
-WITHOUT NOTICE.** All three passed locally. All three broke somewhere a lane never ran.
+WITHOUT NOTICE.** Both real instances passed locally. Both broke somewhere a lane never ran.
 
 IMPORT NAME IS NOT DISTRIBUTION NAME, and comparing them directly is how this check produces
 forty false positives: `yaml` comes from `PyYAML`, `jwt` from `PyJWT`, `datahub` from
