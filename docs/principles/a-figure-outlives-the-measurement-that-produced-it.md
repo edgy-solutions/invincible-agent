@@ -29,8 +29,24 @@ because prose does not move when code does.
 | a dispatch instructing *"expect red until the prime"* in a commit message | yes | that commit's seals were **green** |
 | *"26 occurrences"* of a symbol, quoted three times in one argument | no — 26 was LINES | `grep -c` counts lines; two lanes then agreed loudly about different quantities |
 
-The last is the same defect one step earlier: a figure that was never what its unit claimed.
+**THE LAST ONE IS THE STRONGEST AND IT BREAKS THE TITLE, DELIBERATELY LEFT.** The first four
+*rotted* — true when written, false when read. The fifth was **born wrong**: 26 was never
+"occurrences", so it was false at the moment of writing, and it travelled the same distance in
+the same way. **So the propagation mechanism does not need staleness at all — precision alone is
+enough.** Staleness is the common cause; the decimal tail is the carrier. (91's reading, and it is
+the sharper one: my title names the frequent case, not the mechanism.)
 See [`name what the number counts`](a-green-seal-can-be-green-for-the-wrong-reason.md).
+
+## "Recorded" is not a record
+
+This law was itself nearly lost to a milder form of it. Told *"recorded with four instances"*, the
+other lane meant **their own session memory** — outside the repo, invisible to everyone including
+the person they were telling. **A claim that exists only where its author can see it is a
+conversation, not a record**, and "recorded" does not distinguish *"I will remember"* from *"the
+team can find it"*.
+
+Say which. The check is cheap: **can someone who was not in the conversation find it by
+searching?**
 
 ## The defences
 

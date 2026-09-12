@@ -207,14 +207,39 @@ from a docstring and was one review from publishing it.
 ### 7. Migration order for finance
 
 `fin_eac_comparison` **done**. **`fin_variance_drivers` next**, and the reason is the money
-ruling's own test rather than convenience: it **ranks by `abs(contribution)`, which is a
-comparison**, so the ruling's "producers and any consumer that subtracts or compares" clause
-catches it. The Decimal pass and the module extraction therefore want to happen **in one move
-rather than two** — 91's read, and it is right: extracting a module and then changing its
-arithmetic is two behaviour-preserving claims where only one can be checked at a time.
+ruling's own test rather than convenience: it **ranks by `abs(contribution)`** — *"Ordering is by
+absolute contribution; the sign is on the row"* — so the ruling's *producers and any consumer that
+subtracts or compares* clause catches it.
+
+**TWO MOVES, NOT ONE, AND THE ORDER MATTERS:**
+
+1. **Extraction alone.** Seal green **before and after**, values unchanged.
+2. **Decimal pass alone.** Seal updated where values move, with each move named.
+
+**Both at once cannot be checked.** A green then covers only the *conjunction*, and a red is
+unattributable between the refactor and the arithmetic. Worse, it makes the rule in the next
+paragraph impossible to perform: you cannot have a green *before and after* an extraction when the
+same commit changes what the seal asserts — the two greens are asserting different values, so
+behaviour-preservation is never tested at all.
+
+**And extraction FIRST specifically, because it is the only order that checks against an
+untouched assertion.** The existing seal — written before either change, already battle-tested —
+is the check. Decimal-first also gives attributable diffs, but the extraction would then be
+verified against a seal rewritten minutes earlier, which is a weaker instrument for no gain.
+
+**This matters for this verb in particular:** the Decimal pass here **may not be
+behaviour-preserving**. Decimal can reorder a tie that float resolved arbitrarily, which is a
+deliberate value change — exactly the thing that must not be entangled with a refactor.
 
 The remaining four follow. Each extraction **behaviour-preserving**, with the seal green **before
 and after**; a green only after is a rewrite wearing a refactor's name.
+
+> **How this section was wrong until 2026-09-11, recorded because the mechanism is reusable.**
+> 91 said "one move" without a reason; I accepted the conclusion and **supplied a reason for it**
+> — *"two behaviour-preserving claims where only one can be checked at a time"* — which is true
+> and argues for the **opposite**. A justification invented to support a received conclusion
+> **fits it by construction**, and mine contradicted the very next paragraph I wrote. 91 caught
+> it and inverted their own call.
 
 ## Open — for the architect, deliberately not decided here
 
