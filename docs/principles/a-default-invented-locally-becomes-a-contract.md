@@ -71,3 +71,29 @@ classifier's 0.92. **A number chosen by one component silently became the fleet'
 
 Related: [`reachability-is-a-property-of-a-path`](reachability-is-a-property-of-a-path.md) — both
 are a claim that reads as checked because it is precise; [`a-green-check-proves-only-its-scope`](a-green-check-proves-only-its-scope.md).
+
+## It is the `getenv`-default pattern, moved into an interview protocol
+
+**RULED 2026-09-12.** The same defect [R-012](../rulings/README.md#r-012--getenv-defaults-for-service-urls-are-refused)
+refuses for service URLs, arriving one layer up where nobody was looking for it.
+
+| | the defect | what it produced |
+|---|---|---|
+| **R-012** | a service URL with a `getenv` default | a configuration error delivered as a confident wrong answer |
+| **this** | an instance-menu bound with a provider default | *"9 exist"* with an empty members list, and a refusal that made the ask useless |
+
+**The mechanism is identical and it is worth naming precisely: a value the CALLER omits, read as
+the caller's DECLARATION.** The bound was understood as *"what the caller says it can render"* —
+but the caller does not send it, so each provider supplied a number of its own and then reasoned
+about that number as though the contract had specified it. Two of six classes were refusing at a
+bound nobody had ever asserted.
+
+**A default is an assertion about the other side of an interface, made by the side that cannot
+see it.** That is why both rulings land the same way: **the side that can render the menu is the
+side that must send the limit**, exactly as the side that knows its own URL must declare it.
+
+And the failure is worse than a wrong number, in both cases, because the wrongness is invisible
+from where it is made: the provider's refusal was *correct given its own bound*, and the bound was
+the only thing wrong. **A refusal designed to protect an ask became the reason the ask was
+useless.**
+
