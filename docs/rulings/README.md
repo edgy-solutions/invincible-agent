@@ -776,6 +776,99 @@ wrote one into a seal's justification.
 
 ---
 
+## R-026 — Three laws from the v0.8.0 pin, each about an instrument rather than a subject
+
+**Ruled by the architect on the `frozenset`/tuple report, 2026-09-12.** All three are about the
+thing doing the checking, which is why they sit together.
+
+### (a) A wrapper that discards a fix while leaving the bump looking applied
+
+`frozenset(...)` around a tuple is not a type annoyance. **It reverses the change the version bump
+exists to deliver, and leaves every visible sign of the bump in place** — the pin moved, the lock
+moved, the SDK ships the ordered field, and the value arriving at the card is unordered anyway.
+Nothing is red, the release notes are true, and the defect is invisible at the only layer anyone
+inspects.
+
+**So a bump that changes a CONTRACT is not landed when the pin moves. It is landed when a seal
+asserts the new contract's effect at the consuming surface**, and that seal has to be written
+before the pin so it cannot be written to fit what the code already does.
+
+### (b) Sorting an unordered source rather than passing it through
+
+Where a source genuinely has no order, **impose one; never pass through.** Python randomises
+string hashing per process, so a `frozenset`'s iteration order differs **in every pod** — measured
+three times on identical input by `iagent-mesh-sdk-ca`, three different orders. Pass-through does
+not produce "an arbitrary but stable order"; it produces **a fresh order on every restart**, with
+nothing in the diff to explain why the buttons moved.
+
+**Sorting is the only deterministic option available, not the tidier one.** The original docstring
+here said *"arbitrary but not random"* — the decision was right and the mechanism was wrong, which
+is the more durable error: **the code cannot fail, so the false premise survives to be reused
+somewhere the code would.** Cf. [[a-justification-invented-downstream-fits-by-construction]] and
+R-025; this is the same family with the sign flipped — a TRUE conclusion resting on a false
+reason, which no test can ever catch.
+
+### (c) The instrument and the subject share a surface — the container-type instance
+
+**Nine seals asserted container TYPE when their claim was verb MEMBERSHIP.** `assert
+isinstance(verbs, frozenset)` passes, reads as rigour, and says nothing whatever about whether the
+species accepts the right words. The seal and the thing it checks touch at the same surface, so
+the wrong one gets asserted and the result is indistinguishable from the right one.
+
+**Ask what the claim is BEFORE choosing what to assert, and state the claim in the failure
+message.** A seal whose message cannot say what went wrong in the subject's own vocabulary is
+probably asserting its instrument.
+
+### The corollary these three produced in practice, on the same day
+
+**A SEAL THAT DEFENDS A CHOICE MUST ASSERT THAT ITS OWN FIXTURE DISTINGUISHES THE REJECTED RULE.**
+
+The order seal written for this pin used `risk_acceptance_high`, whose row declares
+`[accepted, rejected, returned_for_rework]` — **already alphabetical**. `sorted()` and
+pass-through produce the identical tuple, so the assertion could not tell the rejected rule from
+the intended one. It passed, and it measured nothing. Mutation testing cannot find this: the
+mutant and the original agree on that fixture.
+
+`hazard_link_review` declares `[linked, new_hazard, dismissed]`, and **in the whole sample overlay
+it is the only row that discriminates.** Most natural verb lists are alphabetical by accident,
+which is precisely why this hides. The seal now asserts the discrimination itself, so
+alphabetising that row later goes red rather than quietly restoring the vacuum.
+
+### Two sites the same class cost on this pin
+
+| miss | why no rebuild would have caught it |
+|---|---|
+| `values.yaml` `meshSdkVersion` | the domain broker pip-installs the SDK **at pod start** on stock `python:3.12-slim`, not the iagent image |
+| 14 per-engine `uv.lock` files | the image build runs `uv sync --locked`; relocking the root alone fails every engine build at **image** time |
+
+**The pin was sixteen sites and fifteen were found by hand.** Both misses were caught by seals.
+Cf. [[a-sample-is-not-the-population]] — and R-027 below, where the same shape appeared *inside*
+the seal written about it.
+
+---
+
+## R-027 — A hand-written COUNT of a population is a sample too
+
+**Seal 13's staleness guard was the defect it guards.** The seal checks that a new engine is
+registered at every site the registry packet lists, and it carried:
+
+    assert "9" not in rows, "...add it here rather than letting the seal quietly under-report"
+
+**A hardcoded count, inside the seal written about hand-kept lists**, instructing the next author
+to edit a literal. It fired correctly when the packet grew from eight sites to ten — and the
+repair was **not** `9` → `11`. It now parses the packet's site numbers and asserts a
+`test_site_<n>` exists for each, so packet and seal cannot drift **in either direction**, and a
+new site is red until it is *checked* rather than until someone *notices*.
+
+**The rule: where a seal is derived from a source, its COMPLETENESS CHECK must be derived from the
+same source.** A derived population guarded by a hand-written count has simply moved the sample
+one level up — which is exactly what *"a derived population is only as complete as the thing it
+derives from"* said, applied to the instrument instead of the subject.
+
+Related: [[a-filed-defect-is-a-sample-not-a-census]], [[an-absence-assertion-is-worth-its-control]].
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
