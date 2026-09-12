@@ -1,18 +1,31 @@
 # ADR-0053 — Measure modules: computation as a declared, versioned, pluggable unit
 
 **Status:** **ACCEPTED 2026-09-11** — ratified by the architect as **R-017** in
-[`docs/rulings/README.md`](../rulings/README.md), verified present on `origin/master` at `dffa6a3`
+[`docs/rulings/README.md`](../rulings/README.md#r-017--adr-0053-ratified-registry-per-deployment-selection-per-program-external-modules-under-sha-pinned-resolution),
+verified present on `origin/master` at `dffa6a3`
 before this line was written. Proposed earlier the same day, **after review by
 `invincible-agent-91` against the tree** (one claim wrong, one false; both corrected in place,
 neither softened). **ADR and seal skeleton only; no engine changes.** The finance extractions
 continue under R-001 and the money ruling as already sequenced, in another lane.
 
-**THE CITATION ABOVE CARRIES NO `#r-017` FRAGMENT, AND THAT IS DELIBERATE.**
-`tests/test_citation_paths.py` resolves the PATH half of a citation and never the fragment, so a
-truncated anchor is green in every tree. Filed by this lane on 2026-09-11 with two live instances
-(`#r-005-shared`, truncated under **both** candidate slug rules). Until the checker can say no
-about the fragment, this ADR names the ruling in prose and links the file — the half that is
-actually sealed.
+**THE FRAGMENT IS BACK, AND THE PARAGRAPH THAT REMOVED IT WAS WRONG IN A WAY WORTH KEEPING.**
+This ADR briefly cited R-017 without an anchor, on the reasoning that `test_citation_paths.py`
+resolves a citation's PATH and never its fragment, so no anchor could be trusted. Two things
+have since changed and both are corrections rather than developments:
+
+* **The two "live broken instances" this lane reported were an artifact of the scanner that
+  found them** — a character class that stopped at an underscore, so a full and correct
+  fragment was reported truncated. The claim was repeated here before it was checked.
+* **The slug question is settled by measurement, not by argument.** Another lane POSTed the
+  headings to GitHub's own renderer: punctuation is stripped and every space becomes one
+  hyphen, with no collapsing — so a heading's ` — ` leaves **two**. The anchor above carries
+  the double hyphen for that reason, and
+  [`tests/test_citation_anchors_resolve.py`](../../tests/test_citation_anchors_resolve.py)
+  now fails any citation naming a heading that does not exist.
+
+Kept rather than quietly rewritten because the original reasoning was sound and its premise
+was not: *refusing to cite what you cannot verify* is right, and **"cannot be verified" is a
+state of the tooling that someone can end.**
 
 **READ THE TREE FIRST, AND IT CORRECTS THE SKETCH IN ONE PLACE THAT MATTERS.** The dispatch
 describes "a measure is a pure, versioned module" as the pattern *as built*. Half of it is built
