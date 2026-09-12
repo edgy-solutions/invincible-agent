@@ -13,8 +13,34 @@ card on screen.
 **Runs last in the browser session**, after the finance board and the §9.2 decision.
 
 **Fleet state assumed:** rev 108, all 17 at `74d6f638f4f5`, all eight cost verbs registered
-(confirmed from `db.relationshipTypes()`). **So a card that does not draw is a PRESENTATION
-problem, not a registration one.** That distinction is the whole point of this walk.
+(confirmed from `db.relationshipTypes()`).
+
+> ## ⚠ WALKED 2026-09-11, AND ALL FOUR ABSTAINED BEFORE ANY CARD WAS REACHED
+>
+> **This sheet said: "a card that does not draw is a PRESENTATION problem, not a registration
+> one." It was NEITHER, and the walk is what proved it.** A two-way split left no name for what
+> actually happened — the questions never reached this engine at all.
+>
+> `"lot 4"` was captured by engine-fin's instance provider at **exactly 0.500**, matching the
+> **bare digit** against a WBS element's `instance_id`; `banana 4` reproduces the hit, and
+> `lot four` produces nothing. That override discarded a correct `cost:Supplier` classification
+> **at 0.92**, and Engine O's post-preemption check then abstained — correctly, and for the
+> first time in production.
+>
+> **So the third state is ROUTING, and it is the one this sheet could not name.** Full chain and
+> the controls: [`lot-4-resolves-to-program-support-2026-09-11.md`](lot-4-resolves-to-program-support-2026-09-11.md).
+>
+> **PREREQUISITE BEFORE WALKING AGAIN**, or all four abstain identically: engine-cost's own
+> instance provider (`cost_agent/instances.py`, shipped `d446a15`) must be **registered in the
+> graph** — a roll and a prime, not a commit — and Lane 1's scope rule must be in force.
+>
+> The questions below are **unchanged**, and are now parsed directly out of this file by
+> `tests/cost/test_the_walk_sheet_resolves_to_cost_lots.py`: **reword one and the seal moves
+> with it. Q5 became TWO prompts on master while this banner was being written, and the seal's
+> own count is what caught it — five prompts, four questions, both Q5 steps sealed.**
+>
+> *Nine verbs are registered now, not eight — `package_export` landed after the line above was
+> written, and the instance provider adds two registrations that are not verbs.*
 
 ---
 
@@ -72,19 +98,43 @@ It was a PREDICTION about which vintage the answer would use, written as an INST
 
 > **"did the rates move against the estimate on lot 3"**
 
-**Expect: `VintageRequired` — *not* a card, and this is a PASS.**
+**Expect: `outcome: "slot_required"` — *not* a card, and this is a PASS.**
+
+> **⚠ THIS SAID `VintageRequired` UNTIL 2026-09-11, AND THAT REFUSAL COULD NOT HAPPEN.**
+> `rate_vintage` is spoken-mandatory, so `/measure/{fn}` short-circuits **before the verb
+> runs**. `_require_vintage` — the only code that knows the vintages — **was unreachable
+> through the path the UI uses.** The wire carried `missing` and `declarations` and **no
+> values at all**, so the second check below could not pass and a walker would have scored a
+> red against a rendering that works. Found by reading the payload rather than the code.
+> **Fixed**: the route now computes `options` from the slots the caller did supply, and a
+> seal asserts it agrees with what the verb would have said.
 
 The phrasing routes correctly (`"did the rates move"` is a declared synonym of
-`mesh:costRateComparison`), and then the verb refuses because `rate_vintage` is required and
-absent. **Checks that matter, and nothing has ever confirmed these render:**
+`mesh:costRateComparison`), and the **route** then refuses because `rate_vintage` is required
+and absent. **This is the payload to compare against — captured from the engine, not written
+from memory:**
+
+```json
+{ "refused": true, "outcome": "slot_required",
+  "reason": "cost_rate_comparison needs rate_vintage",
+  "missing": ["rate_vintage"],
+  "options": { "rate_vintage": ["2021-02-01", "2021-08-01"] } }
+```
+
+**Checks that matter, and nothing has ever confirmed these render:**
 
 - **The refusal DRAWS AT ALL.** A designed refusal that renders as generalist prose, or as
   `No content available`, is the same defect as a card that will not draw — and it is the one
-  failure this walk was most likely to mislabel.
-- **It names BOTH vintages — `2021-02-01` and `2021-08-01`.** The exception carries `available`
-  precisely so the caller's next question is answerable. A refusal that withholds them is a dead
-  end wearing a refusal's clothes.
-- **It says WHY**, in terms of the basis rather than of a missing parameter.
+  failure this walk was most likely to mislabel. **This is the whole reason Q5 is here.**
+- **It names BOTH vintages — `2021-02-01` and `2021-08-01`** — from `options.rate_vintage`.
+  A refusal that withholds them is a dead end wearing a refusal's clothes. **If the screen
+  shows the refusal but not the two values, the payload is right and the RENDERER is
+  dropping them; that is a cortex finding, not an engine one.**
+- **It says WHY — and today it says "needs rate_vintage", which is a missing-parameter
+  reason, not a basis reason.** ⚠ **KNOWN RESIDUAL, do not score it red.** The route's
+  message is generic across every verb; the basis-level explanation lives in
+  `VintageRequired`, which this path still does not reach. The *values* were the load-bearing
+  half and they are now carried; the *wording* is an open improvement.
 
 ### Step 2 — name the vintage, and expect the card
 

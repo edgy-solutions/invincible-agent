@@ -118,6 +118,52 @@ def _require_vintage(state: CostState, fiscal_year: int, rate_vintage: Optional[
     )
 
 
+#: Legal values for a mandatory slot, computed from the slots the caller DID supply.
+#:
+#: ── WHY THIS EXISTS: THE BETTER REFUSAL WAS UNREACHABLE ──────────────────────────────────
+#: `_require_vintage` above carries `available` — the two vintages, by name — precisely so the
+#: caller's next question is answerable. IT CANNOT FIRE THROUGH THE HTTP ROUTE. `rate_vintage`
+#: is a spoken-mandatory slot, so `/measure/{fn}` returns `slot_required` BEFORE the verb is
+#: ever called, and the caller is told "needs rate_vintage" with no way to learn what a
+#: vintage looks like. Measured on the wire 2026-09-11, not reasoned about: the refusal
+#: carried `missing` and `declarations` and no values at all.
+#:
+#: A refusal that withholds the options is a dead end wearing a refusal's clothes — the walk
+#: sheet's own standard, written before anyone had looked at the payload.
+#:
+#: KEYED ON (verb, slot) AND CONTEXT-DEPENDENT BY DESIGN. The vintages are a property of the
+#: LOT's fiscal year, so there is no static enum to declare — which is exactly why this slot
+#: fell through `_ENUM_VALUES` and `_REFERENT_KIND` both, and why nothing could enumerate it.
+def _vintage_options(state: CostState, params: dict[str, Any]) -> Optional[list[str]]:
+    lot_number = params.get("lot")
+    if lot_number is None:
+        return None
+    try:
+        return state.vintages(state.lot(int(lot_number)).fiscal_year)
+    except (NotInModel, TypeError, ValueError):
+        # AN UNKNOWN LOT IS NOT AN OPTIONS PROBLEM. The caller gets `slot_required` for the
+        # vintage; that the lot is also wrong belongs to the lot's own refusal, and guessing
+        # here would attach a second diagnosis to the first one's message.
+        return None
+
+
+OPTION_SOURCES: dict[tuple[str, str], Any] = {
+    ("cost_rate_comparison", "rate_vintage"): _vintage_options,
+}
+
+
+def options_for(state: CostState, fn_name: str, slot: str,
+                params: dict[str, Any]) -> Optional[list[str]]:
+    """Legal values for a missing slot, or None when the engine cannot compute them.
+
+    NONE AND [] MEAN DIFFERENT THINGS and the route keeps them apart: None is "not computable
+    from what you supplied"; [] would be "there are genuinely none". Collapsing them is how a
+    caller reads "no vintages exist" from "you did not name a lot".
+    """
+    source = OPTION_SOURCES.get((fn_name, slot))
+    return source(state, params) if source else None
+
+
 def _applied_rates(state: CostState, lot_number: int, rate_vintage: Optional[str]):
     lot = state.lot(lot_number)
     vintage = _require_vintage(state, lot.fiscal_year, rate_vintage)
