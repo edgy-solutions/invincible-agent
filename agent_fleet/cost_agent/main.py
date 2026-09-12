@@ -442,14 +442,31 @@ class ResolveRequest(BaseModel):
 
 class EnumerateRequest(BaseModel):
     class_uri: str
-    #: THE FLEET'S DEFAULT, AND THIS ENGINE HAS NINE LOTS. `cost:ProductionLot` therefore
-    #: answers `too_many` at the default bound — correct by the contract (the bound is the
-    #: CALLER's declaration of what fits) and worth knowing, because nine is a perfectly
-    #: renderable menu. The `count` is carried precisely so an ask can raise its own limit
-    #: rather than falling back to free text. Left at 8 rather than tuned upward here: a
-    #: provider that quietly disagrees with its neighbours about the default is how the next
-    #: reader picks the wrong one.
-    limit: int = 8
+    #: ⚠ THIS WAS 8 — THE FLEET DEFAULT — AND IT PUT "9 exist" ON A CARD WITH NO MENU.
+    #:
+    #: Measured on the live fleet 2026-09-12, walking Q5: the lot ask rendered as free text
+    #: saying "9 exist". That string is this engine's own `count`, and the members list beside
+    #: it was EMPTY, because nine lots against a bound of eight answers `too_many`.
+    #:
+    #: I PREDICTED THIS IN THIS COMMENT AND SHIPPED IT ANYWAY, reasoning that the bound is the
+    #: caller's declaration of what fits and that diverging from the neighbours was the worse
+    #: error. Both halves were wrong. The caller OMITS the limit, so the provider's default is
+    #: what applies — the "fleet default" was never a caller's judgement about what fits, it
+    #: was a number each provider invented for itself. And a provider knows its own
+    #: cardinality where the caller cannot.
+    #:
+    #: TWO OF SIX CLASSES REFUSED AT 8, which is what makes it a defect rather than a taste:
+    #: ProductionLot (9) and RateTable (12). `too_many` is for a class that is GENUINELY
+    #: larger than a menu; using it for nine turns a refusal designed to protect an ask into
+    #: the reason the ask has nothing to show.
+    #:
+    #: 25 covers this engine's largest class with headroom and stays small enough to be a menu
+    #: rather than a dump. If a class ever exceeds it, that is a real signal.
+    #:
+    #: THE DURABLE FIX IS NOT MINE: the disposition should SEND the limit it can render, and
+    #: then this default stops mattering. Raised here because the card is broken today and a
+    #: correct-by-contract refusal is no comfort to the person looking at it.
+    limit: int = 25
 
 
 @app.post("/resolve_instance")
