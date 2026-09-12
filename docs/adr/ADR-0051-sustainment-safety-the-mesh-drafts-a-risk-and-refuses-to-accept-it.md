@@ -285,6 +285,24 @@ it survives containerisation. A third copy is refused by name.
 **Audiences, one per authority level**, because MIL-STD-882 ties acceptance authority to the risk
 level — which is precisely what the audience key convention expresses:
 
+> **⚠️ THE LADDER IS ATTRIBUTED, NOT VERIFIED, AND NO REAL ACCEPTANCE MAY ROUTE ON IT YET.**
+> MIL-STD-882E **§4.3.7 defers and names no authority**: risks "shall be accepted by the appropriate
+> authority as defined in DoDI 5000.02". The High → component acquisition executive, Serious → PEO,
+> Medium and Low → program manager triple the seed assumes comes from that instruction and **has not
+> been read from source by this lane**. The matrix's Table III citation does **not** cover it, and
+> the TTL records the two separately for exactly that reason.
+>
+> **AND THE DOCUMENT MAY HAVE MOVED.** DoDI 5000.02 as reissued in 2015 carried these definitions;
+> the 2020 reissue pushed engineering content into **DoDI 5000.88**, and which document currently
+> names the tiers is not established here. So the half-hour is: read the **current** issue, cite the
+> section in `safety_risk_matrix.ttl` beside the Table III line, and **if the tiers differ from the
+> CAE/PEO/PM triple, that is a second transcription error of exactly the same shape** — and it gets
+> the same treatment, including the directional assertion, because a ladder that names a more junior
+> tier than the standard fails the same silent way a permissive matrix cell does.
+>
+> Until that is done the sandbox ladder is a fixture. It exercises the routing, the audiences and the
+> three-caller walk; it does not authorise anything.
+
 - `risk_acceptance_high:SUSTAINMENT`, `risk_acceptance_serious:SUSTAINMENT`, … one audience per level
   the §2 ladder names. The ladder is data; the audiences are the git-asserted grants that implement
   it, and the drafter records which one an assessment implies.
@@ -514,6 +532,29 @@ where red was expected is a signal about the seal, not about the code.
 4. **The matrix is data.** Change one row in `safety_risk_matrix.ttl`, re-prime, and the drafted
    risk level changes **with no code edit**. Mutation: hardcode the matrix in the engine → red. This
    seal is the whole of §2; without it §2 is an intention.
+
+4a. **The matrix IS Table III, cell for cell** — and separately, **no cell is more permissive than
+   the standard.** Added 2026-09-12 after seal 4 passed green over a table that was wrong in five
+   of twenty cells.
+
+   **THE PAIRING THIS EXISTS FOR: a correct instrument on a wrong subject.** Seal 4 proved the
+   engine faithfully follows the file. The file was wrong. Labelling a table `SEED` and leaving
+   `prov:wasDerivedFrom` empty was an honest label, and **an honest label on a wrong table still
+   routes a real acceptance to the wrong authority.** Every seal in this repo is worth checking
+   once against that shape: *what does this prove about the mechanism, and what does it assume
+   about the content?*
+
+   **WHY THE DIRECTIONAL ASSERTION IS SEPARATE, AND WHY IT IS DOMAIN-SPECIFIC.** Pinning the
+   transcription catches the next drift. The directional check catches **the direction the drift
+   always takes** — all five errors leaned the same way, toward what sounds reasonable. And in
+   safety the two directions are not symmetric:
+
+   > **A conservative error produces a COMPLAINT. A permissive error produces a SIGNATURE.**
+
+   Over-escalate and someone says so within a day. Under-escalate and the queue works, the card
+   renders, and a more junior authority signs an acceptance that was never theirs to sign —
+   a failure with no symptom, which is the class this repo keeps paying for. That asymmetry is
+   why the two assertions are not one.
 5. **An unrecognized severity or probability refuses loudly**, naming the vocabulary and its source
    file. Control: a recognized one passes the same path.
 6. **The declaration carries the verbs**, extended from the existing declarations-match-code seal;

@@ -43,6 +43,14 @@ honest label on a wrong table still routes a real acceptance to the wrong author
       citation. Verifying it is a half-hour someone should spend before a real acceptance
       routes on it.
 
+      AND THE DOCUMENT MAY HAVE MOVED BETWEEN ISSUES. DoDI 5000.02 as reissued in 2015 carried
+      these definitions; the 2020 reissue pushed engineering content into DoDI 5000.88, and
+      which issue currently names the tiers is NOT established here. Read the current one, cite
+      the section beside the Table III line above, and IF THE TIERS DIFFER FROM CAE/PEO/PM THAT
+      IS A SECOND TRANSCRIPTION ERROR OF THE SAME SHAPE — and it gets the same treatment,
+      including a directional assertion, because a ladder naming a more junior tier than the
+      standard fails the same silent way a permissive matrix cell does.
+
 WHAT A PROGRAMME RATIFIES IS ITS TAILORING, NOT THE STANDARD. A cell that matches Table III needs
 no local ratifier; it has one already. An OVERLAY row that departs from Table III does, and the
 ratifier is the signatory of that programme's System Safety Program Plan. That is the only place
