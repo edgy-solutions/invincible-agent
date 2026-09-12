@@ -92,7 +92,7 @@ the notice is part of the ruling rather than an implementation detail.
 
 | # | ruling | where |
 |---|---|---|
-| a | **Author's visibility audience** — `risk_assessment_author:SUSTAINMENT`, view-only, granted at draft time. The existence-oracle protects against **outsiders, not authors**; that sentence is the rule it instantiates. | §5:290 |
+| a | **The author sees what they can act on, and nothing more.** ⟺ **AMENDED 2026-09-12.** `see ⟺ can_act` is **the substrate's shape**, not a gap in an implementation — the projection materialises one row per authorized ACTOR, so viewability and act-ability derive from one Topaz answer and cannot diverge. The earlier reading described a view-only author audience as though it were available; it is not, and saying so plainly is the honest version. **The inert grant is withdrawn** — see the note below. | §5:290 |
 | b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
@@ -128,6 +128,32 @@ and cortex-ui's `taskKindRegistry` are **interim by construction and retire toge
 — so R-004b is a property **of the declaration** from the first schema, and the cutover seal
 compares it row for row. Otherwise the bad half survives: a served declaration saying how a task
 renders while a code table still decides what it can do.
+
+
+### On (a): what was filed, and what the withdrawn grant teaches
+
+**OPTION (b) IS REAL PLATFORM WORK AND IS FILED WITH ITS USE CASE** — a `viewer` relation with
+`can_view`, and rows materialised with the act gate closed. **A safety officer who must see every
+open acceptance and dispose none is a standard role**, so this will be needed; it is simply not
+increment 3's to build.
+
+**Option (c) — a blind author — is refused.** It is a design nobody would choose on purpose.
+
+**THE WITHDRAWN GRANT IS THE ✅ REGISTERED SHAPE, IN POLICY.** It read as protection and protected
+nothing: same defect as a registration that reports success and routes nowhere, moved from the
+mesh into the authorization rail. It belongs in this register rather than only in a commit,
+because **the next person to read that grant would have read it as coverage.**
+
+**AND SEAL 7 KEEPS THREE LEGS WITHOUT A PERMISSION THE MODEL DOES NOT HAVE**, by running **two
+assessments instead of one**:
+
+    a HIGH   — alice disposes; bob and carol see nothing
+    a MEDIUM — bob disposes;   alice and carol see nothing
+
+That discriminates *"cannot see"* from *"not on this tier"*, which the middle-leg version could
+not. **It is the stronger seal rather than merely the available one: it proves the ladder ROUTES**,
+where a single assessment with one disposer is equally consistent with a ladder that always routes
+to alice.
 
 ---
 
@@ -627,6 +653,24 @@ standing in. See R-020, which is that collision resolved.
 whole of it. The fork is fixed today by a merge, and merges are not a mechanism — the register
 will fork again the moment two lanes both hold unmerged work, which is its normal state.
 
+### ALLOCATION AND PLACEMENT ARE TWO WAYS AN ENTRY LANDS WRONG
+
+**Added 2026-09-12**, after the second one bit.
+
+**Allocation** is which number an entry takes, and it is settled above: only `lane/01` allocates,
+because a registry whose allocation depends on the reader's checkout cannot allocate.
+
+**Placement is where the entry goes in the file, and it is a separate failure.** R-025 was
+inserted by anchoring on the NEXT heading (`## R-005`) and landed between R-004 and R-005 — a
+correctly-allocated number in the wrong place. The same move produced a **duplicate R-014** on an
+earlier merge: one branch appended after *"Why this file exists at all"*, the other inserted in
+numeric order, and git kept both because they were different regions of the file.
+
+**ANCHOR ON THE END, NEVER ON THE NEXT HEADING.** The end is stable; the next heading is whatever
+happens to follow today, so an anchor on it silently relocates the entry every time the
+neighbourhood changes — and a register out of numeric order reads as *a gap where there is none*,
+which is the one thing this file may not do.
+
 ### What this does NOT do
 
 It does not make Lane 1 the author of anyone's ruling. **The text, the reasoning and the
@@ -637,6 +681,98 @@ resource is the *number*, not the judgement.
 Nor does it gate recording a decision. **A ruling with no number yet is still a ruling** — route
 the text, act on it, and cite it once the number comes back. What it may not be is *numbered by
 its author*.
+
+---
+
+## R-022 — The gateway-side projection ALREADY EXISTED; feed the accumulation into it
+
+**RULED 2026-09-12.** Amends the author's own earlier ruling, which said the undeclared-param
+filter *"lives in the gateway, once"*. **The "once" already existed.**
+
+`accept_slots(spoken, declared)` filters supplied slots down to what the verb declares, returns
+a `Refusal` per dropped slot rather than raising, and that result already reaches the routing
+record through `direct_dispatch`. The accumulated chain slots are fed **into** it as a base
+layer; no second projection is built.
+
+**The rule this is an instance of:** *a second site for one rule is the defect, even when the
+second site is the one you were told to build.* Same move that killed the parallel
+materialisation emitter. Three engines with three behaviours for undeclared params — engine-cost
+500, finance 400, planning 404 — was that defect one layer down; adding a fourth copy at the
+gateway would have been it one layer up.
+
+**What the ruling was right about stands:** engines keep their own guards as belt-and-braces, and
+the gateway is the site that makes a multi-verb interview survivable, because it is the only one
+holding both the accumulated set and the declaration.
+
+---
+
+## R-023 — The colon sweep is WITHDRAWN; the anchor lint handles what it was for
+
+**RULED 2026-09-12**, withdrawing an earlier ruling of the architect's own. Recorded with its
+reason **so nobody proposes the colon again.**
+
+The withdrawn ruling: strip the em dash from register headings (`## R-0NN: title`) because two
+slug rules disagree only on a space-surrounded em dash, so removing it would make eight
+coin-flip citations correct *under either renderer without choosing one*.
+
+**ITS PREMISE EXPIRED BETWEEN THE RULING AND ITS EXECUTION.** The rule was then settled by
+measurement rather than argument — a POST to GitHub's own renderer returns
+`r-005--shared_slots-are-template-scoped`, double hyphen — and the eight citations were rewritten
+to it. **Applying the sweep now would break exactly what it was written to fix**: a colon heading
+slugs to a SINGLE hyphen. The stated gain (eight become correct, none edited) was true against
+the single-hyphen corpus and is false against this one.
+
+`invincible-agent-f3` had the sweep built and verified — 20 headings, both rules agreeing on all
+20, break-on-purpose run twice — and **did not apply it**, because the reasoning no longer held.
+That is the behaviour this register exists to make possible: a ruling is citable, so its premise
+is checkable.
+
+**The residual is ergonomic and is already handled.** `--` looks like a typo and invites the
+well-meant single-hyphen "fix" that broke eight citations in the first place — but
+`tests/test_citation_anchors_resolve.py` reds any citation whose anchor does not match the slug
+the measured rule generates from the heading. **The edit fails before it lands. No migration.**
+
+---
+
+## R-024 — `cost:LotCostingReview` rides the NEXT prime, not a prime of its own
+
+**RULED 2026-09-12.** `invincible-agent-22`'s second graph (`972232a`) needs its output class in
+the graph before the ratified row can register — Contract D refuses atomically, so the row cannot
+land without the class.
+
+**One prime, both declarations.** The next prime is already owed: safety's `main.py` registration
+lands and seal 1 needs a fresh prime regardless. A separate prime for one class would be an
+infra action bought with no information.
+
+### And the census SNAPSHOTS the verb set, naming additions
+
+Ruled this morning when `db.relationshipTypes()` moved 63 → 64 and **nobody could name the 64th**.
+*A count that moved and cannot be attributed is the no-op-pin finding in a new costume.*
+
+**22's finding sharpens why a derived answer will not do it: a graph-host verb comes from a
+RATIFIED ROW, not from an engine's `CATALOGUE`.** Any declared-set derivation that reads engine
+catalogues is blind to `finProgramBrief` **by construction**, and that blindness grows with every
+graph engine-lg admits. So the census reads **the graph** and reports additions **by name** since
+its last run — both sources or none, or engine-lg's verbs read as orphans forever.
+
+## R-025 — A claim in a file's own prose is PRE-AUTHENTICATED
+
+**RULED 2026-09-12.** From a false claim traced through three hops by `invincible-agent-28`:
+
+    prose in a policy header  ->  repeated in a comment  ->  carried into a RULED line
+
+**This is the stale-docstring family, worse-placed.** A docstring is read by whoever opens the
+function. **A policy header is read by whoever is deciding what the policy MEANS** — so the claim
+arrives already carrying the file's authority, and the next reader *cites* it rather than checking
+it. That is one layer up from where this shape usually bites, and it is why it travelled as far as
+a `RULED` line: every hop made it more official and none of them made it more true.
+
+**The check is the same as for any inherited claim and it is cheap:** the artifact the code
+PRODUCED outranks the file's description of itself. A grant's effect is a Topaz answer, not a
+sentence above it.
+
+Related: [[a-docstring-is-not-evidence]] — the reading half, and the instance where the author
+wrote one into a seal's justification.
 
 ---
 
