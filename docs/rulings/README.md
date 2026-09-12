@@ -512,6 +512,50 @@ second**. Worktrees hide master; they also hide each other, and the second has n
 
 ---
 
+## R-018 — The `pcn_disposition` overlay row is WORK-SIDE; the ruling is delivered, the row is not
+
+**RULED 2026-09-11.** Source: architect thread.
+
+**The overlay row was never created, and it cannot live in this repo.** It is a work-side
+artifact — a domain overlay under ADR-0036 — so the platform seed carries the *structural*
+species and the domain species live in the work-side overlay.
+
+**The distinction this entry exists to preserve:** *the ruling is delivered; the row is
+outstanding.* Those are not the same state and collapsing them is how a decision reads as
+implemented. Nothing in this repo will ever show the row, so nothing here can go red about its
+absence — which makes the written record the only place the gap is visible.
+
+**Two items commonly folded into this one and correctly separate:**
+
+| item | owner | when |
+|---|---|---|
+| the `pcn_disposition` **string rename** | M3.3 lane (`iagent-mesh-sdk-ca`) | **after** the cutover — its own increment, expand/contract with a dual-read interval |
+| the **groups** ruling (`task_grants.yaml`) | **Lane 1** | scheduled after the cutover |
+
+The groups ruling is real and is not the M3.3 lane's. Bundling the rename into the cutover was
+refused when M3.3 proposed it, and generic-at-birth is satisfied **structurally** instead.
+
+---
+
+## R-019 — `invincible-agent-ad` is the ARCHITECTURE SEAT, lane-less by ruling
+
+**RULED 2026-09-11.** Source: architect thread.
+
+The architecture seat **routes and rules; it does not commit shared docs.** It holds no lane
+branch and no worktree, and that is a ruling rather than an accident of where a session happened
+to start — a seat that commits into shared files is a lane wearing a seat's name.
+
+**TWO SEATS, ONE REGISTER.** The orchestrator (Lane 1) and the architecture seat both write
+rulings *into this file*. They do not maintain parallel registers, because two registers is
+precisely the state that cost a day: a citation resolving differently depending on who you asked.
+
+**AN EARLIER ENTRY STANDS UNTIL EXPLICITLY SUPERSEDED.** Not until it looks stale, not until a
+later conversation seems to assume otherwise. A ruling is retired by a ruling — struck in place,
+with its replacement named — which is why R-014's numbering note is *struck and kept* rather than
+deleted.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
