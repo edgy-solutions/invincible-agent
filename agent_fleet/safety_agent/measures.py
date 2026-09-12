@@ -46,6 +46,15 @@ except ImportError:
 #: folded into either. `closed` is done.
 _LIVE_STATUSES = frozenset({"open", "mitigated"})
 
+#: The levels MIL-STD-882E 4.3.7 requires a user-representative concurrence for (§5.1).
+#:
+#: NOT a stylistic choice and NOT extendable by preference: the standard names Serious and High
+#: and says nothing about Medium or Low, so inventing a concurrence step for those would be as
+#: wrong as omitting one here. Held as a SET OF LEVEL NAMES rather than a rank threshold because
+#: the standard names levels — a threshold would silently acquire any level a tailored matrix
+#: later inserted above it, which is a rule growing by accident.
+_CONCURRENCE_LEVELS = frozenset({"High", "Serious"})
+
 
 def _orphan_reason(h: Hazard) -> Optional[str]:
     """WHY this hazard is orphaned, or None if it is not.
@@ -345,6 +354,53 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     # never compartmented content, because the queue itself must not become the leak. The
     # citations travel because an acceptance without its evidence is the signature this
     # ADR exists to prevent; the hazard's full narrative does not.
+    # ── WHICH TASK OPENS FIRST IS DECIDED BY THE LEVEL (§5.1) ──────────────────────────
+    #
+    # MIL-STD-882E §4.3.7 requires the user representative's formal concurrence BEFORE a
+    # Serious or High acceptance decision. "Before" is in the standard's sentence, so it is
+    # made STRUCTURAL rather than advisory: for those two levels the only task this draft
+    # opens is the CONCURRENCE, and the acceptance request does not exist yet. It is built
+    # by `acceptance_request_after_concurrence` from a disposed `concurred` record, which is
+    # the only way to obtain one.
+    #
+    # A design that opened both at once would put an acceptance in an authority's queue
+    # while the concurrence was outstanding — satisfying neither the letter nor the point,
+    # and doing it invisibly, because both queues would look entirely normal.
+    needs_concurrence = level in _CONCURRENCE_LEVELS
+    out["requires_concurrence"] = needs_concurrence
+    if needs_concurrence:
+        out["review_request"] = {
+            "kind": f"risk_acceptance_concurrence_{level.lower()}",
+            "task_id": f"risk-concurrence-{h.hazard_id}",
+            "audience": f"risk_acceptance_concurrence_{level.lower()}:SUSTAINMENT",
+            "title": f"Concur on {level} risk — {h.hazard_id}",
+            "summary": (
+                f"{h.description} Severity {h.severity}, probability {h.probability}, "
+                f"resolved {level}. USER REPRESENTATIVE CONCURRENCE, required before the "
+                f"acceptance decision (MIL-STD-882E 4.3.7)."
+            ),
+            "requested_by": "engine-safety",
+            "subject_ref": h.hazard_id,
+            "payload": {
+                "hazard_id": h.hazard_id,
+                "severity": h.severity,
+                "probability": h.probability,
+                "risk_level": level,
+                "citations": citations,
+                "derived_from": derived_from,
+                "reason_required": ["concurred", "not_concurred"],
+                # NAMED SO THE CONCURRING PARTY KNOWS WHAT THEY ARE ENABLING. A concurrence
+                # whose consequence is invisible is the rubber stamp peer-level exists to stop.
+                "unblocks_acceptance_audience": audience,
+            },
+        }
+        out["note"] = (
+            f"DRAFTED. {level} risk requires the user representative's formal concurrence "
+            f"BEFORE acceptance (MIL-STD-882E 4.3.7). The acceptance task for "
+            f"'{audience}' is NOT opened until that concurrence is disposed `concurred`."
+        )
+        return out
+
     out["review_request"] = {
         "kind": f"risk_acceptance_{level.lower()}",
         "task_id": f"risk-acceptance-{h.hazard_id}",
@@ -370,3 +426,82 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         },
     }
     return out
+
+
+
+
+def acceptance_request_after_concurrence(
+    state: Any = None, *, hazard_id: str, concurrence: Dict[str, Any]
+) -> Dict[str, Any]:
+    """The acceptance task for a Serious or High hazard — obtainable ONLY from a disposed
+    `concurred` record.
+
+    THIS FUNCTION IS THE "BEFORE" IN MIL-STD-882E 4.3.7, MADE STRUCTURAL. `draftRiskAssessment`
+    does not emit an acceptance request for these levels; this is the only path to one, and it
+    refuses without a concurrence that actually says `concurred`. A caller cannot skip the step
+    by choosing not to call a checker, because there is nothing to skip TO.
+
+    THE LINEAGE IS THE POINT, NOT THE GATE. The returned request carries `DERIVED_FROM` to the
+    concurrence task and records who concurred and why, so "who signed, on what evidence" has
+    TWO names on it. A gate that blocked the acceptance but left no record would satisfy the
+    ordering and lose the thing the ordering exists to produce.
+    """
+    h = BY_HAZARD_ID.get(hazard_id)
+    if h is None:
+        return {"refused": True, "reason": f"unknown hazard '{hazard_id}'"}
+
+    decision = (concurrence or {}).get("decision")
+    if decision != "concurred":
+        # NOT_CONCURRED AND UNDISPOSED ARE REPORTED DISTINCTLY. One is a decision the
+        # authority must be told about; the other is a step still outstanding. Collapsing
+        # them would turn "the user representative declined" into "not ready yet".
+        return {
+            "refused": True,
+            "reason": (
+                f"no acceptance task for {hazard_id}: concurrence is "
+                f"{decision or 'not yet disposed'}, and MIL-STD-882E 4.3.7 requires formal "
+                "concurrence BEFORE the acceptance decision"
+            ),
+            "concurrence_decision": decision,
+        }
+    if not (concurrence.get("comment") or "").strip():
+        # The concurrence kind declares `concurred` reason-required. Enforced here too,
+        # because the declaration does not yet bind at runtime (R-004(f)) and an acceptance
+        # built on an unexplained concurrence is the rubber stamp peer-level exists to stop.
+        return {
+            "refused": True,
+            "reason": f"concurrence on {hazard_id} carries no stated basis; it is reason-required",
+        }
+
+    draft = draft_risk_assessment(hazard_id=hazard_id)
+    if draft.get("refused"):
+        return draft
+    level = draft["risk_level"]
+    audience = draft["acceptance_audience"]
+    derived_from = list(draft["derived_from"]) + [concurrence.get("task_id", "")]
+    return {
+        "refused": False,
+        "kind": f"risk_acceptance_{level.lower()}",
+        "task_id": f"risk-acceptance-{h.hazard_id}",
+        "audience": audience,
+        "title": f"Accept {level} risk — {h.hazard_id}",
+        "summary": (
+            f"{h.description} Severity {h.severity}, probability {h.probability}, resolved "
+            f"{level}. User representative concurred: {concurrence.get('comment')}"
+        ),
+        "requested_by": "engine-safety",
+        "subject_ref": h.hazard_id,
+        "payload": {
+            "hazard_id": h.hazard_id,
+            "severity": h.severity,
+            "probability": h.probability,
+            "risk_level": level,
+            "citations": draft["citations"],
+            "derived_from": [d for d in derived_from if d],
+            "reason_required": ["accepted", "rejected"],
+            # THE SECOND NAME ON THE SIGNATURE.
+            "concurred_by": concurrence.get("acted_by"),
+            "concurrence_task_id": concurrence.get("task_id"),
+            "concurrence_basis": concurrence.get("comment"),
+        },
+    }

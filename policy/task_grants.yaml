@@ -309,3 +309,45 @@ audiences:
   # NOT GRANTED, DELIBERATELY: carol. She is the third leg of seal 7 — a caller who
   # neither sees nor may act. Recorded here rather than left as an absence, because an
   # absence is indistinguishable from an oversight, and this one is load-bearing.
+
+  # ── CONCURRENCE (ADR-0051 §5.1) — the SECOND human act on a Serious or High risk. ────────
+  #
+  # MIL-STD-882E §4.3.7: the user representative "shall provide formal concurrence BEFORE all
+  # Serious and High risk acceptance decisions", and §3.2.49 puts them "at a peer level
+  # equivalent to the risk acceptance authority".
+  #
+  # PEER-LEVEL IS WHY THESE ARE SEPARATE AUDIENCES AND NOT MORE ACTORS ON THE ACCEPTANCE ONES.
+  # An audience whose actors could both concur and accept would turn two independent acts into
+  # one signature wearing two names — which is exactly what a formal concurrence is not.
+  #
+  # SANDBOX ROLES, chosen so seal 7 discriminates on a HIGH assessment with all legs live:
+  #     alice   ACCEPTS High and Serious            (the authority)
+  #     carol   CONCURS on High and Serious         (the user representative — NOT alice)
+  #     bob     accepts Medium and Low only         (sees NEITHER on a High: the third leg)
+  #
+  # carol was previously granted nothing, as seal 7's "neither sees nor acts" leg. She now holds a
+  # real role and BOB takes that leg on a High assessment, which is a better fixture than an
+  # identity that exists only to be refused: bob is refused because he is the WRONG TIER, which is
+  # the refusal a real fleet produces, rather than because he was never given anything.
+  risk_acceptance_concurrence_high:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5.1 / MIL-STD-882E §4.3.7. The user representative's formal concurrence, required
+      BEFORE a High risk acceptance decision. Disposed `concurred` or `not_concurred`, both
+      reason-required: a concurrence with no stated basis is the rubber stamp the standard's
+      peer-level requirement exists to prevent. Sandbox = carol, deliberately NOT alice, who
+      accepts at this level — one person holding both acts is the failure this audience prevents.
+    grant_to:
+      - carol@example.com
+
+  risk_acceptance_concurrence_serious:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051 §5.1 / MIL-STD-882E §4.3.7. As above, for Serious. Sandbox = carol.
+      NO CONCURRENCE AUDIENCE EXISTS FOR MEDIUM OR LOW, and that is the standard rather than an
+      omission: §4.3.7 requires concurrence for Serious and High and says nothing about the
+      others. Inventing a step where none is required would be as wrong as omitting one where it
+      is — and `test_every_risk_level_in_the_matrix_has_a_granted_audience` would fail if a
+      concurrence audience were expected for a level that has none.
+    grant_to:
+      - carol@example.com

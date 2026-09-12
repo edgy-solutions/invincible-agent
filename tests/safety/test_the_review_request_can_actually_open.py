@@ -154,7 +154,17 @@ def test_the_payload_carries_the_evidence_but_not_the_narrative():
         payload = draft["review_request"]["payload"]
         assert payload["citations"], f"{hazard_id}: acceptance payload carries no evidence"
         assert "derived_from" in payload
-        assert payload["reason_required"] == ["accepted", "rejected"], (
+        # DERIVED FROM THE KIND, not hardcoded to the acceptance verbs. A Serious or High draft
+        # opens the CONCURRENCE first (§5.1), whose verbs are `concurred`/`not_concurred`, so a
+        # hardcoded expectation here asserted the wrong contract for exactly the two levels the
+        # standard treats specially — it went red the moment concurrence landed, which is the
+        # seal working rather than the seal being wrong.
+        expected = (
+            ["concurred", "not_concurred"]
+            if draft["review_request"]["kind"].startswith("risk_acceptance_concurrence")
+            else ["accepted", "rejected"]
+        )
+        assert payload["reason_required"] == expected, (
             f"{hazard_id}: the disposer must be told a reason is required BEFORE they act, not "
-            "discover it from a refusal"
+            f"discover it from a refusal (kind {draft['review_request']['kind']})"
         )
