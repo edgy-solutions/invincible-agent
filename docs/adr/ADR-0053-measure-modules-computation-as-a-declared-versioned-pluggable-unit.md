@@ -227,6 +227,15 @@ untouched assertion.** The existing seal — written before either change, alrea
 is the check. Decimal-first also gives attributable diffs, but the extraction would then be
 verified against a seal rewritten minutes earlier, which is a weaker instrument for no gain.
 
+**THE UNTOUCHED-ASSERTION ARGUMENT DECAYS WITH TIME, AND THE EXTRACTION IS GATED ON THIS ADR
+RATIFYING.** If that gap is weeks rather than minutes, the seal has been living in a moving tree
+and is no longer the pristine instrument this paragraph describes — "written before either
+change" stops implying "unchanged". It does **not** flip the order: a drifted seal is still a
+better baseline than one rewritten for the occasion. But when the extraction is finally run, run
+it against **the seal as it stands at that moment**, and **note the seal's own age in the
+result**, rather than inheriting today's claim about how good the instrument is.
+*(91's flag, and it is a correction to my argument rather than to theirs.)*
+
 **This matters for this verb in particular:** the Decimal pass here **may not be
 behaviour-preserving**. Decimal can reorder a tie that float resolved arbitrarily, which is a
 deliberate value change — exactly the thing that must not be entangled with a refactor.
