@@ -321,7 +321,7 @@ _Coverage: **133 of 145 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/runbook-5s-pre-build-check-fails-on-the-baseline.md](plans/runbook-5s-pre-build-check-fails-on-the-baseline.md)
 
 - **s3000l-is-primed-and-invisible** — S3000L is in the prime manifest, loads, and contributes 761 owl:Class to the SUSTAINMENT graph — and ZERO of them reach any consumer of `/classes`, because that query requires `rdfs:label` and S3000L declares none. The SPO interview menu, operable-subjects and the router's candidate pool are all reading a SUSTAINMENT vocabulary that silently omits the domain's largest standard. Fix is not loosening the query — a menu needs names — but deriving a label from the URI fragment at the ontology-seed step, written as a triple with `label_source: derived` vs `authored` so a reader can tell a name the spec gave from one the seeder made up.
-  status: open · owner: lane-1
+  status: open · owner: doc-tools-7f
   → [docs/plans/s3000l-is-primed-and-invisible.md](plans/s3000l-is-primed-and-invisible.md)
 
 - **sandbox-document-objects-are-not-reproducible** — A recoverability audit (2026-09-10, during worker6's storage failure) found sandbox reproducible from the repo EXCEPT for MinIO document objects — the sample PDFs are seeded by nothing and exist only on one failing disk. The bucket-init job creates buckets and uploads nothing. Fix is a manifest of source URLs + sha256 and a fetch/upload script; the bytes must NOT be committed. Also: tests/fixtures/iads_40051_demo is in the repo but wired only to one test, not to any seed path.

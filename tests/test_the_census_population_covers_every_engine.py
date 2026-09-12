@@ -50,6 +50,10 @@ _COMPONENT_TO_URL_VAR = {
     "engine-p": "ENGINE_P",
     "engine-fin": "ENGINE_FIN",
     "engine-cost": "ENGINE_COST",
+    # engine-safety (ADR-0051). Without this the census prints a COMPLETE-LOOKING table with this
+    # engine missing from it — which is how engine-lg went unaccounted for, and is the reason this
+    # map demands either a URL var or an explicit waiver rather than tolerating silence.
+    "engine-safety": "ENGINE_SAFETY",
     "engine-lg": "ENGINE_LG",
     "data-analyst": "ENGINE_DA",
 }

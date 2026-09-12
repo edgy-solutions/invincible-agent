@@ -14,7 +14,7 @@
   Mirrors two image groups, controlled by `-IncludeExternal`:
 
     1. iagent-owned (always mirrored)
-       ghcr.io/edgy-solutions/invincible-agent/* — the 14 engine fleet
+       ghcr.io/edgy-solutions/invincible-agent/* — the 15 engine fleet
          images, dagster runtimes, cortex-bff
        ghcr.io/edgy-solutions/cortex-ui/* — the React frontend
        ghcr.io/edgy-solutions/dag-tools/* — the central-gateway
@@ -94,7 +94,7 @@
   Print the commands without executing.
 
 .EXAMPLE
-  # Default: mirror only iagent-owned images (14 engines + cortex-ui + central-gateway = 16)
+  # Default: mirror only iagent-owned images (15 engines + cortex-ui + central-gateway = 17)
   .\mirror-to-artifactory.ps1 -RepoBase cbm-containers-dev-and.artifactory-and.rmd.ray.com
 
 .EXAMPLE
@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (14) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (15) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -199,6 +199,18 @@ $IagentImages = @(
     # which is the row's own point, that a lesson written beside a list does not maintain
     # the list. What maintained it was the derived check.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
+    # engine-safety — sustainment safety assessment (ADR-0051). DEFAULT-OFF in the chart and
+    # mirrored anyway, for the reason the two entries above both state: default-off is a DEFAULT,
+    # not a guarantee, and the moment someone flips engineSafety.enabled on a work cluster an
+    # unmirrored image is an ImagePullBackOff.
+    #
+    # SIXTH OMISSION OF THIS SITE, AND THE SECOND CAUGHT BY THE DERIVED CHECK RATHER THAN A
+    # DEPLOY. I had the runbook open, the eight-site list in front of me, and did the other seven
+    # — then `test_every_image_ci_builds_can_be_mirrored_to_artifactory` went red naming
+    # `safety-agent`. That is the comment four entries up proving itself again from the other
+    # side: a lesson written beside a list does not maintain the list, and this time the lesson
+    # was being read by the person who skipped the entry.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/safety-agent:latest';          dst='edgy-solutions/invincible-agent/safety-agent:latest' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
     # LIST.

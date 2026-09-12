@@ -18,8 +18,25 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
+
+# TRANSPORT AUTH IS A BIRTH RULE (runbook §6), and this engine was born without it until the
+# fleet-wide seals said so. OBSERVE posture: accept whatever arrives, log the caller posture per
+# request, refuse nothing until REQUIRE_TRANSPORT_AUTH flips. The ANNOUNCEMENT is separate and
+# equally required — an engine that takes the dependency but loses the announcement has a real
+# posture the fleet gauge cannot read, which is a correct engine that reports as unknown.
+#
+# `app_docs_kwargs()` turns /docs, /redoc and /openapi.json off in deployment. It is NOT
+# cosmetic: FastAPI registers those through Starlette's `add_route`, so an app-level
+# `dependencies=` NEVER REACHES THEM — they would be served unauthenticated even under REQUIRE.
+# That is the Starlette-bypass class, and it is why the kwargs are a separate call rather than
+# something the dependency covers.
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+
+COMPONENT = "engine-safety"
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
     # Getting this order backwards cost Engine P a full roll: the import failed, the helper
@@ -231,7 +248,19 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Engine S — sustainment safety", lifespan=lifespan)
+_announce_transport_auth(component=COMPONENT)
+
+app = FastAPI(
+    lifespan=lifespan,
+    **_docs_kwargs(),   # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
+    dependencies=[Depends(_transport_auth(COMPONENT))],
+    title="engine-safety — sustainment safety assessment",
+    description=(
+        "Governed reading over the SUSTAINMENT plane (ADR-0051). Drafts risk assessments "
+        "against MIL-STD-882E Table III and CANNOT accept one — acceptance is a human task "
+        "disposition by the authority the ratified ladder names."
+    ),
+)
 
 # ONE IMPLEMENTATION, MOUNTED PER SERVICE. Reports the sha BAKED INTO THE IMAGE, never one a
 # chart injected. REQUIRED from the first commit (runbook §7).

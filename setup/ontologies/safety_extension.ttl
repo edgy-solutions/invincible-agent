@@ -1,7 +1,17 @@
 @prefix safety: <http://internal/sustainment/safety#> .
 @prefix s3kl:  <http://www.lksoft.com/s3kl#> .
 @prefix ps:    <http://internal/sustainment/product#> .
-@prefix mesh:  <http://internal/mesh#> .
+# THE MESH IRI IS `invincible-agent/mesh#`, NOT `internal/mesh#`, AND THE REPO CONTAINS BOTH.
+# Written wrong here first, copied from `product_structure_extension.ttl` — a neighbour in this
+# same directory that declares `http://internal/mesh#`. The triple parsed, the file loaded, and
+# `rdfs:subClassOf mesh:Response` pointed at a class that does not exist, so the three response
+# classes below inherited NOTHING and still competed for grounding: an answer the router could
+# ground a question on, which is the exact exclusion ADR-0046 says this declaration buys.
+#
+# Caught by `tests/routing/test_response_shapes_are_not_groundable.py`, which parses the graph and
+# follows `rdfs:subClassOf+` — so it sees the resolved IRI rather than the text. An unknown prefix
+# passes through VERBATIM: the row registers, reports accepted, and never matches.
+@prefix mesh:  <http://invincible-agent/mesh#> .
 @prefix owl:   <http://www.w3.org/2002/07/owl#> .
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
