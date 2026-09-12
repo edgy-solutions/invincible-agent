@@ -44,7 +44,7 @@ in an ADR. See §6.
     takes `method: EACMethod` and raises `MethodRequired`; a bare ask is refused with the choice.
   - [ADR-0047](ADR-0047-computation-export-governed-emit-carrying-its-own-algorithm.md) — the
     export carries its own algorithm. §4 is that ADR's class, held to one.
-  - [`docs/rulings/README.md#r-001`](../rulings/README.md) — all three EAC methods on one panel;
+  - **R-001** in [`docs/rulings/README.md`](../rulings/README.md) — all three EAC methods on one panel;
     pinning hides the divergence that is the finding.
   - [`principles/a-surviving-mutation-means-you-cannot-tell-yet.md`](../principles/a-surviving-mutation-means-you-cannot-tell-yet.md)
     — the equivalent-mutant rule, and it is **PROCEDURAL, NOT NUMERIC**: *the mutant is EQUIVALENT
