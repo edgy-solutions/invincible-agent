@@ -33,19 +33,23 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import instances
     import measures
     import slots as slot_decls
     from entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
     from seed import build_state, check_consistency
+    from utils.subject_coverage import assert_subject_coverage as _assert_coverage
 except ImportError:
+    from agent_fleet.cost_agent import instances
     from agent_fleet.cost_agent import measures
     from agent_fleet.cost_agent import slots as slot_decls
     from agent_fleet.cost_agent.entities import (
         COST, CostState, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
     from agent_fleet.cost_agent.seed import build_state, check_consistency
+    from agent_fleet.utils.subject_coverage import assert_subject_coverage as _assert_coverage
 
 # TRANSPORT AUTH (OBSERVE). One implementation, from the mesh membership package: validate
 # whatever arrives, log the caller posture per request, REFUSE NOTHING until
@@ -180,6 +184,20 @@ async def lifespan(app: FastAPI):
     """
     check_consistency(STATE)
     _assert_declarations_cover_verbs()
+    # BOTH DIRECTIONS OF SUBJECT COVERAGE, and neither failure has a symptom at the engine.
+    # "Can every verb's subject be FOUND?" — a gap appears only when a speaker omits the slot
+    # and the elicitation offers free text. "Does every findable subject LEAD somewhere?" — a
+    # name resolves, the router sets a subject, and the question dies one hop later with
+    # nothing to blame. Engine F shipped `unsupported` for a class it ROUTED ON and found it
+    # by running the engine rather than reading it; this raises at startup instead.
+    _assert_coverage(
+        component=COMPONENT,
+        resolvable=instances._RESOLVABLE,
+        verb_subjects=_all_subjects(),
+        no_verb_by_design=instances._NO_VERB_BY_DESIGN,
+        not_enumerable=instances._NOT_ENUMERABLE,
+        resolvable_name="instances._RESOLVABLE",
+    )
     log.info(
         "engine-cost boot OK: %d lots, %d rate sets, %d verbs",
         len(STATE.lots), len(STATE.rates), len(measures.VERBS),
@@ -245,6 +263,82 @@ async def lifespan(app: FastAPI):
             failed.append(entry["verb"])
             log.error("[engine-cost] registration failed for %s: %s", entry["verb"], exc)
 
+    # ── THE INSTANCE PROVIDER ───────────────────────────────────────────────────────────
+    # WITHOUT THESE TWO, THIS ENGINE MAKES NO CLAIM ON ITS OWN LOTS. Measured 2026-09-11:
+    # four cost questions carrying "lot 4" and "lot 3" were preempted onto `fin:WBSElement`
+    # at exactly 0.500 — engine-fin's scorer matching THE BARE DIGIT against `instance_id`,
+    # a hit `banana 4` reproduces — and the post-preemption check correctly abstained. The
+    # classifier had already resolved `cost:Supplier` at 0.92 and that answer was discarded,
+    # because a phone-book hit OVERRIDES `resolved_uri` and cost had no competing claim.
+    #
+    # A SCOPE RULE NEEDS SOMETHING TO PREFER. That is what registering these supplies.
+    for spec in (
+        {
+            "name": "engine_cost_production_cost_resolve_instance",
+            "verb": "mesh:resolveInstance",
+            "input_uri": MESH + "InstanceIdentifier",
+            "output_uri": MESH + "InstanceResolution",
+            "endpoint": "resolve_instance",
+            "synonyms": ["which lot", "which supplier", "which rate table",
+                         "resolve name", "look up by name"],
+            "description": (
+                "Resolves a spoken production-cost name — a production lot, supplier, "
+                "program, cost category, rate table or disclosure recipient — to its "
+                "identifier in the cost model, by exact match then contained phrase then "
+                "token overlap. Returns candidates with class URI, label and score, highest "
+                "first. An empty list is a first-class answer: the provider abstains below "
+                "its floor rather than offering a least-bad match. A BARE NUMBER IS NOT A "
+                "NAME here unless the caller supplies the class — this engine's lot "
+                "identifiers are bare integers, and a provider that claimed every digit in "
+                "the fleet is the defect this one was built in response to."
+            ),
+        },
+        {
+            "name": "engine_cost_production_cost_enumerate_instances",
+            "verb": "mesh:enumerateInstances",
+            "input_uri": MESH + "InstanceClass",
+            "output_uri": MESH + "InstanceEnumeration",
+            "endpoint": "enumerate_instances",
+            "synonyms": ["which lots", "list suppliers", "what rate tables",
+                         "show me the options", "enumerate"],
+            "description": (
+                "Lists the members of a production-cost class — lots, suppliers, cost "
+                "categories, rate tables, disclosure recipients — so an elicitation can "
+                "offer a menu for a slot the speaker never filled. Answers with one of "
+                "three outcomes: members (the list, and a menu is legitimate), too_many "
+                "(the class is real and larger than a menu, with its count), or unsupported "
+                "(this provider does not hold that class). The refusal is a first-class "
+                "answer: free text is permitted where a provider REPORTS unboundedness, "
+                "never where nobody attempted enumeration."
+            ),
+        },
+    ):
+        try:
+            # CONTRACT D: mesh:InstanceIdentifier, mesh:InstanceResolution, mesh:InstanceClass
+            # and mesh:InstanceEnumeration must ALREADY EXIST as :OntologyClass nodes or this
+            # is a PERMANENT 422 with no retry. All four are declared in
+            # setup/ontologies/mesh_system.ttl and engine-fin already registers against them,
+            # which is why this engine can register against them without a new declaration.
+            register_engine_to_mesh(
+                mint=_mint,
+                name=spec["name"],
+                description=spec["description"],
+                verb=spec["verb"],
+                input_uri=spec["input_uri"],
+                output_uri=spec["output_uri"],
+                verb_synonyms=spec["synonyms"],
+                endpoint_url=f"{base}/{spec['endpoint']}",
+                owner_persona=OWNER_PERSONA,
+                domains=DOMAINS,
+                cost_class="fast",
+                provider="engine_cost_production_cost",
+                timeout_s=5.0,
+            )
+            registered.append(spec["verb"])
+        except Exception as exc:  # pragma: no cover
+            failed.append(spec["verb"])
+            log.error("[engine-cost] %s provider registration failed: %s", spec["verb"], exc)
+
     log.info("[engine-cost] registered %d verb(s): %s", len(registered), registered)
     if failed:
         log.error("[engine-cost] %d verb(s) NOT registered: %s", len(failed), failed)
@@ -307,9 +401,72 @@ def _assert_declarations_cover_verbs() -> None:
         )
 
 
+def _all_subjects() -> set[str]:
+    """Every class this engine registers a verb ON — primary and also-askable alike.
+
+    THE COVERAGE CHECK MUST USE THIS, NOT `INPUT_URI` DIRECTLY. Engine F's note applies
+    unchanged: after `also_askable_of`, the primary subject is no longer the set of classes
+    that route somewhere, and reading `input_uri` alone would make the check blind to a
+    secondary subject nothing can resolve — exactly the silent gap it exists to catch.
+
+    This engine declares no `also_askable_of` today. It is read anyway, so the first entry
+    that adds one is covered by the commit that adds it rather than by someone remembering.
+    """
+    return (set(measures.INPUT_URI.values())
+            | {s for e in CATALOGUE for s in e.get("also_askable_of", ())})
+
+
 class MeasureRequest(BaseModel):
     """A dispatched verb call. `params` carries the declared slots, nothing else."""
     params: dict[str, Any] = {}
+
+
+class ResolveRequest(BaseModel):
+    """The mesh's resolveInstance request. THE FIELD IS `identifier`, NOT `text`.
+
+    ⛔ ENGINE F SHIPPED THIS WRONG AND THE PROVIDER WAS UNCALLABLE. It registered as a
+    `mesh:resolveInstance` provider and could not be called by one: Engine O's fan-out sends
+    `{"identifier": ..., "query": ...}` (`ontology_service/main.py::_call_resolver`) and the
+    model required `text`, so every real call was a **422** while the graph said the provider
+    was registered, by name, at the right endpoint.
+
+    REGISTERED IS NOT PARTICIPATING. A registration describes an edge and says nothing about
+    the payload the consumer actually sends. Copied here field-for-field from the four
+    providers that already work, rather than re-derived — the contract's whole value is that
+    they agree.
+    """
+    identifier: str = ""
+    query: str = ""
+    class_uri: Optional[str] = None
+
+
+class EnumerateRequest(BaseModel):
+    class_uri: str
+    #: THE FLEET'S DEFAULT, AND THIS ENGINE HAS NINE LOTS. `cost:ProductionLot` therefore
+    #: answers `too_many` at the default bound — correct by the contract (the bound is the
+    #: CALLER's declaration of what fits) and worth knowing, because nine is a perfectly
+    #: renderable menu. The `count` is carried precisely so an ask can raise its own limit
+    #: rather than falling back to free text. Left at 8 rather than tuned upward here: a
+    #: provider that quietly disagrees with its neighbours about the default is how the next
+    #: reader picks the wrong one.
+    limit: int = 8
+
+
+@app.post("/resolve_instance")
+def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
+    """Resolve a spoken production-cost name to an identifier in this model."""
+    return {
+        "output_uri": MESH + "InstanceResolution",
+        "query": req.identifier,
+        "candidates": instances.resolve(STATE, req.identifier, req.class_uri),
+        "provider": "engine_cost_production_cost",
+    }
+
+
+@app.post("/enumerate_instances")
+def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
+    """List the members of a cost class, or refuse in one of two named ways."""
+    return instances.enumerate_class(STATE, req.class_uri, req.limit)
 
 
 def _refusal(kind: str, message: str, **extra: Any) -> dict[str, Any]:
