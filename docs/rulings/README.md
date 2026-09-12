@@ -192,6 +192,90 @@ has something to land on.
 
 ---
 
+## R-010 — Canvas-template CI on `pull_request` is a blessed exemption
+
+**RULED 2026-09-08.** Source: architect thread. Governs
+[`.github/workflows/validate-canvas-templates.yml`](../../.github/workflows/validate-canvas-templates.yml);
+the job and its reasoning are in [`canvas-templates-slice-1`](../plans/canvas-templates-slice-1.md).
+
+**It overrides [`no-ci-gate-on-the-suite`](../plans/no-ci-gate-on-the-suite.md)**, which makes CI
+jobs `workflow_dispatch`-only because a never-executed job wired to `push` burns minutes, goes red
+for environment reasons, and trains people to ignore it. That reasoning is unchanged and still
+governs everything else.
+
+**Why this job is the exception:** ADR-0050 §1.3 requires an invalid template to fail **at merge**.
+A `workflow_dispatch`-only job does not deliver merge-time failure, so shipping one and calling
+§1.3 satisfied would be precisely the decorative seal ADR-0050 is written against — a check whose
+green means only that nobody ran it.
+
+**Why the convention's cost does not apply here:** the job is seconds of hermetic pure Python over
+~200 lines of YAML — **no cluster, no database, no network**. The failure mode the convention
+protects against (environment-caused reds that train people to ignore a gate) has no purchase on a
+job with no environment.
+
+**The demotion is pre-committed, not promised.** One environment-caused red and it goes to
+`workflow_dispatch`. The standing rule loses to an argument only until it wins on evidence.
+
+**Scope — this is an exemption, not a new convention.** It licenses this one job. A second
+`pull_request` job cites its own argument or does not ship; "R-010 did it" is not that argument.
+The discriminator is the pair: **a decision-bearing gate whose whole value is merge-time refusal,
+AND a check with no environment to be flaky about.** A job missing either half is governed by
+`no-ci-gate-on-the-suite` as before.
+
+---
+
+## R-011 — Task kinds: two after-cutover items on two lanes, and a row that was never created
+
+**RULED 2026-09-11.** Source: architect, correcting their own M3.3 dispatch. Governs the
+task-kind declaration layer ([`policy/task_kinds/`](../../policy/task_kinds/) and
+[`adding-a-task-kind.md`](../runbooks/adding-a-task-kind.md)) and the register's lane assignment.
+
+Recorded here rather than relayed, because the lane it was addressed to (`invincible-agent-01`)
+had ended by the time the correction was ready to send. That is this file's own thesis arriving
+on schedule: **a decision recorded in a conversation does not constrain anything — and a decision
+addressed to a session address does not survive the session.**
+
+**(a) The two after-cutover items belong to DIFFERENT lanes.** The dispatch put both on the
+task-kinds lane.
+
+| item | lane | why |
+|---|---|---|
+| the **groups ruling** — `grant_to` is users-only | whoever owns `task_grants.yaml` | a grant-rail decision, not a declaration one |
+| the **`pcn_disposition` string rename** | the task-kinds lane | expand/contract with a dual-read interval |
+
+The groups constraint is declared **verbatim in three namespaces** —
+[`capability_grants.yaml`](../../policy/capability_grants.yaml),
+[`ontology_compartments.yaml`](../../policy/ontology_compartments.yaml),
+[`task_grants.yaml`](../../policy/task_grants.yaml) — each deferring group audiences for the same
+reason; two state outright that `validate_policy` REFUSES a `grant_to` absent from `users.yaml`.
+**ADR-0051 §5's one-audience-per-authority-level is the workaround that constraint forces**, not a
+design preference. It was scheduled after the M3.3 cutover because the declaration is what groups
+would attach to — a real dependency, which is what made the misattribution plausible.
+
+The rename is the task-kinds lane's, because the kind string is simultaneously a live value in
+`human_task_projection` rows and a UI render contract: it moves with a dual-read interval or it
+strands rows. **It is deliberately NOT bundled into M3.3** — one migration at a time.
+
+**(b) The overlay `pcn_disposition` row was never created HERE, by design — and the ruling is the
+deliverable, not the row.** The dispatch listed the row as an artifact. It cannot exist in this
+repo: `test_no_domain_name_entered_the_platform_seed` fails the build on a domain token in
+`policy/task_kinds/`, which holds exactly four structural rows. What was delivered is the RULING
+that the row lives work-side carrying its own `accepts`. The architect's framing: *a name for
+something that cannot exist where it was put* — the same shape as the Engine S draft.
+
+Record the ruling as delivered and the row as work-side, never created here. **A register carrying
+a phantom deliverable is worse than one admitting a gap** — the same principle that had the
+task-kind runbook's index row marked ROW ADDED rather than quietly filled.
+
+**(c) Roster consequence, because this ruling was nearly lost to it.** `iagent-mesh-sdk-ca` is the
+M3.3 / task-kinds lane, working in `iagent-mesh-sdk` **with commits in `invincible-agent`**. An
+engine-repo search never finds it; `doc-tools-7f` and the cortex session are the same shape.
+**The role-to-address map in `AGENTS.md` must carry the REPO beside the address** — and an address
+alone is insufficient regardless, since session addresses churn hourly and `invincible-agent-01`
+is already gone. A roster keyed only on them reproduces the failure it exists to prevent.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
