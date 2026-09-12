@@ -54,7 +54,7 @@
 cost:ProductionLot a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Production Lot" ;
-    rdfs:comment "One numbered quantity built under a single authorization at a single point in time, costed as a self-contained whole. Questions naming a number and asking what that quantity cost, what it cost per unit, how its labor split, or which rates were applied to it target this class. It is the unit at which cost is accumulated and reported, and the smallest thing that has a complete price of its own." .
+    rdfs:comment "One numbered quantity built under a single authorization at a single point in time, costed as a self-contained whole. Questions asking what a quantity cost, what it cost per unit, how its labor split, which rates were applied to it, or how its base cost builds up to a price through the burden steps target this class. They target it WHETHER OR NOT THEY NAME THE NUMBER: a question about a price walk is about this class before anyone has said which lot, and the lot is then a missing slot to ask for rather than a reason to route elsewhere. It is the unit at which cost is accumulated and reported, and the smallest thing that has a complete price of its own." .
 
 cost:ProductionProgram a owl:Class ;
     rdfs:subClassOf prov:Entity ;
