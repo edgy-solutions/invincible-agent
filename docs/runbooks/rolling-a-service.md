@@ -1,3 +1,29 @@
+---
+iri: docs:runbook-rolling-a-service
+# EXPLAINS IS DELIBERATELY EMPTY, AND THE EMPTINESS IS THE MEASUREMENT, NOT AN OMISSION.
+# The invented-IRI rule (ADR-0037 section 1) refuses a target minted to make an edge look tidy,
+# and adding-an-engine.md already keeps its list short for that reason. This page goes one step
+# further because the graph has nothing it can honestly point at.
+#
+# Derived from setup/ontologies/mesh_system.ttl rather than recalled: the mesh declares FOUR
+# lowercase verbs -- enumerateInstances, proposeDisposition, rendersAs, resolveInstance -- and
+# 72 classes. NOT ONE of either concerns deployment, rolling, images, versions or health. A
+# roll is an infrastructure act; the mesh does not model it, so there is no contract-depth
+# target and inventing `mesh:rollService` is exactly the move the gate exists to refuse.
+#
+# CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER: if doc ingest requires at least one
+# `explains` target, this page is REFUSED. That refusal is the correct outcome -- the only way
+# to be admitted would be a minted IRI, and a page admitted on a fabricated edge is worse than
+# a page the corpus does not carry. If the rule is meant to admit edgeless how-tos, that is a
+# doc-tools decision and this comment is where to record it.
+explains: []
+doc_kind: how-to
+# From policy/personas.yaml, lowercased -- the canonical enum (PORTFOLIO_LEAD, DATA_STEWARD,
+# DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST, PROGRAM_FINANCE_ANALYST, COST_ANALYST), read out
+# of the file rather than recalled. Rolling a service is a platform act, so: architect.
+audience_hint: architect
+---
+
 # Rolling a service
 
 **Ruled 2026-09-06, after a fix silently regressed out of a running deployment.**

@@ -1,8 +1,8 @@
 # Runbooks — index
 
 **You have a task and you want the page that gets you through it.** Every entry below says *you
-want this when…* and whether it exists. **Nine of eleven do not exist yet, and are listed anyway**
-— an index of names with one page behind it is honest and useful; eleven stub pages would be the
+want this when…* and whether it exists. **Most of them do not exist yet, and are listed anyway**
+— an index of names with a few pages behind it is honest and useful; a stub page each would be the
 stub-mill [ADR-0037 §5](../adr/ADR-0037-ratified-docs-corpus-help-surface-grounding.md) refuses.
 A name here is a slot waiting, not a promise.
 
@@ -26,6 +26,7 @@ You are adding a capability to the mesh itself.
 | You are adding a **whole domain** — a new vocabulary graph, its prime-manifest entry, its partition | partial: [`personas-and-domains.md` §Adding a domain](../architecture/personas-and-domains.md) covers the *policy* half (config, no recompile). The ontology + manifest half is in [`adding-an-engine.md`](adding-an-engine.md) §1–§2. Neither is a task page. | not written |
 | You are adding a **persona** | partial: [`personas-and-domains.md` §Adding a persona](../architecture/personas-and-domains.md) — a real how-to living inside an architecture doc | not written *as a runbook* |
 | You are authoring a **workflow definition** — the process documentation that is also the process | — | not written · wakes on the first definition a process owner authors (ADR-0037 §1, gate granularity) |
+| You shipped a fix and need to **roll it into a running service** — and to know the pod serving traffic actually has it | [`rolling-a-service.md`](rolling-a-service.md) | **written** — ruled 2026-09-06 after a fix silently regressed out of a deployment; three failures deep. **ROW ADDED 2026-09-11, not filled**: the page existed and this index had no row for it, so it was a written runbook the index did not admit to. Its `explains` list is deliberately EMPTY — the mesh declares four verbs and 72 classes and not one concerns deployment, so there is no honest target and minting one is what ADR-0037 §1 refuses. |
 
 ## Consumer-side — things done WITH the platform
 
