@@ -34,6 +34,11 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 _PACKET = _REPO / "docs" / "plans" / "adding-an-engine-has-more-registry-sites-than-the-runbook-names.md"
 
+#: This file, read as text: the derived coverage check below asks which `test_site_<n>` functions
+#: exist rather than being told. Reading the source is deliberate — introspecting `globals()` would
+#: see only what has already been defined when the module is executing.
+_SELF = Path(__file__).read_text(encoding="utf-8")
+
 #: Engine S's four names (runbook §0). They DIFFER, which is normal and is exactly why grepping
 #: any one of them finds only part of the wiring.
 VALUES_KEY = "engineSafety"
@@ -49,25 +54,52 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8")
 
 
-def test_the_packet_still_says_eight_so_this_seal_is_not_stale():
-    """THE COUNT IS DERIVED FROM THE PACKET, and if the packet grows a ninth site this goes red.
+def test_the_seal_covers_every_site_the_packet_lists():
+    """THE COUNT IS DERIVED FROM THE PACKET AT BOTH ENDS, and neither end is a literal.
 
-    Without this, the seal below silently keeps checking eight while the real number is nine —
+    Without this, the seal below silently keeps checking eight while the real number is ten —
     which is precisely the shape the packet was written about.
+
+    **THE FIRST VERSION OF THIS TEST WAS ITSELF THE DEFECT IT GUARDS.** It asserted `"9" not in
+    rows` — a hardcoded boundary that told the next author to *"add it here"*, so growing the
+    packet meant editing a literal in the seal. It fired correctly when the packet grew to ten
+    (`invincible-agent-01`, 2026-09-12), and the right repair was not to change 9 to 11: it was
+    to stop naming a number at all. This now reads the packet's site numbers and asserts a
+    `test_site_<n>` exists for each, so the packet and the seal cannot drift in either
+    direction, and a NEW site is red until it is checked rather than until someone notices.
+
+    **A hand-written list of a population is a sample — and so is a hand-written count of one.**
     """
     text = _PACKET.read_text(encoding="utf-8")
     rows = re.findall(r"^\|\s*(\d+(?:–\d+)?)\s*\|", text, re.M)
     assert rows, "no site rows parsed from the packet — instrument failure"
-    # Rows are numbered `1–4` (the four name registries) then 5, 6, 7, 8.
-    assert "1–4" in rows and "8" in rows, (
-        f"the packet's site numbering changed: {rows}. Re-derive this seal from it rather than "
-        "updating the number here."
-    )
-    assert "9" not in rows, (
-        "the packet now lists a NINTH registry site and this seal only checks eight — add it "
-        "here rather than letting the seal quietly under-report completeness"
+    assert "1–4" in rows, (
+        f"the packet's site numbering changed: {rows}. This seal reads it rather than restating "
+        "it, so the parse must be repaired, not the expectation."
     )
 
+    covered = set(re.findall(r"^def test_sites?_(\d+)(?:_to_(\d+))?_", _SELF, re.M))
+    have = {int(a) for a, _ in covered} | {
+        n for a, b in covered if b for n in range(int(a), int(b) + 1)
+    }
+    want = set()
+    for r in rows:
+        if "–" in r:
+            lo, hi = r.split("–")
+            want |= set(range(int(lo), int(hi) + 1))
+        else:
+            want.add(int(r))
+
+    missing = sorted(want - have)
+    assert not missing, (
+        f"the packet lists site(s) {missing} and this seal has no `test_site_{missing[0]}_*` for "
+        f"them — the seal would quietly under-report completeness, which is the packet's own "
+        f"thesis turned on its instrument. Covered: {sorted(have)}."
+    )
+    assert have >= want and len(want) >= 8, (
+        f"the packet shrank to {sorted(want)} — fewer sites than have ever been found, which is "
+        f"more likely a parse failure than a real deletion"
+    )
 
 def test_sites_1_to_4_the_four_name_registries():
     """values key, component/service, image, Keycloak client — all four, each in its own file."""
@@ -128,6 +160,35 @@ def test_site_8_the_public_url_THE_SILENT_ONE():
         "container port can drift apart"
     )
 
+
+def test_site_9_the_endpoint_gating_manifest_FAILS_BY_SKIP():
+    """SITE 9. Same shape as site 6, and the same reason the assertion is positive.
+
+    `SERVICE_FILES` is the population `test_endpoint_gating_manifest.py` parametrises over. An
+    engine absent from it is not FAILING endpoint gating — it is **not being asked about it**,
+    and that file reports green over a service it never opened.
+    """
+    src = _read("tests/test_endpoint_gating_manifest.py")
+    assert f'"{AGENT_DIR}": "agent_fleet/{AGENT_DIR}/main.py"' in src, (
+        f"site 9: {AGENT_DIR} is not in SERVICE_FILES — the endpoint-gating manifest does not "
+        "examine this service at all, and a skip reads as a pass"
+    )
+
+
+def test_site_10_the_census_url_var_map():
+    """SITE 10, and it is the only site in the packet that was GUARDED BEFORE IT WAS MISSED.
+
+    `_COMPONENT_TO_URL_VAR` derives the set of components that must appear in it from the
+    chart's `$engines` list, so an absent engine is red WITH A NAME rather than skipped. It
+    earns a check here anyway: a site being well-guarded does not make it not a site, and this
+    seal's job is to assert the engine is registered everywhere it must be — not to re-audit
+    which of those places happen to police themselves.
+    """
+    src = _read("tests/test_the_census_population_covers_every_engine.py")
+    assert f'"{COMPONENT}": "ENGINE_SAFETY"' in src, (
+        f"site 10: {COMPONENT} is in neither _COMPONENT_TO_URL_VAR nor _NOT_CENSUSED — the "
+        "census would print a complete-looking table with this engine missing from it"
+    )
 
 def test_the_build_matrix_THE_ONE_WITH_NO_ERROR_AT_ALL():
     """Named in the packet beside the eight. Without it no image is ever built at any pinned sha,

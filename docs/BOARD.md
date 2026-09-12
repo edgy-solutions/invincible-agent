@@ -68,7 +68,7 @@ _Coverage: **133 of 145 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: lane 1 (supervisor / BFF queue) — HANDED OVER, not diagnosed further · blocked-on: lane 1
   → [docs/plans/a-succeeded-run-reported-as-failed.md](plans/a-succeeded-run-reported-as-failed.md)
 
-- **adding-an-engine-has-more-registry-sites-than-the-runbook-names** — Runbook §0 names FOUR namespaces a new engine must be registered in. At least EIGHT sites exist, three of them found the hard way on engine-lg alone (mirror script — fifth omission of that same row, _KEY_TO_AGENT_DIR, and ENGINE_LG_PUBLIC_URL which the version census derives its population from). A commit faithful to the runbook inherits the runbook's gaps. Fix is a derived checklist, not a ninth row.
+- **adding-an-engine-has-more-registry-sites-than-the-runbook-names** — Runbook §0 names FOUR namespaces a new engine must be registered in. At least TEN sites exist — the count itself has been resampled four times — three found the hard way on engine-lg alone (mirror script — fifth omission of that same row, _KEY_TO_AGENT_DIR, and ENGINE_LG_PUBLIC_URL which the version census derives its population from). A commit faithful to the runbook inherits the runbook's gaps. Two more surfaced on engine-safety, BOTH failing by SKIP. Fix is a derived checklist, not an eleventh row.
   status: open · owner: unassigned
   → [docs/plans/adding-an-engine-has-more-registry-sites-than-the-runbook-names.md](plans/adding-an-engine-has-more-registry-sites-than-the-runbook-names.md)
 

@@ -9,7 +9,7 @@ dependencies = [
     # and validates against the same schema — "plug into our host" vs "run your own" is a
     # deployment choice rather than a second implementation.
     # PINNED TO A TAG, never a branch: this package governs fleet auth and identity minting.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.7.1",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.8.0",
     "fastapi",
     "uvicorn[standard]",
     "pydantic",

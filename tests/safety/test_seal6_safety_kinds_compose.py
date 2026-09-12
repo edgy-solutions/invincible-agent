@@ -79,6 +79,36 @@ def test_the_seed_alone_does_not_contain_the_safety_kinds():
     )
 
 
+def test_the_pin_that_makes_the_ordered_comparisons_meaningful_is_actually_PRESENT():
+    """THE COUPLING GUARD. The ordered `accepts` comparisons below are correct ONLY at SDK
+    v0.8.0+, and this says so rather than depending on the two landing together.
+
+    `invincible-agent-28` raised it while both changes were still on separate branches: at
+    v0.7.1 `accepts` is a `frozenset`, so `_verbs(row) == list(accepts)` passes or fails **by
+    iteration order** — a test whose result is decided by per-process hash randomisation. On
+    `lane/01` the pin and the comparison switch are the same commit (`f703774`) and cannot
+    separate; **that is a fact about one branch, not a property of the code**, and a cherry-pick
+    or a partial merge would undo it silently.
+
+    So the dependency is asserted. If this file ever arrives somewhere the pin has not, this
+    goes red NAMING THE CAUSE instead of the comparisons failing mysteriously three tests down.
+
+    It is the proxy-versus-event problem in its third form today. First: reading "the pin moved"
+    as "the fix shipped" — the v0.7.1 tripwire. Second: reading "the fix shipped" as "the pin
+    moved everywhere". This asserts the event where it is consumed, which is the only place the
+    question is ever actually settled.
+    """
+    row = _by_kind(compose(_SEED, [str(_OVERLAY)]))["risk_acceptance_high"]
+    accepts = getattr(row, "accepts")
+    assert not isinstance(accepts, (frozenset, set)), (
+        f"`accepts` composes to {type(accepts).__name__}, so the mesh SDK here is PRE-v0.8.0 "
+        f"while this file's comparisons assume declared order. The ordered assertions below "
+        f"would then pass or fail by frozenset iteration order — decided by per-process hash "
+        f"randomisation, not by the declaration. Land the fleet pin (16 sites, incl. every "
+        f"per-engine uv.lock and values.yaml meshSdkVersion) or revert these to set comparisons."
+    )
+
+
 def test_composition_yields_every_safety_kind_with_its_own_verbs():
     """FORWARD. Each row carries exactly what `safety.yaml` declares — not the seed's defaults."""
     composed = _by_kind(compose(_SEED, [str(_OVERLAY)]))
@@ -87,40 +117,37 @@ def test_composition_yields_every_safety_kind_with_its_own_verbs():
 
     for kind, (accepts, reasons) in _EXPECTED.items():
         row = composed[kind]
-        # COMPARED AS SETS, AND THIS NOTE HAS AN EXPIRY — READ IT BEFORE TRUSTING IT.
+        # ORDER NOW CARRIES MEANING, AND THIS BLOCK IS THE TRIPWIRE'S OWN FOLLOW-THROUGH.
         #
-        # Found 2026-09-12: the composer did not preserve declared order.
-        # `[accepted, rejected, returned_for_rework]` came back as
-        # `['returned_for_rework', 'accepted', 'rejected']`, so asserting order would have been
-        # asserting an implementation detail the SDK did not guarantee. It matters because cortex
-        # renders buttons FROM `accepts`, and on a risk acceptance the three verbs are not
+        # The note that stood here said: compared as sets, because the composer did not preserve
+        # declared order — `[accepted, rejected, returned_for_rework]` came back as
+        # `['returned_for_rework', 'accepted', 'rejected']`. It matters because cortex renders
+        # buttons FROM `accepts`, and on a risk acceptance the three verbs are not
         # interchangeable.
         #
-        # FIXED UPSTREAM THE SAME DAY — `accepts` becomes `tuple[str, ...]` rather than
-        # `frozenset[str]` (iagent-mesh-sdk master `d45105e`), a BREAKING change riding a minor.
+        # **THE TRIPWIRE FIRED ON 2026-09-12 AND THIS IS WHAT IT ASKED FOR.** SDK v0.8.0 ships
+        # `accepts: tuple[str, ...]`, the fleet pin moved to it in the same commit as this edit,
+        # and `test_the_ordering_tripwire` — which asserted the OLD contract so that the switch
+        # would announce itself — went red on cue and has been deleted, exactly as its own
+        # docstring instructed.
         #
-        # ⚠️ **MY FIRST VERSION OF THIS NOTE NAMED THE WRONG TRIGGER, and the error is worth more
-        # than the note.** It said "when the mesh-SDK pin moves off v0.6.0, assert order". The pin
-        # DID move — 32 cut v0.7.1 and re-pinned all 31 sites — and on that reading the trigger had
-        # fired. It had not: **`d45105e` landed on SDK master AFTER the tag, so v0.7.1 still ships
-        # `frozenset`** (verified by composing under the synced v0.7.1, not inferred from the
-        # version number). The pin moving was a PROXY for the fix landing, and the two are
-        # different events.
+        # ⚠️ **THE ORIGINAL NOTE NAMED THE WRONG TRIGGER, and that error is worth more than the
+        # note.** It said "when the mesh-SDK pin moves off v0.6.0, assert order". The pin DID move
+        # — v0.7.1, all 31 sites — and on that reading the trigger had fired. It had not: the fix
+        # landed on SDK master AFTER that tag was cut, so v0.7.1 still shipped `frozenset`. The pin
+        # moving was a PROXY for the fix landing, and the two diverged within a day. A revisit-later
+        # note is worth exactly what the next reader's check of its trigger is worth; this one was
+        # worth nothing until it became an assertion.
         #
-        # So the trigger is no longer a comment anybody has to check. `test_the_ordering_tripwire`
-        # below ASSERTS THE CURRENT CONTRACT and goes red by itself the moment the SDK starts
-        # guaranteeing order — which is the only form of "revisit this later" that cannot go stale,
-        # because it does not depend on a reader noticing. A note with a named trigger is worth
-        # exactly what the next reader's check of that trigger is worth, and mine was worth
-        # nothing until the tripwire existed.
-        #
-        # `reason_required` below stays a SET PERMANENTLY, and that asymmetry is deliberate in the
-        # SDK model rather than an oversight: order is meaningless for a membership test, and the
+        # `reason_required` stays a SET PERMANENTLY, and the asymmetry is deliberate in the SDK
+        # model rather than an oversight: order is meaningless for a membership test, and the
         # difference now carries information — a surface may read `accepts` as a sequence and must
-        # not read `reason_required` as one.
-        assert set(_verbs(row)) == set(accepts), (
-            f"{kind}: accepts is {sorted(_verbs(row))}, declared {sorted(accepts)}. A field-level "
-            "merge would hand it the seed's verbs here and look correct."
+        # NOT read `reason_required` as one.
+        assert _verbs(row) == list(accepts), (
+            f"{kind}: accepts is {_verbs(row)}, declared {list(accepts)}. Compared IN ORDER, "
+            "because cortex renders the buttons in this sequence and on a risk acceptance the "
+            "verbs are not interchangeable. A field-level merge would hand it the seed's verbs "
+            "here and look correct."
         )
         assert set(_reasons(row)) == set(reasons), (
             f"{kind}: reason_required is {sorted(_reasons(row))}, declared {sorted(reasons)}"
@@ -187,41 +214,6 @@ def test_reason_required_is_a_subset_of_accepts_on_every_safety_row():
         row = composed[kind]
         stray = set(_reasons(row)) - set(_verbs(row))
         assert not stray, f"{kind}: reason_required names non-accepted verb(s) {sorted(stray)}"
-
-
-def test_the_ordering_tripwire():
-    """SELF-FIRING: goes red the moment the SDK starts guaranteeing verb order.
-
-    WHY THIS IS A TEST AND NOT A COMMENT. The first version of this file carried a comment saying
-    "when the mesh-SDK pin moves off v0.6.0, assert order directly". The pin moved — v0.7.1, all
-    31 sites — and on that reading the trigger had fired. **It had not:** the ordering fix landed
-    on SDK master AFTER the tag was cut, so v0.7.1 still ships `frozenset`. The comment named a
-    PROXY (the pin moved) for the event it cared about (the fix shipped), and the two diverged
-    within a day.
-
-    A revisit-later note is worth exactly what the next reader's check of its trigger is worth.
-    This asserts the CURRENT contract instead, so the switch announces itself.
-
-    WHEN THIS GOES RED, that is the SDK having shipped the ordered `accepts`. Do three things:
-      1. change the `accepts` comparisons above from `set(...) == set(...)` to `list(...) == [...]`
-         in the DECLARED order, since order then carries meaning on the card;
-      2. leave every `reason_required` comparison as a set — that field stays unordered by
-         deliberate SDK design, because order is meaningless for a membership test;
-      3. delete this test.
-    """
-    composed = _by_kind(compose(_SEED, [str(_OVERLAY)]))
-    row = composed["risk_acceptance_high"]
-    accepts = getattr(row, "accepts")
-    assert isinstance(accepts, (frozenset, set)), (
-        "`accepts` is no longer a set — the SDK now guarantees verb ORDER, which it did not when "
-        "these seals were written. The set comparisons above have silently stopped checking "
-        "something the SDK promises. See this test's docstring for the three steps."
-    )
-    # The other half of the contract, asserted so a change to EITHER field is caught rather than
-    # only the one that moved first.
-    assert isinstance(getattr(row, "reason_required"), (frozenset, set)), (
-        "`reason_required` changed container type — it is specified to stay unordered"
-    )
 
 
 def test_at_least_one_declared_row_can_actually_PROVE_order():

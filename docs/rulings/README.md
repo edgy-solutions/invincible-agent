@@ -776,6 +776,266 @@ wrote one into a seal's justification.
 
 ---
 
+## R-026 — Three laws from the v0.8.0 pin, each about an instrument rather than a subject
+
+**Ruled by the architect on the `frozenset`/tuple report, 2026-09-12.** All three are about the
+thing doing the checking, which is why they sit together.
+
+### (a) A wrapper that discards a fix while leaving the bump looking applied
+
+`frozenset(...)` around a tuple is not a type annoyance. **It reverses the change the version bump
+exists to deliver, and leaves every visible sign of the bump in place** — the pin moved, the lock
+moved, the SDK ships the ordered field, and the value arriving at the card is unordered anyway.
+Nothing is red, the release notes are true, and the defect is invisible at the only layer anyone
+inspects.
+
+**So a bump that changes a CONTRACT is not landed when the pin moves. It is landed when a seal
+asserts the new contract's effect at the consuming surface**, and that seal has to be written
+before the pin so it cannot be written to fit what the code already does.
+
+### (b) Sorting an unordered source rather than passing it through
+
+Where a source genuinely has no order, **impose one; never pass through.** Python randomises
+string hashing per process, so a `frozenset`'s iteration order differs **in every pod** — measured
+three times on identical input by `iagent-mesh-sdk-ca`, three different orders. Pass-through does
+not produce "an arbitrary but stable order"; it produces **a fresh order on every restart**, with
+nothing in the diff to explain why the buttons moved.
+
+**Sorting is the only deterministic option available, not the tidier one.** The original docstring
+here said *"arbitrary but not random"* — the decision was right and the mechanism was wrong, which
+is the more durable error: **the code cannot fail, so the false premise survives to be reused
+somewhere the code would.** Cf. [[a-justification-invented-downstream-fits-by-construction]] and
+R-025; this is the same family with the sign flipped — a TRUE conclusion resting on a false
+reason, which no test can ever catch.
+
+### (c) The instrument and the subject share a surface — the container-type instance
+
+**Nine seals asserted container TYPE when their claim was verb MEMBERSHIP.** `assert
+isinstance(verbs, frozenset)` passes, reads as rigour, and says nothing whatever about whether the
+species accepts the right words. The seal and the thing it checks touch at the same surface, so
+the wrong one gets asserted and the result is indistinguishable from the right one.
+
+**Ask what the claim is BEFORE choosing what to assert, and state the claim in the failure
+message.** A seal whose message cannot say what went wrong in the subject's own vocabulary is
+probably asserting its instrument.
+
+### The corollary these three produced in practice, on the same day
+
+**A SEAL THAT DEFENDS A CHOICE MUST ASSERT THAT ITS OWN FIXTURE DISTINGUISHES THE REJECTED RULE.**
+
+The order seal written for this pin used `risk_acceptance_high`, whose row declares
+`[accepted, rejected, returned_for_rework]` — **already alphabetical**. `sorted()` and
+pass-through produce the identical tuple, so the assertion could not tell the rejected rule from
+the intended one. It passed, and it measured nothing. Mutation testing cannot find this: the
+mutant and the original agree on that fixture.
+
+`hazard_link_review` declares `[linked, new_hazard, dismissed]`, and **in the whole sample overlay
+it is the only row that discriminates.** Most natural verb lists are alphabetical by accident,
+which is precisely why this hides. The seal now asserts the discrimination itself, so
+alphabetising that row later goes red rather than quietly restoring the vacuum.
+
+
+
+**AND THE GUARD MUST BE ASSERTED OVER THE SAMPLE, NOT OVER ONE ROW** — `invincible-agent-28`'s
+refinement, and it is the difference between fixing an instance and closing the class. Their rows
+are **seven of eight** non-discriminating:
+
+    risk_acceptance_{high,serious,medium,low}    accepted, rejected, returned_for_rework   ALPHABETICAL
+    risk_acceptance_concurrence_{high,serious}   concurred, not_concurred, returned...     ALPHABETICAL
+    pcn_disposition                              approved, rejected                        ALPHABETICAL
+    hazard_link_review                           linked, new_hazard, dismissed             <- the only one
+
+So an ordered assertion across those rows would have been **7/8 decoration**, read as coverage. A
+guard naming `hazard_link_review` specifically would break the moment that row is renamed — *the
+hand-kept-list shape one level up* (R-027). The guard therefore **walks every declared row and
+requires at least one to be non-alphabetical**, so it keeps working as rows are added and reds when
+the last discriminating one is tidied away.
+
+**One innocuous reordering silently converts every ordered assertion in a file into decoration, and
+nothing says so.** Nobody chooses alphabetical here: `accept` precedes `reject` in both meaning and
+spelling. That is why it is everywhere and why it hides.
+
+### The corollary's own corollary, found by `iagent-mesh-sdk-ca` the same hour
+
+**The SDK's order arm was vacuous from the identical cause** — `[accepted, rejected,
+returned_for_rework]`, already alphabetical — so **the arm asserting that composition preserves
+declared order shipped decorative in the same commit as the feature it guards.** Two lanes, one
+fixture mistake, independently. That is not coincidence: it is what "most natural verb lists come
+out alphabetical by accident" predicts.
+
+**A FIXTURE THAT MUST PROVE IT CAN FAIL BEFORE IT IS ALLOWED TO PASS.** Both seals now assert
+`declared_order != sorted(declared_order)` before using the fixture.
+
+**And the check of the check needed its own control.** ca's first counterfactual used `sed` to
+restore the old fixture and reported a **RED** — which would have concluded the seal was fine and
+needed no change. The `sed` had mangled the test: the red was **the instrument breaking, not the
+fixture discriminating.** The clean check ran the model directly against both orderings.
+
+> **A red is as capable of being wrong as a green**, and it is easier to forget, because a red
+> feels like evidence. An instrument built to test an instrument is not exempt from needing its
+> own control.
+
+Cf. [[a-mutation-that-wont-die]] — the same asymmetry from the other side: there the surprise was
+green where red was expected; here it was red where the red meant nothing.
+
+### Two sites the same class cost on this pin
+
+| miss | why no rebuild would have caught it |
+|---|---|
+| `values.yaml` `meshSdkVersion` | the domain broker pip-installs the SDK **at pod start** on stock `python:3.12-slim`, not the iagent image |
+| 14 per-engine `uv.lock` files | the image build runs `uv sync --locked`; relocking the root alone fails every engine build at **image** time |
+
+**The pin was sixteen sites and fifteen were found by hand.** Both misses were caught by seals.
+Cf. [[a-sample-is-not-the-population]] — and R-027 below, where the same shape appeared *inside*
+the seal written about it.
+
+---
+
+## R-027 — A hand-written COUNT of a population is a sample too
+
+**Seal 13's staleness guard was the defect it guards.** The seal checks that a new engine is
+registered at every site the registry packet lists, and it carried:
+
+    assert "9" not in rows, "...add it here rather than letting the seal quietly under-report"
+
+**A hardcoded count, inside the seal written about hand-kept lists**, instructing the next author
+to edit a literal. It fired correctly when the packet grew from eight sites to ten — and the
+repair was **not** `9` → `11`. It now parses the packet's site numbers and asserts a
+`test_site_<n>` exists for each, so packet and seal cannot drift **in either direction**, and a
+new site is red until it is *checked* rather than until someone *notices*.
+
+**The rule: where a seal is derived from a source, its COMPLETENESS CHECK must be derived from the
+same source.** A derived population guarded by a hand-written count has simply moved the sample
+one level up — which is exactly what *"a derived population is only as complete as the thing it
+derives from"* said, applied to the instrument instead of the subject.
+
+Related: [[a-filed-defect-is-a-sample-not-a-census]], [[an-absence-assertion-is-worth-its-control]].
+
+---
+
+## R-028 — A seal that ASSERTS a dependency constrains MERGE ORDER, not just correctness
+
+**Raised by `invincible-agent-28`, 2026-09-12, before either merge moved.** `lane/01` added a guard
+to seal 6 asserting that the SDK v0.8.0 pin is present, because the ordered `accepts` comparisons
+are meaningless without it. `lane/74` is still at v0.7.1. So:
+
+    lane/74 -> master, THEN lane/01 (pin + locks + comparisons + guard, one commit)   SAFE
+    both in one window, lane/01 second                                                SAFE
+    74 pre-merges 01's test-file changes to settle the conflict early                 BREAKS
+
+**The broken ordering is the tempting one**, because it removes the conflict soonest. It takes the
+guard without the pin, so `lane/74`'s suite goes red **by construction** — and red *for the correct
+reason*, which makes it indistinguishable from a real defect to anyone reading the run.
+
+**THE RULE. A guard that asserts a precondition is a claim about the tree it lands in.** Before
+moving such a file between branches, ask whether the precondition travels with it. If it does not,
+the file cannot go first — no matter how convenient the conflict resolution becomes.
+
+**The corollary is about the conflict, not the guard:** resolve at the merge of the branch that
+CARRIES the precondition, never before it. Here that means the conflict in
+`test_seal6_safety_kinds_compose.py` and `test_seal13_all_eight_registry_sites.py` is resolved when
+`lane/01` merges, taking BOTH sides — the ordered comparisons and coupling guard from one, the
+engine-extra split and discrimination guard from the other. They are orthogonal; neither supersedes.
+
+**And one marking rule falls out of it.** In the split file, the ordered comparisons go behind
+`requires_rdflib` because they parse; **the coupling guard is never marked.** It reads a version and
+a type and needs no graph, and marking it would take it dark in exactly the deployment it was
+written for — a root-venv CI run without the engine extra, which is precisely where a pin/comparison
+mismatch would otherwise surface three tests down from its cause. *Over-marking shrinks the
+always-runs half, which is the thing the split exists to protect.*
+
+
+### What had ALREADY happened when this was filed — verified, not inferred
+
+**`lane/74` reached master VIA `lane/01`, not by merging first**, and this ruling was written
+describing an ordering that was already overtaken. `invincible-agent-28` caught it and checked the
+right thing: **master's copy of the file, not the branch name.**
+
+    94efdf6  "Merge remote-tracking branch 'origin/lane/74' into lane/01"   ancestor of origin/master
+    f703774  the v0.8.0 pin                                                 NOT on origin/master
+
+    master's pyproject pin              v0.7.1
+    master's seal 6: set comparisons    PRESENT
+                     ordering tripwire  PRESENT
+                     ordered comparisons / coupling guard   ABSENT
+
+**The dangerous combination this ruling names — guard without pin — did not occur**, because what
+merged was an older `lane/01` predating `f703774`. Master is internally consistent at v0.7.1.
+
+**THE RULING IS UNCHANGED AND STILL BINDING FOR WHAT REMAINS**, with the roles as stated: 74's
+remaining commits carry no precondition and go first; `lane/01`'s carry the pin and go second. The
+merge that already happened is not a counter-example to it — **it is an instance of the safe case
+reached by accident**, which is the more dangerous way to be right and exactly why the ordering is
+now written down rather than reconstructed each time.
+
+**The check that settled it is the transferable part:** *branch names describe intent; file contents
+describe state.* "`lane/74` is 22 ahead" and "`lane/74` is 2 ahead" were both true an hour apart,
+and neither answered whether the pin and the guard were in the same tree. Reading master's copy of
+the file did.
+
+Cf. [[regenerate-then-stage]] — *a green belongs to a SHA, not a directory* — and R-025.
+
+Related: [[a-guard-that-cannot-fire]] (the marked-dark case), [[prime-then-roll-then-read-the-edges]].
+
+---
+
+## R-029 — A seal that EXERCISES a function is not a seal that PINS its algorithm
+
+**Measured by `invincible-agent-81` on ADR-0053 §7 step 1, 2026-09-12, and it corrects §7's stated
+argument before the remaining four extractions inherit it.**
+
+§7 justifies extraction-before-change on the grounds that *"the existing seal — written before
+either change, already battle-tested — is the check."* For this verb **it checked nothing about the
+unit being moved.**
+
+Five mutations of the extracted module — sort by raw value instead of absolute, keep zero
+contributors, annotate only the last row with the withheld tail, return `0` instead of `None` for an
+undefined share, rank from `0`:
+
+    every one reddened exactly ONE test, and always a test written in the same commit
+    the standing seal stayed GREEN through all five
+
+It exercises the verb at two call sites and asserts its contract **shape**. It never asserted the
+ordering, the zero-drop, the rank numbering, or the withheld tail — *which is to say, none of the
+algorithm being moved.* **The green before and after was real and weak:** it proved the verb still
+runs and answers in the declared shape.
+
+**THIS DOES NOT FLIP THE ORDER — extraction-first stands. It replaces the reason.** Inheriting §7's
+coverage claim is the error. The next extraction must **check what its seal actually asserts about
+the unit**, and that is one command: mutate the unit, see whether the standing seal notices. **A
+required step, not advice.**
+
+### The instrument that did establish preservation, and why it is better than a seal
+
+A purpose-built equivalence run: the pre-extraction function loaded from `git show HEAD:...`
+alongside the new one, both over the same seed across the full matrix — 2 variance kinds × 2 levels
+× 5 `top_n` values. **20 cases, 42 rows, byte-identical JSON, 0 diffs.**
+
+**Equivalence against the code itself rather than against an assertion about it — and unlike a
+seal's age, it does not decay.** Required instrument for the remaining four extractions.
+
+### The seal-age field bit on its own first use
+
+    seal_last_commit  803071e      seal_last_date  2026-09-02
+    run_date          2026-09-12   -> TEN DAYS, in a tree 81 commits had landed in
+
+**The number is what prompted the mutation** — ten days in a moving tree was enough to ask whether
+the seal still pinned anything, and the answer was that it never had. Recorded as commands rather
+than as a figure, per the ADR.
+
+### Scope held where it was tempting to widen
+
+**No registry row was added**, and the package docstring says so rather than leaving it assumed.
+§2 makes a module with no row *invisible*; that is true of this one. **Adding the row here would
+make the green cover the conjunction — the error §7 exists to prevent, committed while following
+§7.** The module's location under `finance_agent/measure_modules/` is mechanical (engine images
+flatten `agent_fleet/<engine>/` to `/app`), stated so nobody reads it as architecture; the shared
+location is §2's open question.
+
+Related: [[a-mutation-that-wont-die]], [[a-stale-claim-is-pre-authenticated]], R-026(c).
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

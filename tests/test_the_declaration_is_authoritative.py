@@ -113,15 +113,15 @@ def test_CONTROL_an_existing_species_is_unchanged(kind, expected):
     else's would satisfy every assertion above while breaking the fleet — and
     `extraction_refusal` is the one that proves the code table still wins where no row overrides
     it, since its verbs come from `_VERBS_BY_KIND`."""
-    assert ht.verbs_for_kind(kind) == frozenset(expected)
+    assert set(ht.verbs_for_kind(kind)) == set(expected)
 
 
 def test_CONTROL_an_undeclared_kind_still_gets_nothing():
     """The gateway-half narrowing must survive the consumer half."""
-    assert ht.verbs_for_kind("risk_acceptance") == frozenset(), (
+    assert tuple(ht.verbs_for_kind("risk_acceptance")) == (), (
         "bare `risk_acceptance` is declared nowhere — the species are per authority level"
     )
-    assert ht.verbs_for_kind("totally_made_up") == frozenset()
+    assert tuple(ht.verbs_for_kind("totally_made_up")) == ()
 
 
 def test_CONTROL_the_code_table_still_serves_a_kind_no_row_covers():
@@ -130,3 +130,74 @@ def test_CONTROL_the_code_table_still_serves_a_kind_no_row_covers():
     reds rather than silently widening every uncovered kind to nothing."""
     assert ht._VERBS_BY_KIND, "the interim per-kind table was emptied before the parity seal"
     assert ht._DEFAULT_VERBS == frozenset({"approved", "rejected"})
+
+# ---------------------------------------------------------------------------------------
+# ONE RETURN TYPE, AND ORDER PRESERVED WHERE IT EXISTS
+# ---------------------------------------------------------------------------------------
+
+def test_EVERY_BRANCH_RETURNS_THE_SAME_CONTAINER_TYPE():
+    """A function returning two types depending on which branch it takes is worse than either.
+
+    `verbs_for_kind` reads a declared row, a code table, or refuses — three branches. If they
+    disagreed on container type, a caller that works in a deployment WITH an overlay would
+    break in one without: a defect that only appears where nobody tests.
+
+    Flagged by `iagent-mesh-sdk-ca` ahead of the SDK v0.8.0 pin, and the UNDECLARED branch was
+    still returning `frozenset()` after the others became tuples — found by printing the type
+    rather than by reading the function.
+    """
+    kinds = ["risk_acceptance_high", "grouped_review", "extraction_refusal",
+             "risk_acceptance", "totally_made_up"]
+    got = {type(ht.verbs_for_kind(k)).__name__ for k in kinds}
+    assert got == {"tuple"}, f"verbs_for_kind returns {got} across its branches, not one type"
+
+
+def test_THE_DECLARATIONS_ORDER_SURVIVES_and_is_not_re_sorted():
+    """SDK v0.8.0 makes `accepts` a tuple; the row's order must carry through untouched.
+
+    **THE FIXTURE IS THE WHOLE SEAL, AND THE OBVIOUS ONE IS VACUOUS.** Written first against
+    `risk_acceptance_high`, whose row declares `[accepted, rejected, returned_for_rework]` —
+    which is ALREADY ALPHABETICAL, so `sorted()` and pass-through produce the identical tuple
+    and the assertion could not tell the rejected rule from the intended one. It passed, and it
+    measured nothing.
+
+    `hazard_link_review` declares `[linked, new_hazard, dismissed]`. Sorted that is
+    `[dismissed, linked, new_hazard]` — a different tuple — so this fixture, and in the sample
+    overlay ONLY this fixture, can fail. The discrimination is asserted below rather than
+    assumed, because a later edit that alphabetised that row would quietly restore the vacuum.
+    """
+    import iagent_mesh.task_kinds as tk
+    declared = tk.TaskKind.model_fields["accepts"].annotation
+    assert "frozenset" not in str(declared), (
+        f"the SDK still stores `accepts` as {declared} — the fleet pin did not move to v0.8.0, "
+        f"and order cannot survive a set no matter what this module does"
+    )
+
+    got = ht.verbs_for_kind("hazard_link_review")   # also populates _DECLARED_ROWS
+    assert isinstance(got, tuple), f"order cannot survive a {type(got).__name__}"
+
+    row = ht._DECLARED_ROWS["hazard_link_review"]
+    want = tuple(str(v) for v in row.accepts)
+    assert want != tuple(sorted(want)), (
+        f"the fixture no longer discriminates: {want} is in sorted order, so this seal would "
+        f"pass under the very `sorted()` wrap it exists to refuse. Pick a row whose declared "
+        f"order is not alphabetical, or this assertion is decoration."
+    )
+
+    assert got == want, (
+        f"the declaration's order was not preserved: got {got}, the row declares {want}. "
+        f"A `sorted(...)` or `frozenset(...)` on this path discards v0.8.0's fix while leaving "
+        f"the version bump looking applied."
+    )
+
+
+def test_the_refusal_payload_does_not_RE_SORT_what_the_row_declared():
+    """`sorted()` on the gateway's `allowed` field reproduces the ordering defect one surface
+    over — and looks like tidiness rather than a decision, which is why it survived unexamined.
+    Asserted against the source because the payload is built inside an exception handler."""
+    src = (_REPO / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    assert 'sorted(human_tasks.verbs_for_kind(' not in src, (
+        "the refusal payload re-sorts the verbs, so a safety species' `allowed` reads "
+        "alphabetically regardless of what its row declared"
+    )
+    assert 'list(human_tasks.verbs_for_kind(' in src

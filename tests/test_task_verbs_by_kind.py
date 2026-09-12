@@ -73,7 +73,11 @@ def test_an_unregistered_kind_keeps_the_approve_reject_default():
     handled by registering species that differ, and (UI side) by an archetype that refuses to
     guess affordances."""
     ht = _ht()
-    assert ht.verbs_for_kind("some_future_kind") == frozenset({"approved", "rejected"})
+    # ASSERTED AS MEMBERSHIP, NOT AS CONTAINER TYPE. This read `== frozenset({...})` and went
+    # red when `verbs_for_kind` began returning a tuple at SDK v0.8.0 — while the CLAIM in the
+    # docstring above stayed true throughout. R-026(c): the seal and its subject share a surface,
+    # so the wrong one gets asserted and the result is indistinguishable from the right one.
+    assert set(ht.verbs_for_kind("some_future_kind")) == {"approved", "rejected"}
 
 
 # ── reason-required is a MEANING requirement, not a form nicety ────────────

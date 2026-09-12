@@ -434,6 +434,30 @@ gauge reads it, so an engine that takes the dependency but drops the announcemen
 posture nothing can observe. `_docs_kwargs()` turns `/docs`, `/redoc` and `/openapi.json` off
 in deployment (the Starlette-bypass class).
 
+#### REQUIRED — and here is the seal that will catch you
+
+    tests/test_transport_auth_applied_everywhere.py
+
+Three of its checks go red on a new engine that omits any part of the two lines above, and each
+names your engine in the failure id:
+
+| check | what a miss looks like |
+|---|---|
+| `test_inbound_every_engine_carries_the_transport_auth_dependency` | the `Depends(_transport_auth(...))` is absent — nothing validates what arrives |
+| `test_announced_every_engine_emits_its_posture` | the dependency is taken and the announcement dropped — **a real posture nothing can observe**, and the fresh-deploy gauge reads that string |
+| `test_outbound_no_engine_reimplements_the_mint` | the engine hand-rolls a token instead of using the SDK's |
+
+**THIS IS THE ONE REGISTRY THAT DOES NOT NEED YOU TO REGISTER IN IT.** `_APPS` is built by
+GLOBBING `agent_fleet/*/main.py`, so a new engine enters the population by existing. Compare the
+ten hand-kept sites in §0, every one of which fails by SILENCE when you forget it: this one fails
+by NAME, on the first run, without a row being added anywhere.
+
+**Measured on engine-safety, 2026-09-12.** The engine was born without transport auth and it was
+these three checks that said so — not review, and not this runbook. That is the correct order and
+it is why this section names the seal rather than merely repeating the rule: **"read the runbook"
+was never the guard.** What the prose is for is telling you WHICH red you are about to see, so
+you recognise it as your omission instead of debugging it as someone else's breakage.
+
 ---
 
 ## §7 — Environment variables
