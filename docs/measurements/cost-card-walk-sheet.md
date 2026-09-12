@@ -98,19 +98,43 @@ It was a PREDICTION about which vintage the answer would use, written as an INST
 
 > **"did the rates move against the estimate on lot 3"**
 
-**Expect: `VintageRequired` — *not* a card, and this is a PASS.**
+**Expect: `outcome: "slot_required"` — *not* a card, and this is a PASS.**
+
+> **⚠ THIS SAID `VintageRequired` UNTIL 2026-09-11, AND THAT REFUSAL COULD NOT HAPPEN.**
+> `rate_vintage` is spoken-mandatory, so `/measure/{fn}` short-circuits **before the verb
+> runs**. `_require_vintage` — the only code that knows the vintages — **was unreachable
+> through the path the UI uses.** The wire carried `missing` and `declarations` and **no
+> values at all**, so the second check below could not pass and a walker would have scored a
+> red against a rendering that works. Found by reading the payload rather than the code.
+> **Fixed**: the route now computes `options` from the slots the caller did supply, and a
+> seal asserts it agrees with what the verb would have said.
 
 The phrasing routes correctly (`"did the rates move"` is a declared synonym of
-`mesh:costRateComparison`), and then the verb refuses because `rate_vintage` is required and
-absent. **Checks that matter, and nothing has ever confirmed these render:**
+`mesh:costRateComparison`), and the **route** then refuses because `rate_vintage` is required
+and absent. **This is the payload to compare against — captured from the engine, not written
+from memory:**
+
+```json
+{ "refused": true, "outcome": "slot_required",
+  "reason": "cost_rate_comparison needs rate_vintage",
+  "missing": ["rate_vintage"],
+  "options": { "rate_vintage": ["2021-02-01", "2021-08-01"] } }
+```
+
+**Checks that matter, and nothing has ever confirmed these render:**
 
 - **The refusal DRAWS AT ALL.** A designed refusal that renders as generalist prose, or as
   `No content available`, is the same defect as a card that will not draw — and it is the one
-  failure this walk was most likely to mislabel.
-- **It names BOTH vintages — `2021-02-01` and `2021-08-01`.** The exception carries `available`
-  precisely so the caller's next question is answerable. A refusal that withholds them is a dead
-  end wearing a refusal's clothes.
-- **It says WHY**, in terms of the basis rather than of a missing parameter.
+  failure this walk was most likely to mislabel. **This is the whole reason Q5 is here.**
+- **It names BOTH vintages — `2021-02-01` and `2021-08-01`** — from `options.rate_vintage`.
+  A refusal that withholds them is a dead end wearing a refusal's clothes. **If the screen
+  shows the refusal but not the two values, the payload is right and the RENDERER is
+  dropping them; that is a cortex finding, not an engine one.**
+- **It says WHY — and today it says "needs rate_vintage", which is a missing-parameter
+  reason, not a basis reason.** ⚠ **KNOWN RESIDUAL, do not score it red.** The route's
+  message is generic across every verb; the basis-level explanation lives in
+  `VintageRequired`, which this path still does not reach. The *values* were the load-bearing
+  half and they are now carried; the *wording* is an open improvement.
 
 ### Step 2 — name the vintage, and expect the card
 

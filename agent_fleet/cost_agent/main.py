@@ -496,11 +496,25 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         # A MISSING MANDATORY SLOT IS AN ASK, NOT A PYTHON ERROR. Calling through with a
         # gap raises TypeError and shows a caller "missing 1 required keyword-only
         # argument" — a signature error rendered to a person who asked a question.
+        #
+        # AND AN ASK MUST CARRY ITS OPTIONS WHERE THE ENGINE KNOWS THEM. This branch fires
+        # BEFORE the verb, so the verb's own richer refusals never run — `VintageRequired`
+        # names both vintages and was unreachable through this route for as long as it has
+        # existed. Measured on the wire, not inferred. A refusal that withholds the options
+        # is a dead end wearing a refusal's clothes.
+        options = {
+            slot: opts for slot in missing
+            if (opts := measures.options_for(STATE, fn_name, slot, req.params)) is not None
+        }
         return _refusal(
             "slot_required",
             f"{fn_name} needs {', '.join(missing)}",
             missing=missing,
             declarations=slot_decls.slots_for(fn_name),
+            # OMITTED ENTIRELY WHEN NOTHING IS COMPUTABLE, rather than sent as {}. An empty
+            # map would read as "asked and there are none"; absence reads as "not asked",
+            # which is the truth when the caller supplied nothing to compute from.
+            **({"options": options} if options else {}),
         )
 
     try:
