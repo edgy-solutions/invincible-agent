@@ -229,6 +229,34 @@ TEST_CASES: list[RouteCase] = [
     # THE HOSTED GRAPH TAKES ITS OWN QUESTION, and it has to win against seven siblings on
     # the same subject to do it. ADR-0046 slice 1's whole claim is that a graph is admitted
     # as an ordinary verb; this row is that claim measured rather than asserted.
+    # --- engine-lg's SECOND graph on cost#ProductionLot -----------------------------------
+    # ADDED 2026-09-12 after the roll that registered `costLotCostingReview`. Same property
+    # as the fin:Program pair above, measured for the second subject: the graph joined
+    # cost#ProductionLot's eligible set (4 verbs -> 5) and MUST NOT have captured its
+    # neighbours' questions.
+    #
+    # These two are a PAIR and must be read together — that is what makes them evidence.
+    # Both resolve to cost#ProductionLot with the SAME five eligible verbs, one picks a cost
+    # verb and one picks the graph. Either row alone is consistent with a router that always
+    # answers the same way.
+    RouteCase(
+        query="applied versus estimating rates for this lot",
+        expected_subject_substring="cost#ProductionLot",
+        expected_verb_iri="mesh:costRateComparison",
+        min_confidence=0.85,
+        domain="PRODUCTION_COST",
+        entitled_domains=("PRODUCTION_COST",),
+        expect_classify_called=True,
+    ),
+    RouteCase(
+        query="review this lot's costing",
+        expected_subject_substring="cost#ProductionLot",
+        expected_verb_iri="mesh:costLotCostingReview",
+        min_confidence=0.85,
+        domain="PRODUCTION_COST",
+        entitled_domains=("PRODUCTION_COST",),
+        expect_classify_called=True,
+    ),
     RouteCase(
         query="give me a brief on how this program is doing",
         expected_subject_substring="fin#Program",

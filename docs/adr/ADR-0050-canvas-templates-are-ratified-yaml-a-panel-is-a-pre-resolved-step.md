@@ -616,7 +616,7 @@ nobody wrote.
    never rejects is indistinguishable from no check.
 2. **A panel whose verb the initiator lacks renders a NAMED HOLE, not a seed failure.** The
    three-caller shape of §5: entitled / partially entitled / unentitled, all three run.
-3. **Two seeds of the same template under the same identity produce identical PANEL SETS.**
+3. **~~Two seeds of the same template under the same identity produce identical PANEL SETS.~~ RENAMED: the CURATED FIVE are stable across a prime.** *(Falsified in both scopings and re-scoped 2026-09-11 — see the block at the end.)*
    *Scope, stated precisely because the loose version is unpassable:* identical **(verb, declared
    slots, slot role, ordinal)** per panel. **Not** identical artifact ids — those are minted per run
    (`uuid4`, [`gateway.py:1500-1507`](../../src/iagent/gateway.py)) — and not identical rendered
@@ -751,3 +751,83 @@ in this ADR's dispatch (§2 declines to rest on it); whether `bpmn_catalog`-styl
 have changed since the sequential ruling (§9.5 asks it as a question); and whether any deployment
 outside this repo already runs a `policy/canvases/` validation rail (premise correction 2 assumes not,
 and §1.3 is written to hold either way).
+
+---
+
+## ⛔⛔ ACCEPTANCE 3 IS FALSIFIED IN **BOTH** SCOPINGS — measured across a prime, 2026-09-11
+
+The 2026-09-09 block below records the first falsification and concludes the seal tested the
+wrong event. **It was then re-scoped to `seed → PRIME → seed`, run under the only conditions
+where that comparison has ever been defensible, and it PASSED.** So the claim is not merely
+mis-scoped — it is wrong about the system.
+
+### THE CLAIM IS STRUCK
+
+> ~~"the one seal phrase-based seeding cannot pass"~~
+
+Struck rather than annotated. A reader who stops at the original sentence has a citation for a
+belief the measurements refute, and a claim that survives its own disproof as a live line is the
+stale-comment shape this repo has paid for repeatedly.
+
+### ALL FOUR PASSES, WITH THEIR RUNS
+
+| # | scope | fleet | evidence |
+|---|---|---|---|
+| 1 | recovered spent seed | `95f78722` | `seal3-run-a-seed{0..4}-06d9592b…` — five verbs, all `complete` |
+| 2–3 | `seed → seed`, same window | `95f78722` | 658.75s, ten artifacts, `seal3-run-a-*` / `seal3-run-b-*` |
+| — | same-window CONTROL | `1d6756ce944a` | 343s, baseline vs fresh seed, identical — determinism **within a process** |
+| 4 | **`seed → PRIME → seed`** | `74d6f638f4f5`, rev 108 | baseline `seal3-base-74d6f63-*` (337s) vs `seal3-postprime-b-*` (334s) — identical in **verb AND slots** |
+
+Run 4's prime held the images constant (all 30 at one sha, censused both sides) and restarted the
+engines via the weight-20 reregister hook. **That restart is ruled IN as part of the prime**, on
+evidence rather than preference: a prime whose engines never restart leaves routing answering from
+the maintenance ontology at 0.78 (diagnosed 2026-09-10, confirmed by its fix). The restart is how
+a prime reaches the routers; a prime without it is the broken state, not a cleaner control.
+
+### AND THE MOTIVATING INSTABILITY DID NOT REPRODUCE
+
+The phrase this ADR's argument rests on — *"where are we over budget"*, recorded moving
+Portfolio 0.86 → Site 0.75 across a single prime — **is not one of the five seeded**, and resolves
+post-prime under the same identity to **Portfolio @0.97**.
+
+**Bound, because one reading is not a before/after:** that is a single POST-prime observation with
+no same-day before-reading. It shows the phrase currently sits on the right answer. It is **"not
+reproducible today"** and must never be paraphrased into "shown stable".
+
+### THE DECISION IS UNCHANGED, AND RESTS ON THE STRUCTURAL ARGUMENT ALONE
+
+**A phrase seed has no panel set until after it runs.** Today's seeder declares five PHRASES and
+no verb, so each panel's verb is whatever the classifier returned on that run — the panel set is
+not merely unstable, it is **not expressible**. That holds on every substrate, needs no drift to
+be caught, and was always the load-bearing half. **The empirical claim was decorative, and the
+seal proved it decorative by passing.**
+
+### WHY THE SEAL COULD NOT HAVE BITTEN — and it is a law now
+
+The five seeded phrases may be stable **because they were curated to be**. Slot 3 was deliberately
+reworded on 2026-08-28 to match a verb default after the by-initiative form returned eleven
+organisations. The seal therefore measures a **hardened list**, and the hardening is precisely
+what a declared verb makes unnecessary — nobody curates the sixth phrase someone adds next month.
+
+Generalised as [`a-population-hardened-against-the-failure-cannot-measure-it`](../principles/a-population-hardened-against-the-failure-cannot-measure-it.md).
+Its diagnostic: **has anything in this population ever been changed in response to the failure I
+am testing for?** If yes, it is a regression check and not a measurement.
+
+### WHAT SEAL 3 IS NOW
+
+**Renamed to what it measures: `the curated five are stable across a prime`.** A regression seal,
+kept and valuable — it would catch a real drift in the shipped list. It is **not** evidence about
+phrase seeding in general, and its old name asserted that it was.
+
+### TWO POSITIVE CONTROLS, RECORDED AND DELIBERATELY UNRUN
+
+1. **The unhardened population.** Seed a list that INCLUDES a documented-unstable phrase across a
+   prime. This is the seal's positive control: it is what would show the instrument can still say
+   *differs*.
+2. **Restart-determinism.** Same ontology, process restarted, nothing primed — a `rollout restart`
+   plus one seed. The same-window control established determinism WITHIN a process; nothing
+   establishes it across a restart.
+
+**Run either the first time a future run differs**, which is when they distinguish a real change
+from a curated one. Recorded unrun rather than dropped, and rather than burning substrate
+speculatively — a named gap is inspectable; a quietly skipped control is not.
