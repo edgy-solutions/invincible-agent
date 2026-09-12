@@ -834,6 +834,30 @@ it is the only row that discriminates.** Most natural verb lists are alphabetica
 which is precisely why this hides. The seal now asserts the discrimination itself, so
 alphabetising that row later goes red rather than quietly restoring the vacuum.
 
+
+### The corollary's own corollary, found by `iagent-mesh-sdk-ca` the same hour
+
+**The SDK's order arm was vacuous from the identical cause** — `[accepted, rejected,
+returned_for_rework]`, already alphabetical — so **the arm asserting that composition preserves
+declared order shipped decorative in the same commit as the feature it guards.** Two lanes, one
+fixture mistake, independently. That is not coincidence: it is what "most natural verb lists come
+out alphabetical by accident" predicts.
+
+**A FIXTURE THAT MUST PROVE IT CAN FAIL BEFORE IT IS ALLOWED TO PASS.** Both seals now assert
+`declared_order != sorted(declared_order)` before using the fixture.
+
+**And the check of the check needed its own control.** ca's first counterfactual used `sed` to
+restore the old fixture and reported a **RED** — which would have concluded the seal was fine and
+needed no change. The `sed` had mangled the test: the red was **the instrument breaking, not the
+fixture discriminating.** The clean check ran the model directly against both orderings.
+
+> **A red is as capable of being wrong as a green**, and it is easier to forget, because a red
+> feels like evidence. An instrument built to test an instrument is not exempt from needing its
+> own control.
+
+Cf. [[a-mutation-that-wont-die]] — the same asymmetry from the other side: there the surprise was
+green where red was expected; here it was red where the red meant nothing.
+
 ### Two sites the same class cost on this pin
 
 | miss | why no rebuild would have caught it |
