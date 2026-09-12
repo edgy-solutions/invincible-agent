@@ -45,6 +45,10 @@ SERVICE_FILES: dict[str, str] = {
     # test_service_enumerations_agree caught it by name. A new engine's routes are not
     # gate-checked at all until it is here.
     "cost_agent": "agent_fleet/cost_agent/main.py",
+    # engine-safety (ADR-0051). SAME FAILURE SHAPE AS THE ROW ABOVE: this dict is what the gating
+    # check is parametrised over, so a service absent from it has its routes checked for a
+    # declared posture NOT AT ALL — and the suite passes, which is worse than failing.
+    "safety_agent": "agent_fleet/safety_agent/main.py",
     "presentation_agent": "agent_fleet/presentation_agent/main.py",
     "mesh_registrar": "agent_fleet/mesh_registrar/main.py",
     "projector": "src/iagent/projector/app.py",

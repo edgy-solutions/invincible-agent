@@ -1136,6 +1136,82 @@ services:
           instance_id and label. Same identity gap and the same incidental bound as resolve
           above — the menu bound of 8 truncates larger classes to a count, which is not a gate."
 
+  safety_agent:
+    file: agent_fleet/safety_agent/main.py
+    inbound_transport_auth: engine-safety
+    notes: |
+      Engine S — sustainment safety assessment (ADR-0051). Two verbs in this increment:
+      findOrphanedHazards and assessDeferralRisk. Governed READING over the SUSTAINMENT and
+      MAINTENANCE planes; nothing here mutates, and NO verb can accept a risk — acceptance is
+      a HumanTask disposition by an entitled authority (§5, §7).
+
+      Cluster-internal: reached via cortex-bff and the mesh fan-outs, never by a browser.
+      Takes the mesh transport-auth dependency in OBSERVE posture like every other engine.
+
+      THE DATA IS A NOTIONAL FIXTURE AND THAT IS WHY THESE ROWS ARE RELEASABLE. Every tail
+      number, part number, hazard and owner is invented (agent_fleet/safety_agent/entities.py),
+      and the fixture's errors are seeded deliberately so the verbs can be measured against a
+      known N. WHEN THIS ENGINE READS A REAL HAZARD LOG, EVERY ROW BELOW MUST BE
+      RE-CLASSIFIED, and harder than a figures engine: a hazard log names unresolved safety
+      defects on identifiable tails, and an orphaned-hazard list is a disclosure even before a
+      severity is attached to it. That re-classification is ADR-0051 §10.1's overlay row, which
+      is also the moment the compartment question (§9) reopens.
+    routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time. RELEASABLE BY DESIGN and
+          deliberately ungated, for the same reason as every other engine's: it is read from
+          outside the cluster and by /fleet/version from inside it, and a gate here would make
+          "is the fix deployed?" require the credential you are usually debugging. Mounted by
+          agent_fleet/utils/version_endpoint.py, so it is not @app-decorated in the service
+          file and the route scanner cannot see it — this declaration is the only record.
+      - method: GET
+        path: /health
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: liveness
+        consumers: [kubelet]
+        class: releasable_by_design
+        justification: >-
+          Liveness only — a DECLARED verb count and an explicit field saying that count is NOT
+          proof of registration, plus the names of any verbs whose registration failed. No
+          hazard content of any kind. The verb names are already public in /verbs.
+      - method: GET
+        path: /verbs
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: capability-catalogue
+        consumers: [cortex-bff, operators]
+        class: releasable_by_design
+        justification: >-
+          The capability catalogue and its slot declarations, read off the same table
+          registration uses. Names verbs, subject classes and slot shapes — no instances, no
+          hazards, no tails. A caller learns the mesh can be asked about orphaned hazards, not
+          that any exist.
+      - method: POST
+        path: /analyze
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: gated-content
+        consumers: [cortex-bff, mesh fan-out]
+        class: releasable_by_design
+        justification: >-
+          RELEASABLE ONLY BECAUSE THE FIXTURE IS NOTIONAL, and this row is the one that changes
+          first. It serves hazard descriptions, tails, severities and deferral consequences.
+          Today every one of those is invented. The moment ADR-0051 §10.1's overlay names a
+          real hazard log this becomes `gated`, identity moves to the INITIATOR (ADR-0049
+          Ruling 1, never the engine's service identity), and the read goes through a
+          per-request minted ticket carrying the caller's identity (ADR-0044). Recorded here
+          rather than left to be noticed, because a releasable row that quietly begins serving
+          a real fleet's open safety defects is precisely the failure this manifest exists to
+          make impossible.
+
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py
     # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it

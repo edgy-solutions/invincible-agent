@@ -397,7 +397,24 @@ _DEFAULT_VERBS = frozenset({"approved", "rejected"})
 # Verbs whose meaning is empty without a stated reason. "Parts entered in the legacy system"
 # and "notice withdrawn by the vendor" are entirely different facts about the pipeline, and a
 # bare acknowledgement erases the difference — which is precisely the evidence ADR-0034 needs.
-_REASON_REQUIRED = frozenset({"acknowledged"})
+#
+# `accepted` ADDED 2026-09-11 for ADR-0051 (sustainment safety), belt-and-braces alongside the
+# declaration's own `reason_required`. A declared `reason_required` does NOTHING at runtime today:
+# this set is consulted by `validate_decision` WITHOUT reference to `kind`, and declarations are
+# not wired into this module at all. Declared-and-unenforced is the `isRegisteredKind` shape, and
+# for a RISK ACCEPTANCE it is precisely the gap ADR-0051 exists to close — an authority taking on
+# residual risk with no stated rationale is the one act in that domain whose record IS the reason.
+# This entry is the enforcement until the declaration is read; the cutover's parity arm asserts the
+# row property when this global goes away.
+#
+# NO EXISTING SPECIES ACCEPTS `accepted`, so this entry is inert until the safety kinds land —
+# which is the whole reason it is safe to add ahead of them. `rejected` is NOT added here and the
+# reason is measured, not stylistic: it is in `accepts` for access_request, grouped_review and
+# workflow_ack, and this set is kind-blind, so adding it would make EVERY rejection in the fleet
+# reason-required — three other species' behaviour changed from the safety lane, to enforce a
+# property for a kind that does not exist yet. It lands with the safety kinds in ADR-0051
+# increment 3, so the cost arrives with the benefit.
+_REASON_REQUIRED = frozenset({"acknowledged", "accepted"})
 
 
 class InvalidDecisionForKind(ValueError):

@@ -1,0 +1,25 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0051 §5. `classifyWriteUp` PROPOSES a link and never creates a hazard (§7). Three write-ups
+# of one condition must resolve to ONE hazard and two links rather than three hazards, and a human
+# makes that call.
+#
+# GROUPED_REVIEW rather than APPROVAL_TASK because one decision resolves N proposals — the
+# `mesh:DispositionReview` shape this ADR already adopts ("a server-authored batch ... opened as
+# ONE human review that fans out ... on approval").
+#
+# `linked`, `new_hazard` and `dismissed` are verbs the structural seed has never heard of, which is
+# the second thing an overlay row must be able to do — an overlay row is a FULL REPLACEMENT by key,
+# not a field-level merge.
+#
+# `dismissed` and `new_hazard` are reason-required. Dismissing a reported hazard with no stated
+# rationale is the erasure this domain cares about most, one rung below an acceptance; and opening
+# a NEW hazard when an existing one was proposed is the duplicate-hazard failure ADR-0051 §1 lists
+# second, so the reason is what lets a later reader tell a considered split from a missed link.
+kind: hazard_link_review
+renders_as:
+  badge: LINK
+  title: Hazard link review
+  archetype: GROUPED_REVIEW
+accepts: [linked, new_hazard, dismissed]
+reason_required: [dismissed, new_hazard]

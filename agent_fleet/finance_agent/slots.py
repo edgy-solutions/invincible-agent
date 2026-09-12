@@ -45,21 +45,21 @@ of the four kinds used cannot otherwise tell whether the other two were consider
 """
 from __future__ import annotations
 
-import inspect
-import types
-import typing
-from typing import Any, Dict, List
+from typing import Dict, List
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     import measures
     from entities import FISCAL_PERIODS
+    from utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 except ImportError:
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent.entities import FISCAL_PERIODS
+    from agent_fleet.utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 
-#: The four-kind vocabulary Lane 1 established. Reproduced verbatim, in order, so a consumer
-#: reading declarations from either engine sees one vocabulary rather than two that agree.
-SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
+# `SLOT_KINDS` is now IMPORTED rather than reproduced. This module's note said it was
+# "reproduced verbatim, in order, so a consumer reading declarations from either engine sees one
+# vocabulary rather than two that agree" — two that agree is exactly what an extraction removes,
+# and the re-export keeps every `from slots import SLOT_KINDS` working.
 
 #: Injected by the route, never spoken. EMPTY FOR THIS ENGINE — see the module docstring.
 #: Present as an empty mapping rather than absent, so that adding a route-supplied parameter
@@ -71,7 +71,8 @@ HANDLE_SLOTS: Dict[str, set] = {}
 CEREMONY_VERBS: set = set()
 
 #: The measure's own state handle. Never a parameter in any sense a caller would recognise.
-_NOT_A_SLOT = {"state"}
+#: The shared default says the same thing; bound here so the engine still names its own fact.
+_NOT_A_SLOT = NOT_A_SLOT
 
 _FIN = "http://invincible-agent/fin#"
 
@@ -113,46 +114,16 @@ UNATTACHED_REFERENTS = {"wp_id", "wbs_id", "obs_id"}
 _PERIOD_SLOTS = {"window"}
 
 
-def _is_union(origin: Any) -> bool:
-    """`Optional[X]` and `X | None` have DIFFERENT origins (`typing.Union` and
-    `types.UnionType`). Both must unwrap, or the same annotation declares differently
-    depending on which syntax the author happened to use."""
-    if origin is typing.Union:
-        return True
-    UnionType = getattr(types, "UnionType", None)  # 3.10+; absent on older runtimes
-    return UnionType is not None and origin is UnionType
-
-
-def _type_of(annotation: Any) -> tuple[str, List[str] | None]:
-    """(type-name, enum-values), read from the annotation and never from a remembered list."""
-    if annotation is inspect.Parameter.empty:
-        return "unknown", None
-    origin = typing.get_origin(annotation)
-    if origin is typing.Literal:
-        return "enum", [str(v) for v in typing.get_args(annotation)]
-    if origin is not None:
-        args = [a for a in typing.get_args(annotation) if a is not type(None)]
-        if _is_union(origin):
-            if len(args) == 1:
-                return _type_of(args[0])       # Optional[X] -> X
-            return "union", None
-        # THE CONTAINER IS PART OF THE CONTRACT, and this is Lane 1's measured bug, not
-        # ours to repeat. Their first unwrap rule was written for Optional and silently ate
-        # this case: `Optional[list[str]]` unwrapped to `list[str]`, then unwrapped AGAIN to
-        # `str`, so a multi-valued slot was declared a scalar. On real bytes, a router
-        # filling it from "in FY26-Q4" sent the STRING, the measure iterated it, and the
-        # engine refused with `422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4` — a
-        # message that names CHARACTERS and blames the engine for the declaration's lie.
-        #
-        # (Engine F's `periods_in` also wraps a bare string defensively, so the same mistake
-        # would be survivable here. It is still declared correctly: a runtime that tolerates
-        # a wrong declaration does not make the declaration right, and the tolerance is a
-        # second line rather than a licence.)
-        inner_name, inner_values = _type_of(args[0]) if args else ("unknown", None)
-        cname = getattr(origin, "__name__", None) or str(origin)
-        return f"{cname}[{inner_name}]", inner_values
-    name = getattr(annotation, "__name__", None)
-    return (name or str(annotation)), None
+# `_is_union` and `_type_of` MOVED 2026-09-11 to `agent_fleet/utils/slot_declarations.py`, at
+# the third consumer (Engine S, ADR-0051 §4) — the trigger this module's own FILED-NOT-FIXED
+# note named. The container-is-part-of-the-contract evidence moved with them, because the
+# knowledge is what makes the rule survive an edit.
+#
+# ONE LOCAL NOTE DID NOT MOVE, because it is Engine F's rather than the derivation's: this
+# engine's `periods_in` also wraps a bare string defensively, so a wrong container declaration
+# would be survivable here. It is still declared correctly — a runtime that tolerates a wrong
+# declaration does not make the declaration right, and the tolerance is a second line rather
+# than a licence.
 
 
 def with_live_vocabularies(
@@ -181,49 +152,25 @@ def with_live_vocabularies(
 
 
 def slots_for(fn_name: str) -> List[dict]:
-    """The slot declarations for one verb, derived from its signature."""
+    """The slot declarations for one verb, derived from its signature.
+
+    The derivation lives in `utils/slot_declarations.py`. What stays here is Engine F's own:
+    that it has NO handles and NO ceremonies (a fact, not an omission — ADR-0045 Decision 1
+    makes this governed reading), and which names are referents and to what class URIs.
+
+    No `decorate` hook: this engine's one data-dependent vocabulary is attached by
+    `with_live_vocabularies` at registration, deliberately kept out of the pure derivation.
+    """
     fn = getattr(measures, fn_name, None)
     if fn is None:
         return []
-    handles = HANDLE_SLOTS.get(fn_name, set())
-    ceremony = fn_name in CEREMONY_VERBS
-    out: List[dict] = []
-    # `eval_str=True` because measures.py uses `from __future__ import annotations`, which
-    # makes every annotation a STRING. Without it, `Literal["CPI", ...]` arrives as the
-    # literal text `"Literal['CPI', ...]"` — the enum values reduced to prose, which is the
-    # hand-maintained shape this module exists to avoid, arriving through the back door.
-    # A slot typed "unknown" is honest; a slot whose values were parsed out of a string
-    # is not, so the fallback keeps the unevaluated signature rather than string-scraping it.
-    try:
-        sig = inspect.signature(fn, eval_str=True)
-    except Exception:  # noqa: BLE001 — an unresolvable annotation must not break registration
-        sig = inspect.signature(fn)
-    for name, prm in sig.parameters.items():
-        if name in _NOT_A_SLOT:
-            continue
-        required = prm.default is inspect.Parameter.empty
-        type_name, values = _type_of(prm.annotation)
-        if name in handles:
-            kind = "handle"
-        elif ceremony:
-            kind = "ceremony"
-        elif required:
-            kind = "spoken-mandatory"
-        else:
-            kind = "spoken-optional"
-        rec: dict = {"name": name, "kind": kind, "type": type_name, "required": required}
-        # WHAT KIND OF THING THIS SLOT NAMES, when it names one. Present only on spoken
-        # slots; absent means "a literal the speaker supplies", which is the common case.
-        if kind.startswith("spoken") and name in _REFERENT_KIND:
-            rec["referent"] = _REFERENT_KIND[name]
-        if values is not None:
-            rec["values"] = values
-        if not required and prm.default is not None:
-            rec["default"] = prm.default if isinstance(
-                prm.default, (str, int, float, bool)
-            ) else str(prm.default)
-        out.append(rec)
-    return out
+    return derive_slots(
+        fn,
+        handles=HANDLE_SLOTS.get(fn_name, set()),
+        ceremony=fn_name in CEREMONY_VERBS,
+        referents=_REFERENT_KIND,
+        not_a_slot=_NOT_A_SLOT,
+    )
 
 
 def missing_mandatory(fn_name: str, params: dict) -> List[dict]:

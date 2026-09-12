@@ -56,6 +56,11 @@ _KEY_TO_AGENT_DIR = {
     "enginePlanning": "planning_agent",
     "engineFinance": "finance_agent",
     "engineCost": "cost_agent",
+    # engine-safety (ADR-0051). SITE 6 OF EIGHT, and the one whose failure mode is a SKIP rather
+    # than a red: every check in this file is keyed off this map, so an engine absent from it is
+    # not "failing", it is UNEXAMINED — which is how engineFinance went five days without anyone
+    # noticing it was unchecked.
+    "engineSafety": "safety_agent",
     # engine-lg, the graph host. Registers one verb per RATIFIED ROW at startup, so it is a
     # registering agent and belongs in the map rather than the waiver.
     "graphHost": "graph_host",

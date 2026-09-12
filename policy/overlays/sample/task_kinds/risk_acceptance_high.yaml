@@ -1,0 +1,44 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0051 §5. The sustainment-safety task species. They are DOMAIN species, so they cannot live
+# in `policy/task_kinds/` — that directory reserves itself for structural species in its own
+# header and `test_no_domain_name_entered_the_platform_seed` fails the build if a domain name
+# enters it. They are absent from the seed BECAUSE THE DESIGN REQUIRES IT.
+#
+# ── ONE SPECIES PER AUTHORITY LEVEL, AND THE KEY IS WHY ─────────────────────────────────────
+# The audience key is `"<task_kind>:<compartment>"`, so `risk_acceptance_high:SUSTAINMENT` names
+# the kind `risk_acceptance_high`. MIL-STD-882 ties WHO may accept a risk to the risk's LEVEL,
+# and the level is resolved from the ratified matrix (`safety_risk_matrix.ttl`), which carries
+# each level's `acceptanceAudience` as data. So the four levels are four species, and the matrix
+# is what decides which one a given hazard's draft opens.
+#
+# An authority level IS a group, and `grant_to` is USERS ONLY, so the group is enumerated by hand
+# in `policy/task_grants.yaml`. That is the constraint's workaround wearing a design's clothes; it
+# is recorded on the M3 list, and when group audiences are ruled these four collapse.
+#
+# ── `accepted`, NOT THE SEED'S `approved` — R-004(e), AND THIS IS WHAT THE OVERLAY IS FOR ────
+# An overlay row is a FULL REPLACEMENT by key, not a field-level merge, which is precisely what
+# lets a domain species declare a verb the structural seed has never heard of. The seed spells
+# the ordinary pair `approved`/`rejected`. A risk is ACCEPTED by an authority — MIL-STD-882's
+# word, and this ADR's whole claim. An approval says the artifact is in order; an acceptance says
+# a named authority is taking the residual risk onto themselves. Two spellings will appear in one
+# queue and that is correct: they are two different acts.
+#
+# ── `reason_required` ON BOTH VERBS — R-004(b) ───────────────────────────────────────────────
+# An authority taking on residual risk with no stated rationale is the one act in this domain
+# whose record IS the reason, and a bare rejection erases exactly the same thing.
+#
+# **THESE ROWS DO NOTHING AT RUNTIME YET AND THAT IS NOT A DEFECT IN THEM.** `validate_decision`
+# consults a kind-blind global set and declarations are not wired into `human_tasks` at all; the
+# M3.3 cutover is what makes `reason_required` mean anything. Until then `accepted` sits in the
+# global `_REASON_REQUIRED` as belt-and-braces (R-004(f)), and `rejected` deliberately does not,
+# because that set is kind-blind and a global entry would change three other species' behaviour.
+
+
+kind: risk_acceptance_high
+renders_as:
+  badge: ACCEPT-H
+  title: High risk acceptance
+  archetype: APPROVAL_TASK
+accepts: [accepted, rejected, returned_for_rework]
+reason_required: [accepted, rejected]
