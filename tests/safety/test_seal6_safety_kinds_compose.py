@@ -79,6 +79,36 @@ def test_the_seed_alone_does_not_contain_the_safety_kinds():
     )
 
 
+def test_the_pin_that_makes_the_ordered_comparisons_meaningful_is_actually_PRESENT():
+    """THE COUPLING GUARD. The ordered `accepts` comparisons below are correct ONLY at SDK
+    v0.8.0+, and this says so rather than depending on the two landing together.
+
+    `invincible-agent-28` raised it while both changes were still on separate branches: at
+    v0.7.1 `accepts` is a `frozenset`, so `_verbs(row) == list(accepts)` passes or fails **by
+    iteration order** — a test whose result is decided by per-process hash randomisation. On
+    `lane/01` the pin and the comparison switch are the same commit (`f703774`) and cannot
+    separate; **that is a fact about one branch, not a property of the code**, and a cherry-pick
+    or a partial merge would undo it silently.
+
+    So the dependency is asserted. If this file ever arrives somewhere the pin has not, this
+    goes red NAMING THE CAUSE instead of the comparisons failing mysteriously three tests down.
+
+    It is the proxy-versus-event problem in its third form today. First: reading "the pin moved"
+    as "the fix shipped" — the v0.7.1 tripwire. Second: reading "the fix shipped" as "the pin
+    moved everywhere". This asserts the event where it is consumed, which is the only place the
+    question is ever actually settled.
+    """
+    row = _by_kind(compose(_SEED, [str(_OVERLAY)]))["risk_acceptance_high"]
+    accepts = getattr(row, "accepts")
+    assert not isinstance(accepts, (frozenset, set)), (
+        f"`accepts` composes to {type(accepts).__name__}, so the mesh SDK here is PRE-v0.8.0 "
+        f"while this file's comparisons assume declared order. The ordered assertions below "
+        f"would then pass or fail by frozenset iteration order — decided by per-process hash "
+        f"randomisation, not by the declaration. Land the fleet pin (16 sites, incl. every "
+        f"per-engine uv.lock and values.yaml meshSdkVersion) or revert these to set comparisons."
+    )
+
+
 def test_composition_yields_every_safety_kind_with_its_own_verbs():
     """FORWARD. Each row carries exactly what `safety.yaml` declares — not the seed's defaults."""
     composed = _by_kind(compose(_SEED, [str(_OVERLAY)]))
