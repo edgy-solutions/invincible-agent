@@ -192,6 +192,87 @@ has something to land on.
 
 ---
 
+## R-009 — cortex-ui stays on its deploy branch; the worktree rule is for MULTI-LANE checkouts
+
+**RULED 2026-09-11.** Source: architect thread, reported by cortex-ui-60.
+
+The worktree convention (`ia-<NN>` ↔ `lane/<NN>`) exists to stop lanes colliding in a shared
+checkout. **cortex-ui has one lane and one deploy branch**, so moving that lane off the branch it
+deploys from would *create* the hazard the rule prevents. cortex-60 remains on `master` and
+everything continues to land there.
+
+**This is an exception with a stated reason, not a refusal, and the reason is what makes it
+citable.** The gate cortex-60 was held against was sound: a docs commit from another lane did land
+on top of their work mid-session (`cbf0846`). Collisions in that checkout are real. They are
+simply **cheaper than deploying from the wrong branch** — and naming that trade is the ruling.
+
+---
+
+## R-010 — NOT RECORDED — the number is allocated and its content is not in hand
+
+**A GAP, ENTERED DELIBERATELY.** The architect's dispatch said "commit R-009 through R-013"; the
+rulings supplied were R-011, R-012 and R-013, and R-009 arrived separately through cortex-ui-60.
+**No content for R-010 reached Lane 1.**
+
+Recorded as an explicit hole rather than skipped, because a register that silently jumps from
+R-009 to R-011 reads as complete — and the next lane to want a number would take R-010 and create
+a genuine collision with whatever it already is. **An absent entry that looks deliberate is the
+failure this file was built to stop.** If R-010 was never allocated, strike this and say so; if it
+was, it needs writing down before it can be cited.
+
+---
+
+## R-011 — Readiness fails on GAVE-UP, never on STILL-TRYING; nothing registered is not ready
+
+**RULED 2026-09-09.** Source: architect thread.
+
+A probe that cannot distinguish *"still trying"* from *"gave up"* has two failure modes and will
+hit one of them: it **crash-loops a healthy pod** that is mid-retry, or it **admits a permanently
+unregistered one**. Both come from the same missing distinction.
+
+**A host serving zero registered capabilities is not ready**, whatever else it can answer.
+
+First live instance: **engine-lg under the Keycloak restart at rev 107** — `ready=false` while
+`status: ok`, because a graph had been admitted. The graph being admitted is not the question
+readiness asks.
+
+---
+
+## R-012 — `getenv` DEFAULTS for service URLs are refused
+
+**RULED 2026-09-11.** Source: architect thread. Implemented `acc6a2c`.
+
+A missing declaration **fails readiness, naming the variable**. A default silently supplies a
+plausible value and converts a configuration error into a wrong answer delivered confidently.
+
+**Two reads answer two different questions, and one read cannot answer both:**
+
+| read | question |
+|---|---|
+| readiness | *was this declared at startup?* |
+| aggregation | *where is it now?* |
+
+Collapsing them is what a default does.
+
+---
+
+## R-013 — Seal 3 is a REGRESSION seal; ADR-0050's empirical claim is struck
+
+**RULED 2026-09-11.** Source: architect thread.
+
+Seal 3 passed four times across a prime, correctly scoped. So **ADR-0050 strikes the phrase
+*"the one seal phrase-based seeding cannot pass"***, records the four runs by id, and rests the
+decision on **the structural argument alone**: a phrase seed has no panel set until after it runs.
+
+Seal 3 **stays**, as a regression seal over the curated five. Its positive control is a
+documented-unstable phrase, run only when a future run differs.
+
+**Law recorded by this ruling:** *a population hardened against the failure cannot measure the
+failure.* The seal was not lying — the population it ran against could no longer express the
+defect it was written to catch, which is indistinguishable from the defect being absent.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
