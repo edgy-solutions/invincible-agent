@@ -38,6 +38,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.graph_host._host_prose import code_without_prose
+
 _ROOT = Path(__file__).resolve().parents[2]
 _HOST = _ROOT / "agent_fleet" / "graph_host" / "main.py"
 _POLICY = _ROOT / "policy" / "graphs"
@@ -94,10 +96,15 @@ def test_the_two_graphs_differ_in_what_the_ROW_controls():
 def test_the_host_names_no_graph(attr: str):
     """THE PLATFORM CLAIM. Derived from the rows, so a third graph is covered automatically.
 
-    A host mentioning any of these would make the next graph a code change — and it is exactly
-    the shape that creeps in as a special case for one graph's quirk.
+    A host mentioning any of these IN CODE would make the next graph a code change — and it is
+    exactly the shape that creeps in as a special case for one graph's quirk.
+
+    PROSE IS EXCLUDED, and `tests/graph_host/_host_prose.py` records why: the first version of
+    this seal matched raw source and went red on the host's own docstring citing both graphs as
+    examples. It was matching a STRING when the defect is a BEHAVIOUR. Code string literals are
+    still matched, because `if graph_id == "fin_program_brief"` IS the defect and lives in one.
     """
-    host_src = _HOST.read_text(encoding="utf-8")
+    host_src = code_without_prose(_HOST)
     offenders = []
     for m in _rows():
         value = getattr(m, attr)
