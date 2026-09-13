@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **133 of 145 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **134 of 146 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -371,6 +371,10 @@ _Coverage: **133 of 145 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **the-manifest-is-the-fourth-consumer-not-the-third** — ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-02 (ec0a1b3) — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three: the MECHANISM has forked, not just the vocabulary §9 predicted — _type_of returns (type, values) in F and P and a bare str in C, and the merge surface is six engine-unique functions, not one. THE KEY DIVERGENCE THIS PACKET ALSO REPORTED IS CLOSED: engine-cost's slots_for emitted `mandatory` where F and P emitted `required`, and ad34120 (2026-09-04) unified all three on `required`, sealed against the consumer. Re-verified 2026-09-06 — the fork and the six functions STAND and are the extraction's real content; the key is settled.
   status: open · owner: unassigned · blocked-on: the slot_declarations extraction (Lane 1) — this packet is its INPUT, not its blocker
   → [docs/plans/the-manifest-is-the-fourth-consumer-not-the-third.md](plans/the-manifest-is-the-fourth-consumer-not-the-third.md)
+
+- **the-sixteen-master-reds-named** — The sixteen reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
+  status: open · owner: invincible-agent-01
+  → [docs/plans/the-sixteen-master-reds-named.md](plans/the-sixteen-master-reds-named.md)
 
 - **the-slot-filler-belongs-where-the-verb-is-known** — BUILT AND MEASURED 2026-08-29 (7 of 7 against pre-registered expectations; see the tail of this doc). Deviation recorded: NOT TypeBuilder — the constraint a dynamic class would buy already exists downstream in slot_acceptance, and two enforcement points would be one more registry to keep in agreement. THE RECORDED RULING COULD NOT BE BUILT AS STATED, and this says so rather than quietly redesigning. The ruling was "/route_intent calls BOTH ExtractIntent and RouteIntent in sequence". /route_intent receives ONLY the query — ADR-0009 Step F'.6 removed candidate_verb, and verb resolution now happens in the SUPERVISOR via /search_predicates + /classify_predicate. At /route_intent time there is no verb, so no intent class, so no declarations to fill against or validate with. The ruling's own reasoning survives intact and points one hop later: fill slots WHERE THE VERB IS KNOWN, which is execute_subtask, immediately before the carry. Recommended: a new /fill_slots(query, verb_iri, declarations) endpoint, generic over declarations via TypeBuilder — the pattern this repo already uses for the predicate dynamic enum — so every engine that declares slots gets filling for free rather than planning getting a bespoke path. BAML's existing RouteIntent (18 hand-maintained typed intents, 0 callers) is NOT the vehicle: it re-routes, which would put a second router in disagreement with the graph. Blocked on the projection either way, because a filler with no declarations has nothing to fill.
   status: open · owner: unassigned
