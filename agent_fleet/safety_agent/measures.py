@@ -386,6 +386,9 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
                 "severity": h.severity,
                 "probability": h.probability,
                 "risk_level": level,
+                # EMITTED, NOT DERIVED DOWNSTREAM. A workflow definition may not compute, so
+                # `High` -> `high` happens here and travels as a fact (ADR-0039 amendment).
+                "risk_level_slug": level.lower(),
                 "citations": citations,
                 "derived_from": derived_from,
                 "reason_required": ["concurred", "not_concurred"],
@@ -418,6 +421,7 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
             "severity": h.severity,
             "probability": h.probability,
             "risk_level": level,
+            "risk_level_slug": level.lower(),
             "citations": citations,
             "derived_from": derived_from,
             # STATED IN THE PAYLOAD, not only in this ADR: the disposer must see that a
@@ -496,6 +500,7 @@ def acceptance_request_after_concurrence(
             "severity": h.severity,
             "probability": h.probability,
             "risk_level": level,
+            "risk_level_slug": level.lower(),
             "citations": draft["citations"],
             "derived_from": [d for d in derived_from if d],
             "reason_required": ["accepted", "rejected"],
