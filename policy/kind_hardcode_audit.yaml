@@ -1,0 +1,162 @@
+# FEATURE 4 — the task-kind hardcode audit. The POPULATION is derived by
+# `scripts/audit_kind_hardcodes.py`; this file carries only the DISPOSITION of each site, and
+# `tests/test_kind_hardcode_audit.py` fails while any derived site has neither.
+#
+# A HAND-WRITTEN LIST OF A POPULATION IS A SAMPLE. The registry-sites packet was resampled four
+# times and is still wrong, so nothing here enumerates — the derivation does, and this file is
+# refused as incomplete the moment it stops covering what the derivation finds.
+#
+# THE DERIVATION DELIBERATELY OVER-COLLECTS. Its kind pattern matches a bare literal, and FOUR
+# DIFFERENT NAMESPACES in this repo share spellings with a task kind:
+#
+#     task kind             the species of a human task            <- the only one Feature 4 converts
+#     workflow definition   `get_workflow_definition("grouped_review")`
+#     ontology / ruleset    `pcn_disposition_rules.ttl`
+#     prose and identifiers log strings, Python names, comments
+#
+# Over-collecting is the safe direction — a missed hardcode is invisible, an over-collected one
+# costs a line here — but it means MOST ENTRIES BELOW ARE EXCLUSIONS, and the exclusion reason
+# carries the namespace distinction. That distinction is the actual finding of the audit: the
+# spelling is not the namespace, and a rename that assumed it was would move four things.
+#
+# disposition vocabulary (closed; the seal rejects anything else):
+#   declaration_row  -> becomes a row in policy/task_kinds/ or a work-side overlay
+#   selection_row    -> the code stops naming a kind and selects one from declared data
+#   chaining_row     -> a next-step choice that becomes a declared transition
+#   excluded         -> not a task-kind hardcode; `reason` says which namespace it is in
+#   UNDECIDED        -> not yet dispositioned. THE SEAL FAILS while any of these remain.
+
+# ── tests are excluded AS A CLASS, once, with a reason ──────────────────────────────────────
+# A test naming a kind is a FIXTURE, not a hardcode: it is the declared input to an assertion,
+# and converting it to a declaration lookup would make the test assert against its own source.
+# Stated once rather than repeated 28 times, because 28 identical reasons is a list nobody reads.
+test_sites_excluded: true
+test_sites_reason: >-
+  A kind literal in a test is a fixture — the declared input to an assertion. Reading it from a
+  declaration instead would make the assertion circular. Seals that pin the CODE TABLES
+  (test_task_verbs_by_kind, test_an_undeclared_kind_accepts_nothing) name kinds by necessity and
+  retire with those tables at the M3.3 cutover.
+
+sites:
+
+  # ── REAL HARDCODES: code that names a task species ────────────────────────────────────────
+
+  - site: agent_fleet/restate_analyst/dispatch_plan.py
+    pattern: kind:pcn_disposition
+    disposition: declaration_row
+    note: >-
+      Mints the dispatch task with a literal domain species. Becomes a work-side overlay row
+      (it may not enter policy/task_kinds/ — the seed is structural only) and the mint reads the
+      kind from the plan's configuration rather than naming it.
+
+  - site: agent_fleet/restate_analyst/dispatch_driver.py
+    pattern: kind:pcn_disposition
+    disposition: declaration_row
+    note: >-
+      WORSE THAN THE PLAN SITE and worth converting first: it is a DEFAULT —
+      `task.get("kind", "pcn_disposition")` — so a caller that omits the kind silently gets a
+      domain species rather than a refusal. An absent kind is a caller defect and must fail,
+      not be guessed. Same overlay row as the plan site; the default becomes a raise.
+
+  - site: agent_fleet/restate_analyst/main.py
+    pattern: kind:workflow_ack
+    disposition: selection_row
+    note: >-
+      Mints a STRUCTURAL species that is already declared in policy/task_kinds/. No new row
+      needed — the code stops naming it and selects it from the composed set.
+
+  - site: agent_fleet/restate_analyst/main.py
+    pattern: kind:grouped_review
+    disposition: selection_row
+    note: >-
+      Three occurrences, one of which also sets `"disposition": "grouped_review"` — the kind and
+      the disposition sharing a spelling is itself a namespace collision worth separating when
+      this is converted.
+
+  - site: src/iagent/gateway.py
+    pattern: kind:access_request
+    disposition: selection_row
+    note: >-
+      One mint plus one log line. Structural species, already declared; the mint selects, the
+      log keeps its literal (a log naming what it logged is not a hardcode).
+
+  - site: src/iagent/gateway.py
+    pattern: kind:workflow_ack
+    disposition: selection_row
+    note: >-
+      Includes a Pydantic model DEFAULT (`kind: str = "workflow_ack"`) — an API-shaped default,
+      not an internal fallback, so it converts to a declared default rather than a raise.
+
+  # ── EXCLUDED: a different namespace that shares a spelling ────────────────────────────────
+
+  - site: agent_fleet/restate_analyst/grouped_review_workflow.py
+    pattern: kind:grouped_review
+    disposition: excluded
+    reason: >-
+      WORKFLOW-DEFINITION namespace, not task-kind. `Workflow("GroupedReview")`, the decorators,
+      and `get_workflow_definition("grouped_review")` name a process; the task species that
+      process mints is a separate string that happens to match.
+
+  - site: agent_fleet/restate_analyst/main.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE, not code — three matches, all in comments and a docstring ABOUT a chaining table.
+      The derivation cannot tell code from comment, which is a real limit of it: a genuine
+      chaining hardcode would look identical to this pattern. Recorded rather than silently
+      dropped so the limit is visible to whoever extends the audit.
+
+  - site: agent_fleet/restate_analyst/review_starter.py
+    pattern: kind:grouped_review
+    disposition: excluded
+    reason: >-
+      Log text and prose. The admission line prints which branch it took; naming the branch it
+      took is what the line is for.
+
+  - site: agent_fleet/restate_analyst/policy_rules_loader.py
+    pattern: kind:pcn_disposition_rules
+    disposition: excluded
+    reason: >-
+      ONTOLOGY/RULESET namespace — a fallback label for a decision-table graph, not a task
+      species. Matched only because the derivation's domain pattern is `(pcn|pdn)_*`.
+
+  - site: setup/prime_databases.py
+    pattern: kind:pcn_disposition_rules
+    disposition: excluded
+    reason: ONTOLOGY namespace — a TTL filename and its S3 key in the canonical manifest.
+
+  - site: setup/prime_databases.py
+    pattern: kind:pcn_extension
+    disposition: excluded
+    reason: ONTOLOGY namespace — a TTL filename and its S3 key in the canonical manifest.
+
+  - site: src/iagent/gateway.py
+    pattern: kind:extraction_refusal
+    disposition: excluded
+    reason: >-
+      Reads the kind off an inbound task to route it; it does not MINT one. A consumer matching
+      on a declared kind is using the declaration, not hardcoding around it.
+
+  - site: src/iagent/gateway.py
+    pattern: kind:grouped_review
+    disposition: excluded
+    reason: Same as above — matches an inbound task's kind to find its batch; no mint.
+
+  - site: src/iagent/human_tasks.py
+    pattern: kind:extraction_refusal
+    disposition: excluded
+    reason: >-
+      The `_VERBS_BY_KIND` row itself. It is not converted BY this audit because it is deleted
+      by the M3.3 cutover, which is a separate gated act — converting it here would collide.
+
+  - site: scripts/migrate_pcn_grouped_review_rows.py
+    pattern: kind:grouped_review
+    disposition: excluded
+    reason: One-shot migration; names both the old and new kind by necessity. Retires after use.
+
+  - site: scripts/migrate_pcn_grouped_review_rows.py
+    pattern: kind:pcn_grouped_review
+    disposition: excluded
+    reason: >-
+      The retired species itself, named so it can be re-keyed away. Zero live rows carry it as
+      of 2026-09-12; the script is kept until it is confirmed unnecessary at work too.
