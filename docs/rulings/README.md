@@ -1309,6 +1309,104 @@ Related: [[every-endpoint-verified-the-join-unasserted]] — the same law found 
 
 ---
 
+## R-036 — A LOCAL SKIP IS NOT A COVERAGE GAP; CHECK CI BEFORE CONCLUDING
+
+**RETRACTED AND REBUILT, 2026-09-12. The instance this was going to be filed on does not exist,
+and the retraction is worth more than the ruling it replaced.**
+
+`doc-tools-7f` reported that `test_telemetry_mapping_truth.py` — the only check of a two-tier
+telemetry contract — was silently SKIPPING, so a renamed key would emit nothing to Langfuse with
+nobody watching. **The skip was real and the conclusion was false.** doc-tools' CI has a
+`telemetry-contract` job that installs the leaf explicitly and runs exactly that test **as a
+pre-build gate**, with `build-and-push` declaring `needs: telemetry-contract`. It ran on their push
+and passed. **The contract has an owner: CI. A mapping drift cannot reach an image there.**
+
+**THEIR NAMING OF THEIR OWN ERROR IS THE RULING:**
+
+> **I measured the venv and concluded about the contract.**
+
+**Which is the same move they had flagged in themselves the day before** — reasoning from a graph
+NAME to a vocabulary NAMESPACE — *"in under a day, in the same report where I was pleased about
+catching it."* An axis error does not feel like one from the inside: each step is a true
+observation about the thing in front of you.
+
+**AND I NEARLY ENSHRINED IT, THEN REPEATED IT.** I had drafted the ruling and swept my own suite
+for instances — **using the same instrument that produced the false one.** My sweep found
+`test_mesh_mapping_truth_check` RUNS here and theirs skips, and I wrote that up as an asymmetry.
+**Both halves of that were about venvs.** We have the identical CI gate: a PR check that
+`pip install`s the leaf and runs the test. *Two people made the same axis error about the same
+contract, one after the other, and the second was looking for it.*
+
+**THE RULE: a skip in a local venv is a statement about the venv. Before concluding that a
+contract is unchecked, read CI** — a cheap pre-build gate installing one dependency is exactly
+where a fast contract check belongs, and it will not appear in any local run.
+
+### What the sweep DID find, and it is ours
+
+**Ours is a STEP IN `lint`. There is no `needs:` anywhere in the workflow, so `build` and `lint`
+run in PARALLEL.**
+
+    doc-tools    build-and-push  needs: telemetry-contract   -> drift CANNOT reach an image
+    ours         lint (step)     no needs:, 0 in the file    -> drift goes RED and the image SHIPS
+
+**The check exists, runs, and gates nothing.** A red telemetry mapping produces a failed `lint` job
+beside a successful `build` job, and the image is pushed and rollable — so the defect the check
+exists to stop reaches the cluster with a red sitting next to it in the same run.
+
+**That is the genuine instance, and it is the opposite direction from my first sweep**: doc-tools
+is better protected than we are, and I had drafted it the other way round. **A check whose result
+nothing consumes is a guard that cannot fire, dressed as one that does** — and unlike the usual
+form, this one is *green-adjacent* rather than dark: it reports honestly to an audience with no
+power to act on it before the artifact ships.
+
+**Filed as work rather than fixed here**, because adding `needs:` to a 15-service build matrix
+changes every push's critical path and that is a decision about CI cost, not a defect repair.
+
+---
+
+
+## R-037 — A SHA ON MAIN IS NOT A RUNNING IMAGE, AND A GATE MUST READ THE CODE
+
+**Ruled from the doc-tools cleanup gate, 2026-09-12.** `doc-tools-7f` pushed the keyless-identity
+writer fix (`a314a84`) and **refused to let the cleanup migration be gated on it**:
+
+> *Between now and that image landing, the DEPLOYED emergency re-sync path is still the old
+> writer. If the cleanup runs in that window, a re-sync can mint a fifth keyless edge into a graph
+> you just cleaned — and your migration would have been correct and still left the defect present.*
+
+**I checked, and the gate was UNSATISFIED.** The check that settled it is the ruling:
+
+    the TAG        doc-tools:latest        identifies nothing
+    the DATE       pod started 2026-09-10  two days BEFORE the fix — suggestive, not proof
+    the CODE       /app/.../aitool_linker.py:310
+                   "tool_urn": props.get("_tool_urn", "")     <- the two-state writer
+
+**and the fixed source names that exact expression as the defect** — `# NOT .get("_tool_urn", "")`.
+
+**READ THE CODE IN THE RUNNING POD.** A tag can lie by design (`:latest`), a date is
+circumstantial, a digest is opaque without a registry lookup. **The artifact the process actually
+loaded is the only thing that answers "is the fix deployed".** Same rule as reading the task-kind
+gate's answer from inside the serving pod rather than from the local tree, which had been wrong
+about the cluster twice in one day.
+
+**AND THE PUSH ITSELF IS NOT THE BUILD.** 7f verified their image build had actually started
+rather than assuming the push triggered it — on a documented precedent in that repo where a commit
+reached main, **no build ever ran, no failure, no skip-ci marker**, and the feature read as shipped
+while the stamp existed in no image. The workflow gained `workflow_dispatch` because the recovery
+path was otherwise a fake empty commit. **Three separate facts, each of which can be true while the
+next is false:** the commit is on main; a build ran; the image is deployed.
+
+### The consequence found an open red
+
+`test_v02_cutover_diff::test_every_aitool_edge_has_required_properties` — four `mesh:` verbs as
+`<no-tool_urn>`, missing `tool_urn` and `provider` — was filed as *"graph state, unassigned"* among
+the fifteen. **It is this defect observed from the consuming side**, mechanistically matched to the
+deployed `.get("_tool_urn", "")` from both sides of the code. **A red with no owner acquired one by
+reading a neighbouring repo's fix** — which is R-032's argument in practice: a row's KIND is
+derivable far more often than *"awaiting a ruling"* suggests.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
