@@ -1104,6 +1104,82 @@ the rule must never be able to convert a real regression into a void.
 
 ---
 
+## R-032 — A STATUS IS A CLAIM ABOUT WHO HOLDS THE WORK, and a wrong one is MISROUTING
+
+**Named by `invincible-agent-28`, 2026-09-12, from the sixteen-reds audit.** Sixteen reds on master
+were carried as *"awaiting rulings"* for two days. **One of sixteen deserved the label.** 74's was a
+one-line fix sitting behind a status that told everyone to leave it alone.
+
+**A WRONG STATUS IS NOT MISLABELLING. IT IS MISROUTING.** The same shape as a register entry
+crediting the wrong lane — which sends the next request to the wrong door. **`awaiting-ruling`
+sends it to nobody**, which is worse: a misattribution reaches someone who can say *"not mine"*,
+and a phantom blocker reaches no one at all.
+
+    awaiting-ruling   ->  a decision-maker who does not know they hold it
+    unassigned        ->  honest, and visible
+    owned, open       ->  actionable
+
+**So `blocked-on:` must name a PARTY, and a status nobody can be paged about is not a status.**
+Before writing one, ask the question that settles it: *if this is still here in a week, whose
+inbox should it have been in?* If the answer is "nobody's", the row is unassigned, not blocked.
+
+### The audit that produced it, as a template
+
+| kind | n | what it actually needed |
+|---|---|---|
+| live graph state | 7 | a prime, or a data fix |
+| a source defect | 1 | one line, named owner |
+| a resolver decision | 3 | the domain-scoping arc's fourth case |
+| corpus decisions | 5 | the owning domain's answer |
+| **genuinely a ruling** | **1** | the router choosing a verb when the subject did not resolve |
+
+**Fifteen reds nobody is looking at is how a twenty-day CI silence starts.** The audit is cheap —
+read each failure's own message — and it is the only thing that converts a wall of red back into
+work with owners.
+
+---
+
+## R-033 — A DEFINITION'S BLEED CAN COME FROM A CITED VERB'S NAME, not from prose
+
+**Found by `invincible-agent-28`, 2026-09-12, fixing their row of the sixteen. Filed because the
+next author will not be looking for it.**
+
+The seal `test_no_new_sibling_name_bleed_in_definitions` asks whether another class's **label**
+appears in a definition's **text** — a definition is retrieval input, so naming a sibling hands
+that sibling's questions to you. (`idp:Pipeline` won *"list the datasets in publog"* exactly that
+way.)
+
+**The bleed was not a sibling named in prose. It was a camelCase VERB NAME:**
+
+    rdfs:comment  "Output of findOrphanedHazards: ..."
+                                    ^^^^^^^^^^^^^^^^
+                                    contains `Hazard` — safety:Hazard's own label
+
+**Citing the VERB put the SUBJECT class's name inside the RESPONSE class's embedded text.** The
+opening is house style, copied from a neighbouring class.
+
+**The detail that makes it a ruling rather than an anecdote: lowercase `hazards` appears TWICE in
+the same definition and matched nothing. The capital did it** — a substring match inside an
+identifier, invisible to anyone reading their own file for a *name*.
+
+**AND THE OTHER TWO RESPONSE CLASSES ARE CORRECT BY LUCK.** `assessDeferralRisk` and
+`draftRiskAssessment` contain no class label as a substring. One of three fired; the other two
+pass for reasons their author did not choose. **A green that depends on how a neighbouring verb
+happens to be spelled is not coverage** — cf. [[a-mutation-that-wont-die]] and R-026's
+alphabetical-fixture family, which is the same accident wearing different clothes.
+
+**The repair is the precedent already in that seal**: provenance moves to a `#` comment and
+`rdfs:comment` becomes a real definition. Same fix as the six build-notes cleared on 2026-08-15 —
+moving them out removed the bleed **and** restored an actual definition, *because the two were one
+authoring mistake seen from different angles.* Not grandfathered: `KNOWN_SIBLING_BLEED` is a
+ratchet whose target is empty.
+
+**Second defect in that TTL this week, after `@prefix mesh: <http://internal/mesh#>` with nine
+citations on an invented predicate IRI. Both invisible to review; both caught by seals that read
+the RESOLVED artifact rather than the text the author wrote.**
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

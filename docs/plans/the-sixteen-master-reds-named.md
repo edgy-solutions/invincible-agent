@@ -5,10 +5,10 @@ owner:      invincible-agent-01
 blocked-on:
 closed-by:
 repo:       invincible-agent
-summary:    The sixteen reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
+summary:    FIFTEEN now (row 6 closed by 74, `89d76d0`). The reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
 ---
 
-# The sixteen master reds, named
+# The sixteen master reds, named — fifteen open
 
 **Measured 2026-09-12 at `77d42e5`, fleet SETTLED (40 Running, 0 terminating, 0 non-running),
 and controlled against master's own copies in the same venv against the same cluster.** Each one
@@ -31,7 +31,7 @@ under R-031.
 | 3 | `b2_ingest_sandboxrtx::test_pool_hold_kind_classes_have_no_verbs_yet` | four `mil:*` content-kind classes carry verb edges before B4 ships | **graph state + B0 §3** | unassigned |
 | 4 | `b3a_ingest_helmet_40051::test_pool_hold_kind_classes_have_no_verbs_yet` | same four | **same** | unassigned |
 | 5 | `v02_cutover_diff::test_every_aitool_edge_has_required_properties` | four `mesh:` verbs with `<no-tool_urn>`, missing `tool_urn` and `provider` | **graph state** | unassigned |
-| 6 | `definitions_are_retrieval_input::test_no_new_sibling_name_bleed_in_definitions` | `safety_extension.ttl :: Orphaned Hazard Set -> names ['Hazard']` | **a SOURCE fix** | **`invincible-agent-28`** |
+| ~~6~~ | ~~`definitions_are_retrieval_input::test_no_new_sibling_name_bleed_in_definitions`~~ | a camelCase VERB name carried a class label into a definition — NOT a sibling named in prose | **CLOSED** `89d76d0` | `invincible-agent-28` |
 | 7–9 | `resolve_instance_probes` ×3 (`engine_e` Equipment ×2, WorkInstruction) | `instance_resolved=False`, `instance_match='not_specific'`, `instance_n=1`, `instance_rejected_n=1` | **a resolver decision** | **`invincible-agent-01`** |
 | 10–15 | `classify_route::test_routing_decision` ×6 | routing expectations vs what the live router answers | **corpus decisions** | see below |
 | 16 | `cost/test_the_refusal_carries_its_options::…[package_export]` | a verb 500s on a param it does not declare | **cost engine** | **`invincible-agent-81`** |
@@ -56,16 +56,26 @@ operation that would change them. Recording them here as PRE-ROLL state at `77d4
 as a standing claim — *content freshness is not write recency, and a graph read before a prime is
 a reading of the old graph.*
 
-## Row 6 has an owner and is the cleanest fix on the list
+## Row 6 — CLOSED, and my description of it was wrong
 
-`safety_extension.ttl`'s *Orphaned Hazard Set* definition names the sibling class `Hazard` outside
-a hierarchy statement. The seal's own message explains why that matters: **it is how `idp:Pipeline`
-won *"list the datasets in publog"* — by naming `idp:Dataset` in its definition.** A definition is
-retrieval input, so naming a sibling hands that sibling's questions to you.
+**What I wrote here first:** *"the definition names the sibling class `Hazard` outside a hierarchy
+statement"* — a sibling named in prose. **That is not what it was**, and the correction is the
+whole value of the row. Left uncorrected it would have sent the next author looking for a class
+name in prose, which is not there.
 
-**This is `invincible-agent-28`'s file and a one-line edit.** It is also the second defect found in
-that TTL this week — the first was `@prefix mesh: <http://internal/mesh#>` against the real
-namespace, with nine citations on an invented predicate IRI.
+`invincible-agent-28` fixed it in `89d76d0` and found the actual mechanism. See R-033. In short:
+the definition opened `"Output of findOrphanedHazards:"` — house style, copied from a neighbouring
+class — and **`findOrphanedHazards` contains the substring `Hazard`**, which is `safety:Hazard`'s
+own label. **Citing the VERB put the SUBJECT class's name inside the RESPONSE class's text.**
+
+**Lowercase `hazards` appears twice in the same definition and matched nothing. The capital did
+it** — a substring inside an identifier, invisible to anyone reading their own file for a *name*.
+And `assessDeferralRisk` / `draftRiskAssessment` contain no class label as a substring, so **the
+other two response classes are correct by luck of their verb names.**
+
+Second defect in that TTL this week, after `@prefix mesh: <http://internal/mesh#>` with nine
+citations on an invented predicate IRI. **Both invisible to review; both caught by seals that read
+the RESOLVED artifact rather than the text the author wrote.**
 
 ## Rows 7–9 are MINE, and the probable cause is my own bare-digit fix
 
@@ -112,6 +122,31 @@ this entire list that plausibly deserved the "awaiting a ruling" label.** One of
 rule `invincible-agent-22` established by refusing to seal exactly this shape: *a preferred answer
 written into a baseline is a guess wearing a baseline's clothes.* Each row gets decided by whoever
 owns that domain, and the corpus is written from their answer.
+
+
+## CLOSED: row 6, and the trap was not what the row said it was
+
+**`invincible-agent-28`, `89d76d0` on `lane/74`.** `test_definitions_are_retrieval_input` 5 passed.
+
+**The bleed was not a sibling named in prose — it was a camelCase VERB name.** The definition
+opened `"Output of findOrphanedHazards:"`, house style copied from a neighbouring class, and
+`findOrphanedHazards` contains the substring `Hazard`, which is `safety:Hazard`'s own label.
+**Citing the verb put the SUBJECT class's name inside the RESPONSE class's embedded text.**
+
+**Lowercase `hazards` appears twice in the same definition and matched nothing. The capital did
+it.** And the other two response classes — `assessDeferralRisk`, `draftRiskAssessment` — contain no
+class label as a substring, so **they are correct by luck of their verb names.** One of three
+fired; two pass for reasons nobody chose. Ruled as R-033.
+
+## Row 7–9 gets a NEGATIVE probe, not just a confirming one
+
+**74's correction to my plan, and it is the right one.** My hypothesis is *"word-overlap drops
+digit tokens, so `AFP-2024-001` degrades to `afp`"*. That predicts an identifier with **no digits**
+resolves where this one fails.
+
+**Probe the negative case too.** A fix that makes `AFP-2024-001` work confirms a mechanism that
+may not be the one operating: *a justification invented downstream fits by construction — and so
+does one confirmed only forwards.* Run the inference in both directions before the repair.
 
 ## What this list is for
 

@@ -372,7 +372,7 @@ _Coverage: **134 of 146 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: unassigned · blocked-on: the slot_declarations extraction (Lane 1) — this packet is its INPUT, not its blocker
   → [docs/plans/the-manifest-is-the-fourth-consumer-not-the-third.md](plans/the-manifest-is-the-fourth-consumer-not-the-third.md)
 
-- **the-sixteen-master-reds-named** — The sixteen reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
+- **the-sixteen-master-reds-named** — FIFTEEN now (row 6 closed by 74, `89d76d0`). The reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
   status: open · owner: invincible-agent-01
   → [docs/plans/the-sixteen-master-reds-named.md](plans/the-sixteen-master-reds-named.md)
 
