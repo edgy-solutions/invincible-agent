@@ -109,3 +109,107 @@ This follows the marker-at-the-site discipline used throughout: the person must 
 ## Verification note
 
 Every claim about current behaviour in this ADR was read on 2026-08-10: the step kinds and definition set from `workflow_definition.py` and `policy/workflows/`; the two-plane table from `dynamic_factory.py`'s module docstring and `sql/create_bpmn_catalog.sql`; the loader wiring from `src/iagent/definitions.py:27`; the row count from sandbox Postgres. **Unverified:** whether `bpmn_catalog` is non-empty in any other environment — the count was taken once, in sandbox, and the collision-activation clause is written to hold regardless.
+
+---
+
+## AMENDMENT 2026-09-12 — choice lives in DECISION TABLES at trigger and termination
+
+**RULED by the architect, from ADR-0051's safety-acceptance flow.** This amendment does not relax
+the no-branching rule; it names where the branching that real processes need actually belongs, so
+that the rule stops reading as "this rail cannot express a process with a choice in it."
+
+**THE PROBLEM THE ORIGINAL RULING LEFT OPEN.** ADR-0034 forbids a mode branch and this ADR forbids
+gateways, for a reason that holds: *the moment definitions gain gateways they become programs, and
+the property that makes them reviewable as policy dissolves.* But almost no real process — a
+maintenance disposition, a safety acceptance, an escalation — can be described without a choice.
+Read narrowly, the ruling said such processes cannot live on this rail at all, which pushed the
+choice back into ENGINE CODE. That is where ADR-0051 first put it (`_CONCURRENCE_LEVELS` and a
+gate function in `safety_agent`), and it is strictly worse: the choice became untailorable AND
+unreviewable, which is both halves of what the rule was protecting.
+
+### The three layers, each with one job and one kind of artefact
+
+| layer | job | artefact |
+|---|---|---|
+| **engines** | COMPUTE FACTS. A verb measures something and emits an attribute — `risk_level: Serious`, `part_condition: repairable`, `deadline_missed: true`. **An engine never chooses what happens next.** | code |
+| **decision tables** | CHOOSE. Rows mapping declared attributes to a definition id. | ratified data, `policy/decisions/` |
+| **definitions** | SEQUENCE. Linear, no branch, exactly as ruled above. `human_await` suspends until disposed, which IS the structural "before". | ratified data, `policy/workflows/` |
+
+**This is the DMN half of BPMN, and it is what ADR-0034 was protecting all along.** A table is
+exhaustive, stateless and reviewable as policy in a way an inline condition never is. The rule was
+never "processes may not branch" — it was "a definition may not be a program".
+
+### Choice lives in exactly two places, both outside the definition and both data
+
+**SELECTION AT TRIGGER** — which definition opens for this event:
+
+    (event=risk_assessment_drafted, level=High)      -> safety_acceptance_with_concurrence
+    (event=risk_assessment_drafted, level=Medium)    -> safety_acceptance_direct
+
+**CHAINING AT TERMINATION** — a definition ends with an observable outcome; the same table says
+what opens next:
+
+    (definition=safety_acceptance_with_concurrence, outcome=not_concurred) -> safety_redraft
+
+**A "route back to the drafter" is NOT a branch.** It is one definition ending `not_concurred` and
+a table row opening another. **Every instance is a record**, which is better for audit than a loop
+inside one — the question "who sent this back, and on what basis" has an answer with a task id
+rather than a journal entry.
+
+### What this buys, and the boundary that stays
+
+- **Loops** are new instances.
+- **Escalation** is a `human_await` with a declared deadline terminating `timed_out`, and a table
+  row opening the escalation definition — a DISPOSITION, not an event, so it stays inside the
+  rulings.
+- **Parallel work** is `dispatch_fanout`, which already exists.
+- **Sub-processes** are chaining.
+- **What cannot be expressed is a condition on something no engine has measured** — and that is
+  the boundary working, not a gap. The fix is a verb that measures it, never a formula in a table.
+
+### THE GUARD THAT KEEPS TABLES FROM BECOMING CODE
+
+**Rows match declared attributes by EQUALITY or MEMBERSHIP only.** No expressions, no arithmetic,
+no reading state. If a choice needs computation, the computation is a verb.
+
+Two seals, and the first is ADR-0051's generalised:
+
+- **TOTALITY** — every attribute value an engine can emit has a row. This is exactly seal
+  "every level the matrix can yield has a granted audience", widened from one attribute domain to
+  any. A value with no row opens NOTHING, which must be visible rather than silent.
+- **UNIQUENESS** — no two rows match one input. Without it a table is order-dependent, which is an
+  expression wearing a table's clothes.
+
+### DO NOT BUILD A FOURTH COMPOSER — this is the same pattern a third time
+
+The task-kind work established the shape and the graph-manifest rows repeat it: a row is data in
+`policy/`, seed plus overlay compose **by key**, a consumer reads the composed set and never a
+hardcoded table, an undeclared thing gets NOTHING rather than a default, and the seal asserts both
+directions.
+
+| task kinds (built) | decision tables (this amendment) |
+|---|---|
+| one row per species, `accepts` / `reason_required` | one row per case, `(event, attributes) -> definition_id` |
+| `policy/task_kinds/` + overlay | `policy/decisions/` + overlay, **same composer** |
+| gate composes; refuses on absence from the composed set | trigger composes; opens nothing on absence |
+| cutover seal: code table equals rows, both directions | totality + uniqueness |
+
+**MEASURED 2026-09-12, so the reuse is sized rather than assumed:** `iagent_mesh.task_kinds.compose`
+is already generic except for **one hardcoded key field** (`raw.get("kind")` in `_read_rows`) and
+**one builder call** (`_build` → `TaskKind`). The seed+overlay walk, full-replacement-by-key and the
+tombstone-for-an-unseeded-key error are all reusable as they stand. So reuse is a small SDK
+parameterisation — `compose(seed, overlays, *, key_field, builder)` — and **a fourth copy of the
+composer is refused by name.** The risk here is not deviation; it is that the pattern is familiar
+enough to be re-implemented rather than reused.
+
+### Consequences for ADR-0051 (the first author on this rail)
+
+`_CONCURRENCE_LEVELS` and `acceptance_request_after_concurrence` leave `safety_agent`. Two linear
+definitions replace them, plus selection and chaining rows. The seal — *a High cannot reach
+`accepted` without `concurred` in its lineage* — moves to the composed table plus definitions, same
+mutation, different subject.
+
+**SEQUENCING, because the obvious order breaks it:** the engine code must NOT be removed before the
+table that replaces it exists and composes. Removing it first leaves level selection nowhere and
+silently turns every Serious/High acceptance into a direct one — the failure this whole amendment
+exists to prevent, produced by the fix for it.

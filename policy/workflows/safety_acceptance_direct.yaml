@@ -1,0 +1,50 @@
+# The one-act safety risk acceptance — Medium and Low.
+#
+# STATUS: AUTHORED, NOT YET TRIGGERED. Same as its sibling: the row that selects it lives in a
+# decision table that does not exist yet (ADR-0039 amendment 2026-09-12). This definition runs
+# nothing today, and the header says so because ADR-0040 makes these headers the board.
+#
+# ── WHY A SECOND DEFINITION RATHER THAN A CONDITIONAL STEP ──────────────────────────────────
+# This is the whole shape the rulings force. ADR-0034 forbids a mode branch; ADR-0039 forbids
+# gateways. "Concurrence only for Serious and High" is therefore not a condition inside one
+# definition — it is TWO definitions and a selection row. The same answer `grouped_review.yaml`
+# already gives itself for per-invocation compartments: *author one definition per case.*
+#
+# ── THE SINGLE ACT IS THE STANDARD, NOT A SIMPLIFICATION ────────────────────────────────────
+# MIL-STD-882E §4.3.7 requires the user representative's formal concurrence for **Serious and
+# High** and says nothing about Medium or Low. Inventing a concurrence step here would be as
+# wrong as omitting one there — a process that over-escalates is not "safer", it is a different
+# process from the one the standard describes, and it trains people to route around the step.
+#
+# Which is also why the level set lives in a table row rather than a threshold: a tailored matrix
+# that inserts a level must not have it silently inherit a requirement nobody placed on it.
+id: safety_acceptance_direct
+name: "Safety risk acceptance (Medium/Low) — acceptance only"
+
+classification: null
+
+participants:
+  - role: initiator
+  - role: acceptance_authority
+
+domain_stages: [drafted, acceptance_pending, disposed]
+
+steps:
+  - kind: human_await
+    id: acceptance
+    promise_name: acceptance
+    audience: "risk_acceptance_{level_lower}:SUSTAINMENT"
+    subject_ref: "{hazard_id}"
+    title: "Accept {level} risk — {hazard_id}"
+    summary: >-
+      Residual risk acceptance by the authority the ratified matrix names for this level. Both
+      dispositions are reason-required on the task kind's own row: an acceptance with no stated
+      rationale erases the record that IS the artifact, and a bare rejection erases the same thing.
+    completion:
+      mode: single
+      quorum: any_of
+      claiming: false
+
+observable_state:
+  visible: [domain_stages, acceptance.status]
+  internal: []
