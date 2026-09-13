@@ -8,7 +8,7 @@ explains:
   - mesh:seedCanvas
   - mesh:seedPortfolioCanvas
 doc_kind: how-to
-audience_hint: data-engineer
+audience_hint: DATA_ENGINEER
 ---
 
 # Adding a canvas template

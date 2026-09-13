@@ -30,11 +30,13 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
+    from measure_modules import variance_driver_ranking
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
+    from agent_fleet.finance_agent.measure_modules import variance_driver_ranking
 
 FIN = "http://invincible-agent/fin#"
 
@@ -212,6 +214,70 @@ VALUE_LABEL: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared arithmetic — one implementation, so two verbs cannot disagree about CPI
 # ─────────────────────────────────────────────────────────────────────────────
+
+#: The money fields `fin_variance_drivers` computes. DERIVED FROM WHAT THE VERB SUBTRACTS,
+#: not from everything that looks like an amount: `bac` arrives from the seed unchanged and is
+#: passed through, so it is a value this verb REPORTS rather than one it PRODUCES, and the
+#: money ruling scopes to producers and to consumers that subtract or compare.
+_DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contribution")
+
+
+def _emit_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert the exact figures to the edge representation the cards read.
+
+    EVERY MONEY FIELD CARRIES AN EXACT STRING BESIDE THE FLOAT, which is engine-cost's pattern
+    and `fin_eac_comparison`'s, and it satisfies both halves of the money ruling: the
+    producer's authoritative figure is Decimal, and a renderer that only displays takes the
+    float at the edge. Anything that SUBTRACTS should read the `_exact` column.
+
+    ⚠ THE FLOATS ARE QUANTIZED TO THE CENT AND THAT IS A DELIBERATE VALUE CHANGE. The inline
+    form emitted a raw float subtraction, which could carry more precision than a cent. A row
+    carrying more precision than the figure it is summarised against is the card disagreeing
+    with its own caption — the defect the EAC pass found between its rows and its summary.
+
+    THE RATIO IS NOT QUANTIZED. A share is a factor, not an amount; rounding it would change
+    the arithmetic rather than present it. It is computed from the EXACT figures and not from
+    the float edge — reading the edge would make the exact column decorative, carried and then
+    unused by the one calculation that needed it.
+    """
+    for row in rows:
+        for key in _DRIVER_MONEY_FIELDS:
+            value = row.get(key)
+            if isinstance(value, Decimal):
+                exact = _money(value)
+                row[f"{key}_exact"] = str(exact)
+                row[key] = float(exact)
+        share = row.get("share_of_total")
+        if isinstance(share, Decimal):
+            row["share_of_total_exact"] = str(share)
+            row["share_of_total"] = float(share)
+    return rows
+
+
+def _totals_exact(
+    state: FinanceState, wp_ids: set[str], window: Optional[list[FiscalPeriod]]
+) -> tuple[Decimal, Decimal, Decimal]:
+    """`_totals` in Decimal. THE SAME SUM, NOT A ROUNDED ONE.
+
+    ADDED BESIDE `_totals` RATHER THAN REPLACING IT, deliberately. `_totals` has callers across
+    five other verbs, and converting it would make this a change to verbs nobody is checking in
+    this commit — the entanglement ADR-0053 §7 refuses one level up. When the remaining verbs
+    take their own Decimal pass this becomes the only implementation and `_totals` goes.
+
+    `Decimal(str(f))` RATHER THAN `Decimal(f)`, and the difference is the whole point: the
+    former reads the decimal literal a human wrote, the latter reads the binary approximation
+    of it. They agree only where the value is exactly representable — which for this seed is
+    everywhere, measured at 162 of 162 money facts, and the seal beside this keeps it true. If
+    that ever fails the fix is Decimal IN THE SEED, not more conversion here: exactness painted
+    over drifted inputs looks compliant and is not.
+    """
+    facts = state.facts_for(wp_ids, window)
+    return (
+        sum((Decimal(str(f.bcws)) for f in facts), Decimal("0")),
+        sum((Decimal(str(f.bcwp)) for f in facts), Decimal("0")),
+        sum((Decimal(str(f.acwp)) for f in facts), Decimal("0")),
+    )
+
 
 def _totals(
     state: FinanceState, wp_ids: set[str], window: Optional[list[FiscalPeriod]]
@@ -862,17 +928,22 @@ def fin_variance_drivers(
             f"work_package"
         )
 
+    # DECIMAL FROM HERE DOWN. `_variance` is a subtraction and is type-agnostic, so it returns
+    # a Decimal when handed Decimals — no second implementation of the sign convention, which
+    # is what made the convention drift-prone the first time.
     total = _variance(
         variance_kind,
-        *_totals(state, {wid for _, _, wps, _ in units for wid in wps}, periods),
+        *_totals_exact(state, {wid for _, _, wps, _ in units for wid in wps}, periods),
     )
 
     scored: list[dict[str, Any]] = []
     for entity_id, name, wp_ids, extra in units:
-        bcws, bcwp, acwp = _totals(state, wp_ids, periods)
+        bcws, bcwp, acwp = _totals_exact(state, wp_ids, periods)
         contribution = _variance(variance_kind, bcws, bcwp, acwp)
-        if contribution == 0:
-            continue  # a contributor of nothing is not a driver
+        # THE ZERO DROP MOVED TO THE MODULE with the rest of the ordering rules — "a
+        # contributor of nothing is not a driver" is a ranking decision, not a gathering one.
+        # Rows are now built for zero contributors and dropped by `rank_drivers`: more work
+        # for a handful of rows, and the rule lives with the three it belongs beside.
         technique = extra.get("technique")
         row: dict[str, Any] = {
             # INSTANCES_BY_PROPERTY's generic keys, so the archetype can draw this without
@@ -891,7 +962,7 @@ def fin_variance_drivers(
             "entity_name": name,
             "variance_kind": variance_kind,
             "contribution": contribution,
-            "share_of_total": (contribution / total) if total else None,
+            "share_of_total": variance_driver_ranking.share_of_total(contribution, total),
             # VIA THE CONVENTION, not `contribution > 0`. The inline sign test was correct and
             # unmaintainable: it agreed with `_variance`'s stated convention by coincidence of
             # both being written the same day, and nothing tied the two together. Now one
@@ -910,19 +981,18 @@ def fin_variance_drivers(
             )
         scored.append(row)
 
-    scored.sort(key=lambda r: abs(r["contribution"]), reverse=True)
-    ranked = scored[:top_n]
-    for i, row in enumerate(ranked, start=1):
-        row["rank"] = i
-    # THE TAIL IS DECLARED WHERE IT IS TRUNCATED. `top_n` hiding contributors without saying
-    # so is the same defect as the depth limit in the decomposition above: a partial list
-    # that looks complete.
-    if len(scored) > len(ranked):
-        withheld = sum(r["contribution"] for r in scored[top_n:])
-        for row in ranked:
-            row["withheld_contributors"] = len(scored) - len(ranked)
-            row["withheld_contribution"] = withheld
-    return ranked
+    # THE MEASURE. Drop non-contributors, order by absolute contribution, truncate, and
+    # declare the withheld tail — ADR-0053 §1, extracted 2026-09-12 behaviour-preserving.
+    # This verb gathers; the module computes. That seam is what makes the module's "no I/O"
+    # true rather than aspirational.
+    #
+    # THE MODULE NEEDED NO CHANGE FOR THE DECIMAL PASS AND ITS VERSION IS UNMOVED. `abs()`,
+    # truthiness and `sum()` are type-agnostic, so it ranks on whatever the caller hands it —
+    # and it is now handed exact values. §1 says bumping the version claims the FIGURES may
+    # change; the figures moved here because the INPUTS changed type, which is this verb's
+    # doing and not the module's. That the seam absorbed a money-representation change without
+    # editing is the strongest evidence available that it was cut in the right place.
+    return _emit_money(variance_driver_ranking.rank_drivers(scored, top_n=top_n))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

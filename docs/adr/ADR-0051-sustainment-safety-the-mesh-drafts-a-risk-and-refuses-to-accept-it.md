@@ -484,10 +484,31 @@ from M3.3's cutover. **Seal 14** (below) stays as written; only its justificatio
 must be scoped to the subject's own element — see the seal for why a body-wide assertion on a card
 that prints its kind in a header cannot fail.
 
-The safety kinds must not go live before both halves are closed. The cutover's safer direction — an
-unknown species rendering dead rather than actionable — is only safe once `declared: false` actually
-renders as *unknown species here*, which is the half that failed to be consumed last time, and is
-now the half that landed first.
+~~The safety kinds must not go live before both halves are closed.~~ **GATE LIFTED 2026-09-12 —
+BOTH HALVES ARE CLOSED, ruled by the architect.** Verified in the tree rather than accepted on
+report:
+
+| half | evidence |
+|---|---|
+| render | cortex-ui `21b2bae` — `isRegisteredKind` has a caller and the fixture asserts `buttons()` is empty |
+| gateway | `tests/test_an_undeclared_kind_accepts_nothing.py` is on master, and `verbs_for_kind` returns `()` for an undeclared kind rather than `_DEFAULT_VERBS` |
+
+So an undeclared kind now accepts **nothing** on both surfaces, and the safety kinds are free to go
+live. The cutover's safer direction — an unknown species rendering dead rather than actionable — is
+real rather than intended.
+
+**STRUCK RATHER THAN DELETED, because a satisfied precondition left standing reads as an
+outstanding one.** That is the same defect one level up from the sixteen master reds carried for two
+days behind an `awaiting-ruling` status when only one of them was: *a status is a claim about who
+holds the work, and a wrong one is not mislabelling, it is misrouting.* A gate nobody has lifted
+keeps a lane waiting on a condition that was met days ago.
+
+*(The packet naming those sixteen is Lane 1's and is not on master yet, so it is deliberately not
+cited by path here — a citation across an unmerged branch boundary is a dangling link by
+construction, and this ADR is already merged.)*
+
+Seal 14 itself does **not** retire with the gate. It asserts the property that now holds; deleting
+it would leave the fleet relying on two lanes' current behaviour with nothing measuring it.
 
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
@@ -860,8 +881,9 @@ per-level acceptance, `hazard_link_review:SUSTAINMENT`, and `risk_assessment_aut
 `accepts` and `reason_required: [accepted, rejected]`. **Not** `policy/task_kinds/` (structural
 species only, no domain names) and **not** `_VERBS_BY_KIND` (mid-retirement).
 `draftRiskAssessment` opens the review in the one-review-fans-out shape. Seals 6, 7, 10, 11 — and
-**seal 14 is a precondition for going live, not a deliverable of this increment**: it is cortex-ui's
-parity seal, and until it is green an undeclared kind still renders an actionable approval card. Note the deploy step the M3.1 rename paid for: **between the git edit and
+~~seal 14 is a precondition for going live~~ — **that gate was LIFTED 2026-09-12, both halves
+closed (§5).** An undeclared kind now accepts nothing on the render side (cortex-ui `21b2bae`) and
+the gateway side (`verbs_for_kind` returns `()`), so nothing here waits on it. Note the deploy step the M3.1 rename paid for: **between the git edit and
 `task_grant_sync` running, a new audience routes to NOBODY** — `register_task` materializes zero rows
 → `NoEntitledRecipients` → 422. Run the sync in the same window and re-drive one draft to witness it.
 

@@ -658,3 +658,54 @@ mesh:StepLadder a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Step Ladder" ;
   rdfs:comment "A total built up by striking factors IN ORDER, each step carrying the rate applied, the figure it was struck on, what it added, and the running total afterwards. ORDER IS THE ANSWER AND IS NOT A RANKING: each step's basis descends from earlier results, so sorting by magnitude would both break the walk and assert a precedence nobody stated. THE STRUCK-ON FIGURE IS WHAT MAKES IT CHECKABLE and is why a contribution ranking cannot carry this shape — a factor is routinely struck on a component or an earlier subtotal rather than on the previous running total, and a reader verifying the arithmetic cannot recover that figure from the amounts. The running total is what makes the sequence one movement rather than several independent figures. A STEP MAY LEGITIMATELY HAVE NO RATE AND NO BASIS: the seed step is an amount rather than a factor struck on something, and rendering either as zero would report a measurement that came out empty, which is a different and false claim. Money is an exact decimal carried as a string end to end, because the shape's whole value is that a recipient can reproduce every figure and a float in the middle of that is a divergence with nothing declaring it. Structurally named — a price composition is its first use and not its definition; any domain that strikes factors in sequence wants this card." .
+
+# =============================================================================
+# THE DOC PAGE VOCABULARY — ADR-0037 §1, slice 1. Added 2026-09-12, lane 5f.
+# =============================================================================
+#
+# DECLARED HERE RATHER THAN IN THE SIBLING `mesh_docs.ttl` THE ADR SKETCHED, and the reason is
+# the ordering requirement rather than tidiness. `mesh_system.ttl` is the SOLE `MESH`-domain
+# entry in `CANONICAL_TTL_MANIFEST`, so it primes. A new sibling file primes only once a manifest
+# row exists — and a vocabulary that never primed FAILS BY PASSING: ingest registers a `DocPage`
+# against an undeclared class, reports accepted, and matches nothing. That is the same shape the
+# archetype note above records, one registry over. ADR-0037 §1 is amended rather than silently
+# departed from.
+#
+# THE INSTANCES DO NOT LIVE IN THIS GRAPH. This file is MESH-domain vocabulary; the pages are
+# instance data in `internal/DOCS`, which ADR-0037's resolved open question puts under a manifest
+# entry of its own with `"domain": "DOCS"` — the sixth domain, absent today. Declaring the class
+# here and the corpus there is the reproducibility split `clear_ontology_graphs()` enforces, not
+# an inconsistency.
+
+@prefix docs: <http://invincible-agent/docs#> .
+
+# THE PREFIX ABOVE IS HALF A DECLARATION AND THE OTHER HALF IS PYTHON. A TTL prefix governs this
+# file; what the WIRE carries is decided by `_IRI_PREFIXES` in
+# `agent_fleet/utils/mesh_registration.py`, and an unknown prefix there is passed through
+# VERBATIM by design — so `docs:runbook-adding-an-engine` would be stored compact, miss the
+# linker's MATCH against full-IRI `:OntologyClass` nodes, and register as accepted-and-
+# unreachable. That table's own comments record this defect shipping three times (`fin:`,
+# `cost:`, and the 2026-08-21 compact-vs-full bug). `docs:` is the fourth candidate and is
+# entered in both places at once, with a seal asserting they agree.
+
+mesh:DocPage a owl:Class ;
+  rdfs:subClassOf prov:Entity ;
+  rdfs:label "Doc Page" ;
+  rdfs:comment "A reviewed page of prose that explains part of the system, carrying its own IRI in its frontmatter so that identity survives being moved. IDENTITY IS THE DECLARED IRI AND NOT THE PATH — ADR-0037 refuses identity-by-path for a measured reason: a commit that moved forty files between docs/plans/, docs/plans/archive/ and docs/reference/ would, under path identity, be forty concepts destroyed and forty created, with every inbound citation pointing at nothing. A PAGE THAT EXPLAINS NOTHING YET IS STILL A PAGE: `explains: none` is an admitted and marked row rather than an omission, because a missing row is indistinguishable from a page nobody wrote, and the corpus's honesty depends on being able to tell those apart. Subclasses prov:Entity so the same wasDerivedFrom lineage the catalog relies on applies to prose without a second mechanism." .
+
+mesh:explains a owl:ObjectProperty ;
+  rdfs:domain mesh:DocPage ;
+  rdfs:label "explains" ;
+  rdfs:comment "Doc to the graph IRI it explains — a verb, an owl:Class, an archetype. THE RANGE IS DELIBERATELY UNCONSTRAINED: a page may explain a verb or a class, and narrowing this would refuse one of the two things the corpus is for. EVERY TARGET MUST RESOLVE IN THE DEPLOYED GRAPH, which is the invented-IRI rule and the only gate this vocabulary carries in one direction. The REVERSE rule — every named thing must carry an edge — was proposed and STRUCK (R-014): a seal is a test function name and a registry site is a Python frozenset, neither has a graph identity, and requiring an edge per named thing manufactures exactly the IRIs the gate refuses. EDGE COUNT IS NOT A QUALITY SIGNAL: one page explaining one IRI is the rule working. The check is a SPARQL ASK against the deployed graph and never a grep of a TTL — those two came apart three times in eight days, because an undeclared prefix or an unprimed file makes the text right and the graph empty." .
+
+mesh:audience_hint a owl:DatatypeProperty ;
+  rdfs:domain mesh:DocPage ;
+  rdfs:range rdfs:Literal ;
+  rdfs:label "audience hint" ;
+  rdfs:comment "Which persona a page is written for — DISPLAY ROUTING, NEVER AUTHZ. The value comes from policy/personas.yaml, which is canonical and UPPERCASE (`DATA_ENGINEER`, not `data-engineer`): that file is what the Topaz sync tool refuses a grant against, so it is the vocabulary with a positive control behind it. THE ENUM IS NOT RESTATED HERE AND THAT IS THE POINT — ADR-0037's own correction records that this bullet once listed `reviewer` and `leader`, neither of which is a persona in this system, and a third copy of an enum is a shape this repo has paid for repeatedly. A hint carrying an unlisted value fails SILENTLY rather than loudly, because display routing has no gate to refuse it, which is why the seal reads the policy file rather than trusting the page." .
+
+mesh:doc_kind a owl:DatatypeProperty ;
+  rdfs:domain mesh:DocPage ;
+  rdfs:range rdfs:Literal ;
+  rdfs:label "doc kind" ;
+  rdfs:comment "The Diataxis split — concept, how-to, reference, rationale — because `what IS a disposition review` and `how do I add one` are different answers that route differently. Defaults to concept and is never asked about: ADR-0037 §3 routes the how-to as a linked affordance rather than as a question to the reader. The coverage gate is stated in terms of THIS field — every registered verb needs at least one explaining page of kind concept — which is why it is a declared property rather than a convention in a filename." .
