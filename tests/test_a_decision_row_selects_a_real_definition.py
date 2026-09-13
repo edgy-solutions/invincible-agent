@@ -106,10 +106,14 @@ def test_the_reference_checker_can_say_no():
     reject a fabricated one — and an empty `known` set would make the assertion above pass by
     matching nothing rather than by resolving everything."""
     known = _definition_ids()
-    assert "safety_acceptance_with_concurrence" in known, (
+    # NAMES A DEFINITION THAT EXISTS, and this control caught its own staleness: it originally
+    # asserted `safety_acceptance_with_concurrence`, which was then DELETED for enforcing order
+    # while ignoring outcome. The positive half of a control is a reference like any other, and it
+    # rots the same way — which is the seal's own subject arriving in its own fixture.
+    assert "safety_concurrence" in known, (
         "a definition known to be authored is not being read — the resolver is broken, not the data"
     )
-    assert "safety_acceptance_with_concurence" not in known, (
+    assert "safety_concurence" not in known, (
         "the resolver accepts a misspelling — it is not discriminating"
     )
 

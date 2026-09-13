@@ -1,0 +1,60 @@
+# ACT ONE of a Serious/High safety acceptance — the user representative's concurrence.
+#
+# STATUS: AUTHORED, NOT YET REACHABLE. The selection row opens it; the chaining row that carries
+# its outcome onward does NOT exist, because the gateway cannot yet resume a workflow for this
+# task kind or carry the verb (see the header block below). ADR-0040 makes these headers the
+# board, so this says so rather than reading as wired.
+#
+# ── WHY THIS IS ONE ACT AND NOT TWO ─────────────────────────────────────────────────────────
+# It was two. `safety_acceptance_with_concurrence` held the concurrence and the acceptance as
+# consecutive steps, and it was DELETED rather than fixed, because the executor proceeds to the
+# next step unconditionally:
+#
+#     approval = await ctx.promise(promise_name, type_hint=dict).value()
+#     results.append({... "status": approval.get("status", "APPROVED"), ...})
+#     # loop continues — nothing inspects the disposition
+#
+# So it enforced ORDER and ignored OUTCOME: a `not_concurred` disposition still opened the
+# acceptance task. **That is MIL-STD-882E §4.3.7 satisfied on paper and defeated in fact** — the
+# concurrence happens, is recorded, and is disregarded — which is worse than the engine code it
+# replaced, because it looks like compliance.
+#
+# The cause is the no-gateway rule applied correctly: "do not proceed on refusal" IS a branch, and
+# a linear definition cannot hold one. The fix is not a branch but CHAINING — one act per
+# definition, the decision table carrying the outcome to whatever opens next. Every instance is a
+# record, which is a better audit trail than a loop inside one.
+#
+# ── PEER LEVEL IS WHY THE AUDIENCE IS ITS OWN ───────────────────────────────────────────────
+# §3.2.49: the user representative is "at a peer level equivalent to the risk acceptance
+# authority" — neither that authority nor its subordinate. An audience holding both acts would
+# collapse two independent acts into one signature wearing two names.
+id: safety_concurrence
+name: "Safety risk concurrence (Serious/High) — act one of two"
+
+classification: null
+
+participants:
+  - role: initiator
+  - role: user_representative
+
+domain_stages: [drafted, concurrence_pending, concurrence_disposed]
+
+steps:
+  - kind: human_await
+    id: concurrence
+    promise_name: concurrence
+    audience: "risk_acceptance_concurrence_{level_slug}:SUSTAINMENT"
+    subject_ref: "{hazard_id}"
+    title: "Concur on {level} risk — {hazard_id}"
+    summary: >-
+      User representative concurrence, required BEFORE the acceptance decision
+      (MIL-STD-882E 4.3.7). This definition ends when this act is disposed; what opens next is a
+      chaining row on the outcome, never a step below.
+    completion:
+      mode: single
+      quorum: any_of
+      claiming: false
+
+observable_state:
+  visible: [domain_stages, concurrence.status]
+  internal: []

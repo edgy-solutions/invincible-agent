@@ -1,0 +1,49 @@
+# The assessment goes back to its AUTHOR — reached by a chaining row on a refused concurrence.
+#
+# STATUS: AUTHORED, NOT YET REACHABLE, for the same reason as `safety_concurrence`.
+#
+# ── WHO THE DRAFTER IS, AND THE HONEST LIMIT OF SAYING SO TODAY ─────────────────────────────
+# RULED: the recipient is the initiator identity on the RiskAssessment artifact — the engineer
+# who ran `draftRiskAssessment`. That is R-004(a)'s amended form: THE AUTHOR ACTS ON WHAT THEY
+# AUTHORED, which is expressible where a view-only audience was not.
+#
+# **The substrate cannot route that way yet.** `register_task` materialises one row per actor of a
+# DECLARED AUDIENCE; it cannot derive a recipient from the subject. So `risk_redraft:SUSTAINMENT`
+# is a declared audience granted to the drafting engineer, and "the recipient is whoever the
+# artifact names" is filed as the same platform item as the viewer relation — the task substrate
+# needs an actor derived from the SUBJECT, not only from a grant.
+#
+# Written this way deliberately: the row is CORRECT on the declared-audience substrate and STAYS
+# correct when per-instance routing lands, because the audience is the same set either way in
+# sandbox. What changes then is precision, not direction.
+id: safety_redraft
+name: "Safety risk assessment returned to its author"
+
+classification: null
+
+participants:
+  - role: initiator
+  - role: assessment_author
+
+domain_stages: [returned, redraft_pending, redrafted]
+
+steps:
+  - kind: human_await
+    id: redraft
+    promise_name: redraft
+    audience: "risk_redraft:SUSTAINMENT"
+    subject_ref: "{hazard_id}"
+    title: "Re-draft {level} risk assessment — {hazard_id}"
+    summary: >-
+      The user representative did not concur. The assessment returns to its author with the
+      stated basis carried in the payload — a refusal without its reason is the erasure this
+      domain cares about most, and the reason is why `not_concurred` is reason-required on the
+      concurrence row.
+    completion:
+      mode: single
+      quorum: any_of
+      claiming: false
+
+observable_state:
+  visible: [domain_stages, redraft.status]
+  internal: []

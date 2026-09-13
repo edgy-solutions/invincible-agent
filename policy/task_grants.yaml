@@ -351,3 +351,24 @@ audiences:
       concurrence audience were expected for a level that has none.
     grant_to:
       - carol@example.com
+
+  # ADR-0051 — where a NON-CONCURRED risk assessment goes: back to its author.
+  #
+  # RULED: the recipient is the initiator identity on the RiskAssessment artifact — the engineer
+  # who ran `draftRiskAssessment`. The author acts on what they authored, which is R-004(a)'s
+  # amended form and is expressible where a view-only audience was not.
+  #
+  # THE SUBSTRATE CANNOT ROUTE PER-INSTANCE YET. `register_task` materialises one row per actor of
+  # a DECLARED audience; deriving a recipient from the subject's initiator is filed as platform
+  # work alongside the viewer relation. So this is a declared audience granted to the drafting
+  # engineer — correct on today's substrate, and the same set in sandbox when per-instance routing
+  # lands. What changes then is precision, not direction.
+  risk_redraft:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0051. The author of a risk assessment the user representative declined to concur with.
+      Sandbox = bob, who drafts. Deliberately NOT alice: an assessment returned for redraft goes
+      to whoever wrote it, not to the authority who would have accepted it — sending it to the
+      authority would turn a refusal into a second bite at the same signature.
+    grant_to:
+      - bob@example.com
