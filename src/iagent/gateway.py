@@ -801,8 +801,48 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
         tasks = await run_in_threadpool(lambda: human_tasks.list_tasks_for(current_user.authz_id))
     except human_tasks.HumanTaskConfigError:
         tasks = []
+    # EACH ROW CARRIES ITS SPECIES' DECLARATION. Without this the only way a client could learn
+    # what a kind accepts was to POST a verb and be told it was wrong — `verbs_for_kind` appeared
+    # exactly ONCE in this file, inside the REFUSAL body. That is discovery-by-failure, and on
+    # this surface it is worse than inelegant: ADR-0034 archives decision records, so probing to
+    # learn a menu writes attempted decisions nobody made. Measured by cortex-ui-60 in the
+    # serving pod at 5fb7ae4.
+    tasks = await run_in_threadpool(lambda: human_tasks.decorate_with_declarations(tasks))
     # `email` is DISPLAY only; the queue was filtered on authz_id above.
     return {"email": current_user.email, "tasks": tasks}
+
+
+@app.get("/task_kinds")
+async def get_task_kinds(current_user: User = Depends(get_current_user)):
+    """Every declared species and its contract — the menu, readable without attempting it.
+
+    THE COMPANION TO THE PER-ROW DECLARATION, for the case a row cannot serve: a client rendering
+    a filter, a legend, or an EMPTY queue still needs to know what species exist.
+
+    NOT GATED ON ENTITLEMENT, deliberately. This returns the SHAPE of a decision — which verbs a
+    species takes and which need a reason — never a decision and never a task. Withholding it
+    would protect nothing, since the refusal body already names the allowed verbs to anyone who
+    posts one; it would only force the probing this endpoint exists to remove.
+
+    `composed: false` WITH AN EMPTY MENU IS NOT AN EMPTY MENU. When the registry cannot be
+    composed the flag says so, because an unreadable overlay must not read as "no species exist".
+    That is the same None-is-not-empty distinction the gate itself turns on, and conflating them
+    is what would take the task rail down.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+
+    def _read():
+        declared = human_tasks._declared_kinds()
+        if declared is None:
+            return None
+        return {k: human_tasks.declaration_for(k) for k in sorted(declared)}
+
+    try:
+        kinds = await run_in_threadpool(_read)
+    except human_tasks.HumanTaskConfigError:
+        kinds = None
+    return {"composed": kinds is not None, "kinds": kinds or {}}
 
 
 # ── PCN/PDN disposition review — start ────────────────────────────────────────
