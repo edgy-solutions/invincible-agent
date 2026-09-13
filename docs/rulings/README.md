@@ -1767,6 +1767,73 @@ on the absence of any.
 
 ---
 
+## R-047 — REGISTERED IS NOT PARTICIPATING, AND THE THIRD MECHANISM IS PATH ARITHMETIC
+
+**Found by `invincible-agent-81` on the live cost engine, 2026-09-12, and verified independently
+in the pod.** The third distinct way a verb can be registered, healthy, sealed, and **never once
+callable where it is registered.**
+
+    /app/scripts   No such file or directory
+    /app/dist      No such file or directory
+
+    pathlib.Path('/app/measures.py').resolve().parents  ->  ['/app', '/']
+    parents[2]                                          ->  IndexError: 2
+
+**The image flattens `agent_fleet/cost_agent/` to `/app`, so `/app/measures.py` has exactly two
+parents.** In the repo the identical line resolves to the repo root and works perfectly — **which
+is why every test passes and why this was invisible.**
+
+**AND THE PATH IS ONLY THE FIRST HALF.** Line 757 exists to put `scripts/` on `sys.path` for the
+builder, and the builder — **~1,300 lines across a script, a template and a dataset builder** — is
+not in the image at all. **The verb's implementation lives outside the container it is registered
+in.**
+
+### The three mechanisms, and why the count matters
+
+| # | verb | mechanism |
+|---|---|---|
+| 1 | Engine F | a payload field |
+| 2 | the walk's | a **shadowed** guard |
+| 3 | `package_export` | **path arithmetic correct in one layout and impossible in the other** |
+
+**Three different causes, one symptom: nine verbs registered, `/health` green, every seal green,
+and one of them unreachable.** A registration is **a claim about reachability that nothing was
+checking** — and each time the claim failed by a route the previous fix did not cover, which is
+why "registered is not participating" has to be a standing question rather than a fixed list of
+checks.
+
+**THE TELL IS A CORRECTNESS THAT DEPENDS ON LAYOUT.** `parents[2]` is not wrong; it is right in
+the repo and impossible in the image. **Any expression whose meaning is a function of where the
+file sits is a candidate**, and the test suite runs in the layout where it works — so the suite
+cannot see it *by construction*, exactly like a control that changes a path-derived gate (R-030).
+
+### The hash that describes an intention rather than an artifact
+
+**The round-trip seal specified for this export required a hash that did not exist.** `locator` is
+`content_hash(body)` — a hash of the package **body dict, built from state.** The HTML is written
+separately with `dest.write_text(html)`, and **no hash is ever taken of the written file.**
+
+> **The response's hashes describe what the engine INTENDED to write.** A truncated or
+> partially-flushed file would report success with a hash computed from memory, and nothing
+> anywhere would notice.
+
+**So the repair is a hash of the artifact AS WRITTEN, re-read from disk** — and only then does a
+round-trip assert anything. **That is the difference between *wrote a file* and *wrote the file it
+says it wrote*,** and it generalises to every manifest this fleet emits.
+
+### A dispatch of mine carried the false premise
+
+I wrote *"`package_export` already builds the 17.6 MB HTML with the `.duckdb` beside it."* **True
+in the repo, from a script. Never true of the engine.** I passed on a capability claim without
+checking **where it ran** — the same axis error as measuring a venv and concluding about a
+contract, and the reason a capability claim must name the process it was observed in.
+
+*(The `.duckdb` half refuses even in the repo — `duckdb` is not installed and is not a declared
+engine dependency. That refusal is DESIGNED and carries a clear message, and is not part of this
+defect.)*
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
