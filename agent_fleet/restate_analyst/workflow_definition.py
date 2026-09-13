@@ -120,6 +120,25 @@ class HumanAwaitStep(BaseModel):
     promise_name: Optional[str] = None
     completion: CompletionPolicy = Field(default_factory=CompletionPolicy)
 
+    # ── THE DEADLINE, AND WHY IT TERMINATES RATHER THAN ESCALATES ──────────────────────────────
+    #
+    # Seconds to wait for the human before the step ends in `timed_out`. Optional: a step with no
+    # deadline waits forever, which is today's behaviour and stays the default — adding a default
+    # timeout would silently change every existing definition's meaning, and "the approval expired"
+    # is not a thing any current process has agreed to.
+    #
+    # IT TERMINATES; IT DOES NOT DECIDE. A timeout is not a disposition — nobody accepted, nobody
+    # rejected, and writing one of those verbs on expiry would put a decision in the archive that
+    # no human made. ADR-0034 archives decision records, so a manufactured verb there is worse
+    # than an absent one. The step ends at the declared terminal `timed_out` and a chaining table
+    # decides what happens next: escalate, re-open to a wider audience, or abandon. THAT choice is
+    # policy and belongs in a row, not in the executor.
+    #
+    # `timed_out` MUST BE IN THE TABLE'S `terminals:` OR THE CHAIN CANNOT NAME IT. That is the
+    # rail: a terminal resolves against the table header, so a typo fails like a typo'd
+    # definition. A deadline with nowhere to land is a field that cannot be acted on.
+    deadline_seconds: Optional[int] = Field(default=None, gt=0)
+
     def resolved_promise_name(self) -> str:
         """The durable promise name this step actually suspends on. ONE
         derivation, so the executor and every seal ask the same function rather
