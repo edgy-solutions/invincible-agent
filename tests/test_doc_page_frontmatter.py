@@ -24,6 +24,10 @@ instrument for it**: text and graph diverge exactly when a prefix is wrong or a 
 which is the whole failure class above. That arm is a SPARQL/Cypher ASK against the deployed graph
 and it SKIPS without one. A skip here is not evidence; it is the absence of evidence, and the
 skip reason says so.
+
+**IT HAS RUN.** 2026-09-12, in-cluster, 8/8 targets resolved with controls passing — the command
+and the full result are recorded on that test rather than here, so they travel with the assertion
+they justify.
 """
 from __future__ import annotations
 
@@ -285,11 +289,32 @@ needs_graph = pytest.mark.skipif(
 def test_every_explains_target_resolves_in_the_deployed_graph():
     """The invented-IRI rule, asked of the graph rather than of the text.
 
-    OWED EXTRACTION, RECORDED RATHER THAN DONE: `tests/_mesh_verbs.py` already holds this repo's
-    graph-existence probes and this is a second consumer, so the rule says lift it. It is NOT
-    lifted yet because this arm has never run — the sandbox release is wedged at pending-upgrade
-    and priming is blocked. Extracting an unrun probe into the file three other suites import
-    would spread something unverified. Lift it the first time this goes green.
+    RUN AGAINST THE CLUSTER 2026-09-12 AT `cf0ff14`, AND THE RESULT IS RECORDED WITH ITS COMMAND
+    because a figure outlives the measurement that produced it:
+
+        kubectl --context edge exec -i -n sandbox deploy/iagent-engine-e -- python - < probe.py
+        (probe GENERATED from this file's own frontmatter scrape, so the target list is derived)
+
+        CONTROLS   1061 OntologyClass nodes with a uri; 65 relationship types; fabricated ABSENT
+        TARGETS    8/8 resolved  —  4 as CLASS, 4 as VERB
+
+    **THE FOUR-AND-FOUR SPLIT IS THE WHOLE REASON THIS ARM ASKS TWO QUESTIONS.** `seedCanvas`,
+    `seedPortfolioCanvas`, `resolveInstance`, `enumerateInstances` resolve as RELATIONSHIP TYPES;
+    `DispositionReview`, `Archetype`, `InstanceResolution`, `InstanceEnumeration` resolve as
+    `:OntologyClass` nodes. A probe that asked only the class question would have reported four
+    real targets as dangling, with total confidence — which is the instrument failure that already
+    happened once on this repo's verbs.
+
+    RUN FROM INSIDE A POD, ON PURPOSE. `adding-an-engine.md` is explicit: the credentials are the
+    pod's own, read from its env by the code it runs, and you do not fetch the secret yourself.
+    That is also why this pytest arm still SKIPS locally — the skip is an environment fact, not a
+    result, and the in-cluster command above is the instrument that produced the green.
+
+    OWED EXTRACTION INTO `tests/_mesh_verbs.py`, STILL NOT DONE, AND THE REASON HAS CHANGED. The
+    QUERIES are now verified — they are the ones that just ran. What is not verifiable from here is
+    the WIRING: this arm cannot execute locally at all, so a refactor of it would be an unrun
+    change to a file three suites import. That is the same objection one layer out. Lift it from an
+    environment where this arm itself runs.
 
     TWO KINDS, TWO QUERIES, and conflating them is the trap: a CLASS is an `:OntologyClass` node
     holding a full IRI; a VERB is a RELATIONSHIP TYPE between such nodes. A first draft of the
