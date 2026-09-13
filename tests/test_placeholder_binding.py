@@ -60,7 +60,19 @@ def test_every_shipped_definition_binds_with_runtime_values_only(name, defn):
     # to a definition without teaching the runtime about it goes RED rather than silently relying
     # on whatever a test happened to pass in.
     trigger = {"compartment": "SUSTAINMENT", "notice_id": "N-1", "notice_ref": "ref",
-               "artifact_urn": "urn:x", "artifact_label": "label", "id": "i", "n": 1}
+               "artifact_urn": "urn:x", "artifact_label": "label", "id": "i", "n": 1,
+               # ADR-0051's safety-acceptance definitions. THE ENGINE EMITS ALL THREE — they are
+               # already keys of `draftRiskAssessment`'s `review_request`, which is what the
+               # selection table's trigger carries, so this list is describing a payload that
+               # exists rather than promising one that does not.
+               #
+               # `level_slug` IS EMITTED, NOT DERIVED HERE, and that is the amendment's own rule
+               # applied to itself: a definition may not compute. `High` -> `high` is a
+               # computation, so it happens in the engine — where computation belongs — and
+               # arrives as a fact. A definition that lowercased it would be a formula in data,
+               # which is the exact thing ADR-0034 forbids, arriving through string interpolation
+               # instead of through a gateway.
+               "hazard_id": "HAZ-1001", "level": "Serious", "level_slug": "serious"}
     bound = bind_placeholders(defn, trigger)
     leftover = collect_placeholders(bound)
     assert not leftover, f"{name}: placeholders survived substitution: {sorted(leftover)}"
