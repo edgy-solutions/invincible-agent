@@ -135,15 +135,27 @@ CATALOGUE: list[dict[str, Any]] = [
     {
         "fn": "cost_category_breakdown",
         "verb": "mesh:costCategoryBreakdown",
+        # ⚠ "how did the price build up" WAS HERE AND IT IS cost_price_composition's.
+        # Measured on the live fleet 2026-09-12: with that phrase declared on both verbs,
+        # `find_tool` returned costPriceComposition under subject ProductionLot and
+        # costCategoryBreakdown under subject CostCategory — SO THE PHRASE DECIDED NOTHING
+        # and whichever subject won chose the answer. A synonym claimed by two verbs cannot
+        # discriminate, which is the one job a synonym has.
+        #
+        # It also contradicted the anti-synonym directly below: this verb declared "show the
+        # burden stack" as a phrase to stay away from while claiming "how did the price build
+        # up", and those are the same question in different words. The contradiction was
+        # invisible because each list was read on its own.
         "synonyms": ["where did the money go", "which cost bucket grew",
                      "what proportion was material", "how does the cost split by category",
-                     "how did the price build up"],
+                     "what share of the total was each bucket"],
         # THE SHARPEST ANTI-SYNONYM PAIR IN THIS ENGINE. cost_lot_breakdown reports what each
         # bucket COST; this reports what SHARE each bucket IS and how that share MOVED. A
         # question aimed at either would otherwise reach both, because they decompose the
         # same total along the same axis.
         "anti_synonyms": ["what did lot 4 cost", "what were the labor hours",
-                          "show the burden stack", "which rates were applied"],
+                          "show the burden stack", "how did the price build up",
+                          "which rates were applied"],
     },
     {
         "fn": "cost_supplier_concentration",
