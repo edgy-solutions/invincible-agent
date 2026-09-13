@@ -33,7 +33,7 @@ steps:
   - kind: human_await
     id: acceptance
     promise_name: acceptance
-    audience: "risk_acceptance_{level_lower}:SUSTAINMENT"
+    audience: "risk_acceptance_{level_slug}:SUSTAINMENT"
     subject_ref: "{hazard_id}"
     title: "Accept {level} risk — {hazard_id}"
     summary: >-
