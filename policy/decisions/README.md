@@ -24,12 +24,38 @@ composer by name.
 ```yaml
 decision: <table id>                 # the key; an overlay row REPLACES a seed row wholesale
 matches: [<attribute>, ...]          # the attributes this table reads — DECLARED, not inferred
+terminals: [<state>, ...]            # states this table may END at — DECLARED, see below
 domain:                              # every value an engine can EMIT for each attribute
   <attribute>: [<value>, ...]
 rows:
   - when: {<attribute>: <value>}     # a match on declared attributes only
-    then: <outcome>                  # a definition id, an audience, a terminal state
+    then: <outcome>                  # a definition id, an audience, or a DECLARED terminal
 ```
+
+
+## `terminals:` — where a terminal state comes from
+
+**`then` may name a terminal, and until now nothing said where terminals COME FROM.** A definition
+id resolves against `policy/workflows/`; an audience resolves against the audience list; a terminal
+resolved against **nothing** — so a typo'd terminal was indistinguishable from a deliberate one,
+and the reference seal had no choice but to skip it.
+
+**A table DECLARES the terminals it may end at, and a typo'd terminal then fails like a typo'd
+definition.** That is not new syntax on the rail — **it is totality applied to TARGETS**, the same
+move `domain` makes for inputs. Both answer *"complete over what?"* from outside the rows.
+
+    then: safety_acceptance_direct   ->  resolves in policy/workflows/
+    then: risk_acceptance:HIGH       ->  resolves in the audience list
+    then: timed_out                  ->  resolves in THIS TABLE'S `terminals:`
+    then: timedout                   ->  RED, naming the declared list
+
+**DECLARED PER TABLE, NOT GLOBALLY.** A global vocabulary would make every terminal available
+everywhere, so a table could silently end in a state its own process has no meaning for. The cost
+is repetition; the benefit is that the declaration is readable beside the rows that use it — and a
+terminal nobody can reach from this table is a row that cannot fire.
+
+**`timed_out` is the first one**, and it exists because `HumanAwaitStep.deadline` terminates
+there: **a deadline with nowhere to land is a field that cannot be acted on.**
 
 ## Two invariants, and both are sealed
 
