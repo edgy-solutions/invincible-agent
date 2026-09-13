@@ -1303,7 +1303,11 @@ exclusion is not a weaker version of it; it is a different rule that happens to 
 that pair "the sharpest in the engine."** The author knew the risk, was looking straight at it, and
 shipped it anyway — **because attention was on each declaration IN TURN.**
 
-Principle filed at `docs/principles/an-invariant-between-declarations-needs-a-seal-over-pairs.md`.
+Principle filed by `invincible-agent-91` at `f0fd459` on `lane/91` — **not yet on master**, so it
+is cited by COMMIT rather than by path. Citing the path directly turned `test_citation_paths` red
+on master (found by `invincible-agent-f3`): **the ruling landed and the artifact it cites did
+not.** Same split as a ruling naming a state it was formed against, in the other direction — and
+the repair is the same, **name the sha**. Re-point this at the path when `lane/91` merges.
 
 Related: [[every-endpoint-verified-the-join-unasserted]] — the same law found from the other side.
 
@@ -1669,6 +1673,97 @@ preserved if something in the fixture would notice it being lost.
 
 **The vacuum was the normal case, again.** Cf. R-041 — three contexts before this one, and each
 time the nearest real example was the degenerate one.
+
+---
+
+## R-044 — A STALE VENV PRODUCES FINDINGS SHAPED EXACTLY LIKE REAL ONES
+
+**Found by `invincible-agent-f3`, 2026-09-12**, and it is a fleet hazard rather than one lane's
+accident.
+
+Their worktree's venv held `iagent-mesh` **0.5.0** while `pyproject.toml` pinned **v0.8.1** in two
+places. Thirteen task-kind declaration tests failed on a missing `iagent_mesh.task_kinds`.
+**Every one of those failures looked exactly like a real defect in newly landed code.**
+
+> **THE TELL IS THAT IT ACCUSES THE NEWEST CODE IN THE TREE.**
+
+That is the diagnostic, and it is the only one available cheaply — because the failure mode is
+*correct behaviour against the wrong artifact*. `uv sync --extra agent-fleet` cleared all thirteen.
+
+**WHY IT IS WORSE THAN AN ORDINARY ENVIRONMENT PROBLEM.** A missing dependency fails by IMPORT and
+names itself. A **stale** one fails by ABSENCE OF A SYMBOL — indistinguishable from a symbol that
+was never written, or was just deleted by the change you are examining. **The investigation it
+invites is code archaeology on innocent code**, and the more recently that code landed, the more
+plausible the accusation.
+
+**Cf. [[a-scope-that-looks-local-and-is-not]]** — a partial `uv sync` in a shared venv, and the
+same class from the other end: there the sync narrowed what was installed, here it left something
+old behind. **Both fail by making the tree and the environment disagree while only the tree is
+under review.**
+
+**The cheap check before believing any suite result that accuses recent work: confirm the
+installed version matches the pin.** One command, and it is the same discipline as reading the
+code in the running pod rather than the tag.
+
+---
+
+## R-045 — A DECLARATION IN AN UNPRIMED FILE IS THE FAIL-BY-PASSING CASE
+
+**Ruled from `invincible-agent-f3`'s slice-1 grounding, 2026-09-12.**
+
+ADR-0037 §1 sketched a sibling `mesh_docs.ttl` for the `mesh:DocPage` terms. **They put them in
+`mesh_system.ttl` instead, and the reason is the ordering requirement made concrete:**
+`mesh_system` is the **sole MESH-domain entry in `CANONICAL_TTL_MANIFEST`**, so it primes. **A
+sibling primes only once a manifest row exists** — and until then the terms are declared in a file
+nothing reads.
+
+**THE SEAL ASSERTS BOTH HALVES: the terms are declared, AND their file is in the manifest.**
+Asserting only the first is the vacuum: the declaration is present, the seal is green, and nothing
+is in the graph.
+
+### The fourth prefix instance, caught with the population still at ZERO
+
+**`docs:` was an unregistered prefix** — declared in no TTL and in none of the three Python prefix
+tables — while five pages already carried `iri: docs:runbook-…`.
+
+**An unknown prefix is passed through VERBATIM by design.** So every page IRI would have been
+stored **compact**, missed the linker's `MATCH` against full-IRI `:OntologyClass` nodes, and
+registered **accepted-and-unreachable.** Nothing red.
+
+**`agent_fleet/utils/mesh_registration.py` carries the post-mortems of this shipping three times in
+its own table** — `fin:`, `cost:`, and the 2026-08-21 compact-vs-full bug. **This is the fourth,
+and the first caught before a single row existed.** Being late would have cost five invisible rows
+instead of one.
+
+**f3 asserted the EXPANSION by running it, and the PASS-THROUGH too** — because pass-through is the
+mechanism every one of the four instances rode in on. *Sealing the repair without sealing the
+mechanism leaves the next prefix free to do it again.*
+
+---
+
+## R-046 — REFUSING A FEATURE IS A DELIVERABLE WHEN THE REASON IS RECORDED
+
+**`invincible-agent-f3` on the literal-property question, 2026-09-12, and the shape of the refusal
+is the reusable part.**
+
+**The argument FOR the feature was sound and is not what decided it.** A literal mints no IRI, so
+it cannot dangle — true, and irrelevant. **What decides it is that the literal has no GATE:**
+
+    an `explains` IRI       goes RED when it stops resolving
+    a literal naming a
+    renamed test            keeps reading as TRUE
+
+**A fact with no gate is a stale claim waiting to happen** (R-025), and the join it would have
+bought is already served by `git grep`, since seal names live in the same repo as the pages.
+
+**AND THE APPARENT EXCEPTION IS THE WEAKEST INSTANCE, WHICH IS WHY IT DOES NOT REOPEN IT.** The
+cross-repo case looks like the one that needs a literal — and it is precisely where the literal is
+**least verifiable from here**, so what it actually wants is a contract test. *An exception that is
+weakest exactly where it is most tempting is not an exception.*
+
+**Recorded on the page with its reason**, which is what makes it a deliverable: the next author
+stops re-deriving a decision someone already made, and can overturn it on the reasoning rather than
+on the absence of any.
 
 ---
 
