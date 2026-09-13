@@ -8,7 +8,7 @@ iri: docs:runbook-adding-a-task-kind
 explains:
   - mesh:DispositionReview
 doc_kind: how-to
-audience_hint: architect
+audience_hint: ARCHITECT
 ---
 
 # Adding a task kind

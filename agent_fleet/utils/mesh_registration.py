@@ -635,6 +635,15 @@ _IRI_PREFIXES = {
     # The measured cost of that miss is not only a blank card: the hardened path is ~0.12s
     # and the BAML-designed fallback it drops to is ~16.4s, and the fallback looks plausible.
     "cost:": "http://invincible-agent/cost#",
+    # docs: (ADR-0037 doc pages) -- ENTERED BEFORE THE FIRST PAGE IS INGESTED, WHICH IS THE
+    # WHOLE POINT. The three entries above were each added AFTER a namespace had already
+    # registered and silently missed; this one is added while the population is still zero,
+    # so there is no window in which `docs:runbook-adding-an-engine` goes onto the wire
+    # compact, misses the linker's MATCH against full-IRI :OntologyClass nodes, and reports
+    # accepted-and-unreachable. Five pages in `docs/runbooks/` already declare `docs:` IRIs
+    # in frontmatter, so the population becomes five the moment ingest exists -- the cost of
+    # being late here would have been five invisible rows rather than one.
+    "docs:": "http://invincible-agent/docs#",
 }
 
 

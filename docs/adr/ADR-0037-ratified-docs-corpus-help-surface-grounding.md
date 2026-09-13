@@ -185,6 +185,158 @@ The user doesn't speak IRIs. Between the sentence and the graph-walk sits **reso
 - **Auto-generated doc stubs from verb registrations** — tempting, but a generated stub that satisfies the coverage gate is the **decorative-seal problem as documentation**: the gate exists to force a human to write *meaning*; a stub-generator defeats its purpose.
 - **Per-paragraph anchoring** — doc-level `explains` is v1; finer granularity wakes on evidence it's needed.
 
+## AMENDMENT 2026-09-12 — slice 1 as built, and the literal-property question REFUSED
+
+Declarations and seals only. **No ingest, no coverage gate, no corpus in the graph** — and the
+reason is §1's own: the frontmatter→triples converter lives in `doc-tools`, a sibling repo, which
+this ADR's resolved open question already named as the real first task. What slice 1 does is make
+the corpus *admissible* before anything reads it, while the population is still zero.
+
+### 1. The literal-property question is REFUSED
+
+R-014 §3 left this open **for this ADR's author**, with the architect's position that *"I'd rather
+it be refused on the page than assumed."* The question: may a `DocPage` carry a seal name or a
+registry-site name as a **literal** property — searchable text, not a graph identity — so that
+*"which runbook names `test_every_bound_archetype…`"* is answerable without minting a node for a
+test?
+
+**Refused. The argument FOR it is sound and is not the one that decides it.** A literal mints no
+IRI and therefore cannot dangle, so the invented-IRI rule is genuinely untouched. That is true and
+it is the wrong axis.
+
+**WHAT DECIDES IT: THE LITERAL HAS NO GATE.** An `explains` IRI that stops resolving goes red — an
+`ASK` answers no and the page fails ingest. A literal naming `test_every_bound_archetype…` keeps
+reading as true forever after the test is renamed, because nothing compares it to anything. It
+would sit in frontmatter *beside* governed fields, inheriting their authority, and be the one
+field with nothing behind it. That is
+[`a-figure-outlives-the-measurement-that-produced-it`](../principles/a-figure-outlives-the-measurement-that-produced-it.md) with a
+place reserved for it in the schema.
+
+**AND THE JOIN IT WOULD BUY IS ALREADY SERVED.** Seal names and registry sites live in the **same
+repository as the pages**, so *"which runbook names this test"* is `git grep` over one tree —
+re-derived on every invocation, never stale. `mesh:explains` earns its keep precisely because it
+joins across **stores and repos** where no text search reaches. A literal buys a worse version of
+a query that already works.
+
+> **A field that can only be checked by the same command that answers the question it exists to
+> answer has no reason to be a field.**
+
+**THE TRIGGER FOR REVISITING, and it names the case that looks strongest and is weakest.** The one
+place the grep genuinely fails is a registry site in **another repository** —
+`docs/runbooks/adding-a-canvas-template.md` records cortex-ui's `TEMPLATES` builder as site 5 with
+**no seal**, for exactly that reason. That is also the case where a literal is *least* verifiable
+from here: a page in this repo naming a symbol in a repo this CI cannot read would be a stale
+claim with extra steps. **So the cross-repo case is not the exception that reopens this; it is the
+case that wants a cross-repo contract test instead.** Reopen on evidence that someone was misled
+by the absence of the literal — not on the observation that the grep has a boundary, which is
+already known.
+
+### 2. The vocabulary lives in `mesh_system.ttl`, not a sibling — §1 amended
+
+§1 specifies *"a single small TTL (a `mesh_docs` vocabulary, sibling of `mesh_system.ttl`)"*.
+**Built in `mesh_system.ttl` instead, and the reason is ordering rather than tidiness.**
+`mesh_system` is the sole `MESH`-domain entry in `CANONICAL_TTL_MANIFEST`, so it primes. **A new
+sibling file primes only once a manifest row exists**, and a vocabulary that never primed fails by
+*passing*: ingest registers a `DocPage` against an undeclared class, reports accepted, and matches
+nothing. The archetype note in that TTL records the same sequencing costing every lane a red
+master, one registry over.
+
+A sibling file remains the better home the moment the vocabulary grows past four terms — at which
+point it needs a manifest row **and** a `DOCS`-domain decision, which is work, not a rename.
+
+### 3. The prerequisite §1 did not name: `docs:` had to be a REGISTERED PREFIX
+
+Five pages already declare `iri: docs:runbook-…`, and **`docs:` was declared nowhere** — not in a
+TTL, not in any of the three Python prefix tables. An unknown prefix is passed through **verbatim
+by design**, so every page IRI would have been stored compact, missed the linker's `MATCH` against
+full-IRI `:OntologyClass` nodes, and registered as **accepted-and-unreachable**.
+
+`agent_fleet/utils/mesh_registration.py` carries the post-mortems of this defect shipping **three
+times** in its own table — `fin:`, `cost:`, and the 2026-08-21 compact-vs-full bug. `docs:` is
+entered on the write side **and** in the TTL, with a seal asserting the two agree, **while the
+population is zero** — the only state in which that is free. Being late would have cost five
+invisible rows rather than one.
+
+### 4. What is sealed, and the arm that is NOT
+
+`tests/test_doc_page_frontmatter.py`. Every check is **structural — it reads files**:
+
+| seal | what it refuses |
+|---|---|
+| the four terms are declared **and** their file is in the manifest | a vocabulary that never primes |
+| `docs:` is on the **write** side, expansion asserted by running it | the three-times-shipped prefix defect |
+| every expected page carries the doc model | a page that silently becomes no row |
+| every `explains` prefix is one the wire can carry | a target that cannot resolve whatever the graph holds |
+| every `audience_hint` is a persona **read from `policy/personas.yaml`** | display routing with no gate behind it |
+
+**Three controls, because each of those passes vacuously in some state.** `README.md` is held out
+of the population as a **real specimen of a page with no frontmatter**, so the refusal is shown
+able to see absence rather than merely to see nothing. `_TEMPLATE.md`'s placeholders are asserted
+to be **refused** by the same gates the corpus passes, so an unfilled copy cannot register a page
+named `REPLACE-ME`. And the persona comparison is shown to reject a fabricated persona — including
+`reviewer`, the value this ADR's own superseded bullet once listed.
+
+**IT WENT RED BEFORE IT WENT GREEN, on a defect that was reported swept.** Two pages carried
+`audience_hint` values the policy file does not contain: `architect` (a case lint) and
+**`data-engineer` — which differs from `DATA_ENGINEER` by a SEPARATOR, not by case**, so no
+case-insensitive match would have saved it. One of the two was this lane's own page. The sweep had
+been reported complete.
+
+**THE ARM THAT MATTERS MOST HAS NOT RUN.** `explains` resolution is a SPARQL/Cypher `ASK` against
+the **deployed graph**, never a grep of a TTL — text and graph diverge exactly when a prefix is
+wrong or a file never primed, which is this whole section. It is written, it **skips** without
+`NEO4J_URI`, and its skip reason says a skip is not a pass. It cannot be run today: the sandbox
+release is wedged at `pending-upgrade` and priming is blocked. **So slice 1 is admissible-by-
+structure and unproven-against-a-graph**, and those must not be reported as one state. Its owed
+extraction into `tests/_mesh_verbs.py` is deliberately **not** done for the same reason — lifting
+an unrun probe into the file three suites import would spread something unverified.
+
+### 5. Slice 2 — DESIGN ONLY, not built
+
+Work-side runbooks ingest from a work-side directory through the same shape: the ADR-0036 overlay
+pattern, **keyed on the page's declared `iri`** — the field ADR-0037 already made identity, so
+composition needs no new key.
+
+**THE COMPOSITION HELPER IS REAL, AND READING IT CHANGED THE DESIGN FOR THE BETTER.** Verified at
+the pinned `iagent-mesh` **v0.8.1** rather than taken from the dispatch, and two corrections came
+out of the read:
+
+```
+iagent_mesh.declarations.compose_rows(
+    seed_dir, overlay_dirs=(), *, key_field, builder, label='declaration', error=DeclarationError)
+```
+
+* **It is not at the package top level** — `from iagent_mesh import compose_rows` raises. It lives
+  in `iagent_mesh.declarations` and is re-exported by `iagent_mesh.task_kinds`.
+* **IT TAKES DIRECTORIES, NOT ROWS.** `seed_dir` and `overlay_dirs`, which is materially better
+  for this design than the row-composing shape the dispatch described: *"a work-side runbook
+  directory"* is already the argument, so slice 2 composes `docs/runbooks/` with an overlay
+  directory and needs no loader of its own.
+
+**A NOTE ON HOW THIS WAS NEARLY REPORTED, because the wrong version survives longer than the wrong
+signature.** The first read of this tree said the symbol did not exist at all, and that was TRUE of
+this worktree's venv, which held **0.5.0** while `pyproject.toml` pins **v0.8.1** in two places. The
+gap was in the environment, not between the design and the artifact — and the same staleness was
+failing **13 task-kind declaration tests** for a missing `iagent_mesh.task_kinds`, which would have
+read as a code defect in someone else's work. `uv sync --extra agent-fleet` cleared both. **A stale
+venv produces findings shaped exactly like real ones**, and the tell is that it accuses the newest
+code in the tree.
+
+Three design rulings recorded now, because each is cheaper to state than to discover:
+
+1. **AN OVERLAY PAGE MUST NOT SATISFY THE SEED'S COVERAGE GATE.** The gate — every registered verb
+   has a `concept` page — is evaluated **per layer**. Otherwise a customer's private page
+   documenting a platform verb turns the platform's CI green *in their deployment and nowhere
+   else*, and the gate stops meaning what it says. The platform's gate reads the platform's layer.
+2. **AN OVERRIDE IS PERMITTED AND MUST BE VISIBLE.** Two layers may declare the same `iri`;
+   last-layer-wins is what `compose_rows` does. But a customer silently replacing a platform
+   page's content is the config-layering hazard in prose form, so the composed row **records which
+   layer won**, exactly as layered config does.
+3. **NO `DOCS` MANIFEST ENTRY YET, and this is a decision rather than an omission.** ADR-0037's
+   resolved question requires the corpus entry to declare `"domain": "DOCS"` — the sixth domain.
+   A manifest row pointing at an artifact the converter does not yet produce would break priming
+   for every lane. The row lands **with** the converter, in the same change.
+
 ## Scope note — what this ADR is *not*
 
 This is the **help/explanation** surface (docs that describe the system). It is **not** the data-plane authoring assistant (ingesting existing dbt/pipeline/code assets and guiding practitioners) — that is a separate, larger program (a future ADR, 0032's analyst-loop ambition transposed to the data plane, evidence-gated and staged). The two share the ratified-config + provenance rails but are different deliverables; keep them separate so this packet-sized help design ships without waiting on the program.
