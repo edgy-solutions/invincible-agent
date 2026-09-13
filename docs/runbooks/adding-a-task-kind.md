@@ -84,7 +84,16 @@ a post-condition on a running system, and three specific claims sit outside thei
 **A seal over a declaration cannot see a deployment.** Green after site 1 means the row is
 declared and well-formed. It is not evidence that any deployment composes your overlay, that the
 UI bundle shipped with your registry row, or that a task of your kind renders at all. Those are
-cluster claims and this repo has no check for them.
+cluster claims and no seal in this repo can reach them.
+
+> **⚠ NARROWED 2026-09-12 — there is now a live read that answers the first of those.**
+> `GET /task_kinds` serves the composed set from the running gateway, so "does this deployment
+> compose my overlay" is answerable by *reading* rather than by inference. It does not answer the
+> UI half. Before this endpoint existed, `verbs_for_kind` appeared in the gateway exactly once —
+> **inside the refusal body** — so the only way to learn a species' menu was to POST a verb and
+> be told it was wrong. RULED 2026-09-12, see [rulings#r-039](../rulings/README.md#r-039--a-composed-declaration-needs-a-read-path-or-its-only-consumer-is-the-error-handler):
+> *a declaration whose only reader is the code path that rejects you is not a declaration, it is
+> an error message with a schema.*
 
 **Declared is not enforced.** `reason_required` on a row does *nothing at runtime today*.
 `validate_decision` checks `decision in _REASON_REQUIRED` — a module-level set of verb strings,
@@ -158,3 +167,20 @@ Everything else is order-free.
    — eight arms. A red one names your missing site.
 7. Wire whatever mints the task to emit your `kind`. **Nothing checks this**; verify it by
    reading a `human_task_projection` row, not by a green suite.
+8. **Confirm the running gateway actually composed your row — by READING, not by provoking a
+   refusal.** Every step above is a file check; this is the first that asks the deployment.
+
+   ```
+   kubectl -n <ns> exec <cortex-bff-pod> -- \
+     curl -s localhost:8000/task_kinds        # or hit the route through your ingress
+   ```
+
+   Your kind present with its verbs in **declared order** means the seed, your overlay and the
+   pin all agree in the process that serves traffic. Absent means the deployment did not compose
+   your overlay — most often `TASK_KIND_OVERLAY_DIRS` unset or pointing somewhere that is not
+   there, which the gateway treats as *cannot know* and abstains on, rather than as *empty*.
+
+   Do **not** substitute "POST a verb and read the refusal" for this. That path tells you the
+   menu only by being wrong, it writes nothing but it does exercise the decision surface, and it
+   is exactly the shape [rulings#r-039](../rulings/README.md#r-039--a-composed-declaration-needs-a-read-path-or-its-only-consumer-is-the-error-handler)
+   exists to end.
