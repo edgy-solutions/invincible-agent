@@ -654,3 +654,29 @@ secrets:
   openaiApiKey: ""  # not needed if Ollama is the only LLM provider
   hfToken: ""
   datahubToken: ""  # populate after DataHub deploys + generates a PAT
+
+# --------------------------------------------------------------------------
+# ENGINE-LG (graph host) — ON in sandbox, and WRITTEN DOWN rather than --set.
+#
+# THE REGRESSION THIS PREVENTS, 2026-09-12. `graphHost.enabled: true` lived
+# ONLY in release rev 112's user-supplied values — someone had passed it as
+# `--set` and it was never written into a file. `scripts/upgrade-sandbox.sh`
+# deliberately does NOT use `--reuse-values` (so a value deleted from a file
+# cannot outlive the commit that deleted it), so the next roll computed the
+# render from the files, found `enabled: false`, and DELETED the deployment.
+#
+# The fleet went 17 services -> 16 and the census said "OK: all 16 at <sha>".
+# Nothing was wrong with any of the 16. A verb whose HOST had disappeared
+# still resolves, because registration persists in the graph — so the pick
+# fails at dispatch, which is the furthest possible point from the cause.
+#
+# `--reuse-values` is NOT the fix; it is the thing the script refuses on
+# purpose. THE FIX IS THAT A LIVE DEPLOYMENT'S EXISTENCE IS DECLARED IN A
+# TRACKED FILE. A `--set` is an instruction, not a declaration: it survives
+# exactly one release and is invisible to every reader of this repo.
+#
+# values.yaml keeps `enabled: false` — that is the platform default and B5's
+# to change. This is the sandbox saying it wants it.
+# --------------------------------------------------------------------------
+graphHost:
+  enabled: true
