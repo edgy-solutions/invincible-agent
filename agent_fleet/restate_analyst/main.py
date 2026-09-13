@@ -2096,10 +2096,44 @@ async def _run_definition(
                 "result": {"dispatched": len(_keys), "keys": _keys, "gate": _gate_result},
             })
 
+    # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
+    #
+    # A DEFINITION MUST TERMINATE WITH ITS LAST STEP'S DISPOSITION, OR CHAINING HAS NOTHING TO
+    # CHAIN ON. ADR-0039's decision tables select the NEXT definition from the outcome of the
+    # one that just ran; `status: "COMPLETED"` is a constant, so every definition looked
+    # identical from outside and a table could only ever match one row. Under §4.3.7 that is the
+    # difference between "a concurrence happened" and "the concurrence was GIVEN" — the executor
+    # proceeded past `human_await` unconditionally, so a NOT_CONCURRED read exactly like a
+    # concurrence. Enforcing order while ignoring outcome is §4.3.7 satisfied on paper and
+    # defeated in fact.
+    #
+    # `outcome` IS ADDITIVE; `status` IS UNTOUCHED. `status` is the RUN's fate — did the executor
+    # finish — and `outcome` is the WORK's. Collapsing them would make "the workflow errored" and
+    # "the human said no" the same value, which is the conflation the disposition rail exists to
+    # prevent. Every current consumer reads `step_results`, so nothing moves under them.
+    #
+    # DERIVED FROM THE LAST DISPOSING STEP, not the last step: a definition ending in a dispatch
+    # or a notification must still terminate with the human's verb, and asking "which step was
+    # last" would make the outcome depend on trailing bookkeeping nobody thinks of as a decision.
+    # THE VERB LIVES IN `approval["status"]`, NOT `approval["decision"]`. Written against
+    # `decision` first — a key the approve handler does not produce (its payload is `status`,
+    # `comments`, `task_id`, `acted_by`). That version was not a crash: it made `outcome`
+    # PERMANENTLY None, indistinguishable from "this definition disposes nothing", and a
+    # chaining table would have matched no row for every definition forever. Fail-by-passing,
+    # caught by reading the resolve site instead of assuming the field.
+    _disposing = [
+        r for r in results
+        if r.get("kind") == "human_await" and (r.get("approval") or {}).get("status")
+    ]
     return {
         "workflow_id": workflow_id,
         "definition_id": wf.id,
         "status": "COMPLETED",
+        # None when a definition disposes nothing — honest, and distinguishable from a
+        # disposition that happened to be absent. A chaining table matching on `outcome` then
+        # fails to find a row rather than silently matching a default.
+        "outcome": (_disposing[-1].get("approval") or {}).get("status") if _disposing else None,
+        "outcome_step_id": _disposing[-1].get("step_id") if _disposing else None,
         "step_results": results,
     }
 
