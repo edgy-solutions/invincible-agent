@@ -99,7 +99,8 @@ def _prefix_bindings() -> dict:
 
     ⛔ DERIVED FROM A MERGED GRAPH IS WRONG HERE, and this is the third narrowness in one
     seal (2026-08-31). Collecting namespaces from one merged rdflib graph is LAST-BINDING-WINS:
-    `product_structure_extension.ttl` binds `mesh:` to `http://internal/mesh#` while
+    `product_structure_extension.ttl` ONCE bound `mesh:` to `http://internal/mesh#` (fixed
+    2026-09-12) while
     `mesh_system.ttl` and `finance_extension.ttl` bind it to `http://invincible-agent/mesh#`,
     so the merge silently produced the wrong namespace and EVERY `mesh:` row reported as
     undeclared — a hardcoded constant replaced by a more general derivation that was less
@@ -145,14 +146,34 @@ def test_no_seeded_prefix_is_bound_two_ways():
     token `mesh:` denotes different things in different seeded files, and any tool that
     merges them (this seal did) silently picks one.
 
-    xfail rather than a hard failure: `product_structure_extension.ttl` is another lane's and
-    whether `http://internal/mesh#` is deliberate is theirs to rule. Recorded so it is a known
-    fact rather than a surprise the next merger meets.
+    RULED AND FIXED 2026-09-12, SO THIS IS NOW A HARD ASSERTION — a ratchet whose target is
+    empty. It was an `xfail` while `product_structure_extension.ttl` bound `mesh:` to
+    `http://internal/mesh#` and it was another lane's call whether that was deliberate. It was
+    not: the served graph uses `http://invincible-agent/{domain}#` everywhere the HUD shows it,
+    so `http://internal/` was a second convention that had leaked in — and that file was the odd
+    one of five, carrying TEN `mesh:` citations on a namespace nothing else uses.
+
+    `doc-tools-7f` established the boundary that settles it: doc-tools' own `http://internal/`
+    uses are NAMED-GRAPH URIs (`http://internal/{domain}`), and a graph NAME and a vocabulary
+    NAMESPACE are different axes. Reasoning from one to the other is the mechanism, not merely
+    the mistake — which is why this ends as a rule rather than an edit.
+
+    WHY THE CONDITIONAL `xfail` COULD NOT STAY. With the conflict gone it fell through and passed
+    WHILE ASSERTING NOTHING, so a reintroduced conflict would have xfailed — reported as a known
+    limitation rather than as the regression it is. An xfail guarding a defect that has been
+    fixed does not quietly become a stricter test; it becomes a hole shaped like the old defect.
+
+    FOURTH INSTANCE OF THE PREFIX CLASS. An unknown prefix passes through VERBATIM, so the row
+    registers, reports accepted, and never matches — nothing goes red. Derived from the files
+    rather than listed, so a sixth TTL is covered on arrival.
     """
     conflicts = {p: sorted(v) for p, v in _prefix_bindings().items() if len(v) > 1}
-    if conflicts:
-        pytest.xfail(f"prefix(es) bound to more than one namespace across seeded TTLs: "
-                     f"{conflicts} — see docs/plans/, filed for the owning lane")
+    assert not conflicts, (
+        f"prefix(es) bound to more than one namespace across seeded TTLs: {conflicts}. "
+        f"The prime seeds these files TOGETHER, so one token denoting two things means any tool "
+        f"that merges them silently picks one — and an unknown prefix passes through VERBATIM, "
+        f"so the row registers, reports accepted, and never matches. Nothing else goes red."
+    )
 
 
 def _binding_rows() -> list[tuple[str, str]]:

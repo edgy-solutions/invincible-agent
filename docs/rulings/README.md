@@ -1036,6 +1036,500 @@ Related: [[a-mutation-that-wont-die]], [[a-stale-claim-is-pre-authenticated]], R
 
 ---
 
+## R-030 — A CONTROL MUST SHARE ITS SUBJECT'S GATE
+
+**Ruled by the architect, 2026-09-12, from the v0.8.0 suite run.** The fourth costume of *the
+instrument measured its own input*, and the sharpest, **because it would have filed a wrong
+attribution against the lane that caught it.**
+
+The suite came back 23 red. To partition mine from pre-existing, I ran master's own copies from a
+`git worktree` under `AppData/Local/Temp`. That directory placement changed a **path-derived
+precondition**: the tests resolve `doc-tools` relative to their own location, so the control looked
+for a sibling that does not exist there.
+
+    control (temp worktree)   2 passed, 50 SKIPPED
+    subject (my tree)         failures
+
+**Read naively, that says my branch broke them.** With `DOC_TOOLS_REPO` pointed at the same place
+the subject resolves, master fails identically: pre-existing.
+
+**THE RULE. A control differs from its subject in EXACTLY ONE variable — the one under test.** Mine
+differed in *where it ran*, which is the one thing a control exists to hold fixed, and the
+difference it manufactured pointed at my own branch as the cause.
+
+**THE TELL IS A SKIP COUNT THAT DOES NOT MATCH.** *50 skipped* against a subject that ran those
+tests is not a passing control; it is a control that measured a smaller thing. **Compare the RUN
+count, not just the verdict** — a control and subject that disagree about how many tests executed
+have not been compared at all. This is the same failure as a floor of 14 over 30 images being
+unable to distinguish *all present* from *half missing*: the instrument's own scope moved.
+
+**And the placement was not incidental.** A temp-directory worktree is the natural way to get a
+clean copy of another ref, and it silently breaks every sibling-repo, relative-path and
+untracked-fixture precondition at once. **When controlling with a worktree, assert the skip counts
+match before reading the verdicts.**
+
+Related: [[the-instrument-and-the-subject-share-a-surface]],
+[[an-absence-assertion-is-worth-its-control]], [[a-sample-is-not-the-population]].
+
+---
+
+## R-031 — A live-model test reports a VERDICT FROM N RUNS, never from one
+
+**Ruled by the architect, 2026-09-12.** A routing test backed by a live model that **passes on
+re-run is neither a red nor a pass**, and three of them ride every suite run as coin flips that
+read as regressions.
+
+    three of three pass   -> PASS
+    otherwise             -> FAIL
+    a SINGLE-RUN failure  -> VOID, and the run count must be named in the output
+
+**A void is not a pass and must not print like one.** The output says how many runs were taken and
+what they were, so a reader can see the difference between *stable* and *not measured enough*.
+
+**WHY A SINGLE RED IS NOT EVIDENCE HERE.** Determinism is a property these tests do not have.
+Against a live model, one failure is a sample of size one from a distribution, and reporting it as
+a regression is the same error as reporting one green as coverage — **[[a-sample-is-not-the-population]],
+applied to repetitions rather than to rows.** The three observed on 2026-09-12
+(`adr0019_engine_o_contract_a` ×2, `classify_route[procedure 1234]`) all passed on re-run in the
+same tree that had just reported them red.
+
+**THE COST OF NOT RULING THIS IS THE TRAINING EFFECT, and it is the same one the routing
+port-forward guard was built against:** a suite that cries wolf teaches every reader to wave
+through red, and **that acquired immunity is what makes the one real red invisible.** Three coin
+flips per run is enough to establish the habit.
+
+**This does NOT widen into "retry until green."** N runs with a stated rule, where anything short
+of unanimous is a failure — not "best of three". A test that passes once in three is failing, and
+the rule must never be able to convert a real regression into a void.
+
+---
+
+## R-032 — A STATUS IS A CLAIM ABOUT WHO HOLDS THE WORK, and a wrong one is MISROUTING
+
+**Named by `invincible-agent-28`, 2026-09-12, from the sixteen-reds audit.** Sixteen reds on master
+were carried as *"awaiting rulings"* for two days. **One of sixteen deserved the label.** 74's was a
+one-line fix sitting behind a status that told everyone to leave it alone.
+
+**A WRONG STATUS IS NOT MISLABELLING. IT IS MISROUTING.** The same shape as a register entry
+crediting the wrong lane — which sends the next request to the wrong door. **`awaiting-ruling`
+sends it to nobody**, which is worse: a misattribution reaches someone who can say *"not mine"*,
+and a phantom blocker reaches no one at all.
+
+    awaiting-ruling   ->  a decision-maker who does not know they hold it
+    unassigned        ->  honest, and visible
+    owned, open       ->  actionable
+
+**So `blocked-on:` must name a PARTY, and a status nobody can be paged about is not a status.**
+Before writing one, ask the question that settles it: *if this is still here in a week, whose
+inbox should it have been in?* If the answer is "nobody's", the row is unassigned, not blocked.
+
+### The audit that produced it, as a template
+
+| kind | n | what it actually needed |
+|---|---|---|
+| live graph state | 7 | a prime, or a data fix |
+| a source defect | 1 | one line, named owner |
+| a resolver decision | 3 | the domain-scoping arc's fourth case |
+| corpus decisions | 5 | the owning domain's answer |
+| **genuinely a ruling** | **1** | the router choosing a verb when the subject did not resolve |
+
+**Fifteen reds nobody is looking at is how a twenty-day CI silence starts.** The audit is cheap —
+read each failure's own message — and it is the only thing that converts a wall of red back into
+work with owners.
+
+---
+
+## R-033 — A DEFINITION'S BLEED CAN COME FROM A CITED VERB'S NAME, not from prose
+
+**Found by `invincible-agent-28`, 2026-09-12, fixing their row of the sixteen. Filed because the
+next author will not be looking for it.**
+
+The seal `test_no_new_sibling_name_bleed_in_definitions` asks whether another class's **label**
+appears in a definition's **text** — a definition is retrieval input, so naming a sibling hands
+that sibling's questions to you. (`idp:Pipeline` won *"list the datasets in publog"* exactly that
+way.)
+
+**The bleed was not a sibling named in prose. It was a camelCase VERB NAME:**
+
+    rdfs:comment  "Output of findOrphanedHazards: ..."
+                                    ^^^^^^^^^^^^^^^^
+                                    contains `Hazard` — safety:Hazard's own label
+
+**Citing the VERB put the SUBJECT class's name inside the RESPONSE class's embedded text.** The
+opening is house style, copied from a neighbouring class.
+
+**The detail that makes it a ruling rather than an anecdote: lowercase `hazards` appears TWICE in
+the same definition and matched nothing. The capital did it** — a substring match inside an
+identifier, invisible to anyone reading their own file for a *name*.
+
+**AND THE OTHER TWO RESPONSE CLASSES ARE CORRECT BY LUCK.** `assessDeferralRisk` and
+`draftRiskAssessment` contain no class label as a substring. One of three fired; the other two
+pass for reasons their author did not choose. **A green that depends on how a neighbouring verb
+happens to be spelled is not coverage** — cf. [[a-mutation-that-wont-die]] and R-026's
+alphabetical-fixture family, which is the same accident wearing different clothes.
+
+**The repair is the precedent already in that seal**: provenance moves to a `#` comment and
+`rdfs:comment` becomes a real definition. Same fix as the six build-notes cleared on 2026-08-15 —
+moving them out removed the bleed **and** restored an actual definition, *because the two were one
+authoring mistake seen from different angles.* Not grandfathered: `KNOWN_SIBLING_BLEED` is a
+ratchet whose target is empty.
+
+**Second defect in that TTL this week, after `@prefix mesh: <http://internal/mesh#>` with nine
+citations on an invented predicate IRI. Both invisible to review; both caught by seals that read
+the RESOLVED artifact rather than the text the author wrote.**
+
+---
+
+## R-034 — A `--set` IS AN INSTRUCTION, NOT A DECLARATION
+
+**Ruled by the architect, 2026-09-12, from a regression I caused rolling `5fb7ae4`.**
+
+My roll **deleted the `engine-lg` deployment.** The fleet went 17 services to 16, and the census
+printed:
+
+    OK: all 16 service(s) at 5fb7ae4...
+    VERBS: 65 relationship type(s) live.  unchanged since the last snapshot.
+
+**Every word true, and CLEANER than the run before it.**
+
+**THE CAUSE, and it was not what it looked like.** Not a values merge, not a lost `$engines` row —
+that row is intact, keyed `graphHost` rather than `engineLg`. Diffing the two releases gives
+exactly one dropped key:
+
+    present at rev 112, absent at rev 113:   graphHost.enabled: true
+
+**It lived only in release 112's user-supplied values — passed once as `--set`, never written to a
+file.** `upgrade-sandbox.sh` deliberately refuses `--reuse-values` so a value deleted from a file
+cannot outlive the commit that deleted it. So the next render computed from the files, found
+`enabled: false`, and deleted the deployment.
+
+**THE RULE. A live deployment's existence is declared in a tracked file, or it is not declared.**
+A `--set` **survives exactly one release and is invisible to every reader of the repo.**
+
+**`--reuse-values` IS NOT THE FIX AND STAYS REFUSED.** It is the script's deliberate design, and
+adopting it would trade this failure for the one it was written against: a stale declaration
+outliving the commit that deleted it. The repair is the declaration, not the merge strategy.
+
+### Why it failed at the maximum distance from its cause
+
+**Registration PERSISTS in the graph after its host is gone.** So the verb count read `unchanged`,
+and a question routing to `finProgramBrief` or `costLotCostingReview` still resolves, still picks a
+verb, and **fails at DISPATCH** — with a clean census and an unchanged verb count standing behind
+it. *A reader who checks the verb line for corroboration gets corroboration of the wrong thing.*
+
+### The instrument half, which is the worse defect
+
+**A report that gets CLEANER as its population shrinks is the worst instrument shape on the list.**
+`OK: all 16` was true of all sixteen. The missing service left the denominator with it.
+
+**The census now compares the PRESENT set against the LAST CENSUS'S set and names disappearances**
+— the same exclusion-not-inclusion rule the verb snapshot already follows, applied to the roster. A
+hardcoded expected-fleet list would make today's answer right and go blind the next time an engine
+is legitimately added. It returns **3, never 1**: a retirement and a regression are
+indistinguishable from there, so it is a *look at this*, not a verdict. Built and sealed with nine
+assertions including the corrupt-snapshot control, because *None is not an empty list* and
+conflating them would report every service as gone on a truncated write.
+
+### Two errors of mine on the way, recorded because they are the reusable part
+
+* **I grepped for `engineLg:` in `values.yaml`, found nothing, and let a NULL RESULT CONFIRM A
+  CONCLUSION.** The key is `graphHost`. I reported the absence as *correct* in a message to another
+  lane. [[names-fail-shapes-survive]] — spend verification on identifiers.
+* **My settle loop passed on pod status `Running` while engine-lg was `0/1` READY** — the exact
+  defect I had warned two lanes about that morning. Running is not Ready.
+
+---
+
+## R-035 — AN INVARIANT BETWEEN DECLARATIONS IS INVISIBLE TO EVERY PER-DECLARATION CHECK
+
+**Ruled into the principles, 2026-09-12. The worked instance is `invincible-agent-81`'s cost
+catalogue.**
+
+    "how did the price build up"   declared a SYNONYM of cost_price_composition
+                                   declared a SYNONYM of cost_category_breakdown
+    "show the burden stack"        declared an ANTI-synonym of cost_category_breakdown
+                                   ...the same question, in different words
+
+**Each list was correct read on its own. The contradiction existed only BETWEEN them** — which is
+why review never caught it, and why no amount of per-verb rigour could have. A phrase claimed by
+two verbs decides nothing, so whichever subject wins chooses the answer.
+
+**THE RULE: the seal has to quantify over PAIRS.** A check that walks declarations one at a time
+cannot see a relation between two of them, however careful it is about each.
+
+**AND THE PAIRWISE SEAL MUST RUN IN BOTH DIRECTIONS.** *Merely not claiming a phrase leaves it to
+whichever subject wins* — so "A does not claim B's phrase" is half a check. 81's seals, derived
+from `CATALOGUE` rather than listed: no phrase claimed by two verbs; no verb declaring a phrase as
+both synonym and anti-synonym; the sharpest pair kept apart **in both directions**. Mutation:
+restoring the duplicate reds 2 of 3.
+
+**The related case is the class comment.** `cost:ProductionLot`'s `rdfs:comment` omits the price
+walk **its own verb routes on** — and the comment is the artefact the classifier reads, so the
+verb was unreachable through its own subject for its own primary question. **The corpus row is
+written from the MEASURED answer after the comment is fixed, never before**: a row written from
+what anyone expects the router to say is a guess wearing a baseline's clothes.
+
+
+### State the IDENTITY; treat the CONFIDENCE as indicative
+
+**`invincible-agent-81`, re-measuring on a restored and settled fleet.** The same three probes,
+identical conditions, minutes apart:
+
+    how does base cost build up to the price      CostCategory    0.86   (was 0.92)
+    ... on lot 4                                  ProductionLot   0.97   (was 0.95)
+    show the burden stack for lot 4               ProductionLot   0.90   (was 0.95)
+
+**The subject identity is stable. The number is not — it moved by up to 0.06 between identical
+runs on a healthy fleet.** The finding rests on *which class wins* and on *the flip when a lot is
+named*; neither moved, so it stands.
+
+**QUOTING THOSE TO TWO DECIMALS AS THOUGH THEY WERE PRECISE IS OVERCLAIMING**, and 81 flagged their
+own. **A future reader diffing 0.92 against 0.86 goes looking for a cause that is not there** —
+precision manufacturing a phantom regression. So: **record the identity as the claim and the
+confidence as indicative**, and never seal a threshold against a number that moves this much
+unless the threshold has been measured across runs.
+
+This is [[an-authority-ranking-needs-a-scope]] one step earlier: before asking whether a score can
+be compared across providers, ask whether it is stable against *itself*.
+
+### Half of a mutual exclusion is a DIFFERENT rule that looks similar
+
+81's sharpening, from building the seal rather than from finding the defect: removing a duplicate
+synonym is not enough. **A phrase merely NOT CLAIMED by the neighbour is still available to
+whichever subject wins**, so the neighbour must *actively push it away*. **Half of a mutual
+exclusion is not a weaker version of it; it is a different rule that happens to look similar.**
+
+**And the detail that makes this a law rather than an anecdote: the catalogue's own comment calls
+that pair "the sharpest in the engine."** The author knew the risk, was looking straight at it, and
+shipped it anyway — **because attention was on each declaration IN TURN.**
+
+Principle filed at `docs/principles/an-invariant-between-declarations-needs-a-seal-over-pairs.md`.
+
+Related: [[every-endpoint-verified-the-join-unasserted]] — the same law found from the other side.
+
+---
+
+## R-036 — A LOCAL SKIP IS NOT A COVERAGE GAP; CHECK CI BEFORE CONCLUDING
+
+**RETRACTED AND REBUILT, 2026-09-12. The instance this was going to be filed on does not exist,
+and the retraction is worth more than the ruling it replaced.**
+
+`doc-tools-7f` reported that `test_telemetry_mapping_truth.py` — the only check of a two-tier
+telemetry contract — was silently SKIPPING, so a renamed key would emit nothing to Langfuse with
+nobody watching. **The skip was real and the conclusion was false.** doc-tools' CI has a
+`telemetry-contract` job that installs the leaf explicitly and runs exactly that test **as a
+pre-build gate**, with `build-and-push` declaring `needs: telemetry-contract`. It ran on their push
+and passed. **The contract has an owner: CI. A mapping drift cannot reach an image there.**
+
+**THEIR NAMING OF THEIR OWN ERROR IS THE RULING:**
+
+> **I measured the venv and concluded about the contract.**
+
+**Which is the same move they had flagged in themselves the day before** — reasoning from a graph
+NAME to a vocabulary NAMESPACE — *"in under a day, in the same report where I was pleased about
+catching it."* An axis error does not feel like one from the inside: each step is a true
+observation about the thing in front of you.
+
+**AND I NEARLY ENSHRINED IT, THEN REPEATED IT.** I had drafted the ruling and swept my own suite
+for instances — **using the same instrument that produced the false one.** My sweep found
+`test_mesh_mapping_truth_check` RUNS here and theirs skips, and I wrote that up as an asymmetry.
+**Both halves of that were about venvs.** We have the identical CI gate: a PR check that
+`pip install`s the leaf and runs the test. *Two people made the same axis error about the same
+contract, one after the other, and the second was looking for it.*
+
+**THE RULE: a skip in a local venv is a statement about the venv. Before concluding that a
+contract is unchecked, read CI** — a cheap pre-build gate installing one dependency is exactly
+where a fast contract check belongs, and it will not appear in any local run.
+
+### What the sweep DID find, and it is ours
+
+**Ours is a STEP IN `lint`. There is no `needs:` anywhere in the workflow, so `build` and `lint`
+run in PARALLEL.**
+
+    doc-tools    build-and-push  needs: telemetry-contract   -> drift CANNOT reach an image
+    ours         lint (step)     no needs:, 0 in the file    -> drift goes RED and the image SHIPS
+
+**The check exists, runs, and gates nothing.** A red telemetry mapping produces a failed `lint` job
+beside a successful `build` job, and the image is pushed and rollable — so the defect the check
+exists to stop reaches the cluster with a red sitting next to it in the same run.
+
+**That is the genuine instance, and it is the opposite direction from my first sweep**: doc-tools
+is better protected than we are, and I had drafted it the other way round. **A check whose result
+nothing consumes is a guard that cannot fire, dressed as one that does** — and unlike the usual
+form, this one is *green-adjacent* rather than dark: it reports honestly to an audience with no
+power to act on it before the artifact ships.
+
+**Filed as work rather than fixed here**, because adding `needs:` to a 15-service build matrix
+changes every push's critical path and that is a decision about CI cost, not a defect repair.
+
+---
+
+
+## R-037 — A SHA ON MAIN IS NOT A RUNNING IMAGE, AND A GATE MUST READ THE CODE
+
+**Ruled from the doc-tools cleanup gate, 2026-09-12.** `doc-tools-7f` pushed the keyless-identity
+writer fix (`a314a84`) and **refused to let the cleanup migration be gated on it**:
+
+> *Between now and that image landing, the DEPLOYED emergency re-sync path is still the old
+> writer. If the cleanup runs in that window, a re-sync can mint a fifth keyless edge into a graph
+> you just cleaned — and your migration would have been correct and still left the defect present.*
+
+**I checked, and the gate was UNSATISFIED.** The check that settled it is the ruling:
+
+    the TAG        doc-tools:latest        identifies nothing
+    the DATE       pod started 2026-09-10  two days BEFORE the fix — suggestive, not proof
+    the CODE       /app/.../aitool_linker.py:310
+                   "tool_urn": props.get("_tool_urn", "")     <- the two-state writer
+
+**and the fixed source names that exact expression as the defect** — `# NOT .get("_tool_urn", "")`.
+
+**READ THE CODE IN THE RUNNING POD.** A tag can lie by design (`:latest`), a date is
+circumstantial, a digest is opaque without a registry lookup. **The artifact the process actually
+loaded is the only thing that answers "is the fix deployed".** Same rule as reading the task-kind
+gate's answer from inside the serving pod rather than from the local tree, which had been wrong
+about the cluster twice in one day.
+
+**AND THE PUSH ITSELF IS NOT THE BUILD.** 7f verified their image build had actually started
+rather than assuming the push triggered it — on a documented precedent in that repo where a commit
+reached main, **no build ever ran, no failure, no skip-ci marker**, and the feature read as shipped
+while the stamp existed in no image. The workflow gained `workflow_dispatch` because the recovery
+path was otherwise a fake empty commit. **Three separate facts, each of which can be true while the
+next is false:** the commit is on main; a build ran; the image is deployed.
+
+
+### FOUR facts, not three — `doc-tools-7f`'s addition, and they got the third one wrong in my favour
+
+    1  the commit is on main
+    2  a build ran
+    3  the image reached THE REGISTRY THIS CLUSTER PULLS FROM
+    4  the pod is running it
+
+**Each can be true while the next is false**, and **(3) is invisible precisely because it is
+usually the same registry.** 7f told me to gate on the Artifactory image, from a standing note that
+turns out to be about the **d4 work cluster**. Verified from my side rather than assumed: context
+`edge`, server `192.168.1.226`, namespace `sandbox`, **no d4 context configured here at all**. And
+the live deployment reads:
+
+    ghcr.io/edgy-solutions/doc-tools:latest   pullPolicy=Always
+
+**No Artifactory hop on this path.** Had I waited on it I would have been waiting on a step that
+does not exist for this cluster — *a correct-sounding gate on the wrong artifact hop is
+indistinguishable from a gate that has not been met.*
+
+### `:latest` UNDERSTATES it — the exact identifier already exists
+
+I had this filed as *"the tag identifies nothing"*, which implies missing infrastructure. **It is
+not missing. CI publishes BOTH, on every build** (`build-container.yml:374-376`):
+
+    ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}   # "latest" on main
+    ${{ steps.meta.outputs.image }}:${{ github.sha }}                   # the exact commit
+
+**An immutable, exact identifier is pushed for every commit and the deployment picks the mutable
+one anyway.** So it is a one-line values choice, not an architecture change.
+
+**AND THE CHART COMMENT IS THE TELL** — the same shape as the loud-guard family:
+
+> *`Always` because `:latest` is mutable.*
+
+**Someone SAW the mutability and compensated for its symptom instead of removing the cause.** A
+pull policy that re-pulls constantly makes drift *fast* rather than preventing it — and it is
+exactly what turned this gate check into archaeology: **reading source inside a running pod to
+discover what is deployed, when a sha tag answers it from the outside.**
+
+**That makes it R-034's class precisely: the tag is an instruction, the code is the declaration.**
+With `:latest` the tracked file declares nothing about which code runs, and `helm get values` tells
+a reader the same `"latest"` it said six months ago. **With the sha, the declaration IS the fact.**
+
+### The consequence found an open red
+
+`test_v02_cutover_diff::test_every_aitool_edge_has_required_properties` — four `mesh:` verbs as
+`<no-tool_urn>`, missing `tool_urn` and `provider` — was filed as *"graph state, unassigned"* among
+the fifteen. **It is this defect observed from the consuming side**, mechanistically matched to the
+deployed `.get("_tool_urn", "")` from both sides of the code. **A red with no owner acquired one by
+reading a neighbouring repo's fix** — which is R-032's argument in practice: a row's KIND is
+derivable far more often than *"awaiting a ruling"* suggests.
+
+---
+
+## R-038 — A SHARED MECHANISM IS NOT NAMED AFTER ITS FIRST CALLER
+
+**RULED 2026-09-12.** Source: architect, on the SDK's declaration composer. Governs
+`iagent_mesh/declarations.py` and every future declaration family. Text routed by
+`iagent-mesh-sdk-ca`; number allocated here per R-021.
+
+**The boundary must be STRUCTURAL, not lexical.** The composer began inside `task_kinds` because
+task kinds were the first family to need it. Parameterising it *there* would have worked and
+would have been wrong: the next family writes `from iagent_mesh.task_kinds import compose` and
+**correctly infers a dependency that does not exist.** Decisions are not a kind of task, and the
+import line must not say they are.
+
+**This is the same law as a domain name in a platform seed, and it belongs beside it.** In both
+cases a comment insisting the thing is generic is a **lexical** boundary; having nothing
+domain-shaped to import is a **structural** one.
+
+**The shape:** `declarations.py` holds the mechanism; families delegate with unchanged signatures.
+**The seal:** the shared module imports NO family, and no family's suite imports another family's
+module — both asserted **from the syntax tree, not by substring scan**, because the forbidden name
+legitimately appears in prose.
+
+**THE PROOF THAT IT IS SHARED RATHER THAN BORROWED IS A TEST FACT:** *the new suite imports
+`task_kinds` nowhere.* Keep that asserted — if the decisions suite ever needs `task_kinds` to
+exercise the composer, **the extraction did not happen, it was only renamed**, and nothing else
+would say so.
+
+*A fourth composer is refused by name in the ADR-0039 amendment; this is what makes that refusal
+structural rather than a rule people follow.*
+
+### As shipped in v0.8.1, and the names are not what the dispatch said
+
+Verified against the published wheel rather than the description:
+
+    compose_rows(seed_dir, overlay_dirs=(), *, key_field, builder, label=..., error=...)
+    load_rows(directory, *, key_field, builder, label=..., error=...)
+    read_rows(directory, *, key_field, error=...)
+
+**The dispatch called it `compose(...)`; the shipped export is `compose_rows`.** The *argument* was
+right and the *name* was wrong — [[names-fail-shapes-survive]], and the reason to check a
+published artifact rather than the message announcing it. `task_kinds.compose` and
+`load_task_kinds` keep their exact signatures and delegate, so the pin is the only thing that moves.
+
+---
+
+## R-039 — A COMPOSED DECLARATION NEEDS A READ PATH, OR ITS ONLY CONSUMER IS THE ERROR HANDLER
+
+**RULED 2026-09-12.** Source: architect, from a gap Lane 1 found in its own work. Governs every
+composed declaration family: task kinds, graphs, decisions. Text routed by `iagent-mesh-sdk-ca`.
+
+**A declaration made authoritative and exposed nowhere is reachable only by getting it wrong.**
+Measured: `verbs_for_kind` appeared once in the gateway, **inside the refusal body**, so a client
+could learn a species' menu only by POSTing a verb and being told it was invalid.
+
+> **A declaration whose only reader is the code path that rejects you is not a declaration. It is
+> an error message with a schema.**
+
+**Every composed family ships a read surface.** The worked instance is Lane 1's `/task_kinds`
+endpoint plus the per-row `declaration` on `/me/human_tasks` — two surfaces, because they answer
+different questions: a row serves a queue that *has* tasks, and the endpoint serves a filter, a
+legend, or an **empty** queue where no row exists to carry it.
+
+### Why this is worse than an inconvenience on a decision surface
+
+**ADR-0034 archives decision records.** Probing to learn a menu therefore **writes attempted
+decisions nobody made** — so discovery-by-failure does not merely annoy the client, it pollutes the
+archive that the whole disposition arc exists to keep trustworthy.
+
+### The read path inherits the invariants, and must be checked separately
+
+The first implementation returned the kind-blind global set, so an undeclared kind came back
+`accepts: []` with `reason_required: ['accepted', 'acknowledged']` — **two verbs required to carry
+a reason on a species that accepts nothing.** A rule that can never fire, served as contract.
+
+`test_reason_required_is_a_subset_of_accepts_on_every_safety_row` was **green throughout**: it reads
+the DATA and the read path serves a PROJECTION of it. **An invariant true of a source is not
+automatically true of every projection of it** — so re-assert it at the surface, do not inherit it.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

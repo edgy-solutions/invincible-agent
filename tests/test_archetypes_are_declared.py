@@ -78,7 +78,8 @@ def _declared_classes(g):
 def _prefix_bindings() -> dict:
     """prefix -> {namespaces it is bound to}, collected PER FILE.
 
-    ⛔ NOT from the merged graph. `product_structure_extension.ttl` binds `mesh:` to
+    ⛔ NOT from the merged graph. `product_structure_extension.ttl` ONCE bound `mesh:` to (fixed
+    2026-09-12)
     `http://internal/mesh#` while `mesh_system.ttl` binds it to `http://invincible-agent/mesh#`,
     so a merged read is last-binding-wins and would silently mark every `mesh:` row undeclared
     — a hardcoded constant replaced by a MORE GENERAL derivation that is LESS CORRECT. Per file,
