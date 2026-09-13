@@ -1036,6 +1036,74 @@ Related: [[a-mutation-that-wont-die]], [[a-stale-claim-is-pre-authenticated]], R
 
 ---
 
+## R-030 — A CONTROL MUST SHARE ITS SUBJECT'S GATE
+
+**Ruled by the architect, 2026-09-12, from the v0.8.0 suite run.** The fourth costume of *the
+instrument measured its own input*, and the sharpest, **because it would have filed a wrong
+attribution against the lane that caught it.**
+
+The suite came back 23 red. To partition mine from pre-existing, I ran master's own copies from a
+`git worktree` under `AppData/Local/Temp`. That directory placement changed a **path-derived
+precondition**: the tests resolve `doc-tools` relative to their own location, so the control looked
+for a sibling that does not exist there.
+
+    control (temp worktree)   2 passed, 50 SKIPPED
+    subject (my tree)         failures
+
+**Read naively, that says my branch broke them.** With `DOC_TOOLS_REPO` pointed at the same place
+the subject resolves, master fails identically: pre-existing.
+
+**THE RULE. A control differs from its subject in EXACTLY ONE variable — the one under test.** Mine
+differed in *where it ran*, which is the one thing a control exists to hold fixed, and the
+difference it manufactured pointed at my own branch as the cause.
+
+**THE TELL IS A SKIP COUNT THAT DOES NOT MATCH.** *50 skipped* against a subject that ran those
+tests is not a passing control; it is a control that measured a smaller thing. **Compare the RUN
+count, not just the verdict** — a control and subject that disagree about how many tests executed
+have not been compared at all. This is the same failure as a floor of 14 over 30 images being
+unable to distinguish *all present* from *half missing*: the instrument's own scope moved.
+
+**And the placement was not incidental.** A temp-directory worktree is the natural way to get a
+clean copy of another ref, and it silently breaks every sibling-repo, relative-path and
+untracked-fixture precondition at once. **When controlling with a worktree, assert the skip counts
+match before reading the verdicts.**
+
+Related: [[the-instrument-and-the-subject-share-a-surface]],
+[[an-absence-assertion-is-worth-its-control]], [[a-sample-is-not-the-population]].
+
+---
+
+## R-031 — A live-model test reports a VERDICT FROM N RUNS, never from one
+
+**Ruled by the architect, 2026-09-12.** A routing test backed by a live model that **passes on
+re-run is neither a red nor a pass**, and three of them ride every suite run as coin flips that
+read as regressions.
+
+    three of three pass   -> PASS
+    otherwise             -> FAIL
+    a SINGLE-RUN failure  -> VOID, and the run count must be named in the output
+
+**A void is not a pass and must not print like one.** The output says how many runs were taken and
+what they were, so a reader can see the difference between *stable* and *not measured enough*.
+
+**WHY A SINGLE RED IS NOT EVIDENCE HERE.** Determinism is a property these tests do not have.
+Against a live model, one failure is a sample of size one from a distribution, and reporting it as
+a regression is the same error as reporting one green as coverage — **[[a-sample-is-not-the-population]],
+applied to repetitions rather than to rows.** The three observed on 2026-09-12
+(`adr0019_engine_o_contract_a` ×2, `classify_route[procedure 1234]`) all passed on re-run in the
+same tree that had just reported them red.
+
+**THE COST OF NOT RULING THIS IS THE TRAINING EFFECT, and it is the same one the routing
+port-forward guard was built against:** a suite that cries wolf teaches every reader to wave
+through red, and **that acquired immunity is what makes the one real red invisible.** Three coin
+flips per run is enough to establish the habit.
+
+**This does NOT widen into "retry until green."** N runs with a stated rule, where anything short
+of unanimous is a failure — not "best of three". A test that passes once in three is failing, and
+the rule must never be able to convert a real regression into a void.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
