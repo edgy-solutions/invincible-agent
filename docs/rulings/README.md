@@ -1451,6 +1451,85 @@ derivable far more often than *"awaiting a ruling"* suggests.
 
 ---
 
+## R-038 — A SHARED MECHANISM IS NOT NAMED AFTER ITS FIRST CALLER
+
+**RULED 2026-09-12.** Source: architect, on the SDK's declaration composer. Governs
+`iagent_mesh/declarations.py` and every future declaration family. Text routed by
+`iagent-mesh-sdk-ca`; number allocated here per R-021.
+
+**The boundary must be STRUCTURAL, not lexical.** The composer began inside `task_kinds` because
+task kinds were the first family to need it. Parameterising it *there* would have worked and
+would have been wrong: the next family writes `from iagent_mesh.task_kinds import compose` and
+**correctly infers a dependency that does not exist.** Decisions are not a kind of task, and the
+import line must not say they are.
+
+**This is the same law as a domain name in a platform seed, and it belongs beside it.** In both
+cases a comment insisting the thing is generic is a **lexical** boundary; having nothing
+domain-shaped to import is a **structural** one.
+
+**The shape:** `declarations.py` holds the mechanism; families delegate with unchanged signatures.
+**The seal:** the shared module imports NO family, and no family's suite imports another family's
+module — both asserted **from the syntax tree, not by substring scan**, because the forbidden name
+legitimately appears in prose.
+
+**THE PROOF THAT IT IS SHARED RATHER THAN BORROWED IS A TEST FACT:** *the new suite imports
+`task_kinds` nowhere.* Keep that asserted — if the decisions suite ever needs `task_kinds` to
+exercise the composer, **the extraction did not happen, it was only renamed**, and nothing else
+would say so.
+
+*A fourth composer is refused by name in the ADR-0039 amendment; this is what makes that refusal
+structural rather than a rule people follow.*
+
+### As shipped in v0.8.1, and the names are not what the dispatch said
+
+Verified against the published wheel rather than the description:
+
+    compose_rows(seed_dir, overlay_dirs=(), *, key_field, builder, label=..., error=...)
+    load_rows(directory, *, key_field, builder, label=..., error=...)
+    read_rows(directory, *, key_field, error=...)
+
+**The dispatch called it `compose(...)`; the shipped export is `compose_rows`.** The *argument* was
+right and the *name* was wrong — [[names-fail-shapes-survive]], and the reason to check a
+published artifact rather than the message announcing it. `task_kinds.compose` and
+`load_task_kinds` keep their exact signatures and delegate, so the pin is the only thing that moves.
+
+---
+
+## R-039 — A COMPOSED DECLARATION NEEDS A READ PATH, OR ITS ONLY CONSUMER IS THE ERROR HANDLER
+
+**RULED 2026-09-12.** Source: architect, from a gap Lane 1 found in its own work. Governs every
+composed declaration family: task kinds, graphs, decisions. Text routed by `iagent-mesh-sdk-ca`.
+
+**A declaration made authoritative and exposed nowhere is reachable only by getting it wrong.**
+Measured: `verbs_for_kind` appeared once in the gateway, **inside the refusal body**, so a client
+could learn a species' menu only by POSTing a verb and being told it was invalid.
+
+> **A declaration whose only reader is the code path that rejects you is not a declaration. It is
+> an error message with a schema.**
+
+**Every composed family ships a read surface.** The worked instance is Lane 1's `/task_kinds`
+endpoint plus the per-row `declaration` on `/me/human_tasks` — two surfaces, because they answer
+different questions: a row serves a queue that *has* tasks, and the endpoint serves a filter, a
+legend, or an **empty** queue where no row exists to carry it.
+
+### Why this is worse than an inconvenience on a decision surface
+
+**ADR-0034 archives decision records.** Probing to learn a menu therefore **writes attempted
+decisions nobody made** — so discovery-by-failure does not merely annoy the client, it pollutes the
+archive that the whole disposition arc exists to keep trustworthy.
+
+### The read path inherits the invariants, and must be checked separately
+
+The first implementation returned the kind-blind global set, so an undeclared kind came back
+`accepts: []` with `reason_required: ['accepted', 'acknowledged']` — **two verbs required to carry
+a reason on a species that accepts nothing.** A rule that can never fire, served as contract.
+
+`test_reason_required_is_a_subset_of_accepts_on_every_safety_row` was **green throughout**: it reads
+the DATA and the read path serves a PROJECTION of it. **An invariant true of a source is not
+automatically true of every projection of it** — so re-assert it at the surface, do not inherit it.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
