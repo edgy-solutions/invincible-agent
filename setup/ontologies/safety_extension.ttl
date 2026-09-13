@@ -171,12 +171,24 @@ acceptance of a subtask; neither is the authority that takes on residual risk.""
 # response is an answer, and an answer must not become a subject the router grounds on.
 # ---------------------------------------------------------------------------
 
+# Output of `findOrphanedHazards`. THE VERB NAME IS IN A `#` COMMENT RATHER THAN IN THE
+# DEFINITION, and that is not tidiness. A definition is RETRIEVAL INPUT: Weaviate embeds
+# "<label> — <definition>" and scores a user's query against that text, so a definition naming
+# another class competes for that class's traffic — how `idp:Pipeline` won "list the datasets in
+# publog", by naming `idp:Dataset`.
+#
+# The trap here is subtler than naming a sibling in prose. `findOrphanedHazards` is camelCase and
+# contains the substring `Hazard`, which is `safety:Hazard`'s OWN LABEL — so citing the verb put
+# the subject class's name into the response class's embedded text. Lowercase "hazards" would not
+# have done it; the capital did. Caught by `test_no_new_sibling_name_bleed_in_definitions`, and it
+# is the second defect in this file this week after the `mesh:` prefix.
 safety:OrphanedHazardSet a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Orphaned Hazard Set" ;
-    rdfs:comment """Output of findOrphanedHazards: live hazards with no owned, field-verified
-mitigation, each carrying the MECHANISM that orphaned it, plus the not-assessed hazards reported
-separately and never counted among them.""" .
+    rdfs:comment """Live safety conditions with no owned, field-verified mitigation, ranked by
+severity then age, each carrying the mechanism that left it unattended: none recorded, one recorded
+with no owner, or an owner whose work nobody has confirmed in the field. Conditions nobody has yet
+assessed are reported separately and never counted among them.""" .
 
 safety:DeferralRiskCard a owl:Class ;
     rdfs:subClassOf mesh:Response ;
