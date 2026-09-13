@@ -1623,6 +1623,55 @@ loud and will announce itself whenever you reach it.
 
 ---
 
+## R-043 — A MUTATION UPSTREAM OF BOTH THE SUBJECT AND ITS EXPECTATION CAN NEVER RED
+
+**RULED 2026-09-12**, from the M3.3 parity seal. The general form of a mutation that looked like
+a survivor and was never a test.
+
+To check that a card renders verbs **in declared order**, the mutation applied was *re-sort the
+declaration*. That fed the card the sorted list **and** compared it against the sorted list:
+
+    declaration ──┬──> the card renders it
+                  └──> the expectation is read from it
+
+    a mutation HERE moves both arms together.  Green, always, on any implementation.
+
+**THE MUTATION THAT MEANS ANYTHING IS ON THE SUBJECT ALONE** — mutate the *card's* ordering, hold
+the declaration fixed, and a sorting card reds against an order-preserving expectation.
+
+**WHY IT IS CONVINCING AND THEREFORE DANGEROUS.** A mutation that produces green reads as *"the
+implementation is robust"* or *"this survivor needs investigation"* — never as *"I mutated a shared
+input."* It arrives wearing the clothes of a result, and the instinct it triggers is to look harder
+at the code rather than at the experiment.
+
+**THE CHECK: trace the mutation point to every arm of the comparison. If it reaches more than one,
+the experiment is void — not negative.**
+
+Same family, now four members:
+
+| instance | what moved together |
+|---|---|
+| a fixture indistinguishable from its subject | the expectation *was* the subject |
+| a test that reconstructs the merge inline | the test recomputed what it was checking |
+| a control worktree that changed a path-derived gate (R-030) | subject and control ran different populations |
+| **this** | the mutation fed both the render and the expectation |
+
+### It arrived alongside R-041's third context, in the place R-041 predicts
+
+**Every deployed `APPROVAL_TASK` declaration is alphabetical by accident**, so across the whole
+population **a sorting card and an order-preserving card are indistinguishable** — and *"rendered
+order equals declared order"* was green having measured nothing.
+
+**The fix is a CONSTRUCTED control: a declaration that asserts it differs from its own sorted form
+before anything else is asserted.** Not a found example — a built one, because the found ones are
+degenerate. **That is what SDK v0.8.0's tuple was cut to make meaningful**: order can only be
+preserved if something in the fixture would notice it being lost.
+
+**The vacuum was the normal case, again.** Cf. R-041 — three contexts before this one, and each
+time the nearest real example was the degenerate one.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
