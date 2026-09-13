@@ -29,6 +29,16 @@ domain:
 # A FALL-THROUGH HERE IS NOT A NO-OP — it means NO DEFINITION WAS SELECTED at the moment a human
 # risk decision was due, and nothing would say so. That is why totality is a build failure rather
 # than a runtime default.
+# TERMINALS THIS TABLE MAY END AT, declared so a typo fails like a typo'd definition. Totality
+# applied to TARGETS, the same move `domain` makes for inputs -- both answer "complete over what?"
+# from OUTSIDE the rows. Declared per table rather than globally: a global vocabulary would let a
+# table end in a state its own process has no meaning for.
+#
+# `timed_out` exists because HumanAwaitStep.deadline terminates there. A deadline with nowhere to
+# land is a field that cannot be acted on -- and no row selects it yet, which is honest: the
+# deadline field lands with the chaining rows.
+terminals: [timed_out]
+
 rows:
   - when: {level: High}
     then: safety_concurrence
