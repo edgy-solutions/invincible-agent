@@ -407,6 +407,90 @@ def report_verb_delta(namespace: str, repo: Path) -> int:
     return 0
 
 
+#: The roster snapshot, beside the verb one and for the same reason: it is a RECORD OF WHAT WAS
+#: SEEN, not a declaration. Committing it would invite someone to edit it to make a diff go away.
+_ROSTER_SNAPSHOT = Path.home() / ".iagent" / "roster_snapshot.json"
+
+
+def _report_roster(present: "list[str]") -> int:
+    """Compare the PRESENT deployment set against the last census's set. Name disappearances.
+
+    WHY THIS EXISTS, measured 2026-09-12. A roll deleted the `engine-lg` deployment — the fleet
+    went 17 services to 16 — and this census printed::
+
+        OK: all 16 service(s) at 5fb7ae4...
+
+    **True of all sixteen, and CLEANER than the run before it.** The population shrank and the
+    report improved. That is the worst instrument shape there is: an instrument whose reading
+    gets better as its subject gets worse, because the missing thing left the denominator with it.
+
+    AND THE VERB COUNT COULD NOT SAVE IT. Registration PERSISTS in the graph, so `65 relationship
+    types, unchanged since the last snapshot` was also true — with a host gone. A question routing
+    to `finProgramBrief` still resolves, still picks a verb, and fails at DISPATCH: the furthest
+    possible point from the cause, with a clean census standing behind it.
+
+    THE SAME EXCLUSION-NOT-INCLUSION RULE THE VERB SNAPSHOT ALREADY FOLLOWS, APPLIED TO THE
+    ROSTER. A hardcoded expected-fleet list would make today's answer right and go blind the next
+    time an engine is legitimately added. Comparing against WHAT WAS SEEN LAST TIME means a
+    disappearance is reported **by name**, and a first run says it cannot report a delta rather
+    than pretending the current set is the expected one.
+
+    A DISAPPEARANCE IS NOT AUTOMATICALLY A DEFECT and this does not claim it is: a deployment can
+    be retired on purpose. It returns 3 — *look at this* — never 1, because the census cannot tell
+    a retirement from a regression and must not pretend to. What it CAN do is refuse to let the
+    change pass unmentioned.
+    """
+    present_set = sorted(set(present))
+    previous: "Optional[list[str]]" = None
+    try:
+        previous = json.loads(_ROSTER_SNAPSHOT.read_text(encoding="utf-8")).get("deployments")
+    except Exception:  # noqa: BLE001
+        previous = None
+
+    rc = 0
+    print(f"\nROSTER: {len(present_set)} deployment(s) present.")
+    if previous is None:
+        print("        No previous snapshot — this run establishes the baseline. A first run "
+              "cannot report a delta and must not pretend to.")
+    else:
+        gone = [d for d in previous if d not in set(present_set)]
+        new = [d for d in present_set if d not in set(previous)]
+        if not gone and not new:
+            print("        unchanged since the last snapshot.")
+        for d in new:
+            print(f"        APPEARED    {d}")
+        for d in gone:
+            print(f"        DISAPPEARED {d}")
+        if gone:
+            rc = 3
+            print(
+                f"\n        {len(gone)} deployment(s) present at the last census are GONE: "
+                f"{', '.join(gone)}."
+            )
+            print(
+                "        A retirement and a regression look identical from here, so this is a "
+                "LOOK-AT-THIS and not a verdict. What it is not is silent: without it the fleet "
+                "shrinks and the report reads 'OK: all N', which is true of the N that remain."
+            )
+            print(
+                "        If the deployment was meant to go, the roster snapshot updates itself "
+                "on this run and the next census is quiet. If it was NOT meant to go, check "
+                "whether its `enabled` lived in a tracked values file or only in a --set: a "
+                "--set survives exactly one release and `upgrade-sandbox.sh` refuses "
+                "--reuse-values on purpose."
+            )
+            print(
+                "        NOTE THE VERB COUNT CANNOT CORROBORATE THIS. Registration persists in "
+                "the graph after its host is gone, so verbs read 'unchanged' while a verb has "
+                "no process to answer it."
+            )
+
+    _ROSTER_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+    _ROSTER_SNAPSHOT.write_text(
+        json.dumps({"deployments": present_set, "at": time.time()}, indent=2), encoding="utf-8")
+    return rc
+
+
 def _last_prime_completion(namespace: str) -> Optional[float]:
     """Epoch seconds at which the most recent prime-substrate hook COMPLETED, or None.
 
@@ -658,12 +742,24 @@ def main() -> int:
     # nothing was wrong.
     verb_rc = report_verb_delta(args.namespace, Path(__file__).resolve().parents[1])
 
+    # THE ROSTER DELTA RUNS HERE FOR THE SAME REASON, and it is the one that catches a
+    # fleet that got SMALLER. `OK: all N` is true of the N that remain, so a
+    # disappearance has to be named against the last census's set rather than inferred
+    # from a count that shrank with it.
+    roster_rc = _report_roster([r[0] for r in rows])
+
     if expected and bad:
         print(f"\nFAILED: {len(bad)} service(s) not at {args.expect} ({_short(expected)}): "
               f"{', '.join(sorted(bad))}")
         return 1
     if expected:
         print(f"\nOK: all {len(rows)} service(s) at {args.expect} ({_short(expected)}).")
+    if roster_rc == 3:
+        print("\nNOTE: exit 3 — sha checked and PASSED; the DEPLOYMENT SET changed since the "
+              "last census. A service that was present and is now gone appears in NO "
+              "per-service verdict above: every remaining service can be current while the "
+              "fleet is a host short.")
+        return 3
     if verb_rc == 3:
         print("\nNOTE: exit 3 — sha checked and PASSED; a verb addition could not be "
               "attributed to any declaration this census reads.")

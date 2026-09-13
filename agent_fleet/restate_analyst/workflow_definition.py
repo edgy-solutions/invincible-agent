@@ -260,37 +260,79 @@ def candidate_definition_dirs(module_path: Path) -> list[Path]:
     return out
 
 
-def definitions_dir() -> Path:
-    """Where the RUNNING SERVICE reads git-asserted definitions from.
+def definition_dirs() -> "list[Path]":
+    """The SEED-THEN-OVERLAY search path, lowest precedence first (ADR-0036).
 
-    ``WORKFLOW_DEFINITIONS_DIR`` wins when set — the explicit deploy seam. Otherwise
-    the first candidate that EXISTS wins; if none exist, the first is returned so the
-    error names a concrete path rather than a guess.
+    ``WORKFLOW_DEFINITIONS_DIR`` is an ``os.pathsep``-separated LIST, not a single directory —
+    the same shape as ``TASK_KIND_OVERLAY_DIRS``. A deployment's own definitions compose over
+    the platform's by id, **full replacement by key**, exactly as a task-kind overlay row
+    replaces a seed row rather than merging into it.
+
+    WHY A LIST RATHER THAN ONE DIRECTORY. A single path forces a deployment that needs one
+    domain definition to either fork the whole directory or bake its own copy of every platform
+    definition — and a forked copy stops tracking the original silently, which is the drift the
+    overlay layer exists to prevent. It is also what ADR-0039 needs: a programme tailors ITS
+    definitions without carrying ours.
+
+    A SINGLE PATH STILL WORKS AND MEANS WHAT IT MEANT. One entry is a list of one, so every
+    existing deployment keeps its behaviour without an edit — the compatibility that makes this
+    safe to land ahead of the decision tables that will use it.
+
+    LATER WINS, and the order is the declaration. Unset falls back to the repo/container
+    candidates as before; if none exist the first is returned anyway, so the error names a
+    concrete path rather than a guess.
     """
     env = os.environ.get("WORKFLOW_DEFINITIONS_DIR")
     if env:
-        return Path(env)
+        # A trailing or doubled separator is a typo, not a request to search the CWD — an empty
+        # entry would resolve to Path(""), i.e. ".", and silently admit whatever is beside the
+        # process.
+        parts = [p.strip() for p in env.split(os.pathsep)]
+        dirs = [Path(p) for p in parts if p]
+        if dirs:
+            return dirs
     candidates = candidate_definition_dirs(Path(__file__))
-    for c in candidates:
-        if c.is_dir():
-            return c
-    return candidates[0]
+    existing = [c for c in candidates if c.is_dir()]
+    return existing or candidates[:1]
+
+
+def definitions_dir() -> Path:
+    """The HIGHEST-PRECEDENCE directory — kept for callers that want one path to name.
+
+    Returns the LAST entry of :func:`definition_dirs`, because later overrides earlier. Use
+    :func:`definition_dirs` for anything that resolves a definition: this cannot see a platform
+    definition that an overlay does not replace.
+    """
+    return definition_dirs()[-1]
 
 
 def describe_registry() -> dict:
     """What the runtime ACTUALLY loaded — the startup/roll witness in one call.
 
-    Returns the resolved directory and the definition ids found there. Deliberately
-    reports the INVENTORY, not a count: "loaded 2 definitions" passes over the wrong
-    two as happily as the right two, and the roll's claim is that the image carries
-    the definitions the gate tested."""
-    d = definitions_dir()
-    if not d.is_dir():
-        return {"directory": str(d), "exists": False, "ids": []}
+    Returns the resolved search path and the COMPOSED definition ids. Deliberately reports the
+    INVENTORY, not a count: "loaded 2 definitions" passes over the wrong two as happily as the
+    right two, and the roll's claim is that the image carries the definitions the gate tested.
+
+    IT REPORTS EVERY DIRECTORY, INCLUDING THE ONES THAT DO NOT EXIST. A missing overlay is the
+    most likely deploy defect once the path is a list, and it fails SILENTLY — composition over
+    an absent directory contributes nothing and the platform definitions still resolve, so the
+    service looks healthy while a programme's tailoring is simply not there. The witness has to
+    name what it could not find, or nobody can tell that case from a correct one-entry path.
+    """
+    dirs = definition_dirs()
+    composed: dict = {}
+    for d in dirs:
+        if d.is_dir():
+            for p in sorted(d.glob("*.yaml")):
+                composed[p.stem] = str(d)      # later wins: full replacement by id
     return {
-        "directory": str(d),
-        "exists": True,
-        "ids": sorted(p.stem for p in d.glob("*.yaml")),
+        "directories": [{"path": str(d), "exists": d.is_dir()} for d in dirs],
+        # The single `directory` key is kept so an existing reader does not break; it is the
+        # highest-precedence entry, which is what it always effectively named.
+        "directory": str(dirs[-1]),
+        "exists": any(d.is_dir() for d in dirs),
+        "ids": sorted(composed),
+        "resolved_from": composed,
     }
 
 
@@ -305,20 +347,29 @@ def get_workflow_definition(workflow_id: str) -> WorkflowDefinition:
     registry read as "no such workflow") is the silent-degrade this whole arc
     hunts. Presence in the repo is not presence in the running system.
     """
-    d = definitions_dir()
-    if not d.is_dir():
+    dirs = definition_dirs()
+    if not any(d.is_dir() for d in dirs):
         raise WorkflowDefinitionError(
-            f"workflow definitions directory {d} does not exist in this runtime — "
-            "the git-asserted definitions are not shipped here. Set "
-            "WORKFLOW_DEFINITIONS_DIR or mount/bake policy/workflows/."
+            f"no workflow definitions directory exists in this runtime — looked in "
+            f"{[str(d) for d in dirs]}. The git-asserted definitions are not shipped here. Set "
+            "WORKFLOW_DEFINITIONS_DIR (an os.pathsep-separated list) or mount/bake "
+            "policy/workflows/."
         )
-    path = d / f"{workflow_id}.yaml"
-    if not path.is_file():
-        available = sorted(p.stem for p in d.glob("*.yaml"))
-        raise WorkflowDefinitionError(
-            f"no git-asserted definition {workflow_id!r} in {d} (have: {available})"
-        )
-    return load_workflow_definition(path)
+    # LATER WINS, so search in REVERSE precedence order and take the first hit: an overlay's
+    # definition replaces the platform's by id, wholesale, never field-merged.
+    for d in reversed(dirs):
+        path = d / f"{workflow_id}.yaml"
+        if path.is_file():
+            return load_workflow_definition(path)
+    # THE ERROR NAMES EVERY DIRECTORY AND THE COMPOSED INVENTORY, not just the last one. With a
+    # search path, "not in <dir>" is a true statement that answers the wrong question — the
+    # reader needs to know where it looked and what it did find, or a missing overlay and a
+    # misspelled id produce the same message.
+    available = sorted({p.stem for d in dirs if d.is_dir() for p in d.glob("*.yaml")})
+    raise WorkflowDefinitionError(
+        f"no git-asserted definition {workflow_id!r} in any of "
+        f"{[str(d) for d in dirs if d.is_dir()]} (have: {available})"
+    )
 
 
 def load_all_workflows(directory: str | Path) -> dict[str, WorkflowDefinition]:

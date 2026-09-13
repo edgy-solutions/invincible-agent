@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -98,3 +99,95 @@ def _restore_globally_stubbed_modules():
         if k not in saved:
             sys.modules.pop(k, None)
     sys.modules.update(saved)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# THE SUITE REFUSES A DIRTY TREE AT EXIT, the way the roll refuses an unsettled fleet.
+#
+# RULED 2026-09-12. A full run mutated `docs/BOARD.md` and I found it by diffing the tree
+# afterwards rather than by noticing — and diffing afterwards is a habit, not a check. Two
+# consequences, neither of which announces itself:
+#
+#   1. THE RUN MEASURED A TREE THAT WAS MOVING. A suite run measures the tree for its whole
+#      duration; if the run itself is one of the things changing it, the result belongs to no
+#      single state. That is the same defect as editing a file mid-run, with the suite as the
+#      editor.
+#   2. THE MUTATION GETS STAGED. In a shared tree `git add -A` after a green sweeps the
+#      generated change into a commit whose message says something else — and the message is
+#      what the next reader trusts.
+#
+# WHY AT EXIT AND NOT AT START. A dirty tree at START is ordinary work in progress and refusing
+# it would make the suite unusable. The claim here is narrower and always true: *the suite must
+# not be what changed the tree*. So the baseline is taken at session start and compared at
+# session end, and only files the RUN touched are named.
+#
+# WHY A WARNING WOULD NOT DO. The runbook's own killed-client trap already records that a
+# warning in a long log stops nobody, including its author. This sets a non-zero exit status,
+# which is the only signal a CI step and a shell `&&` both read.
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+_TREE_BASELINE: "dict[str, str] | None" = None
+
+
+def _tree_state() -> "dict[str, str] | None":
+    """Tracked-file status as {path: xy}, or None when git cannot answer.
+
+    `--porcelain` over tracked files only: untracked scratch output is not a tree mutation, and
+    including it would fire on every developer's stray file — a guard that cries wolf is the
+    thing this is written against.
+    """
+    import subprocess  # noqa: PLC0415
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    out = {}
+    for line in r.stdout.splitlines():
+        if len(line) > 3:
+            out[line[3:].strip()] = line[:2]
+    return out
+
+
+def pytest_configure(config):  # noqa: D103
+    global _TREE_BASELINE
+    _TREE_BASELINE = _tree_state()
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: D103
+    # NOT an error when git is unavailable — an environment fact, and refusing on it would be
+    # the anesthesia failure in the other direction. It is reported, so a silent absence of the
+    # check cannot be mistaken for the check passing.
+    if _TREE_BASELINE is None:
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        if tr is not None:
+            tr.write_line(
+                "tree-mutation check SKIPPED: git could not be read. The suite was NOT shown to "
+                "leave the tree unchanged.", yellow=True)
+        return
+
+    after = _tree_state()
+    if after is None:
+        return
+
+    changed = sorted(p for p, xy in after.items() if _TREE_BASELINE.get(p) != xy)
+    if not changed:
+        return
+
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    if tr is not None:
+        tr.write_line("")
+        tr.write_line("THE SUITE MUTATED TRACKED FILES:", red=True, bold=True)
+        for p in changed:
+            tr.write_line(f"    {p}", red=True)
+        tr.write_line(
+            "A run that changes the tree measured a tree that was moving, and `git add -A` "
+            "after a green stages the change into a commit whose message says otherwise. "
+            "Restore these (`git checkout --`) or make the test that writes them use tmp_path.",
+            red=True)
+    session.exitstatus = 1 if exitstatus == 0 else exitstatus

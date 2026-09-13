@@ -1,0 +1,50 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0039's 2026-09-12 amendment: the CHOICE that opens a safety acceptance is a decision-table
+# row, not a branch inside a definition. MIL-STD-882E §4.3.7 requires formal concurrence BEFORE a
+# Serious or High acceptance; which levels that covers is a PROGRAMME'S TAILORING, and an SSPP
+# tailoring its threshold edits THIS ROW rather than a definition or a constant.
+#
+# THIS IS WHY THE TWO DEFINITIONS ARE LINEAR. `safety_acceptance_with_concurrence` expresses the
+# ordering structurally — `human_await` suspends until its promise resolves, so act 2 cannot open
+# until act 1 is disposed — and `safety_acceptance_direct` is the one-act form. Neither contains
+# the level test, because a definition that branches has absorbed a policy question.
+decision: safety_acceptance_selection
+
+# THE ATTRIBUTES THIS TABLE READS, DECLARED RATHER THAN INFERRED FROM THE ROWS. Declaring them
+# is what makes `domain` below checkable: a table that inferred its attributes from whatever the
+# rows happened to mention could never be shown to be TOTAL, because the question "total over
+# what?" would have no answer independent of the rows.
+matches: [level]
+
+# EVERY VALUE AN ENGINE CAN EMIT for each matched attribute. This is the population totality is
+# measured against, and it is the half that must come from OUTSIDE the rows — otherwise the table
+# is total over itself by construction, which is the fixture-that-cannot-fail shape (R-026).
+domain:
+  level: [Low, Medium, Serious, High]
+
+# ONE ROW PER INPUT. No defaults, no fall-through, no ordering: every value is named, and the
+# seal refuses both a gap and an overlap.
+#
+# A FALL-THROUGH HERE IS NOT A NO-OP — it means NO DEFINITION WAS SELECTED at the moment a human
+# risk decision was due, and nothing would say so. That is why totality is a build failure rather
+# than a runtime default.
+rows:
+  - when: {level: High}
+    then: safety_acceptance_with_concurrence
+  - when: {level: Serious}
+    then: safety_acceptance_with_concurrence
+  - when: {level: Medium}
+    then: safety_acceptance_direct
+  - when: {level: Low}
+    then: safety_acceptance_direct
+
+# ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────────────────────
+#
+# No computed condition. `level` arrives as a declared attribute an engine already emits; the
+# table matches it. The moment a table compares two numbers or derives a value, its rows stop
+# being reviewable as POLICY and become reviewable as CODE — and the reviewer changes from a
+# process owner to a developer.
+#
+# A condition on something no engine has measured is a VERB TO WRITE, not a formula to add. A
+# verb emitting `deadline_missed: true` costs one measure and keeps the reviewer.

@@ -694,3 +694,89 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
             n = cur.rowcount
         conn.commit()
     return n
+
+
+def declaration_for(kind: str) -> "dict[str, Any]":
+    """The READ PATH for a species' contract: what it accepts, in order, and how to render it.
+
+    WHY THIS EXISTS, and it is a gap I left. The consumer half made the declaration AUTHORITATIVE
+    — `verbs_for_kind` returns the composed row's `accepts` — and then exposed it **nowhere**.
+    `cortex-ui-60` measured it in the serving pod: `verbs_for_kind` appears exactly ONCE in
+    `gateway.py`, inside the body returned when `validate_decision` REFUSES.
+
+    **So the only way a client could learn what a species accepts was to POST A VERB AND BE TOLD
+    IT WAS WRONG.** That is discovery-by-failure, and on this surface it is not merely inelegant:
+    ADR-0034 archives decision records, so probing to learn a menu **writes attempted decisions
+    nobody made.** A read path is the difference between a contract and a trapdoor.
+
+    IT ALSO MAKES A CLAIM OF MINE FALSE, WHICH IS THE PART WORTH KEEPING. I reported *"55 live
+    rows across 4 kinds, 0 unactionable"* after the roll. **True of the API and false of the
+    surface**: cortex holds a hardcoded `taskKindRegistry` and refuses every `risk_acceptance_*`
+    species as unregistered, drawing no buttons at all. Given no read path, **refusing was the
+    correct behaviour** — the hardcoded table is only the reason it was also the *only* behaviour.
+    An actionability claim measured at the API is not a claim about what a person can do.
+
+    THE SHAPE IS DELIBERATELY THIN: `{kind, archetype, badge, title, accepts, reason_required}`.
+    `accepts` is a LIST IN THE DECLARATION'S ORDER — v0.8.0's tuple is what makes that meaningful,
+    and a client renders buttons in that order. `reason_required` is a SORTED list because it is a
+    membership test and order is meaningless for it; that asymmetry is deliberate in the SDK model
+    and is preserved here rather than flattened for symmetry's sake.
+
+    AN UNDECLARED KIND RETURNS `accepts: []` AND `declared: False` — not an error and not a
+    fallback menu. A client that renders nothing for it is doing the right thing, and the flag
+    lets it say *why* rather than guessing.
+    """
+    row = _DECLARED_ROWS.get(kind)
+    if row is None:
+        _declared_kinds()                      # populate, then look again
+        row = _DECLARED_ROWS.get(kind)
+    verbs = verbs_for_kind(kind)
+    renders = getattr(row, "renders_as", None) if row is not None else None
+
+    def _r(field: str) -> "str | None":
+        if renders is None:
+            return None
+        if isinstance(renders, dict):
+            return renders.get(field)
+        return getattr(renders, field, None)
+
+    return {
+        "kind": kind,
+        "declared": row is not None,
+        "archetype": _r("archetype"),
+        "badge": _r("badge"),
+        "title": _r("title"),
+        # ORDER IS THE CONTRACT. `list(...)` not `sorted(...)` — re-sorting here reproduces the
+        # defect v0.8.0 was cut to fix, one surface further out, and it would look like tidiness.
+        "accepts": list(verbs),
+        # SORTED ON PURPOSE: a membership test has no order to carry.
+        #
+        # AND INTERSECTED WITH `accepts`, WHICH THE FIRST VERSION OF THIS DID NOT DO. It returned
+        # the kind-blind global set for an UNDECLARED kind, so `risk_acceptance` came back with
+        # `accepts: []` and `reason_required: ["accepted", "acknowledged"]` -- TWO VERBS REQUIRED
+        # TO CARRY A REASON ON A SPECIES THAT ACCEPTS NOTHING. A rule that can never fire, and a
+        # client reading it would render a reason field for verbs it can never submit.
+        # `test_reason_required_is_a_subset_of_accepts_on_every_safety_row` already asserts this
+        # invariant over the declared ROWS; the READ PATH has to honour it too, or the seal is
+        # true of the data and false of what is served.
+        "reason_required": sorted(reason_required_for(kind) & set(verbs)),
+    }
+
+
+def decorate_with_declarations(tasks: "list[dict[str, Any]]") -> "list[dict[str, Any]]":
+    """Attach each row's own declaration under `declaration`, so a client never has to guess.
+
+    Nested rather than flattened onto the row: a task row's columns come from the projection and
+    this comes from the composed registry. Merging them would make a later reader unable to tell
+    which fields are FACTS ABOUT THIS TASK from which are FACTS ABOUT ITS SPECIES — and only the
+    first kind can differ between two rows of the same kind.
+
+    Computed per unique kind, not per row: 55 rows across 4 kinds is 4 lookups.
+    """
+    cache: "dict[str, dict[str, Any]]" = {}
+    for t in tasks:
+        k = str(t.get("kind") or "")
+        if k not in cache:
+            cache[k] = declaration_for(k)
+        t["declaration"] = cache[k]
+    return tasks
