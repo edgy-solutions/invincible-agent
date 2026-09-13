@@ -1530,6 +1530,99 @@ automatically true of every projection of it** — so re-assert it at the surfac
 
 ---
 
+## R-040 — A COMPUTATION SMUGGLED INTO DATA THROUGH STRING INTERPOLATION
+
+**RULED 2026-09-12. The worked instance is ADR-0039's own clause, broken by its own author three
+files later, in good faith, while holding the rule in mind.**
+
+`safety_acceptance_direct` and `safety_acceptance_with_concurrence` name the placeholder
+`{level_lower}`. There is no such fact. **It is `level`, lowercased — a transformation performed
+inside a template**, which is exactly what ADR-0039 forbids one clause earlier:
+
+> *A condition on something no engine has measured is a VERB TO WRITE, not a formula to add.*
+
+**Interpolation is the side door.** A gateway is visibly a branch and gets refused; `{level_lower}`
+looks like a field name. **The rule was written against computation in TABLES and the computation
+arrived in TEXT.**
+
+**THE FIX, RULED: the engine emits `risk_level_slug`; the definition interpolates a fact.** One
+measure, and the reviewer stays a process owner. Binding `hazard_id` and `level` is the ordinary
+half — `config_bindings()` or the trigger; `{level_lower}` is the half that carries the ruling.
+
+**WHY THIS IS RECORDED BESIDE THE CLAUSE RATHER THAN AS A DEFECT.** It is the exact shape the
+OpenDDIL pushback will take — *"just let the table compare two numbers"* — and **the author of the
+rule broke it first.** That is not a criticism; **it is the strongest argument for the rule.** A
+constraint its own author violated within three files, deliberately holding it in mind, is a
+constraint that needs a **seal** rather than a paragraph.
+
+**The answer to the pushback, which belongs in the document rather than in a meeting:** the moment
+a table computes, its rows stop being reviewable as **policy** and become reviewable as **code**,
+and the reviewer changes from a process owner to a developer. A verb emitting
+`deadline_missed: true` costs one measure and keeps the reviewer.
+
+**Caught by `test_placeholder_binding`**, whose message already had the diagnosis: *a DEPLOYMENT
+defect, not a per-notice one — every run of this definition fails identically.*
+
+---
+
+## R-041 — THE FIXTURE-THAT-CANNOT-FAIL, ALL THREE INSTANCES IN ONE DAY
+
+**R-026's corollary has now appeared three times in three different contexts, found by three
+different sessions. Listed together because the shape is only obvious across them.**
+
+| # | fixture | why it could not fail | found by |
+|---|---|---|---|
+| 1 | `risk_acceptance_high`'s `[accepted, rejected, returned_for_rework]` | **already alphabetical**, so `sorted()` and pass-through return the identical tuple | `invincible-agent-65`, then the same vacuum independently in the SDK, then **seven of eight** rows in the safety overlay |
+| 2 | an S3000L-only fixture for `derived` vs `authored` labels | **zero authored labels present**, so a rule marking EVERYTHING derived passes | `doc-tools-7f` |
+| 3 | a decision table's `domain` derived from its own rows | every table is **total by construction** | ruled here, built into `policy/decisions/` before the first row |
+
+**NONE OF THE THREE IS FINDABLE BY MUTATION**, and that is what unites them: **the mutant and the
+original agree on that fixture.** Mutation testing answers *"can this test tell a change?"* — it
+cannot answer *"can this test tell the change it was written for?"*
+
+**THE RULE, RESTATED AS A CHECK YOU CAN ACTUALLY RUN: a seal that defends a choice must assert
+that its own fixture DISTINGUISHES the rejected rule** — in the seal, not in the reviewer's head:
+
+    assert declared_order != sorted(declared_order)     # the order fixture
+    assert any(row.label_source == "authored")          # the derivation fixture
+    assert domain_values > row_values                   # the totality fixture
+
+**And the cause is the same in all three: the vacuum is the NORMAL case.** Most natural verb lists
+are alphabetical by accident. Most S3000L classes genuinely lack labels. Most tables' rows do
+mention every value someone thought of. **Nobody chooses the degenerate fixture; it is what you get
+by reaching for the nearest real example**, which is why "use real data" is not protection here.
+
+---
+
+## R-042 — A MISSING OVERLAY COMPOSES TO SILENCE
+
+**RULED 2026-09-12**, from the `WORKFLOW_DEFINITIONS_DIR` overlay list, and it generalises the
+task-kind path's lesson to every composed search path.
+
+**Composition over an absent directory contributes nothing and raises nothing.** The platform
+definitions still resolve, every probe is green, the service is healthy — **and a programme's
+tailoring is simply not there.** The failure is indistinguishable from a correct single-entry path.
+
+**So the witness must report EVERY directory, including the ones that do not exist.**
+`describe_registry` now returns `{"path": ..., "exists": bool}` per entry plus the composed
+inventory, and the not-found error names every directory searched — because once there is a search
+path, *"not in `<dir>`"* is a true statement answering the wrong question: **a missing overlay and
+a misspelled id produce the same message.**
+
+**AND IT EXTENDS THE POD-READ DISCIPLINE BY ONE STEP.** The sequence was: settle, then read the
+answer from inside the serving pod. It is now:
+
+    1  settle — terminating count AND non-running count, and READY is not Running
+    2  is the OVERLAY DIRECTORY actually in the image?
+    3  is the env var set in the pod?
+    4  read the gate's own answer from inside the pod
+
+**(2) is the silent one and therefore goes first** — the rule from the rolling runbook: *when two
+conditions can each produce the same failure, check the one that fails silently first.* Step 3 is
+loud and will announce itself whenever you reach it.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
