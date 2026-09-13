@@ -1396,6 +1396,50 @@ while the stamp existed in no image. The workflow gained `workflow_dispatch` bec
 path was otherwise a fake empty commit. **Three separate facts, each of which can be true while the
 next is false:** the commit is on main; a build ran; the image is deployed.
 
+
+### FOUR facts, not three — `doc-tools-7f`'s addition, and they got the third one wrong in my favour
+
+    1  the commit is on main
+    2  a build ran
+    3  the image reached THE REGISTRY THIS CLUSTER PULLS FROM
+    4  the pod is running it
+
+**Each can be true while the next is false**, and **(3) is invisible precisely because it is
+usually the same registry.** 7f told me to gate on the Artifactory image, from a standing note that
+turns out to be about the **d4 work cluster**. Verified from my side rather than assumed: context
+`edge`, server `192.168.1.226`, namespace `sandbox`, **no d4 context configured here at all**. And
+the live deployment reads:
+
+    ghcr.io/edgy-solutions/doc-tools:latest   pullPolicy=Always
+
+**No Artifactory hop on this path.** Had I waited on it I would have been waiting on a step that
+does not exist for this cluster — *a correct-sounding gate on the wrong artifact hop is
+indistinguishable from a gate that has not been met.*
+
+### `:latest` UNDERSTATES it — the exact identifier already exists
+
+I had this filed as *"the tag identifies nothing"*, which implies missing infrastructure. **It is
+not missing. CI publishes BOTH, on every build** (`build-container.yml:374-376`):
+
+    ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}   # "latest" on main
+    ${{ steps.meta.outputs.image }}:${{ github.sha }}                   # the exact commit
+
+**An immutable, exact identifier is pushed for every commit and the deployment picks the mutable
+one anyway.** So it is a one-line values choice, not an architecture change.
+
+**AND THE CHART COMMENT IS THE TELL** — the same shape as the loud-guard family:
+
+> *`Always` because `:latest` is mutable.*
+
+**Someone SAW the mutability and compensated for its symptom instead of removing the cause.** A
+pull policy that re-pulls constantly makes drift *fast* rather than preventing it — and it is
+exactly what turned this gate check into archaeology: **reading source inside a running pod to
+discover what is deployed, when a sha tag answers it from the outside.**
+
+**That makes it R-034's class precisely: the tag is an instruction, the code is the declaration.**
+With `:latest` the tracked file declares nothing about which code runs, and `helm get values` tells
+a reader the same `"latest"` it said six months ago. **With the sha, the declaration IS the fact.**
+
 ### The consequence found an open red
 
 `test_v02_cutover_diff::test_every_aitool_edge_has_required_properties` — four `mesh:` verbs as
