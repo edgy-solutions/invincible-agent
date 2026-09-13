@@ -1834,6 +1834,71 @@ defect.)*
 
 ---
 
+## R-048 — ON A LANE BRANCH IS NOT ON MAIN: the zeroth fact
+
+**`doc-tools-7f`, 2026-09-12**, and they named their own error precisely: *"I wrote that the
+converter **exists** while knowing perfectly well I had just pushed it to a lane branch — I had
+the fact and still drew the wrong conclusion from it."*
+
+    0  the code is on a LANE BRANCH
+    1  the commit is on MAIN
+    2  a build ran
+    3  the image reached the registry THIS CLUSTER pulls from
+    4  the pod is running it
+
+**A prime does not read lane branches.** So a manifest row landing against code that exists only
+on a branch points at an artifact no primed deployment can see — which is exactly what
+`invincible-agent-f3` held the `DOCS` row back to avoid.
+
+**AND THE ZEROTH IS THE ONE MOST LIKELY TO BE SKIPPED, PRECISELY BECAUSE THE PERSON WHO PUSHED IT
+CAN SEE THE CODE.** 7f's observation and the reason it belongs at the front: facts 1–4 are checked
+by people looking for a deployment; fact 0 fails for someone looking at their own editor. **The
+artifact is on their disk, so "exists" is true of their world and false of everyone else's.**
+
+**The check is the same one as every other step: read `origin/main`, do not take the report** —
+including from the author, and it is not a comment on their honesty. 7f asked me to verify it that
+way rather than on their word.
+
+---
+
+## R-049 — A TWO-QUESTION PROBE CAN STILL ASK THE SECOND QUESTION WRONG
+
+**`doc-tools-7f` writing the existence check, 2026-09-12 — the confident false negative reappearing
+one layer beneath its own fix.**
+
+`invincible-agent-f3` established that an `explains` target may be an `:OntologyClass` **node** or a
+**relationship type**, and that a class-only probe reports the relationship-typed half as dangling
+**with total confidence.** The obvious repair is to ask both questions. **The obvious way to ask the
+second one is wrong:**
+
+    Neo4j relationship types CANNOT CONTAIN COLONS.
+    So aitool_linker stores the full namespaced IRI as `r.iri`
+    and uses the LOCAL NAME as the type.
+
+    MATCH ()-[r]->() WHERE type(r) = $uri     compares a LOCAL NAME against a FULL IRI
+                                              -> finds nothing, every verb "dangling"
+
+**So a probe that asks both questions still reports every relationship-typed target as missing** —
+and it *looks* like a correct two-question probe, which is worse than the single-question version
+it replaced. Keyed on `r.iri`; a mutation swapping in `type(r)` reds it.
+
+**THE DOUBLE MODELS THE TWO ANSWERS AS INDEPENDENT SETS, NOT ONE BOOLEAN**, and that is the part
+that generalises: *a double returning a single boolean cannot express "exists as a relationship,
+not as a class" — which is the exact state that breaks the single-question probe.* **A fixture that
+cannot represent the bug cannot catch it.** 7f says they would have written the simpler double
+first had the 8/8 split not named the state.
+
+**And the refusal returns both answers rather than collapsing them**, because *"not found" is only
+trustworthy when the reader can see what was looked for.* A dangling refusal that does not name
+both lookups is indistinguishable from a single-question probe reporting a real target. A test
+refuses a message that omits either.
+
+**R-015 holds at this layer too and is asserted rather than argued:** an edgeless page issues no
+queries at all, so it cannot be refused by a graph that is empty or unreachable — sealed with
+`session.run.assert_not_called()`.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
