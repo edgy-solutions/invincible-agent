@@ -202,6 +202,14 @@ parameterisation — `compose(seed, overlays, *, key_field, builder)` — and **
 composer is refused by name.** The risk here is not deviation; it is that the pattern is familiar
 enough to be re-implemented rather than reused.
 
+**IT RIDES v0.8.1, NOT v0.8.0, AND THE REASON IS WORTH RECORDING.** A dispatch asked the SDK lane
+to *hold* v0.8.0 until the parameterisation was in. That was not possible: **v0.8.0 was already
+cut, pinned across sixteen sites, merged, and serving the fleet.** A pushed tag is never rewritten
+— holding one that exists is not a scheduling decision, it is a request to rewrite history. So the
+parameterised composer is **v0.8.1**, and `policy/decisions/` is built against the SDK's composer
+from its first commit rather than against a copy that gets replaced later. **"Hold the tag" and
+"the tag is not yet cut" are different states, and only one of them is holdable.**
+
 ### Consequences for ADR-0051 (the first author on this rail)
 
 `_CONCURRENCE_LEVELS` and `acceptance_request_after_concurrence` leave `safety_agent`. Two linear
@@ -209,7 +217,28 @@ definitions replace them, plus selection and chaining rows. The seal — *a High
 `accepted` without `concurred` in its lineage* — moves to the composed table plus definitions, same
 mutation, different subject.
 
-**SEQUENCING, because the obvious order breaks it:** the engine code must NOT be removed before the
-table that replaces it exists and composes. Removing it first leaves level selection nowhere and
-silently turns every Serious/High acceptance into a direct one — the failure this whole amendment
-exists to prevent, produced by the fix for it.
+### RULE — engine code stays until `policy/decisions/` composes
+
+**Stated as a rule, not a caution, and deliberately.** A caution reads as advice and is skipped by a
+lane that does not know why it is there; a rule with its consequence named is not.
+
+> **Engine code stays until `policy/decisions/` composes. Removing it first turns every Serious and
+> High acceptance into a DIRECT one, silently — the fix producing the failure it exists to
+> prevent.**
+
+**Why it must be written rather than left to judgement.** Deletion looks like the obvious first
+step: the amendment says the choice does not belong in an engine, so a lane reads that and removes
+`_CONCURRENCE_LEVELS`. **Nothing then fails.** The suite stays green, the queue keeps working, every
+card renders — and the user representative's concurrence, which MIL-STD-882E §4.3.7 requires
+**before** every Serious and High acceptance, simply stops happening. The defect is invisible on
+every surface that would normally report one, because the remaining path is a *valid* path. It is
+just the wrong one, and the thing it drops is the second signature.
+
+**So the order is fixed:** the table exists and composes → the rows are written → **then** the
+engine code comes out → **then** the seal moves, with its mutation re-run against the new subject.
+*A seal that moves and is not re-proven has only been relocated.*
+
+**And the order matters most to whoever is least likely to know it.** The lane that eventually
+deletes those two symbols may be doing routine cleanup months from now, prompted by a comment
+saying the logic belongs elsewhere — which it will, and which will be true. This sentence is that
+lane's only protection.
