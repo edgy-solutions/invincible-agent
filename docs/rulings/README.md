@@ -1180,6 +1180,135 @@ the RESOLVED artifact rather than the text the author wrote.**
 
 ---
 
+## R-034 — A `--set` IS AN INSTRUCTION, NOT A DECLARATION
+
+**Ruled by the architect, 2026-09-12, from a regression I caused rolling `5fb7ae4`.**
+
+My roll **deleted the `engine-lg` deployment.** The fleet went 17 services to 16, and the census
+printed:
+
+    OK: all 16 service(s) at 5fb7ae4...
+    VERBS: 65 relationship type(s) live.  unchanged since the last snapshot.
+
+**Every word true, and CLEANER than the run before it.**
+
+**THE CAUSE, and it was not what it looked like.** Not a values merge, not a lost `$engines` row —
+that row is intact, keyed `graphHost` rather than `engineLg`. Diffing the two releases gives
+exactly one dropped key:
+
+    present at rev 112, absent at rev 113:   graphHost.enabled: true
+
+**It lived only in release 112's user-supplied values — passed once as `--set`, never written to a
+file.** `upgrade-sandbox.sh` deliberately refuses `--reuse-values` so a value deleted from a file
+cannot outlive the commit that deleted it. So the next render computed from the files, found
+`enabled: false`, and deleted the deployment.
+
+**THE RULE. A live deployment's existence is declared in a tracked file, or it is not declared.**
+A `--set` **survives exactly one release and is invisible to every reader of the repo.**
+
+**`--reuse-values` IS NOT THE FIX AND STAYS REFUSED.** It is the script's deliberate design, and
+adopting it would trade this failure for the one it was written against: a stale declaration
+outliving the commit that deleted it. The repair is the declaration, not the merge strategy.
+
+### Why it failed at the maximum distance from its cause
+
+**Registration PERSISTS in the graph after its host is gone.** So the verb count read `unchanged`,
+and a question routing to `finProgramBrief` or `costLotCostingReview` still resolves, still picks a
+verb, and **fails at DISPATCH** — with a clean census and an unchanged verb count standing behind
+it. *A reader who checks the verb line for corroboration gets corroboration of the wrong thing.*
+
+### The instrument half, which is the worse defect
+
+**A report that gets CLEANER as its population shrinks is the worst instrument shape on the list.**
+`OK: all 16` was true of all sixteen. The missing service left the denominator with it.
+
+**The census now compares the PRESENT set against the LAST CENSUS'S set and names disappearances**
+— the same exclusion-not-inclusion rule the verb snapshot already follows, applied to the roster. A
+hardcoded expected-fleet list would make today's answer right and go blind the next time an engine
+is legitimately added. It returns **3, never 1**: a retirement and a regression are
+indistinguishable from there, so it is a *look at this*, not a verdict. Built and sealed with nine
+assertions including the corrupt-snapshot control, because *None is not an empty list* and
+conflating them would report every service as gone on a truncated write.
+
+### Two errors of mine on the way, recorded because they are the reusable part
+
+* **I grepped for `engineLg:` in `values.yaml`, found nothing, and let a NULL RESULT CONFIRM A
+  CONCLUSION.** The key is `graphHost`. I reported the absence as *correct* in a message to another
+  lane. [[names-fail-shapes-survive]] — spend verification on identifiers.
+* **My settle loop passed on pod status `Running` while engine-lg was `0/1` READY** — the exact
+  defect I had warned two lanes about that morning. Running is not Ready.
+
+---
+
+## R-035 — AN INVARIANT BETWEEN DECLARATIONS IS INVISIBLE TO EVERY PER-DECLARATION CHECK
+
+**Ruled into the principles, 2026-09-12. The worked instance is `invincible-agent-81`'s cost
+catalogue.**
+
+    "how did the price build up"   declared a SYNONYM of cost_price_composition
+                                   declared a SYNONYM of cost_category_breakdown
+    "show the burden stack"        declared an ANTI-synonym of cost_category_breakdown
+                                   ...the same question, in different words
+
+**Each list was correct read on its own. The contradiction existed only BETWEEN them** — which is
+why review never caught it, and why no amount of per-verb rigour could have. A phrase claimed by
+two verbs decides nothing, so whichever subject wins chooses the answer.
+
+**THE RULE: the seal has to quantify over PAIRS.** A check that walks declarations one at a time
+cannot see a relation between two of them, however careful it is about each.
+
+**AND THE PAIRWISE SEAL MUST RUN IN BOTH DIRECTIONS.** *Merely not claiming a phrase leaves it to
+whichever subject wins* — so "A does not claim B's phrase" is half a check. 81's seals, derived
+from `CATALOGUE` rather than listed: no phrase claimed by two verbs; no verb declaring a phrase as
+both synonym and anti-synonym; the sharpest pair kept apart **in both directions**. Mutation:
+restoring the duplicate reds 2 of 3.
+
+**The related case is the class comment.** `cost:ProductionLot`'s `rdfs:comment` omits the price
+walk **its own verb routes on** — and the comment is the artefact the classifier reads, so the
+verb was unreachable through its own subject for its own primary question. **The corpus row is
+written from the MEASURED answer after the comment is fixed, never before**: a row written from
+what anyone expects the router to say is a guess wearing a baseline's clothes.
+
+
+### State the IDENTITY; treat the CONFIDENCE as indicative
+
+**`invincible-agent-81`, re-measuring on a restored and settled fleet.** The same three probes,
+identical conditions, minutes apart:
+
+    how does base cost build up to the price      CostCategory    0.86   (was 0.92)
+    ... on lot 4                                  ProductionLot   0.97   (was 0.95)
+    show the burden stack for lot 4               ProductionLot   0.90   (was 0.95)
+
+**The subject identity is stable. The number is not — it moved by up to 0.06 between identical
+runs on a healthy fleet.** The finding rests on *which class wins* and on *the flip when a lot is
+named*; neither moved, so it stands.
+
+**QUOTING THOSE TO TWO DECIMALS AS THOUGH THEY WERE PRECISE IS OVERCLAIMING**, and 81 flagged their
+own. **A future reader diffing 0.92 against 0.86 goes looking for a cause that is not there** —
+precision manufacturing a phantom regression. So: **record the identity as the claim and the
+confidence as indicative**, and never seal a threshold against a number that moves this much
+unless the threshold has been measured across runs.
+
+This is [[an-authority-ranking-needs-a-scope]] one step earlier: before asking whether a score can
+be compared across providers, ask whether it is stable against *itself*.
+
+### Half of a mutual exclusion is a DIFFERENT rule that looks similar
+
+81's sharpening, from building the seal rather than from finding the defect: removing a duplicate
+synonym is not enough. **A phrase merely NOT CLAIMED by the neighbour is still available to
+whichever subject wins**, so the neighbour must *actively push it away*. **Half of a mutual
+exclusion is not a weaker version of it; it is a different rule that happens to look similar.**
+
+**And the detail that makes this a law rather than an anecdote: the catalogue's own comment calls
+that pair "the sharpest in the engine."** The author knew the risk, was looking straight at it, and
+shipped it anyway — **because attention was on each declaration IN TURN.**
+
+Principle filed at `docs/principles/an-invariant-between-declarations-needs-a-seal-over-pairs.md`.
+
+Related: [[every-endpoint-verified-the-join-unasserted]] — the same law found from the other side.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
