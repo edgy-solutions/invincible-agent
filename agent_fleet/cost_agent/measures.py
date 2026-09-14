@@ -23,9 +23,47 @@ program, supplier or rate agreement.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 from decimal import Decimal
 from typing import Any, Optional
+
+
+def _repo_root() -> Optional[pathlib.Path]:
+    """The repository checkout this module lives in, or None in a flattened image.
+
+    DERIVED BY LOOKING FOR A MARKER, not by counting directory levels. Counting is what put
+    `parents[2]` in `package_export`: correct in a checkout, an IndexError in `/app`, and
+    indistinguishable between the two by reading the line. This walks upward for a tree that
+    actually contains what the caller needs, and returns None when there is none.
+
+    NONE IS A FIRST-CLASS ANSWER. "I am not in a checkout" is a true and useful statement
+    about a deployed pod, and it is the input to a named refusal rather than an error.
+    """
+    here = pathlib.Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / "scripts").is_dir() and (candidate / "agent_fleet").is_dir():
+            return candidate
+    return None
+
+
+def _baked_algorithm_sha() -> Optional[str]:
+    """The commit the shipped modules come from, WITHOUT requiring git.
+
+    `build_cost_package.algorithm_sha()` shells out to git and refuses on a dirty
+    `pricing.py` — a real safeguard for a developer build, and unusable in a pod: measured,
+    `shutil.which("git")` is None there and there is no working tree to be dirty.
+
+    THE IMAGE ALREADY CARRIES AN HONEST SHA. `utils/version_endpoint` reports `IAGENT_GIT_SHA`,
+    baked at build time, and the deployed engine returns a real commit for it. This is not a
+    substitute for the git answer — it is the SAME CLAIM, sourced from the artifact that can
+    actually attest to it, which in a pod is the stronger of the two.
+
+    None where neither is available, so a caller refuses by name rather than shipping a
+    package whose `algorithm_sha` is a guess.
+    """
+    baked = (os.getenv("IAGENT_GIT_SHA") or "").strip()
+    return baked if baked and baked != "unknown" else None
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
@@ -754,7 +792,31 @@ def package_export(
 
     import sys as _sys
 
-    root = pathlib.Path(__file__).resolve().parents[2]
+    # ⚠ THIS LINE WAS `parents[2]` AND IT 500'd IN EVERY DEPLOYED POD, ALWAYS.
+    #
+    # The image flattens `agent_fleet/cost_agent/` to `/app`, so `/app/measures.py` has
+    # exactly two parents and `parents[2]` raises IndexError. In a checkout the same
+    # expression resolves to the repo root and is correct — which is why every seal is green
+    # and why this was invisible until the verb was called in the pod. Measured there, live:
+    #
+    #     File "/app/measures.py", line 757, in package_export
+    #       root = pathlib.Path(__file__).resolve().parents[2]
+    #     IndexError: 2
+    #
+    # THE DAMAGE WAS NOT THE CRASH, IT WAS WHERE THE CRASH LANDED. Two `SourceUnavailable`
+    # guards below already refuse BY NAME when the builder or the pinned runtime is absent —
+    # exactly the honest answer a pod owes a caller. `parents[2]` threw BEFORE either could
+    # run, converting a designed refusal into an untyped 500. Fixing the arithmetic does not
+    # make the artifact buildable in a pod; it lets the engine SAY SO.
+    root = _repo_root()
+    if root is None:
+        raise SourceUnavailable(
+            "this deployment cannot build the artifact: the package builder and the pinned "
+            "Pyodide runtime live in the repository checkout, and this process is running "
+            "from a flattened image that carries neither. The GOVERNED half — entitlement "
+            "scope, manifest, module hashes and audit line — is computed from the engine's "
+            "own modules and is unaffected; ask for it with `manifest_only`."
+        )
     if str(root / "scripts") not in _sys.path:
         _sys.path.insert(0, str(root / "scripts"))
     try:
