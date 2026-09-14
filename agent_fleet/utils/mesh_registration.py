@@ -292,7 +292,7 @@ def _emit_to_registrar(
             "gateway path.",
             name,
         )
-        return
+        return RegistrationResult(verb, False, "no MESH_REGISTRAR_URL or DATAHUB_GMS_URL")
 
     urn = f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{name},PROD)"
     manifest = {
@@ -403,6 +403,38 @@ def _emit_to_registrar(
     )
 
 
+class RegistrationResult:
+    """What a registration attempt actually achieved — ATTEMPTED, SUCCEEDED, or FAILED with why.
+
+    ⛔ THIS HELPER RETURNED `None` AND CAUGHT ITS OWN EMIT FAILURE, so eleven engines counted
+    every call that did not RAISE as a registration that LANDED. Measured 2026-09-14 on
+    engine-safety against a dead mint: five failed attempts, `registered 3/3` in the log,
+    `registration_incomplete: None` on `/health`, pod **1/1 Ready**, and ZERO verbs in the mesh.
+
+    **The try/except is correct about the code and false about the outcome** — which is exactly
+    how it survived review. ADR-0006 is right that a registration failure must not crash the
+    engine; it does not follow that the engine may then claim it registered.
+
+    So the failure is REPORTED rather than raised: callers count `succeeded`, and readiness fails
+    on a `failed` registration (R-011) — **a pod that could not register is not participating**,
+    and saying so is the difference between a fleet that degrades and one that lies.
+    """
+
+    __slots__ = ("verb", "succeeded", "reason")
+
+    def __init__(self, verb: str, succeeded: bool, reason: "str | None" = None):
+        self.verb = verb
+        self.succeeded = succeeded
+        self.reason = reason
+
+    def __bool__(self) -> bool:
+        return self.succeeded
+
+    def __repr__(self) -> str:
+        return (f"RegistrationResult({self.verb!r}, succeeded={self.succeeded!r}, "
+                f"reason={self.reason!r})")
+
+
 def register_engine_to_mesh(
     *,
     mint=None,
@@ -425,7 +457,7 @@ def register_engine_to_mesh(
     slots: Optional[list] = None,
     arity: Optional[str] = None,
     required_args: Optional[Iterable[str]] = None,
-) -> None:
+) -> "RegistrationResult":
     """Emit a DataHub MCP describing this engine as a predicate edge.
 
     All registration emits are opt-in via ``MESH_REGISTER_ON_STARTUP``.
@@ -447,7 +479,11 @@ def register_engine_to_mesh(
             "(set MESH_REGISTER_ON_STARTUP=true to enable)",
             name,
         )
-        return
+        # NOT a failure: registration was DISABLED, which is a deployment choice rather than a
+        # defect. Still a RegistrationResult so every exit returns the type -- a bare `None` here
+        # would crash any caller that read `.reason`, and "every path returns the shape" is the
+        # half that makes the result safe to count on.
+        return RegistrationResult(verb, False, "MESH_REGISTER_ON_STARTUP is not true")
 
     # mesh-registrar gateway dispatch — opt-in via MESH_REGISTRAR_URL.
     # When set, the engine POSTs a small manifest to the gateway and the
@@ -598,6 +634,7 @@ def register_engine_to_mesh(
             input_uri,
             output_uri,
         )
+        return RegistrationResult(verb, True)
     except Exception as e:  # noqa: BLE001  -- ADR-0006: do not crash the engine
         logger.warning(
             "⚠️ Failed to register engine %s to DataHub: %s. "
@@ -606,6 +643,7 @@ def register_engine_to_mesh(
             urn,
             e,
         )
+        return RegistrationResult(verb, False, str(e))
 
 
 #: Namespaces the compact `prefix:Local` forms expand against. Kept beside the registration
