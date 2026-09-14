@@ -58,10 +58,29 @@ _SRC = (_REPO / "scripts" / "upgrade-sandbox.sh").read_text(encoding="utf-8")
 
 
 def _guard() -> str:
-    """The guard block: from the default assignment to the refusal's close."""
-    i = _SRC.index('HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"')
+    """The guard block: from the default assignment to the refusal's close.
+
+    ⛔ THIS ANCHORED ON THE LITERAL `HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"` AND BROKE THE MOMENT
+    THE DEFAULT LEGITIMATELY CHANGED. The bound moved 75m -> 100m on 2026-09-14 when the prime
+    queue grew, and all ten assertions here died on `ValueError: substring not found` — inside
+    the slice helper, before any of them reached their subject.
+
+    **A seal reporting red for a reason that has nothing to do with what it protects is the
+    worst kind of red**: it reads as the helm guard being broken, which is precisely the claim
+    it exists to make. Found by the eo lane, who noticed it needs no rdflib, no cluster and no
+    extra — so an environmental explanation was never available for it.
+
+    The anchor is now the PATTERN rather than the VALUE — the same rule as deriving the ingest
+    bound instead of restating it. A fixture pinned to a number a healthy change may move is a
+    fixture that fails on healthy code.
+    """
+    m = re.search(r'HELM_TIMEOUT="\$\{HELM_TIMEOUT:-\d+[smh]\}"', _SRC)
+    assert m, (
+        "the HELM_TIMEOUT default assignment is not in upgrade-sandbox.sh in any recognised "
+        "form — the SHAPE moved, not just the value, and this seal cannot locate its subject"
+    )
     j = _SRC.index("exec helm upgrade")
-    return _SRC[i:j]
+    return _SRC[m.start():j]
 
 
 # ── it reads the RESOLVED value, both ways it can differ ────────────────────
