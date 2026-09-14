@@ -31,6 +31,7 @@ import weaviate
 import weaviate.classes as wvc
 from neo4j import GraphDatabase
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -332,12 +333,40 @@ def _require_capability(caller, capability: str, what: str) -> str:
     return who or "none"
 
 
-_JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
-_JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
-_JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
-# The SPARQL UPDATE endpoint (writes) — engine-o's ONE write path, used only by the pcn
-# disposition-state stamp. Derived from the read endpoint (…/ds/sparql -> …/ds/update).
-_JENA_UPDATE_ENDPOINT = os.getenv("JENA_UPDATE_ENDPOINT", "") or (_JENA_ENDPOINT.replace("/sparql", "/update") if _JENA_ENDPOINT else "")
+# Jena posture — endpoint, credential and the write endpoint — derived by a PURE module so the
+# rule is testable without booting this one (rdflib/weaviate/baml are imported at module scope,
+# which is why no test can import main.py). Flatten-aware import, same shape as registry_views.
+# RULED 2026-09-13: FUSEKI_PASSWORD HAS NO DEFAULT. A configured endpoint without a credential
+# fails READINESS naming the variable, instead of authenticating with a literal out of source.
+try:
+    from jena_posture import jena_posture as _jena_posture  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.jena_posture import jena_posture as _jena_posture
+
+_JENA = _jena_posture(os.environ)
+_JENA_ENDPOINT = _JENA.endpoint
+_JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
+
+
+def _jena_client() -> httpx.AsyncClient:
+    """THE ONE PLACE a Jena connection is constructed.
+
+    Extracted at the fourth consumer. Two properties live here and nowhere else, which is the
+    point of there being one factory: the credential comes from the posture (never a literal),
+    and **no TLS verification override is passed**. The four call sites used to carry
+    `verify=False` each. That was inert against today's `http://…:3030/ds/query` — TLS
+    verification applies to https — which is exactly what made it dangerous: a latent override
+    waiting for the first deployment to point `externalFuseki.url` at an https endpoint, where
+    it would have disabled verification silently and nothing would have gone red.
+    """
+    if _JENA.missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"deploy fault: Jena endpoint configured but {', '.join(_JENA.missing)} is not set",
+        )
+    return httpx.AsyncClient(timeout=5.0, auth=_JENA.auth)
+
+
 _LOCAL_GRAPH = None
 
 # Weaviate Configuration
@@ -346,7 +375,11 @@ _WEAVIATE_CLIENT = None
 # Neo4j Configuration
 _NEO4J_URI = os.getenv("NEO4J_URI", "bolt://iagent-neo4j:7687")
 _NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
-_NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+# NO DEFAULT — found by the FUSEKI_PASSWORD seal, which checks the CLASS of secret-ish variables
+# rather than the one that was reported. The chart's own snippets already read this with
+# `os.environ.get("NEO4J_PASSWORD", "")` and every compose file declares it, so the literal
+# `"password"` was dead in every configuration in this repo while reading as a working fallback.
+_NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 _NEO4J_DRIVER = None
 
 # ---------------------------------------------------------------------------
@@ -502,7 +535,7 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
     if _JENA_ENDPOINT:
         try:
-            async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+            async with _jena_client() as client:
                 resp = await client.post(
                     _JENA_ENDPOINT,
                     data={"query": scoped_query},
@@ -3495,8 +3528,29 @@ async def classes(request: ResolveRequest) -> dict:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
-    """Simple liveness probe."""
-    return {"status": "ok", "jena_reachable": _JENA_ENDPOINT != ""}
+    """READINESS. The chart probes this path; liveness is a separate TCP probe, so refusing here
+    removes the pod from the Service without restarting it — the right failure for a deploy fault.
+
+    A configured Jena endpoint with no credential is exactly that fault, and the refusal NAMES the
+    variable: a 503 that does not say which one is a crash with better manners.
+
+    `jena_configured` replaces the former `jena_reachable`, which reported `endpoint != ""` — a
+    CONFIGURATION read wearing a reachability name. Nothing consumed the old key.
+    """
+    if _JENA.missing:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not-ready",
+                "detail": (
+                    "deploy fault: JENA_SPARQL_ENDPOINT is configured but "
+                    + ", ".join(_JENA.missing)
+                    + " is not set — engine-o will not authenticate to Jena with a default"
+                ),
+                "missing": list(_JENA.missing),
+            },
+        )
+    return {"status": "ok", "jena_configured": _JENA.configured}
 
 @app.get("/personas")
 async def list_personas() -> dict:
@@ -3666,7 +3720,7 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
 async def _execute_sparql_update(update: str) -> None:
     if not _JENA_UPDATE_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena update endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+    async with _jena_client() as client:
         resp = await client.post(_JENA_UPDATE_ENDPOINT, data={"update": update})
         resp.raise_for_status()
 
@@ -3831,7 +3885,7 @@ async def instances_by_property(request: InstancesByPropertyRequest) -> dict:
 async def _run_construct_turtle(query: str) -> str:
     if not _JENA_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+    async with _jena_client() as client:
         resp = await client.post(_JENA_ENDPOINT, data={"query": query}, headers={"Accept": "text/turtle"})
         resp.raise_for_status()
         return resp.text
@@ -3840,7 +3894,7 @@ async def _run_construct_turtle(query: str) -> str:
 async def _run_ask(query: str) -> bool:
     if not _JENA_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+    async with _jena_client() as client:
         resp = await client.post(_JENA_ENDPOINT, data={"query": query},
                                  headers={"Accept": "application/sparql-results+json"})
         resp.raise_for_status()
