@@ -513,6 +513,60 @@ it would leave the fleet relying on two lanes' current behaviour with nothing me
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
 
+### §5.2 — Where a risk decision ENDS — two rulings
+
+Writing `safety_acceptance_chaining.yaml` forced two questions the design had never been made to
+answer, because a linear definition let both stay implicit. **RULED 2026-09-13 by the architect**;
+recorded here rather than in the YAML alone, because a routing row is the *consequence* of these and
+not the argument for them.
+
+**RULING ONE — `accepted` IS A TERMINAL. Nothing follows an acceptance.**
+
+The authority accepted the residual risk, with a stated reason. Nothing further is owed by the
+system: the record of who signed and on what evidence already exists in the disposition, and the
+concurrence that preceded it (for Serious and High) is in the same trail. Modelling the end state as
+a *definition* would put an empty queue item in front of a human to represent a decision that has
+already been made — a task nobody owes anyone, which is how a queue stops being a list of work.
+
+So the row ends at `risk_accepted`, a declared terminal, and the acceptance verb is the last human
+act in the flow. **This is the irreversible one**, which is exactly why it must not be followed by a
+step that could be read as review of it.
+
+**RULING TWO — `rejected` IS ALSO A TERMINAL, and is deliberately NOT routed to redraft.**
+
+This is the one that looked wrong at first and is the more load-bearing of the pair. A refused
+acceptance is **a decision, not a request for a better draft.** Routing it back to the author would
+invite the same assessment to be re-presented — reworded, re-severitied, re-argued — until some
+presentation of it was accepted, which is a *second bite at the same signature* and would make the
+refusal advisory. A safety authority's "no" that the system treats as a prompt to try again is not a
+refusal at all.
+
+**The distinction is carried by the verb, and that is why three exist rather than two.** An
+authority who *wants* the assessment reworked has a verb for it — `returned_for_rework` — and that
+one does route to `safety_redraft`. So the flow supports both acts and keeps them apart:
+
+| verb | meaning | goes to |
+|---|---|---|
+| `accepted` | the authority takes the residual risk onto themselves | **terminal** `risk_accepted` |
+| `rejected` | the authority declines; the risk is not accepted | **terminal** `risk_rejected` |
+| `returned_for_rework` | the authority wants a better assessment before deciding | `safety_redraft` |
+
+**The two rulings are what make the middle row mean anything.** Collapse `rejected` into the redraft
+path and the vocabulary has two verbs with one behaviour, and the authority loses the ability to
+*end* anything — every decision becomes provisional, and the only terminal state in a safety flow
+would be acceptance. **A process whose sole absorbing state is "risk accepted" has a direction, and
+it is the wrong one.**
+
+Both terminals are reason-required on their rows: an acceptance without a rationale erases the
+record that *is* the artifact, and a rejection without one leaves the author nothing to act on and
+the next reader no way to tell a refusal from a rework.
+
+*(The same pair does **not** hold one act earlier, and the asymmetry is deliberate rather than an
+oversight: `not_concurred` routes back to the author, because a user representative's
+non-concurrence is an **input to** the authority's decision rather than the decision itself — the
+peer-level structure §3.2.49 describes. `tests/safety/test_concurrence_precedes_acceptance.py`
+asserts it, so the asymmetry is measured rather than remembered.)*
+
 ---
 
 ## §6 — Ingestion lives in doc-tools, and that sets the increment order
@@ -687,6 +741,38 @@ where red was expected is a signal about the seal, not about the code.
     So a risk acceptance is still reachable from outside the engine, **through one door rather
     than two**, until the gateway half closes — which the architect has ruled happens early and
     separately from M3.3's cutover. The seal stays as written; only its justification shrinks.
+
+15. **A Serious or High risk cannot reach an acceptance without a `concurred` first** — §5.1's
+    property, and **the seal that MOVED on 2026-09-13.** It used to assert this over engine code:
+    `_CONCURRENCE_LEVELS` held the level set and `acceptance_request_after_concurrence` refused to
+    build an acceptance without a disposed concurrence. Both are **out of the engine** — ADR-0039's
+    amendment applied to its own first consumer — so the seal now asserts over the **composed
+    decision tables**, as a fact about reachability rather than a guard:
+
+    | half | what it asserts | how it breaks |
+    |---|---|---|
+    | selection | Serious/High select `safety_concurrence`, never the acceptance | the concurrence is skipped outright |
+    | chaining | the acceptance is reachable from `concurred` **and nothing else** | a REFUSAL still reaches a signature |
+
+    **Both halves are asserted, and the conjunction separately**, because each alone is satisfied by
+    a configuration that violates the requirement — a seal holding only the first is green on a table
+    where `not_concurred` routes to the acceptance, which is precisely the two-act definition's
+    deleted behaviour. **Control:** Medium and Low must still reach an acceptance in ONE act, or the
+    file passes on a table that routed every level through a concurrence — inventing a step the
+    standard does not require, which is its own defect.
+
+    **Mutations RE-RUN against the new subject, not carried over** — a wrong target, a deleted row,
+    and a refusal routed onward, each rewriting the composed YAML in a copy of the real directories
+    and re-composing, plus an unmutated copy that must stay **green**. A stubbed reader would have
+    proven only that the assertion can reject a dict. *(Two laws from this move are routed to
+    `lane/01` for allocation — see
+    [the routing packet](../proposals/two-laws-from-the-safety-seals-routed-for-allocation.md).
+    **PROPOSED, not RULED**: a proposal is not a ruling and this citation is not one either.)*
+
+    **And the removal itself is asserted** — `_CONCURRENCE_LEVELS =` and
+    `def acceptance_request_after_concurrence` must not return to `measures.py`. Not to prevent a
+    duplicate: to prevent the choice living in two places that disagree silently, with the engine's
+    copy winning because it runs first, and every table seal above still green.
 
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
