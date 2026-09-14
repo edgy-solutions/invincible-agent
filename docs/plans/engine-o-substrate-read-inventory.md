@@ -353,13 +353,49 @@ hybrid score. The predicate path subtracts an anti-synonym penalty —
 An interface returning a bare `score` invites exactly the cross-provider comparison that an
 authority ranking without a scope produces.
 
-**5. EMPTY IS OVERLOADED THREE WAYS AND ONE OF THEM ASKS THE CALLER TO DO SOMETHING ELSE.** Both
-sites return `[]` for: collection absent, nothing matched, and the client being unreachable or
-throwing. The predicate docstring even says *"Empty list means the collection is empty, missing, or
-unreachable — caller should fall back to Cypher exact-match."* **That instruction cannot be
-followed from the return value**, because the caller cannot tell which of the three happened. §2's
-`collection_present` probe is the first half of the fix; the second is that a failure must not
-arrive as an empty success.
+**5. EMPTY IS OVERLOADED — ONE WAY, NOT THREE. CORRECTED 2026-09-14, and the correction is the
+same defect this section is about.** I first wrote that `[]` conflates collection-absent,
+nothing-matched and unreachable, quoting the helper's own docstring: *"Empty list means the
+collection is empty, missing, or unreachable — caller should fall back to Cypher exact-match."*
+**I took the docstring's account of the helper as the behaviour of the path.** Reading the route
+above it, `/search_predicates` checks `_WEAVIATE_CLIENT` and `collections.exists(...)` and raises
+**503** before the helper is ever called — matching ADR-0009, which requires exactly that rather
+than a silent degradation to exact-match.
+
+**What actually survives is narrower and still real:** inside the helper, `except Exception: print(...);
+return []` turns a mid-query failure into an empty success. So one of the three, not three — and
+the helper's docstring instructs a Cypher fallback that the route has already ruled out. §2's
+`collection_present` probe still belongs in the interface; the remaining fix is that a throw must
+not arrive as an empty result set.
+
+**5b. THE PERMISSIVE DOMAIN BRANCH IS A RATIFIED ADR CLAUSE, NOT AN ENGINE-O DEFECT — HELD, NOT
+FIXED.** Ruled to this lane on 2026-09-14: *"the two collections scope domains by one rule, and
+`domains == []` is not permissive — it's the empty-set-means-all defect."* I did not implement it,
+because the branch it names is specified by ADR-0009 **in those words, twice**:
+
+> *"with the entitled-domains filter applied at the vector-store layer (OR of `domains contains_any
+> [entitled]` and `domains == []` to keep domain-agnostic predicates visible to scoped callers)"*
+> — ADR-0009, and again in its build section: *"OR-filter to keep domain-agnostic predicates
+> visible"*.
+
+And `agent_fleet/utils/mesh_registration.py:571-574` carries the same semantic as the FLEET
+registration contract, citing ADR-0009: *"domains are a scope filter, not a routing key … empty
+list means domain-agnostic."*
+
+**SO THE TWO DIRECTIONS ARE NOT SYMMETRIC, AND EACH IS BIGGER THAN THIS LANE:**
+
+* **If ADR-0009 stands**, the divergent collection is `OntologyClass`, which has NO such branch —
+  so "one rule" means adding the permissive branch to the class side, the OPPOSITE change.
+* **If the ruling stands**, ADR-0009's clause is superseded and the registration contract's
+  documented meaning changes with it. That is a fleet amendment, and **every verb registered as
+  domain-agnostic silently stops being a candidate for scoped callers on the next roll.**
+
+**I CANNOT BOUND THE BLAST RADIUS FROM THIS REPO, which is the reason to ask rather than pick.**
+A derived census of all 38 `register_engine_to_mesh` call sites under `agent_fleet/` shows every
+one passes `domains=` — but three pass a variable or a request field, and registrants OUTSIDE this
+repo (doc-tools' sync, SDK `MeshTool` emits) are not visible here at all. **How many rows actually
+carry `domains == []` is a live Weaviate question**, and it is the number that decides whether this
+is a no-op or a routing outage.
 
 **6. AND ONE DEFAULT WORTH PINNING BEFORE IT BECOMES A CONTRACT.** The class search declares
 `limit: int = 10`; the predicate search requires `limit` from its caller. Two doors of one
