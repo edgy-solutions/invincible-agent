@@ -1,0 +1,48 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# CHAINING AT TERMINATION (ADR-0039's 2026-09-12 amendment). `safety_concurrence` is ONE act and
+# ends with the user representative's verb; this table says what opens next. **That is why the
+# two-act definition was deleted rather than fixed** — it held both acts as consecutive steps and
+# the executor proceeds unconditionally, so a `not_concurred` still opened the acceptance task:
+# MIL-STD-882E §4.3.7 satisfied on paper and defeated in fact.
+#
+# "Do not proceed on refusal" IS a branch, and a linear definition cannot hold one. So the refusal
+# is expressed HERE, as a row, where it is reviewable as policy.
+decision: safety_concurrence_chaining
+
+matches: [outcome]
+
+# THE VALUES THE CONCURRENCE ACT CAN EMIT — and they are not invented here. They are exactly the
+# `accepts` of `risk_acceptance_concurrence_high` / `_serious`, which is what the gateway now
+# passes through intact (it used to collapse every verb to APPROVED/REJECTED, so a row matching
+# `concurred` would have matched nothing forever).
+#
+# `tests/safety/test_the_chaining_domain_matches_the_declared_verbs.py` asserts this list EQUALS
+# that declaration rather than resembling it — a domain hand-copied from another declaration is
+# the hand-kept-list shape, and totality over a wrong population is total over nothing.
+domain:
+  outcome: [concurred, not_concurred, returned_for_rework]
+
+rows:
+  # THE ONLY PATH TO AN ACCEPTANCE FOR A SERIOUS OR HIGH HAZARD. The acceptance definition is not
+  # reachable for these levels by selection — the selection table sends them here first — so the
+  # standard's "before" is enforced by the ROUTE rather than by a guard anyone could forget.
+  - when: {outcome: concurred}
+    then: safety_acceptance_direct
+
+  # The user representative declined. Back to the author with the stated basis — which is why
+  # `not_concurred` is reason-required on the concurrence row: a refusal without its reason is the
+  # erasure this domain cares about most.
+  - when: {outcome: not_concurred}
+    then: safety_redraft
+
+  # Not a refusal and not a concurrence: the representative wants the assessment reworked before
+  # they will answer. Same destination, DIFFERENT MEANING, and the reason carried on the
+  # disposition is what tells the author which one happened. Routing them together is a routing
+  # decision, not a claim that they are the same act.
+  - when: {outcome: returned_for_rework}
+    then: safety_redraft
+
+# No `terminals:` — every outcome of this act opens another definition. A table that declared
+# terminals it never uses would be the same over-declaration the `domain` rule exists to prevent,
+# one field along.

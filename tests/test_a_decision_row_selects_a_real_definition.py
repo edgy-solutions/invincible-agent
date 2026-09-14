@@ -83,22 +83,71 @@ def test_there_are_definitions_and_tables_to_check():
     )
 
 
-def test_every_row_selects_a_definition_that_exists():
-    """THE SEAL. A `then` is a reference, and a reference nobody follows is a claim."""
-    known = _definition_ids()
+def _audience_keys() -> set[str]:
+    """Every declared audience — the second namespace a `then` may resolve in."""
+    doc = yaml.safe_load(
+        (_REPO / "policy" / "task_grants.yaml").read_text(encoding="utf-8")
+    ) or {}
+    return set((doc.get("audiences") or {}).keys())
+
+
+def test_every_row_selects_a_TARGET_that_exists():
+    """THE SEAL. A `then` is a reference, and a reference nobody follows is a claim.
+
+    **RESOLVES AGAINST THREE NAMESPACES, because the rail has three.** The README says `then` may
+    name a definition id, an audience, or a terminal — and the first version of this seal resolved
+    only definitions. It passed while every table happened to chain to definitions, and went RED
+    the moment a legitimate terminal appeared: **an over-constrained seal, which fails honest data
+    rather than dishonest data, and is the one kind of wrong check that gets "fixed" by deleting
+    it.**
+
+    Terminals resolve against the TABLE'S OWN `terminals:` list, not a global vocabulary. That is
+    totality applied to targets — the same move `domain` makes for inputs, both answering
+    *"complete over what?"* from outside the rows. Declared per table on purpose: a global list
+    would make every terminal available everywhere, so a terminal meaningful in one flow would
+    silently typecheck in another.
+    """
+    known_defs = _definition_ids()
+    known_audiences = _audience_keys()
     dangling: list[str] = []
     for label, table in _tables():
+        declared_terminals = set(table.get("terminals") or [])
         for i, row in enumerate(table.get("rows") or []):
-            target = row.get("then")
-            if target and str(target) not in known:
-                dangling.append(
-                    f"{label} row {i}: `then: {target}` names no definition. Known: {sorted(known)}"
-                )
+            target = str(row.get("then") or "")
+            if not target:
+                continue
+            if target in known_defs or target in known_audiences or target in declared_terminals:
+                continue
+            dangling.append(
+                f"{label} row {i}: `then: {target}` resolves nowhere. "
+                f"definitions={sorted(known_defs)} "
+                f"terminals declared by this table={sorted(declared_terminals) or 'NONE'}"
+            )
     assert not dangling, (
-        "decision row(s) select a definition that does not exist — the table is provably TOTAL "
-        "over a target nothing can open, and the symptom appears at the moment a decision was "
+        "decision row(s) select a target that does not exist — the table is provably TOTAL over "
+        "something nothing can open, and the symptom appears at the moment a decision was "
         "due:\n  " + "\n  ".join(dangling)
     )
+
+
+def test_a_terminal_must_be_DECLARED_by_the_table_that_uses_it():
+    """A terminal used without declaration is the hole `terminals:` closed, and this keeps it shut.
+
+    Before the header existed, a terminal resolved against nothing — so `risk_acceptd` was
+    indistinguishable from `risk_accepted` and the seal had no choice but to skip it. Asserting
+    membership in the table's OWN list is what makes a typo fail like a typo'd definition.
+    """
+    for label, table in _tables():
+        declared = set(table.get("terminals") or [])
+        defs = _definition_ids()
+        auds = _audience_keys()
+        for i, row in enumerate(table.get("rows") or []):
+            target = str(row.get("then") or "")
+            if target and target not in defs and target not in auds:
+                assert target in declared, (
+                    f"{label} row {i}: `{target}` is neither a definition nor an audience, so it "
+                    f"can only be a terminal — and this table declares {sorted(declared) or 'none'}"
+                )
 
 
 def test_the_reference_checker_can_say_no():

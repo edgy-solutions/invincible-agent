@@ -134,6 +134,39 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # directly.
 # ============================================================================
 
+#: Dagster's max_concurrent_runs on this cluster. N ingests serialise into ceil(N/2) batches.
+_INGEST_CONCURRENCY = 2
+#: Measured 2026-08-22: 10 runs completed within 1800s on this cluster.
+_SECONDS_PER_SLOT = 360
+#: Margin over the measured queue. Not decoration -- the measurement is a median-ish observation
+#: on arm64 nodes whose per-slot time varies, and a bound sized to the observation exactly is a
+#: bound that fails on the first slow run.
+_QUEUE_MARGIN = 1.2
+
+
+def derived_ingest_timeout(manifest=None) -> int:
+    """Seconds to wait for the ingest queue, DERIVED FROM THE MANIFEST THIS RUN WILL EXECUTE.
+
+    WHY THIS IS COMPUTED AND NOT CONFIGURED. The bound and the work were set independently, and
+    on 2026-09-14 they disagreed: the docs-corpus merge added an eleventh manifest entry, taking
+    the queue to 11 -> ceil(11/2) = 6 batches x 360s = 2160s... and the chart still said 3600s
+    while `test_prime_timeout_bounds_agree` computed the real requirement and went red.
+
+    THE FIRST FIX WAS TO RAISE THE NUMBER, AND THAT IS THE MOVE THE SEAL EXISTS TO PREVENT.
+    Raising a bound to clear a red and raising it because the work grew are indistinguishable in
+    a diff -- both are a bigger integer. The difference only survives if the value is WRITTEN BY
+    THE ACT: adding an ontology moves the bound by construction, and there is no number anyone
+    can forget to update.
+
+    Same rule as the census reading `helm get values` rather than restating a pin, and as a
+    decision table's `domain` coming from outside its rows.
+    """
+    import math
+    rows = CANONICAL_TTL_MANIFEST if manifest is None else manifest
+    batches = math.ceil(len(rows) / _INGEST_CONCURRENCY)
+    return int(batches * _SECONDS_PER_SLOT * _QUEUE_MARGIN)
+
+
 CANONICAL_TTL_MANIFEST = [
     # ----- LAYER 1: MAINTENANCE (the operating domain the routing matrix exercises) -----
     {
@@ -409,6 +442,33 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "mesh/mesh_system.ttl",
         "path": "ontologies/mesh_system.ttl",
     },
+
+    # ----- LAYER 6: DOCS (the runbook corpus as DocPage instances, ADR-0037) -----
+    # THE SIXTH DOMAIN, AND ITS OWN DOMAIN ON PURPOSE. The drop set is derived as
+    # {f"http://internal/{e['domain']}"}, so a docs entry filed under an existing domain would
+    # land in that domain's vocabulary graph and be swept with it. ADR-0037's resolved open
+    # question rules this: internal/DOCS is manifest-class and IS prime-wiped, and that is what
+    # makes it safe — the corpus is markdown-in-git, fully reproducible, and doc ingest appends
+    # exactly as the TTLs do, so an exempted graph would accumulate duplicate triples per prime.
+    # No change to clear_ontology_graphs() is needed: it derives its drop set from this list.
+    #
+    # THIS FILE DECLARES ZERO owl:Class AND THAT IS FINE — VERIFIED, NOT ASSUMED. It holds
+    # DocPage INDIVIDUALS. doc-tools' sync_jena_ontologies_to_neo4j has an explicit third case
+    # for a class-less ontology (its comment names pcn_disposition_rules.ttl): it probes the raw
+    # graph, finds no class declaration, and skips the Neo4j write gracefully rather than raising
+    # the "content drift" error. The Jena named-graph load — which is where the doc route reads —
+    # still succeeds. Two manifest entries already rely on that path today
+    # (pcn_disposition_rules.ttl, safety_risk_matrix.ttl), so this adds no new failure mode.
+    #
+    # GENERATED, NOT AUTHORED: scripts/generate_docs_corpus.py builds it from the frontmatter of
+    # docs/runbooks/*.md, and tests/test_docs_corpus_drift.py fails if the committed file has
+    # drifted from the pages. Editing this TTL by hand is a change that the next generate erases.
+    {
+        "domain": "DOCS",
+        "name": "docs_corpus",
+        "s3_key": "docs/docs_corpus.ttl",
+        "path": "ontologies/docs_corpus.ttl",
+    },
 ]
 
 
@@ -581,6 +641,111 @@ def record_prime_run(wiped: bool = False) -> None:
         print(f"  [PrimeRun] !! COULD NOT RECORD THIS PRIME: {exc}")
         print("  [PrimeRun] !! the substrate is primed; the census will report recency as "
               "UNCHECKED (exit 3) until a prime records successfully.")
+
+
+def upload_doc_pages() -> None:
+    """Push each runbook's MARKDOWN to the corpus bucket at the key its DocPage row points at.
+
+    THE ROW IS A POINTER, SO THE THING IT POINTS AT HAS TO BE THERE. `docs_corpus.ttl` gives every
+    page a `mesh:source` key and a `mesh:body_sha`; the route resolves the page, reads the body
+    from that key, and refuses if the sha does not match. None of that works if the bytes are only
+    in a git checkout — the answer path runs inside the cluster, and a body read from a file baked
+    into some service's image would be a second copy with no seal over it.
+
+    CONTENT-ADDRESSED, WHICH IS WHY THIS IS SAFE TO RE-RUN AND SAFE TO LEAVE BEHIND. The key
+    contains the sha of the bytes, so re-uploading identical content is a no-op onto the same key
+    and changed content lands at a NEW key that a regenerated row points at. A stale object is not
+    merely detectable, it is unreachable: nothing references it.
+
+    ITS OWN BUCKET, NOT THE ONTOLOGY ONE. See the assertion below: relying on the ontology
+    sensor to decline a markdown body made the interlock a side effect of someone else's guard.
+
+    IT REFUSES ON DRIFT RATHER THAN UPLOADING PAST IT. If the committed TTL disagrees with the
+    files on disk, uploading would put the bytes at keys no row names — every page would resolve to
+    nothing, at answer time, in front of a reader. That is the failure this check exists to make
+    loud, and it is exactly the state a prime run from a tree where someone edited a runbook and
+    did not regenerate would be in.
+    """
+    print("--- Uploading doc pages to MinIO ---")
+    if boto3 is None:
+        raise RuntimeError("boto3 not installed; pip install boto3")
+
+    # Imported BY PATH: `scripts/` is not a package, and the generator is the ONE place a key or a
+    # sha is computed. A second implementation here would hash the same bytes a slightly different
+    # way and upload to a key nothing points at.
+    import importlib.util
+    gen_path = SCRIPT_DIR.parent / "scripts" / "generate_docs_corpus.py"
+    spec = importlib.util.spec_from_file_location("generate_docs_corpus", gen_path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    committed = gen.OUT.read_text(encoding="utf-8") if gen.OUT.is_file() else ""
+    if committed != gen.render():
+        raise RuntimeError(
+            "REFUSED: docs_corpus.ttl has drifted from docs/runbooks/*.md. Uploading now would "
+            "put page bodies at keys no DocPage row names, and every doc answer would resolve to "
+            "nothing at answer time. Run `python scripts/generate_docs_corpus.py` and commit.")
+
+    endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+
+    # A SEPARATE BUCKET, AND THE ASSERTION BELOW IS THE POINT OF IT. RULED 2026-09-13.
+    #
+    # The first version put pages in the ontology bucket and relied on the ontology sensor
+    # DECLINING them: that sensor launches an ingest for new objects and refuses one whose domain
+    # is undeclared, so a markdown body never reached a TTL parser. That worked, and it was the
+    # wrong construction — **a refusal is not a router.** The interlock was a side effect of
+    # someone else's guard, held in place only by that guard having no default. The day it gains
+    # one, a runbook becomes a parse error inside the prime, and the failure surfaces as an
+    # ontology error about a file that is not an ontology.
+    #
+    # AND THE HAZARD WAS LIVE RATHER THAN THEORETICAL — verified at source 2026-09-13 in
+    # `doc_tools/definitions.py:70`. `ontology_sensor` is an `S3SensorComponent` over
+    # `ONTOLOGY_BUCKET` with **`prefix=""` and `filter_patterns=[]`**: it watches the WHOLE bucket
+    # with no filtering, so every page body would have been picked up and handed to
+    # `ingest_ontology_to_jena`. Only the undeclared-domain refusal stood between a runbook and a
+    # TTL parser. (Source proves DEFINED and its configured bucket; whether it is RUNNING is a
+    # runtime question — AGENTS.md's seventh instance records that a grep for `@sensor` once
+    # concluded this very sensor did not exist, because it is factory-constructed rather than
+    # decorated. Neither answer changes this decision: the separation is correct either way.)
+    #
+    # So the pages go somewhere the sensor does not watch, and the separation is ASSERTED rather
+    # than assumed — a deployment that points both names at one bucket rebuilds the original
+    # coupling silently, which is exactly the misconfiguration this refuses to boot past.
+    bucket = os.environ.get("DOCS_BUCKET", "doc-pages")
+    ontology_bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+    if bucket == ontology_bucket:
+        raise RuntimeError(
+            f"REFUSED: DOCS_BUCKET and ONTOLOGY_BUCKET are both {bucket!r}. Page bodies would land "
+            f"in the bucket the ontology sensor watches, and a markdown file would be handed to a "
+            f"TTL parser the moment that sensor's domain check gains a default. Point DOCS_BUCKET "
+            f"at a bucket of its own.")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=_minio_compat_config(),
+    )
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except Exception:
+        print(f"  [!] Bucket {bucket} not found; creating...")
+        s3.create_bucket(Bucket=bucket)
+
+    n = 0
+    for page in gen.pages():
+        body_sha, key = gen.page_locator(page)
+        s3.put_object(
+            Bucket=bucket, Key=key, Body=page.read_bytes(),
+            ContentType="text/markdown; charset=utf-8",
+            Metadata={"body-sha256": body_sha, "source-path": f"docs/runbooks/{page.name}"},
+        )
+        print(f"  {page.name} -> s3://{bucket}/{key}")
+        n += 1
+    print(f"  [OK] {n} doc page(s) uploaded")
 
 
 def upload_canonical_ttls() -> None:
@@ -1534,10 +1699,13 @@ def main() -> None:
                              "and the helm hook chain's documented ordering "
                              "(prime -> ontologySeed -> reregister) does not actually "
                              "hold for the ingest.")
-    parser.add_argument("--ingest-timeout", type=int, default=1800,
-                        help="Seconds to wait with --wait-for-ingest (default 1800). "
-                             "Serialized ingests on arm64 nodes are slow; size this to "
-                             "the SLOWEST full chain, not the median.")
+    parser.add_argument("--ingest-timeout", type=int, default=None,
+                        help="Seconds to wait with --wait-for-ingest. DEFAULT IS DERIVED from "
+                             "the manifest this run will actually execute — see "
+                             "derived_ingest_timeout(). Pass a value only to override it; a "
+                             "literal here is a number that must be remembered, and the whole "
+                             "point of the derivation is that adding an ontology moves the "
+                             "bound BY CONSTRUCTION.")
     parser.add_argument("--trigger-ingest", action="store_true",
                         help="Trigger dagster ingest_ontology_job for each partition after upload. "
                              "Off by default — the dagster sensor will pick up uploaded files OR "
@@ -1555,6 +1723,14 @@ def main() -> None:
                              "that so the projector is never stranded and answer history "
                              "survives a routine reprime.")
     args = parser.parse_args()
+    # THE DERIVED DEFAULT, resolved here so an explicit --ingest-timeout still wins.
+    # None means 'nobody stated one', which is a different fact from 'somebody chose
+    # this number' -- and only the first can be safely replaced by a derivation.
+    if args.ingest_timeout is None:
+        args.ingest_timeout = derived_ingest_timeout()
+        print(f"[prime] ingest timeout DERIVED from the manifest: "
+              f"{len(CANONICAL_TTL_MANIFEST)} entries -> {args.ingest_timeout}s")
+
 
     parse_env()
 
@@ -1605,6 +1781,7 @@ def main() -> None:
 
     if args.upload_only:
         upload_canonical_ttls()
+        upload_doc_pages()
         if args.trigger_ingest:
             trigger_ingest_jobs(wait=args.wait_for_ingest,
                                 wait_timeout=args.ingest_timeout)
@@ -1615,6 +1792,7 @@ def main() -> None:
 
     if not args.skip_uploads:
         upload_canonical_ttls()
+        upload_doc_pages()
 
     if args.trigger_ingest:
         trigger_ingest_jobs(wait=args.wait_for_ingest,

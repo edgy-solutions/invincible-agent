@@ -86,6 +86,15 @@ users:
                             # alice maintains aircraft — mirrors the data-
                             # engineers fixture above. Remove when the E-join
                             # demo no longer needs a maintenance-entitled actor.
+      - safety-engineers    # ADR-0051, 2026-09-14: alice holds the High and Serious risk
+                            # acceptance audiences, and AN AUTHORITY WHO CAN SIGN BUT CANNOT
+                            # LOOK IS THE WRONG SHAPE — the cell grants the QUESTION ("show
+                            # me open hazards", "what does this deferral re-open"), never the
+                            # signature, which stays a task disposition no cell can confer.
+                            # So this is not the fixture posture of the five grants above: it
+                            # is the acceptance authority being able to read the plane she
+                            # signs against. carol is deliberately NOT here — the user
+                            # representative concurs on what is put in front of her.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]
@@ -99,6 +108,15 @@ users:
     # the ADR-0025 amendment forbids.
     groups:
       - aviation-stewards
+      # ADR-0051, 2026-09-14: bob is the SAFETY ENGINEER — the assessment author and the
+      # redraft recipient. HE ASKS AND HE CANNOT SIGN, and the two halves live in different
+      # namespaces on purpose: this cell admits the safety verbs, while acceptance is a TASK
+      # DISPOSITION carried by the `risk_acceptance_*:SUSTAINMENT` audiences, which bob does
+      # not hold and which NO cell can confer. §7's refusal is structural, not enforced.
+      #
+      # He does hold `risk_redraft:SUSTAINMENT` and `hazard_link_review:SUSTAINMENT` in
+      # task_grants.yaml — the author's queue, which is the other half of the same role.
+      - safety-engineers
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]

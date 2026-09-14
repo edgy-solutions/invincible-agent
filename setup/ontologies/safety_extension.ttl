@@ -290,3 +290,90 @@ safety:acceptanceAuthorityLevel a owl:DatatypeProperty ;
     rdfs:domain safety:RiskAssessment ;
     rdfs:range xsd:string ;
     rdfs:comment "The level the drafted risk IMPLIES, resolved from the matrix. Records what the draft would require, not what anyone granted." .
+
+# ---------------------------------------------------------------------------
+# PROVENANCE PREDICATES ON THE MATRIX ITSELF — declared 2026-09-14, and the reason
+# they are being declared NOW is the finding.
+#
+# `safety:derivedFromStandard` and `safety:ratificationStatus` have been in USE on
+# `safety_risk_matrix.ttl` since it was written, and were DECLARED NOWHERE. The file
+# parsed, loaded and primed exactly as if they were — an undeclared predicate is not
+# an error in RDF, it is a triple whose subject and object are fine and whose meaning
+# is nobody's.
+#
+# THAT IS THE THIRD TIME THIS EXACT SHAPE HAS APPEARED IN THIS ARC, and it is why the
+# declaration is here rather than a note saying it should be: a `mesh:` prefix bound to
+# a class that did not exist, a docs citation naming a packet on another branch, and a
+# decision row naming a definition never authored. Each one a reference that LOOKS
+# satisfied because nothing followed it. Adding a THIRD undeclared predicate while
+# reading a standard from source to fix a provenance gap would have been the same
+# error committed inside its own correction.
+#
+# The pattern was inherited honestly — `pcn_disposition_rules.ttl` uses
+# `pcn:ratificationStatus` undeclared too, and this file's matrix was built to match
+# its neighbour. That is how a convention spreads without anyone choosing it.
+# ---------------------------------------------------------------------------
+
+safety:derivedFromStandard a owl:AnnotationProperty ;
+    rdfs:label "derived from standard" ;
+    rdfs:range xsd:string ;
+    rdfs:comment """The STANDARD a policy table was transcribed from, named to the section.
+Deliberately an annotation on the table rather than a value on each row: the citation is a fact
+about the whole transcription, and per-row copies would drift against each other.
+
+Kept SEPARATE from safety:ladderDerivedFromInstruction below. The matrix comes from MIL-STD-882E
+and the acceptance ladder from a DoD instruction; one predicate covering both would make a later
+change to either one invisible, which is exactly the state the ladder spent two days in.""" .
+
+safety:ladderDerivedFromInstruction a owl:AnnotationProperty ;
+    rdfs:label "ladder derived from instruction" ;
+    rdfs:range xsd:string ;
+    rdfs:comment """The INSTRUCTION that names the risk acceptance authority per level, and the
+concurrence that precedes the Serious and High ones. 882E 4.3.7 defers this question by name —
+"accepted by the appropriate authority as defined in DoDI 5000.02" — so the ladder can never
+carry the matrix's citation, and this predicate exists so it cannot accidentally be given one.
+
+DoDI 5000.88 PARA 3.6.e.(1)(b)1 as of 2026-09-14. The instruction has moved between issues once
+already (the 2020 reissue pulled engineering content out of 5000.02), which is the argument for
+recording WHICH issue rather than only which paragraph.""" .
+
+safety:ratificationStatus a owl:AnnotationProperty ;
+    rdfs:label "ratification status" ;
+    rdfs:range xsd:string ;
+    rdfs:comment """Who, if anyone, must sign this table off — and it is a STATUS rather than a
+signature. A table matching the standard needs no local ratifier because it has one already; a
+programme's TAILORING needs the SSPP signatory. The distinction is the whole reason the field
+exists: without it, "unratified" reads as a defect on a table that is correctly citing a standard.
+
+Mirrors pcn:ratificationStatus on the disposition rules by intent, not by import — a shared
+spelling across two domain ontologies is a convention, and neither should silently constrain the
+other's vocabulary.""" .
+
+safety:acceptanceAuthorityTier a owl:DatatypeProperty ;
+    rdfs:label "acceptance authority tier" ;
+    rdfs:domain safety:RiskLevel ;
+    rdfs:range xsd:string ;
+    rdfs:comment """CAE_OR_DAE | PEO_LEVEL | PM. The OFFICE DoDI 5000.88 PARA 3.6.e.(1)(b)1
+assigns each risk level, held separately from `safety:acceptanceAudience` because they answer
+different questions: the audience is which queue the acceptance lands in HERE, the tier is what
+the instruction REQUIRES. A deployment re-points the audience constantly and the tier almost
+never, and collapsing them would make a tailoring indistinguishable from a transcription error.
+
+"CAE_OR_DAE" and "PEO_LEVEL" are spelled as the instruction spells them. The High authority may
+be the Defense Acquisition Executive rather than the Component one, and "program executive
+officer-level" is a LEVEL rather than the PEO in person — reading either as a single named post
+would make the seed STRICTER than its source, which fails by blocking a lawful acceptance and is
+the direction nobody files a defect about.""" .
+
+safety:authorityRank a owl:DatatypeProperty ;
+    rdfs:label "authority rank" ;
+    rdfs:domain safety:RiskLevel ;
+    rdfs:range xsd:integer ;
+    rdfs:comment """Seniority order of the acceptance authority, 1 most senior. Exists for ONE
+purpose: the DIRECTIONAL half of the ladder seal, which asserts that no level names a more junior
+office than the instruction requires.
+
+A plain equality check catches any difference; the directional assertion is what names the
+DANGEROUS difference, and the two are stated separately for the same reason the matrix states
+them separately — an equality failure says "the table changed", and a directional failure says
+"a High risk is now signable by a program manager", which are not the same report.""" .

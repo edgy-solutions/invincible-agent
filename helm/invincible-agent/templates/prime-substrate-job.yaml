@@ -210,7 +210,13 @@ spec:
             # async ingest escapes that ordering and reregister(20) runs against
             # a class graph that is still filling.
             - "--wait-for-ingest"
-            - "--ingest-timeout={{ .Values.primeSubstrate.ingestTimeout }}"
+            {{- /* OMITTED unless explicitly set: the prime DERIVES this from the manifest
+                   it is about to run (derived_ingest_timeout), so adding an ontology moves
+                   the bound BY CONSTRUCTION. Passing a literal here reinstates the number
+                   somebody has to remember, which is the defect this replaced. */}}
+            {{- with .Values.primeSubstrate.ingestTimeout }}
+            - "--ingest-timeout={{ . }}"
+            {{- end }}
             {{- end }}
             {{- end }}
           # Pull cluster-wide config (Neo4j/Weaviate/Jena URLs) from the

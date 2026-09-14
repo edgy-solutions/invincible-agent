@@ -300,17 +300,69 @@ level — which is precisely what the audience key convention expresses:
 > the same treatment, including the directional assertion, because a ladder that names a more junior
 > tier than the standard fails the same silent way a permissive matrix cell does.
 >
-> **UPDATE 2026-09-12 — corroborated, still not read from primary.** The current issue appears to be
-> **DoDI 5000.88** (the 2020 reissue moved engineering content out of 5000.02), and **¶3.6.e.(1)(b)1**
-> is cited as assigning Component/Defense Acquisition Executive → High, PEO-level → Serious, PM →
-> Medium and Low. **That matches the seeded ladder.** But `esd.whs.mil` returns **HTTP 403** to this
-> environment, so the corroboration is a search summary and a secondary page, not the document. The
-> matrix was transcribed cell by cell from 882E's own PDF; this was not, and **the two must not be
-> read as equally sourced.** Anyone with access should open ¶3.6.e.(1)(b)1 and replace the note with
-> the verbatim quote.
+> ~~**UPDATE 2026-09-12 — corroborated, still not read from primary.** `esd.whs.mil` returns HTTP
+> 403 to this environment, so the corroboration is a search summary and a secondary page, not the
+> document. Until that is done the sandbox ladder is a fixture: it exercises the routing, the
+> audiences and the three-caller walk; it does not authorise anything.~~
+
+**CAVEAT LIFTED 2026-09-14 — READ FROM SOURCE. The ladder is the instruction's, not a fixture.**
+
+**DoDI 5000.88 ¶3.6.e.(1)(b)1**, Directives Division PDF, **November 18 2020 issue**, confirms the
+seeded ladder level for level: the **CAE (or DAE)** for High, **program executive officer-level** for
+Serious, the **PM** for Medium and Low. The matrix and the ladder are now **equally sourced**, which
+is the state the struck note said had to be reached before a real acceptance routes. `prov:wasDerivedFrom`
+carries the instruction beside the standard, under a **separate predicate** (`safety:ladderDerivedFromInstruction`)
+because they are two documents and one predicate covering both would hide a later change to either.
+
+**AND THE SAME PARAGRAPH CARRIES THE CONCURRENCE RULE**, which is the part worth more than the
+confirmation: the user representative, as defined in MIL-STD-882E, is part of the process throughout
+the life-cycle and provides **formal concurrence before all Serious and High risk acceptance
+decisions**. §5.1 built the two-act sequence from 882E §4.3.7 alone; it now has **two sources that do
+not depend on each other**, and the seal over it is unchanged — a second source is corroboration, not
+a reason to re-derive.
+
+**THE LADDER IS NOW SEALED LIKE TABLE III**, by `tests/safety/test_ladder_matches_dodi_5000_88.py`,
+and sealing it needed a new field. The TTL recorded only `acceptanceAudience` — *which queue* — and
+never the **office** the instruction names, so a seal over those rows could only have asserted that
+four keys were spelled consistently with themselves. `safety:acceptanceAuthorityTier` records the
+office; the seal asserts it level by level **and** directionally, because *"the table changed"* and
+*"a High risk is now signable by a program manager"* are not the same report. The mutation is run:
+demoting High to `PM` reds the directional half while **the audience-key check stays green**, which
+is the whole argument for the new field.
+
+> **TWO NUANCES ARE OVERLAY-TAILORABLE, NOT SEED** — carried because collapsing either would state
+> something narrower than the instruction does.
 >
-> Until that is done the sandbox ladder is a fixture. It exercises the routing, the audiences and the
-> three-caller walk; it does not authorise anything.
+> **"CAE (or DAE)"** — the High authority may be the **Defense** Acquisition Executive rather than
+> the Component one. Pointing `risk_acceptance_high:SUSTAINMENT` at a DAE-held group is **not** a
+> departure from the standard and needs **no SSPP ratifier**.
+>
+> **"Program executive officer-LEVEL"** is a level, **not necessarily the PEO in person**. Reading
+> it as the post would make the seed *stricter* than its source — which fails by blocking a lawful
+> acceptance rather than admitting an unlawful signature. Different direction, still wrong, and the
+> one nobody files a defect about.
+>
+> **For joint programmes the acceptance authorities reside within the LEAD DoD COMPONENT.** That is
+> an overlay fact and not a platform one: nothing here or in `task_grants.yaml` should encode which
+> component leads, because a seed that guessed would be an entitlement decision made by a manifest
+> field rather than by anyone.
+
+### §5.3 — Three requirements in the same section this design does not model — FILED, not built
+
+All three are **reads over state the engine already holds**, which is why they are slices rather than
+redesigns, and why filing them costs nothing now. None is in scope for increment 5.
+
+| requirement (DoDI 5000.88 ¶3.6.e) | what it is, mechanically | depends on |
+|---|---|---|
+| the PM reports ESOH risk status and acceptance decisions at **technical reviews**; acquisition **program reviews** and **fielding decisions** address the status of all Serious and High ESOH risks | a **status query verb** over open assessments *by level* — not a task, and deliberately not a canvas: the answer is a list with a level filter and a disposition state | the assessment objects, which exist |
+| the LSE supports system-related **Class A and B mishap investigations** by providing analyses of hazards that contributed to the mishap | **`trendMishaps`' consumer** — the deferred slice-3 verb now has a named requirement to serve rather than a plausible one | `trendMishaps`, deferred (RULED, see [rulings#r-004](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (a)) |
+| the **PESHE** summary | a **report verb** over the same objects | the same objects |
+
+**Filed rather than built, and the distinction is the point.** A requirement named in an ADR with no
+verb behind it is a commitment the next reader can check; a verb written against a requirement nobody
+asked for is scope. The middle row is the useful one — `trendMishaps` was deferred on the judgement
+that a trend verb was premature, and this is the first evidence that a real consumer exists for it,
+which is a reason to revisit the deferral rather than to reverse it unilaterally.
 
 ### §5.1 — A Serious or High acceptance needs TWO human acts, and this design models one
 
@@ -513,6 +565,60 @@ it would leave the fleet relying on two lanes' current behaviour with nothing me
 The task payload stays clearance-bounded — reference plus a clearance-safe summary, never
 compartmented content — because the queue itself must not become the leak.
 
+### §5.2 — Where a risk decision ENDS — two rulings
+
+Writing `safety_acceptance_chaining.yaml` forced two questions the design had never been made to
+answer, because a linear definition let both stay implicit. **RULED 2026-09-13 by the architect**;
+recorded here rather than in the YAML alone, because a routing row is the *consequence* of these and
+not the argument for them.
+
+**RULING ONE — `accepted` IS A TERMINAL. Nothing follows an acceptance.**
+
+The authority accepted the residual risk, with a stated reason. Nothing further is owed by the
+system: the record of who signed and on what evidence already exists in the disposition, and the
+concurrence that preceded it (for Serious and High) is in the same trail. Modelling the end state as
+a *definition* would put an empty queue item in front of a human to represent a decision that has
+already been made — a task nobody owes anyone, which is how a queue stops being a list of work.
+
+So the row ends at `risk_accepted`, a declared terminal, and the acceptance verb is the last human
+act in the flow. **This is the irreversible one**, which is exactly why it must not be followed by a
+step that could be read as review of it.
+
+**RULING TWO — `rejected` IS ALSO A TERMINAL, and is deliberately NOT routed to redraft.**
+
+This is the one that looked wrong at first and is the more load-bearing of the pair. A refused
+acceptance is **a decision, not a request for a better draft.** Routing it back to the author would
+invite the same assessment to be re-presented — reworded, re-severitied, re-argued — until some
+presentation of it was accepted, which is a *second bite at the same signature* and would make the
+refusal advisory. A safety authority's "no" that the system treats as a prompt to try again is not a
+refusal at all.
+
+**The distinction is carried by the verb, and that is why three exist rather than two.** An
+authority who *wants* the assessment reworked has a verb for it — `returned_for_rework` — and that
+one does route to `safety_redraft`. So the flow supports both acts and keeps them apart:
+
+| verb | meaning | goes to |
+|---|---|---|
+| `accepted` | the authority takes the residual risk onto themselves | **terminal** `risk_accepted` |
+| `rejected` | the authority declines; the risk is not accepted | **terminal** `risk_rejected` |
+| `returned_for_rework` | the authority wants a better assessment before deciding | `safety_redraft` |
+
+**The two rulings are what make the middle row mean anything.** Collapse `rejected` into the redraft
+path and the vocabulary has two verbs with one behaviour, and the authority loses the ability to
+*end* anything — every decision becomes provisional, and the only terminal state in a safety flow
+would be acceptance. **A process whose sole absorbing state is "risk accepted" has a direction, and
+it is the wrong one.**
+
+Both terminals are reason-required on their rows: an acceptance without a rationale erases the
+record that *is* the artifact, and a rejection without one leaves the author nothing to act on and
+the next reader no way to tell a refusal from a rework.
+
+*(The same pair does **not** hold one act earlier, and the asymmetry is deliberate rather than an
+oversight: `not_concurred` routes back to the author, because a user representative's
+non-concurrence is an **input to** the authority's decision rather than the decision itself — the
+peer-level structure §3.2.49 describes. `tests/safety/test_concurrence_precedes_acceptance.py`
+asserts it, so the asymmetry is measured rather than remembered.)*
+
 ---
 
 ## §6 — Ingestion lives in doc-tools, and that sets the increment order
@@ -688,6 +794,70 @@ where red was expected is a signal about the seal, not about the code.
     than two**, until the gateway half closes — which the architect has ruled happens early and
     separately from M3.3's cutover. The seal stays as written; only its justification shrinks.
 
+15. **A Serious or High risk cannot reach an acceptance without a `concurred` first** — §5.1's
+    property, and **the seal that MOVED on 2026-09-13.** It used to assert this over engine code:
+    `_CONCURRENCE_LEVELS` held the level set and `acceptance_request_after_concurrence` refused to
+    build an acceptance without a disposed concurrence. Both are **out of the engine** — ADR-0039's
+    amendment applied to its own first consumer — so the seal now asserts over the **composed
+    decision tables**, as a fact about reachability rather than a guard:
+
+    | half | what it asserts | how it breaks |
+    |---|---|---|
+    | selection | Serious/High select `safety_concurrence`, never the acceptance | the concurrence is skipped outright |
+    | chaining | the acceptance is reachable from `concurred` **and nothing else** | a REFUSAL still reaches a signature |
+
+    **Both halves are asserted, and the conjunction separately**, because each alone is satisfied by
+    a configuration that violates the requirement — a seal holding only the first is green on a table
+    where `not_concurred` routes to the acceptance, which is precisely the two-act definition's
+    deleted behaviour. **Control:** Medium and Low must still reach an acceptance in ONE act, or the
+    file passes on a table that routed every level through a concurrence — inventing a step the
+    standard does not require, which is its own defect.
+
+    **Mutations RE-RUN against the new subject, not carried over** — a wrong target, a deleted row,
+    and a refusal routed onward, each rewriting the composed YAML in a copy of the real directories
+    and re-composing, plus an unmutated copy that must stay **green**. A stubbed reader would have
+    proven only that the assertion can reject a dict.
+
+    **Two laws come out of this move. RULED 2026-09-13 — see
+    [rulings#r-053](../rulings/README.md#r-053--a-seal-that-moves-and-is-not-re-proven-has-only-been-relocated)
+    and
+    [rulings#r-054](../rulings/README.md#r-054--choice-removed-from-code-before-its-table-composes-is-choice-deleted-and-it-fails-permissive).**
+    R-053 is why the mutations were re-run rather than carried: *the old suite's mutations patch a
+    Python name, and a Python-name mutation cannot fail against YAML* — so it is not a surviving
+    mutant, it is **an experiment that never ran**, in a file that reads exactly like a proven seal.
+    R-054 is why the tables composed **before** the code came out, and its general form is the one
+    this seal is built against: *the intermediate state is not "broken", it is "permissive", and
+    permissive states pass every test written to catch broken ones.* Hence the chaining half asserts
+    the route **refuses** something — `not_concurred` does not reach a signature — rather than merely
+    that every outcome resolves to a definition.
+
+    > ~~**⚠️ THE TWO ENTRIES ARE ON `lane/01` AT `786c099` AND ARE NOT ON MASTER YET**, so these
+    > links resolve to the file but not to their anchors until that branch merges — and **nothing in
+    > the suite checks a fragment**, so a dangling anchor is silent.~~
+    >
+    > **STRUCK 2026-09-13: `lane/01` merged at master `a1d3ba0`, and the reason given was WRONG.**
+    > Both anchors resolve — verified by grepping the headings on master, not by looking at the
+    > links. **And `tests/test_citation_anchors_resolve.py` DOES check fragments**, across every
+    > tracked file via `git grep`, with a slugger verified against `api.github.com/markdown`. So the
+    > claim *"nothing checks a fragment"* was **a plausible negative stated as a considered one** —
+    > I checked `test_citation_paths.py`, found it stops at the path, and reported the gap as a
+    > property of the suite rather than of the one file I read. That is this document's own
+    > recurring shape, committed in the note warning about it.
+    >
+    > **WHAT WAS ACTUALLY INVISIBLE IS NARROWER AND WORTH KEEPING.** Lane 1 mutated the R-053
+    > heading on master and the anchor seal stayed **GREEN** — because the citation was on `lane/74`
+    > and the register on master, so `git grep` found no citer and **a fragment with no citer is
+    > indistinguishable from a fragment nobody broke.** Neither branch could see it: each half was
+    > whole on its own side and the pair had never existed in one tree. *On a lane branch is not on
+    > master*, applied to the **citer** rather than the cited. It resolves on merge, and it is
+    > re-proven rather than assumed: with both halves in this tree, mutating this ADR's own anchor
+    > to `…a-seal-that-MOVED…` reds the seal, naming this file and line 770.
+
+    **And the removal itself is asserted** — `_CONCURRENCE_LEVELS =` and
+    `def acceptance_request_after_concurrence` must not return to `measures.py`. Not to prevent a
+    duplicate: to prevent the choice living in two places that disagree silently, with the engine's
+    copy winning because it runs first, and every table seal above still green.
+
 **What these seals cannot see:** whether the seeded matrix is *correct* — no test can tell a wrong
 severity table from a right one, which is why §2 makes ratification a named human act and leaves
 `prov:wasDerivedFrom` empty until it happens. Also unseen: whether the hazard taxonomy
@@ -751,12 +921,26 @@ standard was supposed to buy.**
    signatory — the programme's person, not ours** — and they are required only for an overlay row
    that departs from the standard. A cell matching Table III already has its authority.
 
-   > **⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
-   > The MATRIX was transcribed from 882E's own PDF cell by cell (see below). The LADDER is not in
-   > 882E at all — the standard defers and names no authority — so the High/Serious/Medium/Low
-   > assignment above is attributed to DoDI 5000.02 and **has not been read from source by this
-   > lane**. It is recorded as attributed in the TTL rather than borrowing the matrix's citation.
-   > Verifying it is a half-hour somebody should spend before a real acceptance routes on it.
+   > ~~**⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
+   > The LADDER is not in 882E at all, so the assignment above is attributed to DoDI 5000.02 and
+   > has not been read from source by this lane. Verifying it is a half-hour somebody should spend
+   > before a real acceptance routes on it.~~
+   >
+   > **STRUCK 2026-09-14 — BOTH HALVES ARE NOW READ FROM SOURCE, and §10.2 is closed with a
+   > citation rather than with an argument.** DoDI 5000.88 ¶3.6.e.(1)(b)1 (18 Nov 2020 issue)
+   > confirms the ladder level for level: CAE (or DAE) → High, PEO-level → Serious, PM → Medium and
+   > Low. **The half-hour was spent and the ladder survived it** — which is worth recording,
+   > because the matrix did *not* survive the same exercise and the two were flagged with identical
+   > confidence beforehand.
+   >
+   > **THEY STILL DO NOT SHARE A CITATION, and that half of the warning stands permanently.** The
+   > matrix cites MIL-STD-882E; the ladder cites the instruction, under its own
+   > `safety:ladderDerivedFromInstruction` predicate. 882E §4.3.7 defers this question *by name*, so
+   > the standard's citation can never cover the ladder no matter how well verified it is — and the
+   > instruction has already moved between issues once, which is why the TTL records **which
+   > issue** and not only which paragraph.
+   >
+   > **No real acceptance is blocked on provenance any more.** What remains is the roll.
 
    **AND THE READING WAS WRONG IN FIVE OF TWENTY CELLS.** The seeded matrix was labelled "the
    agent's reading of MIL-STD-882 convention", which was an honest label on a table nobody had

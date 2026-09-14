@@ -38,15 +38,34 @@ _DURATION = re.compile(r'HELM_TIMEOUT="\$\{HELM_TIMEOUT:-(?P<v>\d+)(?P<unit>[smh
 
 
 def _inner_seconds() -> int:
-    data = yaml.safe_load(_VALUES.read_text(encoding="utf-8"))
-    return int(data["primeSubstrate"]["ingestTimeout"])
+    """The inner bound the PRIME WILL ACTUALLY USE — derived, not read from a config literal.
+
+    ⛔ THIS READ `primeSubstrate.ingestTimeout` OUT OF values.yaml AND THAT WAS THE DEFECT ONE
+    LAYER UP. The seal correctly caught the bound disagreeing with the queue on 2026-09-14, and
+    the first repair was to RAISE THE NUMBER — which is the move this seal exists to prevent.
+    Raising a bound to clear a red and raising it because the work grew are indistinguishable in
+    a diff: both are a bigger integer.
+
+    So the number is gone. `derived_ingest_timeout()` computes it from the manifest the prime is
+    about to run, the chart omits the flag unless someone overrides it, and THIS SEAL NOW
+    ASSERTS THE DERIVATION RATHER THAN A VALUE. Adding an ontology moves the bound by
+    construction and there is nothing left to forget.
+    """
+    import sys
+    if str(_ROOT / "setup") not in sys.path:
+        sys.path.insert(0, str(_ROOT / "setup"))
+    import prime_databases  # noqa: PLC0415
+    return prime_databases.derived_ingest_timeout()
+
+
+_DURATION = re.compile(r'HELM_TIMEOUT="\$\{HELM_TIMEOUT:-(?P<v>\d+)(?P<unit>[smh])\}"')
 
 
 def _outer_seconds() -> int:
+    """helm's own bound, read from the script's DEFAULT rather than restated here."""
     m = _DURATION.search(_SCRIPT.read_text(encoding="utf-8"))
     assert m, "HELM_TIMEOUT default not found in upgrade-sandbox.sh — the pattern moved"
-    mult = {"s": 1, "m": 60, "h": 3600}[m.group("unit")]
-    return int(m.group("v")) * mult
+    return int(m.group("v")) * {"s": 1, "m": 60, "h": 3600}[m.group("unit")]
 
 
 def test_both_bounds_are_readable():

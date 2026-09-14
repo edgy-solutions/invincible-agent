@@ -680,3 +680,25 @@ secrets:
 # --------------------------------------------------------------------------
 graphHost:
   enabled: true
+
+# --------------------------------------------------------------------------
+# ENGINE-SAFETY — ON in sandbox, increment 5 (ADR-0051).
+#
+# DECLARED HERE, NOT PASSED AS `--set`. A --set survives exactly one release
+# and is invisible to every reader of this repo; upgrade-sandbox.sh refuses
+# --reuse-values on purpose, so the next roll computes from the files and a
+# --set-only engine is DELETED. That is not hypothetical — graphHost.enabled
+# lived only in a release's user-supplied values on 2026-09-12, the roll
+# dropped it, and the census reported "OK: all 16" while a host had vanished.
+#
+# values.yaml keeps `enabled: false` — the platform default, and B5's to
+# change. This is the sandbox saying the sandbox wants it.
+#
+# SHIPS WITH bcd9d37 OR THE CELL GRANTS NOTHING: the registration passing
+# domains=DOMAINS is what makes the SUSTAINMENT/SAFETY_ENGINEER cell mean
+# anything. Before that commit the engine registered 0/3 verbs and any that
+# had landed would have been domain-agnostic — visible to every caller in the
+# fleet, the gate inverted by an OMITTED argument rather than a wrong one.
+# --------------------------------------------------------------------------
+engineSafety:
+  enabled: true
