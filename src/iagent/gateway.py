@@ -3273,11 +3273,38 @@ def _project_route_decision(mat: dict) -> dict | None:
     #
     # Same honest-empty discipline as the pool above: absent projects to [], never a crash.
     try:
-        excluded = json.loads(md.get("eligibility_excluded") or "[]")
-        if not isinstance(excluded, list):
-            excluded = []
+        _raw_excluded = json.loads(md.get("eligibility_excluded") or "[]")
+        if not isinstance(_raw_excluded, list):
+            _raw_excluded = []
     except (ValueError, TypeError):
-        excluded = []
+        _raw_excluded = []
+
+    # ── FLAGGED IS NOT EXCLUDED, AND ONE LIST CANNOT SAY BOTH ──────────────────────────────
+    #
+    # The field is named `eligibility_excluded` and the arity gate stopped excluding on
+    # 2026-09-04 — it FLAGS `needs_instance` and KEEPS the verb as a candidate, because
+    # removing the only verb that fits abstains for the reason it would have asked about.
+    # Every such entry carries `disposal: "flagged"`, so the distinction was in the data and
+    # nowhere in the read: a live candidate rendered under a key whose name says it was
+    # deleted.
+    #
+    # THE NARROWING LANDS HERE, AND ONLY NOW. It was held additive — both keys carrying the
+    # flagged rows — until the consumer read the new shape AT THE SERVING SURFACE, which is
+    # `cortex-ui` e1f9722, verified in the pod rather than on main (R-055.1: merged-is-not-
+    # deployed is the same window one repo over). `readExclusions` now PARTITIONS on
+    # `disposal` and takes `flags` first, so neither half is derived from the other's absence
+    # and a third disposal cannot be absorbed into either.
+    #
+    # Both halves are computed from one partition rather than two comprehensions, so a row
+    # that is neither `flagged` nor recognised cannot silently land in both or in neither.
+    flags, excluded = [], []
+    for _r in _raw_excluded:
+        # An ABSENT `disposal` reads as removed, deliberately: every row predating the field
+        # meant exactly that, and a mislabel is visible where a disappearance is not.
+        if isinstance(_r, dict) and _r.get("disposal") == "flagged":
+            flags.append(_r)
+        else:
+            excluded.append(_r)
 
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
@@ -3338,6 +3365,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             # contest, not just the winner (losers first-class).
             "candidates": candidates,
             "excluded": excluded,
+            "flags": flags,
         }
 
     # Fallback projection — surface that the pipeline GENUINELY fell
@@ -3393,6 +3421,7 @@ def _project_route_decision(mat: dict) -> dict | None:
         # so "why did nothing win" is visible with scores.
         "candidates": candidates,
         "excluded": excluded,
+        "flags": flags,
     }
 
 
@@ -4671,6 +4700,26 @@ async def generate_dagster_stream(
             {k: v["source"] for k, v in _chain_slots.items()},
         )
 
+    # ── THE ANSWER TURN CARRIES THE ASK'S ACCUMULATED SET ────────────────────────────────────
+    #
+    # `_pre_resolved_from_ask` builds the route from the ASK artifact, and the ask is by
+    # construction the turn where nothing was bound — so `subject_instance_id` is necessarily
+    # empty there and rode forward onto the turn that finally supplied one. Measured on
+    # artifact-2-1789404372153: the pick bound `program_id: NP-MERIDIAN`, the arity gate still
+    # saw a set query, and the dispatch abstained FOR THE REASON THE ASK HAD JUST BEEN ANSWERED.
+    #
+    # THE SET TRAVELS, NOT A LIST OF NAMES. Names alone would be a third thing the ask's payload
+    # does not carry that the answer turn needs — the defect's own shape one more time. The
+    # provenance-keyed union is what `_accumulated_slots` already walks out of the lineage, so
+    # the ask turn and the answer turn share ONE payload shape and the consumer derives what it
+    # needs from it.
+    #
+    # PRE-RESOLVED ONLY. The classified path has no ask, so it has no unpromoted instance —
+    # carrying this there would feed a state that cannot arise, and a dead branch under a seal
+    # reads as coverage.
+    if _pre_resolved:
+        _pre_resolved["accumulated_slots"] = _chain_slots or {}
+
     mode: str
     entity_refs: list[str] = []
     intent_extraction: dict = {}
@@ -5585,6 +5634,30 @@ async def _stream_direct_outcome(
         bundle["resolved_intent"]["refused_slots"] = json.loads(
             _slots_md.get("refused_slots") or "[]"
         )
+        # ── THE VERB AND THE DISPOSITION TRAVEL WITH THE SLOTS ────────────────────────────
+        #
+        # This wrote ONLY the two slot keys onto whatever `resolved_intent` already held — and
+        # on the direct path that is nothing. Measured on artifact-2-1789404372153: a FAILED
+        # artifact whose entire intent was
+        #
+        #     {"refused_slots": [], "accepted_slots": {"program_id": "NP-MERIDIAN"}}
+        #
+        # while artifact-1 and the older cost artifact both carry `verb_iri`, `disposition`,
+        # `subject_uri` and `owner_persona`.
+        #
+        # **A FAILED ARTIFACT WITH NO VERB IS UNATTRIBUTABLE BY CONSTRUCTION.** It took three
+        # reads of the artifact store to learn which verb had been refused, and the answer was
+        # sitting in `routing.excluded[]` the whole time — in a different column, because the
+        # field that names the action had been dropped from the field that records the intent.
+        #
+        # Written with `setdefault` rather than assignment: where a fuller intent already exists
+        # (the classify path fills it in above) this must not overwrite it with the direct
+        # path's view. Only the absent keys are supplied.
+        for _k in ("verb_iri", "disposition", "subject_uri", "owner_persona",
+                   "subject_instance_id", "subject_instance_label", "slot_resolution"):
+            _v = _slots_md.get(_k)
+            if _v not in (None, ""):
+                bundle["resolved_intent"].setdefault(_k, _v)
 
     if outcome.kind == direct_dispatch.ABSTAIN:
         # THE VERB WAS RIGHT AND THE ENGINE DID NOT ANSWER. The routing record above is
