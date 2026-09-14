@@ -409,6 +409,33 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "mesh/mesh_system.ttl",
         "path": "ontologies/mesh_system.ttl",
     },
+
+    # ----- LAYER 6: DOCS (the runbook corpus as DocPage instances, ADR-0037) -----
+    # THE SIXTH DOMAIN, AND ITS OWN DOMAIN ON PURPOSE. The drop set is derived as
+    # {f"http://internal/{e['domain']}"}, so a docs entry filed under an existing domain would
+    # land in that domain's vocabulary graph and be swept with it. ADR-0037's resolved open
+    # question rules this: internal/DOCS is manifest-class and IS prime-wiped, and that is what
+    # makes it safe — the corpus is markdown-in-git, fully reproducible, and doc ingest appends
+    # exactly as the TTLs do, so an exempted graph would accumulate duplicate triples per prime.
+    # No change to clear_ontology_graphs() is needed: it derives its drop set from this list.
+    #
+    # THIS FILE DECLARES ZERO owl:Class AND THAT IS FINE — VERIFIED, NOT ASSUMED. It holds
+    # DocPage INDIVIDUALS. doc-tools' sync_jena_ontologies_to_neo4j has an explicit third case
+    # for a class-less ontology (its comment names pcn_disposition_rules.ttl): it probes the raw
+    # graph, finds no class declaration, and skips the Neo4j write gracefully rather than raising
+    # the "content drift" error. The Jena named-graph load — which is where the doc route reads —
+    # still succeeds. Two manifest entries already rely on that path today
+    # (pcn_disposition_rules.ttl, safety_risk_matrix.ttl), so this adds no new failure mode.
+    #
+    # GENERATED, NOT AUTHORED: scripts/generate_docs_corpus.py builds it from the frontmatter of
+    # docs/runbooks/*.md, and tests/test_docs_corpus_drift.py fails if the committed file has
+    # drifted from the pages. Editing this TTL by hand is a change that the next generate erases.
+    {
+        "domain": "DOCS",
+        "name": "docs_corpus",
+        "s3_key": "docs/docs_corpus.ttl",
+        "path": "ontologies/docs_corpus.ttl",
+    },
 ]
 
 

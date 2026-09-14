@@ -1,0 +1,70 @@
+# GENERATED FILE — DO NOT EDIT.
+#
+# Produced by `scripts/generate_docs_corpus.py` from the frontmatter of `docs/runbooks/*.md`.
+# Committed so a reviewer can read what will prime; `--check` fails if it has drifted from the
+# pages it was derived from.
+#
+# THIS IS THE SEED HALF OF THE DOC CORPUS. The work-side half arrives as an ADR-0036 overlay
+# through doc-tools' ingest, produces the same triples against the same vocabulary, and is
+# deliberately indistinguishable to a reader.
+#
+# The vocabulary itself (mesh:DocPage, mesh:explains, mesh:audience_hint, mesh:doc_kind) is
+# declared in mesh_system.ttl and primes with the MESH domain — a page here asserting a type that
+# was never declared is the fail-by-passing case ADR-0037 §1 exists to refuse.
+
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix cost: <http://invincible-agent/cost#> .
+@prefix docs: <http://invincible-agent/docs#> .
+@prefix fin: <http://invincible-agent/fin#> .
+@prefix mesh: <http://invincible-agent/mesh#> .
+
+docs:runbook-adding-a-canvas-template a mesh:DocPage ;
+  rdfs:label "Adding a canvas template" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "DATA_ENGINEER" ;
+  mesh:explains mesh:seedCanvas ,
+    mesh:seedPortfolioCanvas .
+
+docs:runbook-adding-a-graph a mesh:DocPage ;
+  rdfs:label "Runbook — adding a graph to engine-lg" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:explains mesh:finProgramBrief ,
+    mesh:costLotCostingReview ,
+    mesh:StatefulSupportResponse ,
+    cost:LotCostingReview ,
+    fin:Program ,
+    cost:ProductionLot .
+
+docs:runbook-adding-a-task-kind a mesh:DocPage ;
+  rdfs:label "Adding a task kind" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:explains mesh:DispositionReview .
+
+docs:runbook-adding-an-archetype a mesh:DocPage ;
+  rdfs:label "Adding an archetype" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:explains mesh:Archetype .
+
+docs:runbook-adding-an-engine a mesh:DocPage ;
+  rdfs:label "Runbook — adding an engine" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:explains mesh:resolveInstance ,
+    mesh:enumerateInstances ,
+    mesh:InstanceResolution ,
+    mesh:InstanceEnumeration .
+
+docs:runbook-rolling-a-service a mesh:DocPage ;
+  rdfs:label "Rolling a service" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" .
+# rolling-a-service.md: explains none — an honest row, not an omission.
+
+docs:runbook-writing-a-walk-sheet a mesh:DocPage ;
+  rdfs:label "Writing a walk sheet" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" .
+# writing-a-walk-sheet.md: explains none — an honest row, not an omission.
