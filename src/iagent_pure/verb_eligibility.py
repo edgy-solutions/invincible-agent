@@ -20,7 +20,11 @@ from typing import Any, Dict, List
 
 from iagent_pure.slot_acceptance import decode_declarations
 
-__all__ = ["filter_verbs_by_arity", "predicate_from_compat_record"]
+__all__ = [
+    "filter_verbs_by_arity",
+    "predicate_from_compat_record",
+    "turn_is_set_shaped",
+]
 
 
 def filter_verbs_by_arity(
@@ -80,6 +84,50 @@ def filter_verbs_by_arity(
         else:
             out.append(v)
     return out, flagged
+
+
+def turn_is_set_shaped(
+    subject_instance_id: str | None,
+    verb: Dict[str, Any],
+    bound_slot_names: set[str] | None,
+) -> bool:
+    """Is THIS turn set-shaped for THIS verb - reading the bound slots, not just the subject.
+
+    WHY THE SUBJECT FIELD ALONE IS THE WRONG READ, measured 2026-09-14 on the empty
+    `finProgramBrief` card. The answer-after-a-pick turn gets its route from
+    `_pre_resolved_from_ask`, which copies `subject_instance_id` out of **the ask artifact's**
+    `resolved_intent`. The ask is by construction the turn where no instance was named, so
+    that field is necessarily empty there - and it is copied forward unchanged onto the turn
+    that finally supplies one. The picked value lands in the chain's bound slots
+    (`accepted_slots: {"program_id": "NP-MERIDIAN"}`), which nothing promotes.
+
+    So `not subject_instance_id` reported SET on the exact turn that named the instance, the
+    arity gate flagged the verb `needs_instance`, and the dispatch precondition abstained -
+    **for the reason the ask had just been answered.** Same shape as the H06 ruling that made
+    this gate stop excluding, one layer further along: the gate is right that an instance is
+    needed and wrong about whether one arrived.
+
+    THE LINK IS DECLARED, NOT SNIFFED. A slot carrying `referent` names the class it
+    identifies an instance of, and `arity: single` is FORCED by exactly that slot being both
+    required and a referent (see `GraphManifest._arity_agrees_with_slots`). So the slot that
+    makes a verb single-arity IS the slot whose binding supplies the instance - the same
+    coincidence `filter_verbs_by_arity` already relies on to guarantee a kept verb cannot
+    dispatch silently. Reading it here closes the loop rather than adding a rule.
+
+    Conservative in the same direction as every other gate: unknown bound slots (``None``)
+    means "nothing known to be bound", never "assume an instance".
+    """
+    if subject_instance_id:
+        return False
+    bound = bound_slot_names or set()
+    if not bound:
+        return True
+    for decl in decode_declarations(verb.get("slots")):
+        if not isinstance(decl, dict):
+            continue
+        if decl.get("referent") and decl.get("required") and decl.get("name") in bound:
+            return False
+    return True
 
 
 def predicate_from_compat_record(cv: dict) -> dict:
