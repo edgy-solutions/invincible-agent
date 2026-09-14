@@ -123,3 +123,82 @@ def test_the_generator_refuses_an_unregistered_prefix():
 
     ok = mod._prefix_bindings({"mesh", "docs"})
     assert "http://invincible-agent/docs#" in ok, "a registered prefix is not bound"
+
+
+# ── THE POINTER HALF ──────────────────────────────────────────────────────────────────────────
+
+def test_every_page_carries_a_locator_and_a_sha_that_match_the_file():
+    """THE GRAPH HOLDS A POINTER, NEVER THE MARKDOWN, so the pointer has to be true.
+
+    Three things must agree, and they are computed in three different places: the sha in the row,
+    the sha embedded in the content-addressed key, and the sha of the bytes on disk. Any two
+    agreeing while the third does not is a page that resolves to nothing at answer time — the
+    failure a reader sees and no CI check would.
+    """
+    import hashlib
+    import importlib.util
+
+    import rdflib
+    spec = importlib.util.spec_from_file_location("gen_docs_corpus", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    g = rdflib.Graph()
+    g.parse(TTL, format="turtle")
+    mesh = rdflib.Namespace("http://invincible-agent/mesh#")
+
+    rows = {}
+    for page in g.subjects(rdflib.RDF.type, mesh.DocPage):
+        src = g.value(page, mesh.source)
+        sha = g.value(page, mesh.body_sha)
+        assert src is not None, f"{page} has no mesh:source — the route has nowhere to read from"
+        assert sha is not None, f"{page} has no mesh:body_sha — the route cannot verify what it read"
+        rows[str(src)] = str(sha)
+    assert rows, "no page carries a locator; this test is asserting nothing"
+
+    for path in gen.pages():
+        on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
+        computed_sha, key = gen.page_locator(path)
+        assert computed_sha == on_disk, "the generator's sha is not the sha of the file it read"
+        assert key in rows, (
+            f"{path.name} hashes to a key the corpus does not name ({key}) — the TTL is stale "
+            f"against this file and the body would be uploaded where no row points")
+        assert rows[key] == on_disk, (
+            f"{path.name}: the row's body_sha does not match the file")
+        assert on_disk in key, (
+            "the key is not content-addressed on the sha it carries, so a stale object is "
+            "reachable rather than orphaned")
+
+
+def test_the_uploader_refuses_to_upload_past_drift():
+    """BREAK ON PURPOSE, and it must fail BEFORE touching the network.
+
+    Uploading a body while the committed rows point elsewhere is the worst available outcome: the
+    prime reports success, every seal stays green, and the page resolves to nothing the first time
+    a reader asks. Restored by bytes.
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT))
+    from setup.prime_databases import upload_doc_pages
+
+    original = TTL.read_bytes()
+    try:
+        TTL.write_bytes(original + b"\n# drift\n")
+        with pytest.raises(RuntimeError) as caught:
+            upload_doc_pages()
+        assert "drift" in str(caught.value).lower(), (
+            f"the refusal does not name drift: {caught.value}")
+    finally:
+        TTL.write_bytes(original)
+    assert TTL.read_bytes() == original, "the tree was left mutated by a test"
+
+
+def test_the_vocabulary_declares_the_two_pointer_terms():
+    """A row asserting mesh:source against a term that was never declared is the fail-by-passing
+    case: ingest accepts it, and nothing ever matches."""
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(ROOT / "setup" / "ontologies" / "mesh_system.ttl", format="turtle")
+    mesh = rdflib.Namespace("http://invincible-agent/mesh#")
+    for term in ("source", "body_sha"):
+        assert (mesh[term], None, None) in g, f"mesh:{term} is not declared in mesh_system.ttl"

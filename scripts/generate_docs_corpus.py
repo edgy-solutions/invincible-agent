@@ -31,6 +31,7 @@ unchecked is a copy that silently stops matching its source.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import pathlib
 import sys
 
@@ -110,6 +111,23 @@ def pages() -> list[pathlib.Path]:
     return sorted(p for p in RUNBOOKS.glob("*.md") if p.name not in NOT_PAGES)
 
 
+def page_locator(path: pathlib.Path) -> tuple[str, str]:
+    """-> (body_sha, bucket-relative object key). THE ONE PLACE EITHER IS COMPUTED.
+
+    `setup/prime_databases.py` imports this rather than recomputing, and that is deliberate: the
+    key is content-addressed, so a second implementation that hashed differently would upload to a
+    key nothing points at and the failure would be a page that resolves to nothing at answer time
+    — silent, and only at the moment a reader asks. One function, imported by both, and a seal
+    asserting the committed TTL agrees with what this returns.
+
+    The key is bucket-RELATIVE, matching `CANONICAL_TTL_MANIFEST`'s `s3_key` convention: the bucket
+    is resolved from `ONTOLOGY_BUCKET` at read time so a locator does not hard-code one
+    deployment's bucket.
+    """
+    body_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    return body_sha, f"docs/pages/{body_sha}/{path.name}"
+
+
 def _prefix_bindings(used: set[str]) -> str:
     """`@prefix` lines for exactly the prefixes the corpus uses, sourced from the WRITE-SIDE table.
 
@@ -159,10 +177,13 @@ def render() -> str:
                 f"REFUSED: {p.name} declares {iri!r}, which is not in the docs: namespace. An "
                 f"unregistered prefix is passed through verbatim and the row matches nothing.")
 
+        body_sha, key = page_locator(p)
         lines = [f"{iri} a mesh:DocPage ;",
                  f'  rdfs:label "{_escape(_title(p))}" ;',
                  f'  mesh:doc_kind "{_escape(str(fm["doc_kind"]))}" ;',
-                 f'  mesh:audience_hint "{_escape(str(fm["audience_hint"]))}"']
+                 f'  mesh:audience_hint "{_escape(str(fm["audience_hint"]))}" ;',
+                 f'  mesh:source "{key}" ;',
+                 f'  mesh:body_sha "{body_sha}"']
 
         targets = fm["explains"]
         if targets == NO_TARGETS or not targets:

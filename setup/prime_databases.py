@@ -610,6 +610,81 @@ def record_prime_run(wiped: bool = False) -> None:
               "UNCHECKED (exit 3) until a prime records successfully.")
 
 
+def upload_doc_pages() -> None:
+    """Push each runbook's MARKDOWN to the corpus bucket at the key its DocPage row points at.
+
+    THE ROW IS A POINTER, SO THE THING IT POINTS AT HAS TO BE THERE. `docs_corpus.ttl` gives every
+    page a `mesh:source` key and a `mesh:body_sha`; the route resolves the page, reads the body
+    from that key, and refuses if the sha does not match. None of that works if the bytes are only
+    in a git checkout — the answer path runs inside the cluster, and a body read from a file baked
+    into some service's image would be a second copy with no seal over it.
+
+    CONTENT-ADDRESSED, WHICH IS WHY THIS IS SAFE TO RE-RUN AND SAFE TO LEAVE BEHIND. The key
+    contains the sha of the bytes, so re-uploading identical content is a no-op onto the same key
+    and changed content lands at a NEW key that a regenerated row points at. A stale object is not
+    merely detectable, it is unreachable: nothing references it.
+
+    IT REFUSES ON DRIFT RATHER THAN UPLOADING PAST IT. If the committed TTL disagrees with the
+    files on disk, uploading would put the bytes at keys no row names — every page would resolve to
+    nothing, at answer time, in front of a reader. That is the failure this check exists to make
+    loud, and it is exactly the state a prime run from a tree where someone edited a runbook and
+    did not regenerate would be in.
+    """
+    print("--- Uploading doc pages to MinIO ---")
+    if boto3 is None:
+        raise RuntimeError("boto3 not installed; pip install boto3")
+
+    # Imported BY PATH: `scripts/` is not a package, and the generator is the ONE place a key or a
+    # sha is computed. A second implementation here would hash the same bytes a slightly different
+    # way and upload to a key nothing points at.
+    import importlib.util
+    gen_path = SCRIPT_DIR.parent / "scripts" / "generate_docs_corpus.py"
+    spec = importlib.util.spec_from_file_location("generate_docs_corpus", gen_path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    committed = gen.OUT.read_text(encoding="utf-8") if gen.OUT.is_file() else ""
+    if committed != gen.render():
+        raise RuntimeError(
+            "REFUSED: docs_corpus.ttl has drifted from docs/runbooks/*.md. Uploading now would "
+            "put page bodies at keys no DocPage row names, and every doc answer would resolve to "
+            "nothing at answer time. Run `python scripts/generate_docs_corpus.py` and commit.")
+
+    endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=_minio_compat_config(),
+    )
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except Exception:
+        print(f"  [!] Bucket {bucket} not found; creating...")
+        s3.create_bucket(Bucket=bucket)
+
+    n = 0
+    for page in gen.pages():
+        body_sha, key = gen.page_locator(page)
+        # NO `domain` METADATA, DELIBERATELY. The ontology sensor watches this bucket and launches
+        # an ingest for new objects; a markdown body is not an ontology and must not be handed to
+        # a TTL parser. The sensor's own refusal on an undeclared domain is what keeps these out,
+        # so omitting the metadata is the interlock rather than an oversight.
+        s3.put_object(
+            Bucket=bucket, Key=key, Body=page.read_bytes(),
+            ContentType="text/markdown; charset=utf-8",
+            Metadata={"body-sha256": body_sha, "source-path": f"docs/runbooks/{page.name}"},
+        )
+        print(f"  {page.name} -> s3://{bucket}/{key}")
+        n += 1
+    print(f"  [OK] {n} doc page(s) uploaded")
+
+
 def upload_canonical_ttls() -> None:
     """Push every TTL in CANONICAL_TTL_MANIFEST to MinIO.
 
@@ -1632,6 +1707,7 @@ def main() -> None:
 
     if args.upload_only:
         upload_canonical_ttls()
+        upload_doc_pages()
         if args.trigger_ingest:
             trigger_ingest_jobs(wait=args.wait_for_ingest,
                                 wait_timeout=args.ingest_timeout)
@@ -1642,6 +1718,7 @@ def main() -> None:
 
     if not args.skip_uploads:
         upload_canonical_ttls()
+        upload_doc_pages()
 
     if args.trigger_ingest:
         trigger_ingest_jobs(wait=args.wait_for_ingest,
