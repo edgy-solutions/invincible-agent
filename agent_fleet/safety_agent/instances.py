@@ -74,24 +74,25 @@ def _members() -> Dict[str, List[Dict[str, str]]]:
         SAFETY + "WriteUp": [
             {"identifier": w.write_up_id, "label": w.narrative} for w in WRITE_UPS
         ],
-        # ── `maint:WorkOrder` IS DELIBERATELY NOT CLAIMED HERE, AND IT IS A QUESTION, NOT AN
-        #    OVERSIGHT ─────────────────────────────────────────────────────────────────────
+        # ── `maint:WorkOrder` IS NOT CLAIMED HERE — RULED 2026-09-14 ─────────────────────────
         #
-        # `assessDeferralRisk` takes a work order, so "assess the deferral risk for WO-3001"
-        # will fail to resolve exactly the way `HAZ-1003` did until somebody claims that class.
-        # This engine is NOT the obvious somebody: work orders are the MAINTENANCE plane's, and
-        # ADR-0035's two planes plus this module's own engine docstring say an analysis engine
-        # reads a plane it does not own.
+        # **Engine E resolves work orders. Engine S does not claim them.** Written first as an
+        # open question and ruled the same way, which is why the note stays: an absence with no
+        # reason beside it reads as an oversight to the next author, and the next author's
+        # instinct is to close it.
         #
-        # Claiming them because they happen to sit in this engine's fixture would be an
-        # ownership decision made by a convenience — the same shape as filing cost classes under
-        # the finance domain because a manifest field was handy. So the gap is left OPEN and
-        # NAMED rather than closed quietly, and the scope question goes to the architect: either
-        # Engine E resolves work orders, or Engine S is ruled the provider for the ones it holds.
+        # The principle is this module's own, turned on itself: A SECOND PROVIDER FOR A CLASS
+        # ALREADY CLAIMED IS A SECOND TRUTH. Engine E already provides `resolve_instance` for the
+        # maintenance plane. Claiming work orders because they happen to sit in this engine's
+        # fixture would be the overwrite defect wearing a convenience — the same shape as filing
+        # cost classes under the finance domain because a manifest field was handy.
         #
-        # THE WALK DOES NOT NEED IT YET. Step 2 asks for a hazard, and `safety:Hazard` is
-        # claimed below. Shipping the half that is unambiguous beats claiming a plane to save a
-        # later round trip.
+        # `assessDeferralRisk` IS NOT ORPHANED BY THIS. It binds `work_order_id` through Engine
+        # E's hit, under the refinement that domain scoping governs SUBJECT resolution while SLOT
+        # REFERENT resolution asks the referent class's provider whatever domain the request is
+        # in — the slot declared the class, so Engine E's hit is the answer to the question the
+        # slot asked rather than an out-of-domain candidate. That refinement is Lane 1's, at the
+        # pre-step; nothing here depends on it landing first.
     }
 
 

@@ -129,14 +129,32 @@ def test_too_many_is_reserved_for_a_class_larger_than_a_menu():
     )
 
 
-def test_work_orders_are_UNCLAIMED_deliberately_and_this_records_it():
-    """A DECISION, NOT A GAP, and asserted so it cannot become one silently.
+def test_work_orders_are_UNCLAIMED_by_RULING_not_by_omission():
+    """**RULED 2026-09-14: Engine E resolves `maint:WorkOrder`. Engine S does not claim it.**
 
-    `assessDeferralRisk` takes a work order, so "assess the deferral risk for WO-3001" fails to
-    resolve exactly as HAZ-1003 did. This engine does not claim the class: work orders are the
-    MAINTENANCE plane's, and claiming them because they sit in this fixture would be an ownership
-    decision made by convenience. If a later ruling gives Engine S that class, this test is the
-    one that must change — which is the point of writing the refusal down.
+    This test was written the day before as an open question — the refusal recorded so it could
+    not become a silent gap — and the ruling settled it in the same direction. The behaviour is
+    unchanged and the REASON is not, which is why the docstring moves rather than the assertions:
+    a test asserting the right thing for a superseded reason is a stale claim that still passes.
+
+    The principle is this engine's own, applied to itself: **a second provider for a class already
+    claimed is a second truth.** Engine E already provides `resolve_instance` for the maintenance
+    plane, so Engine S claiming work orders because they happen to sit in its fixture would be the
+    overwrite defect, not a convenience.
+
+    **AND `assessDeferralRisk` IS NOT ORPHANED BY THIS** — it binds `work_order_id` through Engine
+    E's hit. That needed a refinement to domain scoping, which is Lane 1's at the pre-step:
+    *domain scoping governs SUBJECT resolution — which class a question is about. SLOT REFERENT
+    resolution asks the referent class's provider whatever domain the request is in, because the
+    slot declared the class.* A SUSTAINMENT request binding a `maint:WorkOrder` slot takes Engine
+    E's hit as authoritative; it is not an out-of-domain candidate, it is the answer to the
+    question the slot asked.
+
+    So the assertion below is about THIS provider's restraint, not about the slot being
+    unfillable. If Engine S is ever ruled the work-order provider, this is the test that changes.
     """
     assert instances.enumerate_class(_WORK_ORDER)["outcome"] == "unsupported"
     assert instances.resolve("WO-3001") == []
+    # AND THE BARE FORM ABSTAINS TOO, which is the half of the walk's seal that belongs here:
+    # Engine E resolving `WO-3001` is correct; anyone resolving a bare `3001` is the phone book.
+    assert instances.resolve("3001") == []
