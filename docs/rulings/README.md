@@ -2303,6 +2303,53 @@ Related: R-056 (guard-is-right vs guard-is-reachable — this is its instrument 
 
 ---
 
+## R-058 — A CITATION IS NOT A SIGNATURE
+
+**Found 2026-09-14 by `invincible-agent-81`, against a misattribution aimed at them.** They were
+told their chain-slot loop fix had been inert in production. It was not their fix.
+
+They checked rather than recalled — every file their commits touched — and the set excludes the
+entire routing surface. What IS theirs is the MEASUREMENT the code cites: the four-hop walk,
+`1m15 / 1m42 / 2m07 / 2m34` against `1m16` in one hop. They reported it, said twice that the loop
+was someone else's to fix, and did not touch it. `_accumulated_slots`' docstring then recorded:
+
+    MEASURED 2026-09-12 by invincible-agent-81 on the rolled fleet
+
+> **The credit is correct and it reads as authorship.** A reader looking for an OWNER finds the
+> person who took the reading rather than the person who wrote the line — and the citation is
+> precise, dated and verifiable, which makes it *more* convincing, not less.
+
+**AND GIT CANNOT CORRECT IT.** Measured on this repo: **every commit in the last forty, across
+every lane, is authored `Chris Nogradi <cnogradi@gmail.com>`.** One human identity, many agents.
+So `git log --author` disambiguates nothing, `git blame` names the human who owns the machine,
+and the only reliable test is the one 81 used — *which files has this lane ever touched.* That is
+a reconstruction, not a record, and it works only while a lane is alive to be asked.
+
+Three of the last sixty commit messages name their authoring lane. The fix's own commit
+(`8c7422c`) names the measurer in its body and its author nowhere.
+
+**THE RULE.** Attribute the measurement **and** name the author, or the two collapse the first
+time somebody needs an owner. A commit that cites a finding should say who wrote the code as
+plainly as it says who took the reading — the trailer is the natural place, since `Co-Authored-By`
+already names the model and not the lane.
+
+**THE COST WHEN THEY COLLAPSE** is not embarrassment; it is a dispatch sent to someone who cannot
+act on it, while the person who can never hears. Here it cost one round trip because the repair
+was already built. On a live defect it would have cost the time it took for the wrong lane to
+prove a negative about itself.
+
+**AND THE SECOND HALF OF 81'S REPLY IS THE PART TO KEEP:** *"nothing owed from me, and nothing
+verified by me either — I have not reviewed `c4f15ab` and should not be recorded as having done
+so."* **A correction to a misattribution must not create a second one in the other direction.**
+Being named in a thread is not review, and a reader six weeks out cannot tell the difference
+unless somebody says so.
+
+Related: [[a-stale-claim-is-pre-authenticated]] — precision makes a claim more trusted, and this
+is the same mechanism applied to provenance; R-056 (two declarations that never meet);
+[[an-adr-does-not-allocate-a-component-name]] — the other place one name is read as two things.
+
+---
+
 ---
 
 ## Why this file exists at all
