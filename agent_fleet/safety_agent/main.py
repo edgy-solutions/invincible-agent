@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # TRANSPORT AUTH IS A BIRTH RULE (runbook §6), and this engine was born without it until the
@@ -395,6 +396,63 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
         return {"refused": True, "reason": f"unknown verb '{req.fn}'",
                 "known": sorted(BY_FN)}
 
+    fn = getattr(measures, req.fn)
+
+    # ── AN UNEXPECTED KEY IS A 422 NAMING THE ARGUMENT, NEVER A 500 ─────────────────────────
+    #
+    # `fn(**req.params)` unfiltered raises `TypeError: got an unexpected keyword argument` for
+    # ANY key the caller adds, and FastAPI turns that into a 500 with no body. MEASURED against
+    # this engine before the guard: `{"subject": "safety:Hazard"}` and `{"hazard_id": "HAZ-1003"}`
+    # each killed the call on arrival — and a 500 with no body is indistinguishable, from the
+    # surface, from the blank card a missing rendering produces. Two unrelated defects with one
+    # symptom is how an afternoon goes.
+    #
+    # THE GATEWAY'S `accept_slots` PROJECTION IS SUPPOSED TO STOP THIS UPSTREAM, and this guard
+    # exists anyway: an engine that dies on an unexpected kwarg is trusting a caller it cannot
+    # see. Belt and braces — the same posture the safety task kinds take by keeping `accepted`
+    # in the global verb set until the cutover reads rows.
+    #
+    # THE REFUSAL IS BUILT FROM THE SIGNATURE, not from a hand-kept list, so a slot added to a
+    # measure is accepted here the moment it exists and a slot removed stops being accepted in
+    # the same edit. A hand-written allowlist would be a second declaration of the signature,
+    # and the two would disagree on the first change.
+    import inspect
+
+    params = inspect.signature(fn).parameters.values()
+    accepted = {
+        p.name for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    # A MEASURE DECLARING `**kwargs` ACCEPTS ANYTHING, AND THE GUARD MUST SAY SO. Without this
+    # the check refuses every key for such a function, because its named set is empty — an
+    # over-constrained guard failing HONEST data, which is the kind that gets deleted rather
+    # than fixed. No measure takes `**kwargs` today; the seal's own stub does, and that is how
+    # this surfaced: the guard answered 422 to a call it had no business refusing.
+    takes_any = any(p.kind is p.VAR_KEYWORD for p in params)
+    unexpected = [] if takes_any else sorted(set(req.params) - accepted)
+    if unexpected:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "refused": True,
+                "reason": f"{req.fn} does not accept {', '.join(unexpected)}",
+                "unexpected": unexpected,
+                # WHAT IT *DOES* ACCEPT, from the declaration — a refusal that names only what
+                # was wrong makes the caller guess at what would be right.
+                "accepts": sorted(accepted - {"state"}),
+                "slots": slots_mod.slots_for(req.fn),
+            },
+        )
+
+    # ── THE MANDATORY-SLOT REFUSAL RUNS *AFTER* THE UNEXPECTED-KEY ONE, DELIBERATELY ────────
+    #
+    # It used to run first, and the ordering hid the more diagnostic answer: a caller sending
+    # `hazard_id` to a verb whose slot is `work_order_id` got back "missing required slot(s)"
+    # and no mention of the key it DID send. The seal caught it — `assess_deferral_risk`
+    # answered 200 to an unexpected key because its mandatory slot was absent in the same call.
+    #
+    # An unexpected key means the caller's model of this verb is wrong, which usually EXPLAINS
+    # the missing slot rather than being a second independent fault. Naming the wrong key first
+    # answers both; naming the missing slot first answers neither.
     missing = slots_mod.missing_mandatory(req.fn, req.params)
     if missing:
         return {
@@ -404,8 +462,33 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
             "slots": slots_mod.slots_for(req.fn),
         }
 
-    fn = getattr(measures, req.fn)
-    result = fn(**req.params)
+    # ── AND NO MEASURE MAY DIE WITHOUT WRITING A RESPONSE ───────────────────────────────────
+    #
+    # The guard above stops the ONE exception we found. This stops the CLASS. An unhandled
+    # exception in this handler produces no body, and from the caller's side that is
+    # indistinguishable from an engine that is merely slow — 58 seconds of learning nothing
+    # that 5 milliseconds could have told it. The artifact reads FAILED with 0 bytes and points
+    # at the dispatch, which is the one place the cause is not.
+    #
+    # NOT A BARE `except` AROUND EVERYTHING: the refusals above are DECIDED answers and return
+    # normally. This wraps only the measure call, so a bug inside a measure is reported as a
+    # bug inside that measure, by name, with the params that reached it.
+    try:
+        result = fn(**req.params)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=500,
+            content={
+                "refused": True,
+                "reason": f"{req.fn} raised {type(exc).__name__}: {exc}",
+                "fn": req.fn,
+                # THE PARAMS AS RECEIVED, because the first question about a failed dispatch is
+                # always "what did it actually get sent" and the answer has been unavailable
+                # every time it has been asked.
+                "params_received": sorted(req.params),
+            },
+        )
+
     result["output_uri"] = spec["output_uri"]
     # NAMES NO ARCHETYPE. The card shape is the presentation layer's decision
     # (ADR-0017); an engine that names one is deciding how it is drawn.
