@@ -16,8 +16,14 @@ restated.** A message is not citable and survives neither its sender nor its rea
 author (docs/ADR lane) and the census owner (`iagent-mesh-sdk-ca`) both need this to still exist
 when the addresses have changed.
 
-Scope is `agent_fleet/ontology_service/` at `3247562`. This packet is the ENGINE-O HALF of ca's
-fleet census, not the census.
+Scope is `agent_fleet/ontology_service/`. The site population was derived at `3247562`; §7 and §7b
+read the query texts at `0ef480c`, and §3/§3b record what has changed in between. This packet is
+the ENGINE-O HALF of ca's fleet census, not the census.
+
+**THE THIRTEEN QUERY TEXTS ARE READ — §7 has the ten Neo4j and provider-discovery ones, §7b the
+three Weaviate ones.** Until both existed this packet's purposes came from docstrings, which is
+not evidence for any operation whose signature turns on a detail of its query. Between them they
+change six signatures, and §7b's first item changes what `MeshVectors` IS.
 
 ## §0 — HOW THE POPULATION WAS DERIVED, and what the derivation cannot see
 
@@ -304,6 +310,61 @@ Python AFTER the query, **keyed on an EMAIL**. "Identity is an argument" cannot 
 this door until that keying moves to a principal id — which is the gateway's email-keyed-authz
 ruling, arriving inside an engine's read path. The interface should take a principal, and this
 implementation will need the gateway's change before it can mean one.
+
+## §7b — THE WEAVIATE QUERY TEXTS, READ. `MeshVectors.nominate(...)` is not what its name suggests
+
+Completing §7: ten of the thirteen sites were read there, all Neo4j and provider-discovery. These
+are the remaining three, and they change the interface more than any of the first ten.
+
+**1. THE VECTOR IS COMPUTED BY THE CALLER. WEAVIATE IS DUMB STORAGE.** Both searches call
+`embed_query(query)` — `agent_fleet/utils/embed.py` → LiteLLM `/embeddings` — and pass the result
+as `vector=` to `collection.query.hybrid(...)`. The module says so outright: *"Weaviate is dumb
+storage: NO text2vec module is involved on the cluster side."* So `MeshVectors.nominate(text)`
+would be a lie by omission: **the implementation owns the embedding contract**, and a caller
+handing text to two implementations can get vectors from two different models against one stored
+index. `embed.py` carries `DEFAULT_EMBED_MODEL = "nomic-embed-text"` and `EXPECTED_EMBED_DIM = 768`
+**duplicated in two files by hand** (its own header says to update both). The interface must
+either carry the model identity or the implementation must assert it against the collection.
+
+**2. THE OPERATION ANSWERS IN TWO RETRIEVAL MODES AND THE RETURN SHAPE CANNOT TELL THEM APART.**
+Both sites wrap `embed_query` in `try/except` and fall back to `collection.query.bm25(...)`,
+printing to stdout. Same fields, same score key, no marker. **This is not hypothetical: the fleet
+ran 67 days with `LLM_BASE_URL` unset, so every embed raised and every search was BM25-only** —
+and nothing in any result said so. A `nominate()` that returns rows without the mode that produced
+them re-arms that exact failure for every future consumer. **The retrieval mode belongs in the
+return, not in a log line.**
+
+**3. THE TWO COLLECTIONS SCOPE DOMAINS BY DIFFERENT RULES, AND ONE IS PERMISSIVE.**
+
+    OntologyClass   domain  (singular)  ->  .equal(d) | .contains_any(ds)      strict
+    Predicate       domains (list)      ->  .contains_any(ds) OR length == 0   permissive
+
+The predicate filter deliberately keeps **domain-agnostic** predicates (`domains == []`) via a
+length filter, because Weaviate v4 rejects `.equal([])`. That is the exact twin of §7's Neo4j
+finding — a verb declaring no domains is in scope everywhere — and the class collection has **no
+such branch**. One interface, two domain semantics, and the difference is invisible in a signature
+that takes `domain` uniformly.
+
+**4. THE SCORES ARE NOT COMPARABLE ACROSS THE TWO CALLS.** The class path returns Weaviate's raw
+hybrid score. The predicate path subtracts an anti-synonym penalty —
+`adjusted_score = max(0.0, score - _ANTI_SYN_PENALTY_ALPHA * overlap)` with alpha defaulting to
+`0.50` from `PREDICATE_ANTI_SYNONYM_ALPHA`. **So `score` means "what Weaviate said" at one door and
+"what Weaviate said, adjusted by a locally-tuned penalty" at the other**, and either may be `None`.
+An interface returning a bare `score` invites exactly the cross-provider comparison that an
+authority ranking without a scope produces.
+
+**5. EMPTY IS OVERLOADED THREE WAYS AND ONE OF THEM ASKS THE CALLER TO DO SOMETHING ELSE.** Both
+sites return `[]` for: collection absent, nothing matched, and the client being unreachable or
+throwing. The predicate docstring even says *"Empty list means the collection is empty, missing, or
+unreachable — caller should fall back to Cypher exact-match."* **That instruction cannot be
+followed from the return value**, because the caller cannot tell which of the three happened. §2's
+`collection_present` probe is the first half of the fix; the second is that a failure must not
+arrive as an empty success.
+
+**6. AND ONE DEFAULT WORTH PINNING BEFORE IT BECOMES A CONTRACT.** The class search declares
+`limit: int = 10`; the predicate search requires `limit` from its caller. Two doors of one
+interface, one of which has already invented a bound. Pick it in the interface and read it from
+there — a default invented locally becomes a contract nobody agreed to.
 
 ## §8 — WHAT THIS PACKET DOES NOT ESTABLISH
 
