@@ -34,8 +34,15 @@ test_sites_excluded: true
 test_sites_reason: >-
   A kind literal in a test is a fixture — the declared input to an assertion. Reading it from a
   declaration instead would make the assertion circular. Seals that pin the CODE TABLES
-  (test_task_verbs_by_kind, test_an_undeclared_kind_accepts_nothing) name kinds by necessity and
-  retire with those tables at the M3.3 cutover.
+  (test_task_verbs_by_kind, test_an_undeclared_kind_accepts_nothing) name kinds by necessity.
+  ⛔ CORRECTED 2026-09-14 — an earlier version of this line said they "retire with those tables
+  at the M3.3 cutover". That is an R-054 violation written into the audit. `test_task_verbs_by_kind`
+  carries the REFUSAL assertions — a triage task refuses approve/reject, an acknowledgement
+  without a reason is refused — and those are the arms proving the gate says NO to something.
+  Retiring them with the table leaves seals that assert an UNDECLARED kind is refused and nothing
+  that asserts a DECLARED kind refuses a verb its own row omits. That intermediate state is not
+  broken, it is PERMISSIVE, and permissive passes every test written to catch broken. The refusal
+  arms are RE-HOMED onto the declaration path before the deletion, never deleted with the table.
 
 sites:
 
