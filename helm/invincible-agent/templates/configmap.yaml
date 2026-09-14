@@ -97,6 +97,16 @@ data:
   WEAVIATE_GRPC_HOST: {{ include "invincible-agent.weaviateGrpcHost" . | quote }}
   {{- end }}
   JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/sparql"
+  # THE UPDATE ENDPOINT IS DECLARED, NOT DERIVED. engine-o computed it as
+  # `JENA_SPARQL_ENDPOINT.replace("/sparql", "/update")` — string surgery that DERIVES NOTHING
+  # WHILE READING LIKE A DERIVATION. It happens to work on this spelling, which is what makes it
+  # dangerous: it works, so nobody looks, and it is one chart edit away from POSTing updates at a
+  # query endpoint. Declared here so a missing value makes the update path refuse BY NAME rather
+  # than silently substitute.
+  #
+  # Same `fusekiUrl` helper as its sibling above, so the two cannot drift to different hosts —
+  # which a second hardcoded literal would eventually allow.
+  JENA_UPDATE_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/update"
   DATABASE_URL: {{ include "invincible-agent.pgUri" . | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
   # Engine service URLs (Internal K8s DNS)
