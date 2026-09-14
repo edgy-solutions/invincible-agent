@@ -27,18 +27,74 @@ from typing import Dict, Optional, Tuple
 
 _SAFETY = "http://internal/sustainment/safety#"
 
-#: Repo-relative default. Overridable so a deployment names the file it primed.
-_DEFAULT_TTL = (
-    Path(__file__).resolve().parents[2] / "setup" / "ontologies" / "safety_risk_matrix.ttl"
-)
-
 #: (severity_code, probability_code) -> (risk_level_label, acceptance_audience)
 _CELLS: Optional[Dict[Tuple[str, str], Tuple[str, str]]] = None
 _SOURCE: str = ""
 
 
+def candidate_matrix_paths(module_path: Path) -> list[Path]:
+    """Where the ratified matrix might be. THE REPO CANDIDATE IS GUARDED ON DEPTH.
+
+    **TAKES `module_path` RATHER THAN READING `__file__`, and that signature is why this is
+    testable at all** — copied from `restate_analyst.candidate_definition_dirs`, which takes the
+    same argument for the same reason. A seal can hand it `/app/matrix.py` and observe the guard.
+
+    That mattered immediately. The first seal written for this defect copied the engine into a
+    temp directory, called it "the flat layout", and **passed with the guard REMOVED** — because
+    `C:/Users/.../Temp/.../app/matrix.py` has plenty of parents. `/app` has two only because it
+    sits at the filesystem root. The fixture could not reproduce the property it was named after:
+    the fixture-that-cannot-fail shape, found inside the seal written to catch this very bug.
+
+    THIS CRASHED THE ENGINE AT IMPORT, AND THE ENGINE HAD NOT SHIPPED YET. It was a module-scope
+    constant:
+
+        _DEFAULT_TTL = Path(__file__).resolve().parents[2] / "setup" / ...
+
+    In the image `/app` IS the engine directory, so this module is `/app/matrix.py`, whose parents
+    are exactly `['/app', '/']`. `parents[2]` raises **IndexError at module scope**, and
+    `measures.py` imports this module at load — so the process would never have served. Not a 500;
+    a pod that cannot come up.
+
+    **AND THE ESCAPE HATCH COULD NOT HAVE SAVED IT, which is why it had to be a code fix.**
+    `matrix_path()` honours `SAFETY_RISK_MATRIX_TTL`, but the constant was evaluated at IMPORT —
+    the override was computed *after* the thing that crashed. No deployment-time workaround
+    existed.
+
+    `restate_analyst/workflow_definition.py:250` already carried this exact lesson in a docstring:
+    *"has exactly two parents, so an unguarded `parents[2]` raises IndexError."* Somebody hit it,
+    understood it, and fixed it in one file — **and it did not travel.** Two more engines shipped
+    the defect afterwards. The knowledge was in the tree the whole time.
+
+    LAZY RATHER THAN A CONSTANT, so the env override is read at CALL time and a deployment naming
+    the file it actually primed is obeyed.
+    """
+    here = module_path.resolve()
+    out: list[Path] = []
+    if len(here.parents) >= 3:  # repo layout only; guarded, see docstring
+        out.append(here.parents[2] / "setup" / "ontologies" / "safety_risk_matrix.ttl")
+    # Flattened container layout. NOTHING COPIES THE TTL HERE TODAY — the image build copies the
+    # engine directory, `utils/`, and named policy files; the ontologies are PRIMED, not shipped.
+    # So in the image this candidate does not exist and `SAFETY_RISK_MATRIX_TTL` (or increment 5's
+    # graph read) is required. Stated rather than discovered: the engine now STARTS either way and
+    # refuses loudly when asked for a level it has no table for.
+    out.append(here.parent / "safety_risk_matrix.ttl")
+    return out
+
+
 def matrix_path() -> Path:
-    return Path(os.getenv("SAFETY_RISK_MATRIX_TTL", str(_DEFAULT_TTL)))
+    """The ratified matrix, env override first, then the first candidate that EXISTS.
+
+    Returns the last candidate when none exists, so the refusal names the flat path a deployment
+    would have to supply rather than a repo path that means nothing inside the image.
+    """
+    override = os.getenv("SAFETY_RISK_MATRIX_TTL", "").strip()
+    if override:
+        return Path(override)
+    candidates = candidate_matrix_paths(Path(__file__))
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[-1]
 
 
 def _load() -> Dict[Tuple[str, str], Tuple[str, str]]:

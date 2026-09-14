@@ -41,9 +41,9 @@ terminals: [timed_out]
 
 rows:
   - when: {level: High}
-    then: safety_acceptance_with_concurrence
+    then: safety_concurrence
   - when: {level: Serious}
-    then: safety_acceptance_with_concurrence
+    then: safety_concurrence
   - when: {level: Medium}
     then: safety_acceptance_direct
   - when: {level: Low}
