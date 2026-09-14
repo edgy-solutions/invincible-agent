@@ -2055,6 +2055,58 @@ something**, not merely that it runs.
 Related: [[a-guard-that-cannot-fire]] — the WEAKENED form, where the guard runs, its premise is
 true, and it answers a weaker question.
 
+## R-055 — THE OTHER HALF OF R-054: THE INTERMEDIATE STATE CAN FAIL ABSENT, AND ABSENCE HAS NO SURFACE
+
+**Architect-ratified 2026-09-14, on Lane 1's measurement, as a correction to the architect's own
+ruling.** The ruling given was "split `eligibility_excluded` into `flags` and `excluded`". What
+shipped was ADDITIVE — `flags` emitted, `excluded` left whole — and the architect ruled the
+amendment better than the original *for the reason it was measured*.
+
+R-054 names the order and one failure mode. This is the second mode, and it inverts the remedy.
+
+**R-054's intermediate state is PERMISSIVE: a gate says yes to everything.** The seal answers by
+asserting the gate REFUSES something.
+
+**This one is ABSENT: a fact stops reaching the surface that explains it.** No gate opened. No
+arm was taken unconditionally. A row simply stopped being rendered, and *there is nothing to
+assert against* — the producer's tests pass because it emits correct data, and the consumer's
+tests pass because it correctly renders what it is given.
+
+WHAT WAS MEASURED. `eligibility_excluded` carries rows the arity gate KEPT (`disposal:
+"flagged"`) since the H06 ruling of 2026-09-04 stopped it excluding. So a live candidate renders
+under a key whose name says it was deleted. Narrowing the producer is obviously right — and
+`cortex-ui`'s `readExclusions` has **no `disposal` awareness at all**, and its own comment
+records the recent fix for arity rows *being silently discarded there*. Narrowing first would
+have re-opened that identical defect **from the producer's side**: the same row vanishing from
+the same panel, whose only job is explaining an empty card.
+
+**MISLABEL IS VISIBLE; ABSENCE ISN'T.** A reader who sees "excluded by arity" on a live candidate
+can question it, and one day will. A reader who sees nothing has no thread to pull — and neither
+end is wrong, so neither end gets a bug report. That is the whole trade, and it decides the order.
+
+**THE RULE.** When a field's MEANING splits across a producer/consumer boundary:
+
+1. The producer emits the new shape **additively**. Both keys carry the rows.
+2. The consumer reads the new shape and stops reading the old.
+3. **Only then** the producer narrows.
+
+**AND THE TEMPORARY STATE CARRIES ITS OWN EXPIRY.** A seal asserts the producer has *not* narrowed
+yet, stating why, and naming itself as the assertion to delete when step 2 lands. Without that,
+step 3 is a good idea somebody has in six months with none of this context — which is how the
+consumer's original discard defect got written in the first place.
+
+    test_THE_SPLIT_IS_ADDITIVE_UNTIL_THE_CONSUMER_READS_IT   ← deleted BY the change it guards
+
+A temporary state that cannot say it is temporary is just a permanent state nobody chose.
+
+Worked example: `3e0fba2`, `tests/routing/test_the_answer_turn_reads_the_slots_it_bound.py`.
+
+Related: R-054 (the permissive arm, same ordering law); [[a-plausible-negative-is-not-a-considered-one]]
+— an empty list reads as a deliberate "nothing was excluded"; [[read-the-consumer-of-what-you-fixed]]
+— this was found by opening the consumer, and by nothing else.
+
+---
+
 ---
 
 ## Why this file exists at all
