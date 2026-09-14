@@ -86,3 +86,33 @@ groups:
     grants:
       - {persona: DATA_ENGINEER, domain: DATA_ENGINEERING}
       - {persona: DATA_STEWARD, domain: DATA_ENGINEERING}
+
+  # SUSTAINMENT-domain safety group — Engine S's cell (ADR-0051). Added 2026-09-14.
+  #
+  # WHY IT EXISTS: /resolve domain-scopes the OntologyClass pool to the caller's cells, so a
+  # safety question only grounds+routes to Engine S from a SUSTAINMENT cell. This file already
+  # records four engines that registered verbs no user could reach — Engine P, Engine F,
+  # engine-cost, and the MAINTENANCE mechanic — each with the same sentence: REGISTRATION IS
+  # NOT ENTITLEMENT. Engine S was queued to be the fifth.
+  #
+  # ⚠️ THIS GRANT IS NOT YET OBSERVABLE, AND THAT IS STATED RATHER THAN DISCOVERED. Two things
+  # upstream of it are unfinished as of 2026-09-14, both filed:
+  #   1. engine-safety's three verbs register with NO `domains` and NO `owner_persona`, which
+  #      makes them DOMAIN-AGNOSTIC — and a verb with no domains is visible to EVERY caller
+  #      (ontology_service/main.py's filter skips the intersection when `verb_domains` is
+  #      empty). Until they carry `domains: [SUSTAINMENT]`, this cell is not what admits them
+  #      and its absence is not what excludes anyone.
+  #   2. the registration call cannot bind its own signature, so today it is 0 of 3 registered.
+  # A cell that grants nothing observable is exactly the shape this file warns about elsewhere,
+  # so it is written WITH its precondition rather than left to read as live.
+  #
+  # WHO IS IN IT. bob is the safety engineer — the author/drafter, who asks and cannot sign.
+  # alice is here too because she holds the High and Serious acceptance audiences, and AN
+  # AUTHORITY WHO CAN SIGN BUT CANNOT LOOK IS THE WRONG SHAPE: the cell grants the question
+  # ("show me open hazards"), never the signature, which stays a task disposition. carol is
+  # deliberately ABSENT — the user representative concurs on an assessment put in front of her
+  # and has no reason to query the hazard plane; if that turns out to be wrong it is one line,
+  # and the wrong direction to guess is the one that grants.
+  safety-engineers:
+    grants:
+      - {persona: SAFETY_ENGINEER, domain: SUSTAINMENT}

@@ -300,17 +300,69 @@ level — which is precisely what the audience key convention expresses:
 > the same treatment, including the directional assertion, because a ladder that names a more junior
 > tier than the standard fails the same silent way a permissive matrix cell does.
 >
-> **UPDATE 2026-09-12 — corroborated, still not read from primary.** The current issue appears to be
-> **DoDI 5000.88** (the 2020 reissue moved engineering content out of 5000.02), and **¶3.6.e.(1)(b)1**
-> is cited as assigning Component/Defense Acquisition Executive → High, PEO-level → Serious, PM →
-> Medium and Low. **That matches the seeded ladder.** But `esd.whs.mil` returns **HTTP 403** to this
-> environment, so the corroboration is a search summary and a secondary page, not the document. The
-> matrix was transcribed cell by cell from 882E's own PDF; this was not, and **the two must not be
-> read as equally sourced.** Anyone with access should open ¶3.6.e.(1)(b)1 and replace the note with
-> the verbatim quote.
+> ~~**UPDATE 2026-09-12 — corroborated, still not read from primary.** `esd.whs.mil` returns HTTP
+> 403 to this environment, so the corroboration is a search summary and a secondary page, not the
+> document. Until that is done the sandbox ladder is a fixture: it exercises the routing, the
+> audiences and the three-caller walk; it does not authorise anything.~~
+
+**CAVEAT LIFTED 2026-09-14 — READ FROM SOURCE. The ladder is the instruction's, not a fixture.**
+
+**DoDI 5000.88 ¶3.6.e.(1)(b)1**, Directives Division PDF, **November 18 2020 issue**, confirms the
+seeded ladder level for level: the **CAE (or DAE)** for High, **program executive officer-level** for
+Serious, the **PM** for Medium and Low. The matrix and the ladder are now **equally sourced**, which
+is the state the struck note said had to be reached before a real acceptance routes. `prov:wasDerivedFrom`
+carries the instruction beside the standard, under a **separate predicate** (`safety:ladderDerivedFromInstruction`)
+because they are two documents and one predicate covering both would hide a later change to either.
+
+**AND THE SAME PARAGRAPH CARRIES THE CONCURRENCE RULE**, which is the part worth more than the
+confirmation: the user representative, as defined in MIL-STD-882E, is part of the process throughout
+the life-cycle and provides **formal concurrence before all Serious and High risk acceptance
+decisions**. §5.1 built the two-act sequence from 882E §4.3.7 alone; it now has **two sources that do
+not depend on each other**, and the seal over it is unchanged — a second source is corroboration, not
+a reason to re-derive.
+
+**THE LADDER IS NOW SEALED LIKE TABLE III**, by `tests/safety/test_ladder_matches_dodi_5000_88.py`,
+and sealing it needed a new field. The TTL recorded only `acceptanceAudience` — *which queue* — and
+never the **office** the instruction names, so a seal over those rows could only have asserted that
+four keys were spelled consistently with themselves. `safety:acceptanceAuthorityTier` records the
+office; the seal asserts it level by level **and** directionally, because *"the table changed"* and
+*"a High risk is now signable by a program manager"* are not the same report. The mutation is run:
+demoting High to `PM` reds the directional half while **the audience-key check stays green**, which
+is the whole argument for the new field.
+
+> **TWO NUANCES ARE OVERLAY-TAILORABLE, NOT SEED** — carried because collapsing either would state
+> something narrower than the instruction does.
 >
-> Until that is done the sandbox ladder is a fixture. It exercises the routing, the audiences and the
-> three-caller walk; it does not authorise anything.
+> **"CAE (or DAE)"** — the High authority may be the **Defense** Acquisition Executive rather than
+> the Component one. Pointing `risk_acceptance_high:SUSTAINMENT` at a DAE-held group is **not** a
+> departure from the standard and needs **no SSPP ratifier**.
+>
+> **"Program executive officer-LEVEL"** is a level, **not necessarily the PEO in person**. Reading
+> it as the post would make the seed *stricter* than its source — which fails by blocking a lawful
+> acceptance rather than admitting an unlawful signature. Different direction, still wrong, and the
+> one nobody files a defect about.
+>
+> **For joint programmes the acceptance authorities reside within the LEAD DoD COMPONENT.** That is
+> an overlay fact and not a platform one: nothing here or in `task_grants.yaml` should encode which
+> component leads, because a seed that guessed would be an entitlement decision made by a manifest
+> field rather than by anyone.
+
+### §5.3 — Three requirements in the same section this design does not model — FILED, not built
+
+All three are **reads over state the engine already holds**, which is why they are slices rather than
+redesigns, and why filing them costs nothing now. None is in scope for increment 5.
+
+| requirement (DoDI 5000.88 ¶3.6.e) | what it is, mechanically | depends on |
+|---|---|---|
+| the PM reports ESOH risk status and acceptance decisions at **technical reviews**; acquisition **program reviews** and **fielding decisions** address the status of all Serious and High ESOH risks | a **status query verb** over open assessments *by level* — not a task, and deliberately not a canvas: the answer is a list with a level filter and a disposition state | the assessment objects, which exist |
+| the LSE supports system-related **Class A and B mishap investigations** by providing analyses of hazards that contributed to the mishap | **`trendMishaps`' consumer** — the deferred slice-3 verb now has a named requirement to serve rather than a plausible one | `trendMishaps`, deferred (RULED, see [rulings#r-004](../rulings/README.md#r-004--adr-0051-sustainment-safety-four-rulings) (a)) |
+| the **PESHE** summary | a **report verb** over the same objects | the same objects |
+
+**Filed rather than built, and the distinction is the point.** A requirement named in an ADR with no
+verb behind it is a commitment the next reader can check; a verb written against a requirement nobody
+asked for is scope. The middle row is the useful one — `trendMishaps` was deferred on the judgement
+that a trend verb was premature, and this is the first evidence that a real consumer exists for it,
+which is a reason to revisit the deferral rather than to reverse it unilaterally.
 
 ### §5.1 — A Serious or High acceptance needs TWO human acts, and this design models one
 
@@ -869,12 +921,26 @@ standard was supposed to buy.**
    signatory — the programme's person, not ours** — and they are required only for an overlay row
    that departs from the standard. A cell matching Table III already has its authority.
 
-   > **⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
-   > The MATRIX was transcribed from 882E's own PDF cell by cell (see below). The LADDER is not in
-   > 882E at all — the standard defers and names no authority — so the High/Serious/Medium/Low
-   > assignment above is attributed to DoDI 5000.02 and **has not been read from source by this
-   > lane**. It is recorded as attributed in the TTL rather than borrowing the matrix's citation.
-   > Verifying it is a half-hour somebody should spend before a real acceptance routes on it.
+   > ~~**⚠️ ONE HALF IS VERIFIED AND THE OTHER IS ATTRIBUTED, AND THEY MUST NOT SHARE A CITATION.**
+   > The LADDER is not in 882E at all, so the assignment above is attributed to DoDI 5000.02 and
+   > has not been read from source by this lane. Verifying it is a half-hour somebody should spend
+   > before a real acceptance routes on it.~~
+   >
+   > **STRUCK 2026-09-14 — BOTH HALVES ARE NOW READ FROM SOURCE, and §10.2 is closed with a
+   > citation rather than with an argument.** DoDI 5000.88 ¶3.6.e.(1)(b)1 (18 Nov 2020 issue)
+   > confirms the ladder level for level: CAE (or DAE) → High, PEO-level → Serious, PM → Medium and
+   > Low. **The half-hour was spent and the ladder survived it** — which is worth recording,
+   > because the matrix did *not* survive the same exercise and the two were flagged with identical
+   > confidence beforehand.
+   >
+   > **THEY STILL DO NOT SHARE A CITATION, and that half of the warning stands permanently.** The
+   > matrix cites MIL-STD-882E; the ladder cites the instruction, under its own
+   > `safety:ladderDerivedFromInstruction` predicate. 882E §4.3.7 defers this question *by name*, so
+   > the standard's citation can never cover the ladder no matter how well verified it is — and the
+   > instruction has already moved between issues once, which is why the TTL records **which
+   > issue** and not only which paragraph.
+   >
+   > **No real acceptance is blocked on provenance any more.** What remains is the roll.
 
    **AND THE READING WAS WRONG IN FIVE OF TWENTY CELLS.** The seeded matrix was labelled "the
    agent's reading of MIL-STD-882 convention", which was an honest label on a table nobody had

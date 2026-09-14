@@ -38,3 +38,37 @@ domains:
   # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING -- scoping is per CELL. This line alone
   # changes nothing observable; the grant is the cost-analysts group in groups.yaml.
   - PRODUCTION_COST
+
+  # The domain Engine S (ADR-0051) registers its safety verbs under, and the domain the
+  # safety: OntologyClasses carry. Added 2026-09-14, and FIRST of the four edits that arc --
+  # domain, persona, grant, cell -- because the sync validates both halves of a cell against
+  # these vocabularies and refuses the whole overlay on an unknown component. A cell written
+  # before its domain does not partially apply; it fails the file.
+  #
+  # DELIBERATELY THE EXISTING SUSTAINMENT PLANE, NOT A NEW SAFETY DOMAIN. ADR-0051 §9 defers a
+  # separate SAFETY compartment rather than refusing it (RULED 2026-09-10, see rulings#r-004 (d)):
+  # safety data is more restricted than sustainment data in some programmes and identical in
+  # others, and splitting on a guess costs a re-prime and a grants migration. The eight safety
+  # task audiences already spell `:SUSTAINMENT`, so a domain of another name here would put the
+  # QUESTION-ASKING side and the DISPOSING side in two different compartments -- an engineer who
+  # could open the hazard list but not the task about it, or the reverse.
+  #
+  # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING -- scoping is per CELL. This line alone changes
+  # nothing observable; the grant is the safety-engineers group in groups.yaml.
+  - SUSTAINMENT
+
+# ── THE HEADER'S "UPDATE ADR-0009 FIRST" IS STALE, AND IT IS RECORDED HERE BECAUSE IT IS A
+#    PRECONDITION THAT CANNOT BE SATISFIED. Added 2026-09-14 while adding SUSTAINMENT.
+#
+# `personas.yaml` already carries this correction TWICE -- against PROGRAM_FINANCE_ANALYST and
+# again against COST_ANALYST -- and this file, which states the same instruction in the same
+# words, never received it. ADR-0009 is the ADR that SUNSET domain and persona as classification
+# axes: it describes the legacy enum rather than maintaining a live one, and there is no domain
+# enum in it to update. The catalog rego walks the directory instead of enumerating a hardcoded
+# list, so adding a domain here needs no code-side change.
+#
+# WHY IT IS WRITTEN DOWN RATHER THAN JUST IGNORED. An instruction that cannot be followed is
+# either skipped -- leaving the next reader unable to tell whether it was CONSIDERED or missed --
+# or chased until it is abandoned. Both cost the same the second time. And a correction recorded
+# against one file's copy of a shared instruction does not correct the other copy: the stale half
+# reads as current precisely because its sibling was fixed and this one was not.
