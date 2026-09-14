@@ -1467,6 +1467,28 @@ services:
         consumers: [cortex-ui]
         class: releasable_by_design
         justification: "caller's own HITL queue (self-scoped filter)"
+      - method: GET
+        path: /task_kinds
+        identity: get_current_user
+        gate: "auth only — DELIBERATELY not entitlement-scoped"
+        exposes: schema
+        consumers: [cortex-ui, cortex-ui-ba parity seal]
+        class: releasable_by_design
+        justification: |
+          Returns the SHAPE of a decision, never a decision and never a task: which verbs a
+          species accepts, in declared order, and which of them require a reason. No task row,
+          no subject, no disposition.
+
+          NOT ENTITLEMENT-SCOPED ON PURPOSE. Withholding it protects nothing — the 422 refusal
+          body already names the allowed verbs to anyone who posts one — so scoping would only
+          force the probing this endpoint exists to remove. And that probing is not merely
+          inelegant here: ADR-0034 archives decision records, so discovering a menu by attempting
+          it WRITES ATTEMPTED DECISIONS NOBODY MADE.
+
+          Added 2026-09-14 with the read path (R-039: a composed declaration needs a read
+          surface, or its only consumer is the error handler). It went in undeclared and this
+          manifest caught it — the route shipped a day before its row, which is the gap the
+          derived-population check exists for.
       - method: POST
         path: /plan/measure/{fn}
         identity: get_current_user
