@@ -2255,6 +2255,54 @@ payload, which is the same substitution at the input end.
 
 ---
 
+## R-057 — AN INSTRUMENT THAT CANNOT ASK THE QUESTION ANSWERS ANYWAY, WITH THE REASSURING WORD
+
+**Architect-ruled 2026-09-14: the two instrument instances of this week are ONE LAW.** Filed with
+a third, found the same day, which is the most expensive of the three.
+
+    grep -P '\x00'              unsupported in this shell -> matched nothing -> "CLEAN", 1199 files
+    grep $'\x00'                collapsed to an EMPTY pattern -> matched every line
+    a seal over `bound_slot_sources`   the FIXTURE supplies the field -> 17 green assertions
+
+**None of the three errored.** Each returned a well-formed, confident answer, and in two of them
+that answer was the reassuring one. **A tool that cannot reach the question does not say so — it
+reports the default outcome of not finding anything, which is indistinguishable from the good
+news.** The false-alarm case (the empty pattern) was caught within a minute because its arithmetic
+was absurd. The false all-clears were not caught by anything except a planted control.
+
+**THE THIRD INSTANCE IS THE SHAPE AT FULL SIZE.** A gate fix and a provenance-gated promotion were
+written, sealed with 17 assertions across two sites, mutation-checked, committed, rolled to the
+cluster and REPORTED AS FIXED. Then:
+
+    356 AnswerArtifacts carry `resolved_intent`
+      0 carry `bound_slot_sources`
+        the field is READ in one place and WRITTEN nowhere but a test fixture
+
+So `turn_is_set_shaped(instance, verb, set())` degrades to exactly `not instance` — the behaviour
+it replaced — and `promotable_instance_from_slots(verb, {})` returns `None` on its first line.
+**The whole arc is inert in production, and every seal is green because the seals supply the
+input the world does not.**
+
+> **This is R-056's law applied to the instrument instead of the guard: a test cannot tell you
+> whether the data it fabricates exists.** Mutation testing, coverage and a kill sheet are all
+> computed inside the fixture's world.
+
+**THE CHECK, and it is the same one in all three cases: ASK THE INSTRUMENT A QUESTION YOU KNOW
+THE ANSWER TO, THROUGH THE PATH THE CLAIM USES.** Plant a NUL and prove the scan finds it. Count
+the rows in production that carry the field before trusting a seal that reads it. A control that
+reaches the answer by a different route is a second claim, not a control.
+
+**AND THE PRODUCTION COUNT IS THE ONE THAT WAS SKIPPED.** Two reachability traces had already run
+on this change — one found the wrong call site, one confirmed the payload was set by the gateway.
+Both traced CODE. Neither asked whether any artifact in the database had ever carried the field,
+which is one query and would have stopped the work before the first commit.
+
+Related: R-056 (guard-is-right vs guard-is-reachable — this is its instrument half);
+[[an-absence-assertion-is-worth-its-control]]; [[a-sample-is-not-the-population]];
+[[assert-on-the-claim-not-its-neighbour]].
+
+---
+
 ---
 
 ## Why this file exists at all
