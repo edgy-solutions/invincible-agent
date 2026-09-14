@@ -1,0 +1,47 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# CHAINING AT TERMINATION for the acceptance act — where a risk decision ENDS.
+#
+# This is the table that completes the flow, and two of its three rows end at a TERMINAL rather
+# than another definition. That is the honest shape: an accepted risk is not waiting on anything,
+# and modelling it as a definition that opens nothing would put an empty queue item in front of a
+# human to represent a decision already made.
+decision: safety_acceptance_chaining
+
+matches: [outcome]
+
+# The `accepts` of `risk_acceptance_{high,serious,medium,low}` — all four declare the same three
+# verbs, which is what makes ONE table correct for every level. Asserted against the declarations
+# rather than trusted: if a level's row ever declares a different verb set, one table can no longer
+# serve them and the seal says so instead of this silently covering three of four.
+domain:
+  outcome: [accepted, rejected, returned_for_rework]
+
+# DECLARED TERMINALS — where this table may END. Before `terminals:` existed a typo'd terminal
+# resolved against nothing and was indistinguishable from a deliberate one; now `risk_acceptd`
+# reds naming this list. Totality applied to targets, the same move `domain` makes for inputs.
+#
+# Both states are recorded outcomes of a HUMAN act, which is why they are terminals rather than
+# definitions: nothing further is owed by the system, and the record of who signed and on what
+# evidence already exists in the disposition.
+terminals: [risk_accepted, risk_rejected]
+
+rows:
+  # The authority accepted the residual risk, with a stated reason (reason-required on the row —
+  # an acceptance with no rationale erases the record that IS the artifact). For a Serious or High
+  # hazard this row is reachable ONLY via the concurrence chain, so the terminal carries two names.
+  - when: {outcome: accepted}
+    then: risk_accepted
+
+  # The authority declined to accept. ALSO TERMINAL, and deliberately NOT routed to redraft: a
+  # refused acceptance is a decision, not a request for a better draft. Sending it back would
+  # invite the same assessment to be re-presented until it was accepted, which is the "second bite
+  # at the same signature" the redraft audience was written to avoid.
+  - when: {outcome: rejected}
+    then: risk_rejected
+
+  # The authority wants the assessment reworked before deciding. THIS one goes back to the author,
+  # because it is a request rather than a decision — the distinction the two rows above make by
+  # ending, this one makes by continuing.
+  - when: {outcome: returned_for_rework}
+    then: safety_redraft
