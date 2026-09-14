@@ -3279,6 +3279,35 @@ def _project_route_decision(mat: dict) -> dict | None:
     except (ValueError, TypeError):
         excluded = []
 
+    # ── FLAGGED IS NOT EXCLUDED, AND ONE LIST CANNOT SAY BOTH ──────────────────────────────
+    #
+    # The field is named `eligibility_excluded` and the arity gate stopped excluding on
+    # 2026-09-04 — it FLAGS `needs_instance` and KEEPS the verb as a candidate, because
+    # removing the only verb that fits abstains for the reason it would have asked about.
+    # Every such entry carries `disposal: "flagged"`, so the distinction is in the data and
+    # was nowhere in the read: a reader of this list sees a candidate that is still live,
+    # under a key whose name says it was deleted.
+    #
+    # That is the plausible-negative shape one layer along — "excluded" reads as a decision
+    # somebody made, and here it is the opposite decision. The producers already separate
+    # them; this is the consumer catching up. `excluded` keeps its name and now means what
+    # it says; `flags` is the other half, and neither is derived from the other's absence.
+    flags = [r for r in excluded if isinstance(r, dict) and r.get("disposal") == "flagged"]
+    #
+    # ⚠ `excluded` IS NOT NARROWED YET, AND THAT IS THE ORDER RATHER THAN AN OMISSION.
+    #
+    # `cortex-ui/src/lib/routing.ts::readExclusions` has NO disposal awareness — it renders
+    # every row as "excluded by {gate}" — and its own comment records the fix for arity rows
+    # being SILENTLY DISCARDED there, because the reader keyed on `verb` while the producer
+    # sends `uri`. Dropping the flagged rows out of `excluded` here would re-open that exact
+    # defect from the producer's side: the same arity row vanishing from the same panel, whose
+    # whole job is explaining an empty card.
+    #
+    # So this step is ADDITIVE. `flags` is emitted, both keys carry the flagged rows, and the
+    # narrowing lands with the cortex-ui change that reads `flags` and labels it a flag instead
+    # of a removal. Trading a mislabel for an absence would be the worse half of the trade, and
+    # an absence is the thing neither end can see.
+
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
     # handler_endpoint being non-empty is a belt-and-suspenders check.
@@ -3338,6 +3367,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             # contest, not just the winner (losers first-class).
             "candidates": candidates,
             "excluded": excluded,
+            "flags": flags,
         }
 
     # Fallback projection — surface that the pipeline GENUINELY fell
@@ -3393,6 +3423,7 @@ def _project_route_decision(mat: dict) -> dict | None:
         # so "why did nothing win" is visible with scores.
         "candidates": candidates,
         "excluded": excluded,
+        "flags": flags,
     }
 
 
@@ -4670,6 +4701,26 @@ async def generate_dagster_stream(
             _answering_artifact_id, len(_chain_slots), session_id,
             {k: v["source"] for k, v in _chain_slots.items()},
         )
+
+    # ── THE ANSWER TURN CARRIES THE ASK'S ACCUMULATED SET ────────────────────────────────────
+    #
+    # `_pre_resolved_from_ask` builds the route from the ASK artifact, and the ask is by
+    # construction the turn where nothing was bound — so `subject_instance_id` is necessarily
+    # empty there and rode forward onto the turn that finally supplied one. Measured on
+    # artifact-2-1789404372153: the pick bound `program_id: NP-MERIDIAN`, the arity gate still
+    # saw a set query, and the dispatch abstained FOR THE REASON THE ASK HAD JUST BEEN ANSWERED.
+    #
+    # THE SET TRAVELS, NOT A LIST OF NAMES. Names alone would be a third thing the ask's payload
+    # does not carry that the answer turn needs — the defect's own shape one more time. The
+    # provenance-keyed union is what `_accumulated_slots` already walks out of the lineage, so
+    # the ask turn and the answer turn share ONE payload shape and the consumer derives what it
+    # needs from it.
+    #
+    # PRE-RESOLVED ONLY. The classified path has no ask, so it has no unpromoted instance —
+    # carrying this there would feed a state that cannot arise, and a dead branch under a seal
+    # reads as coverage.
+    if _pre_resolved:
+        _pre_resolved["accumulated_slots"] = _chain_slots or {}
 
     mode: str
     entity_refs: list[str] = []

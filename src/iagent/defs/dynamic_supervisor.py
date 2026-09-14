@@ -726,11 +726,45 @@ def _classify_route(
         # found nothing, every time, silently: a single-asset verb would dispatch against a
         # set query on the pre-resolved path while the normal path correctly asked.
         _pre_instance = str(pre_resolved.get("subject_instance_id") or "")
+        # ── THE ASK'S EMPTY INSTANCE MUST NOT DECIDE THE ANSWER TURN ────────────────────────
+        #
+        # `_pre_resolved_from_ask` builds this route from the ASK artifact, where by construction
+        # nothing was bound — so `subject_instance_id` is empty there and rides forward onto the
+        # turn that finally supplies one. Measured on artifact-2-1789404372153: the pick bound
+        # `program_id: NP-MERIDIAN`, `not _pre_instance` still reported SET, the verb was flagged
+        # `needs_instance`, and the dispatch abstained FOR THE REASON THE ASK HAD JUST BEEN
+        # ANSWERED. `invincible-agent-22`'s finding, and it is every engine's, not graph-host's.
+        #
+        # THE NAMES ARE DERIVED FROM THE CARRIED SET, not passed as a list. The gateway forwards
+        # the provenance-keyed union `_accumulated_slots` walks out of the lineage, so the ask
+        # turn and the answer turn share one payload shape.
+        from iagent_pure.verb_eligibility import turn_is_set_shaped  # noqa: PLC0415
+        _pre_bound = {str(k) for k in (pre_resolved.get("accumulated_slots") or {})}
         _pre_arity_flagged: list = []
         if _pre_verbs:
-            _pre_verbs, _pre_arity_flagged = _filter_verbs_by_arity(
-                _pre_verbs, not _pre_instance,
-            )
+            # PER VERB, because the gate is a property of the VERB'S DECLARATION rather than of
+            # the turn. `turn_is_set_shaped` reads the verb's own slots: one that is both
+            # `required` and a `referent` is the slot that makes the verb single-arity AND the
+            # slot whose binding supplies the instance.
+            #
+            # A VERB DECLARING NO SUCH SLOT IS UNAFFECTED BY CONSTRUCTION, and that is the gate
+            # rather than a branch someone could later simplify away. It matters because three
+            # engines of four never pass `arity` at registration, and `subject_instance_id`
+            # reaches the generalist fallback as `resolved_instance_id` — after which Engine A
+            # does NOT re-resolve. An ungated promotion would change Engine A's behaviour on
+            # every cost, finance and safety verb as a side effect of repairing graph-host.
+            # The call is UNCHANGED except for its second argument: `turn_is_set_shaped` is a
+            # strict refinement of `not _pre_instance` — with no bound slots known it returns
+            # exactly that — so the flagging, the `needs_instance` mutation and the kept-not-
+            # excluded disposal all stay the gate they already were.
+            _kept, _pre_arity_flagged = [], []
+            for _cv in _pre_verbs:
+                _one, _flagged = _filter_verbs_by_arity(
+                    [_cv], turn_is_set_shaped(_pre_instance, _cv, _pre_bound),
+                )
+                _kept.extend(_one)
+                _pre_arity_flagged.extend(_flagged)
+            _pre_verbs = _kept
         _pre_truth = next(
             (cv for cv in (_pre_verbs or []) if cv.get("verb_iri") == _pre_verb),
             None,
@@ -896,17 +930,21 @@ def _classify_route(
     # ARITY GATE (query-shape eligibility, ADR-0008 follow-up). Query-arity
     # comes from the abstention arc's own signal: the subject resolved to a
     # CLASS with no specific instance (subject_instance_id empty) → a
-    # SET/collection query → single-asset verbs cannot answer it. Remove
-    # verbs that POSITIVELY declare arity="single" BEFORE the classifier
-    # sees them, so a set-query can never resolve to a single-asset verb
-    # (the `show me data about customers → describeAsset → assets:[]`
-    # defect). Verbs with arity set/any/null are kept (null = unclassified
-    # → never over-excluded during backfill). Runs only when subject !=
-    # UNKNOWN (abstention already short-circuited nothing-resolved above),
-    # so "no instance" here means class-only/set, NEVER abstention — the
-    # two gates read the resolution signal consistently. Deterministic, no
-    # LLM; composes with the domain scope into the (domain ∩ arity)
-    # eligibility intersection the enforcement arc extends with permission.
+    # SET/collection query → single-asset verbs cannot answer it as asked.
+    #
+    # ⛔ THIS COMMENT SAID "REMOVE ... BEFORE THE CLASSIFIER SEES THEM" AND THE GATE STOPPED
+    # REMOVING ON 2026-09-04. It FLAGS `needs_instance` and KEEPS the verb as a candidate —
+    # see `filter_verbs_by_arity`, whose docstring carries the H06 ruling: excluding the only
+    # verb that fits abstains FOR THE REASON IT WOULD HAVE ASKED ABOUT. The comment survived
+    # the change describing the opposite disposal, directly above code doing the new one, and
+    # a stale claim is pre-authenticated: it was true when written and reads as true now.
+    #
+    # Verbs with arity set/any/null are unflagged (null = unclassified → never over-flagged
+    # during backfill). Runs only when subject != UNKNOWN (abstention already short-circuited
+    # nothing-resolved above), so "no instance" here means class-only/set, NEVER abstention —
+    # the two gates read the resolution signal consistently. Deterministic, no LLM; composes
+    # with the domain scope into the (domain ∩ arity) eligibility intersection the enforcement
+    # arc extends with permission.
     # THE ELIGIBILITY TRACE. Accumulated across every gate, carried on telemetry into the
     # routing materialization, and rendered by the decision path — so a removed candidate
     # leaves evidence instead of a shorter list. Declared here, before the first gate, so a
