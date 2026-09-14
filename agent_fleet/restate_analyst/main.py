@@ -23,6 +23,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
+from datetime import timedelta
 from typing import Optional
 
 import os
@@ -1952,7 +1953,46 @@ async def _run_definition(
                 f"register_{step.id}",
                 lambda t=task: _register_human_task(workflow_id, t, user_jwt),
             )
-            approval = await ctx.promise(promise_name, type_hint=dict).value()
+            # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
+            #
+            # No `deadline_seconds` means wait forever — today's behaviour, and the default stays
+            # that way. Adding a default timeout would silently change the meaning of every
+            # existing definition, and "the approval expired" is not something any current
+            # process has agreed to.
+            #
+            # `ctx.sleep` is a DURABLE timer, not `asyncio.sleep`: the deadline survives a
+            # process restart, which is the only version worth having. A wall-clock timeout in
+            # the handler would restart with the pod and a long-suspended approval would never
+            # expire — the failure would be invisible because the task simply stays open.
+            #
+            # A TIMEOUT IS NOT A DISPOSITION. Nobody accepted and nobody rejected, so no verb is
+            # written: `status` is TIMED_OUT and `approval` is None. ADR-0034 archives decision
+            # records, and manufacturing `rejected` on expiry would put a decision in the archive
+            # that no human made — worse than an absent one, because it is attributable.
+            #
+            # It therefore contributes NO `outcome`: the terminal-outcome filter below selects
+            # steps whose approval carries a status, so a timed-out step leaves `outcome` to the
+            # last step a human actually disposed. What happens next is a CHAINING ROW matching
+            # the declared terminal `timed_out` — escalate, widen the audience, or abandon. That
+            # choice is policy and belongs in a row, not here.
+            _promise = ctx.promise(promise_name, type_hint=dict)
+            if getattr(step, "deadline_seconds", None):
+                _timer = ctx.sleep(timedelta(seconds=step.deadline_seconds))
+                _winner = await restate.select(approved=_promise.value(), expired=_timer)
+                if _winner[0] == "expired":
+                    results.append({
+                        "step_id": step.id, "kind": "human_await",
+                        "status": "TIMED_OUT", "approval": None,
+                        "terminal": "timed_out",
+                        "deadline_seconds": step.deadline_seconds,
+                    })
+                    # The definition ENDS here. Continuing would run later steps as though the
+                    # human had acted, which is the §4.3.7 defect in general form: proceeding
+                    # past an await that was never satisfied.
+                    break
+                approval = _winner[1]
+            else:
+                approval = await _promise.value()
             results.append({
                 "step_id": step.id, "kind": "human_await",
                 "status": approval.get("status", "APPROVED"), "approval": approval,
