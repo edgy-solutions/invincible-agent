@@ -96,7 +96,7 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "WEAVIATE_GRPC_HOST") }}
   WEAVIATE_GRPC_HOST: {{ include "invincible-agent.weaviateGrpcHost" . | quote }}
   {{- end }}
-  JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
+  JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/sparql"
   DATABASE_URL: {{ include "invincible-agent.pgUri" . | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
   # Engine service URLs (Internal K8s DNS)
