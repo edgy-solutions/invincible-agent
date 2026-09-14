@@ -624,6 +624,9 @@ def upload_doc_pages() -> None:
     and changed content lands at a NEW key that a regenerated row points at. A stale object is not
     merely detectable, it is unreachable: nothing references it.
 
+    ITS OWN BUCKET, NOT THE ONTOLOGY ONE. See the assertion below: relying on the ontology
+    sensor to decline a markdown body made the interlock a side effect of someone else's guard.
+
     IT REFUSES ON DRIFT RATHER THAN UPLOADING PAST IT. If the committed TTL disagrees with the
     files on disk, uploading would put the bytes at keys no row names — every page would resolve to
     nothing, at answer time, in front of a reader. That is the failure this check exists to make
@@ -653,7 +656,28 @@ def upload_doc_pages() -> None:
     endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
     access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
     secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-    bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+
+    # A SEPARATE BUCKET, AND THE ASSERTION BELOW IS THE POINT OF IT. RULED 2026-09-13.
+    #
+    # The first version put pages in the ontology bucket and relied on the ontology sensor
+    # DECLINING them: that sensor launches an ingest for new objects and refuses one whose domain
+    # is undeclared, so a markdown body never reached a TTL parser. That worked, and it was the
+    # wrong construction — **a refusal is not a router.** The interlock was a side effect of
+    # someone else's guard, held in place only by that guard having no default. The day it gains
+    # one, a runbook becomes a parse error inside the prime, and the failure surfaces as an
+    # ontology error about a file that is not an ontology.
+    #
+    # So the pages go somewhere the sensor does not watch, and the separation is ASSERTED rather
+    # than assumed — a deployment that points both names at one bucket rebuilds the original
+    # coupling silently, which is exactly the misconfiguration this refuses to boot past.
+    bucket = os.environ.get("DOCS_BUCKET", "doc-pages")
+    ontology_bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+    if bucket == ontology_bucket:
+        raise RuntimeError(
+            f"REFUSED: DOCS_BUCKET and ONTOLOGY_BUCKET are both {bucket!r}. Page bodies would land "
+            f"in the bucket the ontology sensor watches, and a markdown file would be handed to a "
+            f"TTL parser the moment that sensor's domain check gains a default. Point DOCS_BUCKET "
+            f"at a bucket of its own.")
 
     s3 = boto3.client(
         "s3",
@@ -671,10 +695,6 @@ def upload_doc_pages() -> None:
     n = 0
     for page in gen.pages():
         body_sha, key = gen.page_locator(page)
-        # NO `domain` METADATA, DELIBERATELY. The ontology sensor watches this bucket and launches
-        # an ingest for new objects; a markdown body is not an ontology and must not be handed to
-        # a TTL parser. The sensor's own refusal on an undeclared domain is what keeps these out,
-        # so omitting the metadata is the interlock rather than an oversight.
         s3.put_object(
             Bucket=bucket, Key=key, Body=page.read_bytes(),
             ContentType="text/markdown; charset=utf-8",

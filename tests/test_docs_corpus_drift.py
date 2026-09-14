@@ -202,3 +202,64 @@ def test_the_vocabulary_declares_the_two_pointer_terms():
     mesh = rdflib.Namespace("http://invincible-agent/mesh#")
     for term in ("source", "body_sha"):
         assert (mesh[term], None, None) in g, f"mesh:{term} is not declared in mesh_system.ttl"
+
+
+def test_page_bodies_do_not_share_the_ontology_bucket():
+    """RULED: a refusal is not a router.
+
+    Page bodies once lived in the ontology bucket and were kept out of the TTL parser by the
+    ontology sensor DECLINING an undeclared domain. That held only while that guard had no
+    default; the day it gained one, a runbook would have become a parse error inside the prime,
+    surfacing as an ontology error about a file that is not an ontology.
+
+    The separation is asserted rather than assumed because a deployment that points both names at
+    one bucket rebuilds the coupling silently — nothing else would notice.
+    """
+    import os
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT))
+    from setup.prime_databases import upload_doc_pages
+
+    before = {k: os.environ.get(k) for k in ("DOCS_BUCKET", "ONTOLOGY_BUCKET")}
+    try:
+        os.environ["DOCS_BUCKET"] = "same-bucket"
+        os.environ["ONTOLOGY_BUCKET"] = "same-bucket"
+        with pytest.raises(RuntimeError) as caught:
+            upload_doc_pages()
+        msg = str(caught.value)
+        assert "DOCS_BUCKET" in msg and "ONTOLOGY_BUCKET" in msg, (
+            f"the refusal does not name both settings, so a reader cannot act on it: {msg}")
+
+        # THE OTHER DIRECTION, which is the half that would rot silently: distinct buckets must
+        # get PAST this guard. A refusal that fires always is indistinguishable from one that
+        # works, and it would block every prime rather than the misconfigured ones.
+        #
+        # Proven WITHOUT a network by making the very next step fail with a marker: reaching the
+        # S3 client at all means the separation guard let us through. Calling for real took 54s
+        # of connect timeouts in an environment with no MinIO, which is a slow test that proves
+        # the same thing less clearly.
+        import setup.prime_databases as pdb
+
+        class _Marker(Exception):
+            pass
+
+        class _StubBoto3:
+            @staticmethod
+            def client(*a, **k):
+                raise _Marker("reached the S3 client")
+
+        real_boto3 = pdb.boto3
+        try:
+            pdb.boto3 = _StubBoto3
+            os.environ["DOCS_BUCKET"] = "doc-pages"
+            os.environ["ONTOLOGY_BUCKET"] = "ontologies"
+            with pytest.raises(_Marker):
+                upload_doc_pages()
+        finally:
+            pdb.boto3 = real_boto3
+    finally:
+        for k, v in before.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
