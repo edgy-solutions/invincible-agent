@@ -114,10 +114,82 @@ is unset. That corroborates ca's ban-list finding from a second direction: the o
 legitimately holds every driver uses rdflib for the same non-driver purpose the three "violating"
 engines do.
 
-**F6 — FILED, NOT FIXED, and not mine:** every Jena call passes `verify=False`, and
-`_JENA_PASSWORD` defaults to a literal credential in source (L337). Both are pre-existing and
-neither blocks this work; recorded here because this packet is the first thing to enumerate that
-path, and an observation made during a census that is never written down was not made.
+**F6 — RULED AND FIXED 2026-09-13** (this line previously read *"filed, not fixed"* — the ruling
+came back the other way, and a stale claim in a packet is read as current by whoever finds it
+next). Every Jena call passed `verify=False` and `_JENA_PASSWORD` defaulted to a literal
+credential in source. Now: the credential has **no default**, a configured endpoint without one
+**fails readiness naming the variable**, and the four call sites go through one client factory
+that passes no TLS override. `agent_fleet/ontology_service/jena_posture.py` +
+`tests/test_a_missing_fuseki_credential_fails_readiness.py`.
+
+**The `verify=False` half needs its honest scope stated:** the configured endpoint is
+`http://…:3030/ds/query`, and TLS verification applies to https — **so the override was inert in
+every deployment that exists.** It was not a live hole; it was a **latent** one, waiting for the
+first deployment to use the `externalFuseki.url` override with an https address, where
+verification would have been off silently with nothing going red. A latent hole reads as coverage
+for exactly as long as everyone happens to behave.
+
+**F6b — THE SEAL FOUND A SECOND INSTANCE THE RULING DID NOT NAME.** The credential-default check
+was written over the CLASS of secret-ish variables rather than the one that was reported, and it
+went red on `NEO4J_PASSWORD`, which defaulted to the literal `"password"` at main.py:378. The
+chart's own snippets already read that variable as `os.environ.get("NEO4J_PASSWORD", "")` and
+every compose file declares it, so the default was **dead in every configuration in this repo
+while reading as a working fallback.** Fixed in the same change. *A filed defect is a sample, not
+a census* — the reported one was the one somebody happened to look at.
+
+**STILL OPEN, not fixed:** `_NEO4J_URI` defaults to the in-cluster address
+`bolt://iagent-neo4j:7687`. That is a hardcoded fallback for a SUBSTRATE address, which is the
+same shape the service-URL readiness ruling prohibited for peer URLs on 2026-09-11. Different
+ruling, different owner — named here rather than quietly fixed.
+
+## §3b — F7 IS REFUTED. The write path is correct, and the way I got it wrong is the finding
+
+**RETRACTED 2026-09-13, same day, before anything was built on it.** The claim below said
+engine-o's one write path POSTs `update=` to the QUERY endpoint. **It does not.** Lane 1 read the
+live pod — `JENA_SPARQL_ENDPOINT=http://iagent-fuseki:3030/ds/sparql` — so the substitution fires
+and yields `/ds/update`, the correct Fuseki convention. A CHECKED NEGATIVE, recorded rather than
+deleted: an unchecked one leaves the question open forever, and this one cost two commands.
+
+**MY PREMISE WAS FALSE INSIDE THIS REPO, NOT ONLY AGAINST THE CLUSTER.** I wrote *"every endpoint
+spelled anywhere in this repo ends `/ds/query`"*. `helm/invincible-agent/values-sandbox.yaml:187`
+spells `/ds/sparql`, and carries five lines of comment explaining exactly why. **That file was in
+the grep output I derived and quoted from; I read three of its hits and stated a claim about
+all of them.** So this is not "a repo census cannot see a deployed value" — that would be a
+kinder law than I earned. It is: **I derived a population, then read a sample of it, and reported
+the sample in the population's voice.** In a packet whose §0 is about deriving populations.
+
+**WHAT SURVIVES IS NARROWER, BETTER EVIDENCED, AND NOT MINE TO FIX.** The sandbox file is
+patching a default that is wrong in the chart itself: `values.yaml:279` and the template at
+`configmap.yaml:99` BOTH render `/ds/query`, and the sandbox comment states that this Fuseki
+dataset **returns HTTP 405 on POST to `/ds/query`**, which "made every Fuseki query 405 → silent
+fallback/empty". So a deployment that does not carry the sandbox override gets an endpoint that
+405s every read AND a write endpoint that never derives. The fix is in the chart, which is Lane 1's.
+The original text follows, struck but intact, because a retraction that deletes its own claim
+leaves the next reader unable to check the reasoning.
+
+### ~~F7 as originally written~~ — ENGINE-O'S WRITE ENDPOINT IS DERIVED BY A SUBSTITUTION THAT NEVER FIRES
+
+Found while enumerating the write path, and it is a correctness defect rather than a posture one.
+
+    _JENA_UPDATE_ENDPOINT = os.getenv("JENA_UPDATE_ENDPOINT", "") or
+                            _JENA_ENDPOINT.replace("/sparql", "/update")
+
+* `JENA_UPDATE_ENDPOINT` is set **nowhere** — not in `helm/`, not in either compose file, not in
+  `setup/`. Derived by a whole-repo grep; the only occurrences are its own definition and use.
+* ~~Every endpoint spelled anywhere in this repo ends **`/ds/query`**~~ — **FALSE, and this is the
+  sentence that was wrong.** True of `values.yaml:279`, `configmap.yaml:99` and
+  `examples/docker-compose.yml:69`; NOT true of `values-sandbox.yaml:187`, which is the one the
+  sandbox actually runs.
+
+**So the substitution fires in no configuration that exists, and engine-o's one write path POSTs
+`update=` to the QUERY endpoint.** The comment above it read *"Derived from the read endpoint
+(…/ds/sparql -> …/ds/update)"* — written against a spelling the chart does not use, and it has
+been describing a transformation that does not happen. *A docstring is not evidence.*
+
+**NOT FIXED, deliberately.** Whether writes currently fail loudly at Fuseki or something else is
+true in-cluster is a live question this packet cannot answer, and **changing where a write lands
+is not an inventory's call.** The consumers are `/write_item_state` and `/write_decision_record`.
+Needs a ruling and a live check, in that order.
 
 ## §4 — F3: THE PATTERN THE ADR PROPOSES ALREADY EXISTS HERE, AT A SMALLER SCALE
 
@@ -162,7 +234,61 @@ check matching a STRING cannot see a BEHAVIOUR, and it flagged the prose EXPLAIN
 evidence of a write. Corrected by reading the body; §1's zero-writes claim rests on the absence
 of Cypher write keywords, verified separately.
 
-## §7 — WHAT THIS PACKET DOES NOT ESTABLISH
+## §7 — THE QUERY TEXTS, READ. Five places the docstring and the Cypher disagree
+
+§8 warns that the purposes came from docstrings. Here is the reading, and it changes five
+signatures. Every item is from the query text; the line numbers are `main.py` unless noted.
+
+**1. `domains` IS A PERMISSIVE FILTER, NOT A FILTER.** `_SERVED_CLASSES_CYPHER` (L1893) accepts a
+verb when `size($domains) = 0 OR coalesce(r.domains, []) = [] OR any(d IN r.domains WHERE d IN
+$domains)`. **A verb that declares NO domains is served in EVERY domain.** The docstring says
+"classes carrying a verb in these domains". An interface signature typed as a filter would be
+documenting the opposite of what the query does for undeclared verbs — and undeclared is the
+default state of a verb nobody has scoped yet.
+
+**2. "DOMAIN-SCOPED" MEANS TWO DIFFERENT THINGS AT TWO DOORS.** `operable_subjects` (L3637)
+filters `s.domain = $domain` — a **node property, singular**. `_served_class_uris` and
+`find_compatible_verbs` filter `r.domains` — a **relationship property, a list**. Same word, same
+interface, two data models. An interface that takes `domain` uniformly would hide that one door
+asks what the CLASS is scoped to and the other asks what the VERB is scoped to. **Whether the two
+can disagree in practice is NOT established here** — I did not find the writer of the node
+property (it is not the registrar; likely doc-tools) and I ran no check for a test relating them.
+Recorded as the open question it is, because "and nothing asserts they agree" is the kind of
+absence that needs its own control before it is worth saying.
+
+**3. `find_tool`'s VERB ARGUMENT IS POLYMORPHIC ACROSS THREE IDENTIFIER SPACES.**
+`type(r) = $verb_label OR r.iri = $verb_label OR $verb_label IN coalesce(r.synonyms, [])`
+(L2512) — a relationship TYPE, an IRI, or a synonym, all through one parameter named
+`verb_label`. **And the cheapest-wins ordering has no tie-break**: `ORDER BY CASE
+coalesce(r.cost_class,'slow') …` then `LIMIT 1`, so among equal-cost edges the winner is whatever
+the planner returns first. A `MeshGraph.edge(subject, verb)` signature has to say which of the
+three spaces `verb` is in, and that ties are undefined — an authority ranking needs a scope.
+
+**4. THE TWO PROVIDER-DISCOVERY QUERIES MIX COMPACT AND FULL IRI SPELLINGS IN ONE MATCH.**
+`_INSTANCE_RESOLVERS_CYPHER` (L1390) anchors on the FULL IRI
+`'http://invincible-agent/mesh#InstanceIdentifier'` and then filters `r.iri = 'mesh:resolveInstance'`
+— the COMPACT form. Both are correct only because the registrar happens to write each property in
+that spelling. **An unknown or re-spelled prefix passes through verbatim and matches nothing**, so
+the failure is a silently empty provider list, which this repo has already paid for twice. If the
+interface takes a verb IRI, it must say which spelling, and the implementation should normalise
+rather than inherit two conventions.
+
+**5. THE HOP BOUND IS A HARDCODED 5 IN ONE QUERY AND A CALLER ARGUMENT IN TWO OTHERS.**
+`_SERVED_CLASSES_CYPHER` fixes `subClassOf*0..5`; `find_compatible_verbs` (L4000) and
+`_get_subject_ancestor_chain` (L4197) substitute `$MAXHOPS$` **by string replacement**, because a
+variable-length bound cannot be a Cypher parameter. So three operations answer inheritance
+questions at depths that need not agree, and one of them cannot be asked for a different depth.
+A default invented locally becomes a contract — pick the bound in the interface, do not let three
+queries each carry their own.
+
+**AND ONE THAT IS NOT A DISAGREEMENT BUT DECIDES A PROPERTY OF THE WHOLE INTERFACE:**
+`operable_subjects`'s entitlement filter is `_can_view_class(request.user_email, uri)`, applied in
+Python AFTER the query, **keyed on an EMAIL**. "Identity is an argument" cannot be honoured at
+this door until that keying moves to a principal id — which is the gateway's email-keyed-authz
+ruling, arriving inside an engine's read path. The interface should take a principal, and this
+implementation will need the gateway's change before it can mean one.
+
+## §8 — WHAT THIS PACKET DOES NOT ESTABLISH
 
 * It is scoped to `agent_fleet/ontology_service/`. It says nothing about the other engines, which
   is ca's census.
