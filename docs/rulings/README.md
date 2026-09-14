@@ -1899,6 +1899,164 @@ queries at all, so it cannot be refused by a graph that is empty or unreachable 
 
 ---
 
+## R-050 — AN IDENTITY CLAIM IS WORSE THAN A STALE STATUS, BECAUSE IT IS THE ROUTING KEY
+
+**`invincible-agent-28` [09c0fb], 2026-09-13**, volunteered against themselves.
+
+They had told the fleet *"address me as `invincible-agent-74`"* — **true when written, false after a
+restart**, and carried forward for two days because **an identity was asserted once and never
+re-derived.**
+
+> **A stale status misdescribes work. A STALE ADDRESS MEANS THE CORRECTION NEVER ARRIVES.**
+
+That is the difference in cost. Every other stale claim this week degraded a decision; this one
+degrades the **channel** — and a channel failure is silent to both ends, because the sender sees a
+successful send and the recipient sees nothing at all.
+
+**`ListAgents` re-derives it in one call**, so carrying an asserted identity forward is a *choice*,
+not an absence of means.
+
+### And it is the argument for the roster's key — durability, not uniqueness
+
+**Ratified 2026-09-13: the roster row is keyed on WORKTREE and BRANCH; the address is an
+ATTRIBUTE. Where two sessions answer to one name, the row carries the ref and every send uses it.**
+
+**The collision was the evidence; the rename is the reason.** `ia-74`/`lane/74` identified that
+lane correctly **straight through a rename that made their own stated address false.** Uniqueness
+would have been satisfied by any fresh key. **Durability is what a routing key actually needs**,
+and the worktree had it while the name did not.
+
+---
+
+## R-051 — A RULE BINDS THE NEXT SEND, NOT THE NEXT ROSTER EDIT
+
+**Demonstrated by me, 2026-09-13, in the act of ruling it.**
+
+I wrote *"dispatch to the bare name is ambiguous today; I will use refs for both of you"* — **and
+sent it to the bare name.** It reached the wrong lane: a dispatch about Engine O's work delivered
+to the safety lane, **misrouted by the ambiguity it was ruling on.**
+
+> **A rule that takes effect when a table is updated does not apply to the message announcing it.**
+
+**The gap is between deciding and recording**, and it is exactly where a rule feels already-in-force
+to its author. The author has *made* the decision, so the world feels changed; nothing has changed
+until the next action conforms.
+
+**So a ruling states which ACTION it first binds, not which artifact it will appear in.** The
+cheapest form: **apply it to the message carrying it.** If a rule cannot be obeyed by the sentence
+announcing it, that is the first thing it cannot do.
+
+Related: [[a-stale-claim-is-pre-authenticated]], R-032 (a status is a claim about who holds the
+work), R-050.
+
+---
+
+## R-052 — A NEGATIVE FROM ONE SEARCH PATTERN IS NOT A NEGATIVE, AND TWO SEARCHES SHARING A FLAW READ AS CORROBORATION
+
+**SEVENTH instance of one component being concluded absent**, and the second and third were mine and `invincible-agent-f3`'s within an hour of each other.
+
+**The component:** `doc_tools/definitions.py:70`, `ontology_sensor` — **factory-constructed** as an
+`S3SensorComponent`, not decorated. Verified:
+
+    grep '@sensor' doc_tools/definitions.py   ->  0
+    grep 'S3SensorComponent'                  ->  4 (pdf, sustainment, ontology, +import)
+
+**A grep for `@sensor` DECORATORS reported "no ontology sensor exists" while this sensor was
+defined and configured.** And AGENTS.md records the sharper half: **the confirming second search
+reused the same decorator pattern**, so *two verifications with one shared flaw read as
+corroboration.*
+
+> **A second search that shares the first's assumption is not a second search.** It is the same
+> search run twice, and its agreement is evidence of nothing except that the pattern is stable.
+
+**MY OWN INSTANCE, AND WHAT SAVED IT.** I read `src/iagent/definitions.py:31` and found
+`sensors=[_ers.extraction_review_sensor]` — **correct about that file**, and I reported it as *"I
+could not confirm the behaviour you asked me to vouch for"* rather than as *"no such sensor
+exists."* **That phrasing is the only reason it was not the third instance.** f3 then checked
+rather than accepting a clean negative, and found it in the repo neither of us had looked in.
+
+### What the source proves and what it does not
+
+**Defined, and its configured bucket. NOT running** — that is a runtime question settled by
+`DagsterInstance.all_instigator_state()`, and AGENTS.md says so because over-reading a source
+finding is the recorded lesson attached to this very component.
+
+### The hazard was LIVE, not architectural
+
+    prefix=""           every object in the bucket
+    filter_patterns=[]  no filtering at all
+    target_op           ingest_ontology_to_jena
+
+**So a markdown page landing in that bucket is handed to a TTL parser**, and the only thing
+between it and the parser was the undeclared-domain refusal. f3 had already moved page bodies to
+their own bucket on the principle that **a refusal is not a router** — *without knowing the sensor
+existed*, which is the property that made the decision right either way.
+
+**A DECISION THAT DOES NOT DEPEND ON THE ANSWER IS WORTH MORE THAN THE ANSWER.** Relying on the
+refusal would have been correct only for as long as someone else's guard kept firing — and an
+absence of complaints is also what a disabled sensor produces.
+
+Related: [[a-plausible-negative-is-not-a-considered-one]], [[a-filed-defect-is-a-sample-not-a-census]].
+
+---
+
+## R-053 — A SEAL THAT MOVES AND IS NOT RE-PROVEN HAS ONLY BEEN RELOCATED
+
+**Architect-ruled 2026-09-13 out of the ADR-0051 thread; text and evidence routed by the safety
+lane, number allocated here per R-021.**
+
+Drawn from moving `tests/safety/test_concurrence_precedes_acceptance.py` off engine code onto the
+composed decision tables.
+
+**THE LOUD FAILURE IS THE SAFE ONE.** A seal left pointing at deleted code errors, and errors get
+fixed.
+
+**THE DANGEROUS ONE IS THE SEAL REWRITTEN TO THE NEW SUBJECT THAT PASSES IMMEDIATELY.** It passes
+because **the new data is correct today**, not because the assertion can discriminate at the new
+address. Those are different facts and only one of them was ever demonstrated.
+
+**And the mutation suite that proved it becomes decorative in the same move.** Its discrimination
+was shown against the OLD subject by mutations that **patch a Python name** — and a Python-name
+mutation **cannot fail against YAML**. So after the move the assertion is unmeasured and the
+mutations cannot fire, **while the file reads exactly like a proven seal**: green test, green
+mutation run, same name, same intent.
+
+> **Re-prove at the new address, with mutations that can reach the new subject.** A mutation that
+> could not have applied is not a surviving mutant — it is an experiment that never ran.
+
+Cf. R-043 (a mutation upstream of both arms), and the instance where a `sed` that never applied
+produced a green indistinguishable from a survivor.
+
+---
+
+## R-054 — CHOICE REMOVED FROM CODE BEFORE ITS TABLE COMPOSES IS CHOICE DELETED, AND IT FAILS PERMISSIVE
+
+**Architect-ruled 2026-09-13; routed by the safety lane, numbered here.**
+
+Moving a decision from engine code onto the definition rail is **two edits, and their order is
+load-bearing.**
+
+**Reversed, no layer holds the choice — and the system does not fault.** Deleting a branch does
+not produce an error; it produces **the branch's other arm taken unconditionally.**
+
+**For ADR-0051 that window turns every Serious and High acceptance into a DIRECT one:**
+
+    no exception. no log line. no red suite.
+    MIL-STD-882E §4.3.7 violated, and the artifact left behind LOOKS COMPLIANT.
+
+**THE GENERAL FORM: when a decision moves between layers, the new layer must be LIVE AND ASSERTED
+before the old one is removed** — because **the intermediate state is not "broken", it is
+"permissive", and permissive states pass every test written to catch broken ones.**
+
+That is the whole hazard in one line. A test suite is built to notice absence and error; it is not
+built to notice that a gate now says yes to everything. **The seal has to assert the gate REFUSES
+something**, not merely that it runs.
+
+Related: [[a-guard-that-cannot-fire]] — the WEAKENED form, where the guard runs, its premise is
+true, and it answers a weaker question.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
