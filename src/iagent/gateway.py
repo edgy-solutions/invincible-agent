@@ -5585,6 +5585,30 @@ async def _stream_direct_outcome(
         bundle["resolved_intent"]["refused_slots"] = json.loads(
             _slots_md.get("refused_slots") or "[]"
         )
+        # ── THE VERB AND THE DISPOSITION TRAVEL WITH THE SLOTS ────────────────────────────
+        #
+        # This wrote ONLY the two slot keys onto whatever `resolved_intent` already held — and
+        # on the direct path that is nothing. Measured on artifact-2-1789404372153: a FAILED
+        # artifact whose entire intent was
+        #
+        #     {"refused_slots": [], "accepted_slots": {"program_id": "NP-MERIDIAN"}}
+        #
+        # while artifact-1 and the older cost artifact both carry `verb_iri`, `disposition`,
+        # `subject_uri` and `owner_persona`.
+        #
+        # **A FAILED ARTIFACT WITH NO VERB IS UNATTRIBUTABLE BY CONSTRUCTION.** It took three
+        # reads of the artifact store to learn which verb had been refused, and the answer was
+        # sitting in `routing.excluded[]` the whole time — in a different column, because the
+        # field that names the action had been dropped from the field that records the intent.
+        #
+        # Written with `setdefault` rather than assignment: where a fuller intent already exists
+        # (the classify path fills it in above) this must not overwrite it with the direct
+        # path's view. Only the absent keys are supplied.
+        for _k in ("verb_iri", "disposition", "subject_uri", "owner_persona",
+                   "subject_instance_id", "subject_instance_label", "slot_resolution"):
+            _v = _slots_md.get(_k)
+            if _v not in (None, ""):
+                bundle["resolved_intent"].setdefault(_k, _v)
 
     if outcome.kind == direct_dispatch.ABSTAIN:
         # THE VERB WAS RIGHT AND THE ENGINE DID NOT ANSWER. The routing record above is
