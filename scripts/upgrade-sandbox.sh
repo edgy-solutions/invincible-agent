@@ -141,4 +141,37 @@ _on_kill() {
   exit 143
 }
 trap _on_kill TERM INT
+# ── THE TAG MUST RESOLVE, AND THIS REFUSES RATHER THAN WARNS ────────────────────────────────
+#
+# TWICE IN ONE DAY, BY THE AUTHOR OF THE RULE THAT FORBIDS IT. A sha was TYPED instead of
+# derived -- `cd924dbb61fb...` for `cd924dbcb1a1...` -- and both times the first seven characters
+# were real, which is exactly why it read as correct. First time it wedged the release at
+# pending-upgrade; second time 18 pods went ImagePullBackOff.
+#
+# "A sha is derived, never typed" is a good rule and it did not survive contact with its author's
+# hands. A discipline that fails twice is not the remedy; this is. The script resolves the tag
+# itself and refuses anything git cannot name -- so the habit has nowhere to land.
+#
+# REFUSES, DOES NOT WARN: this script's own killed-client trap already records that a warning in
+# a long log stops nobody, including the person who wrote it.
+_tag=""
+_prev=""
+for _arg in "$@"; do
+  case "${_arg}" in
+    global.imageTag=*) _tag="${_arg#global.imageTag=}" ;;
+    *) [ "${_prev}" = "--set" ] && case "${_arg}" in global.imageTag=*) _tag="${_arg#global.imageTag=}" ;; esac ;;
+  esac
+  _prev="${_arg}"
+done
+if [ -n "${_tag}" ]; then
+  if ! git -C "$(dirname "${CHART}")/.." cat-file -e "${_tag}^{commit}" 2>/dev/null; then
+    echo "REFUSING: global.imageTag='${_tag}' does not resolve to a commit in this repository." >&2
+    echo "  A sha that is ALMOST right is the dangerous case -- the first characters match, the" >&2
+    echo "  tag reads as correct, and the failure arrives as ImagePullBackOff on every service." >&2
+    echo "  Derive it:  --set global.imageTag=\$(git rev-parse origin/master)" >&2
+    echo "  If you mean a tag that is not a commit: ALLOW_UNRESOLVABLE_IMAGE_TAG=1 ..." >&2
+    [ "${ALLOW_UNRESOLVABLE_IMAGE_TAG:-}" = "1" ] || exit 2
+  fi
+fi
+
 exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}"      --timeout "${HELM_TIMEOUT}" "$@"
