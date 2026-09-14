@@ -235,7 +235,7 @@ async def lifespan(app: FastAPI):
         secret_env="ENGINE_SAFETY_CLIENT_SECRET",
     )
 
-    registered, failed = [], []
+    attempted, failed = [], []
     for v in VERBS:
         # ONE NAME PER (VERB, SUBJECT). Registering one verb twice under one name DELETES the
         # first edge — the registrar's compensate-on-rescope sweep removes rows matching
@@ -281,7 +281,7 @@ async def lifespan(app: FastAPI):
                 slots=slots_mod.slots_for(v["fn"]),
                 mint=_mint,
             )
-            registered.append(v["verb"])
+            attempted.append(v["verb"])
         except Exception as exc:  # noqa: BLE001
             # NO SUCCESS LINE THAT DOES NOT CHECK SUCCESS (runbook §8). A loop that prints
             # "registered" after a call it never checked is how an engine reports healthy with
@@ -289,7 +289,30 @@ async def lifespan(app: FastAPI):
             failed.append((v["verb"], str(exc)))
             print(f"[engine-safety] REGISTRATION FAILED {v['verb']}: {exc}")
 
-    print(f"[engine-safety] registered {len(registered)}/{len(VERBS)} verbs")
+    # ── THIS SAYS "ATTEMPTED", NOT "REGISTERED", AND THE DIFFERENCE WAS MEASURED ────────
+    #
+    # The line here used to read `registered {n}/{len(VERBS)}` and it COULD NOT FAIL.
+    # `register_engine_to_mesh` catches its own emit failure, logs "⚠️ Failed to register
+    # engine ... Engine will keep serving", and RETURNS NORMALLY — so the `except` above never
+    # fires for the failure that actually matters and the counter increments on a call that
+    # reached nothing.
+    #
+    # MEASURED 2026-09-14 rather than reasoned about: run against a dead GMS port, this engine
+    # printed three emit warnings and then `registered 3/3 verbs`, with
+    # `registration_incomplete: None` on /health. A healthy pod, an honest-looking count, and
+    # zero verbs in the mesh — precisely the state runbook §8 exists to prevent, arriving
+    # through the CALLEE rather than the caller. The comment in the handler above is true
+    # about the code it guards and false about the outcome, which is how it survived review.
+    #
+    # NOT A SAFETY-ENGINE DEFECT: the helper is shared by eleven engines and every one counts
+    # the same way. Reported rather than fixed here, because making `register_engine_to_mesh`
+    # signal success is a contract change across the fleet and a shared mechanism is not
+    # re-specified by its newest caller. What IS mine is declining to print a word I cannot
+    # support — the count is of ATTEMPTS, which is exactly what this loop can observe.
+    print(
+        f"[engine-safety] registration ATTEMPTED for {len(attempted)}/{len(VERBS)} verbs "
+        "(the helper does not report emit success — read the mesh census for what landed)"
+    )
     if failed:
         # Readiness must FAIL ON GAVE UP rather than degrade quietly.
         app.state.registration_incomplete = [v for v, _ in failed]
