@@ -1,82 +1,76 @@
-# The empty `finProgramBrief` card was a CORRECT ASK that the card did not render
+# RETRACTED IDENTIFICATION — I measured the ASK and asserted about the ANSWER
 
-**Measured 2026-09-14** against the live graph, reading `AnswerArtifact` directly rather than
-reasoning from the symptom. Raised by `invincible-agent-65` with two candidate owners; **it is
-neither of them.**
+**Superseded 2026-09-14 by the architect, who has the screens.** The measurement below is
+accurate; **the artifact it was taken from is the wrong one**, and the conclusion drawn from it
+was wrong in the harmful direction. Kept rather than deleted because the retraction is the
+useful part.
 
-## The symptom as reported
+## What I claimed, and what is actually true
 
-*"Make me a program finance canvas"* routed to `mesh:finProgramBrief`, the Dagster run
-**succeeded in 56s**, and the card rendered `Program · fin Program Brief` as its entire content.
-Two candidates were put forward: **the brief's `StatefulSupportResponse` came back empty**
-(engine-lg's), or **the `KNOWLEDGE_DOCUMENT` binding cannot render its shape** (cortex-ui's).
+I read `artifact-1-1789404282812`, found a correct `ask`, and concluded the card rendered its
+summary instead of its ELICITATION component — therefore **neither** candidate owner, therefore
+both lanes should stand down.
 
-## What the artifact actually says
+**Artifact-1 rendered correctly.** It is on screen: *"Which program did you mean?"* with
+Notional Program Meridian offered as an option, ELICITATION displayed, exactly the 823-byte
+payload described below. The elicitation path works, end to end, including the render.
 
-`artifact-1-1789404282812`, status `complete`:
+**The empty card is a SECOND artifact** — the rail entry at **11:46, marked 2 hops**, written
+after the program was picked. The sequence was:
+
+    ask (correct, rendered)  ->  pick  ->  ~1m09 over two hops  ->  27-byte summary, nothing else
+
+I never opened it. **And my "stand down" told the two lanes whose candidates are exactly right
+for that artifact to stop looking** — including my own. For an answer-after-pick, "the brief's
+`StatefulSupportResponse` came back empty" and "the `KNOWLEDGE_DOCUMENT` binding cannot render
+its shape" are both live, and the first is engine-lg's.
+
+## How I picked the wrong artifact, which is the part worth keeping
+
+**The two artifacts of one exchange share every field I identified it by.** Same question text,
+same subject, same verb, both with a short summary. I selected on those, found artifact-1, and
+treated a match on the shared fields as an identification.
+
+The fields that actually distinguish them are the ones I did not use: **lineage**
+(`DERIVED_FROM` — the answer carries the pick in its ancestry and the ask does not), the **hop
+count**, and the **timestamp**. `tests/routing/test_ask_to_answer_lineage.py` exists precisely
+because adjacency is not lineage; I made the error its docstring warns about, from the other side.
+
+**A shared identifier cannot identify — and the ask/answer pair is built to share them.** When
+two records describe one exchange, select on the relation between them, never on their common
+description.
+
+Compounding it: I asserted about **a card I never saw**. Every fact I had was from the payload;
+"the card displayed the summary" was an inference presented in the register of a measurement,
+and it was the load-bearing claim.
+
+## What still stands
+
+The measurement of artifact-1 is real and worth keeping, because it proves the whole ask path:
 
 ```
-resolved_intent.disposition   "ask"
-resolved_intent.accepted_slots {}
-summary                        "Program · fin Program Brief"        (27 bytes)
-rendered_output                                                     (823 bytes)
+resolved_intent.disposition   "ask"        accepted_slots {}
+rendered_output               823 bytes
+  archetype      ELICITATION      slot  program_id     reason  slot-unfilled
+  message        "Which program did you mean? Options: Notional Program Meridian."
+  option_source  enumeration      options [{Notional Program Meridian / NP-MERIDIAN}]
+  provenance     candidates_considered 1, satisfied 1, presentation_source registered,
+                 selection_basis output_uri+payload
 ```
 
-**The graph never ran.** `program_id` is `spoken-mandatory` on the ratified row and the question
-names no program, so `decide_disposition` returned **`ask`** — which is correct, and is the exact
-behaviour `tests/graph_host/test_the_graphs_missing_slot_is_an_ask.py` asserts.
+The slot declaration, its referent, the enumeration provider, the disposition declining to guess
+a mandatory slot, the presentation selector, **and the render** all work. That is a real result
+about the ask; it is not a result about the empty card.
 
-So there was no brief to be empty, and nothing for a `KNOWLEDGE_DOCUMENT` binding to fail on.
+And the generalisation survives its own retraction, because it was never about which artifact:
+**an ask is not a degraded answer, it is a different kind of answer.** It just does not apply
+here — this ask was rendered as an ask.
 
-## And `rendered_output` carries a COMPLETE, CORRECT elicitation
+## What is still unread
 
-```json
-{"components": [{"archetype": "ELICITATION",
-                 "disposition": "ask",
-                 "slot": "program_id",
-                 "reason": "slot-unfilled",
-                 "message": "Which program did you mean? Options: Notional Program Meridian.",
-                 "option_source": "enumeration",
-                 "options": [{"label": "Notional Program Meridian", "value": "NP-MERIDIAN"}],
-                 "verb_iri": "mesh:finProgramBrief"}],
- "presentation_provenance": {"archetype": "ELICITATION",
-                             "candidates_considered": 1, "candidates_satisfied": 1,
-                             "presentation_source": "registered",
-                             "selection_basis": "output_uri+payload"}}
-```
+**Artifact-2: the 11:46 rail entry, 2 hops**, whose `resolved_intent` says whether the graph ran
+under the picking identity with `program_id` bound, or whether the pick fell back to the full
+path and produced a different artifact. Dagster run `8b5b3710` succeeded in 56s inside that
+window; the card took 1m09 over two hops, and that gap is unexplained.
 
-**Every backend layer did its job**, and each is independently visible above: the slot declaration
-and its `referent`, the enumeration provider resolving one real option, the disposition returning
-`ask` rather than routing on a missing mandatory slot, and the presentation selector choosing
-`ELICITATION` from a registered candidate on `output_uri+payload`.
-
-**The card displayed the 27-byte `summary` and not the 823-byte `ELICITATION` component.**
-
-## Where this leaves the owners
-
-| candidate | verdict |
-|---|---|
-| the brief returned empty (engine-lg) | **NO** — the graph was never invoked, correctly |
-| `KNOWLEDGE_DOCUMENT` cannot render it (cortex-ui) | **NO** — the archetype is `ELICITATION`, not `KNOWLEDGE_DOCUMENT` |
-| **an ASK rendered as an ANSWER** | **THIS** — the payload carries the question, the menu and one resolved option; the surface showed the title line |
-
-The remaining work is in the **ELICITATION rendering path**, and it is a different defect from
-either thing that was about to be built.
-
-## What this cannot distinguish
-
-Whether the component was dropped **in cortex-bff's response shaping** or **in cortex-ui's
-rendering**. The artifact proves the component existed when the artifact was written; it does not
-prove what the browser received. Settling that needs the network response, not the graph.
-
-## The caution that generalises
-
-**A run that succeeds in 56s with an empty card is the strongest form of "registered is not
-participating" this fleet has produced** — green run, green card, zero content — and the honest
-reading was available only in the payload. Both offered explanations were plausible, both named a
-real component, and **both were wrong**; a fix built on either would have changed code that was
-behaving correctly and left the defect in place.
-
-**An `ask` is not a degraded answer. It is a different kind of answer**, and a surface that
-renders it as an empty one converts the system's most careful behaviour — declining to guess a
-slot — into its most broken-looking.
+That artifact is the subject. Nothing above is evidence about it.
