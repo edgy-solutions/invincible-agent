@@ -2057,6 +2057,55 @@ true, and it answers a weaker question.
 
 ---
 
+## R-055 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+
+**Three shapes in one day, filed as one entry because they will be recognised faster as a family
+than as instances.** In every one the failure **was** recorded, correctly, by code that was doing
+its job — and every one produced **a surface that looked fine over something that did not
+happen.**
+
+| shape | where the truth was | what the reader saw |
+|---|---|---|
+| **the LOG** | four WARNING lines: `mint failed 5/5` | `registered 3/3`, pod `1/1 Ready`, mesh empty |
+| **the COLUMN** | `status: failed` in the artifact row | a blank card, indistinguishable from an empty success |
+| **the WRONG COLUMN** | `routing.excluded[]` named the gate | `resolved_intent` held slots and no verb |
+
+**ALL THREE WERE FOUND BY READING THE ROW RATHER THAN THE SCREEN**, and none was found by the
+thing that was supposed to report it.
+
+### The third is the subtlest and cost the most
+
+`artifact-2-1789404372153`, `status: failed` in 191ms, entire intent:
+
+    {"refused_slots": [], "accepted_slots": {"program_id": "NP-MERIDIAN"}}
+
+**The slot that was bound, and not the verb that refused it.** Three reads to learn that
+`mesh:finProgramBrief` was excluded on an **arity** gate immediately after an elicitation supplied
+its one slot.
+
+**NOTHING WAS LOST. IT WAS UNFINDABLE FROM WHERE A READER STARTS.** The field naming the ACTION had
+been dropped from the field recording the INTENT — so a reader who opened `resolved_intent`, *the
+field whose name promises exactly that*, saw slots and no verb. **Both halves were recorded
+correctly and separately, and nothing named the verb in the field that would have joined them.**
+
+> **Recorded in a column a reader does not start from is the same as not recorded, for anyone
+> diagnosing under time.**
+
+### The remedy is not "log more"
+
+Each repair puts the fact **where the person who hits it is already looking**: the registration
+returns a result its caller counts; the card names `status` and the exclusion reason; the artifact
+carries the verb beside the slots. **None of the three added information — all three moved it.**
+
+### And the method note is the law from the retraction, proven
+
+`invincible-agent-22` misidentified an artifact by selecting on **the fields the ask/answer pair is
+built to share** — same question, same subject, same verb, short summaries on both. **One query on
+`derived_from_artifact_id` — the RELATION — resolved what three reads on the description could
+not.** *Select on the relation between two records, never on their common description.*
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
