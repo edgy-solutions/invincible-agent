@@ -51,6 +51,27 @@ SAFETY = "http://internal/sustainment/safety#"
 MAINT = "http://internal/maintenance#"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# THE ENGINE'S SCOPE — and these two names must EXIST IN THE POLICY VOCABULARIES,
+# which is a coupling nothing in the suite checked until 2026-09-14.
+#
+# `DOMAINS` is the one that gates. `/find_compatible_verbs` intersects a verb's
+# domains with the caller's entitled domains and SKIPS the check entirely when a
+# verb declares none — so omitting this makes an engine's verbs visible to every
+# caller in the fleet, silently, with a shorter call as the only tell.
+#
+# `OWNER_PERSONA` does NOT gate: src/iagent/auth.py flattens entitlements to
+# `{c.domain for c in cells}` and the persona half never reaches a filter. It is
+# the answering VOICE, and it is set because an answer should say who is speaking.
+#
+# BOTH must appear in policy/personas.yaml and policy/domains.yaml or the sync
+# refuses every group grant naming them — which is exactly how engine-cost's
+# COST_ANALYST was caught, and it is caught only INDIRECTLY, once somebody writes
+# the grant. `tests/safety/test_engine_scope_exists_in_policy.py` makes it direct.
+# ─────────────────────────────────────────────────────────────────────────────
+OWNER_PERSONA = "SAFETY_ENGINEER"
+DOMAINS = ["SUSTAINMENT"]
+
+# ─────────────────────────────────────────────────────────────────────────────
 # THE VERB CATALOGUE — one table, read twice (runbook §3): once by registration
 # and once by /verbs. Descriptions are the ROUTING SIGNAL, and the not-clauses
 # are load-bearing: a verb that does not say what it is NOT gets routed to for
@@ -226,10 +247,37 @@ async def lifespan(app: FastAPI):
                 verb=v["verb"],
                 input_uri=v["input_uri"],
                 output_uri=v["output_uri"],
-                endpoint=f"{base}/analyze",
+                # THREE PARAMETER NAMES WERE WRONG, SO EVERY REGISTRATION RAISED TypeError.
+                # `endpoint=`, `synonyms=`, `anti_synonyms=` are not this function's parameters;
+                # it is keyword-only with no **kwargs, so the call could never bind —
+                # `TypeError: missing a required argument: 'endpoint_url'`. The handler below
+                # caught all three and the engine reported `registered 0/3` +
+                # `registration_incomplete`, which is that loop doing exactly its job. Nothing
+                # was silently wrong; nothing was registered either, which is why the safety
+                # verbs are absent from the verb census.
+                endpoint_url=f"{base}/analyze",
                 description=v["desc"],
-                synonyms=v["synonyms"],
-                anti_synonyms=v["anti_synonyms"],
+                verb_synonyms=v["synonyms"],
+                verb_anti_synonyms=v["anti_synonyms"],
+                # ── THE REGISTRATION CARRIED NO SCOPE AT ALL, AND THAT IS THE WORSE HALF ──
+                #
+                # Both of these defaulted to None, and a verb with NO domains is DOMAIN-AGNOSTIC:
+                # `/find_compatible_verbs` skips the entitlement intersection entirely for a verb
+                # that declares none, so all three safety verbs would have been visible to EVERY
+                # caller in the fleet. The opposite of the gate ADR-0051 §5 rests on, arriving
+                # through an OMITTED argument rather than a wrong one — which is the harder half
+                # to see, because a missing kwarg looks like a shorter call.
+                #
+                # THIS IS WHY THE `safety-engineers` CELL GRANTS NOTHING WITHOUT THIS LINE. A cell
+                # admits a caller only once the verbs declare the domain that cell carries; until
+                # then its ABSENCE excludes nobody either, which is a grant that passes readback
+                # and means nothing — the shape policy/groups.yaml warns about in its own header.
+                #
+                # `owner_persona` is the answering VOICE, not a filter: src/iagent/auth.py
+                # flattens entitlements to `{c.domain for c in cells}` and discards the persona
+                # half before any verb filter runs. Set so the answer says who is speaking.
+                owner_persona=OWNER_PERSONA,
+                domains=DOMAINS,
                 slots=slots_mod.slots_for(v["fn"]),
                 mint=_mint,
             )
