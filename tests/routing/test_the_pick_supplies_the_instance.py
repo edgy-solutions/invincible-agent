@@ -211,6 +211,23 @@ def test_engine_cost_DECLARES_NO_ARITY_so_its_live_half_is_dark():
     becomes a test of a literal the system does not emit, which is the defect
     `DISPOSAL_REMOVED`'s own docstring records one module over.
 
+    ── AND DECLARING ARITY HERE SWITCHES ON TWO BEHAVIOURS, NOT ONE ─────────────────────────
+    Read this before adding `arity_for` to engine-cost. One line will enable, for all six
+    verbs at once:
+
+      1. THE FLAG. `filter_verbs_by_arity` starts marking them `needs_instance` on set-shaped
+         turns — the ask this seal exists for, which is the intended gain.
+      2. THE PROMOTION, and its reach is wider. The pick's referent binding is promoted into
+         `subject_instance_id`, which `dynamic_supervisor.py:1679-1690` threads onto the
+         GENERALIST FALLBACK as `resolved_instance_id` — the branch whose own log line says
+         "Engine A will NOT re-resolve". Verified at that line 2026-09-14, not taken on
+         report.
+
+    The promotion is gated on the declaration precisely so three engines do not acquire (2) as
+    a side effect of a fourth being fixed. Declaring arity opts this engine in to BOTH. That is
+    the right trade — but it is a routing change on six verbs, not a slot annotation, and it
+    should be made deliberately rather than discovered in a diff.
+
     Re-run the census:
         grep -rn "def arity_for" agent_fleet/*/slots.py
         grep -n "arity=" agent_fleet/cost_agent/main.py
@@ -221,12 +238,16 @@ def test_engine_cost_DECLARES_NO_ARITY_so_its_live_half_is_dark():
     from agent_fleet.cost_agent import slots as cost_slots
 
     assert not hasattr(cost_slots, "arity_for"), (
-        "engine-cost now derives arity. GOOD — now delete the hand-supplied "
-        '`"arity": "single"` in test_the_rule_holds_for_a_CATALOGUE_sourced_verb and read the '
-        "declared value, so that row tests what the engine actually registers."
+        "engine-cost now derives arity. GOOD — two things follow. (1) Delete the "
+        'hand-supplied `"arity": "single"` in '
+        "test_the_rule_holds_for_a_CATALOGUE_sourced_verb and read the declared value, so "
+        "that row tests what the engine actually registers. (2) Confirm the six verbs were "
+        "meant to opt in to the INSTANCE PROMOTION as well as the flag — it reaches the "
+        "generalist fallback, where Engine A stops re-resolving. See this test's docstring."
     )
     main_src = (_REPO / "agent_fleet" / "cost_agent" / "main.py").read_text(encoding="utf-8")
     assert "arity=" not in main_src, (
-        "engine-cost's registration now passes arity. GOOD — see the message above, and the "
-        "live half of this seal becomes provable for a second engine."
+        "engine-cost's registration now passes arity. GOOD — the live half of this seal "
+        "becomes provable for a second engine. Check the promotion consequence in this "
+        "test's docstring before shipping: six verbs gain it at once."
     )
