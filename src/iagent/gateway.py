@@ -3273,40 +3273,38 @@ def _project_route_decision(mat: dict) -> dict | None:
     #
     # Same honest-empty discipline as the pool above: absent projects to [], never a crash.
     try:
-        excluded = json.loads(md.get("eligibility_excluded") or "[]")
-        if not isinstance(excluded, list):
-            excluded = []
+        _raw_excluded = json.loads(md.get("eligibility_excluded") or "[]")
+        if not isinstance(_raw_excluded, list):
+            _raw_excluded = []
     except (ValueError, TypeError):
-        excluded = []
+        _raw_excluded = []
 
     # ── FLAGGED IS NOT EXCLUDED, AND ONE LIST CANNOT SAY BOTH ──────────────────────────────
     #
     # The field is named `eligibility_excluded` and the arity gate stopped excluding on
     # 2026-09-04 — it FLAGS `needs_instance` and KEEPS the verb as a candidate, because
     # removing the only verb that fits abstains for the reason it would have asked about.
-    # Every such entry carries `disposal: "flagged"`, so the distinction is in the data and
-    # was nowhere in the read: a reader of this list sees a candidate that is still live,
-    # under a key whose name says it was deleted.
+    # Every such entry carries `disposal: "flagged"`, so the distinction was in the data and
+    # nowhere in the read: a live candidate rendered under a key whose name says it was
+    # deleted.
     #
-    # That is the plausible-negative shape one layer along — "excluded" reads as a decision
-    # somebody made, and here it is the opposite decision. The producers already separate
-    # them; this is the consumer catching up. `excluded` keeps its name and now means what
-    # it says; `flags` is the other half, and neither is derived from the other's absence.
-    flags = [r for r in excluded if isinstance(r, dict) and r.get("disposal") == "flagged"]
+    # THE NARROWING LANDS HERE, AND ONLY NOW. It was held additive — both keys carrying the
+    # flagged rows — until the consumer read the new shape AT THE SERVING SURFACE, which is
+    # `cortex-ui` e1f9722, verified in the pod rather than on main (R-055.1: merged-is-not-
+    # deployed is the same window one repo over). `readExclusions` now PARTITIONS on
+    # `disposal` and takes `flags` first, so neither half is derived from the other's absence
+    # and a third disposal cannot be absorbed into either.
     #
-    # ⚠ `excluded` IS NOT NARROWED YET, AND THAT IS THE ORDER RATHER THAN AN OMISSION.
-    #
-    # `cortex-ui/src/lib/routing.ts::readExclusions` has NO disposal awareness — it renders
-    # every row as "excluded by {gate}" — and its own comment records the fix for arity rows
-    # being SILENTLY DISCARDED there, because the reader keyed on `verb` while the producer
-    # sends `uri`. Dropping the flagged rows out of `excluded` here would re-open that exact
-    # defect from the producer's side: the same arity row vanishing from the same panel, whose
-    # whole job is explaining an empty card.
-    #
-    # So this step is ADDITIVE. `flags` is emitted, both keys carry the flagged rows, and the
-    # narrowing lands with the cortex-ui change that reads `flags` and labels it a flag instead
-    # of a removal. Trading a mislabel for an absence would be the worse half of the trade, and
-    # an absence is the thing neither end can see.
+    # Both halves are computed from one partition rather than two comprehensions, so a row
+    # that is neither `flagged` nor recognised cannot silently land in both or in neither.
+    flags, excluded = [], []
+    for _r in _raw_excluded:
+        # An ABSENT `disposal` reads as removed, deliberately: every row predating the field
+        # meant exactly that, and a mislabel is visible where a disappearance is not.
+        if isinstance(_r, dict) and _r.get("disposal") == "flagged":
+            flags.append(_r)
+        else:
+            excluded.append(_r)
 
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.

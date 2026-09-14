@@ -2101,6 +2101,71 @@ A temporary state that cannot say it is temporary is just a permanent state nobo
 
 Worked example: `3e0fba2`, `tests/routing/test_the_answer_turn_reads_the_slots_it_bound.py`.
 
+### R-055.1 — "THE CONSUMER READS IT" MEANS THE SERVING SURFACE, NOT `main`
+
+Added 2026-09-14, on the first application of this ruling, which nearly failed at step 3.
+
+The consumer landed steps 1 and 2 and reported step 3 unblocked. It was not. The sandbox was
+still serving a build from the previous day:
+
+    version.json          git_sha 435ae7e...   built_at 2026-09-13T03:56Z
+    grep "excluded by"            -> found      (CONTROL: grep works on this bundle)
+    grep "candidates flagged"     -> nothing
+
+— and the image for the merged commit was **still building**. Narrowing then would have blanked
+the panel with both repos' suites green, which is this ruling's own failure mode, reached through
+the door the ruling opens.
+
+**MERGED-NOT-DEPLOYED IS THE SAME WINDOW AS NARROWED-NOT-READ, one repo over.** So step 2 is not
+"the consumer's change is on main"; it is **"the serving surface answers with the new shape"**,
+proven by readback with a positive control, exactly as any other absence assertion.
+
+**AND THE PULL IS ASYMMETRIC, WHICH IS WHY THIS NEEDS WRITING DOWN.** The same session that
+refused to take the producer's payload shape from a dispatch — and went and measured it in the
+serving pod, correctly — then read its OWN side's readiness off `main`. Nobody was careless. The
+instinct to verify someone else's claim is simply stronger than the instinct to verify your own
+repo's state, and the second is the one that ships.
+
+### R-055.2 — A FIXTURE WRITTEN FROM AN ACCOUNT OF A PAYLOAD AGREES WITH THE ACCOUNT
+
+**Found by `cortex-ui-60`, in its own work, and reported against itself.**
+
+Its existing fixture in `attemptFailed.test.tsx` carried **no `disposal` field at all** — it had
+been built from a description of the payload in a dispatch message rather than from the producer.
+It passed. It passed *as a removal*, which is precisely the mislabel this whole packet exists to
+fix, and it would have stayed green through a blank panel.
+
+**A fixture written from an account of a payload agrees with the account, not with the payload**
+— and it goes green while the thing it models is wrong. It is the same defect as a corpus row
+written from what the router SHOULD say, and the same as a docstring standing in for evidence:
+a second-hand description acquires the authority of the thing it describes, and tests built on
+it verify the description.
+
+This is what makes the ordering law EVIDENCED rather than merely prudent: the consumer's own
+test suite could not have caught the narrowing, because its fixture disagreed with the producer
+in exactly the field the narrowing turns on.
+
+Related: [[a-docstring-is-not-evidence]]; [[a-stale-claim-is-pre-authenticated]];
+[[an-absence-assertion-is-worth-its-control]] — the readback in R-055.1 needed one, and had one.
+
+### R-055.3 — PARTITION, DO NOT FILTER, AND TAKE THE NEW KEY FIRST
+
+Also `cortex-ui-60`'s, and both points improve on the dispatch that asked for them.
+
+**PARTITION.** A `flagged` half computed as "everything not `removed`" absorbs any THIRD disposal
+the gate ever adds and renders it as a live candidate — **a claim about a decision, made from not
+recognising a word.** Neither half may be derived from the other's absence. Sealed with a
+`deferred` row that must land in NEITHER half.
+
+**TAKE THE NEW KEY FIRST.** While both keys carry the same rows, reading both naively lists every
+flagged candidate twice and the fix looks like a new defect. Taking `flags` before `excluded`
+classifies a doubled row by the KEY rather than by its own field: the same answer today, and the
+right one for a flag row that arrives with no `disposal` — a case **only the additive window
+makes reachable.** The window does work beyond what it was opened for.
+
+**AN ABSENT `disposal` READS AS REMOVED**, deliberately: every row predating the field meant that,
+and by this ruling's own trade a mislabel is visible where a disappearance is not.
+
 Related: R-054 (the permissive arm, same ordering law); [[a-plausible-negative-is-not-a-considered-one]]
 — an empty list reads as a deliberate "nothing was excluded"; [[read-the-consumer-of-what-you-fixed]]
 — this was found by opening the consumer, and by nothing else.
