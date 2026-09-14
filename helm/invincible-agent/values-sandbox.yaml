@@ -185,6 +185,12 @@ agentFleet:
     # working query endpoint. (Was hot-patched via `kubectl set env` on 2026-07-22
     # to unblock; folded here so a fresh install reproduces it — bootstrap-state-debt.)
     JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/sparql"
+    # DECLARED BESIDE ITS SIBLING, AND FOR THE SAME REASON THE OVERRIDE EXISTS AT ALL. This file
+    # overrides the QUERY endpoint to the short service name; without the same override the
+    # UPDATE endpoint would keep the helper's FQDN and the two would name different hosts for one
+    # substrate. Rendering both and reading them side by side is what caught it — a single render
+    # of the new key alone looked correct.
+    JENA_UPDATE_ENDPOINT: "http://iagent-fuseki:3030/ds/update"
     # NEO4J_URI override RETIRED (chart 0.3.16): the configmap derives it
     # from neo4j.*/externalNeo4j.* with hasKey guards, and the stale
     # values.yaml default (`bolt://neo4j`, the duplicate-key race that
