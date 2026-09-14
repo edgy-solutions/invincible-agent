@@ -1,0 +1,20 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0051. Where a risk assessment goes when the user representative does NOT concur: back to
+# its author. Reached by a chaining row on `safety_concurrence`'s outcome, never by a branch.
+#
+# RECIPIENT, RULED: the initiator identity on the RiskAssessment artifact — the author acts on
+# what they authored. The substrate materialises rows from a declared AUDIENCE rather than from a
+# subject's initiator, so the audience below is the sandbox stand-in and per-instance routing is
+# filed as platform work. Correct now; more precise later; not a different design.
+#
+# `redrafted` and `withdrawn` are both reason-required. Returning a revised assessment without
+# saying what changed makes the second draft unreviewable against the first; withdrawing one
+# without saying why erases a hazard someone raised.
+kind: safety_redraft
+renders_as:
+  badge: REDRAFT
+  title: Assessment returned
+  archetype: APPROVAL_TASK
+accepts: [redrafted, withdrawn]
+reason_required: [redrafted, withdrawn]
