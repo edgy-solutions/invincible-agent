@@ -159,3 +159,85 @@ def predicate_from_compat_record(cv: dict) -> dict:
         # exactly.
         "slots": decode_declarations(cv.get("slots")),
     }
+
+
+# ── PROMOTING A BOUND REFERENT INTO THE RECORD ──────────────────────────────────────────────
+#
+# `turn_is_set_shaped` taught the arity GATE to read the chain's bound slots. It did not write
+# the RECORD, so a turn that bound `program_id` from an offered menu still projected
+# `instance_resolved: false` with an empty identifier - a resolved turn reporting as unresolved.
+# That is a self-consistent false record, which no consistency check can see (R-056).
+#
+# THE GATE ON PROMOTION IS PROVENANCE, NOT SHAPE. `subject_instance_id` does not stop at the
+# projection: it reaches the generalist fallback as `resolved_instance_id`, and Engine A does
+# NOT re-resolve it. So promoting a value means an engine will act on a string without any
+# validator having seen it - unless one already has.
+
+#: Sources whose value a validator HAS already seen, and the reason for each.
+#:
+#:   picked  - chosen from a menu THIS SYSTEM enumerated at the hop that bound it, so the value
+#:             is one of the options the graph itself produced.
+#:   filled  - extracted from the question by the slot filler, which resolves against the graph.
+#:
+#: The two the architect named, and the reason is the same in both: a validator stands between
+#: the value and the record.
+PROMOTABLE_SLOT_SOURCES = frozenset({"picked", "filled"})
+
+#: Sources NOT promoted, each with its reason. An exclusion list with reasons is auditable; one
+#: without is the list nobody can read - and a source missing from BOTH sets is a hard failure
+#: below rather than a quiet non-promotion.
+NON_PROMOTABLE_SLOT_SOURCES: dict[str, str] = {
+    "supplied": (
+        "sent by an API caller with the request. THE ONE SOURCE NO VALIDATOR HAS SEEN - "
+        "promoting it would have Engine A read an unchecked caller string as a resolved "
+        "instance and skip re-resolution. Architect-ruled 2026-09-14."
+    ),
+    "spoken": (
+        "UNDECIDED, AND EXCLUDED WHILE UNDECIDED. Typed in answer to a RESPEAK ask where NO "
+        "menu existed, so no enumeration validated it; whether the resolver then saw it is not "
+        "established here. The 2026-09-14 ruling named picked, filled and supplied and did not "
+        "reach this one. Not promoting is the conservative arm - it leaves today's behaviour, "
+        "where Engine A re-resolves - so it is excluded pending a ruling rather than decided by "
+        "whichever set it fell into first."
+    ),
+}
+
+
+def promotable_instance_from_slots(
+    verb: Dict[str, Any],
+    accumulated_slots: Dict[str, Any] | None,
+) -> tuple[str, str, str] | None:
+    """The bound value that identifies this verb's instance, IF a validator has seen it.
+
+    Returns ``(value, slot_name, source)`` or ``None``. ``None`` means "leave the record as it
+    was", which is today's behaviour and the safe arm in every uncertain case.
+
+    THE SLOT IS FOUND BY THE SAME CONJUNCTION THE REST OF THIS MODULE USES: ``required`` AND
+    ``referent``. That is what forces ``arity: single`` (`GraphManifest._arity_agrees_with_slots`)
+    and therefore what makes this slot's binding the thing that supplies the instance. Reading
+    the same declaration here means the gate and the promotion cannot drift apart into two
+    opinions about which slot matters.
+    """
+    slots = accumulated_slots or {}
+    if not slots:
+        return None
+    for decl in decode_declarations(verb.get("slots")):
+        if not isinstance(decl, dict):
+            continue
+        if not (decl.get("referent") and decl.get("required")):
+            continue
+        rec = slots.get(decl.get("name"))
+        if not isinstance(rec, dict):
+            continue
+        source = str(rec.get("source") or "")
+        if source in NON_PROMOTABLE_SLOT_SOURCES:
+            return None
+        if source not in PROMOTABLE_SLOT_SOURCES:
+            # AN UNKNOWN SOURCE IS NOT A DEFAULT, the same rule `_accumulated_slots` applies one
+            # layer up. A fifth source added upstream must not be promoted by falling through.
+            return None
+        value = rec.get("value")
+        if value in (None, ""):
+            return None
+        return str(value), str(decl.get("name") or ""), source
+    return None

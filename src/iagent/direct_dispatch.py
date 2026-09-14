@@ -41,6 +41,7 @@ that is meant to be strictly an optimisation.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -61,7 +62,11 @@ from iagent_pure.routing_record import (
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity,
     predicate_from_compat_record,
+    promotable_instance_from_slots,
+    turn_is_set_shaped,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DirectOutcome",
@@ -209,9 +214,33 @@ def dispatch_pre_resolved(
         return DirectOutcome(FALL_BACK, f"verifier unreachable: {err}")
 
     # ── 2. ARITY. The flag is not on the record; the filter puts it there ───────────────
+    #
+    # ⛔ THIS IS THE SITE THE DEFECT WAS MEASURED ON, and it is the one that RUNS. The
+    # supervisor has the same gate for the fallback path; a pick-answer reaches here first.
+    #
+    # `instance_id` comes from the ASK artifact's `resolved_intent`, and the ask is by
+    # construction the turn where nothing was named — so it is empty here and rides forward
+    # onto the turn that finally supplies one. The picked value lands in `chain_slots`
+    # (`{"program_id": {"value": "NP-MERIDIAN", "source": "picked"}}`), which nothing read.
+    # So `not instance_id` reported SET on the exact turn that named the instance, the gate
+    # flagged `needs_instance`, and the dispatch abstained FOR THE REASON THE ASK HAD JUST
+    # BEEN ANSWERED.
+    #
+    # PER VERB, because the gate is a property of the VERB'S DECLARATION: the slot that is
+    # both `required` and a `referent` forces `arity: single` AND is the slot whose binding
+    # supplies the instance. A verb declaring no such slot is unaffected BY CONSTRUCTION,
+    # which is what makes this safe for the three engines of four that declare no arity.
+    _bound_names = {str(k) for k in (chain_slots or {})}
     flagged: List[dict] = []
     if verbs:
-        verbs, flagged = filter_verbs_by_arity(verbs, not instance_id)
+        _kept: List[dict] = []
+        for _cv in verbs:
+            _one, _f = filter_verbs_by_arity(
+                [_cv], turn_is_set_shaped(instance_id, _cv, _bound_names),
+            )
+            _kept.extend(_one)
+            flagged.extend(_f)
+        verbs = _kept
 
     truth = next((cv for cv in (verbs or []) if cv.get("verb_iri") == verb), None)
     if truth is None:
@@ -228,6 +257,29 @@ def dispatch_pre_resolved(
     # 0.9-ish score would be the worse lie; the verb was carried from a decision a person
     # acted on and re-confirmed against the compat-walk one line above.
     predicate["score"] = 1.0
+
+    # ── THE RECORD MUST SAY WHAT HAPPENED ───────────────────────────────────────────────
+    #
+    # The gate above reads the bound slots; without this the RECORD still would not, and both
+    # record sites below write `instance_id`. A turn that bound `program_id` from an offered
+    # menu would project `instance_resolved: false` with an empty identifier — a resolved turn
+    # reporting as unresolved, which is self-consistent and false and therefore invisible to
+    # any consistency check between those two fields (R-056).
+    #
+    # GATED ON PROVENANCE, NOT SHAPE. This field reaches the generalist fallback as
+    # `resolved_instance_id` and Engine A does NOT re-resolve it, so only a value a validator
+    # has already seen may be promoted: `picked` (a menu this system enumerated) and `filled`
+    # (the slot filler, resolving against the graph). A caller-`supplied` id is REFUSED —
+    # promoting it would have an engine act on an unchecked caller string. `spoken` is excluded
+    # pending a ruling. Every source carries its reason in NON_PROMOTABLE_SLOT_SOURCES.
+    if not instance_id:
+        _promoted = promotable_instance_from_slots(truth, chain_slots or {})
+        if _promoted:
+            instance_id = _promoted[0]
+            logger.info(
+                "instance_promoted verb_iri=%s slot=%s source=%s - the record now reports "
+                "the instance this turn bound", verb, _promoted[1], _promoted[2],
+            )
 
     # ── 3. SLOTS. Validated against the menu that offered them, not splatted ────────────
     _declared = predicate.get("slots") or []

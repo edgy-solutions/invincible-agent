@@ -738,7 +738,10 @@ def _classify_route(
         # THE NAMES ARE DERIVED FROM THE CARRIED SET, not passed as a list. The gateway forwards
         # the provenance-keyed union `_accumulated_slots` walks out of the lineage, so the ask
         # turn and the answer turn share one payload shape.
-        from iagent_pure.verb_eligibility import turn_is_set_shaped  # noqa: PLC0415
+        from iagent_pure.verb_eligibility import (  # noqa: PLC0415
+            promotable_instance_from_slots,
+            turn_is_set_shaped,
+        )
         _pre_bound = {str(k) for k in (pre_resolved.get("accumulated_slots") or {})}
         _pre_arity_flagged: list = []
         if _pre_verbs:
@@ -779,6 +782,36 @@ def _classify_route(
             # acted on and re-confirmed against the compat-walk one line above. Reporting a
             # fabricated 0.9-ish score would be the worse lie.
             _pre_predicate["score"] = 1.0
+            # ── THE RECORD MUST SAY WHAT HAPPENED ───────────────────────────────────────────
+            #
+            # The gate above now reads the chain's bound slots; without this the RECORD still
+            # did not. A turn that bound `program_id` from an offered menu projected
+            # `instance_resolved: false` with an empty identifier - a resolved turn reporting as
+            # unresolved, which is a self-consistent false record and therefore invisible to any
+            # consistency check (R-056: both halves derive from this one field).
+            #
+            # PROMOTION IS GATED ON PROVENANCE, NOT ON SHAPE, because this field does not stop
+            # at the projection - it reaches the generalist fallback as `resolved_instance_id`
+            # and Engine A does NOT re-resolve. `picked` and `filled` have been past a validator
+            # (a menu this system enumerated; the slot filler resolving against the graph).
+            # `supplied` has not, and is refused: promoting it would have an engine act on an
+            # unchecked caller string. `spoken` is excluded pending a ruling - see
+            # NON_PROMOTABLE_SLOT_SOURCES, where every source carries its reason.
+            #
+            # AN ALREADY-RESOLVED SUBJECT WINS. If the ask genuinely carried an instance there is
+            # nothing to promote, and overwriting it with a slot value would be this defect in
+            # the other direction.
+            _promoted = None
+            if not _pre_instance:
+                _promoted = promotable_instance_from_slots(
+                    _pre_truth, pre_resolved.get("accumulated_slots") or {},
+                )
+                if _promoted:
+                    context.log.info(
+                        "instance_promoted verb_iri=%s slot=%s source=%s - the record now "
+                        "reports the instance this turn bound",
+                        _pre_verb, _promoted[1], _promoted[2],
+                    )
             context.log.info(
                 "routing_decision PRE-RESOLVED subject_uri=%s verb_iri=%s "
                 "compatible_count=%d - /resolve and /classify_predicate skipped",
@@ -800,8 +833,8 @@ def _classify_route(
                     for v in _pre_arity_flagged
                 ],
                 "fallback_reason": None,
-                "subject_instance_id": str(
-                    pre_resolved.get("subject_instance_id") or ""
+                "subject_instance_id": (
+                    _pre_instance or (_promoted[0] if _promoted else "")
                 ),
                 "subject_instance_label": str(
                     pre_resolved.get("subject_instance_label") or ""
