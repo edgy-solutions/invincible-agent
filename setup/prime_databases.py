@@ -667,6 +667,16 @@ def upload_doc_pages() -> None:
     # one, a runbook becomes a parse error inside the prime, and the failure surfaces as an
     # ontology error about a file that is not an ontology.
     #
+    # AND THE HAZARD WAS LIVE RATHER THAN THEORETICAL — verified at source 2026-09-13 in
+    # `doc_tools/definitions.py:70`. `ontology_sensor` is an `S3SensorComponent` over
+    # `ONTOLOGY_BUCKET` with **`prefix=""` and `filter_patterns=[]`**: it watches the WHOLE bucket
+    # with no filtering, so every page body would have been picked up and handed to
+    # `ingest_ontology_to_jena`. Only the undeclared-domain refusal stood between a runbook and a
+    # TTL parser. (Source proves DEFINED and its configured bucket; whether it is RUNNING is a
+    # runtime question — AGENTS.md's seventh instance records that a grep for `@sensor` once
+    # concluded this very sensor did not exist, because it is factory-constructed rather than
+    # decorated. Neither answer changes this decision: the separation is correct either way.)
+    #
     # So the pages go somewhere the sensor does not watch, and the separation is ASSERTED rather
     # than assumed — a deployment that points both names at one bucket rebuilds the original
     # coupling silently, which is exactly the misconfiguration this refuses to boot past.
