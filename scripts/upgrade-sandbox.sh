@@ -58,7 +58,7 @@ for f in "${VALUES[@]}"; do echo "  -f ${f##*/}"; done
 # window. 40m was smaller than the 45-min queue and made helm the binding constraint;
 # 75m leaves the inner bound room to be the thing that actually fails, which is the one
 # that can say WHY. tests/test_prime_timeout_bounds_agree.py asserts the ordering.
-HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"
+HELM_TIMEOUT="${HELM_TIMEOUT:-100m}"
 
 # ── THE RESOLVED TIMEOUT, NOT THE DEFAULT ──────────────────────────────────────────────
 #
