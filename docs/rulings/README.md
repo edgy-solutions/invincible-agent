@@ -1303,7 +1303,11 @@ exclusion is not a weaker version of it; it is a different rule that happens to 
 that pair "the sharpest in the engine."** The author knew the risk, was looking straight at it, and
 shipped it anyway — **because attention was on each declaration IN TURN.**
 
-Principle filed at `docs/principles/an-invariant-between-declarations-needs-a-seal-over-pairs.md`.
+Principle filed by `invincible-agent-91` at `f0fd459` on `lane/91` — **not yet on master**, so it
+is cited by COMMIT rather than by path. Citing the path directly turned `test_citation_paths` red
+on master (found by `invincible-agent-f3`): **the ruling landed and the artifact it cites did
+not.** Same split as a ruling naming a state it was formed against, in the other direction — and
+the repair is the same, **name the sha**. Re-point this at the path when `lane/91` merges.
 
 Related: [[every-endpoint-verified-the-join-unasserted]] — the same law found from the other side.
 
@@ -1527,6 +1531,371 @@ a reason on a species that accepts nothing.** A rule that can never fire, served
 `test_reason_required_is_a_subset_of_accepts_on_every_safety_row` was **green throughout**: it reads
 the DATA and the read path serves a PROJECTION of it. **An invariant true of a source is not
 automatically true of every projection of it** — so re-assert it at the surface, do not inherit it.
+
+---
+
+## R-040 — A COMPUTATION SMUGGLED INTO DATA THROUGH STRING INTERPOLATION
+
+**RULED 2026-09-12. The worked instance is ADR-0039's own clause, broken by its own author three
+files later, in good faith, while holding the rule in mind.**
+
+`safety_acceptance_direct` and `safety_acceptance_with_concurrence` name the placeholder
+`{level_lower}`. There is no such fact. **It is `level`, lowercased — a transformation performed
+inside a template**, which is exactly what ADR-0039 forbids one clause earlier:
+
+> *A condition on something no engine has measured is a VERB TO WRITE, not a formula to add.*
+
+**Interpolation is the side door.** A gateway is visibly a branch and gets refused; `{level_lower}`
+looks like a field name. **The rule was written against computation in TABLES and the computation
+arrived in TEXT.**
+
+**THE FIX, RULED: the engine emits `risk_level_slug`; the definition interpolates a fact.** One
+measure, and the reviewer stays a process owner. Binding `hazard_id` and `level` is the ordinary
+half — `config_bindings()` or the trigger; `{level_lower}` is the half that carries the ruling.
+
+**WHY THIS IS RECORDED BESIDE THE CLAUSE RATHER THAN AS A DEFECT.** It is the exact shape the
+OpenDDIL pushback will take — *"just let the table compare two numbers"* — and **the author of the
+rule broke it first.** That is not a criticism; **it is the strongest argument for the rule.** A
+constraint its own author violated within three files, deliberately holding it in mind, is a
+constraint that needs a **seal** rather than a paragraph.
+
+**The answer to the pushback, which belongs in the document rather than in a meeting:** the moment
+a table computes, its rows stop being reviewable as **policy** and become reviewable as **code**,
+and the reviewer changes from a process owner to a developer. A verb emitting
+`deadline_missed: true` costs one measure and keeps the reviewer.
+
+**Caught by `test_placeholder_binding`**, whose message already had the diagnosis: *a DEPLOYMENT
+defect, not a per-notice one — every run of this definition fails identically.*
+
+---
+
+## R-041 — THE FIXTURE-THAT-CANNOT-FAIL, ALL THREE INSTANCES IN ONE DAY
+
+**R-026's corollary has now appeared three times in three different contexts, found by three
+different sessions. Listed together because the shape is only obvious across them.**
+
+| # | fixture | why it could not fail | found by |
+|---|---|---|---|
+| 1 | `risk_acceptance_high`'s `[accepted, rejected, returned_for_rework]` | **already alphabetical**, so `sorted()` and pass-through return the identical tuple | `invincible-agent-65`, then the same vacuum independently in the SDK, then **seven of eight** rows in the safety overlay |
+| 2 | an S3000L-only fixture for `derived` vs `authored` labels | **zero authored labels present**, so a rule marking EVERYTHING derived passes | `doc-tools-7f` |
+| 3 | a decision table's `domain` derived from its own rows | every table is **total by construction** | ruled here, built into `policy/decisions/` before the first row |
+
+**NONE OF THE THREE IS FINDABLE BY MUTATION**, and that is what unites them: **the mutant and the
+original agree on that fixture.** Mutation testing answers *"can this test tell a change?"* — it
+cannot answer *"can this test tell the change it was written for?"*
+
+**THE RULE, RESTATED AS A CHECK YOU CAN ACTUALLY RUN: a seal that defends a choice must assert
+that its own fixture DISTINGUISHES the rejected rule** — in the seal, not in the reviewer's head:
+
+    assert declared_order != sorted(declared_order)     # the order fixture
+    assert any(row.label_source == "authored")          # the derivation fixture
+    assert domain_values > row_values                   # the totality fixture
+
+**And the cause is the same in all three: the vacuum is the NORMAL case.** Most natural verb lists
+are alphabetical by accident. Most S3000L classes genuinely lack labels. Most tables' rows do
+mention every value someone thought of. **Nobody chooses the degenerate fixture; it is what you get
+by reaching for the nearest real example**, which is why "use real data" is not protection here.
+
+---
+
+## R-042 — A MISSING OVERLAY COMPOSES TO SILENCE
+
+**RULED 2026-09-12**, from the `WORKFLOW_DEFINITIONS_DIR` overlay list, and it generalises the
+task-kind path's lesson to every composed search path.
+
+**Composition over an absent directory contributes nothing and raises nothing.** The platform
+definitions still resolve, every probe is green, the service is healthy — **and a programme's
+tailoring is simply not there.** The failure is indistinguishable from a correct single-entry path.
+
+**So the witness must report EVERY directory, including the ones that do not exist.**
+`describe_registry` now returns `{"path": ..., "exists": bool}` per entry plus the composed
+inventory, and the not-found error names every directory searched — because once there is a search
+path, *"not in `<dir>`"* is a true statement answering the wrong question: **a missing overlay and
+a misspelled id produce the same message.**
+
+**AND IT EXTENDS THE POD-READ DISCIPLINE BY ONE STEP.** The sequence was: settle, then read the
+answer from inside the serving pod. It is now:
+
+    1  settle — terminating count AND non-running count, and READY is not Running
+    2  is the OVERLAY DIRECTORY actually in the image?
+    3  is the env var set in the pod?
+    4  read the gate's own answer from inside the pod
+
+**(2) is the silent one and therefore goes first** — the rule from the rolling runbook: *when two
+conditions can each produce the same failure, check the one that fails silently first.* Step 3 is
+loud and will announce itself whenever you reach it.
+
+---
+
+## R-043 — A MUTATION UPSTREAM OF BOTH THE SUBJECT AND ITS EXPECTATION CAN NEVER RED
+
+**RULED 2026-09-12**, from the M3.3 parity seal. The general form of a mutation that looked like
+a survivor and was never a test.
+
+To check that a card renders verbs **in declared order**, the mutation applied was *re-sort the
+declaration*. That fed the card the sorted list **and** compared it against the sorted list:
+
+    declaration ──┬──> the card renders it
+                  └──> the expectation is read from it
+
+    a mutation HERE moves both arms together.  Green, always, on any implementation.
+
+**THE MUTATION THAT MEANS ANYTHING IS ON THE SUBJECT ALONE** — mutate the *card's* ordering, hold
+the declaration fixed, and a sorting card reds against an order-preserving expectation.
+
+**WHY IT IS CONVINCING AND THEREFORE DANGEROUS.** A mutation that produces green reads as *"the
+implementation is robust"* or *"this survivor needs investigation"* — never as *"I mutated a shared
+input."* It arrives wearing the clothes of a result, and the instinct it triggers is to look harder
+at the code rather than at the experiment.
+
+**THE CHECK: trace the mutation point to every arm of the comparison. If it reaches more than one,
+the experiment is void — not negative.**
+
+Same family, now four members:
+
+| instance | what moved together |
+|---|---|
+| a fixture indistinguishable from its subject | the expectation *was* the subject |
+| a test that reconstructs the merge inline | the test recomputed what it was checking |
+| a control worktree that changed a path-derived gate (R-030) | subject and control ran different populations |
+| **this** | the mutation fed both the render and the expectation |
+
+### It arrived alongside R-041's third context, in the place R-041 predicts
+
+**Every deployed `APPROVAL_TASK` declaration is alphabetical by accident**, so across the whole
+population **a sorting card and an order-preserving card are indistinguishable** — and *"rendered
+order equals declared order"* was green having measured nothing.
+
+**The fix is a CONSTRUCTED control: a declaration that asserts it differs from its own sorted form
+before anything else is asserted.** Not a found example — a built one, because the found ones are
+degenerate. **That is what SDK v0.8.0's tuple was cut to make meaningful**: order can only be
+preserved if something in the fixture would notice it being lost.
+
+**The vacuum was the normal case, again.** Cf. R-041 — three contexts before this one, and each
+time the nearest real example was the degenerate one.
+
+---
+
+## R-044 — A STALE VENV PRODUCES FINDINGS SHAPED EXACTLY LIKE REAL ONES
+
+**Found by `invincible-agent-f3`, 2026-09-12**, and it is a fleet hazard rather than one lane's
+accident.
+
+Their worktree's venv held `iagent-mesh` **0.5.0** while `pyproject.toml` pinned **v0.8.1** in two
+places. Thirteen task-kind declaration tests failed on a missing `iagent_mesh.task_kinds`.
+**Every one of those failures looked exactly like a real defect in newly landed code.**
+
+> **THE TELL IS THAT IT ACCUSES THE NEWEST CODE IN THE TREE.**
+
+That is the diagnostic, and it is the only one available cheaply — because the failure mode is
+*correct behaviour against the wrong artifact*. `uv sync --extra agent-fleet` cleared all thirteen.
+
+**WHY IT IS WORSE THAN AN ORDINARY ENVIRONMENT PROBLEM.** A missing dependency fails by IMPORT and
+names itself. A **stale** one fails by ABSENCE OF A SYMBOL — indistinguishable from a symbol that
+was never written, or was just deleted by the change you are examining. **The investigation it
+invites is code archaeology on innocent code**, and the more recently that code landed, the more
+plausible the accusation.
+
+**Cf. [[a-scope-that-looks-local-and-is-not]]** — a partial `uv sync` in a shared venv, and the
+same class from the other end: there the sync narrowed what was installed, here it left something
+old behind. **Both fail by making the tree and the environment disagree while only the tree is
+under review.**
+
+**The cheap check before believing any suite result that accuses recent work: confirm the
+installed version matches the pin.** One command, and it is the same discipline as reading the
+code in the running pod rather than the tag.
+
+---
+
+## R-045 — A DECLARATION IN AN UNPRIMED FILE IS THE FAIL-BY-PASSING CASE
+
+**Ruled from `invincible-agent-f3`'s slice-1 grounding, 2026-09-12.**
+
+ADR-0037 §1 sketched a sibling `mesh_docs.ttl` for the `mesh:DocPage` terms. **They put them in
+`mesh_system.ttl` instead, and the reason is the ordering requirement made concrete:**
+`mesh_system` is the **sole MESH-domain entry in `CANONICAL_TTL_MANIFEST`**, so it primes. **A
+sibling primes only once a manifest row exists** — and until then the terms are declared in a file
+nothing reads.
+
+**THE SEAL ASSERTS BOTH HALVES: the terms are declared, AND their file is in the manifest.**
+Asserting only the first is the vacuum: the declaration is present, the seal is green, and nothing
+is in the graph.
+
+### The fourth prefix instance, caught with the population still at ZERO
+
+**`docs:` was an unregistered prefix** — declared in no TTL and in none of the three Python prefix
+tables — while five pages already carried `iri: docs:runbook-…`.
+
+**An unknown prefix is passed through VERBATIM by design.** So every page IRI would have been
+stored **compact**, missed the linker's `MATCH` against full-IRI `:OntologyClass` nodes, and
+registered **accepted-and-unreachable.** Nothing red.
+
+**`agent_fleet/utils/mesh_registration.py` carries the post-mortems of this shipping three times in
+its own table** — `fin:`, `cost:`, and the 2026-08-21 compact-vs-full bug. **This is the fourth,
+and the first caught before a single row existed.** Being late would have cost five invisible rows
+instead of one.
+
+**f3 asserted the EXPANSION by running it, and the PASS-THROUGH too** — because pass-through is the
+mechanism every one of the four instances rode in on. *Sealing the repair without sealing the
+mechanism leaves the next prefix free to do it again.*
+
+---
+
+## R-046 — REFUSING A FEATURE IS A DELIVERABLE WHEN THE REASON IS RECORDED
+
+**`invincible-agent-f3` on the literal-property question, 2026-09-12, and the shape of the refusal
+is the reusable part.**
+
+**The argument FOR the feature was sound and is not what decided it.** A literal mints no IRI, so
+it cannot dangle — true, and irrelevant. **What decides it is that the literal has no GATE:**
+
+    an `explains` IRI       goes RED when it stops resolving
+    a literal naming a
+    renamed test            keeps reading as TRUE
+
+**A fact with no gate is a stale claim waiting to happen** (R-025), and the join it would have
+bought is already served by `git grep`, since seal names live in the same repo as the pages.
+
+**AND THE APPARENT EXCEPTION IS THE WEAKEST INSTANCE, WHICH IS WHY IT DOES NOT REOPEN IT.** The
+cross-repo case looks like the one that needs a literal — and it is precisely where the literal is
+**least verifiable from here**, so what it actually wants is a contract test. *An exception that is
+weakest exactly where it is most tempting is not an exception.*
+
+**Recorded on the page with its reason**, which is what makes it a deliverable: the next author
+stops re-deriving a decision someone already made, and can overturn it on the reasoning rather than
+on the absence of any.
+
+---
+
+## R-047 — REGISTERED IS NOT PARTICIPATING, AND THE THIRD MECHANISM IS PATH ARITHMETIC
+
+**Found by `invincible-agent-81` on the live cost engine, 2026-09-12, and verified independently
+in the pod.** The third distinct way a verb can be registered, healthy, sealed, and **never once
+callable where it is registered.**
+
+    /app/scripts   No such file or directory
+    /app/dist      No such file or directory
+
+    pathlib.Path('/app/measures.py').resolve().parents  ->  ['/app', '/']
+    parents[2]                                          ->  IndexError: 2
+
+**The image flattens `agent_fleet/cost_agent/` to `/app`, so `/app/measures.py` has exactly two
+parents.** In the repo the identical line resolves to the repo root and works perfectly — **which
+is why every test passes and why this was invisible.**
+
+**AND THE PATH IS ONLY THE FIRST HALF.** Line 757 exists to put `scripts/` on `sys.path` for the
+builder, and the builder — **~1,300 lines across a script, a template and a dataset builder** — is
+not in the image at all. **The verb's implementation lives outside the container it is registered
+in.**
+
+### The three mechanisms, and why the count matters
+
+| # | verb | mechanism |
+|---|---|---|
+| 1 | Engine F | a payload field |
+| 2 | the walk's | a **shadowed** guard |
+| 3 | `package_export` | **path arithmetic correct in one layout and impossible in the other** |
+
+**Three different causes, one symptom: nine verbs registered, `/health` green, every seal green,
+and one of them unreachable.** A registration is **a claim about reachability that nothing was
+checking** — and each time the claim failed by a route the previous fix did not cover, which is
+why "registered is not participating" has to be a standing question rather than a fixed list of
+checks.
+
+**THE TELL IS A CORRECTNESS THAT DEPENDS ON LAYOUT.** `parents[2]` is not wrong; it is right in
+the repo and impossible in the image. **Any expression whose meaning is a function of where the
+file sits is a candidate**, and the test suite runs in the layout where it works — so the suite
+cannot see it *by construction*, exactly like a control that changes a path-derived gate (R-030).
+
+### The hash that describes an intention rather than an artifact
+
+**The round-trip seal specified for this export required a hash that did not exist.** `locator` is
+`content_hash(body)` — a hash of the package **body dict, built from state.** The HTML is written
+separately with `dest.write_text(html)`, and **no hash is ever taken of the written file.**
+
+> **The response's hashes describe what the engine INTENDED to write.** A truncated or
+> partially-flushed file would report success with a hash computed from memory, and nothing
+> anywhere would notice.
+
+**So the repair is a hash of the artifact AS WRITTEN, re-read from disk** — and only then does a
+round-trip assert anything. **That is the difference between *wrote a file* and *wrote the file it
+says it wrote*,** and it generalises to every manifest this fleet emits.
+
+### A dispatch of mine carried the false premise
+
+I wrote *"`package_export` already builds the 17.6 MB HTML with the `.duckdb` beside it."* **True
+in the repo, from a script. Never true of the engine.** I passed on a capability claim without
+checking **where it ran** — the same axis error as measuring a venv and concluding about a
+contract, and the reason a capability claim must name the process it was observed in.
+
+*(The `.duckdb` half refuses even in the repo — `duckdb` is not installed and is not a declared
+engine dependency. That refusal is DESIGNED and carries a clear message, and is not part of this
+defect.)*
+
+---
+
+## R-048 — ON A LANE BRANCH IS NOT ON MAIN: the zeroth fact
+
+**`doc-tools-7f`, 2026-09-12**, and they named their own error precisely: *"I wrote that the
+converter **exists** while knowing perfectly well I had just pushed it to a lane branch — I had
+the fact and still drew the wrong conclusion from it."*
+
+    0  the code is on a LANE BRANCH
+    1  the commit is on MAIN
+    2  a build ran
+    3  the image reached the registry THIS CLUSTER pulls from
+    4  the pod is running it
+
+**A prime does not read lane branches.** So a manifest row landing against code that exists only
+on a branch points at an artifact no primed deployment can see — which is exactly what
+`invincible-agent-f3` held the `DOCS` row back to avoid.
+
+**AND THE ZEROTH IS THE ONE MOST LIKELY TO BE SKIPPED, PRECISELY BECAUSE THE PERSON WHO PUSHED IT
+CAN SEE THE CODE.** 7f's observation and the reason it belongs at the front: facts 1–4 are checked
+by people looking for a deployment; fact 0 fails for someone looking at their own editor. **The
+artifact is on their disk, so "exists" is true of their world and false of everyone else's.**
+
+**The check is the same one as every other step: read `origin/main`, do not take the report** —
+including from the author, and it is not a comment on their honesty. 7f asked me to verify it that
+way rather than on their word.
+
+---
+
+## R-049 — A TWO-QUESTION PROBE CAN STILL ASK THE SECOND QUESTION WRONG
+
+**`doc-tools-7f` writing the existence check, 2026-09-12 — the confident false negative reappearing
+one layer beneath its own fix.**
+
+`invincible-agent-f3` established that an `explains` target may be an `:OntologyClass` **node** or a
+**relationship type**, and that a class-only probe reports the relationship-typed half as dangling
+**with total confidence.** The obvious repair is to ask both questions. **The obvious way to ask the
+second one is wrong:**
+
+    Neo4j relationship types CANNOT CONTAIN COLONS.
+    So aitool_linker stores the full namespaced IRI as `r.iri`
+    and uses the LOCAL NAME as the type.
+
+    MATCH ()-[r]->() WHERE type(r) = $uri     compares a LOCAL NAME against a FULL IRI
+                                              -> finds nothing, every verb "dangling"
+
+**So a probe that asks both questions still reports every relationship-typed target as missing** —
+and it *looks* like a correct two-question probe, which is worse than the single-question version
+it replaced. Keyed on `r.iri`; a mutation swapping in `type(r)` reds it.
+
+**THE DOUBLE MODELS THE TWO ANSWERS AS INDEPENDENT SETS, NOT ONE BOOLEAN**, and that is the part
+that generalises: *a double returning a single boolean cannot express "exists as a relationship,
+not as a class" — which is the exact state that breaks the single-question probe.* **A fixture that
+cannot represent the bug cannot catch it.** 7f says they would have written the simpler double
+first had the 8/8 split not named the state.
+
+**And the refusal returns both answers rather than collapsing them**, because *"not found" is only
+trustworthy when the reader can see what was looked for.* A dangling refusal that does not name
+both lookups is indistinguishable from a single-question probe reporting a real target. A test
+refuses a message that omits either.
+
+**R-015 holds at this layer too and is asserted rather than argued:** an edgeless page issues no
+queries at all, so it cannot be refused by a graph that is empty or unreachable — sealed with
+`session.run.assert_not_called()`.
 
 ---
 
