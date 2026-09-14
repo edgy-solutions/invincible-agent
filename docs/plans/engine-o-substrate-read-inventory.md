@@ -158,12 +158,14 @@ all of them.** So this is not "a repo census cannot see a deployed value" — th
 kinder law than I earned. It is: **I derived a population, then read a sample of it, and reported
 the sample in the population's voice.** In a packet whose §0 is about deriving populations.
 
-**WHAT SURVIVES IS NARROWER, BETTER EVIDENCED, AND NOT MINE TO FIX.** The sandbox file is
-patching a default that is wrong in the chart itself: `values.yaml:279` and the template at
-`configmap.yaml:99` BOTH render `/ds/query`, and the sandbox comment states that this Fuseki
-dataset **returns HTTP 405 on POST to `/ds/query`**, which "made every Fuseki query 405 → silent
-fallback/empty". So a deployment that does not carry the sandbox override gets an endpoint that
-405s every read AND a write endpoint that never derives. The fix is in the chart, which is Lane 1's.
+**WHAT SURVIVED WAS NARROWER, AND IT IS NOW FIXED — by Lane 1, in the chart, where it belonged.**
+The sandbox file had been patching a default that was wrong in the chart itself: `values.yaml:279`
+and the template at `configmap.yaml:99` both rendered `/ds/query`, which per the sandbox comment
+**returns HTTP 405 on POST** for this Fuseki dataset — so a deployment without the sandbox
+override had a broken READ path before its write path mattered. **Both render `/ds/sparql` as of
+chart 0.3.69, verified at master `216cabd`.** Recorded closed rather than deleted: this line is
+the only place the reason is written down, and the next person to see `/ds/query` in an old values
+file needs to find it.
 The original text follows, struck but intact, because a retraction that deletes its own claim
 leaves the next reader unable to check the reasoning.
 

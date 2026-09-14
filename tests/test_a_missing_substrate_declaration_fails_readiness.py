@@ -33,7 +33,11 @@ _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from agent_fleet.ontology_service.jena_posture import jena_posture  # noqa: E402
+from agent_fleet.ontology_service.substrate_posture import (  # noqa: E402
+    jena_posture,
+    missing_declarations,
+    neo4j_posture,
+)
 
 _MAIN = _REPO / "agent_fleet" / "ontology_service" / "main.py"
 _ENDPOINT = "http://iagent-fuseki.iagent.svc.cluster.local:3030/ds/query"
@@ -148,6 +152,94 @@ def test_no_CREDENTIAL_DEFAULT_survives_anywhere_in_main():
     )
 
 
+def test_no_SUBSTRATE_ADDRESS_DEFAULT_survives_anywhere_in_main():
+    """RULED 2026-09-14. `NEO4J_URI` defaulted to `bolt://iagent-neo4j:7687` — a hardcoded
+    in-cluster address standing in for a missing declaration, so a pod the chart never configured
+    still reached a real graph and the map could disagree with the territory in silence.
+
+    Over the CLASS of substrate addresses, for the same reason the credential check is: the one
+    that got reported is never the only one.
+    """
+    addresses = ("NEO4J_URI", "JENA_SPARQL_ENDPOINT", "JENA_UPDATE_ENDPOINT", "WEAVIATE_HTTP_HOST")
+    offenders = []
+    for node in ast.walk(_main_tree()):
+        if not (isinstance(node, ast.Call) and len(node.args) == 2):
+            continue
+        fn = node.func
+        is_getenv = (isinstance(fn, ast.Attribute) and fn.attr == "getenv") or (
+            isinstance(fn, ast.Name) and fn.id == "getenv"
+        )
+        if not is_getenv:
+            continue
+        name, default = node.args
+        if not (isinstance(name, ast.Constant) and name.value in addresses):
+            continue
+        if not (isinstance(default, ast.Constant) and default.value in ("", None)):
+            offenders.append(f"{name.value} -> {ast.unparse(default)} at line {node.lineno}")
+    assert not offenders, (
+        f"a substrate address default was re-added: {offenders}. An address the deployment did "
+        f"not declare must not resolve to one somebody hardcoded."
+    )
+
+
+# --------------------------------------------------------------------------- the Neo4j rule
+#
+# ABSENT is a fault; EMPTY is a declaration of absence. Both halves are the rule, and the second
+# is not a nicety: `docker-compose.e2e.yml` runs engine-o with no Neo4j in the stack at all.
+
+
+def test_an_UNDECLARED_neo4j_uri_is_a_deploy_fault():
+    """THE RULING. No default, and readiness must be able to say which variable."""
+    p = neo4j_posture({})
+    assert p.missing == ("NEO4J_URI",)
+    assert p.uri == "", "a fallback address was substituted for a missing declaration"
+    assert not p.declared_absent
+
+
+def test_a_DECLARED_EMPTY_neo4j_uri_is_a_deployment_WITHOUT_A_GRAPH():
+    """THE CONTROL THAT KEEPS A REAL DEPLOYMENT ALIVE.
+
+    Without this half, the rule above refuses readiness for `docker-compose.e2e.yml`, whose
+    engine-o has no Neo4j service to reach and whose healthcheck polls `/health` for a 200 with
+    everything downstream waiting on it. Declaring an absence is cheap and visible in review;
+    forgetting is neither, and the two must not produce the same answer.
+    """
+    p = neo4j_posture({"NEO4J_URI": ""})
+    assert p.missing == ()
+    assert p.declared_absent
+    assert not p.configured
+
+
+def test_a_declared_neo4j_uri_is_used_verbatim():
+    p = neo4j_posture({"NEO4J_URI": "bolt://declared:7687", "NEO4J_PASSWORD": "pw"})
+    assert p.uri == "bolt://declared:7687"
+    assert p.missing == ()
+    assert p.auth == ("neo4j", "pw")
+
+
+def test_the_e2e_stack_DECLARES_its_absent_graph():
+    """THE CONSUMER, sealed rather than remembered.
+
+    This rule breaks `docker-compose.e2e.yml` the moment that file stops declaring `NEO4J_URI`,
+    and the failure would surface as a healthcheck timing out after 60 retries in a stack nobody
+    associates with a posture module. A fix is not finished until you have read the consumer of
+    what you fixed; this is that reading, written down so it cannot rot.
+    """
+    compose = (_REPO / "docker-compose.e2e.yml").read_text(encoding="utf-8")
+    assert "NEO4J_URI=" in compose, (
+        "docker-compose.e2e.yml no longer declares NEO4J_URI. Engine-o's readiness will refuse "
+        "and its healthcheck will never go green — declare it empty to say the stack has no graph."
+    )
+
+
+def test_missing_declarations_UNIONS_every_substrate():
+    """The readiness answer comes from one function. Two substrates owed at once must BOTH be
+    named, or a deploy fault gets fixed one variable per redeploy."""
+    both = missing_declarations({"JENA_SPARQL_ENDPOINT": _ENDPOINT})
+    assert set(both) == {"FUSEKI_PASSWORD", "NEO4J_URI"}, both
+    assert missing_declarations({"JENA_SPARQL_ENDPOINT": "", "NEO4J_URI": ""}) == ()
+
+
 def test_readiness_CONSULTS_the_posture_rather_than_restating_it():
     """The join. The pure module can be perfectly right while `/health` never asks it — two
     correct halves and an unasserted relation between them is a defect this repo has paid for.
@@ -161,9 +253,11 @@ def test_readiness_CONSULTS_the_posture_rather_than_restating_it():
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "health"
     )
     names = {n.id for n in ast.walk(health) if isinstance(n, ast.Name)}
-    assert "_JENA" in names, (
-        "/health does not consult the Jena posture — the credential rule and the probe that is "
-        "supposed to enforce it meet nowhere"
+    assert "_missing_declarations" in names, (
+        "/health does not call the ONE function that unions every substrate's missing "
+        "declarations — the rules and the probe that is supposed to enforce them meet nowhere. "
+        "A handler that re-checks one posture directly passes every other test in this file and "
+        "silently stops covering the next substrate added."
     )
 
 

@@ -339,9 +339,9 @@ def _require_capability(caller, capability: str, what: str) -> str:
 # RULED 2026-09-13: FUSEKI_PASSWORD HAS NO DEFAULT. A configured endpoint without a credential
 # fails READINESS naming the variable, instead of authenticating with a literal out of source.
 try:
-    from jena_posture import jena_posture as _jena_posture  # type: ignore[no-redef]
+    from substrate_posture import jena_posture as _jena_posture, neo4j_posture as _neo4j_posture, missing_declarations as _missing_declarations  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.ontology_service.jena_posture import jena_posture as _jena_posture
+    from agent_fleet.ontology_service.substrate_posture import jena_posture as _jena_posture, neo4j_posture as _neo4j_posture, missing_declarations as _missing_declarations
 
 _JENA = _jena_posture(os.environ)
 _JENA_ENDPOINT = _JENA.endpoint
@@ -372,14 +372,15 @@ _LOCAL_GRAPH = None
 # Weaviate Configuration
 _WEAVIATE_CLIENT = None
 
-# Neo4j Configuration
-_NEO4J_URI = os.getenv("NEO4J_URI", "bolt://iagent-neo4j:7687")
-_NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
-# NO DEFAULT — found by the FUSEKI_PASSWORD seal, which checks the CLASS of secret-ish variables
-# rather than the one that was reported. The chart's own snippets already read this with
-# `os.environ.get("NEO4J_PASSWORD", "")` and every compose file declares it, so the literal
-# `"password"` was dead in every configuration in this repo while reading as a working fallback.
-_NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
+# Neo4j Configuration — RULED 2026-09-14: `NEO4J_URI` has NO DEFAULT.
+# It was `bolt://iagent-neo4j:7687`: a hardcoded in-cluster address standing in for a missing
+# declaration, the shape the service-URL ruling prohibited for peer URLs. Undeclared now fails
+# readiness by name; declared-empty means "this deployment has no graph" and stays ready.
+# The password lost its literal `"password"` default in the same arc — found by writing the
+# credential check over the CLASS of secret-ish variables rather than the one that was reported.
+_NEO4J = _neo4j_posture(os.environ)
+_NEO4J_URI = _NEO4J.uri
+_NEO4J_USER, _NEO4J_PASSWORD = _NEO4J.auth if _NEO4J.auth else ("neo4j", "")
 _NEO4J_DRIVER = None
 
 # ---------------------------------------------------------------------------
@@ -3536,21 +3537,31 @@ async def health():
 
     `jena_configured` replaces the former `jena_reachable`, which reported `endpoint != ""` — a
     CONFIGURATION read wearing a reachability name. Nothing consumed the old key.
+
+    THE MISSING LIST COMES FROM ONE FUNCTION covering every substrate, never from a condition
+    restated here. A probe that checks two of three postures is the unasserted-join defect and it
+    reads exactly like a complete check.
     """
-    if _JENA.missing:
+    missing = _missing_declarations(os.environ)
+    if missing:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "not-ready",
                 "detail": (
-                    "deploy fault: JENA_SPARQL_ENDPOINT is configured but "
-                    + ", ".join(_JENA.missing)
-                    + " is not set — engine-o will not authenticate to Jena with a default"
+                    "deploy fault: "
+                    + ", ".join(missing)
+                    + " is not declared — engine-o will not substitute a default for it. "
+                    "Declare it, or declare it EMPTY to say this deployment has no such substrate."
                 ),
-                "missing": list(_JENA.missing),
+                "missing": list(missing),
             },
         )
-    return {"status": "ok", "jena_configured": _JENA.configured}
+    return {
+        "status": "ok",
+        "jena_configured": _JENA.configured,
+        "neo4j_configured": _NEO4J.configured,
+    }
 
 @app.get("/personas")
 async def list_personas() -> dict:
