@@ -779,12 +779,27 @@ where red was expected is a signal about the seal, not about the code.
     the route **refuses** something — `not_concurred` does not reach a signature — rather than merely
     that every outcome resolves to a definition.
 
-    > **⚠️ THE TWO ENTRIES ARE ON `lane/01` AT `786c099` AND ARE NOT ON MASTER YET**, so these links
-    > resolve to the file but **not to their anchors** until that branch merges. Recorded here rather
-    > than left for a reader to discover, because **nothing in the suite checks a fragment** —
-    > `test_citation_paths.py` resolves the path and stops. A dangling anchor is therefore silent,
-    > which is the reference-that-looks-satisfied shape this ADR has now met four times. Strike this
-    > note when `lane/01` lands; **do not strike it by checking that the link is blue.**
+    > ~~**⚠️ THE TWO ENTRIES ARE ON `lane/01` AT `786c099` AND ARE NOT ON MASTER YET**, so these
+    > links resolve to the file but not to their anchors until that branch merges — and **nothing in
+    > the suite checks a fragment**, so a dangling anchor is silent.~~
+    >
+    > **STRUCK 2026-09-13: `lane/01` merged at master `a1d3ba0`, and the reason given was WRONG.**
+    > Both anchors resolve — verified by grepping the headings on master, not by looking at the
+    > links. **And `tests/test_citation_anchors_resolve.py` DOES check fragments**, across every
+    > tracked file via `git grep`, with a slugger verified against `api.github.com/markdown`. So the
+    > claim *"nothing checks a fragment"* was **a plausible negative stated as a considered one** —
+    > I checked `test_citation_paths.py`, found it stops at the path, and reported the gap as a
+    > property of the suite rather than of the one file I read. That is this document's own
+    > recurring shape, committed in the note warning about it.
+    >
+    > **WHAT WAS ACTUALLY INVISIBLE IS NARROWER AND WORTH KEEPING.** Lane 1 mutated the R-053
+    > heading on master and the anchor seal stayed **GREEN** — because the citation was on `lane/74`
+    > and the register on master, so `git grep` found no citer and **a fragment with no citer is
+    > indistinguishable from a fragment nobody broke.** Neither branch could see it: each half was
+    > whole on its own side and the pair had never existed in one tree. *On a lane branch is not on
+    > master*, applied to the **citer** rather than the cited. It resolves on merge, and it is
+    > re-proven rather than assumed: with both halves in this tree, mutating this ADR's own anchor
+    > to `…a-seal-that-MOVED…` reds the seal, naming this file and line 770.
 
     **And the removal itself is asserted** — `_CONCURRENCE_LEVELS =` and
     `def acceptance_request_after_concurrence` must not return to `measures.py`. Not to prevent a
