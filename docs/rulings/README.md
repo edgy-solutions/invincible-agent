@@ -1951,6 +1951,55 @@ work), R-050.
 
 ---
 
+## R-052 — A NEGATIVE FROM ONE SEARCH PATTERN IS NOT A NEGATIVE, AND TWO SEARCHES SHARING A FLAW READ AS CORROBORATION
+
+**SEVENTH instance of one component being concluded absent**, and the second and third were mine and `invincible-agent-f3`'s within an hour of each other.
+
+**The component:** `doc_tools/definitions.py:70`, `ontology_sensor` — **factory-constructed** as an
+`S3SensorComponent`, not decorated. Verified:
+
+    grep '@sensor' doc_tools/definitions.py   ->  0
+    grep 'S3SensorComponent'                  ->  4 (pdf, sustainment, ontology, +import)
+
+**A grep for `@sensor` DECORATORS reported "no ontology sensor exists" while this sensor was
+defined and configured.** And AGENTS.md records the sharper half: **the confirming second search
+reused the same decorator pattern**, so *two verifications with one shared flaw read as
+corroboration.*
+
+> **A second search that shares the first's assumption is not a second search.** It is the same
+> search run twice, and its agreement is evidence of nothing except that the pattern is stable.
+
+**MY OWN INSTANCE, AND WHAT SAVED IT.** I read `src/iagent/definitions.py:31` and found
+`sensors=[_ers.extraction_review_sensor]` — **correct about that file**, and I reported it as *"I
+could not confirm the behaviour you asked me to vouch for"* rather than as *"no such sensor
+exists."* **That phrasing is the only reason it was not the third instance.** f3 then checked
+rather than accepting a clean negative, and found it in the repo neither of us had looked in.
+
+### What the source proves and what it does not
+
+**Defined, and its configured bucket. NOT running** — that is a runtime question settled by
+`DagsterInstance.all_instigator_state()`, and AGENTS.md says so because over-reading a source
+finding is the recorded lesson attached to this very component.
+
+### The hazard was LIVE, not architectural
+
+    prefix=""           every object in the bucket
+    filter_patterns=[]  no filtering at all
+    target_op           ingest_ontology_to_jena
+
+**So a markdown page landing in that bucket is handed to a TTL parser**, and the only thing
+between it and the parser was the undeclared-domain refusal. f3 had already moved page bodies to
+their own bucket on the principle that **a refusal is not a router** — *without knowing the sensor
+existed*, which is the property that made the decision right either way.
+
+**A DECISION THAT DOES NOT DEPEND ON THE ANSWER IS WORTH MORE THAN THE ANSWER.** Relying on the
+refusal would have been correct only for as long as someone else's guard kept firing — and an
+absence of complaints is also what a disabled sensor produces.
+
+Related: [[a-plausible-negative-is-not-a-considered-one]], [[a-filed-defect-is-a-sample-not-a-census]].
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
