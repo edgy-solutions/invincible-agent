@@ -2000,6 +2000,63 @@ Related: [[a-plausible-negative-is-not-a-considered-one]], [[a-filed-defect-is-a
 
 ---
 
+## R-053 — A SEAL THAT MOVES AND IS NOT RE-PROVEN HAS ONLY BEEN RELOCATED
+
+**Architect-ruled 2026-09-13 out of the ADR-0051 thread; text and evidence routed by the safety
+lane, number allocated here per R-021.**
+
+Drawn from moving `tests/safety/test_concurrence_precedes_acceptance.py` off engine code onto the
+composed decision tables.
+
+**THE LOUD FAILURE IS THE SAFE ONE.** A seal left pointing at deleted code errors, and errors get
+fixed.
+
+**THE DANGEROUS ONE IS THE SEAL REWRITTEN TO THE NEW SUBJECT THAT PASSES IMMEDIATELY.** It passes
+because **the new data is correct today**, not because the assertion can discriminate at the new
+address. Those are different facts and only one of them was ever demonstrated.
+
+**And the mutation suite that proved it becomes decorative in the same move.** Its discrimination
+was shown against the OLD subject by mutations that **patch a Python name** — and a Python-name
+mutation **cannot fail against YAML**. So after the move the assertion is unmeasured and the
+mutations cannot fire, **while the file reads exactly like a proven seal**: green test, green
+mutation run, same name, same intent.
+
+> **Re-prove at the new address, with mutations that can reach the new subject.** A mutation that
+> could not have applied is not a surviving mutant — it is an experiment that never ran.
+
+Cf. R-043 (a mutation upstream of both arms), and the instance where a `sed` that never applied
+produced a green indistinguishable from a survivor.
+
+---
+
+## R-054 — CHOICE REMOVED FROM CODE BEFORE ITS TABLE COMPOSES IS CHOICE DELETED, AND IT FAILS PERMISSIVE
+
+**Architect-ruled 2026-09-13; routed by the safety lane, numbered here.**
+
+Moving a decision from engine code onto the definition rail is **two edits, and their order is
+load-bearing.**
+
+**Reversed, no layer holds the choice — and the system does not fault.** Deleting a branch does
+not produce an error; it produces **the branch's other arm taken unconditionally.**
+
+**For ADR-0051 that window turns every Serious and High acceptance into a DIRECT one:**
+
+    no exception. no log line. no red suite.
+    MIL-STD-882E §4.3.7 violated, and the artifact left behind LOOKS COMPLIANT.
+
+**THE GENERAL FORM: when a decision moves between layers, the new layer must be LIVE AND ASSERTED
+before the old one is removed** — because **the intermediate state is not "broken", it is
+"permissive", and permissive states pass every test written to catch broken ones.**
+
+That is the whole hazard in one line. A test suite is built to notice absence and error; it is not
+built to notice that a gate now says yes to everything. **The seal has to assert the gate REFUSES
+something**, not merely that it runs.
+
+Related: [[a-guard-that-cannot-fire]] — the WEAKENED form, where the guard runs, its premise is
+true, and it answers a weaker question.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
