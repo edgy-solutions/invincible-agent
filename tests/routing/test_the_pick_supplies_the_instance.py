@@ -137,3 +137,96 @@ def test_unknown_bound_slots_are_not_read_as_an_instance():
     """`None` means "nothing known to be bound". Every other gate fails in this direction."""
     v = _verb_from_the_ratified_row()
     assert turn_is_set_shaped("", v, None) is True
+
+
+# ── THE SECOND CALLER — an engine with a CATALOGUE, not a ratified row ──────────────────
+#
+# A fix on a shared path asserted on one caller is asserted on a SAMPLE. `finProgramBrief`
+# gets its declarations from `policy/graphs/*.yaml`; engine-cost derives its own from a
+# signature. If the rule only works for one of those, it works for the caller I happened to
+# measure.
+#
+# AND THE SECOND CALLER FOUND SOMETHING THE FIRST COULD NOT. See the arity census below.
+
+def _cost_lot_verb_slots() -> list[dict]:
+    """The REAL declarations engine-cost registers, from the engine's own module."""
+    import sys as _sys
+    if str(_REPO) not in _sys.path:
+        _sys.path.insert(0, str(_REPO))
+    from agent_fleet.cost_agent import slots as cost_slots
+
+    return cost_slots.slots_for("cost_lot_breakdown")
+
+
+def test_the_rule_holds_for_a_CATALOGUE_sourced_verb():
+    """Same rule, a different declaration SOURCE and a different slot TYPE.
+
+    `program_id` is a string from a ratified row; `lot` is an INTEGER derived from a Python
+    signature. A rule that happened to depend on either would pass one and fail the other.
+
+    ARITY IS SUPPLIED BY THIS TEST, and that is not cosmetic — see the census below. Engine-cost
+    does not declare arity at all, so this row proves the RULE for a catalogue-sourced verb and
+    does NOT prove the live path for engine-cost. Those are different claims and the next test
+    is what keeps them apart.
+    """
+    decls = _cost_lot_verb_slots()
+    lot = next((d for d in decls if d["name"] == "lot"), None)
+    assert lot is not None, f"engine-cost's lot slot is gone: {decls}"
+    assert lot.get("required") and lot.get("referent"), (
+        f"lot is no longer a required referent — this caller no longer exercises the rule: {lot}"
+    )
+
+    verb = {"verb_iri": "mesh:costLotBreakdown", "arity": "single",
+            "slots": json.dumps(decls)}
+
+    assert turn_is_set_shaped("", verb, {"lot"}) is False, (
+        "the picked lot did not make the turn instance-shaped for a catalogue-sourced verb"
+    )
+    # The control travels with it, exactly as for the first caller.
+    assert turn_is_set_shaped("", verb, set()) is True
+
+
+def test_engine_cost_DECLARES_NO_ARITY_so_its_live_half_is_dark():
+    """THE CENSUS, and it is why the test above hand-supplies `arity`.
+
+    MEASURED 2026-09-14 at the registration site, not by the absence of a function name:
+    `agent_fleet/utils/mesh_registration.py` takes `arity: Optional[str] = None`, and
+    engine-cost's `register_engine_to_mesh(...)` call in `cost_agent/main.py` does not pass it.
+    All six cost verbs therefore register `arity = null`, which `filter_verbs_by_arity` reads as
+    "never flag".
+
+        planning_agent   HAS arity_for   -> declares arity
+        graph_host       ratified row    -> declares arity
+        cost_agent       none            -> null
+        finance_agent    none            -> null
+        safety_agent     none            -> null
+
+    **So the arity gate is inert for three of the four engines** — six cost verbs carry a
+    REQUIRED REFERENT slot (`lot`) and none of them can ever be flagged `needs_instance`. The
+    ask/pick defect this file seals is invisible there, not absent: the slot layer still asks,
+    so it degrades to the pre-flag behaviour rather than failing loudly.
+
+    THIS TEST FAILS WHEN SOMEONE FIXES THAT, deliberately. The day engine-cost declares arity,
+    the row above should stop hand-supplying it and read the real value — otherwise it quietly
+    becomes a test of a literal the system does not emit, which is the defect
+    `DISPOSAL_REMOVED`'s own docstring records one module over.
+
+    Re-run the census:
+        grep -rn "def arity_for" agent_fleet/*/slots.py
+        grep -n "arity=" agent_fleet/cost_agent/main.py
+    """
+    import sys as _sys
+    if str(_REPO) not in _sys.path:
+        _sys.path.insert(0, str(_REPO))
+    from agent_fleet.cost_agent import slots as cost_slots
+
+    assert not hasattr(cost_slots, "arity_for"), (
+        "engine-cost now derives arity. GOOD — now delete the hand-supplied "
+        '`"arity": "single"` in test_the_rule_holds_for_a_CATALOGUE_sourced_verb and read the '
+        "declared value, so that row tests what the engine actually registers."
+    )
+    main_src = (_REPO / "agent_fleet" / "cost_agent" / "main.py").read_text(encoding="utf-8")
+    assert "arity=" not in main_src, (
+        "engine-cost's registration now passes arity. GOOD — see the message above, and the "
+        "live half of this seal becomes provable for a second engine."
+    )
