@@ -2172,6 +2172,77 @@ Related: R-054 (the permissive arm, same ordering law); [[a-plausible-negative-i
 
 ---
 
+## R-056 — AGREEMENT IS NOT CORROBORATION WHEN THERE IS ONLY ONE WITNESS
+
+**Found 2026-09-14 by Lane 1 and `cortex-ui-60` in the same exchange, each catching the other's
+half.** Numbered here because it is an instrument law, not a routing fact.
+
+A consistency check was built between two fields of one record: the arity gate's `flagged`
+disposal and the projection's `instance_resolved`. A `flagged` row on an artifact reporting
+`instance_resolved: true` would be a record denying itself — a defect nameable on the turn
+instead of inferred from a total. It is a good idea. **It cannot fire.**
+
+    gateway.py:3340,3399        "instance_resolved": bool(md.get("subject_instance_id"))
+    dynamic_supervisor.py:956   query_is_set = not subject_instance_id
+    dynamic_supervisor.py:728   _pre_instance = pre_resolved.get("subject_instance_id")
+
+**Both halves derive from ONE field.** A flag is emitted only when the gate saw no instance,
+which means that field is empty, which means `instance_resolved` renders false. The contradiction
+is unreachable by construction. (Confirmed exhaustively: `instance_id` is assigned once at
+`direct_dispatch.py:198` and read at `:214`, `:374`, `:460` with no rebinding — a reassignment
+between the gate's read and the materialization's was the one thing that could have made it
+reachable, and there isn't one.)
+
+**AND THE DEFECT THAT PROMPTED ALL OF THIS WOULD NEVER HAVE TRIPPED IT.** On the NP-MERIDIAN
+turn, `subject_instance_id` was empty and `instance_resolved` was false. **The two halves AGREED,
+and both were wrong**, because the bound value was in the chain's slots where neither looked.
+
+> **A record can be self-consistent and false, and a consistency check is blind to exactly that.
+> Agreement is not corroboration when there is only one witness.**
+
+**THE CHEAP INSTRUMENT** (`cortex-ui-60`'s, and it costs a minute): **trace each half of a
+comparison back to its SOURCE. If they meet at one variable, it is an identity wearing a check's
+clothes.**
+
+**WHY NO TEST RUN FINDS THIS, and this is the part that generalises.** Mutation testing proves
+*guard-is-right*; it can never prove *guard-is-reachable*, **because the fixture supplies the
+triggering input.** Three mutants were killed here over a proven-green baseline — including an
+always-contradicted control, correctly insisted upon, which is precisely the test that catches a
+renderer bug and is silent on reachability. A full kill sheet says nothing about whether the
+world can produce the row.
+
+**THE DISPOSAL IS RELABEL, NOT DELETE.** Asserting that two declarations of one fact agree is a
+JOIN ASSERTION, and the join is what nobody checks — both halves had rendered happily alone since
+June. It is worth keeping as a REGRESSION guard: the day someone makes the gate read a different
+field than the projection, it is the only thing watching. What it must never be read as is a
+partition of the existing population. **A clean result from a check that cannot fail is worse
+than no check, because it looks like evidence** — so every surface rendering the stamp carries
+`ZERO CONTRADICTED IS NOT EVIDENCE OF ZERO DEFECTS` in the same breath, for the reader in six
+weeks who finds a clean panel and banks it.
+
+### R-056.1 — BOTH SESSIONS RAN A BLIND SCAN THE SAME HOUR, AND ONLY A PLANTED CONTROL CAUGHT IT
+
+Two NUL-byte sweeps, two different shells, two silent instrument failures:
+
+    grep -P ' '     unsupported in this shell -> matched nothing, reported CLEAN
+    grep $' '       collapsed to an EMPTY pattern -> matched every line:
+                       "322 NUL-carrying lines" in a 321-line file
+
+**Neither tool errored. Both produced a confident, well-formed, wrong answer** — one a false
+all-clear, one a false alarm whose arithmetic was the only tell. In each case the thing that
+caught it was a control planted BEFORE the sweep, never the sweep itself.
+
+An absence assertion is worth its control, and **the control has to run through the same
+instrument the claim does** — a scan proving a planted NUL is findable, in the same shell, in the
+same invocation shape.
+
+Related: [[a-guard-that-cannot-fire]] — the BORN DEAD form;
+[[the-instrument-and-the-subject-share-a-surface]]; [[an-absence-assertion-is-worth-its-control]];
+[[assert-on-the-claim-not-its-neighbour]]; R-055.2 — a fixture written from an account of a
+payload, which is the same substitution at the input end.
+
+---
+
 ---
 
 ## Why this file exists at all
