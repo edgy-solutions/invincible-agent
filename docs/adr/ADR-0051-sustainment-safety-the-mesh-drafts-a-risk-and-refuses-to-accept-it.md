@@ -764,10 +764,27 @@ where red was expected is a signal about the seal, not about the code.
     **Mutations RE-RUN against the new subject, not carried over** — a wrong target, a deleted row,
     and a refusal routed onward, each rewriting the composed YAML in a copy of the real directories
     and re-composing, plus an unmutated copy that must stay **green**. A stubbed reader would have
-    proven only that the assertion can reject a dict. *(Two laws from this move are routed to
-    `lane/01` for allocation — see
-    [the routing packet](../proposals/two-laws-from-the-safety-seals-routed-for-allocation.md).
-    **PROPOSED, not RULED**: a proposal is not a ruling and this citation is not one either.)*
+    proven only that the assertion can reject a dict.
+
+    **Two laws come out of this move. RULED 2026-09-13 — see
+    [rulings#r-053](../rulings/README.md#r-053--a-seal-that-moves-and-is-not-re-proven-has-only-been-relocated)
+    and
+    [rulings#r-054](../rulings/README.md#r-054--choice-removed-from-code-before-its-table-composes-is-choice-deleted-and-it-fails-permissive).**
+    R-053 is why the mutations were re-run rather than carried: *the old suite's mutations patch a
+    Python name, and a Python-name mutation cannot fail against YAML* — so it is not a surviving
+    mutant, it is **an experiment that never ran**, in a file that reads exactly like a proven seal.
+    R-054 is why the tables composed **before** the code came out, and its general form is the one
+    this seal is built against: *the intermediate state is not "broken", it is "permissive", and
+    permissive states pass every test written to catch broken ones.* Hence the chaining half asserts
+    the route **refuses** something — `not_concurred` does not reach a signature — rather than merely
+    that every outcome resolves to a definition.
+
+    > **⚠️ THE TWO ENTRIES ARE ON `lane/01` AT `786c099` AND ARE NOT ON MASTER YET**, so these links
+    > resolve to the file but **not to their anchors** until that branch merges. Recorded here rather
+    > than left for a reader to discover, because **nothing in the suite checks a fragment** —
+    > `test_citation_paths.py` resolves the path and stops. A dangling anchor is therefore silent,
+    > which is the reference-that-looks-satisfied shape this ADR has now met four times. Strike this
+    > note when `lane/01` lands; **do not strike it by checking that the link is blue.**
 
     **And the removal itself is asserted** — `_CONCURRENCE_LEVELS =` and
     `def acceptance_request_after_concurrence` must not return to `measures.py`. Not to prevent a
