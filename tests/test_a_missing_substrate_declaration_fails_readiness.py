@@ -182,6 +182,50 @@ def test_no_SUBSTRATE_ADDRESS_DEFAULT_survives_anywhere_in_main():
     )
 
 
+# --------------------------------------------------------------------------- declared, not derived
+
+
+def test_the_update_endpoint_is_NOT_DERIVED_from_a_query_endpoint_ending_in_sparql():
+    """RULED 2026-09-14. The old fallback was `endpoint.replace("/sparql", "/update")`.
+
+    THE FIXTURE IS THE WHOLE TEST. It uses an endpoint ending `/ds/sparql` — the one spelling the
+    substitution actually transformed, and the one the sandbox deploys. Any other fixture passes
+    against the old code too, and would have sealed nothing: a `/ds/query` endpoint came out of
+    the substitution unchanged, so the derivation and its absence are indistinguishable there.
+    """
+    p = jena_posture(
+        {"JENA_SPARQL_ENDPOINT": "http://iagent-fuseki:3030/ds/sparql", "FUSEKI_PASSWORD": "pw"}
+    )
+    assert p.update_endpoint == "", (
+        f"a write endpoint was derived from the query endpoint: {p.update_endpoint!r}. String "
+        f"surgery that happens to work on one spelling is one chart edit from POSTing updates "
+        f"at a query endpoint."
+    )
+
+
+def test_a_declared_update_endpoint_is_used_verbatim():
+    """THE CONTROL. Without it, 'never derives' is satisfied by a posture that never produces a
+    write endpoint at all — which would refuse every write in every deployment."""
+    p = jena_posture(
+        {
+            "JENA_SPARQL_ENDPOINT": "http://iagent-fuseki:3030/ds/sparql",
+            "JENA_UPDATE_ENDPOINT": "http://iagent-fuseki:3030/ds/update",
+            "FUSEKI_PASSWORD": "pw",
+        }
+    )
+    assert p.update_endpoint == "http://iagent-fuseki:3030/ds/update"
+
+
+def test_the_write_refusal_NAMES_the_variable():
+    """A 503 reading "Jena update endpoint not configured" sends the reader to the code. The
+    variable name sends them to the chart, which is where the fix is."""
+    src = _MAIN.read_text(encoding="utf-8")
+    fn = src[src.index("async def _execute_sparql_update") :][:900]
+    assert "JENA_UPDATE_ENDPOINT is not declared" in fn, (
+        "the write path refuses without naming the variable the deployment has to declare"
+    )
+
+
 # --------------------------------------------------------------------------- the Neo4j rule
 #
 # ABSENT is a fault; EMPTY is a declaration of absence. Both halves are the rule, and the second

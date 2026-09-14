@@ -83,15 +83,22 @@ def jena_posture(env: Mapping[str, str]) -> JenaPosture:
     password = _clean(env, "FUSEKI_PASSWORD")
 
     # The SPARQL UPDATE endpoint — engine-o's ONE write path (the pcn disposition stamp).
-    # DERIVATION PRESERVED VERBATIM. The DEPLOYED `JENA_SPARQL_ENDPOINT` ends `/ds/sparql`
-    # (values-sandbox.yaml:187, confirmed against the live pod), so this substitution FIRES and
-    # yields `/ds/update`, the correct Fuseki convention. It does NOT fire for the chart's own
-    # default or template, which render `/ds/query` — and per that same values file `/ds/query`
-    # returns 405 on POST for this dataset, so such a deployment has a broken READ path before
-    # its write path matters. A chart defect, not this module's.
-    update_endpoint = _clean(env, "JENA_UPDATE_ENDPOINT") or (
-        endpoint.replace("/sparql", "/update") if endpoint else ""
-    )
+    #
+    # RULED 2026-09-14: DECLARED, NEVER DERIVED. This used to fall back to
+    # `endpoint.replace("/sparql", "/update")`, which **derives nothing while reading like a
+    # derivation** — string surgery that happens to work on one spelling of one endpoint. It was
+    # correct in the deployed configuration, and that is exactly what made it dangerous: it works,
+    # so nobody looks, and it is one chart edit away from POSTing updates at a query endpoint.
+    # An undeclared update endpoint now makes the write path REFUSE BY NAME (main.py's
+    # `_execute_sparql_update`) rather than silently substitute. Declared in the chart since
+    # 0.3.73 — `configmap.yaml` and `values-sandbox.yaml`.
+    #
+    # THE COST OF DECLARING RATHER THAN DERIVING, so the trade is on the record: the substitution
+    # at least guaranteed ONE HOST, being surgery on one string. Two declarations can drift, and
+    # they did within the hour — the first render of the new key kept the helper's FQDN while the
+    # query endpoint used the short service name. One substrate, two hostnames, and the new key
+    # read as correct ON ITS OWN. **Render and read the PAIR, never either alone.**
+    update_endpoint = _clean(env, "JENA_UPDATE_ENDPOINT")
 
     missing: Tuple[str, ...] = ()
     if endpoint and not password:

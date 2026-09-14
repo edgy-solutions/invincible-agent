@@ -3730,7 +3730,16 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
 # ---------------------------------------------------------------------------
 async def _execute_sparql_update(update: str) -> None:
     if not _JENA_UPDATE_ENDPOINT:
-        raise HTTPException(status_code=503, detail="Jena update endpoint not configured")
+        # NAMED. "not configured" sends the reader to the code; the variable sends them to the
+        # chart, which is where the fix is. Since 2026-09-14 this endpoint is never derived from
+        # the query endpoint, so an absent declaration is the only way to arrive here.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "deploy fault: JENA_UPDATE_ENDPOINT is not declared — engine-o will not derive a "
+                "write endpoint from the query endpoint"
+            ),
+        )
     async with _jena_client() as client:
         resp = await client.post(_JENA_UPDATE_ENDPOINT, data={"update": update})
         resp.raise_for_status()

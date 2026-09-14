@@ -169,6 +169,21 @@ file needs to find it.
 The original text follows, struck but intact, because a retraction that deletes its own claim
 leaves the next reader unable to check the reasoning.
 
+**AND THE SUBSTITUTION IS GONE ANYWAY — ruled 2026-09-14, on the sharper reason.** Not "it
+derives the wrong address" (it did not) but: **`endpoint.replace("/sparql", "/update")` derives
+NOTHING while reading like a derivation.** It is string surgery that happens to work on one
+spelling. A reader asking "is there an update endpoint?" finds a line that answers yes. It worked,
+so nobody looked, and it sat one chart edit away from POSTing updates at a query endpoint. The
+endpoint is now DECLARED (chart 0.3.73) and an absent declaration makes the write path refuse
+**by name**.
+
+**THE COST OF THE TRADE, because it arrived within the hour and is the honest other half:** the
+substitution guaranteed ONE HOST, being surgery on one string. Two declarations can drift — and
+the first render of the new key kept the helper's FQDN while the query endpoint used the short
+service name. **One substrate, two hostnames, and the new key read as correct on its own.** It was
+reading the PAIR that showed it. So: declared beats derived, and a declared pair must be rendered
+and read together, never either alone.
+
 ### ~~F7 as originally written~~ — ENGINE-O'S WRITE ENDPOINT IS DERIVED BY A SUBSTITUTION THAT NEVER FIRES
 
 Found while enumerating the write path, and it is a correctness defect rather than a posture one.
