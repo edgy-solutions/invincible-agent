@@ -134,34 +134,33 @@ def test_EVERY_KNOWN_SOURCE_IS_IN_EXACTLY_ONE_SET():
         assert why and why.strip(), f"{src} is excluded with no reason"
 
 
-def test_THE_JOIN_the_pure_sets_cover_the_gateway_vocabulary():
+def test_THE_JOIN_the_partition_covers_the_whole_vocabulary():
     """THE INVARIANT BETWEEN TWO DECLARATIONS, which is the kind nothing else checks.
 
-    The source names are declared in `gateway.py` (`SLOT_SOURCE_*`) and partitioned here. Two
-    correct declarations that never meet is the shape that let `instance_resolved` and the arity
-    gate disagree about nothing for three months.
+    ⛔ THIS READ THE CONSTANTS OUT OF `gateway.py` BY REGEX AND WENT RED WHEN THEY MOVED —
+    correctly. The vocabulary was declared in gateway, and then the writer needed it and so did
+    the promotion rule; three copies of four names is how a rename makes a feature stop
+    SILENTLY, with the reader refusing every row as "unknown source" and reporting a clean
+    empty chain. It now lives in `iagent_pure.slot_acceptance`, the one door every binding
+    passes through, and this seal imports the object instead of parsing for it.
 
-    A RENAME upstream is what this catches. An ADDED source falls through to "not promoted",
-    which is safe — but a renamed one would make promotion quietly stop happening, and a feature
-    that silently stops is worse than one that fails.
+    The floor is what caught the move: it refused to quantify over an empty set rather than
+    passing vacuously, which is the whole reason a floor is written before the assertion.
     """
-    gw = _GW.read_text(encoding="utf-8")
-    declared = set(re.findall(r'^SLOT_SOURCE_\w+\s*=\s*"(\w+)"', gw, re.M))
-    assert len(declared) >= 4, (
-        f"parsed only {declared} from gateway.py — the SLOT_SOURCE_* shape moved and this seal "
-        f"is quantifying over almost nothing"
-    )
+    from iagent_pure.slot_acceptance import SLOT_SOURCES
+
+    assert len(SLOT_SOURCES) >= 4, f"the vocabulary shrank to {SLOT_SOURCES}"
     known = set(PROMOTABLE_SLOT_SOURCES) | set(NON_PROMOTABLE_SLOT_SOURCES)
-    missing = declared - known
+    missing = set(SLOT_SOURCES) - known
     assert not missing, (
-        f"gateway declares slot source(s) {sorted(missing)} that this module has neither "
-        f"promoted nor excluded. Add each to PROMOTABLE_SLOT_SOURCES or to "
-        f"NON_PROMOTABLE_SLOT_SOURCES with its reason — never leave one undecided."
+        f"slot source(s) {sorted(missing)} are neither promoted nor excluded. Add each to "
+        f"PROMOTABLE_SLOT_SOURCES or to NON_PROMOTABLE_SLOT_SOURCES with its reason — never "
+        f"leave one undecided, because whichever branch it reaches first will decide it."
     )
-    stale = known - declared
+    stale = known - set(SLOT_SOURCES)
     assert not stale, (
-        f"this module partitions source(s) {sorted(stale)} that gateway no longer declares — a "
-        f"rename upstream would make promotion silently stop happening"
+        f"{sorted(stale)} is partitioned here but is no longer a declared source — a rename "
+        f"upstream would make promotion silently stop happening"
     )
 
 

@@ -48,6 +48,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from iagent.verb_lookup import find_compatible_verbs
+from iagent_pure.slot_acceptance import (
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+)
 from iagent_pure.slot_disposition import (
     ABSTAIN as _ABSTAIN_ACTION,
     ASK as _ASK,
@@ -310,6 +314,19 @@ def dispatch_pre_resolved(
     _chain = {k: v.get("value") for k, v in (chain_slots or {}).items() if isinstance(v, dict)}
     _supplied = {**_chain, **dict(bound_slots or {})}
 
+    # ── WHERE EACH VALUE CAME FROM, tracked alongside the merge that produces it ────────
+    #
+    # Built here because this is where the layers are still distinguishable: one line later
+    # `_supplied` is a flat dict and the provenance is unrecoverable. An inherited slot keeps
+    # the source it was BOUND with — re-labelling it by the hop that carried it would turn a
+    # caller-supplied id into a pick after one hop, which is the exact laundering the split
+    # exists to prevent.
+    _sources: Dict[str, str] = {
+        k: str(v.get("source") or "")
+        for k, v in (chain_slots or {}).items() if isinstance(v, dict)
+    }
+    _sources.update({k: SLOT_SOURCE_PICKED for k in dict(bound_slots or {})})
+
     # ── THE SPOKEN ANSWER IS AN ANSWER, and this path was DROPPING IT ───────────────────
     #
     # MEASURED 2026-09-08 23:34. `spoken_answer` was a parameter this function accepted and
@@ -336,8 +353,11 @@ def dispatch_pre_resolved(
         ]
         if len(_unfilled) == 1:
             _supplied[_unfilled[0]] = spoken_answer
+            # TYPED, WITH NO MENU BEHIND IT. Not `picked`: nothing enumerated this value, so
+            # it is not promotable to a resolved instance until a resolver has seen it.
+            _sources[_unfilled[0]] = SLOT_SOURCE_SPOKEN
 
-    acceptance = accept_slots(_supplied, _declared)
+    acceptance = accept_slots(_supplied, _declared, _sources)
     params = dict(getattr(acceptance, "params", {}) or {})
     refusals = [
         {"name": r.name, "reason": r.reason, "spoken": r.spoken}
@@ -502,10 +522,21 @@ def dispatch_pre_resolved(
             graph_trace_mat=graph_trace_mat, predicate=predicate, refusals=refusals,
         )
 
+    if getattr(acceptance, "unsourced", ()):
+        # A BINDING WITH NO PROVENANCE IS A HOLE IN THE CHAIN, not a detail. It will not be
+        # carried forward, so the next hop re-asks a slot this one answered.
+        logger.warning(
+            "accepted slot(s) %s carry NO source — they will not be carried to the next hop",
+            list(acceptance.unsourced),
+        )
     slots_mat = materialization(
         verb_iri=verb,
         disposition="route",
         accepted_slots=_json(params),
+        # THE FIELD THAT WAS READ AND NEVER WRITTEN. Without it `_accumulated_slots` returns
+        # {} for every chain, and the gate's bound-slot read plus the instance promotion are
+        # both inert while their seals stay green (R-057).
+        bound_slot_sources=_json(getattr(acceptance, "bound_slot_sources", {}) or {}),
         refused_slots=_json(refusals),
         slot_resolution=_json(getattr(acceptance, "resolution", {}) or {}),
         subject_uri=subject,
