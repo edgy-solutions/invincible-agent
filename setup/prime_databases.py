@@ -134,6 +134,39 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # directly.
 # ============================================================================
 
+#: Dagster's max_concurrent_runs on this cluster. N ingests serialise into ceil(N/2) batches.
+_INGEST_CONCURRENCY = 2
+#: Measured 2026-08-22: 10 runs completed within 1800s on this cluster.
+_SECONDS_PER_SLOT = 360
+#: Margin over the measured queue. Not decoration -- the measurement is a median-ish observation
+#: on arm64 nodes whose per-slot time varies, and a bound sized to the observation exactly is a
+#: bound that fails on the first slow run.
+_QUEUE_MARGIN = 1.2
+
+
+def derived_ingest_timeout(manifest=None) -> int:
+    """Seconds to wait for the ingest queue, DERIVED FROM THE MANIFEST THIS RUN WILL EXECUTE.
+
+    WHY THIS IS COMPUTED AND NOT CONFIGURED. The bound and the work were set independently, and
+    on 2026-09-14 they disagreed: the docs-corpus merge added an eleventh manifest entry, taking
+    the queue to 11 -> ceil(11/2) = 6 batches x 360s = 2160s... and the chart still said 3600s
+    while `test_prime_timeout_bounds_agree` computed the real requirement and went red.
+
+    THE FIRST FIX WAS TO RAISE THE NUMBER, AND THAT IS THE MOVE THE SEAL EXISTS TO PREVENT.
+    Raising a bound to clear a red and raising it because the work grew are indistinguishable in
+    a diff -- both are a bigger integer. The difference only survives if the value is WRITTEN BY
+    THE ACT: adding an ontology moves the bound by construction, and there is no number anyone
+    can forget to update.
+
+    Same rule as the census reading `helm get values` rather than restating a pin, and as a
+    decision table's `domain` coming from outside its rows.
+    """
+    import math
+    rows = CANONICAL_TTL_MANIFEST if manifest is None else manifest
+    batches = math.ceil(len(rows) / _INGEST_CONCURRENCY)
+    return int(batches * _SECONDS_PER_SLOT * _QUEUE_MARGIN)
+
+
 CANONICAL_TTL_MANIFEST = [
     # ----- LAYER 1: MAINTENANCE (the operating domain the routing matrix exercises) -----
     {
@@ -1656,10 +1689,13 @@ def main() -> None:
                              "and the helm hook chain's documented ordering "
                              "(prime -> ontologySeed -> reregister) does not actually "
                              "hold for the ingest.")
-    parser.add_argument("--ingest-timeout", type=int, default=1800,
-                        help="Seconds to wait with --wait-for-ingest (default 1800). "
-                             "Serialized ingests on arm64 nodes are slow; size this to "
-                             "the SLOWEST full chain, not the median.")
+    parser.add_argument("--ingest-timeout", type=int, default=None,
+                        help="Seconds to wait with --wait-for-ingest. DEFAULT IS DERIVED from "
+                             "the manifest this run will actually execute — see "
+                             "derived_ingest_timeout(). Pass a value only to override it; a "
+                             "literal here is a number that must be remembered, and the whole "
+                             "point of the derivation is that adding an ontology moves the "
+                             "bound BY CONSTRUCTION.")
     parser.add_argument("--trigger-ingest", action="store_true",
                         help="Trigger dagster ingest_ontology_job for each partition after upload. "
                              "Off by default — the dagster sensor will pick up uploaded files OR "
@@ -1677,6 +1713,14 @@ def main() -> None:
                              "that so the projector is never stranded and answer history "
                              "survives a routine reprime.")
     args = parser.parse_args()
+    # THE DERIVED DEFAULT, resolved here so an explicit --ingest-timeout still wins.
+    # None means 'nobody stated one', which is a different fact from 'somebody chose
+    # this number' -- and only the first can be safely replaced by a derivation.
+    if args.ingest_timeout is None:
+        args.ingest_timeout = derived_ingest_timeout()
+        print(f"[prime] ingest timeout DERIVED from the manifest: "
+              f"{len(CANONICAL_TTL_MANIFEST)} entries -> {args.ingest_timeout}s")
+
 
     parse_env()
 
