@@ -704,6 +704,18 @@ mesh:audience_hint a owl:DatatypeProperty ;
   rdfs:label "audience hint" ;
   rdfs:comment "Which persona a page is written for — DISPLAY ROUTING, NEVER AUTHZ. The value comes from policy/personas.yaml, which is canonical and UPPERCASE (`DATA_ENGINEER`, not `data-engineer`): that file is what the Topaz sync tool refuses a grant against, so it is the vocabulary with a positive control behind it. THE ENUM IS NOT RESTATED HERE AND THAT IS THE POINT — ADR-0037's own correction records that this bullet once listed `reviewer` and `leader`, neither of which is a persona in this system, and a third copy of an enum is a shape this repo has paid for repeatedly. A hint carrying an unlisted value fails SILENTLY rather than loudly, because display routing has no gate to refuse it, which is why the seal reads the policy file rather than trusting the page." .
 
+mesh:source a owl:DatatypeProperty ;
+  rdfs:domain mesh:DocPage ;
+  rdfs:range rdfs:Literal ;
+  rdfs:label "source" ;
+  rdfs:comment "WHERE THE PAGE'S TEXT ACTUALLY IS. The graph is the index and the docs are the leaves, so a DocPage carries a LOCATOR and never the markdown: a body stored as a literal is a second copy of a reviewed artifact, and the copy is the one that goes stale while continuing to render. For the PLATFORM corpus this is a bucket-relative object key under the corpus bucket, exactly the convention CANONICAL_TTL_MANIFEST's `s3_key` already uses — the bucket comes from DOCS_BUCKET at read time, so the locator does not hard-code one deployment's bucket name. THE PAGE BUCKET IS NOT THE ONTOLOGY BUCKET and the uploader refuses if a deployment points both names at one: relying on the ontology sensor to decline a markdown body made the interlock a side effect of someone else's guard, and a refusal is not a router. The key is CONTENT-ADDRESSED (`docs/pages/<body_sha>/<filename>`), which makes a stale object impossible rather than merely detectable: different text is a different key and therefore a different row. For a WORK-SIDE page the store is not this one, so the value is a full URN or URI and the presence of a scheme is what tells them apart. THE PAGE MUST BE REACHABLE AT ANSWER TIME FROM INSIDE THE CLUSTER, which is why the prime uploads the markdown beside the TTLs: a body read from a file in some service's image is a second copy with no seal over it." .
+
+mesh:body_sha a owl:DatatypeProperty ;
+  rdfs:domain mesh:DocPage ;
+  rdfs:range rdfs:Literal ;
+  rdfs:label "body sha" ;
+  rdfs:comment "The SHA-256 of the page's bytes as indexed, hex. THE ROUTE ASSERTS IT AFTER READING AND BEFORE RENDERING, and that assertion is the whole reason a pointer is safe where a copy is not: the graph's claim about a page and the text a reader is shown are checked against each other at answer time rather than assumed to have stayed in step. A mismatch is a REFUSAL, not a warning — rendering text that is not what was indexed is the confidently-wrong answer this corpus exists to avoid, and the reader cannot tell by looking. It is also what makes the content-addressed key honest: the sha in the path and the sha in the row are derived from the same bytes by the same generator, and the seal asserts they agree." .
+
 mesh:doc_kind a owl:DatatypeProperty ;
   rdfs:domain mesh:DocPage ;
   rdfs:range rdfs:Literal ;

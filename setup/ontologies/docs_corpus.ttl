@@ -1,0 +1,84 @@
+# GENERATED FILE — DO NOT EDIT.
+#
+# Produced by `scripts/generate_docs_corpus.py` from the frontmatter of `docs/runbooks/*.md`.
+# Committed so a reviewer can read what will prime; `--check` fails if it has drifted from the
+# pages it was derived from.
+#
+# THIS IS THE SEED HALF OF THE DOC CORPUS. The work-side half arrives as an ADR-0036 overlay
+# through doc-tools' ingest, produces the same triples against the same vocabulary, and is
+# deliberately indistinguishable to a reader.
+#
+# The vocabulary itself (mesh:DocPage, mesh:explains, mesh:audience_hint, mesh:doc_kind) is
+# declared in mesh_system.ttl and primes with the MESH domain — a page here asserting a type that
+# was never declared is the fail-by-passing case ADR-0037 §1 exists to refuse.
+
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix cost: <http://invincible-agent/cost#> .
+@prefix docs: <http://invincible-agent/docs#> .
+@prefix fin: <http://invincible-agent/fin#> .
+@prefix mesh: <http://invincible-agent/mesh#> .
+
+docs:runbook-adding-a-canvas-template a mesh:DocPage ;
+  rdfs:label "Adding a canvas template" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "DATA_ENGINEER" ;
+  mesh:source "docs/pages/ef2a2cc140a0495af1daacc7655ff21c3f139e85af815568d57ad4285968097c/adding-a-canvas-template.md" ;
+  mesh:body_sha "ef2a2cc140a0495af1daacc7655ff21c3f139e85af815568d57ad4285968097c" ;
+  mesh:explains mesh:seedCanvas ,
+    mesh:seedPortfolioCanvas .
+
+docs:runbook-adding-a-graph a mesh:DocPage ;
+  rdfs:label "Runbook — adding a graph to engine-lg" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d/adding-a-graph.md" ;
+  mesh:body_sha "edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d" ;
+  mesh:explains mesh:finProgramBrief ,
+    mesh:costLotCostingReview ,
+    mesh:StatefulSupportResponse ,
+    cost:LotCostingReview ,
+    fin:Program ,
+    cost:ProductionLot .
+
+docs:runbook-adding-a-task-kind a mesh:DocPage ;
+  rdfs:label "Adding a task kind" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a/adding-a-task-kind.md" ;
+  mesh:body_sha "d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a" ;
+  mesh:explains mesh:DispositionReview .
+
+docs:runbook-adding-an-archetype a mesh:DocPage ;
+  rdfs:label "Adding an archetype" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/54f3569338ff684041402b28eaaf50674f22e38a1d11ca9ad8529b239f056ede/adding-an-archetype.md" ;
+  mesh:body_sha "54f3569338ff684041402b28eaaf50674f22e38a1d11ca9ad8529b239f056ede" ;
+  mesh:explains mesh:Archetype .
+
+docs:runbook-adding-an-engine a mesh:DocPage ;
+  rdfs:label "Runbook — adding an engine" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/c253593995ca32784a1c2c4a321edb1bed49696fe9600fd7cbda5fc38c8cc112/adding-an-engine.md" ;
+  mesh:body_sha "c253593995ca32784a1c2c4a321edb1bed49696fe9600fd7cbda5fc38c8cc112" ;
+  mesh:explains mesh:resolveInstance ,
+    mesh:enumerateInstances ,
+    mesh:InstanceResolution ,
+    mesh:InstanceEnumeration .
+
+docs:runbook-rolling-a-service a mesh:DocPage ;
+  rdfs:label "Rolling a service" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/443828da33e02779becca2e63255b4233a959189856198edc5c90b1f087900d2/rolling-a-service.md" ;
+  mesh:body_sha "443828da33e02779becca2e63255b4233a959189856198edc5c90b1f087900d2" .
+# rolling-a-service.md: explains none — an honest row, not an omission.
+
+docs:runbook-writing-a-walk-sheet a mesh:DocPage ;
+  rdfs:label "Writing a walk sheet" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2/writing-a-walk-sheet.md" ;
+  mesh:body_sha "c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2" .
+# writing-a-walk-sheet.md: explains none — an honest row, not an omission.
