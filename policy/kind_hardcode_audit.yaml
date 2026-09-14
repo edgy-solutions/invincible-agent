@@ -167,3 +167,26 @@ sites:
     reason: >-
       The retired species itself, named so it can be re-keyed away. Zero live rows carry it as
       of 2026-09-12; the script is kept until it is confirmed unnecessary at work too.
+
+  # ── added 2026-09-14: sites that arrived with master, all prose ───────────────────────────
+
+  - site: agent_fleet/restate_analyst/workflow_definition.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — a comment explaining that a step ends at its declared terminal and what a chaining
+      table would match. Same limit as main.py's: the derivation cannot tell code from comment.
+
+  - site: agent_fleet/safety_agent/measures.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — a comment describing which authority tier the selection table routes to. The
+      routing itself is already declared data; this line only explains it.
+
+  - site: src/iagent/gateway.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — a comment warning that a chaining row on a particular outcome would match nothing
+      forever. A warning ABOUT a chaining table, not a chaining decision in code.

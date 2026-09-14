@@ -55,7 +55,13 @@ def _tracked_py(repo: pathlib.Path) -> list[str]:
          *[f"{r}/*.py" for r in ROOTS]],
         capture_output=True, text=True, check=True,
     ).stdout.split("\n")
-    return sorted({p for p in out if p.endswith(".py")})
+    self_rel = pathlib.Path(__file__).resolve().relative_to(repo).as_posix()
+    # THE INSTRUMENT IS NOT A SITE. This file necessarily contains every pattern it searches
+    # for — they are its regex literals — so scanning itself reported SIX self-matches as
+    # undispositioned hardcodes. A measuring device that counts itself inflates the population
+    # with entries nobody can act on, and the audit then has six rows whose only honest
+    # disposition is "this is the ruler".
+    return sorted({p for p in out if p.endswith(".py") and p != self_rel})
 
 
 def population(repo: pathlib.Path) -> dict[tuple[str, str], int]:
