@@ -93,7 +93,7 @@ the notice is part of the ruling rather than an implementation detail.
 | # | ruling | where |
 |---|---|---|
 | a | **The author sees what they can act on, and nothing more.** ⟺ **AMENDED 2026-09-12.** `see ⟺ can_act` is **the substrate's shape**, not a gap in an implementation — the projection materialises one row per authorized ACTOR, so viewability and act-ability derive from one Topaz answer and cannot diverge. The earlier reading described a view-only author audience as though it were available; it is not, and saying so plainly is the honest version. **The inert grant is withdrawn** — see the note below. | §5:290 |
-| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
+| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. *(Kill counts prove guard-is-right, never guard-is-reachable — R-056.)* | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
 | e | **The acceptance verb is `accepted`, NOT the seed's `approved`.** RULED 2026-09-11, architect. A risk is *accepted* by an authority — MIL-STD-882's word, and the ADR's whole claim. `approved` is the generic seed's verb for generic things. A queue showing both side by side is showing **two different acts, correctly**; the declaration row's label makes it explicit. The SDK constrains verb strings nowhere, deliberately, so this is expressible without asking anyone's permission. | §5 |
@@ -995,6 +995,12 @@ undefined share, rank from `0`:
     every one reddened exactly ONE test, and always a test written in the same commit
     the standing seal stayed GREEN through all five
 
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
+
 It exercises the verb at two call sites and asserts its contract **shape**. It never asserted the
 ordering, the zero-drop, the rank numbering, or the withheld tail — *which is to say, none of the
 algorithm being moved.* **The green before and after was real and weak:** it proved the verb still
@@ -1022,6 +1028,12 @@ seal's age, it does not decay.** Required instrument for the remaining four extr
 **The number is what prompted the mutation** — ten days in a moving tree was enough to ask whether
 the seal still pinned anything, and the answer was that it never had. Recorded as commands rather
 than as a figure, per the ADR.
+
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
 
 ### Scope held where it was tempting to widen
 
@@ -2224,8 +2236,8 @@ weeks who finds a clean panel and banks it.
 
 Two NUL-byte sweeps, two different shells, two silent instrument failures:
 
-    grep -P ' '     unsupported in this shell -> matched nothing, reported CLEAN
-    grep $' '       collapsed to an EMPTY pattern -> matched every line:
+    grep -P '\x00'     unsupported in this shell -> matched nothing, reported CLEAN
+    grep $'\x00'       collapsed to an EMPTY pattern -> matched every line:
                        "322 NUL-carrying lines" in a 321-line file
 
 **Neither tool errored. Both produced a confident, well-formed, wrong answer** — one a false
