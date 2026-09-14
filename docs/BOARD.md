@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **135 of 147 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **136 of 148 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -291,6 +291,10 @@ _Coverage: **135 of 147 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **producer-declarations-payload-preregistration** — PRE-REGISTRATION for the three producer declarations (cortex-ui e99fd59). Payload shapes written down BEFORE emitting, one sample per changed verb, so the emitted shape can be checked against an intention rather than explained after the fact. Three items: `value_unit: "USD"` top-level on the money family (its frontend half shipped in a03a960 and reads `comp.value_unit`); a `baseline` SERIES on PeriodSeriesRow present only when a comparison is in scope (frontend half NOT built — the ghost renderer is cortex's, flagged); and `risk_flag` VALUES from plan_schedule (mechanism exists, emit vocabulary only). Two design questions are RAISED not answered: risk_flag's case convention collides with the existing lowercase values, and MOVED-vs-violated precedence needs a ruling.
   status: open · owner: unassigned
   → [docs/plans/producer-declarations-payload-preregistration.md](plans/producer-declarations-payload-preregistration.md)
+
+- **recipient-scope-is-a-grant-not-a-seed** — Who may FETCH a produced customer-validation package is currently a dict in engine-cost's seed. It is a grant-rail relation and wants task_grants.yaml's shape — deny-by-default, Topaz-decided, git-asserted with git-blame, overlay-configurable, sync-flowed so removal REVOKES, and granted_by + reason required on every entry. A mapping changeable by anyone who can change the engine is not policy. Ruled 2026-09-14 alongside the fix that put the check on the route; Lane 1's, with an ADR-0047 amendment, not an engine change.
+  status: open · owner: unassigned
+  → [docs/plans/recipient-scope-is-a-grant-not-a-seed.md](plans/recipient-scope-is-a-grant-not-a-seed.md)
 
 - **register-cost-tool-as-engine** — BUILD engine-cost — an ORIGINAL implementation of the per-lot cost-accounting concept on the ADR-0045 pattern, notional data. PREMISE CORRECTED 2026-09-02 — filed as "register an existing external tool", but no such tool exists in this workspace to wrap, so this is a BUILD FROM SPECIFICATION and the module-isolability FORK IS RETIRED (nothing foreign to refactor; exportability is designed in, so ADR-0047 §3's premise inverts from hope to design). Five cost categories (labor split touch/support/SEPM, material, other-direct, warranty, contracts) over numbered production lots, a deterministic pricing composition base->fringe->overhead->G&A->cost-of-money->profit->price, and a fiscal-year rate table carrying a VINTAGE. Six verbs declared before building. GATES TWO ADR CHAINS — affordability's third source under ADR-0049 option A, and the computation ADR-0047's package carries. ONE GENUINELY NEW ARCHETYPE — the price composition is a waterfall/stack nothing existing renders. Mandatory slots lot and rate_vintage, the latter because a price without its rate vintage is the EAC-without-method ambiguity and refuses the same way.
   status: open · owner: unassigned
