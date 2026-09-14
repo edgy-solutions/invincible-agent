@@ -1042,6 +1042,41 @@ services:
           member list here that becomes sensitive the moment real parties are named, because
           who a program discloses to is itself disclosable. Flagged now rather than found
           later: this is the row that re-classifies FIRST, ahead of the figures."
+      # ── THE MOST SENSITIVE ROUTE IN THIS ENGINE, AND THE ONLY ONE THAT SERVES A FILE ──
+      - method: GET
+        path: /artifact/{filename}
+        identity: none
+        gate: "transport auth (OBSERVE) + a DERIVED filename allow-list"
+        exposes: the-whole-disclosure-package
+        consumers: [cortex-bff card action, the recipient the package was built for]
+        class: releasable_by_design
+        justification: "Serves a produced customer-validation package — every figure
+          package_export was willing to disclose to one recipient, in one file, over HTTP.
+          EVERY OTHER ROUTE IN THIS ENGINE RETURNS ROWS FOR ONE QUESTION; this returns the
+          bounded set for a whole recipient scope, which is why it is classified separately
+          from /measure rather than folded in with it.
+
+          THE BOUND IS package_export's, NOT THIS ROUTE'S, and that is the property to
+          re-examine first. Entitlement filtering happens once, at production (ADR-0047 §5);
+          by the time bytes are on disk the disclosure decision is made and recorded in an
+          audit line. So this route is only as bounded as the artifacts on the disk — it does
+          NOT re-check who is asking, and a second recipient's package sitting in the same
+          directory is servable to anyone who can reach the engine.
+
+          TRAVERSAL IS REFUSED STRUCTURALLY: it serves only filenames DERIVED from the
+          recipient scopes this engine packages for, so an input is compared against a closed
+          set rather than cleaned into a path. Sanitizing is one missed encoding from serving
+          something else; a derived allow-list cannot be talked into anything.
+
+          404 IN EVERY DEPLOYED POD TODAY, and that is honest rather than incidental: the
+          builder and the pinned Pyodide runtime live in the repository checkout and are not
+          in the image, so nothing is ever written there.
+
+          WHEN THIS ENGINE READS A GOVERNED DATASET THIS ROW IS THE ONE THAT CHANGES CLASS
+          FIRST AND HARDEST — ahead of the supplier list, ahead of the figures. A real
+          package is the complete disclosure to a named party, and serving it without
+          re-checking the caller becomes indefensible the moment the data stops being
+          notional. The re-check belongs here, on the caller, not only at production."
 
   finance_agent:
     inbound_transport_auth: engine-fin
