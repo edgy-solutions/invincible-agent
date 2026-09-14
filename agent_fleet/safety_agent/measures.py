@@ -12,6 +12,7 @@ hazard cannot be resolved instead of returning a clean "no hazard".
 """
 from __future__ import annotations
 
+from datetime import date as _date
 from typing import Any, Dict, List, Optional
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIRST
@@ -146,10 +147,55 @@ def find_orphaned_hazards(
         {"I": 1, "II": 2, "III": 3, "IV": 4}.get(r["severity"] or "", 99),
         r["opened_on"],
     ))
+    # ── THE CONTRIBUTION_RANKING AXIS KEYS, AND WHAT THE BAR ACTUALLY MEANS ─────────────────
+    #
+    # `_PROJECTED_ARCHETYPES` carries the `rows` key plus the declared envelope fields
+    # `value_label`/`value_unit`/`scope_label`; ROW fields pass through VERBATIM. Without these
+    # the binding matches and the card still draws nothing — the same blank surface as having
+    # no binding at all, which is the defect this whole arc started from.
+    #
+    # ⚠️ RANK AND MAGNITUDE ARE DIFFERENT QUANTITIES HERE, AND `value_label` IS WHAT KEEPS THAT
+    # HONEST. The ORDER is severity first then age — the verb's claim about which hazard matters
+    # most. The BAR is days open, because a ranking archetype draws a magnitude and severity is
+    # an ORDINAL WITH NO LENGTH. So the bars are deliberately NOT monotonic with rank: a
+    # Catastrophic hazard opened last week outranks a Marginal one open for a year and has the
+    # shorter bar. A reader who takes the bar for severity has been misled BY THE CARD, and
+    # naming the axis is the only defence a producer has.
+    #
+    # Days open is a real quantity rather than filler to satisfy a renderer: it sums, its shares
+    # mean something ("a fifth of the fleet's unattended-hazard-days"), and it is already this
+    # verb's secondary sort key.
+    today = _date.today()
+    for r in orphans:
+        r["days_open"] = max((today - _date.fromisoformat(r["opened_on"])).days, 0)
+    total_days = sum(r["days_open"] for r in orphans) or 1
+    rows = [
+        {
+            **r,
+            "rank": i,
+            "entity_id": r["hazard_id"],
+            "entity_name": r["description"],
+            "contribution": r["days_open"],
+            "share_of_total": round(r["days_open"] / total_days, 4),
+            # NO `favourable` KEY, DELIBERATELY. It carries the good/bad direction on a cost or
+            # variance ranking; an unattended hazard has no favourable direction — every row is
+            # bad and the ordering is severity, not sentiment. Omitting it makes the card show
+            # "no direction stated" instead of colouring rows against a claim nobody made.
+        }
+        for i, r in enumerate(orphans, start=1)
+    ]
+
     return {
         "refused": False,
         "scope": scope,
         "scope_value": scope_value,
+        # THE ARCHETYPE'S KEY. `orphans` stays beside it because the seals and the drafting path
+        # read it by name; renaming a payload key that other code reads in order to satisfy a
+        # renderer would be the renderer deciding the engine's vocabulary.
+        "rows": rows,
+        "value_label": "days open",
+        "value_unit": "days",
+        "scope_label": scope_value or "fleet",
         "orphans": orphans,
         "orphan_count": len(orphans),
         # Reported, never merged into the count above.
