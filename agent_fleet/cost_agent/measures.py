@@ -92,7 +92,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     )
     from export import audit_line, build_dataset_package, build_package
     from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
-    from seed import RECIPIENT_SCOPES, lots_for_recipient
+    from seed import RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient
 except ImportError:
     from agent_fleet.cost_agent.entities import (
         COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
@@ -103,7 +103,9 @@ except ImportError:
     from agent_fleet.cost_agent.pricing import (
         DEFAULT_COMPOSITION, compose_price, rates_for, unit_price,
     )
-    from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES, lots_for_recipient
+    from agent_fleet.cost_agent.seed import (
+        RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient,
+    )
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the
 #: response, and by the registration, to fill Contract D's output end — so the two cannot

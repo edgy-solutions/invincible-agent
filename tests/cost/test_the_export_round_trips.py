@@ -53,6 +53,32 @@ def client():
         yield c
 
 
+class _Caller:
+    """The one field `CallerIdentity` permits an authorization decision to read."""
+
+    def __init__(self, authz_id):
+        self.authz_id = authz_id
+
+
+@pytest.fixture
+def as_caller(monkeypatch):
+    """Run a request as a given `authz_id`.
+
+    PATCHES THE ENGINE'S VIEW OF THE CALLER, not the transport. Minting a real bearer here
+    would test the mint; what is under test is the authorization decision, and it must be
+    exercisable for callers who could never hold a token — an unidentified one, and another
+    customer's.
+    """
+    def _run(authz_id):
+        monkeypatch.setattr("agent_fleet.cost_agent.main._current_caller",
+                            lambda: _Caller(authz_id) if authz_id is not None else None)
+    return _run
+
+
+ALPHA_READER = "alice@example.com"
+BETA_READER = "bob@example.com"
+
+
 def test_the_manifest_hash_is_of_the_FILE_ON_DISK(exported):
     """THE ROUND TRIP. Re-read independently of the verb and compare.
 
@@ -128,13 +154,100 @@ def test_the_response_carries_a_FETCHABLE_uri_and_not_a_filesystem_path(exported
     assert uri.endswith("/artifact/" + exported["artifact_filename"])
 
 
-def test_the_uri_actually_serves_the_artifact_that_was_hashed(exported, client):
+def test_ANOTHER_RECIPIENTS_CALLER_IS_REFUSED(exported, client, as_caller):
+    """THE CONTROL, and it is the whole ruling: a second recipient's caller as the negative.
+
+    Entitlement is filtered once, at PRODUCTION (ADR-0047 §5) — correct for the build and
+    insufficient for the download, because both recipients' packages sit in one directory. A
+    route that serves by filename alone hands alpha's package to beta's reader.
+
+    THE NEGATIVE IS A REAL ENTITLED CALLER, not an anonymous one. Refusing the anonymous case
+    proves only that *some* check exists; refusing a caller who legitimately holds a DIFFERENT
+    package is the only arrangement that proves the check reads WHICH package.
+    """
+    as_caller(BETA_READER)
+    response = client.get("/artifact/" + exported["artifact_filename"])
+
+    assert response.status_code == 403, response.status_code
+    detail = response.json()["detail"]
+    assert "notional-customer-alpha" in detail, "the refusal must name the package refused"
+    assert ALPHA_READER not in detail, (
+        "the refusal named who MAY read it — the recipient list is a disclosure of its own"
+    )
+
+
+def test_EACH_RECIPIENTS_READER_GETS_THEIR_OWN_PACKAGE(client, as_caller):
+    """THE POSITIVE CONTROL THE REFUSALS ARE WORTHLESS WITHOUT.
+
+    The seals around this one prove alpha's reader is served and beta's reader is refused
+    ALPHA's package. Neither proves beta's reader can obtain BETA's — so a rule that simply
+    refused everyone but alice would satisfy all of them, and "the check works" would mean
+    "the check says no".
+
+    ⚠ IT ALSO PINS THE SCOPE LOOKUP. Deriving the wrong scope from a filename is invisible
+    while only one recipient is exercised: every request would be checked against alpha's
+    reader list and alpha's reader would still be served.
+    """
+    if m._repo_root() is None:  # pragma: no cover
+        pytest.skip("no checkout")
+
+    for scope, reader in ((SCOPE, ALPHA_READER),
+                          ("notional-customer-beta", BETA_READER)):
+        m.package_export(STATE, recipient_scope=scope)
+        as_caller(reader)
+        r = client.get(f"/artifact/cost-validation-{scope}.html")
+        assert r.status_code == 200, (
+            f"{reader} was refused their OWN package for {scope}: {r.status_code} "
+            f"{r.json().get('detail', '') if r.status_code != 200 else ''}"
+        )
+
+
+def test_an_unidentified_caller_is_refused_even_under_the_OBSERVE_posture(client, as_caller):
+    """This route does not inherit OBSERVE, and that is deliberate.
+
+    Transport auth in OBSERVE decides whether an unverified TRANSPORT is refused. This is an
+    AUTHORIZATION decision about a disclosure: it fails closed while the fleet posture is
+    permissive, because "we are not enforcing transport yet" is not a reason to hand one
+    customer's package to another.
+    """
+    for anonymous in (None, ""):
+        as_caller(anonymous)
+        r = client.get(f"/artifact/cost-validation-{SCOPE}.html")
+        assert r.status_code == 403, f"caller {anonymous!r} was not refused"
+
+
+def test_a_SERVICE_identity_is_refused_so_the_bff_cannot_become_a_deputy(client, as_caller):
+    """The card action reaches this engine through cortex-bff.
+
+    GRANTING THE SERVICE WOULD MAKE THIS ROUTE OPEN TO ANYONE WHO CAN OPEN THE UI — a confused
+    deputy one hop out, which would look like an authorization check while being none. A
+    service calling for a person must carry THAT PERSON's identity (ADR-0044's per-request
+    minted ticket); where it cannot, a refusal is the honest outcome.
+    """
+    for svc in ("svc:cortex-bff", "svc:engine-cost", "svc:anything"):
+        as_caller(svc)
+        assert client.get(f"/artifact/cost-validation-{SCOPE}.html").status_code == 403
+
+
+def test_authorization_is_decided_BEFORE_existence_is_revealed(client, as_caller, monkeypatch):
+    """An unentitled caller learns nothing about whether the package exists.
+
+    Ordering the 404 first would tell someone refused the artifact whether it had ever been
+    produced — a small leak, and free to avoid by deciding entitlement first.
+    """
+    monkeypatch.setattr(m, "_repo_root", lambda: None)   # nothing exists at all
+    as_caller(BETA_READER)
+    assert client.get(f"/artifact/cost-validation-{SCOPE}.html").status_code == 403
+
+
+def test_the_uri_actually_serves_the_artifact_that_was_hashed(exported, client, as_caller):
     """END TO END: follow the URI the verb published and hash what comes back.
 
     THIS IS THE CHECK THAT DISTINGUISHES "wrote a file" FROM "wrote the file it says it
     wrote", and it is the only one that exercises the producer and the download path
     together — each is correct on its own today, and nothing before this asserted they agree.
     """
+    as_caller(ALPHA_READER)
     response = client.get("/artifact/" + exported["artifact_filename"])
     assert response.status_code == 200, response.text
     served = "sha256:" + hashlib.sha256(response.content).hexdigest()
@@ -147,17 +260,18 @@ def test_the_uri_actually_serves_the_artifact_that_was_hashed(exported, client):
     "../../etc/passwd", "..%2f..%2fsecrets", "cost-validation-nope.html",
     "pricing.py", "", "cost-validation-.html",
 ])
-def test_the_route_serves_ONLY_names_this_engine_can_produce(client, name):
+def test_the_route_serves_ONLY_names_this_engine_can_produce(client, as_caller, name):
     """Traversal is refused STRUCTURALLY, not by sanitizing.
 
     A route that cleans a filename is one missed encoding away from serving something else; a
     route that will only serve names it computed itself cannot be talked into anything,
     because the input is compared against a closed set rather than transformed into a path.
     """
+    as_caller(ALPHA_READER)   # entitled, so a 404 here is the NAME check and not the authz one
     assert client.get("/artifact/" + name).status_code == 404
 
 
-def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client):
+def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client, as_caller):
     """⚠ THE SEAL ABOVE WAS VACUOUS AND A MUTATION PROVED IT.
 
     Deleting the allow-list entirely left all thirteen tests green: `../../etc/passwd` never
@@ -175,6 +289,7 @@ def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client):
     planted = root / "dist" / "not-a-package.html"
     planted.parent.mkdir(parents=True, exist_ok=True)
     planted.write_bytes(b"<html>secrets</html>")
+    as_caller(ALPHA_READER)
     try:
         response = client.get("/artifact/not-a-package.html")
         assert response.status_code == 404, (
@@ -198,11 +313,12 @@ def test_the_producible_set_is_DERIVED_from_the_recipient_scopes():
     assert len(names) == 2 * len(RECIPIENT_SCOPES), sorted(names)
 
 
-def test_a_deployment_with_no_checkout_404s_rather_than_erroring(client, monkeypatch):
+def test_a_deployment_with_no_checkout_404s_rather_than_erroring(client, as_caller, monkeypatch):
     """Every pod today. The builder and the pinned runtime are not in the image, so nothing is
     ever written there — a 404 is the honest answer and the one a card should render as "not
     available from this deployment" rather than as a broken link."""
     monkeypatch.setattr(m, "_repo_root", lambda: None)
+    as_caller(ALPHA_READER)   # entitled, so the 404 is about the deployment and not the caller
     response = client.get(f"/artifact/cost-validation-{SCOPE}.html")
     assert response.status_code == 404
     assert "image" in response.json()["detail"]

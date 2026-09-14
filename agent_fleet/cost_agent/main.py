@@ -60,6 +60,7 @@ except ImportError:
 # phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
 # the announcement has a real posture the gauge cannot read.
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import current_caller as _current_caller
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 
@@ -592,6 +593,19 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         return _refusal("not_in_model", str(e), available=available)
 
 
+def _scope_of_artifact(filename: str) -> Optional[str]:
+    """Which recipient's package this filename is. DERIVED FROM THE SAME MAP THAT NAMES IT.
+
+    Parsing the scope back out of the string would be a second implementation of the naming
+    rule, and the two would drift the first time a filename changed — with the authorization
+    check reading the stale one, which is the direction that fails open.
+    """
+    for scope in measures.RECIPIENT_SCOPES:
+        if filename in (f"cost-validation-{scope}.html", f"cost-{scope}.duckdb"):
+            return scope
+    return None
+
+
 def _producible_artifact_names() -> set[str]:
     """Every filename `package_export` can itself produce. DERIVED, never sanitized.
 
@@ -632,6 +646,38 @@ async def artifact(filename: str) -> Any:
             detail=(f"{filename!r} is not an artifact this engine produces; producible names "
                     f"are derived from the recipient scopes it packages for"),
         )
+
+    # ── AUTHORIZATION, ON THE CALLER, BEFORE ANY BYTES ──────────────────────────────────
+    #
+    # RULED 2026-09-14 and moved from "when the data stops being notional" to now: the route's
+    # SHAPE is what ships to the first customer, and it ships with whatever check it has on
+    # the day. Filtering once at production is correct for the BUILD and insufficient for the
+    # DOWNLOAD — two recipients' packages sit in one directory.
+    #
+    # THIS ROUTE DOES NOT INHERIT THE OBSERVE POSTURE, and the distinction is deliberate.
+    # Transport auth in OBSERVE decides whether an unverified TRANSPORT is refused; this is an
+    # AUTHORIZATION decision about a disclosure. It fails closed while the fleet posture is
+    # permissive, because "we are not enforcing transport yet" is not a reason to hand one
+    # customer's package to another.
+    #
+    # KEYED ON `authz_id` ONLY — `CallerIdentity` says it is the sole field an authorization
+    # decision may read, and `raw` exists for logging and nothing else.
+    caller = _current_caller()
+    authz_id = getattr(caller, "authz_id", None) if caller else None
+    scope = _scope_of_artifact(filename)
+    permitted = measures.readers_for_recipient(scope) if scope else ()
+    if not authz_id or authz_id not in permitted:
+        # 403 NAMING THE PACKAGE, not a bare refusal: the caller is entitled to know WHICH
+        # disclosure they were refused, and a 404 here would hide the package's existence from
+        # someone who may legitimately hold another one. It does NOT name who may read it —
+        # that is the recipient list, and leaking it is a disclosure of its own.
+        raise HTTPException(
+            status_code=403,
+            detail=(f"caller {authz_id or 'unidentified'!r} is not entitled to the package "
+                    f"for {scope!r}. This artifact is a customer disclosure and is served "
+                    f"only to the recipient it was produced for."),
+        )
+
     root = measures._repo_root()
     if root is None:
         raise HTTPException(
