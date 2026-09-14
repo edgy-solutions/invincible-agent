@@ -2606,8 +2606,37 @@ async def act_on_human_task(
     # teardown). Best-effort: the projection is already resolved; a resume failure
     # is logged, not surfaced as an act failure.
     resumed = False
-    if match.get("kind") == "workflow_ack" and match.get("workflow_id"):
-        status = "APPROVED" if req.decision == "approved" else "REJECTED"
+    # ── GAP 1: ANY workflow-backed task resumes, not only `workflow_ack` ───────────────────────
+    #
+    # The kind test was `== "workflow_ack"`, so every OTHER species that suspends a definition —
+    # every safety acceptance, every concurrence, every redraft — was disposed in the projection
+    # and the workflow was never told. The definition stayed suspended forever with the task
+    # showing resolved: the two halves disagreeing, and neither reporting it.
+    #
+    # THE CONDITION IS `workflow_id`, WHICH IS THE FACT THAT MATTERS. A task carrying one is a
+    # task some definition is suspended on; the SPECIES is irrelevant to whether it should be
+    # resumed. Keying on the kind made a structural property depend on a name, so every new
+    # species inherited the defect silently — and `workflow_ack` was simply the first one anybody
+    # tried.
+    if match.get("workflow_id"):
+        # ── GAP 2: THE DECLARED VERB SURVIVES ──────────────────────────────────────────────
+        #
+        # This read `"APPROVED" if req.decision == "approved" else "REJECTED"` — a two-valued
+        # collapse applied BEFORE the verb reaches the runtime. So `concurred` arrived as
+        # REJECTED (it is not the string "approved"), and `accepted`, `not_concurred`,
+        # `returned_for_rework`, `linked`, `new_hazard` and `dismissed` all arrived as one of two
+        # words nobody declared.
+        #
+        # A chaining row on `{outcome: concurred}` would then match NOTHING FOREVER, and the
+        # §4.3.7 sequence would read as a rejection at the moment a concurrence was given. The
+        # runtime now terminates with the last step's actual disposition (`outcome`), and this is
+        # the other end of that: the verb has to arrive intact for the terminal to mean anything.
+        #
+        # The verb is ALREADY VALIDATED against the species' declaration by `validate_decision`
+        # above, so passing it through is not widening the surface — it is declining to narrow a
+        # surface that was already gated. The gate is the declaration; this was a second,
+        # undeclared gate that only knew two words.
+        status = req.decision
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 rr = await client.post(
