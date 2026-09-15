@@ -41,7 +41,15 @@ _REPO = Path(__file__).resolve().parents[1]
 #:
 #: This is a DATE rather than a sha because lanes carry unmerged work whose shas are not
 #: reachable from here — a sha cutoff would exempt nothing on a branch that has not merged.
-_BINDS_AFTER = "2026-09-14T23:00:00"
+#: One second before `b466612`, the commit implementing this rule — so the rule's own commit is
+#: the FIRST one bound by it, rather than the rule exempting its own author.
+#:
+#: ⛔ THE FIRST VALUE WAS A ROUND 23:00 AND SAT IN THE FUTURE. Every commit was exempt, the
+#: parametrised assertion had an empty population, and the seal reported `1 skipped` — which in
+#: a run of hundreds reads exactly like a pass. A cutoff nobody has reached yet is a guard that
+#: cannot fire, and I built one into the guard against not-firing. Proved by probe afterwards:
+#: an empty commit with no trailer reds this file.
+_BINDS_AFTER = "2026-09-14T19:53:27-05:00"
 
 #: `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01`. The branch half may contain `/`.
 _TRAILER = re.compile(r"^Lane:\s*(\S+?)/(\S+)\s*$", re.M)
