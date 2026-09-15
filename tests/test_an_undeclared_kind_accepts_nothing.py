@@ -106,15 +106,51 @@ def test_WITH_NO_OVERLAY_CONFIGURED_the_gate_does_not_fire(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("kind", _LIVE_BUT_NOT_SEEDED)
-def test_a_LIVE_domain_species_keeps_its_verbs_when_no_overlay_is_configured(monkeypatch, kind):
-    """The 18 rows, by name. `pcn_disposition` alone is 16 of them."""
-    _fresh(monkeypatch, None)
-    assert set(ht.verbs_for_kind(kind)) == set(ht._DEFAULT_VERBS), (
-        f"{kind!r} is live in sandbox and absent from the seed BY DESIGN; refusing it makes "
-        f"those tasks dead while they still render"
-    )
 
+# ── THE M3.3 CUTOVER GATE ───────────────────────────────────────────────────────────────────
+#
+# The three arms below assert the behaviour the cutover INSTALLS, and the cutover lives on
+# `lane/ca-m33-cutover` until it merges. They are written here rather than there because the
+# architect ruled a lane does not rewrite another lane's safety assertion to match its own
+# deletion — the owner rewrites it under the ruling.
+#
+# So they SKIP while the tables are still present, and the skip NAMES WHAT IT DOES NOT PROVE.
+# A skip that reads as a pass is how a rewritten seal quietly asserts nothing for a week.
+_CUTOVER_LANDED = not hasattr(ht, "_DEFAULT_VERBS")
+_needs_cutover = pytest.mark.skipif(
+    not _CUTOVER_LANDED,
+    reason=(
+        "the M3.3 cutover has not merged: `_DEFAULT_VERBS` still exists, so an unknowable "
+        "overlay still falls back to the code table. This arm asserts the REFUSAL that "
+        "replaces it and proves nothing until the deletion lands."
+    ),
+)
+
+
+@_needs_cutover
+@pytest.mark.parametrize("kind", _LIVE_BUT_NOT_SEEDED)
+def test_a_LIVE_domain_species_REFUSES_when_the_overlay_is_unknowable(monkeypatch, kind):
+    """THE CHANGE. A domain species under an unconfigured overlay refuses, NAMING the variable.
+
+    This arm asserted the opposite until the M3.3 cutover: an unknowable overlay handed these
+    18 rows the code table's `approved`/`rejected`. That was the honest answer while a table
+    existed to fall back to. With the tables deleted there is nothing to fall back to, and the
+    honest answer to "what does this species accept" when the set is unknowable is neither a
+    verb list nor an empty one — R-012's three states, applied to the field the deletion made
+    load-bearing.
+
+    **The refusal must name the VARIABLE, not just the kind.** "unavailable" sends a reader to
+    the species; `TASK_KIND_OVERLAY_DIRS` sends them to the deployment, which is where the fix
+    is. A refusal a reader cannot act on gets worked around.
+    """
+    _fresh(monkeypatch, None)
+    with pytest.raises(ht.TaskKindSetUnknown) as exc:
+        ht.verbs_for_kind(kind)
+    msg = str(exc.value)
+    assert "TASK_KIND_OVERLAY_DIRS" in msg, (
+        f"the refusal does not name the variable to configure: {msg}"
+    )
+    assert kind in msg, f"the refusal does not name the species: {msg}"
 
 # ---------------------------------------------------------------------------------------
 # WITH AN OVERLAY PATH — the gate fires, on the composed set
@@ -154,11 +190,24 @@ def test_THE_CONTROL_an_OVERLAY_kind_gets_its_verbs(monkeypatch, tmp_path):
     assert set(ht.verbs_for_kind("pcn_disposition")) == {"approved", "rejected"}
 
 
-def test_DEFAULT_VERBS_IS_NOT_EMPTIED_and_that_is_the_point():
-    """Asserted because emptying it is the tempting implementation, and a reader who
-    'simplified' the registry check back into an empty default would take three species down
-    while every refusal test above stayed green."""
-    assert ht._DEFAULT_VERBS == frozenset({"approved", "rejected"})
+@_needs_cutover
+def test_THE_TABLES_ARE_GONE_and_the_declaration_is_the_only_source():
+    """This asserted `_DEFAULT_VERBS == {approved, rejected}` — correct while the table was the
+    fallback, and the assertion the cutover deletes.
+
+    Its REASON survives inverted. It existed because emptying the table was the tempting
+    implementation and would have taken three species down while every refusal test stayed
+    green. Deleting it is the same hazard by another route, so what is asserted now is that the
+    tables do not come back: a reinstated default would restore exactly the bypass the whole arc
+    removed, and the refusal arms above would still pass because they only ever exercise the
+    unknowable-overlay path.
+    """
+    for table in ("_DEFAULT_VERBS", "_VERBS_BY_KIND", "_REASON_REQUIRED"):
+        assert not hasattr(ht, table), (
+            f"{table} is back. The declaration is the only source since M3.3; a code table "
+            f"beside it is a second answer to 'what does this species accept', and the one "
+            f"that answers first wins silently."
+        )
 
 
 def test_validate_decision_REFUSES_an_undeclared_kind_BY_NAME(monkeypatch, tmp_path):
@@ -168,15 +217,28 @@ def test_validate_decision_REFUSES_an_undeclared_kind_BY_NAME(monkeypatch, tmp_p
     assert "risk_acceptance" in str(exc.value), f"the refusal does not name the kind: {exc.value}"
 
 
-def test_an_UNREADABLE_overlay_falls_back_rather_than_refusing_everything(monkeypatch):
-    """None is not an empty set, and conflating them takes the task rail down.
+@_needs_cutover
+@pytest.mark.parametrize("kind", _SEED)
+def test_THE_BLAST_RADIUS_IS_BOUNDED_a_seeded_species_still_answers(monkeypatch, kind):
+    """THE CONTROL, AND IT IS WHY THE DESIGN IS SHAPED THIS WAY.
 
-    This path raised `NameError` when first written — `logger` was undefined in the module — so
-    the "safe fallback" would have 500'd every task action. Found by this control.
+    The arm this replaces said an unreadable overlay must fall back rather than refuse
+    everything, because "a deployment accident would take every task in the fleet with it".
+    **That property survives the cutover and is the reason the cutover looks as it does.**
+    `iagent-mesh-sdk-ca`'s first attempt raised on EVERY unknowable set, which reintroduced
+    precisely this outage; respecting the old seal produced the better design rather than
+    overriding it.
+
+    THE SEED SHIPS IN THE IMAGE AND IS ALWAYS READABLE; ONLY THE OVERLAY HALF CAN GO MISSING.
+    So a mistyped variable degrades the domain species to a named refusal and leaves every
+    seeded species answering from its own row. The blast radius is bounded by construction, and
+    this asserts it rather than arguing it.
     """
     _fresh(monkeypatch, str(_REPO / "policy" / "no_such_directory_here"))
     assert ht._declared_kinds() is None, "an unreadable overlay reported itself as EMPTY"
-    assert set(ht.verbs_for_kind("grouped_review")) == set(ht._DEFAULT_VERBS), (
-        "an unreadable overlay refused a declared kind — a deployment accident would take "
-        "every task in the fleet with it"
+    verbs = ht.verbs_for_kind(kind)
+    assert verbs, (
+        f"{kind!r} is in the SEED, which ships in the image and is always readable — it must "
+        f"still answer when the overlay is unknowable. Refusing here is the fleet-wide outage "
+        f"the superseded arm was written to prevent."
     )

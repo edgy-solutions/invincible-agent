@@ -80,6 +80,32 @@ _EXEMPT: dict[str, str] = {
         " lane merged master, which brought this seal, and pushed without running what the" + 
         " merge carried in. Recorded, not rewritten."
     ),
+    # ── SECOND BATCH, 2026-09-15, and the pattern is the point rather than the rows ──────
+    #
+    # Three more pushed without the trailer, from two lanes, all with the rule in ancestry.
+    # Caught by R-063.2 on the very next merge — the derived seal seeing new commits join its
+    # population — which is the law working and NOT evidence the rule is landing.
+    #
+    # A GROWING EXEMPTION LIST IS A SIGNAL ABOUT THE RULE, NOT ABOUT THE COMMITS. Four
+    # entries now, none of them boundary cases. The remedy is not more entries: it is that a
+    # lane learns the trailer exists at the moment it merges master, which is exactly when
+    # nobody re-reads the suite list. If a fifth batch appears, the rule needs a mechanism
+    # that fires BEFORE a push rather than a seal that reports after one.
+    "4ee0764": (
+        "engine-lg's saver-ordering seal. Pushed direct to master; the rule was in ancestry."
+    ),
+    "054fb4c": (
+        "engine-lg's durable checkpointing. Same push, same lane, same omission."
+    ),
+    "cada33b": (
+        "the m3.3 cutover WIP. Marked NOT MERGEABLE in its own subject, so it is work in "
+        "progress that reached master's ancestry — recorded rather than rewritten, and the "
+        "entry retires itself if it is ever amended before merge."
+    ),
+    "c9d66e6": (
+        "the m3.3 cutover head on lane/ca-m33-cutover, same lane and same omission as its "
+        "WIP parent above."
+    ),
 }
 
 
