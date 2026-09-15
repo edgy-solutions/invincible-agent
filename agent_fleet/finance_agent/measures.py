@@ -30,14 +30,14 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from measure_modules import index_series, variance_driver_ranking
+    from measure_modules import burn_series, index_series, variance_driver_ranking
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
     from agent_fleet.finance_agent.measure_modules import (
-        index_series, variance_driver_ranking,
+        burn_series, index_series, variance_driver_ranking,
     )
 
 FIN = "http://invincible-agent/fin#"
@@ -858,40 +858,22 @@ def fin_burn_rate(
     wp_ids = {w.wp_id for w in state.work_packages
               if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
 
-    rows: list[dict[str, Any]] = []
-    cum_acwp = cum_bcws = 0.0
-    burns: list[float] = []
-    for period in periods:
-        bcws, _bcwp, acwp = _totals(state, wp_ids, [period])
-        if bcws == 0 and acwp == 0:
-            continue
-        cum_acwp += acwp
-        cum_bcws += bcws
-        burns.append(acwp)
-        # A THREE-PERIOD TRAILING MEAN, and three is declared rather than tuned: it is short
-        # enough to follow a turn and long enough not to chase one month. The window length
-        # rides on the row so the figure can be argued with.
-        trailing = burns[-3:]
-        rate = sum(trailing) / len(trailing)
-        remaining = program.bac - cum_acwp
-        rows.append({
-            "period": period,
-            "scope_label": program.name,
-            "burn": acwp,
-            "planned": bcws,
-            "variance_to_plan": bcws - acwp,
-            "cum_burn": cum_acwp,
-            "cum_planned": cum_bcws,
-            "budget_remaining": remaining,
-            "trailing_rate": rate,
-            "trailing_periods": len(trailing),
-            # PERIODS, NOT A DATE. Converting to a calendar date would require a period-to-
-            # date map this model does not hold, and inventing one is how a forecast
-            # acquires a precision its inputs never had.
-            "runway_periods": (remaining / rate) if rate > 0 else None,
-            "value_unit": program.value_unit,
-        })
-    return rows
+    # THIS VERB GATHERS; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-14
+    # behaviour-preserving). The smoothing window and the runway's denominator are the unit —
+    # three of R-029's six survivors lived in exactly those two decisions.
+    #
+    # `_bcwp` IS DROPPED HERE RATHER THAN CARRIED. The module takes (period, planned, burn);
+    # earned value plays no part in a burn series, and handing a measure a quantity it must
+    # ignore is how an unused field later acquires a use nobody intended.
+    quantities = ((period, bcws, acwp)
+                  for period, (bcws, _bcwp, acwp)
+                  in ((p, _totals(state, wp_ids, [p])) for p in periods))
+    return burn_series.build(
+        quantities,
+        budget_at_completion=program.bac,
+        scope_label=program.name,
+        value_unit=program.value_unit,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
