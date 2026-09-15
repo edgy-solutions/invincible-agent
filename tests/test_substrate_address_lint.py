@@ -12,18 +12,38 @@ about. A hand-curated list of who MAY connect, with nothing deriving who DOES, b
 trusted with age rather than less. That is the stale-claim shape applied to a security
 declaration.
 
-── THIS IS A LINT. IT IS NOT AN ENFORCEMENT, AND IT MAY NOT HAVE ONE BEHIND IT ─────────────
-The allowlist seal opens "The NetworkPolicy allowlist names which pods may open a connection".
-**There is no NetworkPolicy manifest in this repository**, and that sentence is the ONLY
-occurrence of the word "NetworkPolicy" anywhere in it (searched 2026-09-15). Two readings, not
-discriminated from here:
-  (a) it is applied out-of-band — cluster-level, a platform team, another repo — so the chart
-      correctly does not carry it; or
-  (b) it was planned, never built, and the sentence has been read as current fact since.
-Either way nothing in this repo lets a reader verify the enforcement exists, which is itself
-the shape both seals were written against. **Recorded as UNPROVEN rather than asserted**, and
-routed to the architect. Until it resolves, do not describe this lint as the second layer of a
-defence in depth — it may be the only instrument there is.
+── THIS IS A LINT — AND AS OF 2026-09-15 IT HAS NO ENFORCEMENT BEHIND IT ─────────────
+The allowlist seal opened "The NetworkPolicy allowlist names which pods may open a connection".
+**No such NetworkPolicy was ever built.** This file first recorded the question UNPROVEN; it is
+now decided. Per-claim provenance, because these are three different kinds of evidence:
+
+  CHECKED (this repo)     NetworkPolicy manifests in helm/ and deploy/ — ZERO. The only
+                          occurrence of the word was that sentence.
+  CHECKED (live, by
+  invincible-agent-28)    `kubectl get networkpolicy -A` — exactly one, and not ours:
+                          cattle-fleet-system/default-allow-all, Rancher's own. The `sandbox`
+                          namespace has NONE.
+  INFERRED (not observed) k3s node-args do not disable network policy, so the built-in
+                          controller should be active — an absent flag plus a documented
+                          default, NOT an observed dropped packet.
+
+**SCOPE LIMIT ON THE LIVE HALF.** That `kubectl` ran against SANDBOX. Other deployments of this
+chart are not visible from here and are not claimed either way. The deployment-independent fact
+is the first line: **the chart carries no NetworkPolicy, so it cannot apply one anywhere.**
+Whether some out-of-band mechanism applies one elsewhere is outside what this repo can see.
+
+**CONSEQUENCE, AND IT INVERTS THIS FILE'S SCOPE.** The ruling that demoted the address scan to
+"a lint, not a second enforcement" rests on an enforcement that does not exist. So this is not
+the shallow second layer of a defence in depth — **for the third arm of the dependency rule it
+is currently the only instrument**, and it can only notice an undeclared connection, never stop
+one. Do not cite it as depth. The gap is routed to Lane 1, which owns the chart.
+
+**AND THE ASSERTING SENTENCE WAS THE DEFECT.** A seal whose opening line claims a control is in
+place, while the control was never built, makes its own green read as coverage of that control.
+It is the family this arc keeps finding — the tripwire whose meaning sat where nobody read it,
+the handoff line that had become false — with one difference worth naming: those claims went
+stale, and this one **was never true**. A stale claim has a moment when checking it would have
+worked. This one would have failed the first time anybody looked.
 
 ── WHAT A GREEN RUN DOES NOT MEAN ──────────────────────────────────────────────────────────
 "No undeclared DIRECT ADDRESS REFERENCE" — never "no substrate access". The three blind spots
