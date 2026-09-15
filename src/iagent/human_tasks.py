@@ -505,7 +505,9 @@ def _declared_kinds() -> "frozenset[str] | None":
     if not raw:
         logger.warning(
             "%s is unset, so the task-kind set is the SEED HALF ONLY and cannot be trusted to "
-            "be complete — undeclared kinds keep today's verbs. Set it to the deployment's "
+            "be complete. SEEDED species still answer from their own rows; a DOMAIN species the "
+            "seed does not carry is REFUSED, naming this variable — the code-table fallback that "
+            "used to guess for it was deleted at the M3.3 cutover. Set it to the deployment's "
             "overlay directory (empty string is not the same as 'no domain species'; point it "
             "at an empty dir to assert there are none).",
             _OVERLAY_DIRS_ENV,

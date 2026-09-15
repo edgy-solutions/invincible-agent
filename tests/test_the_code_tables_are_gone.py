@@ -84,12 +84,17 @@ def test_AN_UNKNOWABLE_SET_RAISES_rather_than_silently_accepting_nothing(monkeyp
     ordering existed to prevent, arriving on the last step.
     """
     monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None, raising=False)
+    monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
     monkeypatch.delenv(ht._OVERLAY_DIRS_ENV, raising=False)
+
+    # A SPECIES THE SEED DOES NOT CARRY. The first version of this arm used `grouped_review` and
+    # failed once the seed/overlay split landed — correctly, because a seeded species is still
+    # answerable with the overlay unset. The arm was wrong, not the code: only a DOMAIN species
+    # is genuinely unanswerable, and that is the whole point of the split.
     with pytest.raises(ht.TaskKindSetUnknown, match=ht._OVERLAY_DIRS_ENV):
-        ht.verbs_for_kind("grouped_review")
-    monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None, raising=False)
+        ht.verbs_for_kind("a_domain_species_with_no_seed_row")
     with pytest.raises(ht.TaskKindSetUnknown):
-        ht.reason_required_for("grouped_review")
+        ht.reason_required_for("a_domain_species_with_no_seed_row")
 
 
 # ── reason-required is PER SPECIES now, not a kind-blind global ──────────────────────────
@@ -119,3 +124,39 @@ def test_a_verb_OUTSIDE_the_rows_vocabulary_is_refused(monkeypatch, tmp_path):
     monkeypatch.setenv(ht._OVERLAY_DIRS_ENV, str(tmp_path))
     with pytest.raises(ht.InvalidDecisionForKind, match="not a valid action"):
         ht.validate_decision("extraction_refusal", "approved", "because")
+
+
+# ── the refusal reaches the CARD, not a 500 ──────────────────────────────────────────────
+
+def test_the_refusal_is_carried_to_the_caller_with_its_CAUSE(monkeypatch):
+    """RULED: a domain species under an unset overlay renders "declared species unavailable",
+    naming the variable — no verbs, the cause on the card.
+
+    A raise from `verbs_for_kind` that reaches the boundary unhandled is a 500, which tells the
+    caller nothing and blames the wrong thing. This asserts the boundary maps it to a structured
+    refusal that carries the variable's name.
+    """
+    from iagent import gateway
+
+    monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None, raising=False)
+    monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
+    monkeypatch.delenv(ht._OVERLAY_DIRS_ENV, raising=False)
+
+    # the guarded lookup used inside the refusal body must not re-raise
+    assert gateway._allowed_or_empty("a_domain_species_with_no_seed_row") == []
+
+
+def test_a_SEEDED_species_is_unaffected_by_an_unset_overlay(monkeypatch):
+    """THE BOUNDED BLAST RADIUS, asserted. The seed ships in the image, so a mistyped variable
+    degrades the domain species to a named refusal — not every task in the fleet to nothing,
+    which is what the older seal was written to guarantee."""
+    from iagent import gateway
+
+    monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None, raising=False)
+    monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
+    monkeypatch.delenv(ht._OVERLAY_DIRS_ENV, raising=False)
+
+    assert gateway._allowed_or_empty("grouped_review"), (
+        "a seeded species lost its verbs to an unset OVERLAY variable — the seed is always "
+        "readable and only the overlay half can be missing"
+    )
