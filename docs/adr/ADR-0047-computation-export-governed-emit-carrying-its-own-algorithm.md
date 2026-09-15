@@ -215,6 +215,43 @@ recipient class and recorded**, rather than falling out of whatever the filter h
 same reasoning that makes a silently-narrowed answer dishonest inside the system applies with more
 force to a file that leaves the building.
 
+### §5.1 — A SERVICE IDENTITY IS NEVER A DISCLOSURE RECIPIENT (amendment, ratified 2026-09-14)
+
+`recipient_scope` resolves to principals, and **a `svc:` principal may not be one of them.**
+
+**THE REASON IS THE CONFUSED DEPUTY, and it is already written down one file over.**
+`policy/users.yaml` says it beside `svc:data-analyst`:
+
+> the service credential says **WHICH SERVICE** is calling, **not WHOSE data may be read**. DA
+> serves every caller, so a read grant on `svc:data-analyst` would entitle **EVERY** caller to
+> whatever it can reach — the confused deputy the per-caller conjunction exists to prevent.
+
+A service serves every caller by construction. Disclosing to the service therefore discloses to
+its whole caller set, and the packaging-time evaluation in §5 — which is the *only* evaluation,
+because everything embedded is disclosed — would be run against a principal that is not the
+audience.
+
+**WHY IT IS IN THE ADR AND IN THE RAIL, BOTH.** The rule was true and enforced nowhere: `svc:`
+subjects are seeded users *deliberately*, so the identities stay legible and grantable, and the
+grant rail's `unknown_user_subjects` resolved them happily. Measured 2026-09-14: a planted
+`grant_to: svc:data-analyst` produced **zero** errors. **An engine-local rule the rail silently
+accepts is droppable by the next person who edits the rail without reading the engine** —
+`invincible-agent-81`'s finding, and the reason this is an amendment rather than a comment.
+
+`policy/sync/validate_policy.py::service_identity_recipients` now refuses it across
+`asset_grants`, `task_grants` and `ontology_compartments`, naming the reason in the error so a
+reader can act on it rather than work around it.
+
+**SCOPE: DISCLOSURE, NOT INVOCATION.** `capability_grants.yaml` is exempt, deliberately — an
+INVOKE is an **effect**, not a read, and a service principal invoking a capability is not this
+hazard. If a capability grant is ever made to convey disclosure, this exemption must be
+revisited rather than inherited.
+
+**WHAT IS NOT RULED HERE:** how a human's authority is *delegated* to a service acting on their
+behalf. Today the acting human rides separately (`X-Originator-Email`, and the `can_read` gate is
+keyed on that). Formalising that delegation is an open design decision — and the point of this
+amendment is that it must be settled as one, **not by a grant to the service.**
+
 ---
 
 ## §6 — The package is a `PublishedArtifact`

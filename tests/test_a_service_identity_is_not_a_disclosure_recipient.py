@@ -122,3 +122,47 @@ def test_THE_GATE_DOES_NOT_DEPEND_ON_THE_ROSTER_PARSING():
             break
     else:
         raise AssertionError("the asset_grants call to the service-identity gate is gone")
+
+
+_ADR = (
+    _REPO / "docs" / "adr"
+    / "ADR-0047-computation-export-governed-emit-carrying-its-own-algorithm.md"
+)
+
+
+def test_THE_ADR_AND_THE_RAIL_NAME_EACH_OTHER():
+    """THE JOIN between a ruling and its enforcement, and it is the one nothing else checks.
+
+    An ADR clause with no rail is a convention; a rail with no clause is a rule whose reason
+    nobody can find when they want to change it. Both existed separately here for weeks — the
+    reason sat in `users.yaml`, the enforcement sat nowhere — which is exactly how it stayed
+    droppable.
+
+    So the amendment must name the function, and the function must carry the reason. Then a
+    reader arriving from either end reaches the other.
+    """
+    adr = _ADR.read_text(encoding="utf-8")
+    assert "service_identity_recipients" in adr, (
+        "ADR-0047 §5.1 does not name the validator that enforces it — a reader who wants to "
+        "relax the rule cannot find what would have to change"
+    )
+    assert "confused deputy" in adr.lower()
+    assert "capability_grants.yaml` is exempt" in adr or "capability_grants" in adr, (
+        "the ADR does not record the invocation/disclosure scope split, so a later reader "
+        "finds the exemption in code as an absence and reads it as an oversight"
+    )
+
+
+def test_THE_ADR_DOES_NOT_SETTLE_DELEGATION_and_says_so():
+    """The amendment's own limit, asserted so it is not read as wider than it is.
+
+    How a human's authority is delegated to a service acting for them is OPEN. The ruling is
+    that it must be settled deliberately rather than by a grant — and an ADR that looked like
+    it had settled delegation would licence exactly the grant it forbids.
+    """
+    adr = _ADR.read_text(encoding="utf-8")
+    assert "X-Originator-Email" in adr, (
+        "§5.1 no longer records how the acting human rides today, so the open question reads "
+        "as answered"
+    )
+    assert "open design decision" in adr
