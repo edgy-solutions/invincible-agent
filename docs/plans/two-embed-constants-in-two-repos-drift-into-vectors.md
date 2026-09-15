@@ -91,6 +91,129 @@ check added after a divergence has to be a migration; added now it is a constant
 **The halves have owners:** the reader half is this lane's (waits on SDK `v0.9.0`, which carries
 the Protocol). The writer half is `doc-tools-7f`'s.
 
+## WHAT THE SUBSTRATE PERMITS — measured twice, and it corrects this packet
+
+**THERE IS NO COLLECTION METADATA DICT IN WEAVIATE.** Established by `doc-tools-7f`, who owns the
+writer, and confirmed here from a different instrument before it was relayed:
+
+    7f   weaviate-client 4.21.3, introspected: create()/config.get() expose name, description and
+         the *_config blocks. A free-form key-value field: NONE.
+    eo   live server schema, GET /v1/schema: top-level keys on both collections are exactly
+         ['class','invertedIndexConfig','multiTenancyConfig','properties','replicationConfig',
+         'shardingConfig','vectorConfig']. No unclassified dict. `description` absent on both.
+
+**So "record the model under a key" is not expressible, and the Protocol must declare an ENCODING
+rather than a key name** — `description` is a single string and it is the only carrier. A key name
+declared in the abstract would leave both implementations to invent a PLACEMENT, which is this
+packet's defect a third time, inside the fix for the fix.
+
+**AND IT CORRECTS THIS PACKET'S SEQUENCING CLAIM.** I wrote that the check had to be added while the
+constants still agree *"or it becomes a migration"*, believing create-time was the only path.
+**`config.update()` accepts `description`**, so `OntologyClass` (21,078 objects) and `Predicate`
+can be annotated **in place — no recreation, vectors untouched.** The urgency I asserted was real
+in direction and wrong in mechanism, and the correction came from the lane that owns the writer,
+which is the argument for establishing what the substrate permits before anyone declares anything.
+
+### A FOURTH STATE, from the reader side — it decides the encoding
+
+`description` is a HUMAN-FACING PROSE FIELD. Both collections hold none today, which is luck
+rather than design. So the reader distinguishes four states, not three:
+
+    matching              -> open
+    mismatching           -> REFUSE, naming both
+    absent                -> open, report the gap once
+    PRESENT BUT NOT OURS  -> someone wrote prose here
+
+**The fourth must collapse to ABSENT, never to MISMATCH.** A reader that treats an unparseable
+description as a wrong model means **the first person who documents a collection takes routing
+down** — worse than the defect being fixed, and reachable the first time anyone writes a sentence.
+
+**THE FOURTH STATE IS READER-ONLY, AND IT CAN HIDE THE WRITER-SIDE DEFECT.** Caught by
+`doc-tools-7f`: a tolerant reader is fully compatible with a writer that OVERWRITES a human's
+prose — the reader sees our marker, reports agreement, routing stays green, and the sentence
+someone wrote is gone with nothing red anywhere. **Safe for routing, unsafe for the text, and the
+tolerance removes the only signal that would have surfaced the loss.**
+
+I checked whether the reader can compensate. **It cannot** — a reader seeing our marker has no way
+to know whether prose preceded it. That is not a gap in the reader's half; it is why the writer's
+behaviour must be DECLARED rather than implemented into existence:
+
+    reader   foreign description -> ABSENT, never MISMATCH      settled
+    writer   foreign description -> overwrite? refuse? merge?   OPEN — the SDK declares it
+
+**And "refuse" carries a known cost worth naming before it is chosen:** it turns a human's sentence
+into an ingest failure, and a check that fails ingest for documenting a collection is the
+over-constrained seal that gets DISABLED — the same shape as a commit seal whose only remedy its
+own docstring forbids. Disabled takes the rule with it.
+
+**A CARRIER NEITHER SIDE NAMED, which changes what is being chosen between:** the record does not
+have to live on the collection it describes. A separate small collection — one object per
+described collection — touches no human-facing field, needs no splice-able or self-identifying
+encoding (the carrier is ours by construction), and makes overwrite/refuse/merge moot. It costs an
+extra collection, a read at open, and a convention for a recreated collection — where
+`description` has the genuine advantage of dying with the collection it described. **A marker
+object inside `OntologyClass` or `Predicate` would be a candidate in hybrid search and must not be
+considered**; only a separate collection.
+
+**If `description` is chosen, the encoding must be SELF-IDENTIFYING**: decidably ours or not-ours without guessing.
+Strict JSON with a discriminating key, a sentinel prefix, or a fenced region inside prose — the
+choice is the SDK's; the required property is that *"not ours"* and *"ours, malformed"* are never
+the same observation, because they want opposite behaviours. The same decision answers 7f's
+question of whether the Protocol OWNS `description` or must COEXIST with prose.
+
+## RULED 2026-09-14 — THE CARRIER IS A SEPARATE COLLECTION, NOT `description`
+
+**All three ways of encoding into `description` are traps, and the ruling names each:** overwrite
+loses a human's text with nothing red; refuse turns an ingest failure into the reason the check
+gets muted; **splice is a parser over a field that was never a format.** A carrier that is ours
+alone has none of them, and the encoding question closes rather than resolving — there is no
+longer a field to encode into.
+
+    one small collection, one object per described collection:
+      collection name · embedding model · model version · dimension · written-by · creation stamp
+
+Declared in the SDK as part of the `MeshVectors` contract — **the collection, the schema, AND both
+behaviours**, so neither implementer invents the other's half. The writer creates or replaces the
+marker **in the same act that creates the collection**, and never touches `description`.
+
+### The two seals that travel with it
+
+**1. The marker collection is never a search candidate.** Excluded from hybrid search and from the
+routable class pool BY NAME, and the census asserts it. A marker object turning up as a neighbour
+is the failure this carrier could introduce, and it is one a seal can catch. (A marker object
+*inside* `OntologyClass` or `Predicate` — the cheaper version of the idea — is ruled out for
+exactly that reason.)
+
+**2. A recreated collection cannot inherit a stale marker.** The marker is written in the same act
+as the collection's creation — fold-not-hand-run, the way the prime writes its own `:PrimeRun` row
+— and carries the creation stamp; **the reader treats a marker older than its collection as
+ABSENT.** That is the one real advantage `description` had — dying with what it described — kept
+without the cost.
+
+### MEASURED: there is no collection creation timestamp, and the proxy has two caveats
+
+Checked on sandbox before relaying the ruling, because seal 2 depends on a value that may not
+exist: **Weaviate's class schema carries nothing time-like at all.** The workable form is the
+**oldest object's `creationTimeUnix`** (`OntologyClass`'s is `1780980389974` = 2026-06-09T04:46:29Z,
+sorted-ascending query verified). A recreated-and-re-ingested collection has all-new objects, so
+the oldest moves past a stale marker and the comparison holds. Two caveats belong in the contract
+rather than in an implementer's head:
+
+* **An EMPTY collection has no oldest object**, so its marker cannot be dated → ABSENT, report the
+  gap, open. Not "valid".
+* **If the writer ever PRESERVES `creationTimeUnix` on re-ingest, seal 2 is silently defeated** —
+  the proxy stops moving while the vectors change underneath, and a marker for vectors that no
+  longer exist reads as current. A writer-side requirement, and the one that decides whether this
+  carrier is safe.
+
+### Kept from the superseded `description` build, because it is the strongest part of it
+
+The SDK's first declaration (`6649128`, before the ruling reached it) had **one implementation of
+the write plus an admission check that REFUSES a writer whose output is wrong** — proven by
+stubbing a destroying writer and watching admission reject it. *Measured, not argued.* **The
+carrier changed; that mechanism should not.** One implementation of the stamp write, admission
+checking its output, and neither side writing a parser.
+
 ## The shape when it lands
 
 **Superseded note:** this section previously proposed ONE HOME for the contract — both `embed.py`
