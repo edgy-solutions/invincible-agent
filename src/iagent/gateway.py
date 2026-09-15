@@ -4554,6 +4554,133 @@ async def _get_ui_payload_output(run_id: str) -> dict:
 
 async def generate_dagster_stream(
     request: InterviewRequest,
+    trace_id: str = "",
+    user_id: str = "default_testing_user",
+    user_email: str = "",
+    user_persona: str | None = None,
+    entitled_domains: list[str] | None = None,
+    entitlement_source: str = "fallback",
+    caller_token: str = "",
+) -> AsyncGenerator[str, None]:
+    """THE OUTER BOUNDARY. Every turn that reaches here produces an artifact.
+
+    ⛔ WHAT THIS IS FOR, measured 2026-09-14 and the worst failure of the day. A one-word slip
+    inside the body — `bound_slots` where the name in scope was `request.bound_slots` — raised
+    `NameError` mid-stream. The generator stopped. **Nothing else happened.** No route decision,
+    no materializations, no artifact: not `failed`, not `complete`, NOTHING. The rail showed no
+    new row, and the card held only the question text.
+
+    So the whole failure-recording arc built that same day could not see it, and never could:
+
+        You cannot record an absence. Everything else records WHAT HAPPENED;
+        this dispatch never happened.
+
+    **TWO WAYS OUT WITHOUT WRITING, AND BOTH ARE CLOSED HERE.**
+
+    1. An exception escapes the body — the `NameError` case. Caught below; a `failed` artifact
+       is written carrying the exception text as its cause, and a terminal error event is
+       emitted so the card renders the failure instead of the question.
+    2. The body returns having never flipped `status` off `pending`. The bundle's own comment
+       says it: *"If neither flip happens before stream_end, the bundle is NOT dispatched."* No
+       exception is involved, and the outcome is identical — silence. The sentinel below makes
+       that case write too.
+
+    **WHY A WRAPPER RATHER THAN A try/except INSIDE THE BODY.** The body is long and builds its
+    bundle partway through; a handler inside it can only cover the part after the bundle exists,
+    and the defect that prompted this fired BEFORE that point. The wrapper knows enough from its
+    own parameters to write a complete, honest, minimal artifact without depending on how far the
+    body got — which is the only version that covers the failure that actually happened.
+
+    The artifact it writes is deliberately thin: id, question, who asked, `failed`, and the cause.
+    A richer one would need the body's state, and needing the body's state is what made the gap.
+    """
+    _wrote = False
+
+    try:
+        async for _ev in _generate_dagster_stream_inner(
+            request,
+            trace_id=trace_id,
+            user_id=user_id,
+            user_email=user_email,
+            user_persona=user_persona,
+            entitled_domains=entitled_domains,
+            entitlement_source=entitlement_source,
+            caller_token=caller_token,
+        ):
+            _wrote = True
+            yield _ev
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "generate_dagster_stream raised for session %s — writing a failed artifact so the "
+            "turn is not silent", getattr(request, "session_id", "?"),
+        )
+        _cause = {
+            "exception": type(exc).__name__,
+            "message": str(exc)[:1200],
+            "where": "generate_dagster_stream",
+        }
+        try:
+            await _dispatch_answer_artifact(
+                _boundary_failure_bundle(
+                    request, user_id, user_persona, entitled_domains,
+                    entitlement_source, _cause,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            # THE WRITER ITSELF FAILING MUST NOT SWALLOW THE ORIGINAL. A raise here would
+            # replace a diagnosable engine failure with a storage failure, and the reader would
+            # chase the wrong one.
+            logger.exception("boundary artifact write FAILED; original cause: %s", _cause)
+        if not _wrote:
+            # Nothing reached the client at all, so the card has nothing to render. Emit the
+            # terminal pair rather than leaving the connection to time out — a hung stream and a
+            # failed one look identical to a person and only one of them is true.
+            yield _perror(
+                "The turn failed before it produced an answer.",
+                kind="stream",
+                retryable=True,
+                cause="stream_raised",
+            )
+            yield _sse("stream_end", "{}")
+        return
+
+
+def _boundary_failure_bundle(
+    request: "InterviewRequest",
+    user_id: str,
+    user_persona: str | None,
+    entitled_domains: list[str] | None,
+    entitlement_source: str,
+    cause: dict,
+) -> dict:
+    """The thinnest honest artifact: who asked what, that it failed, and why.
+
+    `status` is `failed` EXPLICITLY. The writer requires it at construction precisely so a
+    forgotten status cannot persist as `complete`, and this is the path where forgetting would
+    be easiest — nothing here knows whether an answer was nearly ready.
+    """
+    return {
+        "id": (getattr(request, "artifact_id", "") or f"artifact-boundary-{int(time.time()*1000)}"),
+        "question_text": getattr(request, "message", "") or "",
+        "message_id": getattr(request, "session_id", "") or "",
+        "valid_as_of": int(time.time() * 1000),
+        "status": "failed",
+        "produced_by": {"actor_type": "agent", "actor_id": "cortex-bff"},
+        "produced_for": {
+            "user_id": user_id,
+            "is_authenticated": True,
+            "user_persona": user_persona,
+            "entitled_domains": entitled_domains or [],
+            "entitlement_source": entitlement_source,
+        },
+        "resolved_intent": {"failure_cause": cause},
+        "routing": None,
+        "sources": [],
+    }
+
+
+async def _generate_dagster_stream_inner(
+    request: InterviewRequest,
     trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
     user_id: str = "default_testing_user",
     # ADR-0025 hop 2: caller's entitlement key (email); threaded to Engine D
@@ -4737,7 +4864,7 @@ async def generate_dagster_stream(
         # nearest hop win: a person who answers a slot twice meant the second answer.
         _this_turn = {
             k: {"value": v, "source": SLOT_SOURCE_PICKED}
-            for k, v in dict(bound_slots or {}).items()
+            for k, v in dict(request.bound_slots or {}).items()
         }
         _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
@@ -5709,6 +5836,24 @@ async def _stream_direct_outcome(
             retryable=True,
             cause="engine_did_not_answer",
         )
+        # ── THE ARTIFACT RECORDS ITS OWN CAUSE ──────────────────────────────────────────
+        #
+        # Without this the `failed` artifact says WHICH VERB was tried and nothing about what
+        # came back, and the answer lives only in a pod log that rotates. Measured on
+        # artifact-2-1789439072125: the engine replied
+        # `{"loc":["body","fn"],"msg":"Field required"}` — the refusal was built to NAME THE
+        # ARGUMENT — and recovering it took a replay against the live pod with a hand-rebuilt
+        # request body, because the artifact recorded neither the cause nor the body.
+        #
+        # Same class as the missing `verb_iri` one layer over, and the same repair: a failure
+        # recorded where nobody reads is a failure nobody can act on.
+        if getattr(outcome, "failure_cause", None):
+            bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+            bundle["resolved_intent"]["failure_cause"] = outcome.failure_cause
+            logger.warning(
+                "direct path failure cause for run %s: %s",
+                session_id, json.dumps(outcome.failure_cause, default=str)[:600],
+            )
         bundle["status"] = "failed"
         return
 
@@ -5813,22 +5958,43 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
         # init paths above each flip it to 'complete' (happy path,
         # final_payload received + parsed) or 'failed' (any _perror
         # branch). If we land here with status still 'pending', some
-        # exit path was added without a status flip — log loudly and
-        # skip the dispatch rather than letting an honest-pending
-        # leak through. (We do NOT default to 'failed' here because
-        # that would re-create the trap one layer over: the dispatch
-        # site has no idea what actually happened; only the gateway
-        # exit paths know.)
+        # exit path was added without a status flip.
+        #
+        # ⛔ THIS USED TO SKIP THE WRITE, and the reasoning was careful and wrong in one step:
+        # *"we do NOT default to 'failed' because the dispatch site has no idea what actually
+        # happened; only the gateway exit paths know."* True about the DETAIL and false about
+        # the FACT. **"The turn ended without recording an outcome" is itself what happened**,
+        # and it is recordable honestly — naming the condition rather than guessing a cause.
+        #
+        # Skipping conflated *do not invent a cause* with *do not write anything*, and the
+        # second is what produced silence: no artifact, no row in the rail, nothing for a reader
+        # to pull on. Measured 2026-09-14 on the sibling path, where a NameError ended the
+        # stream and the turn left no trace at all — you cannot record an absence, so the fix is
+        # to stop producing one.
+        #
+        # The cause below says exactly and only what is known. It does not claim the engine
+        # failed, because nobody here knows that.
         if bundle["status"] == "pending":
             logger.error(
-                "AnswerArtifact dispatch ABORTED: bundle.status is still "
-                "'pending' at stream_end for artifact %s. Some Graph "
-                "Path exit path failed to flip status. Skipping write "
-                "rather than persisting an honest-pending; investigate "
-                "the gateway exit paths.",
+                "AnswerArtifact still 'pending' at stream_end for artifact %s — some exit path "
+                "returned without recording an outcome. Writing it as FAILED with that as the "
+                "cause rather than skipping, so the turn is not silent.",
                 bundle["id"],
             )
-            return
+            bundle["status"] = "failed"
+            _ri = dict(bundle.get("resolved_intent") or {})
+            _ri.setdefault("failure_cause", {
+                "exception": "NoOutcomeRecorded",
+                "message": (
+                    "the stream ended with status still 'pending': an exit path returned "
+                    "without flipping status to complete or failed. The turn's outcome was "
+                    "never recorded; this artifact exists so the turn is not silent."
+                ),
+                "where": "_dispatch_answer_artifact",
+            })
+            bundle["resolved_intent"] = _ri
+            # NO `return` HERE, and its removal is the whole change. The old code logged and
+            # returned; the log was the only trace, in a pod whose logs rotate.
 
         _writer = get_writer()
         if _writer is not None:
