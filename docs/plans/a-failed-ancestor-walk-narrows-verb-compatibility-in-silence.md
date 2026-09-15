@@ -40,14 +40,23 @@ class", which is a real and common answer. A refusal on every empty chain would 
 subject into a 503. The distinction has to be drawn on the FAILURE, never on the emptiness — the
 same line the Weaviate fix drew, and the same control it kept.
 
+## RULED 2026-09-14 — IT REFUSES. NO FALLBACK.
+
+`/classify_predicate` **refuses, naming the substrate**, when the walk fails. This is the only one
+of the three packets with no middle option, and the reason is what the failure does: **the
+pre-ADR-0018 behaviour arriving through the error path is the design change undone by an
+exception.** A degraded answer here is indistinguishable from a considered one, so there is nothing
+to carry a degradation marker to — the answer itself would be the wrong shape.
+
 ## The shape when it lands
 
-1. `_get_subject_ancestor_chain` raises on a substrate failure; an absent subject still returns `[]`.
-2. `/classify_predicate` decides, explicitly and in this packet before the change: refuse, or
-   proceed with a recorded degradation the answer carries. **Proceeding silently is the one option
-   ruled out**, because it is today's behaviour.
-3. `MeshGraph.ancestors(iri, max_hops)` inherits whichever is chosen — the interface's failure
-   semantics are decided here, which is why this waits for the contract.
-4. The seal's fixture must distinguish the two empties: an unknown subject (legitimate `[]`) and a
-   driver that raises (refusal). A fixture that only exercises one of them cannot tell the fix from
-   the defect.
+1. `_get_subject_ancestor_chain` raises on a substrate failure; **an absent subject still returns
+   `[]`**, because "this subject is not a known class" is a real and common answer and `hops=0` is
+   the subject itself.
+2. `/classify_predicate` refuses with the substrate named. Proceeding silently — today's behaviour
+   — is ruled out, and so is proceeding with a marker.
+3. `MeshGraph.ancestors(iri, max_hops)` inherits that refusal semantic; the interface's failure
+   behaviour is decided here, which is why this waits for the contract.
+4. **THE SEAL RULE, shared by all three packets:** *a fixture that exercises only the legitimate
+   empty cannot tell the fix from the defect.* Both empties in the fixture — an unknown subject
+   (legitimate `[]`) and a driver that raises (refusal) — asserted to produce different returns.

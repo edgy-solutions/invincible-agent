@@ -44,14 +44,28 @@ none into whether we managed to ask.**
 the one thing that could was never asked."* Same sentence reaching the user, different cause. A
 failure in discovery reproduces it exactly, and the fix for the first one does not cover it.
 
+## RULED 2026-09-14 — THREE STATES, AND ONLY TWO OF THEM ARE CACHEABLE
+
+    registered        the providers, as today
+    none registered   a real, checked answer about the registry   -> CACHEABLE
+    unknown           the lookup failed                           -> NEVER CACHED
+
+**The sentence is the defect**, and the cache is what makes it last: a claim about the registry
+that a Neo4j failure makes false, held for the whole TTL by one blip. The module already
+distinguishes `unsupported` twelve lines below for exactly this reason — *"counting it as either
+produces a false statement in the very field a person reads"* — it simply never asked whether it
+managed to ask.
+
 ## The shape when it lands
 
-1. `_discover_enumerate_providers` raises on a substrate failure rather than returning `[]`. Its
-   cache discipline matters here: **a failure must not be cached as an empty provider list**, or
-   one blip silences enumeration for the whole TTL. That is the sharper half of this packet.
-2. `/enumerate_instances` gains a fifth outcome — `lookup_failed` — distinct from `no_provider`.
-   The vocabulary belongs to the MeshGraph contract, which is why this waits for it.
+1. `_discover_enumerate_providers` returns the three states rather than `[]`-for-everything.
+   **`unknown` is never written to the cache**; that is the half that turns a blip into a window.
+2. `/enumerate_instances` renders `unknown` as its own outcome, distinct from `no_provider`, and
+   never as the sentence above. The outcome vocabulary belongs to the `MeshGraph` contract, which
+   is why this waits for it.
 3. `_discover_instance_resolvers` (L1553) is the sibling read with the same shape and the same
    cache. **Both or neither** — they were written as a matched pair and the comment says so.
-4. The seal asserts the DISTINCTION, not the refusal: a registry that genuinely holds no provider
-   still answers `no_provider`, and a failed lookup never does.
+4. **THE SEAL RULE, shared by all three packets:** *a fixture that exercises only the legitimate
+   empty cannot tell the fix from the defect.* Both empties in every fixture: a registry that
+   genuinely holds no provider still answers `none registered` and still caches; a failed lookup
+   answers `unknown`, caches nothing, and is asserted to produce a DIFFERENT return.

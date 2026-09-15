@@ -46,15 +46,35 @@ two of them (`/resolve_instance`'s ABSTAIN, `_served_class_uris`' sibling degrad
 protocols where an empty answer is a legitimate, load-bearing value. **A refusal that a fan-out
 reads as an abstention is a worse defect than the one being fixed.**
 
+## RULED 2026-09-14 — PER-ROUTE, NOT BLANKET
+
+The Weaviate pair took one refusal because they had one consumer shape. This one does not, and a
+single rule applied to seven consumers would be wrong at two of them:
+
+* **Where an empty result is a first-class ABSTAIN in a fan-out** — `/resolve_instance` — the
+  return carries **three states: answered-empty, failed, unreachable**, and the CALLER decides.
+  A refusal read as an abstention is worse than the defect it replaces.
+* **Where an empty result is a DECISION INPUT** — `/instances_by_property`, feeding the
+  disposition dashboard — a substrate failure is a **503**. A confident zero on a dashboard is the
+  failure recorded where nobody reads it.
+* **The cold-start fallback under `/resolve` is the double-failure case**, and it is the one that
+  **must never answer "both asked, both found nothing."** Weaviate empty followed by a Jena failure
+  is not a subject the mesh does not know; it is a question nobody managed to ask.
+
 ## The shape when it lands
 
-1. `execute_sparql` raises rather than returning `[]` — the same 503-with-cause the Weaviate pair
-   now raises, so the two substrates refuse identically.
-2. **Each of the seven consumers gets an explicit decision recorded here before the change**, not
-   discovered after: refuse, or catch-and-abstain with the reason written down. `/resolve_instance`
-   is the one to decide first, because the fan-out's contract says an empty list is an ABSTAIN.
-3. The seal is behavioural, in `tests/test_predicate_hybrid_search.py`'s stub harness (the only
-   one in the repo that imports `main.py`), plus the structural arm in
+1. `execute_sparql` stops conflating the two. The three-state result is the vehicle, not a raised
+   exception at every site — see the ruling above.
+2. **Each of the seven consumers gets its disposition recorded here before the change**, not
+   discovered after. Three are ruled above; the remaining four (`/classes`,
+   `/classify_legacy_table`, `_get_active_ontology_classes`, `_check_jena_populated`) follow the
+   decision-input rule unless someone names a reason they should not.
+3. The seal is behavioural, in `tests/test_predicate_hybrid_search.py`'s stub harness (the only one
+   in the repo that imports `main.py`), plus the structural arm in
    `tests/test_a_substrate_failure_is_not_an_empty_result.py`, extended to name this function.
-4. A control in the same breath: **an empty graph must still answer `[]`.** Collapsing "the domain
-   has no classes" into "Jena is down" would turn every cold start into an outage.
+4. **THE SEAL RULE, ruled for all three packets:** *a fixture that exercises only the legitimate
+   empty cannot tell the fix from the defect.* **Both empties in every fixture**, asserted to
+   produce different returns. An empty graph must still answer empty — collapsing "the domain has
+   no classes" into "Jena is down" turns every cold start into an outage.
+5. **Lands with ca's `MeshOntology` return**, where the three-state result is the CONTRACT rather
+   than three patches applied behind one signature.
