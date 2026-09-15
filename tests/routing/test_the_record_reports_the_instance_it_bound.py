@@ -227,8 +227,28 @@ def test_THE_FAST_PATH_PROMOTES_INTO_THE_RECORD():
     """Both of this module's record sites write `instance_id`, so promoting it once fixes both
     — which is why the promotion goes on the variable and not on each call."""
     src = _src(_DD)
-    assert "promotable_instance_from_slots(truth, chain_slots or {})" in src, (
+    assert "promotable_instance_from_slots(truth, _provenance)" in src, (
         "the fast path never promotes, so its record still reports a bound turn as unresolved"
+    )
+    # ⛔ THE ANTI-REGRESSION ARM, and it is the defect this seal SHIPPED WITH.
+    #
+    # The first version promoted from `chain_slots` — what the ANCESTORS bound. The pick that
+    # answers an ask arrives on THIS turn and is in no ancestor, so the promotion read the one
+    # place the value could never be. Measured live on artifact-4-1789438505471: its own record
+    # carried {"program_id": {"value": "NP-MERIDIAN", "source": "picked"}} and its parent the
+    # ask carried {} — and the verb was still flagged `needs_instance`.
+    #
+    # Every assertion in this file passed throughout, because the fixtures hand the predicate a
+    # populated dict and never model WHERE that dict comes from.
+    assert "promotable_instance_from_slots(truth, chain_slots" not in src, (
+        "the promotion reads chain_slots — the ancestors' bindings — so this turn's own pick is "
+        "invisible to it and the answer turn is flagged for the reason it was just answered"
+    )
+    assert "_bound_names = {str(k) for k in (chain_slots or {})}" not in src, (
+        "the arity gate reads chain_slots alone; the turn's pick must be merged in"
+    )
+    assert "_provenance = {" in src, (
+        "the merged chain-plus-this-turn provenance is gone"
     )
     assert "if not instance_id:" in src, (
         "promotion is attempted even when the ask genuinely carried an instance"

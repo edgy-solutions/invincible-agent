@@ -234,7 +234,24 @@ def dispatch_pre_resolved(
     # both `required` and a `referent` forces `arity: single` AND is the slot whose binding
     # supplies the instance. A verb declaring no such slot is unaffected BY CONSTRUCTION,
     # which is what makes this safe for the three engines of four that declare no arity.
-    _bound_names = {str(k) for k in (chain_slots or {})}
+    # ⛔ THIS READ `chain_slots` ALONE AND THAT IS THE DEFECT THE WHOLE ARC WAS ABOUT.
+    #
+    # `chain_slots` is what the ANCESTORS bound. The pick that answers an ask arrives on THIS
+    # turn, in `bound_slots`, and is by construction in no ancestor — measured on
+    # artifact-4-1789438505471, whose own record carries
+    # `{"program_id": {"value": "NP-MERIDIAN", "source": "picked"}}` while its parent, the ask,
+    # carries `{}`. So the gate looked only where the value could never be and flagged
+    # `needs_instance` on the turn that named the instance.
+    #
+    # The writer was correct and the reader was looking one hop upstream. Same shape as the
+    # original defect — a value present in one place and read from another — reproduced inside
+    # the fix for it.
+    _turn_records = {
+        k: {"value": v, "source": SLOT_SOURCE_PICKED} for k, v in dict(bound_slots or {}).items()
+    }
+    _provenance = {**{k: v for k, v in (chain_slots or {}).items() if isinstance(v, dict)},
+                   **_turn_records}
+    _bound_names = {str(k) for k in _provenance}
     flagged: List[dict] = []
     if verbs:
         _kept: List[dict] = []
@@ -277,7 +294,7 @@ def dispatch_pre_resolved(
     # promoting it would have an engine act on an unchecked caller string. `spoken` is excluded
     # pending a ruling. Every source carries its reason in NON_PROMOTABLE_SLOT_SOURCES.
     if not instance_id:
-        _promoted = promotable_instance_from_slots(truth, chain_slots or {})
+        _promoted = promotable_instance_from_slots(truth, _provenance)
         if _promoted:
             instance_id = _promoted[0]
             logger.info(

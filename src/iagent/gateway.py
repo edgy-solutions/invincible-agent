@@ -4725,7 +4725,21 @@ async def generate_dagster_stream(
     # carrying this there would feed a state that cannot arise, and a dead branch under a seal
     # reads as coverage.
     if _pre_resolved:
-        _pre_resolved["accumulated_slots"] = _chain_slots or {}
+        # ⛔ THE CHAIN ALONE IS NOT "WHAT THIS TURN HAS BOUND", and sending only it reproduced
+        # the original defect inside its own fix. `_chain_slots` is what the ANCESTORS bound;
+        # the pick that answers an ask arrives on THIS turn, in `bound_slots`, and is by
+        # construction in no ancestor. Measured on artifact-4-1789438505471: its own record
+        # carried {"program_id": {"value": "NP-MERIDIAN", "source": "picked"}} while its parent
+        # — the ask — carried {}. The consumer looked only where the value could never be.
+        #
+        # So the field means EVERYTHING BOUND AS OF THIS TURN, ancestors plus this turn's own
+        # answer, and the nearest binding wins for the same reason `_accumulated_slots` lets the
+        # nearest hop win: a person who answers a slot twice meant the second answer.
+        _this_turn = {
+            k: {"value": v, "source": SLOT_SOURCE_PICKED}
+            for k, v in dict(bound_slots or {}).items()
+        }
+        _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
     mode: str
     entity_refs: list[str] = []
