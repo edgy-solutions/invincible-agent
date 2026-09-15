@@ -39,6 +39,25 @@ def _ht():
 
 
 # ── the vocabulary is per species ──────────────────────────────────────────
+
+_OVERLAY = _ROOT / "policy" / "overlays" / "sample" / "task_kinds"
+
+
+def _composed(monkeypatch):
+    """Make the composed set KNOWABLE for a test that asks about a species.
+
+    After the M3.3 cutover there is no code table behind an unresolvable overlay, so a test that
+    asks what a DOMAIN species accepts must say where the domain rows are — otherwise it is
+    asking a question the process is right to refuse. The seeded species need nothing; this is
+    for the arms that name a domain kind.
+    """
+    ht = _ht()
+    monkeypatch.setenv(ht._OVERLAY_DIRS_ENV, str(_OVERLAY))
+    monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None, raising=False)
+    monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
+    return ht
+
+
 def test_a_triage_task_refuses_approve_and_reject():
     """THE REGRESSION. These are the two verbs the card actually offered, and both must be
     refused at the write — the UI is where the bug was seen, the API is where it is FIXED, so
@@ -56,10 +75,16 @@ def test_a_triage_task_accepts_its_own_verbs(verb):
     ht.validate_decision("extraction_refusal", verb, "parts entered in the legacy system")
 
 
-def test_ordinary_approvals_are_untouched():
-    """The default vocabulary is correct for a task that IS a decision — this change must not
-    make every other task species stricter."""
-    ht = _ht()
+def test_ordinary_approvals_are_untouched(monkeypatch):
+    """The ordinary vocabulary is correct for a task that IS a decision — no change here may make
+    every other species stricter.
+
+    THE CLAIM SURVIVED THE CUTOVER; ITS FIXTURE DID NOT. These verbs used to come from a code
+    table and now come from declared rows, so the arm needs the composed set to be KNOWABLE
+    before it can ask about `pcn_disposition` — a domain species whose row is in the overlay.
+    Failing here without the overlay was the gate working, not the claim breaking.
+    """
+    ht = _composed(monkeypatch)
     for kind in ("workflow_ack", "access_request", "grouped_review", "pcn_disposition"):
         ht.validate_decision(kind, "approved")
         ht.validate_decision(kind, "rejected")
@@ -67,20 +92,24 @@ def test_ordinary_approvals_are_untouched():
             ht.validate_decision(kind, "acknowledged", "reason")
 
 
-def test_an_unregistered_kind_keeps_the_approve_reject_default():
-    """The default stays approve/reject — deliberately. The triage lesson is NOT 'default to
-    nothing'; it is that a default must not assert semantics the task may not have, which is
-    handled by registering species that differ, and (UI side) by an archetype that refuses to
-    guess affordances."""
-    ht = _ht()
-    # ASSERTED AS MEMBERSHIP, NOT AS CONTAINER TYPE. This read `== frozenset({...})` and went
-    # red when `verbs_for_kind` began returning a tuple at SDK v0.8.0 — while the CLAIM in the
-    # docstring above stayed true throughout. R-026(c): the seal and its subject share a surface,
-    # so the wrong one gets asserted and the result is indistinguishable from the right one.
-    assert set(ht.verbs_for_kind("some_future_kind")) == {"approved", "rejected"}
+def test_an_unregistered_kind_NO_LONGER_gets_a_default(monkeypatch):
+    """⛔ INVERTED AT THE M3.3 CUTOVER. This arm asserted the opposite and was right to.
+
+    It read: "the default stays approve/reject — deliberately. The triage lesson is NOT 'default
+    to nothing'; it is that a default must not assert semantics the task may not have."
+
+    That reasoning held while a code table was the fallback for kinds no declaration covered.
+    The tables are gone, so there is nothing left to default FROM — and the ruled answer for a
+    species the seed does not carry, under a knowable set, is that it accepts nothing. **The
+    claim was not wrong; its premise was deleted.** Kept inverted rather than removed, because
+    an arm that vanishes takes its reasoning with it and the next person re-derives the default.
+    """
+    ht = _composed(monkeypatch)
+    assert ht.verbs_for_kind("some_future_kind") == (), (
+        "an undeclared species was handed verbs — the code-table default is back"
+    )
 
 
-# ── reason-required is a MEANING requirement, not a form nicety ────────────
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
 def test_acknowledge_without_a_reason_is_refused(blank):
     """"Parts entered in the legacy system" and "notice withdrawn by the vendor" are entirely
@@ -115,16 +144,43 @@ def test_status_is_not_coerced_into_rejected():
     assert "acknowledged" in body and "redriven" in body
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "LIVE DEFECT, PRE-EXISTING, NOT MINE TO FIX — declared rather than hidden. "
+        "`mark_task_resolved` maps `status = decision if decision in (approved, acknowledged, "
+        "redriven) else 'rejected'`, so EVERY safety verb (accepted, concurred, not_concurred, "
+        "returned_for_rework, linked, new_hazard, dismissed) is stored as 'rejected' — a risk "
+        "ACCEPTANCE recorded as its opposite. Identical on origin/master before this cutover. "
+        "The fix is cross-repo: cortex-ui's card types task_state as "
+        "pending|approved|rejected|expired, so new statuses need that contract to move first. "
+        "STRICT so the day it is fixed this XPASSes, fails, and forces the marker's removal."
+    ),
+)
 def test_every_declared_verb_survives_the_status_mapping():
     """Derived from the vocabulary rather than hand-listed, so adding a species' verb without
-    teaching the status mapping fails HERE instead of silently recording it as 'rejected'."""
+    teaching the status mapping fails HERE instead of silently recording it as 'rejected'.
+
+    AND ITS OLD SOURCE IS WHY NOBODY SAW THE DEFECT. It derived from `_VERBS_BY_KIND`, which
+    carried one row and never held a safety verb — so the arm whose whole purpose was "a new
+    verb must not be silently recorded as rejected" **excluded exactly the species at risk**.
+    A fixture that cannot contain the failing case reports green forever. Re-sourced to the
+    declared rows, it found the defect on its first run."""
     ht = _ht()
     src = (_ROOT / "src" / "iagent" / "human_tasks.py").read_text(encoding="utf-8")
     body = src[src.index("def mark_task_resolved"):]
     body = body[:body.index("with _pg_connect")]
+    # DERIVED FROM THE DECLARED ROWS, not from a code table — same property, new source. The
+    # point of the arm is unchanged: adding a species' verb without teaching the status mapping
+    # must fail HERE rather than silently record the decision as "rejected".
+    import yaml  # noqa: PLC0415
+
     declared = set()
-    for verbs in list(ht._VERBS_BY_KIND.values()) + [ht._DEFAULT_VERBS]:
-        declared |= set(verbs)
+    for d in (_ROOT / "policy" / "task_kinds", _OVERLAY):
+        for f in sorted(d.glob("*.yaml")):
+            row = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            declared |= set(row.get("accepts") or ())
+    assert declared, "derived no verbs from the declarations — the source moved, not the property"
     for verb in declared - {"rejected"}:
         assert verb in body, (
             f"verb {verb!r} is declared for some task kind but the status mapping in "

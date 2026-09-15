@@ -149,13 +149,6 @@ sites:
     disposition: excluded
     reason: Same as above — matches an inbound task's kind to find its batch; no mint.
 
-  - site: src/iagent/human_tasks.py
-    pattern: kind:extraction_refusal
-    disposition: excluded
-    reason: >-
-      The `_VERBS_BY_KIND` row itself. It is not converted BY this audit because it is deleted
-      by the M3.3 cutover, which is a separate gated act — converting it here would collide.
-
   - site: scripts/migrate_pcn_grouped_review_rows.py
     pattern: kind:grouped_review
     disposition: excluded

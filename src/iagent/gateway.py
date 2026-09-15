@@ -2403,6 +2403,17 @@ async def canvas_lineage_edges(
         return {"edges": []}
 
 
+def _allowed_or_empty(kind: str) -> list:
+    """`verbs_for_kind` or `[]` — never a raise, because every caller of this is already
+    reporting a refusal and a second failure there loses the first one."""
+    from . import human_tasks
+
+    try:
+        return list(human_tasks.verbs_for_kind(kind))
+    except Exception:  # noqa: BLE001 — the refusal being reported matters more than this detail
+        return []
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -2462,6 +2473,21 @@ async def act_on_human_task(
     # unauthorized caller through a validation error) and before any write.
     try:
         human_tasks.validate_decision(match.get("kind") or "", req.decision, req.comment)
+    except human_tasks.TaskKindSetUnknown as exc:
+        # THE RULED REFUSAL, CARRIED TO THE CARD RATHER THAN DROPPED AS A 500. A species the seed
+        # does not carry cannot be answered while the overlay is unset or unreadable, and the
+        # honest answer to cannot-know is a refusal that SAYS WHY — not the generic pair a code
+        # table used to remember, and not a silent dead task.
+        #
+        # It is a 409, not a 422: the request is well formed and the caller did nothing wrong;
+        # this deployment cannot currently answer for that species. A 422 would blame the caller
+        # for a configuration they cannot see.
+        raise HTTPException(status_code=409, detail={
+            "error": "task_kind_set_unknown",
+            "kind": match.get("kind"),
+            "allowed": [],
+            "message": str(exc),
+        })
     except human_tasks.InvalidDecisionForKind as exc:
         raise HTTPException(status_code=422, detail={
             "error": "invalid_decision_for_kind",
@@ -2474,7 +2500,9 @@ async def act_on_human_task(
             # `sorted()` looks like tidiness rather than a decision, which is why it survived
             # unexamined. Flagged by iagent-mesh-sdk-ca from the call sites rather than from
             # reasoning about them.
-            "allowed": list(human_tasks.verbs_for_kind(match.get("kind") or "")),
+            # GUARDED: this call is INSIDE an exception handler, so a raise here replaces a
+            # structured refusal with a 500 — the error path becoming an error surface.
+            "allowed": _allowed_or_empty(match.get("kind") or ""),
             "message": str(exc),
         })
 
