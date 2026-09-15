@@ -89,6 +89,51 @@ def _read_yaml(path: Path, errors: list[str]) -> dict:
     return data
 
 
+#: Service principals are seeded as users so they are LEGIBLE and grantable through the
+#: rails; this prefix is what marks one as not-a-human-recipient.
+SERVICE_SUBJECT_PREFIX = "svc:"
+
+
+def service_identity_recipients(file_label: str, pairs) -> list[str]:
+    """DISCLOSURE TO A SERVICE IS THE CONFUSED DEPUTY. Refuses `svc:*` as a grantee.
+
+    THE GAP THIS CLOSES, named by `invincible-agent-81` against the grant rail: `svc:` subjects
+    ARE seeded users, so `unknown_user_subjects` resolves them happily and a grant reading
+    `grant_to: svc:cortex-bff` passes validation, syncs, and reads back green.
+
+    **The rule existed and lived in a COMMENT.** `policy/users.yaml` says it plainly beside
+    `svc:data-analyst`:
+
+        the service credential says WHICH SERVICE is calling, not WHOSE data may be read.
+        DA serves every caller, so a read grant on svc:data-analyst would entitle EVERY
+        caller to whatever it can reach - the confused deputy the per-caller conjunction
+        exists to prevent.
+
+    An engine-local rule the rail silently accepts is droppable by the next person who edits
+    the rail without reading the engine. Making it a validator makes it a property of the FILE,
+    which is the whole difference between a convention and a constraint.
+
+    SCOPE IS DISCLOSURE-RECIPIENT GRANTS - who may SEE something. `capability_grants.yaml` is
+    deliberately NOT passed through this: an INVOKE is an EFFECT rather than a read, as that
+    file's own header states, and a service principal invoking a capability is not the confused
+    deputy. If a capability grant ever conveys disclosure, that exemption must be revisited
+    rather than inherited.
+
+    PURE - no filesystem. ``pairs`` = ``[(context, grantee), ...]``.
+    """
+    out: list[str] = []
+    for context, grantee in pairs:
+        if str(grantee).strip().startswith(SERVICE_SUBJECT_PREFIX):
+            out.append(
+                f"{file_label}: {context} grants disclosure to {grantee!r}, a SERVICE identity. "
+                f"A service credential says which service is calling, not whose data may be "
+                f"read - the service serves every caller, so this entitles all of them "
+                f"(confused deputy). Grant to the acting human, or formalise the delegation as "
+                f"a design decision rather than settling it with a grant here."
+            )
+    return out
+
+
 def unknown_user_subjects(file_label: str, pairs, known_users: set[str]) -> list[str]:
     """AUTHOR-BUG GATE (validators catch author bugs; readbacks catch sync bugs —
     neither substitutes for the other). EVERY grant sync (asset/task/ontology/
@@ -254,6 +299,19 @@ def validate(
             [(comp.name, gt) for comp in comps for gt in comp.grant_to], known_users))
         errors.extend(unknown_user_subjects("capability_grants.yaml",
             [(c.key, gt) for c in caps for gt in c.grant_to], known_users))
+
+    # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
+    #
+    # Runs OUTSIDE the `known_users` guard on purpose: a `svc:` grantee is refused whether or
+    # not users.yaml parsed. The other check asks "does this principal exist"; this one asks
+    # "may this KIND of principal receive disclosure", and the answer does not depend on the
+    # roster being readable.
+    errors.extend(service_identity_recipients("asset_grants.yaml",
+        [(g.asset, g.subject) for g in grants]))
+    errors.extend(service_identity_recipients("task_grants.yaml",
+        [(a.key, gt) for a in audiences for gt in a.grant_to]))
+    errors.extend(service_identity_recipients("ontology_compartments.yaml",
+        [(comp.name, gt) for comp in comps for gt in comp.grant_to]))
 
     return errors
 
