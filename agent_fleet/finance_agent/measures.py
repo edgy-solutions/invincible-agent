@@ -31,8 +31,8 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         periods_in,
     )
     from measure_modules import (
-        burn_series, eac_formulas, funding_grid, index_series,
-        variance_driver_ranking,
+        burn_series, decomposition_policy, eac_formulas, funding_grid,
+        index_series, variance_driver_ranking,
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
@@ -40,8 +40,8 @@ except ImportError:
         periods_in,
     )
     from agent_fleet.finance_agent.measure_modules import (
-        burn_series, eac_formulas, funding_grid, index_series,
-        variance_driver_ranking,
+        burn_series, decomposition_policy, eac_formulas, funding_grid,
+        index_series, variance_driver_ranking,
     )
 
 FIN = "http://invincible-agent/fin#"
@@ -462,7 +462,7 @@ def fin_variance_analysis(
                if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
     root_bcws, root_bcwp, root_acwp = _totals(state, all_wps, periods)
     root_variance = _variance(variance_kind, root_bcws, root_bcwp, root_acwp)
-    floor = abs(root_variance) * materiality
+    floor = decomposition_policy.materiality_floor(root_variance, materiality)
 
     def node(
         level: str, entity_id: str, entity_name: str, wp_ids: set[str],
@@ -483,7 +483,8 @@ def fin_variance_analysis(
             # choosing either would be right about half the tree. Measured on the seed:
             # Systems Engineering is +120,000 inside a -1,130,000 root.
             "favourable": _is_favourable(variance_kind, variance),
-            "share_of_root": (variance / root_variance) if root_variance else None,
+            "share_of_root": decomposition_policy.share_of_root(
+                variance, root_variance),
             "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
             "value_unit": program.value_unit,
             "period_count": len(periods),
@@ -492,14 +493,15 @@ def fin_variance_analysis(
             rec.update(extra)
 
         children = _children_of(level, entity_id)
-        if not children:
-            rec["stop_reason"] = "leaf"
-        elif abs(variance) < floor:
-            rec["stop_reason"] = "explained"
-        elif depth >= max_depth:
-            # SAY SO. A tree truncated by a depth limit and a tree that genuinely ended
-            # look identical from the outside, and only one of them is a complete answer.
-            rec["stop_reason"] = "depth"
+        # THE POLICY IS THE MODULE'S; the traversal stays here because it needs state.
+        # SAY SO when a tree is truncated: a depth-limited tree and one that genuinely ended
+        # look identical from the outside, and only one of them is a complete answer.
+        reason = decomposition_policy.stop_reason(
+            has_children=bool(children), variance=variance, floor=floor,
+            depth=depth, max_depth=max_depth,
+        )
+        if reason != "decomposed":
+            rec["stop_reason"] = reason
         else:
             kids = [
                 node(child_level, cid, cname, cwps, depth + 1, cextra)
@@ -508,13 +510,14 @@ def fin_variance_analysis(
             # MATERIAL CHILDREN ONLY, and the immaterial remainder is REPORTED rather than
             # dropped. Contributors that do not sum to their parent's variance is the
             # arithmetic lie this engine is most likely to tell, so the residual is a row.
-            material = [k for k in kids if abs(k["variance"]) >= floor]
-            residual = variance - sum(k["variance"] for k in material)
+            material, residual = decomposition_policy.partition(
+                kids, variance=variance, floor=floor)
             rec["contributors"] = material
             if abs(residual) > 0:
                 rec["residual"] = residual
+                dropped = decomposition_policy.immaterial_count(kids, material)
                 rec["residual_note"] = (
-                    f"{len(kids) - len(material)} contributor(s) below the "
+                    f"{dropped} contributor(s) below the "
                     f"{materiality:.0%} materiality floor, netting "
                     f"{residual:,.0f} {program.value_unit}"
                 )
