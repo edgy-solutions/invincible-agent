@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -371,6 +371,10 @@ _Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **the-domain-gate-removes-verbs-inside-a-cypher-query** — Every other eligibility gate now records what it removed (`an-eligibility-gate-must-leave-evidence`). The domain gate cannot, because it filters INSIDE the Cypher query — the excluded verbs are never materialised on either side of the wire, so there is no Python seam where a removed verb passes through. `domain_scope_excluded` is detected today by RE-ASKING Neo4j unscoped on the empty-pool path, which is a different and more expensive mechanism and only fires when the pool is empty. A domain gate that removes SOME verbs and leaves others is invisible, and that is the shape that produces a confident wrong answer rather than an abstention.
   status: open · owner: agent (lane 1) — it is engine-o's Cypher · blocked-on: a decision on whether `/find_compatible_verbs` returns the unscoped set alongside the scoped one
   → [docs/plans/the-domain-gate-removes-verbs-inside-a-cypher-query.md](plans/the-domain-gate-removes-verbs-inside-a-cypher-query.md)
+
+- **the-eac-formulas-live-in-two-places** — fin_eac_comparison reimplements all three EAC formulas in its own Decimal `compute(method)`, independent of the eac_formulas module fin_eac_calculation uses. MEASURED — they agree today, so this is unsealed duplication rather than a live wrong answer. It matters because §2a's transcription seal covers the module and NOT the comparison verb, whose three figures are the ones a customer sees side by side. A join seal is in place as the interim; the fix is for the comparison verb to CALL the module, which §2 requires anyway.
+  status: open · owner: unassigned · blocked-on: ADR-0053 §2 — the method registry; this is part of that build rather than before it
+  → [docs/plans/the-eac-formulas-live-in-two-places.md](plans/the-eac-formulas-live-in-two-places.md)
 
 - **the-filler-has-no-entity-resolution** — MEASURED. Six spoken slots are OPAQUE IDS (site_id, capability_id, project_id, tech_id, process_id, scope_initiative_id) and the filler has no entity resolution, so it confidently emits the spoken NAME. "how loaded is the Aurora site" -> {"site_id": "Aurora"} at confidence 0.92 -> 422 unknown site 'Aurora'. That is a WRONG fill, not a miss: an honest refusal to a perfectly answerable question. The system ALREADY has the component for this — /resolve and entity_refs, ADR-0031's instance-resolution ladder — so the filler is doing a job another part owns. Also the first evidence on the threshold question, and it points at the harder branch: the wrong fill scored 0.92 where the correct one scored 0.98. Suggestive, n=3, and pre-registers a hypothesis the corpus will settle.
   status: open · owner: unassigned
