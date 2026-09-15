@@ -105,6 +105,56 @@ def _load_builder(m: GraphManifest):
     )
 
 
+#: Which saver a checkpointer row gets, and WHY IT IS REPORTED RATHER THAN ASSUMED.
+#:
+#: `langgraph-checkpoint-postgres` is a declared dependency of this engine and
+#: `AsyncPostgresSaver` is the intended end state — `graph_host/__init__.py` names it as the
+#: one part of Engine B worth keeping. It is NOT wired: `graphHost.env` is `{}` in values.yaml
+#: and no DSN reaches this pod, so there is nothing to connect to yet.
+#:
+#: IN-MEMORY IS SUFFICIENT FOR WHAT THE ROWS ACTUALLY DECLARE TODAY and that is a measured
+#: claim, not a convenience. `fin_program_brief`'s row says `thread_id = run id`: state scoped
+#: to ONE run, and the graph runs straight through with no interrupt, so nothing ever resumes
+#: a thread in a second process. Postgres buys durability ACROSS pods and restarts, which
+#: matters the moment a graph interrupts for a human — `HumanAwaitStep` — and not before.
+#:
+#: SO THE DEGRADATION IS NAMED WHERE IT CAN BE READ, not left to be inferred: the saver in use
+#: is logged at boot and reported by `/health`. A durable-looking declaration served by
+#: process memory is precisely the silent half-truth this host refuses elsewhere.
+_CHECKPOINT_DSN_ENV = "GRAPH_HOST_POSTGRES_DSN"
+
+
+def _saver_for(m: GraphManifest) -> Any:
+    """The checkpointer a row's `checkpointer: true` actually gets."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    return InMemorySaver()
+
+
+def checkpointer_durability() -> dict:
+    """What `/health` says about state, so nobody infers durability from a boolean.
+
+    `rows` is derived from what was ADMITTED rather than from the policy directory — a row
+    that failed to load cannot be carrying state, and reporting it here would be the census
+    defect in miniature.
+    """
+    import os
+
+    stateful = sorted(gid for gid, (mm, _g) in (_LOADED or {}).items() if mm.checkpointer)
+    return {
+        "saver": "in-memory",
+        "durable_across_restarts": False,
+        "stateful_graphs": stateful,
+        "postgres_dsn_configured": bool(os.environ.get(_CHECKPOINT_DSN_ENV)),
+        "note": (
+            "state is scoped to this process. Every ratified row today declares "
+            "thread_id = run id and runs straight through, so nothing resumes a thread in a "
+            "second process. A graph that INTERRUPTS for a human needs AsyncPostgresSaver "
+            f"and a {_CHECKPOINT_DSN_ENV}; the dependency is declared and the DSN is not wired."
+        ),
+    }
+
+
 def load_graphs() -> dict[str, tuple[GraphManifest, Any]]:
     """Compose the ratified rows and compile one graph per row.
 
@@ -136,7 +186,22 @@ def load_graphs() -> dict[str, tuple[GraphManifest, Any]]:
         # The CHECKPOINTER IS THE HOST'S TO HONOUR, which is why a row names a builder rather
         # than shipping a compiled graph: a module that compiled itself could attach durable
         # per-thread memory a row said was off.
-        out[m.graph_id] = (m, graph.compile() if not m.checkpointer else graph)
+        #
+        # AND FOR ONE RELEASE THIS LINE HONOURED NOTHING. It read
+        #     graph.compile() if not m.checkpointer else graph
+        # — treating a checkpointer as a SUBSTITUTE for compiling rather than an ARGUMENT to
+        # it. `ainvoke` exists only on the compiled graph, so every row declaring
+        # `checkpointer: true` was stored as a BUILDER and returned 500 on first call:
+        # `'StateGraph' object has no attribute 'ainvoke'`. Measured live on NP-MERIDIAN.
+        # The traceback is the LAST line after the graph does ~57s of real work, so it reads
+        # like a timeout and is not one.
+        #
+        # TWO DEFECTS, AND THE SECOND OUTLIVES THE FIRST. Compiling in both arms clears the
+        # 500 — and would leave `checkpointer: true` attached to NOTHING, which is the exact
+        # shape this host already paid for once with `refusal`: a row declaring behaviour that
+        # nothing implements, green everywhere. The saver is therefore PASSED, not implied.
+        out[m.graph_id] = (m, graph.compile(checkpointer=_saver_for(m)) if m.checkpointer
+                           else graph.compile())
     return out
 
 
@@ -305,7 +370,14 @@ async def health() -> dict:
             detail={"status": "no-graphs-admitted", "engine": COMPONENT,
                     "reason": f"zero ratified rows under {GRAPH_POLICY_DIR}"},
         )
-    return {"status": "ok", "engine": COMPONENT, "graphs": sorted(_LOADED)}
+    return {
+        "status": "ok",
+        "engine": COMPONENT,
+        "graphs": sorted(_LOADED),
+        # STATE IS REPORTED, NEVER INFERRED FROM THE ROW. A caller reading `checkpointer: true`
+        # off a manifest would reasonably assume the state survives a restart. It does not yet.
+        "checkpointing": checkpointer_durability(),
+    }
 
 
 @app.get("/ready")
