@@ -183,6 +183,20 @@ def dispatch_pre_resolved(
     chain_slots: Optional[Dict[str, Any]] = None,
     spoken_answer: str,
     user_query: str,
+    #: THE RUN THIS DISPATCH IS, and it has NO DEFAULT ON PURPOSE.
+    #:
+    #: A stateful graph row refuses a call without one - measured on
+    #: artifact-2-1789497046894, whose recorded 422 body read: `fin_program_brief declares
+    #: checkpointer: true, so it needs a thread_id to checkpoint under - the row's contract
+    #: is thread_id = run id`. The request body recorded beside it was exactly
+    #: `{query, params}`: the contract was never spoken on this side.
+    #:
+    #: NO DEFAULT HERE, because every plausible one is wrong in a way that PASSES. The
+    #: session id scopes state to a SESSION, so turn 2 silently resumes turn 1's
+    #: checkpoint; the graph's own name - the fallback the host deleted - scopes it to
+    #: every caller at once. A default invented in the callee becomes a contract nobody
+    #: agreed to, so the caller declares what its run is and this function only carries it.
+    run_id: str,
     entitled_domains: List[str],
     acting_persona: str,
     ontology_url: str,
@@ -577,7 +591,17 @@ def dispatch_pre_resolved(
     # artifact-2-1789439072125's cause needed a hand-rebuilt body replayed against the pod, and
     # then a second read of both sides to trust the reconstruction — two reads because the one
     # thing that would have settled it in one was never written down.
-    _request_body = {"query": user_query, "params": params}
+    # `thread_id` TRAVELS ON EVERY DISPATCH, not only the ones known to be stateful.
+    # Scoping it to endpoints matching "/graphs/" would be a URL-SHAPE PROXY for "does this
+    # row checkpoint" - the same substitution that had `_repo_root` test for a checkout
+    # shape instead of for the files it actually needed. The ROW declares whether it needs
+    # a thread and the host enforces that; this side supplies the identity and lets the
+    # declaration decide.
+    #
+    # Safe for engines that do not want it: no engine request model in this repo sets
+    # `extra="forbid"` (checked across agent_fleet/ and src/), so an unrecognised key is
+    # ignored rather than answered with the 422 this line exists to prevent.
+    _request_body = {"query": user_query, "params": params, "thread_id": run_id}
     try:
         resp = _post(
             endpoint,

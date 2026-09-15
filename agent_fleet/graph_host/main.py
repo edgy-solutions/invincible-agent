@@ -109,14 +109,24 @@ def _load_builder(m: GraphManifest):
 #:
 #: `langgraph-checkpoint-postgres` is a declared dependency of this engine and
 #: `AsyncPostgresSaver` is the intended end state — `graph_host/__init__.py` names it as the
-#: one part of Engine B worth keeping. It is NOT wired: `graphHost.env` is `{}` in values.yaml
-#: and no DSN reaches this pod, so there is nothing to connect to yet.
+#: one part of Engine B worth keeping.
 #:
-#: IN-MEMORY IS SUFFICIENT FOR WHAT THE ROWS ACTUALLY DECLARE TODAY and that is a measured
-#: claim, not a convenience. `fin_program_brief`'s row says `thread_id = run id`: state scoped
-#: to ONE run, and the graph runs straight through with no interrupt, so nothing ever resumes
-#: a thread in a second process. Postgres buys durability ACROSS pods and restarts, which
-#: matters the moment a graph interrupts for a human — `HumanAwaitStep` — and not before.
+#: IT IS WIRED NOW, and this paragraph said the opposite for as long as it was true. It read
+#: "It is NOT wired: `graphHost.env` is `{}` in values.yaml and no DSN reaches this pod" —
+#: accurate when written, false from `e36aa55`, which composed
+#: `GRAPH_HOST_POSTGRES_DSN` from the shared BPMN parts. Measured in the running pod on
+#: 2026-09-15: `[engine-lg] checkpointer: postgres (durable=True, ready=True)`.
+#:
+#: A STALE NEGATIVE IS THE EXPENSIVE KIND. A reader arriving at a 422 about `thread_id`
+#: would have read this and concluded no checkpointer could be active, then looked for the
+#: cause somewhere it was not. The claim was precise, sourced and wrong, which is what made
+#: it credible — so it names its own supersession rather than being quietly deleted.
+#:
+#: WHAT THE ROWS DECLARE IS UNCHANGED. `fin_program_brief`'s row says `thread_id = run id`:
+#: state scoped to ONE run, and the graph runs straight through with no interrupt, so
+#: nothing resumes a thread in a second process. Postgres buys durability ACROSS pods and
+#: restarts, which matters the moment a graph interrupts for a human — `HumanAwaitStep`.
+#: The difference is that the durability is now real rather than pending.
 #:
 #: SO THE DEGRADATION IS NAMED WHERE IT CAN BE READ, not left to be inferred: the saver in use
 #: is logged at boot and reported by `/health`. A durable-looking declaration served by

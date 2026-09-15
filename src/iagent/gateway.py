@@ -5204,6 +5204,17 @@ async def _generate_dagster_stream_inner(
     _direct = None
     if _pre_resolved:
         _direct_stages: list = []
+        # ONE RUN, ONE THREAD - minted here because this is where a run begins, and the
+        # stateful graph rows contract on `thread_id = run id`. Before this, the dispatch
+        # body carried no thread at all and `fin_program_brief` refused every call with a
+        # 422 (artifact-2-1789497046894); the NP-MERIDIAN pick was correct and the answer
+        # still never arrived.
+        #
+        # NOT `session_id`, which is the nearest thing already in scope and is WRONG in the
+        # direction that looks right: it would scope checkpoint state to a SESSION, so the
+        # second question of a session would resume the first one's state and reducers that
+        # append would merge two answers. A session is not a run.
+        _run_id = 'run-' + uuid.uuid4().hex
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -5217,6 +5228,7 @@ async def _generate_dagster_stream_inner(
                     chain_slots=_chain_slots,
                     spoken_answer=request.spoken_answer or "",
                     user_query=user_query,
+                    run_id=_run_id,
                     entitled_domains=entitled_domains or [],
                     acting_persona=user_persona,
                     ontology_url=_DAGSONTOLOGY_SVC_URL,
