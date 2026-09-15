@@ -335,7 +335,8 @@ def _require_capability(caller, capability: str, what: str) -> str:
 
 # Jena posture — endpoint, credential and the write endpoint — derived by a PURE module so the
 # rule is testable without booting this one (rdflib/weaviate/baml are imported at module scope,
-# which is why no test can import main.py). Flatten-aware import, same shape as registry_views.
+# so importing main.py in a test costs a stub harness — tests/test_predicate_hybrid_search.py
+# has the only one). Flatten-aware import, same shape as registry_views.
 # RULED 2026-09-13: FUSEKI_PASSWORD HAS NO DEFAULT. A configured endpoint without a credential
 # fails READINESS naming the variable, instead of authenticating with a literal out of source.
 try:
@@ -1103,8 +1104,26 @@ def _weaviate_hybrid_search_sync(
             for obj in response.objects
         ]
     except Exception as e:
-        print(f"Weaviate OntologyClass search failed: {e}")
-        return []
+        # RULED 2026-09-14: A MID-QUERY FAILURE IS A REFUSAL, NEVER AN EMPTY SUCCESS.
+        #
+        # This used to `return []`, and the caller that reads it is `/resolve`, whose very next
+        # step is the COLD START FALLBACK: it prints "WEAVIATE COLD START DETECTED", reads
+        # `_SPARQL_MAINTENANCE_CLASSES` out of the RDF graph, and answers from the MAINTENANCE
+        # ontology. So a transient Weaviate error did not produce a missing answer — it produced a
+        # confident WRONG-DOMAIN one, under a banner announcing a diagnosis that was false.
+        #
+        # An empty RESULT still means cold start and still takes that path. Only the FAILURE is
+        # separated out, which is the entire distinction: ADR-0009 makes Weaviate required routing
+        # infrastructure and requires a 503 "rather than silently degrading".
+        logging.error("Weaviate OntologyClass search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate OntologyClass search failed — routing cannot proceed. This is a "
+                "substrate failure, not an empty result; an empty result is a cold start and is "
+                f"served from the graph instead. Cause: {e}"
+            ),
+        ) from e
 
 
 async def weaviate_hybrid_search(
@@ -1326,9 +1345,24 @@ def _predicate_hybrid_search_sync(
         out.sort(key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True)
         return out
     except Exception as e:
-        # Routing accelerator — failures degrade the system, not crash it.
-        print(f"[ontology-service] Predicate hybrid search failed: {e}")
-        return []
+        # RULED 2026-09-14, same rule as the OntologyClass search above.
+        #
+        # The comment here used to read "Routing accelerator — failures degrade the system, not
+        # crash it." That stance predates ADR-0009, which makes Weaviate REQUIRED routing
+        # infrastructure and has `/search_predicates` return 503 when it is unavailable "rather
+        # than silently degrading to exact-match". The route already honours that for an absent
+        # client or collection; this handler was the hole underneath it — the same failure, one
+        # frame down, answered with an empty success.
+        #
+        # An empty list from here means NO PREDICATE MATCHED, and that is now its only meaning.
+        logging.error("[ontology-service] Predicate hybrid search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate Predicate search failed — routing cannot proceed. This is a substrate "
+                f"failure, not an empty candidate set. Cause: {e}"
+            ),
+        ) from e
 
 
 async def predicate_hybrid_search(

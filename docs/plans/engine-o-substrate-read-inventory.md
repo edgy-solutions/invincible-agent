@@ -83,9 +83,23 @@ every engine depends on is a wider blast radius bought for nothing.
 
 | site | what it is TRYING TO DO | lands in |
 |---|---|---|
-| `_weaviate_hybrid_search_sync` (L979) | hybrid search over the `OntologyClass` collection — nominate candidate classes for a phrase | `MeshVectors.nominate(collection, text, domain, scope)` |
+| `_weaviate_hybrid_search_sync` (L979) | hybrid search over the `OntologyClass` collection — nominate candidate classes for a phrase | `MeshVectors.nominate(collection, text, **domains: Sequence[str]**, limit)` |
 | `_predicate_hybrid_search_sync` (L1143) | the same over the predicate collection — nominate candidate verbs | same operation |
 | `collections.exists(...)` (L1012, L1164, L2612) | is the collection present at all — the guard that distinguishes "nothing matched" from "nothing to match against" | `MeshVectors.collection_present(name)` |
+
+**CORRECTED 2026-09-14, and the correction is a finding about THIS PACKET.** That row read
+`nominate(collection, text, domain, scope)` — **singular `domain`** — and the SDK lane built the
+Protocol from it, because this packet is the thing they were told to derive from. It is wrong:
+both searches scope by a LIST (`domains: list[str]`, `entitled_domains: list[str]`), the singular
+is the form the 2026-06-28 routing_domain lock fix SUPERSEDED, and a singular makes ADR-0009's
+`domains == []` clause inexpressible. Fixed in the Protocol at `a909867` after I caught it reading
+their signature against my own §7.
+
+**A SUMMARY LINE IS A CLAIM ABOUT THE THING IT SUMMARISES.** §7 had the detail right — it is where
+I recorded that the two collections scope by different shapes — and the table above it lost the
+arity. **The lossy version is the one that got cited**, because a table of candidate operations is
+exactly what a builder reads first. Where a row and a §7 entry disagree, the §7 entry is the
+measurement and the row is a label.
 
 **The existence probe is not plumbing and should survive into the interface.** It is the local
 form of a distinction this repo has paid for repeatedly: an empty result and an absent substrate
@@ -334,6 +348,14 @@ and nothing in any result said so. A `nominate()` that returns rows without the 
 them re-arms that exact failure for every future consumer. **The retrieval mode belongs in the
 return, not in a log line.**
 
+**RATIFIED 2026-09-14 — and it is ONE type, not a field here and a field there.** The SDK
+carries a single result that every read returns: `outcome` (answered | empty | failed |
+unreachable — WHETHER it was answered) and `mode` (HOW, where a mode exists). `MeshGraph`,
+`MeshOntology` and `MeshVectors` all return it, and ca builds it before any interface has a
+method. It is one decision rather than two converging ones only because the `mode` axis had no
+implementation yet — a ruling, not an existing design, which I had wrongly attributed to the
+SDK lane when arguing for the unification.
+
 **3. THE TWO COLLECTIONS SCOPE DOMAINS BY DIFFERENT RULES, AND ONE IS PERMISSIVE.**
 
     OntologyClass   domain  (singular)  ->  .equal(d) | .contains_any(ds)      strict
@@ -393,9 +415,64 @@ list means domain-agnostic."*
 **I CANNOT BOUND THE BLAST RADIUS FROM THIS REPO, which is the reason to ask rather than pick.**
 A derived census of all 38 `register_engine_to_mesh` call sites under `agent_fleet/` shows every
 one passes `domains=` — but three pass a variable or a request field, and registrants OUTSIDE this
-repo (doc-tools' sync, SDK `MeshTool` emits) are not visible here at all. **How many rows actually
-carry `domains == []` is a live Weaviate question**, and it is the number that decides whether this
-is a no-op or a routing outage.
+repo (doc-tools' sync, SDK `MeshTool` emits) are not visible here at all.
+
+### THE CENSUS LINE — measured against live sandbox 2026-09-14
+
+RULED 2026-09-14: ADR-0009 stands; the class collection comes under it. The measurement changed
+what that means. `tests/sandbox_e2e/_probe_domain_agnostic_rows.py`, read-only aggregate counts:
+
+    Predicate       129 rows,  27 with len(domains) == 0   ->  21% ARE domain-agnostic
+    OntologyClass 21078 rows,   0 domain-agnostic          ->  8 distinct domains, none empty
+
+**SOMEBODY DID REGISTER AGNOSTIC ON PURPOSE, 27 TIMES.** A fifth of the routing table. Deleting
+ADR-0009's branch would have taken all 27 out of every domain-scoped search.
+
+**AND THE CLASS BRANCH WOULD BE DEAD CODE: zero of 21,078 rows carry no domain.** All eight domain
+values are non-empty and they sum to the total. So the rule is satisfied vacuously in data, and
+writing the branch would be a guard that cannot fire.
+
+**WORSE, IT CANNOT BE WRITTEN AT ALL ON THIS SCHEMA — and that is why the two call sites differ.
+The divergence is in the SCHEMA, not in engine-o's code:**
+
+    Predicate      invertedIndexConfig.indexPropertyLength = True    -> len(domains)==0 filters
+    OntologyClass  invertedIndexConfig.indexPropertyLength = unset   -> len(domain)==0 RAISES
+
+Verified by running the filter: *"Property length must be indexed to be filterable! add
+`indexPropertyLength`"*. And `_weaviate_hybrid_search_sync` wraps its query in
+`except Exception: print(...); return []` — **so adding that branch would not fail loudly, it
+would empty the class candidate pool in silence.** Routing down, service green. The setting is
+immutable after collection creation, so enabling it means recreating `OntologyClass` and
+re-ingesting 21,078 objects: a prime-shaped migration, not a toggle.
+
+**WHAT LANDED INSTEAD IS A TRIPWIRE.** The probe asserts the premise the missing branch rests on —
+zero agnostic class rows — and reds the day one appears, naming what it would take to serve it. A
+revisit-later that cannot go stale is a check that goes red when the world changes; the number in
+this paragraph would otherwise be a figure outliving its measurement.
+
+### §7c — AN EXCEPTION RETURNED AS AN EMPTY SUCCESS: the ruled two, and the three the ruling did not name
+
+RULED 2026-09-14 and FIXED for the two Weaviate searches: a mid-query failure now refuses with a
+503 instead of returning `[]`. **The consumer is what made it urgent.** `/resolve` reads an empty
+candidate list, prints **"WEAVIATE COLD START DETECTED"**, falls back to
+`_SPARQL_MAINTENANCE_CLASSES` and answers from the MAINTENANCE ontology — so a transient Weaviate
+error produced a confident WRONG-DOMAIN answer under a banner naming a false diagnosis. Not a
+missing answer: a wrong one. An empty RESULT still means cold start and still takes that path;
+only the FAILURE is separated out.
+
+**THEN THE SAME CHECK WAS RUN OVER THE WHOLE MODULE**, because a reported defect is a sample. An
+AST walk for every `except` handler returning an empty container finds **five** sites. Partitioned,
+every member in the basis or excluded WITH A REASON:
+
+| site | substrate | disposition |
+|---|---|---|
+| `_weaviate_hybrid_search_sync` | Weaviate | **FIXED** — refuses 503 |
+| `_predicate_hybrid_search_sync` | Weaviate | **FIXED** — refuses 503 |
+| `execute_sparql` (L571) | Jena | **BASIS, not fixed** — a SPARQL failure returns `[]`, and its callers include `/policy_rules`, `/resolve_instance` and the cold-start fallback itself. Changing it touches every SPARQL consumer, so it is a ruling, not a lane's call. |
+| `_discover_enumerate_providers` (L1539) | Neo4j | **BASIS, not fixed** — a discovery failure returns no providers, which renders as *"this class cannot be listed"*. That exact SYMPTOM has been produced once before by a different cause (a hardwired `ENUMERATE_INSTANCES_URL`), and the module's own comment records it. |
+| `_get_subject_ancestor_chain` (L4282) | Neo4j | **BASIS, not fixed** — an empty chain silently narrows verb compatibility to the raw subject, which is the inheritance gap ADR-0018's amendment exists to close. |
+| `_served_class_uris` (L2006) | Neo4j | **EXCLUDED, with its reason already written**: *"RETURNS AN EMPTY SET ON ANY FAILURE, AND THE CALLER MUST READ THAT AS 'DO NOT FILTER'"*. It degrades OPEN on purpose — failing closed would empty the candidate pool and take routing down globally. This is the one case where an empty success is the correct answer, and it says so. |
+| `_decode_declarations` (L3177) | — | **EXCLUDED** — a JSON decode, no substrate behind it. Different family. |
 
 **6. AND ONE DEFAULT WORTH PINNING BEFORE IT BECOMES A CONTRACT.** The class search declares
 `limit: int = 10`; the predicate search requires `limit` from its caller. Two doors of one

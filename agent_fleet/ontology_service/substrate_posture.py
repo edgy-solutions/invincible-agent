@@ -23,8 +23,14 @@ SUBSTRATES, which a deployment may legitimately not have. Same spelling, opposit
 down here because otherwise the next reader will "fix" one to match the other.
 
 Born pure for the same reason `state_sparql` and `policy_rules_sparql` were: `main.py` imports
-rdflib, weaviate, neo4j and baml_client at module scope, so nothing in it can be exercised by a
-unit test, and a rule that cannot be exercised is a rule nobody will notice breaking.
+rdflib, weaviate, neo4j and baml_client at module scope, so exercising anything in it costs a
+stub harness that fakes all four — `tests/test_predicate_hybrid_search.py` builds one, and it is
+the only test in the repo that does. A pure module needs none of that, and a rule that is
+expensive to exercise is a rule nobody will notice breaking.
+
+(CORRECTED 2026-09-14: this paragraph first said main.py "cannot be exercised by a unit test".
+It can — that stub harness proves it. The design still holds on the cost; the absolute claim did
+not, and it was load-bearing in three files before a failing test disproved it.)
 
 RULED 2026-09-13: **the Fuseki credential has no default.** It used to be a literal in source
 (`os.getenv("FUSEKI_PASSWORD", "Admin123!")`), which is a default that fails OPEN in the one
