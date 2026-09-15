@@ -63,6 +63,26 @@ _REPO = Path(__file__).resolve().parents[1]
 #: self-closing, and no lane reaches master without that merge.
 _RULE_COMMIT = "b466612"
 
+#: Commits that DESCEND from the rule and still carry no trailer, each with its reason.
+#:
+#: NOT A CONVENIENCE. A commit in here could have complied and did not, and the entry exists
+#: only because published history is not rewritten (R-030) — the same reason the trailer wall
+#: could not be fixed by amending. An exemption that outlives its reason is a hole with a
+#: comment on it, so each entry says what happened rather than that it was allowed.
+#:
+#: THE ENTRIES RETIRE THEMSELVES: `test_AN_EXEMPTION_RETIRES_ITSELF` reds if an exempt commit
+#: ever carries a valid trailer, so a stale row is a failure rather than a silent allowance.
+#: (Mechanism from `lane/91`; adopted here before that branch merged.)
+_EXEMPT: dict[str, str] = {
+    "b15adbc": (
+        "engine-lg's compile fix, pushed direct to master. A genuine omission rather than a" + 
+        " boundary case: the rule WAS in its ancestry. It is the R-063 shape in reverse — the" + 
+        " lane merged master, which brought this seal, and pushed without running what the" + 
+        " merge carried in. Recorded, not rewritten."
+    ),
+}
+
+
 _TRAILER = re.compile(r"^Lane:\s*(\S+?)/(\S+)\s*$", re.M)
 
 
@@ -148,7 +168,9 @@ def test_THE_TRAILER_FORM_IS_PARSEABLE():
 def test_A_COMMIT_MADE_AFTER_THE_RULING_NAMES_ITS_LANE(sha: str, subject: str, body: str):
     """THE SEAL. Binds forward only; published history is not rewritten to satisfy it."""
     if not sha:
-        pytest.skip("no commits after the cutoff yet — the rule binds forward")
+        pytest.skip("no bound commits yet — the rule binds forward")
+    if any(sha.startswith(k) for k in _EXEMPT):
+        pytest.skip(f"exempt: {_EXEMPT[next(k for k in _EXEMPT if sha.startswith(k))]}")
     assert _TRAILER.search(body or ""), (
         f"{sha[:12]} ({subject[:60]!r}) carries no `Lane:` trailer.\n"
         f"Add `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01` — as a trailer. Git's "
@@ -192,3 +214,25 @@ def test_THE_TRAILER_MATCHES_THE_WORKTREE_IT_WAS_MADE_IN():
             f"worktree that made the commit (`git rev-parse --show-toplevel`, "
             f"`git branch --show-current`) - NEVER derive it from a session address."
         )
+
+
+def test_EVERY_EXEMPTION_NAMES_A_REASON():
+    """An exemption with an empty reason is a silenced failure wearing a decision's clothes."""
+    for sha, why in _EXEMPT.items():
+        assert why and why.strip(), f"{sha} is exempt with no reason"
+
+
+def test_AN_EXEMPTION_RETIRES_ITSELF():
+    """THE MECHANISM THAT KEEPS THE LIST FROM ROTTING, from `lane/91`.
+
+    If an exempt commit ever carries a valid trailer, the exemption is stale and the seal says
+    so rather than quietly allowing what no longer needs allowing. An exemption that outlives
+    its reason is a hole with a comment on it.
+    """
+    for sha, body in ((s_, b_) for s_, _sub, b_ in _bound_commits()):
+        key = next((k for k in _EXEMPT if sha.startswith(k)), None)
+        if key and _TRAILER.search(body or ""):
+            raise AssertionError(
+                f"{key} is in _EXEMPT but now carries a valid Lane: trailer. Delete the entry — "
+                f"it is allowing something that no longer needs allowing."
+            )

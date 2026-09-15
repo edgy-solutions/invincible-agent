@@ -2522,6 +2522,106 @@ R-057 (a test cannot tell you whether the data it fabricates exists);
 
 ---
 
+## R-061 — A SEAL THAT ASSERTS THE ORDER OF TWO STRINGS CANNOT SEE A `return` BETWEEN THEM
+
+**Found by mutation, 2026-09-14, inside the seal written to prove a guard fires.**
+
+`test_THE_SKIP_RETURN_IS_GONE` asserted that `_writer = get_writer()` appears after
+`bundle["status"] = "failed"`. Restoring the defect — a `return` between them — leaves both
+strings present, in that order. **The seal passed with the bug back in.**
+
+> **Text order is not control flow.** A check over source can say WHAT appears and in what
+> sequence; it cannot say what EXECUTES. The two diverge at exactly one construct — an early exit
+> — and that is the construct the seal existed to forbid.
+
+**THE PROPERTY, not the arrangement:** *nothing exits between preparing the write and performing
+it.* Asserted by scanning the span between the two statements for `return` / `raise`, which is a
+claim about reachability rather than about layout.
+
+**AND ONLY THE MUTATION FOUND IT.** The assertion reads correctly — it names the right two
+statements in the right order, and a reviewer checking whether it "tests the fix" would say yes.
+Re-reading it produced agreement; restoring the defect produced the truth. A kill sheet is half
+the evidence (R-056), and this is the other half doing the work a reading could not.
+
+Cf. [[the-instrument-and-the-subject-share-a-surface]] — there a check matching a STRING could not
+see a BEHAVIOUR; here it could not see an EXIT.
+
+---
+
+## R-062 — DO NOT PUSH A RED YOU HAVE NOT READ
+
+**Stated against myself.** `4294b61` was committed and pushed with `1 failed` in the run output.
+I had classified it, in the moment, as "probably the boundary touching an adjacent seal" and moved
+on.
+
+It was: `test_question_text_on_the_artifact_is_the_users_message` indexed the FIRST
+`"question_text":` in `gateway.py`, and the outer boundary had added a second construction site
+DEFINED EARLIER in the module — so the seal read the new one and reported a composition defect
+against a line that composes nothing. **A seal over a population of one, written when the
+population was one.**
+
+The classification was right. That is not the point.
+
+> **A red is a claim you have not evaluated.** Deciding what it probably is, and pushing on that,
+> is the fixture-world problem applied to your own judgement: the explanation is supplied by the
+> person who most wants it to be benign, and it is never checked against the failure output.
+
+The cost here was nothing, because the guess held. The cost is unbounded when it does not, and
+**nothing in the moment distinguishes the two** — which is the whole reason the rule cannot be
+"read it when it looks serious."
+
+**Both pre-existing reds and new ones.** A pre-existing failure is a statement about WHO
+introduced it, never about what it costs — the docs-corpus drift was carried across six suite runs
+on exactly that reasoning and it was the red that refused the prime.
+
+---
+
+## R-063 — A MERGE CAN BRING A NEW SEAL, AND RUNNING ONLY WHAT YOU EDITED WILL NOT FIND IT
+
+**`invincible-agent-81`'s correction to R-0xx's own rule**, found against their own work.
+
+*Choose suites by consequence, not by edit* silently assumes **the suite you need existed when you
+last looked at the suite list.** A merge is exactly the moment that assumption breaks: it brings
+code you did not write AND checks you have never run, and nothing about the act announces the
+second half.
+
+Two of their commits ran `tests/finance/` and `tests/cost/` green — correctly, by the rule as
+written — and never ran the trailer seal a master merge had just carried in.
+
+**THE TRAILER WALL PROVED IT FROM TWO LANES AT ONCE**, which is what made it a boundary defect
+rather than a lane being behind: `lane/eo` and `lane/91` hit the same check from different
+directions within an hour, neither having been able to comply.
+
+**How to apply:** after a merge, the population of relevant suites is not the one you reasoned
+about before it. Run what the merge brought, or run everything — and note that "run everything"
+is only sustainable if the seals are cheap, which is why **a seal's cost is part of whether it
+survives**: the ancestry predicate at 0.76s replaced a correct one at 134s, and the 134s version
+was on its way to being deselected and then deleted.
+
+### R-063.1 — DO NOT CHANGE SOMEONE ELSE'S MECHANISM SO YOUR OWN WORK PASSES
+
+**Both lanes refused it independently, and the refusal is why the defect was diagnosed rather than
+absorbed.** `lane/eo` and `lane/91` each hit the trailer seal, each could have swapped its
+predicate inside their own branch, and each declined: *"changing someone else's predicate so my own
+commits pass is the shape an exclusion list exists to avoid."*
+
+> **It is not the edit that is wrong, it is the direction of fit.** Adjusting a check until the
+> data passes is indistinguishable from fixing the check, at the moment you do it, to you. The
+> difference only shows up later, in whether the check still refuses anything.
+
+What they did instead is the pattern: **measure, propose, and hand the owner the numbers.** The eo
+lane brought 16-bound-by-date against 12-by-ancestry with the difference named; `lane/91` brought
+a six-commit partition with four exempt and two genuinely bound. Neither asked for an exception;
+both made the owner's decision cheap.
+
+**And that is what turned it from "a lane is behind" into a boundary defect** — two lanes, opposite
+directions, the same wall within an hour, neither having moved the wall.
+
+Related: R-030 (published history is not rewritten — the reason the trailer wall could not be
+fixed by amending); R-058.1.
+
+---
+
 ---
 
 ## Why this file exists at all
