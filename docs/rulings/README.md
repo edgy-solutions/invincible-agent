@@ -2346,13 +2346,21 @@ unless somebody says so.
 
 ### R-058.2 — A WRONG CLAIM CAN BE CHECKED AGAINST THE WORLD; A WRONG ATTRIBUTION CORRUPTS THE CHECK
 
-**Found by `invincible-agent-28`, against their own relay.** Architect-ruled as R-058's mechanism
+**Found by the `lane/eo` lane, against their own relay.** Architect-ruled as R-058's mechanism
 stated from the inside, which is why it is placed here rather than given its own number.
 
-They relayed the architect's `retrieval_mode` ruling to the SDK lane as **"your `retrieval_mode`"**
+**⛔ THIS RULING WAS MISATTRIBUTED AT THE MOMENT OF FILING, AND THE ERROR IS THE BEST WORKED
+EXAMPLE IT HAS.** Lane 1 credited it to `invincible-agent-28` — a display name shared by TWO live
+sessions, one working `lane/eo` and one working `lane/74`. The tool said so on every send ("1
+other live session is also named…"), and Lane 1 read a name where an identity was required. So a
+ruling whose text is *a wrong attribution corrupts the check* was filed with a wrong attribution,
+and the lane it named had to prove a negative about work it had never touched — which is exactly
+the cost the ruling describes. **Attribution is now by LANE, the durable key, per R-058.1.**
+
+That lane relayed the architect's `retrieval_mode` ruling to the SDK lane as **"your `retrieval_mode`"**
 and built an argument on it: *you already have the HOW axis, do not design the WHETHER axis
 separately.* It was never that lane's. They searched five repos, found **zero** occurrences, and
-said they nearly took it on 28's say-so —
+said they nearly took it on that say-so —
 
 > **because being told "this is yours" reads as a reminder rather than as an assertion.**
 
@@ -2428,7 +2436,10 @@ cutoff-in-the-future is that law inside the check itself);
 
 ## R-059 — A JUSTIFICATION NOBODY TESTED OUTLIVES WHAT IT JUSTIFIED
 
-**Offered by `invincible-agent-28` against their own work; numbered here per R-021.**
+**Offered by the `lane/eo` lane against their own work; numbered here per R-021.**
+
+*(Originally filed crediting `invincible-agent-28`, a display name shared by two live sessions.
+Corrected to the lane, which is checkable — see R-058.2's note.)*
 
 **A reason is the least-checked sentence in a change.** The claim gets reviewed and the code gets
 tested; the justification is read as background. So it survives the thing it was written to
@@ -2454,6 +2465,60 @@ several, and the several are the ones a reader finds first.
 Related: R-058.2 — a reason nobody tested and a source nobody checked, the same week and the same
 shape; [[a-docstring-is-not-evidence]]; [[a-justification-invented-downstream-fits-by-construction]]
 — there the reason was built to fit a conclusion, here it was true once and never re-read.
+
+---
+
+## R-060 — A SEAL THAT SPEAKS ITS SUBJECT'S DIALECT CANNOT DETECT THAT THE DIALECT IS WRONG
+
+**Found by the `lane/74` lane against their own suite, 2026-09-14.**
+
+Engine S registered one door, `{base}/analyze`, taking the verb in the body as `fn`. The fleet
+puts the verb in the PATH — `{base}/measure/{fn}` — so the dispatcher sends `{query, params}` and
+every Engine S verb 422'd on arrival: *missing `fn`*.
+
+**THEIR SEAL WAS GREEN THROUGHOUT AND COULD NOT HAVE CAUGHT IT.** It posted to `/analyze` with
+`{"fn": ...}` — the engine's own dialect. So the test agreed with the engine, both disagreed with
+the fleet, and
+
+> **the agreement is what made it look verified.**
+
+This is *the instrument and the subject share a surface* raised from a STRING to a CONTRACT. A
+check written from the same understanding as the thing it checks confirms the understanding, not
+the behaviour — and it does so more convincingly the more carefully it is written.
+
+**IT WAS FOUND BY REPLAYING AGAINST THE LIVE POD** with a body rebuilt from a stored artifact,
+which is the one reading that could not inherit the dialect, because the pod answers the wire and
+not the author.
+
+### The replacement is derived — and took two wrong versions, both failing HONEST data
+
+    v1  required "/measure/" in every endpoint
+        -> flagged the /resolve_instance and /enumerate_instances providers, which are CORRECT:
+           a provider answers for a whole CLASS, so there is no verb to put in a path.
+    v2  still flagged cost's f"{base}/{spec['endpoint']}", also correct — each spec carries its
+        own endpoint, so that URL DOES vary.
+        -> it had encoded ONE ENGINE'S SPELLING of the property instead of the property.
+
+**The rule is now the property: THE URL MUST VARY PER REGISTRATION.** One interpolation is a
+constant path shared by every verb; two or more means something per-registration reaches the
+path. Mutation-checked: restoring `{base}/analyze` reds it by name.
+
+**AND THE ARGUMENT WAS ALREADY WRITTEN DOWN IN `engine-cost`:** one endpoint per verb, *because
+the registrar BAKES `endpoint_url` per verb* — so a single body-dispatched route gives every verb
+the same URL and the mesh has no way to reach one rather than another. The reason existed, in a
+neighbouring engine, unread at the time the second shape was chosen.
+
+### The general form, which showed up twice in one engine on one day
+
+**Survey before mint applies to an API exactly as it applies to a class.** `maint:WorkOrder` was
+refused because the class already exists under the standard's name (`mro:MaintenanceWorkOrder`);
+`{base}/analyze` was refused because the shape already exists under the fleet's. Same rule, one
+spelling a vocabulary and one spelling a wire contract.
+
+Related: [[the-instrument-and-the-subject-share-a-surface]]; R-056 (agreement is not corroboration
+when there is one witness — here the witness is a shared assumption rather than a shared field);
+R-057 (a test cannot tell you whether the data it fabricates exists);
+[[a-filed-defect-is-a-sample-not-a-census]] — v1 and v2 were each a sample of the property.
 
 ---
 

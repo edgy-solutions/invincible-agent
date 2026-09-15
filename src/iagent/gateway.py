@@ -4737,7 +4737,7 @@ async def generate_dagster_stream(
         # nearest hop win: a person who answers a slot twice meant the second answer.
         _this_turn = {
             k: {"value": v, "source": SLOT_SOURCE_PICKED}
-            for k, v in dict(bound_slots or {}).items()
+            for k, v in dict(request.bound_slots or {}).items()
         }
         _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
