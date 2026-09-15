@@ -31,7 +31,8 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         periods_in,
     )
     from measure_modules import (
-        burn_series, eac_formulas, index_series, variance_driver_ranking,
+        burn_series, eac_formulas, funding_grid, index_series,
+        variance_driver_ranking,
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
@@ -39,7 +40,8 @@ except ImportError:
         periods_in,
     )
     from agent_fleet.finance_agent.measure_modules import (
-        burn_series, eac_formulas, index_series, variance_driver_ranking,
+        burn_series, eac_formulas, funding_grid, index_series,
+        variance_driver_ranking,
     )
 
 FIN = "http://invincible-agent/fin#"
@@ -1091,41 +1093,16 @@ def fin_funding_status(
     _require_program(state, program_id)
     periods = set(periods_in(window))
 
-    rows: list[dict[str, Any]] = []
-    for line in state.funding:
-        if line.program_id != program_id or line.period not in periods:
-            continue
-        verdict = _funding_state(line.authorized, line.obligated, line.expended)
-        rows.append({
-            # ── the grid's contract: subject x period, three quantities, a verdict ──
-            # `subject_id` is the cell's POSITION and `line_id` is what it is ABOUT — the
-            # same split the planning grid draws, and the reason the archetype cannot name
-            # the subject itself.
-            "subject_id": line.line_id,
-            "subject_name": line.name,
-            "period": line.period,
-            "required": line.authorized,
-            "committed": line.obligated,
-            "secured": line.expended,
-            "shortfall": max(0.0, line.authorized - line.obligated),
-            "gap": line.authorized - line.obligated,
-            "at_risk": max(0.0, line.authorized - line.expended),
-            "state": verdict,
-            # ── the same cell in IPMDAR's words ──
-            "line_id": line.line_id,
-            "authorized": line.authorized,
-            "obligated": line.obligated,
-            "expended": line.expended,
-            "unobligated_balance": line.authorized - line.obligated,
-            "unexpended_balance": line.obligated - line.expended,
-            "funding_state": {
-                "short": "unobligated-balance",
-                "pledged-not-firm": "obligated-not-expended",
-                "met": "expended",
-            }[verdict],
-            "value_unit": "USD",
-            "value_label": "Unobligated balance",
-            "scope_label": line.name,
-        })
-    rows.sort(key=lambda r: (r["subject_id"], PERIOD_ORDER[r["period"]]))
-    return rows
+    # THIS VERB GATHERS AND FILTERS; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-15
+    # behaviour-preserving). The window filter stays HERE — which rows exist is a question
+    # about state, and R-029 found a dropped filter answering a one-quarter question with the
+    # programme's whole history.
+    cells = ((line.line_id, line.name, line.period,
+              line.authorized, line.obligated, line.expended)
+             for line in state.funding
+             if line.program_id == program_id and line.period in periods)
+    return funding_grid.build(
+        cells,
+        verdict=_funding_state,
+        order=lambda period: PERIOD_ORDER[period],
+    )
