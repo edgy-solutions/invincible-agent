@@ -1,6 +1,46 @@
 """Every substrate-access exception carries an expiry, and the seal reds when one passes.
 
-WHAT THIS IS FOR. The NetworkPolicy allowlist names which pods may open a connection to Neo4j,
+⛔ READ THIS FIRST: THE CHART CARRIES NO NETWORKPOLICY MANIFEST. Measured 2026-09-15:
+
+    grep -rl "kind: NetworkPolicy" helm/ deploy/   ->  ZERO manifests   [REPO-LEVEL]
+
+**That is the claim that carries, and it is deployment-independent: a chart with no manifest
+cannot apply a policy ANYWHERE.**
+
+    kubectl get networkpolicy -A   ->  in SANDBOX: none in the namespace; one cluster-wide and
+                                       it is Rancher's own cattle-fleet-system/default-allow-all,
+                                       709d old.                        [SANDBOX ONLY]
+
+**THE SANDBOX READING IS SCOPED ON PURPOSE.** There is at least one other deployment of this chart
+— the work cluster — that no session here can read. *"No policy in sandbox"* does not generalise
+to a deployment nobody can see, and an out-of-band policy applied by hand there is outside what
+any of us can observe. The first draft of this note said "the cluster", which reads as THE WORLD
+while naming the one you happen to hold credentials for; `invincible-agent-28` caught it, having
+had the same correction made to them.
+
+**So this file described a control the chart cannot apply, in its own opening sentence, and read
+as coverage for it.** Not stale — NEVER TRUE. `invincible-agent-28` found it while checking a claim
+an SDK lint had inherited: the only occurrence of the word "NetworkPolicy" anywhere was this
+file's assertion that one exists.
+
+**THE EXCLUSION BELOW HAS NOTHING TO BE EXCLUDED FROM.** `presentation_agent` reaching Weaviate
+through `urllib.request` — the standard library, invisible to any package-name ban — is the case
+the policy exists for, and it is UNENFORCED today. The expiry still fires, and what it now means
+is "the control this exception assumes was never built", which is a louder finding than the
+exception it was written to time out.
+
+**AND THE ARGUMENT THAT RULED IT WAS ABOUT A DIFFERENT QUESTION.** The third arm was ruled on the
+ground that a package-name seal cannot see `httpx` and can never see `urllib.request`. That is
+true, and it is about what the FIRST TWO arms cannot do; it said nothing about whether the third
+had been built. Nobody checked, including me when I wrote this.
+
+The manifest arm below is a STRICT XFAIL: it asserts the policy exists, fails today, and the day
+somebody builds it the arm XPASSes, the strict marker fails, and this account has to be rewritten
+rather than quietly outliving its subject.
+
+---
+
+WHAT THIS WAS FOR. The NetworkPolicy allowlist names which pods may open a connection to Neo4j,
 Weaviate and Jena. It is the **third arm** of the dependency rule — the first two being *the
 import name is not the capability* and *the pyproject is not the import*; this one is **the
 import is not the connection**, and it is the only arm that can see a capability reached with no
@@ -127,3 +167,38 @@ def test_THE_ALLOWLIST_IS_PLURAL_AND_REASONED():
     assert len(SUBSTRATE_CLIENTS) >= 4, "the allowlist parsed to almost nothing"
     for pod, why in SUBSTRATE_CLIENTS.items():
         assert why and why.strip(), f"{pod} is allowlisted with no reason"
+
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "THE CHART CARRIES NO NetworkPolicy MANIFEST — zero in helm/ or deploy/ — so it "
+        "cannot apply one in ANY deployment of it. That is the repo-level claim and it is what "
+        "this asserts. It deliberately says nothing about whether some deployment has a policy "
+        "applied out-of-band: that is unobservable from here, and 'no enforcement anywhere' is "
+        "a much larger claim than the evidence. STRICT: the day a manifest lands this XPASSes, "
+        "the marker fails, and the account above is rewritten rather than left describing a "
+        "world that has moved."
+    ),
+)
+def test_THE_NETWORKPOLICY_MANIFEST_EXISTS():
+    """The third arm of the dependency rule — the import is not the CONNECTION.
+
+    A package ban cannot see `httpx`; nothing can see `urllib.request`. Only an egress control
+    can, and there is none. Asserted here rather than left implicit because the surrounding file
+    reads as though the control exists, and a reader arriving at the exception list would
+    reasonably conclude the allowlist it excludes from is real.
+    """
+    manifests = [
+        p for d in ("helm", "deploy")
+        for p in (_REPO / d).rglob("*.yaml")
+        if "kind: NetworkPolicy" in p.read_text(encoding="utf-8", errors="replace")
+    ] if (_REPO / "helm").is_dir() else []
+    assert manifests, (
+        "the chart carries no NetworkPolicy manifest, so it cannot enforce which pods may open "
+        "a connection to Neo4j, Weaviate or Jena in any deployment of it — and "
+        "presentation_agent's urllib path, the case the policy exists for, has nothing in the "
+        "chart standing between it and Weaviate. (This says nothing about a policy some "
+        "deployment may have applied out-of-band; that is not observable from the repository.)"
+    )
