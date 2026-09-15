@@ -137,14 +137,24 @@ def test_THE_TRAILER_MATCHES_THE_WORKTREE_IT_WAS_MADE_IN():
             pairs.add((Path(m.group(1)).name, m.group(2)))
     if not pairs:
         pytest.skip("no worktree registry readable here")
-    known_worktrees = {w for w, _ in pairs}
+    # THE PAIR, NOT THE HALVES. The first version checked only that the worktree existed, so
+    # `ia-74/lane/01` - two real names that are not each other's - would have passed. A trailer
+    # can be wrong by MISPAIRING as easily as by inventing, and the mispaired one is worse: it
+    # resolves to a lane that exists and belongs to somebody else.
+    #
+    # AND THE DERIVATION IS THE THING TO FIX, NOT THE ROW. `invincible-agent-28` works in
+    # `ia-74/lane/74`. A trailer built from the SESSION ADDRESS would read `ia-28/lane/28` - a
+    # lane that does not exist. The session address and the worktree are independent and neither
+    # predicts the other; the session address also churns, which is why the roster is not keyed
+    # on it either. Read the trailer from the worktree, never from what a session calls itself.
     for sha, subject, body in _bound_commits():
         m = _TRAILER.search(body or "")
         if not m:
             continue                      # the assertion above owns that case
-        wt = m.group(1)
-        assert wt in known_worktrees, (
-            f"{sha[:12]} claims `Lane: {wt}/{m.group(2)}` but {wt!r} is not a registered "
-            f"worktree ({sorted(known_worktrees)}). A trailer naming a lane that does not "
-            f"exist points the next dispatch at nobody."
+        claimed = (m.group(1), m.group(2))
+        assert claimed in pairs, (
+            f"{sha[:12]} claims `Lane: {claimed[0]}/{claimed[1]}`, which is not a registered "
+            f"worktree/branch PAIR. Registered: {sorted(pairs)}. Read the trailer from the "
+            f"worktree that made the commit (`git rev-parse --show-toplevel`, "
+            f"`git branch --show-current`) - NEVER derive it from a session address."
         )
