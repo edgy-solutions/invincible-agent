@@ -48,6 +48,20 @@ pre-ADR-0018 behaviour arriving through the error path is the design change undo
 exception.** A degraded answer here is indistinguishable from a considered one, so there is nothing
 to carry a degradation marker to — the answer itself would be the wrong shape.
 
+## RATIFIED 2026-09-14 — THE SHARED RESULT TYPE, built before any interface has a method
+
+This packet's three states are not this packet's invention any more. **One result type in the SDK
+carries both axes and `MeshGraph`, `MeshOntology` and `MeshVectors` all return it:**
+
+    outcome   answered | empty | failed | unreachable     -- WHETHER it was answered
+    mode      how it was answered, where a mode exists    -- e.g. hybrid | bm25
+
+ca builds the type first; this packet lands ON it. The reason it is cheap now: there are not two
+converging decisions (a status field on the graph side, a mode field on the vector side, meaning
+one thing in two vocabularies) — **there is one decision, and it is only one because the `mode`
+axis had no implementation yet to be consistent with.** That is the correction that made it a
+single type instead of a later reconciliation.
+
 ## The shape when it lands
 
 1. `_get_subject_ancestor_chain` raises on a substrate failure; **an absent subject still returns

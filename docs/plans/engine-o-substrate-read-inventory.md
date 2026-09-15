@@ -334,6 +334,14 @@ and nothing in any result said so. A `nominate()` that returns rows without the 
 them re-arms that exact failure for every future consumer. **The retrieval mode belongs in the
 return, not in a log line.**
 
+**RATIFIED 2026-09-14 — and it is ONE type, not a field here and a field there.** The SDK
+carries a single result that every read returns: `outcome` (answered | empty | failed |
+unreachable — WHETHER it was answered) and `mode` (HOW, where a mode exists). `MeshGraph`,
+`MeshOntology` and `MeshVectors` all return it, and ca builds it before any interface has a
+method. It is one decision rather than two converging ones only because the `mode` axis had no
+implementation yet — a ruling, not an existing design, which I had wrongly attributed to the
+SDK lane when arguing for the unification.
+
 **3. THE TWO COLLECTIONS SCOPE DOMAINS BY DIFFERENT RULES, AND ONE IS PERMISSIVE.**
 
     OntologyClass   domain  (singular)  ->  .equal(d) | .contains_any(ds)      strict
