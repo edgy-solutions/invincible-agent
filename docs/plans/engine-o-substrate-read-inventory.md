@@ -83,9 +83,23 @@ every engine depends on is a wider blast radius bought for nothing.
 
 | site | what it is TRYING TO DO | lands in |
 |---|---|---|
-| `_weaviate_hybrid_search_sync` (L979) | hybrid search over the `OntologyClass` collection — nominate candidate classes for a phrase | `MeshVectors.nominate(collection, text, domain, scope)` |
+| `_weaviate_hybrid_search_sync` (L979) | hybrid search over the `OntologyClass` collection — nominate candidate classes for a phrase | `MeshVectors.nominate(collection, text, **domains: Sequence[str]**, limit)` |
 | `_predicate_hybrid_search_sync` (L1143) | the same over the predicate collection — nominate candidate verbs | same operation |
 | `collections.exists(...)` (L1012, L1164, L2612) | is the collection present at all — the guard that distinguishes "nothing matched" from "nothing to match against" | `MeshVectors.collection_present(name)` |
+
+**CORRECTED 2026-09-14, and the correction is a finding about THIS PACKET.** That row read
+`nominate(collection, text, domain, scope)` — **singular `domain`** — and the SDK lane built the
+Protocol from it, because this packet is the thing they were told to derive from. It is wrong:
+both searches scope by a LIST (`domains: list[str]`, `entitled_domains: list[str]`), the singular
+is the form the 2026-06-28 routing_domain lock fix SUPERSEDED, and a singular makes ADR-0009's
+`domains == []` clause inexpressible. Fixed in the Protocol at `a909867` after I caught it reading
+their signature against my own §7.
+
+**A SUMMARY LINE IS A CLAIM ABOUT THE THING IT SUMMARISES.** §7 had the detail right — it is where
+I recorded that the two collections scope by different shapes — and the table above it lost the
+arity. **The lossy version is the one that got cited**, because a table of candidate operations is
+exactly what a builder reads first. Where a row and a §7 entry disagree, the §7 entry is the
+measurement and the row is a label.
 
 **The existence probe is not plumbing and should survive into the interface.** It is the local
 form of a distinction this repo has paid for repeatedly: an empty result and an absent substrate

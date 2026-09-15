@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -411,6 +411,10 @@ _Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
+
+- **two-embed-constants-in-two-repos-drift-into-vectors** — DEFAULT_EMBED_MODEL and EXPECTED_EMBED_DIM are hand-duplicated across agent_fleet/utils/embed.py and doc_tools/utils/embed.py, enforced by "code review on either constant catches drift". A model divergence produces VECTORS rather than an error, and Weaviate's dimension lock — the only real net — cannot see it.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: a ruling on where the embedding contract lives — the twin is in doc-tools, so no change inside this repo can make the two agree
+  → [docs/plans/two-embed-constants-in-two-repos-drift-into-vectors.md](plans/two-embed-constants-in-two-repos-drift-into-vectors.md)
 
 - **unbound-output-types-triage** — PHASE C, 2026-08-24. Seven Engine P output types have no archetype binding. Each ruled by READING ITS PAYLOAD and applying the semantic-axis test — what does the colour or position MEAN to a reader — rather than by matching row shapes. THREE bind to existing archetypes (DependencyNeighborhoodSet and ConstraintViolationSet to INSTANCES_BY_PROPERTY, each needing a payload reshape to columns/rows/state-vocabulary), TWO need their own component (ContributionSequence and PlateauTimeline, both because they carry MILESTONE markers no existing contract expresses), and TWO are structured documents (FootprintSet, ChangeLog). CoverageGapSet is the honest list-not-grid. This is the morning's build list, pre-reasoned; nothing here is built.
   status: open · owner: unassigned · repo: cortex-ui
