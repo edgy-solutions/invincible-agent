@@ -2344,8 +2344,60 @@ so."* **A correction to a misattribution must not create a second one in the oth
 Being named in a thread is not review, and a reader six weeks out cannot tell the difference
 unless somebody says so.
 
+### R-058.1 — THE REMEDY, RATIFIED 2026-09-14
+
+**`Lane: <worktree>/<branch>` as a trailer on every commit**, e.g. `Lane: ia-01/lane/01`.
+
+**IT NAMES THE DURABLE KEY, NOT THE ADDRESS** — the way the roster does. A session id
+(`invincible-agent-65`) dies with the session; the worktree/branch pair outlives it and is what a
+later reader can actually check out. `git worktree list` is the registry.
+
+Enforced by `tests/test_every_commit_names_its_lane.py`, which:
+
+  * binds **forward only, by date** — retro-fitting means rewriting published history, which is
+    refused here for the same reason a pushed tag is never rewritten;
+  * asserts **the premise** (one git identity across all lanes), so the day lanes commit under
+    distinct identities somebody finds out there rather than maintaining redundant ceremony;
+  * asserts the trailer names a **registered worktree** — one naming a lane that does not exist
+    points the next dispatch at nobody, which is worse than silence, because a confident wrong
+    answer travels further than none.
+
+**Measurer and reviewer stay distinct from author.** The seal asserts authorship only. Taking a
+reading is not writing the line, and being named in a thread is not review.
+
+**THE TRAILER IS READ FROM THE WORKTREE, NEVER DERIVED FROM A SESSION ADDRESS.** Found within the
+hour of ratifying it, by `invincible-agent-28`, against my own assertion about them:
+
+    Lane: ia-28/lane/28     <- what I wrote, from the session name
+    Lane: ia-74/lane/74     <- what that session actually is
+
+**The session address and the worktree are independent, and neither predicts the other.** The
+session address also churns, which is why the roster is not keyed on it. 28 had made the
+reciprocal error earlier in the same arc — telling peers to address them as
+`invincible-agent-74` because they worked in `ia-74` — and `ListAgents` corrected them. So the
+mapping fails in *both* directions and looks reasonable in both.
+
+The seal's registry arm caught it (`ia-28` is in no worktree list), which is the guard firing on
+its author. But it checked only the worktree HALF, so `ia-74/lane/01` — two real names that are
+not each other's — would have passed. **It checks the PAIR now: mispairing is worse than
+inventing, because an invented lane resolves to nobody and a mispaired one resolves to somebody.**
+
+> **When a derivation produces a wrong identifier, fix the derivation, not the row.** A row
+> corrected by hand leaves the rule that produced it intact and pointed at the next one.
+
+Related: [[an-authority-ranking-needs-a-scope]] and [[prefix-registries-bite-silently]] — the same
+shape, where a plausible key resolves to the wrong thing rather than to nothing.
+
+**AND THE FIRST VERSION OF THE SEAL COULD NOT FIRE.** Its cutoff was a round `23:00` that had not
+arrived: every commit exempt, an empty parametrised population, and `1 skipped` — which inside a
+run of hundreds reads exactly like a pass. The guard against commits with no recoverable owner
+shipped as a guard that could not run, in the same change that argued for reachability. It is now
+bound one second before its own implementing commit, so **the rule's first subject is the commit
+that created it**, and a trailerless probe was shown to red the file.
+
 Related: [[a-stale-claim-is-pre-authenticated]] — precision makes a claim more trusted, and this
-is the same mechanism applied to provenance; R-056 (two declarations that never meet);
+is the same mechanism applied to provenance; R-056 (two declarations that never meet); R-057 (the
+cutoff-in-the-future is that law inside the check itself);
 [[an-adr-does-not-allocate-a-component-name]] — the other place one name is read as two things.
 
 ---
