@@ -229,6 +229,7 @@ def run_registration_saga(
                 driver=driver,
                 verb_iri=verb_iri,
                 input_uri=input_uri,
+                tool_urn=tool_urn,
                 slots=json.loads(rel_props.get("slots") or "[]"),
             )
             if _pb["written"] or _pb["deleted"]:

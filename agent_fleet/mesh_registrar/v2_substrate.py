@@ -208,13 +208,17 @@ def merge_neo4j_predicate_edge(
 # meaningful — an arm asserting "a required:false edge does not widen the pool" is asserting
 # against a case that cannot occur if this function never writes one.
 #
+# IDENTITY IS THE PAIR `(verb_iri, _tool_urn)`, NOT THE VERB. One verb iri may be registered by
+# several providers from DIFFERENT subject classes, so `_tool_urn` says whose parameterisation an
+# edge is — exactly as it does on the verb relationship itself. The pool joins on both halves.
+#
 # ONLY SPOKEN SLOTS CARRY A REFERENT, so only spoken slots can parameterise. A handle is
 # resolved by the dispatcher and was never something a speaker names. Nothing is filtered on
 # `kind` here — the absence of `referent` already encodes it, and a second gate would be a
 # second implementation of that rule.
 _PARAMETERISED_SYNC_DELETE = """
 MATCH (vsubj:OntologyClass {uri: $input_uri})-[p:PARAMETERISED_BY]->(:OntologyClass)
-WHERE p.verb_iri = $verb_iri
+WHERE p.verb_iri = $verb_iri AND p._tool_urn = $tool_urn
 DELETE p
 RETURN count(p) AS deleted
 """
@@ -226,7 +230,7 @@ WITH vsubj, ref
 CALL apoc.merge.relationship(
     vsubj,
     'PARAMETERISED_BY',
-    {verb_iri: $verb_iri, slot: $slot},
+    {verb_iri: $verb_iri, _tool_urn: $tool_urn, slot: $slot},
     $props,
     ref,
     $props
@@ -240,6 +244,7 @@ def sync_parameterised_by_edges(
     driver: Any,
     verb_iri: str,
     input_uri: str,
+    tool_urn: str,
     slots: Any,
 ) -> dict:
     """Make this verb's PARAMETERISED_BY edges EXACTLY match its current declaration.
@@ -250,9 +255,16 @@ def sync_parameterised_by_edges(
     that has ceased to be true. Deleting this verb's edges first makes the edge set a statement
     about the CURRENT declaration rather than about every declaration there has ever been.
 
-    Scoped to `verb_iri`: a concurrent registration of a DIFFERENT verb on the same subject
-    class keeps its edges, the same containment `compensate_neo4j_predicate_edge` gets from
-    filtering on identity.
+    SCOPED TO `(verb_iri, _tool_urn)`, AND THE PAIR IS LOAD-BEARING. Scoping the delete to
+    `verb_iri` alone was an ACTIVE defect, not a theoretical one: ONE VERB CAN HAVE SEVERAL
+    PROVIDERS. `mesh:finVarianceDrivers` is registered by `engine_fin_finance` from `fin#Program`
+    and by `engine_fin_finance_by_subject` from `fin#ControlAccount`, both declaring
+    `program_id`. Under a verb-only sync the SECOND provider to register would DELETE the first's
+    parameterisation and write only its own — the first silently loses its widening until it
+    happens to re-register, and nothing errors anywhere. This module already states the rule four
+    lines above `_COMPENSATE_CYPHER`: filter on BOTH "so a concurrent registration that already
+    committed for a different provider is NOT collaterally deleted". The parameterisation edge
+    inherits that identity or it inherits that bug.
 
     Returns ``{"written": [...], "unresolved": [...], "deleted": n}``. `unresolved` names slots
     whose referent class has no OntologyClass node — REPORTED, never silently dropped.
@@ -268,7 +280,8 @@ def sync_parameterised_by_edges(
 
     with driver.session() as session:
         rec = session.run(
-            _PARAMETERISED_SYNC_DELETE, input_uri=input_uri, verb_iri=verb_iri
+            _PARAMETERISED_SYNC_DELETE,
+            input_uri=input_uri, verb_iri=verb_iri, tool_urn=tool_urn,
         ).single()
         deleted = int(rec["deleted"]) if rec else 0
 
@@ -283,11 +296,22 @@ def sync_parameterised_by_edges(
                 input_uri=input_uri,
                 referent_uri=str(decl["referent"]),
                 verb_iri=verb_iri,
+                tool_urn=tool_urn,
                 slot=slot_name,
-                # bool() is deliberate: a manifest carrying required="false" (a STRING) would
-                # otherwise be written truthy, and the pool's `= true` would admit an optional
-                # slot — the unconstrained enum ADR-0018 exists to prevent.
-                props={"required": bool(decl.get("required", False))},
+                # THE IDENTITY FIELDS GO IN $props TOO, mirroring
+                # merge_neo4j_predicate_edge's "Ensure the identity fields are also in $props
+                # so a CREATE has them". The pool filters on verb_iri/_tool_urn being present,
+                # so an edge created without them is one the query silently ignores — a
+                # shortfall no recording double can see, because the double never CREATEs.
+                props={
+                    "verb_iri": verb_iri,
+                    "_tool_urn": tool_urn,
+                    "slot": slot_name,
+                    # bool() is deliberate: a manifest carrying required="false" (a STRING)
+                    # would otherwise be written truthy, and the pool's `= true` would admit an
+                    # optional slot — the unconstrained enum ADR-0018 exists to prevent.
+                    "required": bool(decl.get("required", False)),
+                },
             ).single()
             if row is None:
                 unresolved.append({"slot": slot_name, "referent": str(decl["referent"])})
@@ -310,11 +334,13 @@ def compensate_parameterised_by_edges(
     driver: Any,
     verb_iri: str,
     input_uri: str,
+    tool_urn: str,
 ) -> int:
-    """DELETE this verb's PARAMETERISED_BY edges. Idempotent; returns the count removed."""
+    """DELETE this PROVIDER's PARAMETERISED_BY edges for this verb. Idempotent."""
     with driver.session() as session:
         rec = session.run(
-            _PARAMETERISED_SYNC_DELETE, input_uri=input_uri, verb_iri=verb_iri
+            _PARAMETERISED_SYNC_DELETE,
+            input_uri=input_uri, verb_iri=verb_iri, tool_urn=tool_urn,
         ).single()
     return int(rec["deleted"]) if rec else 0
 

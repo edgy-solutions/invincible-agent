@@ -91,7 +91,7 @@ def test_AN_EDGE_IS_WRITTEN_FOR_EVERY_REFERENT_CARRYING_SLOT_REQUIRED_OR_NOT():
     control arm asserting against a case that cannot occur."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots(
             {"name": "lot", "referent": _LOT, "required": True},
             {"name": "window", "referent": "http://x#Period", "required": False},
@@ -106,7 +106,7 @@ def test_REQUIRED_IS_ALWAYS_WRITTEN_INCLUDING_FALSE():
     shortfall is invisible from both sides."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "window", "referent": "http://x#Period", "required": False}),
     )
     props = _merges(d)[0]["props"]
@@ -119,7 +119,7 @@ def test_A_MISSING_REQUIRED_KEY_DEFAULTS_TO_FALSE_NOT_TRUE():
     verb that merely MENTIONS a class — the unconstrained enum ADR-0018 exists to prevent."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "lot", "referent": _LOT}),
     )
     assert _merges(d)[0]["props"]["required"] is False
@@ -130,7 +130,7 @@ def test_A_STRING_FALSE_IS_NOT_WRITTEN_TRUTHY():
     pool's `= true` would then admit it, and nothing anywhere would report a problem."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "lot", "referent": _LOT, "required": "false"}),
     )
     assert _merges(d)[0]["props"]["required"] is True, (
@@ -147,7 +147,7 @@ def test_A_SLOT_WITHOUT_A_REFERENT_GETS_NO_EDGE():
     second implementation of that rule."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots(
             {"name": "handle_id", "kind": "handle", "required": True},
             {"name": "lot", "kind": "spoken-mandatory", "referent": _LOT, "required": True},
@@ -162,7 +162,7 @@ def test_AN_UNRESOLVED_REFERENT_IS_REPORTED_NOT_SILENTLY_DROPPED():
     pool correct and short at once. So it is REPORTED."""
     d = _Driver(missing={"http://x#Ghost"})
     out = sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots(
             {"name": "lot", "referent": _LOT, "required": True},
             {"name": "ghost", "referent": "http://x#Ghost", "required": True},
@@ -184,7 +184,7 @@ def test_THE_WRITE_IS_A_SYNC_AND_DELETES_FIRST():
     """
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "lot", "referent": _LOT, "required": True}),
     )
     kinds = ["delete" if "DELETE p" in c else "merge" for c, _ in d.session_obj.calls]
@@ -192,16 +192,57 @@ def test_THE_WRITE_IS_A_SYNC_AND_DELETES_FIRST():
     assert "merge" in kinds
 
 
-def test_THE_SYNC_IS_SCOPED_TO_THIS_VERB():
-    """A concurrent registration of a DIFFERENT verb on the same subject class must keep its
-    edges — the containment `compensate_neo4j_predicate_edge` gets from filtering on identity."""
+def test_THE_SYNC_IS_SCOPED_TO_THE_PROVIDER_PAIR_NOT_THE_VERB():
+    """THE DEFECT LANE 1 CAUGHT, and it was active rather than theoretical.
+
+    ONE VERB CAN HAVE SEVERAL PROVIDERS: `mesh:finVarianceDrivers` is registered by
+    `engine_fin_finance` from fin#Program AND by `engine_fin_finance_by_subject` from
+    fin#ControlAccount, both declaring `program_id`. Scoped to verb_iri alone, the SECOND
+    provider to register deletes the FIRST's parameterisation and writes only its own — the
+    first loses its widening until it happens to re-register, and nothing errors.
+
+    This module states the rule four lines above `_COMPENSATE_CYPHER`: filter on BOTH "so a
+    concurrent registration that already committed for a different provider is NOT collaterally
+    deleted". I read that comment and built the opposite; this arm is why it cannot recur.
+    """
     d = _Driver()
-    sync_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ, slots=[])
-    delete_params = [p for c, p in d.session_obj.calls if "DELETE p" in c][0]
-    assert delete_params["verb_iri"] == "x:v", (
-        "the delete is not scoped to this verb and will strip every parameterisation on the "
-        "subject class, including verbs this registration knows nothing about"
+    sync_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A", slots=[])
+    dp = [q for c, q in d.session_obj.calls if "DELETE p" in c][0]
+    assert dp["verb_iri"] == "x:v"
+    assert dp["tool_urn"] == "urn:A", (
+        "the delete is not scoped to the PROVIDER, so registering one provider of a multi-"
+        "provider verb silently strips every other provider's parameterisation"
     )
+
+
+def test_THE_DELETE_STATEMENT_FILTERS_ON_BOTH_HALVES():
+    """Passing tool_urn as a parameter proves nothing if the Cypher ignores it — the arm above
+    would pass against a WHERE clause that filters on verb_iri alone."""
+    from agent_fleet.mesh_registrar.v2_substrate import _PARAMETERISED_SYNC_DELETE
+
+    assert "p.verb_iri = $verb_iri" in _PARAMETERISED_SYNC_DELETE
+    assert "p._tool_urn = $tool_urn" in _PARAMETERISED_SYNC_DELETE, (
+        "the DELETE ignores the provider; the parameter is passed and discarded, which reads as "
+        "scoped while deleting everything"
+    )
+
+
+def test_THE_MATCH_KEY_AND_PROPS_BOTH_CARRY_THE_IDENTITY():
+    """apoc.merge.relationship sets identProps on CREATE, and the existing predicate-edge writer
+    still duplicates them into $props ("Ensure the identity fields are also in $props so a CREATE
+    has them"). The pool filters on verb_iri/_tool_urn, so an edge created without them is one
+    the query silently ignores — and a recording double can never catch it, because the double
+    never CREATEs. Mirrored deliberately rather than trusted."""
+    d = _Driver()
+    sync_parameterised_by_edges(
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
+        slots=_slots({"name": "lot", "referent": _LOT, "required": True}),
+    )
+    props = _merges(d)[0]["props"]
+    for field, value in (("verb_iri", "x:v"), ("_tool_urn", "urn:A"), ("slot", "lot")):
+        assert props.get(field) == value, (
+            f"$props omits {field!r}; a CREATE would land an edge the pool cannot see"
+        )
 
 
 def test_THE_MATCH_KEY_CARRIES_VERB_IRI_AND_SLOT():
@@ -209,16 +250,16 @@ def test_THE_MATCH_KEY_CARRIES_VERB_IRI_AND_SLOT():
     class. Without slot, two slots of one verb collapse to a single edge."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "lot", "referent": _LOT, "required": True}),
     )
     m = _merges(d)[0]
-    assert m["verb_iri"] == "x:v" and m["slot"] == "lot"
+    assert m["verb_iri"] == "x:v" and m["slot"] == "lot" and m["tool_urn"] == "urn:A"
 
 
 def test_COMPENSATION_REMOVES_THIS_VERBS_EDGES():
     d = _Driver()
-    assert compensate_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ) == 0
+    assert compensate_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A") == 0
     assert any("DELETE p" in c for c, _ in d.session_obj.calls)
 
 
@@ -229,7 +270,7 @@ def test_THE_DOUBLE_ACTUALLY_RECORDS():
     asserts on absence — and two of them assert on absence."""
     d = _Driver()
     sync_parameterised_by_edges(
-        driver=d, verb_iri="x:v", input_uri=_SUBJ,
+        driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A",
         slots=_slots({"name": "lot", "referent": _LOT, "required": True}),
     )
     assert len(d.session_obj.calls) == 2, d.session_obj.calls
@@ -239,7 +280,7 @@ def test_NO_SLOTS_WRITES_NOTHING_BUT_STILL_SYNCS():
     """A verb that dropped every referent slot must lose every edge — otherwise the accretion
     guard has a hole exactly where a declaration shrank to nothing."""
     d = _Driver()
-    out = sync_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ, slots=None)
+    out = sync_parameterised_by_edges(driver=d, verb_iri="x:v", input_uri=_SUBJ, tool_urn="urn:A", slots=None)
     assert out["written"] == [] and _merges(d) == []
     assert any("DELETE p" in c for c, _ in d.session_obj.calls)
 
