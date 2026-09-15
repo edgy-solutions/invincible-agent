@@ -739,7 +739,10 @@ def upload_doc_pages() -> None:
     for page in gen.pages():
         body_sha, key = gen.page_locator(page)
         s3.put_object(
-            Bucket=bucket, Key=key, Body=page.read_bytes(),
+            # THE SAME BYTES THE SHA WAS TAKEN OVER. `page.read_bytes()` here would store a
+            # CRLF body under an LF-derived key on a Windows run — the object and its own
+            # declared `body-sha256` disagreeing, which no consumer could detect.
+            Bucket=bucket, Key=key, Body=gen.page_bytes(page),
             ContentType="text/markdown; charset=utf-8",
             Metadata={"body-sha256": body_sha, "source-path": f"docs/runbooks/{page.name}"},
         )
