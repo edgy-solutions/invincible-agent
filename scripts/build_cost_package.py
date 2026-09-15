@@ -454,7 +454,10 @@ function render(pkg) {{
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--recipient", required=True)
+    # NOT `required=True`, because `--fetch-runtime` is a standalone mode and a recipient has
+    # nothing to do with downloading a runtime. Validated below instead, where the two modes
+    # are distinguishable. See the check after the fetch.
+    ap.add_argument("--recipient")
     ap.add_argument("--out-dir", "--out", dest="out_dir", default="dist",
                     help="DIRECTORY the package is written into (note: build_cost_dataset.py's --out is a FILE)")
     ap.add_argument("--runtime-dir", default=str(ROOT / ".pyodide-cache"))
@@ -477,6 +480,28 @@ def main() -> int:
         for f in RUNTIME_FILES + ("pyodide.js",):
             print(f"  fetching {f}")
             urllib.request.urlretrieve(base + f, rt / f)
+        if not a.recipient:
+            # ── FETCH-ONLY IS A MODE, AND IT IS THE ONE CI USES ─────────────────────────────
+            #
+            # ⛔ `--recipient` WAS `required=True`, so `--fetch-runtime` ALONE could not run:
+            #
+            #     build_cost_package.py: error: the following arguments are required: --recipient
+            #
+            # The image build calls it exactly that way — the runtime is fetched so it can be
+            # COPIED into the image, and no package is being built at that moment. The flag's
+            # own help says "download the pinned Pyodide runtime into --runtime-dir", which
+            # reads as a standalone action and was not one.
+            #
+            # AND THE SEAL THAT WAS SUPPOSED TO COVER THIS ASSERTED THE STRING `--fetch-runtime`
+            # APPEARED IN THE WORKFLOW. It did. The command was still unrunnable. A check that
+            # the flag is MENTIONED is not a check that the invocation PARSES — the instrument
+            # and the subject sharing a surface, one more time.
+            print(f"[fetch-runtime] {len(RUNTIME_FILES) + 1} file(s) in {rt}")
+            return 0
+
+    if not a.recipient:
+        ap.error("--recipient is required when building a package "
+                 "(it is not required for --fetch-runtime alone)")
 
     db = None
     if a.with_dataset:

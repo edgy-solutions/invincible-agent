@@ -54,7 +54,7 @@ def test_THE_ROOT_CHECK_TESTS_THE_REQUIREMENT_not_a_checkout_shape():
     )
 
 
-def test_THE_ROOT_CHECK_REQUIRES_BOTH_HALVES():
+def test_THE_ROOT_CHECK_REQUIRES_BOTH_HALVES(tmp_path):
     """Either alone produces a refusal one layer later — the builder with no runtime raises the
     missing-files refusal, the runtime with no builder raises the import one. Accepting a root
     on one half moves the failure without removing it."""
@@ -63,10 +63,32 @@ def test_THE_ROOT_CHECK_REQUIRES_BOTH_HALVES():
     spec = importlib.util.spec_from_file_location("cost_measures_probe", _MEASURES)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod._can_build_a_package_here(_REPO) is True, (
-        "the real checkout does not satisfy the check this seal is about"
+
+    # ⛔ THIS ASSERTED `_can_build_a_package_here(_REPO) is True` — a property of a WORKING COPY,
+    # not of the repository. `.pyodide-cache/` is gitignored, so it exists in whichever checkout
+    # last fetched it and in no other: the assertion passed in the original tree and failed the
+    # moment this suite ran from a worktree. The same absent-from-git shape the endpoint itself
+    # is about (R-064), reappearing in the seal written for it.
+    #
+    # Both halves are CONSTRUCTED now, so the check is about the predicate rather than about
+    # whose machine is running it.
+    both = tmp_path / "both"
+    (both / "scripts").mkdir(parents=True)
+    (both / "scripts" / "build_cost_package.py").write_text("# builder", encoding="utf-8")
+    (both / ".pyodide-cache").mkdir()
+    assert mod._can_build_a_package_here(both) is True
+
+    builder_only = tmp_path / "builder-only"
+    (builder_only / "scripts").mkdir(parents=True)
+    (builder_only / "scripts" / "build_cost_package.py").write_text("# b", encoding="utf-8")
+    assert mod._can_build_a_package_here(builder_only) is False, (
+        "a tree with the builder and NO runtime resolves as a root — the refusal moves from "
+        "`not a checkout` to a missing-files list one layer later instead of being avoided"
     )
-    assert mod._can_build_a_package_here(_REPO / "docs") is False
+
+    runtime_only = tmp_path / "runtime-only"
+    (runtime_only / ".pyodide-cache").mkdir(parents=True)
+    assert mod._can_build_a_package_here(runtime_only) is False
 
 
 def test_THE_IMAGE_COPIES_THE_BUILDER():
@@ -132,8 +154,29 @@ def test_CI_FETCHES_THE_RUNTIME_because_it_is_gitignored():
     assert "--fetch-runtime" in wf, (
         "nothing fetches the pinned runtime, so the COPY source does not exist in CI"
     )
-    assert "PYODIDE_VERSION" in _BUILDER.read_text(encoding="utf-8"), (
-        "the fetch is no longer version-pinned"
+    # ⛔ THE STRING BEING PRESENT IS NOT THE COMMAND BEING RUNNABLE, and that gap cost a build.
+    # This asserted `--fetch-runtime` appeared in the workflow. It did. The invocation still
+    # failed:
+    #
+    #     build_cost_package.py: error: the following arguments are required: --recipient
+    #
+    # `--recipient` was `required=True`, so the flag's own documented standalone use — "download
+    # the pinned Pyodide runtime into --runtime-dir" — could not run. A check that a flag is
+    # MENTIONED is not a check that the invocation PARSES.
+    #
+    # So the parser is asked directly, with the arguments the workflow actually passes.
+    src_b = _BUILDER.read_text(encoding="utf-8")
+    i = src_b.index("add_argument(")
+    while "--recipient" not in src_b[i:i + 60]:
+        i = src_b.index("add_argument(", i + 1)
+    decl = src_b[i:src_b.index(")", i)]
+    assert "required=True" not in decl, (
+        "--recipient is required again, so `--fetch-runtime` alone cannot run and the image "
+        "build fails before the COPY ever happens: " + decl
+    )
+    assert "if not a.recipient:" in src_b, (
+        "nothing validates the recipient after parsing, so a build with no recipient now "
+        "proceeds and fails somewhere less legible than argparse"
     )
 
 

@@ -141,7 +141,26 @@ def test_status_is_not_coerced_into_rejected():
         "the old coercion is back: every non-approval becomes 'rejected', so an acknowledged "
         "extraction failure is recorded as a rejection"
     )
-    assert "acknowledged" in body and "redriven" in body
+    # ⛔ THIS ASSERTED THE ALLOWLIST CONTAINED `acknowledged` AND `redriven`. That was the right
+    # check against a PARTIAL widening — the fix of the day it was written, which named the
+    # verbs that existed then. It is superseded rather than wrong: there is no allowlist now,
+    # so those words do not appear, and the property is stronger without them.
+    #
+    # THE ALLOWLIST WAS THE DEFECT, NOT ITS CONTENTS. Measured 2026-09-15 against the composed
+    # declaration: THIRTEEN verbs declared, three named. Every safety verb — `accepted`,
+    # `concurred`, `returned_for_rework` and the rest — stored as REJECTED, and a risk
+    # acceptance recorded as its opposite is the one act under ADR-0051 whose record IS the
+    # evidence. Widening a list verb-by-verb only ever covers the species someone remembered.
+    assert "status = decision" in body, (
+        "the status is no longer taken from the decision, so some vocabulary is being imposed "
+        "on it again"
+    )
+    assert "else \"rejected\"" not in body, (
+        "a coercion to 'rejected' survives in any form; the declaration is the only source of "
+        "what a species accepts and the projection must record what it was given"
+    )
+    # The one value that must NOT widen, because the queue reads it as OPEN.
+    assert 'if decision == "pending":' in body
 
 
 @pytest.mark.xfail(
