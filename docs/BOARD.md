@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **138 of 150 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -539,6 +539,10 @@ _Coverage: **138 of 150 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **the-burn-rate-figures-a-reader-acts-on-were-unsealed** — Two figures in fin_burn_rate could be silently wrong with the full suite green — variance_to_plan with its sign flipped, and budget_remaining ignoring spend. THE CODE WAS CORRECT; nothing asserted that it was. Found by R-029's mutate-the-unit check before an ADR-0053 §7 extraction, sealed in b42ce8f. Filed separately from the extraction per the rule that a correctness gap found during a refactor does not ride in the refactor.
   status: closed · owner: lane/91 (invincible-agent-81) · closed-by: b42ce8f
   → [docs/plans/the-burn-rate-figures-a-reader-acts-on-were-unsealed.md](plans/the-burn-rate-figures-a-reader-acts-on-were-unsealed.md)
+
+- **the-eac-forecast-could-be-inverted-unsealed** — Five of six mutations against fin_eac_calculation survived the full suite, and the CPI one REVERSES THE SIGN of the forecast — "2.15M over budget" reading as "1.8M under". THE VERB WAS CORRECT; nothing asserted that it was. Found by R-029's check before an ADR-0053 §7 extraction, sealed in 3863a86. Test-only. The one mutation that did red exposed a second law: a relative check is not an absolute one.
+  status: closed · owner: lane/91 (invincible-agent-81) · closed-by: 3863a86
+  → [docs/plans/the-eac-forecast-could-be-inverted-unsealed.md](plans/the-eac-forecast-could-be-inverted-unsealed.md)
 
 - **the-specificity-gate-strips-content-words** — RULED AND FIXED 2026-08-30 — and the three readings turned out NOT to be alternatives. Measured through the FULL gate (fallback branch included), SYMMETRY ALONE IS A REGRESSION: stripping the identifier side empties "Test" to nothing and a nameless identifier is refused, so the reading called safest breaks a case that works today. PATH-SCOPING ALONE IS INCOMPLETE: `publog.p_cage.prod` still yields `prod` against `p_cage`. Only BOTH give self-match for every case, and they also keep the terminal name a CONTENT word (`test`) rather than the stopword (`and`) symmetry alone produces. Reading 3 (terminal-name for English phrases) untouched and still open. IMPLEMENTED by restoring the information `_segments` discarded — the SEPARATOR KIND — and the discriminator is WHITESPACE, not a list of punctuation: the first draft enumerated `[./\:]` and a real DataHub URN refused it, because its env qualifier is COMMA-separated, breaking six of the gate's own seal cases. A separator run containing whitespace joins WORDS OF A PHRASE; pure punctuation joins COMPONENTS OF AN IDENTIFIER. The strict xfail flipped to green; 175 routing tests pass. ORIGINAL FINDING: `passes_segment_specificity(x, x)` returns FALSE — a name cannot match itself — for any space-separated label whose final word is one of prod|dev|test|stage|staging|qa|uat. "Integration and Test" yields name `test` on the IDENTIFIER side and asset name `and` on the CANDIDATE side, because only the candidate side strips env suffixes. The two halves of the comparison are computed by different functions with different rules. Blast radius is human LABELS, not catalog ids: `my_dataset_prod` is one segment and passes. This is why every one of engine-fin's tied cases returns `not_specific` — the decision table never reaches the tie, and fixing engine-fin's field names is necessary but NOT sufficient for the ADR-0033 disambiguation case.
   status: closed · owner: agent (elicitation lane) — RULED AND IMPLEMENTED 2026-08-30 · closed-by: 257f9dd

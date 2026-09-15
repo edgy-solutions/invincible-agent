@@ -146,6 +146,39 @@ repo, passing the same validation as a seed row.
 Slot vocabularies attach **from the registry at registration** — so `EACMethod`'s three values stop
 being a `Literal` in a signature and become the rows that exist.
 
+#### 2a. EVERY METHOD ROW CARRIES AN ABSOLUTE TRANSCRIPTION SEAL AGAINST THE STANDARD IT CITES
+
+*Added 2026-09-14 from `fin_eac_calculation`'s R-029 check — `lane/91 (invincible-agent-81)`.*
+
+A row's `prov:wasDerivedFrom` points at **the clause it implements**, and the module is sealed by
+**transcribing that clause's formula** and asserting the module computes it — the same discipline
+the risk matrix was transcribed under, cell by cell from its source table.
+
+**THE EVIDENCE THAT THIS IS NOT CEREMONY.** Before any customer row existed, five of six
+mutations against the three *built-in* EAC methods survived the whole suite. The worst was
+`EAC = BAC * CPI` in place of `BAC / CPI`: with CPI below 1 that **reverses the sign of the
+forecast** — *"we will overrun by 2.15M"* becomes *"we will land 1.8M under"* — and 151 green
+tests could not tell. Recorded in
+[`the-eac-forecast-could-be-inverted-unsealed`](../plans/the-eac-forecast-could-be-inverted-unsealed.md).
+
+> **A row whose formula cannot be checked against a stated standard is a row that ships a sign
+> flip with a name on it.** The name is the danger: `method: "CPI"` on the artifact and a version
+> beside it reads as provenance, and §5 makes that string travel with every figure.
+
+**AND A COMPARISON SEAL DOES NOT SUBSTITUTE, which is why this is stated separately.**
+`fin_eac_comparison` compares the three methods' spread and it **did not catch the inversion** —
+`BAC * CPI` keeps CPI below CPI_SPI, so the ordering held and the spread check stayed green.
+
+> **A relative check is not an absolute one.** It notices one method moving *against the others*;
+> it cannot notice all of them wrong in the same direction, nor one wrong in a way that preserves
+> the ordering. **A check between derived things is blind to what they share** — the same shape as
+> two fields agreeing because they come from one upstream.
+
+So the registry needs **both**: the spread, which catches a method drifting from its neighbours,
+and the transcription, which catches every method being wrong together. Neither implies the other,
+and the spread is the more sophisticated-looking of the two, which is how it comes to be mistaken
+for coverage.
+
 ### 3. "User-configurable" means SELECTING among ratified methods and SETTING ratified parameters
 
 Adding an algorithm is **adding a declared module with a manifest and a seal**. It is a reviewed
