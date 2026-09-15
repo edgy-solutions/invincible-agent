@@ -99,8 +99,16 @@ reason is worth keeping: a shared constant makes the two sides agree with *each 
 still leaves nobody agreeing with the VECTORS. The collection is the only witness that has seen
 what was actually written.
 
+0. **THE KEY AND VALUE SHAPE ARE DECLARED IN THE SDK, as part of the `MeshVectors` contract.**
+   Ruled 2026-09-14, and it corrects something I had proposed: I asked doc-tools to pick a key and
+   tell me so I could match it. **That would have reproduced this packet's defect inside its own
+   fix** — a contract kept as two hand-agreed spellings in two repos, enforced by remembering a
+   message, which is the same shape as two hand-copied constants enforced by code review. *A key
+   two lanes agree on is an agreement; a key the Protocol declares is a contract both
+   implementations conform to*, and the conformance suite asserts it. **Both sides read the
+   declaration, neither reads the other.**
 1. **WRITER (doc-tools-7f):** record the embedding model **name and version** as collection
-   metadata at create-or-first-write. Both collections carry none today — `vectorizer: None`,
+   metadata at create-or-first-write, under the declared key. Both collections carry none today — `vectorizer: None`,
    `moduleConfig: {}`, no property that could hold one (measured above).
 2. **READER (this lane), on SDK `v0.9.0`:** `MeshVectors` reads that metadata **at open** and
    asserts it against its own `embedding_model`. A mismatch **refuses, naming both** — the
