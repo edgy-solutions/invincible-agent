@@ -40,7 +40,16 @@ import pytest
 
 import operator
 
-from typing_extensions import Annotated, TypedDict
+# FROM `typing`, NOT `typing_extensions`, and the difference is not stylistic. Both graphs this
+# seal exercises import them from `typing` (requires-python is >=3.12,<3.13, where both have been
+# stdlib for several releases), and `typing_extensions` is named by no pyproject in the tree.
+# `test_every_import_is_a_declared_dependency` reds on it: the distribution arrives transitively
+# today and leaves without notice tomorrow.
+#
+# A FIXTURE THAT IMPORTS WHAT ITS SUBJECT DOES NOT is also a small version of the stub problem
+# this very seal was written about — the test's state type would be built by a different
+# mechanism than the graphs'.
+from typing import Annotated, TypedDict
 
 from tests.graph_host._engine_deps import needs_langgraph
 

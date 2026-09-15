@@ -2592,6 +2592,31 @@ written — and never ran the trailer seal a master merge had just carried in.
 rather than a lane being behind: `lane/eo` and `lane/91` hit the same check from different
 directions within an hour, neither having been able to comply.
 
+### R-063.2 — A MERGE ALSO ENLARGES THE POPULATION OF SEALS THAT ALREADY EXISTED
+
+**Found against my own application of R-063, within the hour of filing it.**
+
+I merged a lane's commit, correctly ran the new seal FILE it brought (`tests/graph_host/…`, 39
+passed), and pushed. Master went red on `test_every_import_is_a_declared_dependency` — an OLD
+seal, which I did not run, because the merge brought it no changes.
+
+**It did not need to.** That seal scopes over `tests/`, so a new test file joins its population by
+existing. The merge added `from typing_extensions import …`, a distribution no pyproject names,
+and the seal caught it exactly as designed.
+
+> **"Run what the merge brought" is not "run the files the merge touched."** New code enters the
+> populations of every derived seal, and a derived seal's whole point is that it quantifies over
+> a set nobody maintains by hand.
+
+**How to apply:** after a merge, run the new files AND the seals that derive their population from
+a directory or a glob — those are precisely the ones a merge can break without touching. When in
+doubt the full suite is the answer, which is again why a seal's cost decides whether it survives.
+
+**AND THE FIX WAS THE FIXTURE AGREEING WITH ITS SUBJECT.** Both graphs the seal exercises import
+`Annotated` and `TypedDict` from `typing`; the test imported them from `typing_extensions`. A
+fixture importing what its subject does not is a small version of the stub problem that same seal
+was written about — the state type would be built by a different mechanism than the graphs'.
+
 **How to apply:** after a merge, the population of relevant suites is not the one you reasoned
 about before it. Run what the merge brought, or run everything — and note that "run everything"
 is only sustainable if the seals are cheap, which is why **a seal's cost is part of whether it
