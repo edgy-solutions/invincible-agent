@@ -93,7 +93,7 @@ the notice is part of the ruling rather than an implementation detail.
 | # | ruling | where |
 |---|---|---|
 | a | **The author sees what they can act on, and nothing more.** ⟺ **AMENDED 2026-09-12.** `see ⟺ can_act` is **the substrate's shape**, not a gap in an implementation — the projection materialises one row per authorized ACTOR, so viewability and act-ability derive from one Topaz answer and cannot diverge. The earlier reading described a view-only author audience as though it were available; it is not, and saying so plainly is the honest version. **The inert grant is withdrawn** — see the note below. | §5:290 |
-| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
+| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. *(Kill counts prove guard-is-right, never guard-is-reachable — R-056.)* | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
 | e | **The acceptance verb is `accepted`, NOT the seed's `approved`.** RULED 2026-09-11, architect. A risk is *accepted* by an authority — MIL-STD-882's word, and the ADR's whole claim. `approved` is the generic seed's verb for generic things. A queue showing both side by side is showing **two different acts, correctly**; the declaration row's label makes it explicit. The SDK constrains verb strings nowhere, deliberately, so this is expressible without asking anyone's permission. | §5 |
@@ -995,6 +995,12 @@ undefined share, rank from `0`:
     every one reddened exactly ONE test, and always a test written in the same commit
     the standing seal stayed GREEN through all five
 
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
+
 It exercises the verb at two call sites and asserts its contract **shape**. It never asserted the
 ordering, the zero-drop, the rank numbering, or the withheld tail — *which is to say, none of the
 algorithm being moved.* **The green before and after was real and weak:** it proved the verb still
@@ -1022,6 +1028,12 @@ seal's age, it does not decay.** Required instrument for the remaining four extr
 **The number is what prompted the mutation** — ten days in a moving tree was enough to ask whether
 the seal still pinned anything, and the answer was that it never had. Recorded as commands rather
 than as a figure, per the ADR.
+
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
 
 ### Scope held where it was tempting to widen
 
@@ -2224,8 +2236,8 @@ weeks who finds a clean panel and banks it.
 
 Two NUL-byte sweeps, two different shells, two silent instrument failures:
 
-    grep -P ' '     unsupported in this shell -> matched nothing, reported CLEAN
-    grep $' '       collapsed to an EMPTY pattern -> matched every line:
+    grep -P '\x00'     unsupported in this shell -> matched nothing, reported CLEAN
+    grep $'\x00'       collapsed to an EMPTY pattern -> matched every line:
                        "322 NUL-carrying lines" in a 321-line file
 
 **Neither tool errored. Both produced a confident, well-formed, wrong answer** — one a false
@@ -2240,6 +2252,153 @@ Related: [[a-guard-that-cannot-fire]] — the BORN DEAD form;
 [[the-instrument-and-the-subject-share-a-surface]]; [[an-absence-assertion-is-worth-its-control]];
 [[assert-on-the-claim-not-its-neighbour]]; R-055.2 — a fixture written from an account of a
 payload, which is the same substitution at the input end.
+
+---
+
+## R-057 — AN INSTRUMENT THAT CANNOT ASK THE QUESTION ANSWERS ANYWAY, WITH THE REASSURING WORD
+
+**Architect-ruled 2026-09-14: the two instrument instances of this week are ONE LAW.** Filed with
+a third, found the same day, which is the most expensive of the three.
+
+    grep -P '\x00'              unsupported in this shell -> matched nothing -> "CLEAN", 1199 files
+    grep $'\x00'                collapsed to an EMPTY pattern -> matched every line
+    a seal over `bound_slot_sources`   the FIXTURE supplies the field -> 17 green assertions
+
+**None of the three errored.** Each returned a well-formed, confident answer, and in two of them
+that answer was the reassuring one. **A tool that cannot reach the question does not say so — it
+reports the default outcome of not finding anything, which is indistinguishable from the good
+news.** The false-alarm case (the empty pattern) was caught within a minute because its arithmetic
+was absurd. The false all-clears were not caught by anything except a planted control.
+
+**THE THIRD INSTANCE IS THE SHAPE AT FULL SIZE.** A gate fix and a provenance-gated promotion were
+written, sealed with 17 assertions across two sites, mutation-checked, committed, rolled to the
+cluster and REPORTED AS FIXED. Then:
+
+    356 AnswerArtifacts carry `resolved_intent`
+      0 carry `bound_slot_sources`
+        the field is READ in one place and WRITTEN nowhere but a test fixture
+
+So `turn_is_set_shaped(instance, verb, set())` degrades to exactly `not instance` — the behaviour
+it replaced — and `promotable_instance_from_slots(verb, {})` returns `None` on its first line.
+**The whole arc is inert in production, and every seal is green because the seals supply the
+input the world does not.**
+
+> **This is R-056's law applied to the instrument instead of the guard: a test cannot tell you
+> whether the data it fabricates exists.** Mutation testing, coverage and a kill sheet are all
+> computed inside the fixture's world.
+
+**THE CHECK, and it is the same one in all three cases: ASK THE INSTRUMENT A QUESTION YOU KNOW
+THE ANSWER TO, THROUGH THE PATH THE CLAIM USES.** Plant a NUL and prove the scan finds it. Count
+the rows in production that carry the field before trusting a seal that reads it. A control that
+reaches the answer by a different route is a second claim, not a control.
+
+**AND THE PRODUCTION COUNT IS THE ONE THAT WAS SKIPPED.** Two reachability traces had already run
+on this change — one found the wrong call site, one confirmed the payload was set by the gateway.
+Both traced CODE. Neither asked whether any artifact in the database had ever carried the field,
+which is one query and would have stopped the work before the first commit.
+
+Related: R-056 (guard-is-right vs guard-is-reachable — this is its instrument half);
+[[an-absence-assertion-is-worth-its-control]]; [[a-sample-is-not-the-population]];
+[[assert-on-the-claim-not-its-neighbour]].
+
+---
+
+## R-058 — A CITATION IS NOT A SIGNATURE
+
+**Found 2026-09-14 by `invincible-agent-81`, against a misattribution aimed at them.** They were
+told their chain-slot loop fix had been inert in production. It was not their fix.
+
+They checked rather than recalled — every file their commits touched — and the set excludes the
+entire routing surface. What IS theirs is the MEASUREMENT the code cites: the four-hop walk,
+`1m15 / 1m42 / 2m07 / 2m34` against `1m16` in one hop. They reported it, said twice that the loop
+was someone else's to fix, and did not touch it. `_accumulated_slots`' docstring then recorded:
+
+    MEASURED 2026-09-12 by invincible-agent-81 on the rolled fleet
+
+> **The credit is correct and it reads as authorship.** A reader looking for an OWNER finds the
+> person who took the reading rather than the person who wrote the line — and the citation is
+> precise, dated and verifiable, which makes it *more* convincing, not less.
+
+**AND GIT CANNOT CORRECT IT.** Measured on this repo: **every commit in the last forty, across
+every lane, is authored `Chris Nogradi <cnogradi@gmail.com>`.** One human identity, many agents.
+So `git log --author` disambiguates nothing, `git blame` names the human who owns the machine,
+and the only reliable test is the one 81 used — *which files has this lane ever touched.* That is
+a reconstruction, not a record, and it works only while a lane is alive to be asked.
+
+Three of the last sixty commit messages name their authoring lane. The fix's own commit
+(`8c7422c`) names the measurer in its body and its author nowhere.
+
+**THE RULE.** Attribute the measurement **and** name the author, or the two collapse the first
+time somebody needs an owner. A commit that cites a finding should say who wrote the code as
+plainly as it says who took the reading — the trailer is the natural place, since `Co-Authored-By`
+already names the model and not the lane.
+
+**THE COST WHEN THEY COLLAPSE** is not embarrassment; it is a dispatch sent to someone who cannot
+act on it, while the person who can never hears. Here it cost one round trip because the repair
+was already built. On a live defect it would have cost the time it took for the wrong lane to
+prove a negative about itself.
+
+**AND THE SECOND HALF OF 81'S REPLY IS THE PART TO KEEP:** *"nothing owed from me, and nothing
+verified by me either — I have not reviewed `c4f15ab` and should not be recorded as having done
+so."* **A correction to a misattribution must not create a second one in the other direction.**
+Being named in a thread is not review, and a reader six weeks out cannot tell the difference
+unless somebody says so.
+
+### R-058.1 — THE REMEDY, RATIFIED 2026-09-14
+
+**`Lane: <worktree>/<branch>` as a trailer on every commit**, e.g. `Lane: ia-01/lane/01`.
+
+**IT NAMES THE DURABLE KEY, NOT THE ADDRESS** — the way the roster does. A session id
+(`invincible-agent-65`) dies with the session; the worktree/branch pair outlives it and is what a
+later reader can actually check out. `git worktree list` is the registry.
+
+Enforced by `tests/test_every_commit_names_its_lane.py`, which:
+
+  * binds **forward only, by date** — retro-fitting means rewriting published history, which is
+    refused here for the same reason a pushed tag is never rewritten;
+  * asserts **the premise** (one git identity across all lanes), so the day lanes commit under
+    distinct identities somebody finds out there rather than maintaining redundant ceremony;
+  * asserts the trailer names a **registered worktree** — one naming a lane that does not exist
+    points the next dispatch at nobody, which is worse than silence, because a confident wrong
+    answer travels further than none.
+
+**Measurer and reviewer stay distinct from author.** The seal asserts authorship only. Taking a
+reading is not writing the line, and being named in a thread is not review.
+
+**THE TRAILER IS READ FROM THE WORKTREE, NEVER DERIVED FROM A SESSION ADDRESS.** Found within the
+hour of ratifying it, by `invincible-agent-28`, against my own assertion about them:
+
+    Lane: ia-28/lane/28     <- what I wrote, from the session name
+    Lane: ia-74/lane/74     <- what that session actually is
+
+**The session address and the worktree are independent, and neither predicts the other.** The
+session address also churns, which is why the roster is not keyed on it. 28 had made the
+reciprocal error earlier in the same arc — telling peers to address them as
+`invincible-agent-74` because they worked in `ia-74` — and `ListAgents` corrected them. So the
+mapping fails in *both* directions and looks reasonable in both.
+
+The seal's registry arm caught it (`ia-28` is in no worktree list), which is the guard firing on
+its author. But it checked only the worktree HALF, so `ia-74/lane/01` — two real names that are
+not each other's — would have passed. **It checks the PAIR now: mispairing is worse than
+inventing, because an invented lane resolves to nobody and a mispaired one resolves to somebody.**
+
+> **When a derivation produces a wrong identifier, fix the derivation, not the row.** A row
+> corrected by hand leaves the rule that produced it intact and pointed at the next one.
+
+Related: [[an-authority-ranking-needs-a-scope]] and [[prefix-registries-bite-silently]] — the same
+shape, where a plausible key resolves to the wrong thing rather than to nothing.
+
+**AND THE FIRST VERSION OF THE SEAL COULD NOT FIRE.** Its cutoff was a round `23:00` that had not
+arrived: every commit exempt, an empty parametrised population, and `1 skipped` — which inside a
+run of hundreds reads exactly like a pass. The guard against commits with no recoverable owner
+shipped as a guard that could not run, in the same change that argued for reachability. It is now
+bound one second before its own implementing commit, so **the rule's first subject is the commit
+that created it**, and a trailerless probe was shown to red the file.
+
+Related: [[a-stale-claim-is-pre-authenticated]] — precision makes a claim more trusted, and this
+is the same mechanism applied to provenance; R-056 (two declarations that never meet); R-057 (the
+cutoff-in-the-future is that law inside the check itself);
+[[an-adr-does-not-allocate-a-component-name]] — the other place one name is read as two things.
 
 ---
 

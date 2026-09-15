@@ -4,13 +4,17 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **137 of 149 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **138 of 150 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
 - **canvas-templates-slice-1** — ADR-0050 slice 1, NON-GATEWAY HALF — landed 2026-09-06 (`a59a9c5`, per git; an earlier revision of this line said 08-23, taken from the session clock rather than the commit). Ratified `policy/canvases/portfolio.yaml` (five panels, verbs read off the seeder's own `measure` field, slots declared as the verbs' REAL signature defaults since §3's carry is blocked), Pydantic models + generated JSON Schema + drift test with positive control, and a merge-gating CI job. Seal 3 recorded FAILING against today's phrase seed — structurally, from source, so it cannot be a lucky pass. GATEWAY HALF IS NOT MINE and is not here: `seedCanvas(template_id)`, `_CALLER_IDENTITY_VERBS`, and the superseded Ruling (a) seal. THREE THINGS OWED, named below rather than implied: verb-EXISTENCE checking (seal 1's other half), the live seal-3 run (~50 min, needs a quiet substrate), and the cortex `TEMPLATES` row §7 requires before the backend advertises a second template.
   status: in-flight · owner: unassigned
   → [docs/plans/canvas-templates-slice-1.md](plans/canvas-templates-slice-1.md)
+
+- **engine-o-substrate-read-inventory** — The engine-o half of the mesh-client census — every substrate touch engine-o makes, derived from its handles rather than listed, with what each one is TRYING TO DO. The candidate named-operation list MeshGraph / MeshOntology / MeshVectors must cover.
+  status: in-flight · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo
+  → [docs/plans/engine-o-substrate-read-inventory.md](plans/engine-o-substrate-read-inventory.md)
 
 ## blocked-on-human
 

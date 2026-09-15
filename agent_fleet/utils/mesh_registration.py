@@ -682,6 +682,19 @@ _IRI_PREFIXES = {
     # in frontmatter, so the population becomes five the moment ingest exists -- the cost of
     # being late here would have been five invisible rows rather than one.
     "docs:": "http://invincible-agent/docs#",
+    # safety: (Engine S, ADR-0051). The WRITE side, and it must agree with the read table in
+    # `presentation_agent/capabilities.py` — the read side folds both forms, so a compact IRI
+    # that never expands here still passes every local check while going onto the wire compact,
+    # missing the linker's MATCH against full-IRI :OntologyClass nodes, and registering as
+    # accepted-and-unreachable.
+    #
+    # NOT `invincible-agent/...` LIKE ITS THREE NEIGHBOURS. Safety extends the SUSTAINMENT plane,
+    # so the authority and path differ: `internal/sustainment/safety#`. Every other entry in this
+    # table shares a shape, which is precisely what makes copying one of them the likely error.
+    #
+    # ENTERED WHILE ENGINE S'S VERBS ALREADY REGISTER WITH FULL IRIs, so nothing is retroactively
+    # broken — this covers the compact forms the BINDING ROWS use.
+    "safety:": "http://internal/sustainment/safety#",
 }
 
 

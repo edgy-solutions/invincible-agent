@@ -909,8 +909,10 @@ services:
           answer about the model's contents. Read-only, no effect, and the fan-out that calls it
           is in-cluster.
           `ungated_by_accident` rather than `internal` DELIBERATELY. Reachability is the only
-          thing protecting it, and the four sibling providers (engine-d, engine-e, engine-o,
-          engine-fin) share that posture — so this is a FLEET-WIDE property of the
+          thing protecting it, and EVERY sibling mesh:resolveInstance provider shares that
+          posture — derived from the rows in this file rather than counted here, because a
+          hand-kept tally goes stale the next time a provider is added (it did: engine-safety
+          became one and this line still said four) — so this is a FLEET-WIDE property of the
           mesh:resolveInstance contract, not a gap unique to engine-p. The contract carries no
           caller identity at all: `{identifier, query}` has nowhere to put one. Gating it means
           changing the verb's contract for every provider, which is a mesh decision and not a
@@ -1263,6 +1265,47 @@ services:
           rather than left to be noticed, because a releasable row that quietly begins serving
           a real fleet's open safety defects is precisely the failure this manifest exists to
           make impossible.
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: existence
+        consumers: [engine-o /resolve fan-out]
+        class: ungated_by_accident
+        justification: >-
+          THE mesh:resolveInstance PROVIDER for SUSTAINMENT. Turns a spoken name into an
+          instance id — "the fuel-line chafe hazard" -> HAZ-1003 — so it EXPOSES EXISTENCE:
+          a caller learns whether a named hazard is in the log, and an empty candidate list is
+          itself an answer about the log's contents.
+          `ungated_by_accident` rather than `internal`, matching every sibling provider, because
+          reachability is the only thing protecting it and the mesh contract carries no caller
+          identity at all — `{identifier, query}` has nowhere to put one. Gating it means
+          changing the verb's contract for every provider, which is a mesh decision and not a
+          per-engine one.
+          AND THE EXPOSURE HERE IS NOT THE SAME KIND AS A PORTFOLIO'S. The sibling rows expose
+          the membership of a plan; this one exposes the existence of SAFETY DEFECTS. While the
+          fixture is notional that is a difference in kind without a difference in consequence —
+          but it is the same row as /analyze above, and it changes on the same day: when
+          ADR-0051 §10.1's overlay names a real hazard log, this stops being releasable by
+          reachability alone.
+      - method: POST
+        path: /enumerate_instances
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: existence
+        consumers: [supervisor ask disposition via ENUMERATE_INSTANCES_URL]
+        class: ungated_by_accident
+        justification: >-
+          THE mesh:enumerateInstances PROVIDER. Exposes MORE existence than resolve does, and
+          the difference is why this row is written out rather than copied: resolve answers "is
+          this one hazard here?", enumerate answers "what is here?" and returns the membership
+          of a class — every open hazard on a platform — to any in-cluster caller.
+          Same fleet-wide contract gap as resolve above (`{class_uri}` carries no identity) and
+          the same mesh-level decision. The menu bound truncates larger classes to a count,
+          which is incidental rather than a gate.
+          THIS IS THE FIRST ROUTE TO REVISIT when the overlay lands, ahead of /analyze: a list of
+          every open safety defect is a more useful thing to an adversary than any single one of
+          them, and it is the cheapest to ask for.
 
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py

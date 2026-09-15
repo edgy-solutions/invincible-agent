@@ -3880,14 +3880,21 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
 #: carry both rules, so flattening these into a single dict would make the loop disappear and
 #: silently delete that refusal. If a future change cannot express this distinction, the change
 #: is wrong however clean the chain looks afterward.
-SLOT_SOURCE_PICKED = "picked"        # chosen from a menu this system offered
-SLOT_SOURCE_SPOKEN = "spoken"        # typed in answer to a RESPEAK ask (no menu existed)
-SLOT_SOURCE_SUPPLIED = "supplied"    # sent by an API caller with the request
-SLOT_SOURCE_FILLED = "filled"        # extracted from the question by the slot filler
-
-_SLOT_SOURCES = (
-    SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED,
+# ⛔ THESE MOVED TO `iagent_pure.slot_acceptance` AND ARE IMPORTED, NOT REDECLARED.
+#
+# They were declared here and consumed here, and then the WRITER needed them (accept_slots is
+# the one door every binding passes through) and so did the promotion rule. Three copies of a
+# four-name vocabulary is how a rename makes a feature stop silently — the reader would refuse
+# every row as "unknown source" and report a clean empty chain.
+from iagent_pure.slot_acceptance import (  # noqa: E402
+    SLOT_SOURCE_FILLED,
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+    SLOT_SOURCE_SUPPLIED,
+    SLOT_SOURCES as _SLOT_SOURCES,
 )
+
+_ = (SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED)
 
 
 def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
@@ -4718,7 +4725,21 @@ async def generate_dagster_stream(
     # carrying this there would feed a state that cannot arise, and a dead branch under a seal
     # reads as coverage.
     if _pre_resolved:
-        _pre_resolved["accumulated_slots"] = _chain_slots or {}
+        # ⛔ THE CHAIN ALONE IS NOT "WHAT THIS TURN HAS BOUND", and sending only it reproduced
+        # the original defect inside its own fix. `_chain_slots` is what the ANCESTORS bound;
+        # the pick that answers an ask arrives on THIS turn, in `bound_slots`, and is by
+        # construction in no ancestor. Measured on artifact-4-1789438505471: its own record
+        # carried {"program_id": {"value": "NP-MERIDIAN", "source": "picked"}} while its parent
+        # — the ask — carried {}. The consumer looked only where the value could never be.
+        #
+        # So the field means EVERYTHING BOUND AS OF THIS TURN, ancestors plus this turn's own
+        # answer, and the nearest binding wins for the same reason `_accumulated_slots` lets the
+        # nearest hop win: a person who answers a slot twice meant the second answer.
+        _this_turn = {
+            k: {"value": v, "source": SLOT_SOURCE_PICKED}
+            for k, v in dict(bound_slots or {}).items()
+        }
+        _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
     mode: str
     entity_refs: list[str] = []
@@ -5256,6 +5277,10 @@ async def generate_dagster_stream(
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
                     "accepted_slots": _j("accepted_slots", {}),
+                    # THE PROVENANCE RECORD. Read by `_accumulated_slots` on the next hop;
+                    # written nowhere until 2026-09-14, which made the whole chain-slot carry
+                    # inert in production with every seal over it green (R-057).
+                    "bound_slot_sources": _j("bound_slot_sources", {}),
                     "refused_slots": _j("refused_slots", []),
                     "slot_resolution": _j("slot_resolution", {}),
                     # The subject the verb was chosen for — see the producer. Without it
@@ -5631,6 +5656,18 @@ async def _stream_direct_outcome(
         bundle["resolved_intent"]["accepted_slots"] = json.loads(
             _slots_md.get("accepted_slots") or "{}"
         )
+        # ── THE PROVENANCE RECORD, ON THE PATH THAT ACTUALLY RUNS ────────────────────────
+        #
+        # TWO COMPOSITION SITES, and this is the one a pick-answer reaches. Writing the field
+        # only at the classify-path site above would have left the writer as inert as the
+        # reader it was built to feed — "one site" turning out to be two for the third time on
+        # this arc, which is why it is asserted rather than remembered.
+        try:
+            _bss = json.loads(_slots_md.get("bound_slot_sources") or "{}")
+        except (ValueError, TypeError):
+            _bss = {}
+        if isinstance(_bss, dict) and _bss:
+            bundle["resolved_intent"]["bound_slot_sources"] = _bss
         bundle["resolved_intent"]["refused_slots"] = json.loads(
             _slots_md.get("refused_slots") or "[]"
         )

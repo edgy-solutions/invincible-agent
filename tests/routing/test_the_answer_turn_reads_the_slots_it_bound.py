@@ -134,10 +134,19 @@ def _src(p: Path) -> str:
 def test_THE_GATEWAY_CARRIES_THE_SET_not_a_list_of_names():
     """The contract change: `pre_resolved` carries the accumulated slot set."""
     src = _src(_GW)
-    assert '_pre_resolved["accumulated_slots"] = _chain_slots' in src, (
-        "the gateway does not forward the chain's accumulated slots onto the pre-resolved "
-        "route, so the site below has nothing to derive names from and the promotion is inert"
+    assert '_pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}' in src, (
+        "the gateway does not forward the accumulated slots onto the pre-resolved route, so "
+        "the site below has nothing to derive names from and the promotion is inert"
     )
+    # ⛔ THE ARM THAT WOULD HAVE CAUGHT THE LIVE FAILURE. The first version sent `_chain_slots`
+    # alone — the ANCESTORS' bindings. The pick answering an ask arrives on THIS turn and is in
+    # no ancestor, so the payload carried everything except the one value the consumer needed.
+    # artifact-4-1789438505471 carried the pick on its OWN record; its parent the ask carried
+    # {}; and the verb was flagged `needs_instance` anyway.
+    assert '"accumulated_slots"] = _chain_slots or {}' not in src, (
+        "the gateway sends the chain alone, so this turn's own pick never reaches the gate"
+    )
+    assert '_this_turn = {' in src, "this turn's own bindings are not merged in"
 
 
 def test_THE_SITE_DERIVES_THE_NAMES_FROM_THE_CARRIED_SET():
@@ -154,8 +163,17 @@ def test_THE_OLD_BOOLEAN_IS_GONE_FROM_THE_PRE_RESOLVED_SITE():
     """`not _pre_instance` is the read that was wrong. Leaving it beside the new call would be
     two gates disagreeing, with the stricter one winning silently."""
     src = _src(_SUP)
-    assert "not _pre_instance" not in src, (
-        "the pre-resolved site still passes the ask's empty subject as the query shape"
+    # ⛔ THIS MATCHED `not _pre_instance` BARE AND WENT RED AGAINST CORRECT CODE. The promotion
+    # added `if not _pre_instance:` — a guard that is right, reads the same field, and is not
+    # the gate at all. The assertion was written against a STRING and could not tell the gate's
+    # ARGUMENT from an unrelated correct use of the same expression.
+    #
+    # Third time this shape has bitten in this file's lineage, so the fix is to anchor on what
+    # makes it the gate: the trailing comma that marks it as `filter_verbs_by_arity`'s second
+    # POSITIONAL ARGUMENT. `if not _pre_instance:` ends in a colon and cannot match.
+    assert "not _pre_instance," not in src, (
+        "the pre-resolved site still passes the ask's empty subject as the query shape — the "
+        "gate's second argument is the bare boolean again"
     )
 
 
