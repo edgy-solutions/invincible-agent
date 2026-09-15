@@ -194,6 +194,32 @@ def checkpointer_readiness() -> tuple[bool, dict]:
         return True, {"checkpointing": "not required — no admitted row declares one",
                       **_SAVER_STATUS}
     if _SAVER_STATUS.get("durable"):
+        # THE REPORT MUST AGREE WITH THE OBJECTS, and this is the only check that can tell
+        # them apart. `load_graphs` COMPILES each stateful row against whatever `_saver_for`
+        # returns at that moment. Open the saver AFTER compilation and every graph carries an
+        # InMemorySaver while `_SAVER_STATUS` says durable — the engine reports durability it
+        # does not have, readiness passes, and the loss shows up only as a thread that will not
+        # resume, on a restart, in production.
+        #
+        # THIS IS THE `registered 3/3` SHAPE FOR DURABILITY: a status line derived from the
+        # ATTEMPT rather than from the RESULT. So it is derived from the result — identity, not
+        # truthiness, because an InMemorySaver is perfectly truthy.
+        wrong = sorted(
+            gid for gid, (mm, g) in (_LOADED or {}).items()
+            if mm.checkpointer and getattr(g, "checkpointer", None) is not _SAVER
+        )
+        if wrong:
+            return False, {
+                "checkpointing": "REPORTED DURABLE, COMPILED AGAINST SOMETHING ELSE",
+                "stateful_graphs": stateful,
+                "reason": (
+                    f"{wrong} compiled against a checkpointer that is not the opened saver. "
+                    f"The saver must be opened BEFORE load_graphs, which compiles against it; "
+                    f"opened afterwards it is held by nothing while this engine reports "
+                    f"durable. Ordering defect in the lifespan, not configuration."
+                ),
+                **_SAVER_STATUS,
+            }
         return True, {"checkpointing": "durable", "stateful_graphs": stateful, **_SAVER_STATUS}
     if _SAVER_STATUS.get("open_error"):
         return False, {

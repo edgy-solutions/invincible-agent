@@ -227,6 +227,12 @@ def test_a_DECLARED_but_UNREACHABLE_DSN_is_a_DIFFERENT_refusal(loaded, monkeypat
 @needs_langgraph
 def test_a_DURABLE_saver_is_READY(loaded, monkeypatch):
     """The positive control for all three above — otherwise "not ready" passes unconditionally."""
+    # `_SAVER` IS TAKEN FROM THE COMPILED GRAPHS, which is what a correctly ordered boot
+    # produces: the saver opened first, then compiled against. Setting `durable` without it
+    # is the MISORDERED state, and the ordering invariant refuses that — correctly, which is
+    # how this row was caught when the invariant landed.
+    held = next(g.checkpointer for _gid, (m, g) in loaded._LOADED.items() if m.checkpointer)
+    monkeypatch.setattr(loaded, "_SAVER", held)
     monkeypatch.setitem(loaded._SAVER_STATUS, "durable", True)
     monkeypatch.setitem(loaded._SAVER_STATUS, "kind", "postgres")
     ok, _detail = loaded.checkpointer_readiness()
@@ -323,3 +329,84 @@ async def test_a_thread_written_by_ONE_saver_RESUMES_in_ANOTHER():
         f"a second saver over the same DSN did not see the first's thread: {second}. The state "
         f"did not survive the process, which is the only thing durability claims."
     )
+
+
+# ── THE ORDERING IS LOAD-BEARING, NOT TIDY ──────────────────────────────────────────────
+#
+# `load_graphs` COMPILES each stateful row against whatever `_saver_for` returns at that
+# moment. Open the saver AFTER compilation and every graph carries an InMemorySaver while
+# `_SAVER_STATUS` says durable: the engine reports durability it does not have, readiness
+# passes, and the loss appears only as a thread that will not resume, on a restart, in
+# production.
+#
+# THAT IS THE `registered 3/3` SHAPE FOR DURABILITY — a status derived from the ATTEMPT rather
+# than the RESULT. A seal on the LIFESPAN alone would pin today's line order and say nothing
+# about what the graphs hold; these assert the OBJECTS, so a future refactor that reorders is
+# caught by what it produces rather than by how it reads.
+
+@needs_langgraph
+@pytest.mark.asyncio
+async def test_the_lifespan_opens_the_saver_BEFORE_it_compiles(loaded, monkeypatch):
+    """IDENTITY, NOT TRUTHINESS. An InMemorySaver is perfectly truthy, so
+    `assert graph.checkpointer` passes against the misordered host — the defect this exists
+    for. Only `is _SAVER` separates them."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    sentinel = InMemorySaver()
+
+    async def _fake_open(stack):
+        loaded._SAVER = sentinel
+        loaded._SAVER_STATUS.update({"kind": "postgres", "durable": True,
+                                     "dsn_configured": True, "open_error": None})
+
+    monkeypatch.setattr(loaded, "_open_saver", _fake_open)
+    monkeypatch.delenv("MESH_REGISTER_ON_STARTUP", raising=False)
+
+    async with loaded.lifespan(loaded.app):
+        stateful = [(gid, g) for gid, (m, g) in loaded._LOADED.items() if m.checkpointer]
+        assert stateful, "no stateful row admitted — this seal has no subject"
+        for gid, g in stateful:
+            assert getattr(g, "checkpointer", None) is sentinel, (
+                f"{gid} was compiled against a checkpointer that is not the opened saver. The "
+                f"saver was opened after load_graphs, so it is held by nothing while the "
+                f"engine reports durable."
+            )
+
+
+@needs_langgraph
+def test_reporting_durable_while_compiled_against_something_else_is_NOT_READY(loaded,
+                                                                              monkeypatch):
+    """The runtime half. The seal above catches the ordering in THIS repo's lifespan; this
+    catches the same divergence however it arises — a second entry point, a route-C host, a
+    reload that recompiles without reopening."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    monkeypatch.setattr(loaded, "_SAVER", InMemorySaver())      # "opened" saver
+    monkeypatch.setitem(loaded._SAVER_STATUS, "durable", True)
+    monkeypatch.setitem(loaded._SAVER_STATUS, "kind", "postgres")
+    # _LOADED still holds graphs compiled against a DIFFERENT saver — the misordered state.
+
+    ok, detail = loaded.checkpointer_readiness()
+    assert ok is False, (
+        "the engine reported READY while its stateful graphs hold a checkpointer that is not "
+        "the opened saver. That is a durability claim nothing backs."
+    )
+    assert "REPORTED DURABLE" in detail["checkpointing"]
+    assert "before load_graphs" in detail["reason"].lower() or \
+           "BEFORE load_graphs" in detail["reason"]
+
+
+@needs_langgraph
+def test_the_matching_case_is_READY(loaded, monkeypatch):
+    """THE CONTROL. Without it, the row above is satisfied by a readiness check that refuses
+    every durable host — which would pass while making durability unreachable."""
+    # The correctly ordered state, taken from the objects rather than reconstructed: every
+    # stateful graph already holds the saver `load_graphs` compiled it against, so declaring
+    # THAT one open is exactly what a saver-opened-first boot leaves behind.
+    held = {g.checkpointer for _gid, (m, g) in loaded._LOADED.items() if m.checkpointer}
+    assert len(held) == 1, f"stateful graphs hold {len(held)} different savers: {held}"
+    monkeypatch.setattr(loaded, "_SAVER", held.pop())
+    monkeypatch.setitem(loaded._SAVER_STATUS, "durable", True)
+
+    ok, detail = loaded.checkpointer_readiness()
+    assert ok is True, f"a correctly-ordered durable host was refused readiness: {detail}"
