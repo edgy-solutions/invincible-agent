@@ -68,7 +68,11 @@ def build(
     over, so a consumer can check the response against itself.
     """
     rows: list[dict[str, Any]] = []
-    cum_bcws = cum_bcwp = cum_acwp = 0.0
+    # SEEDED AT INT ZERO, NOT 0.0, AND THAT IS THE WHOLE OF THIS MODULE'S DECIMAL CHANGE.
+    # `0.0 + Decimal(...)` is a TypeError; `0 + Decimal(...)` and `0 + float` both work. A
+    # float seed silently pins this module to float inputs — the one line that would have made
+    # it un-liftable while looking like a formatting choice.
+    cum_bcws = cum_bcwp = cum_acwp = 0
     for period, bcws, bcwp, acwp in quantities:
         if (bcws, bcwp, acwp) == _ABSENT:
             continue

@@ -223,8 +223,20 @@ VALUE_LABEL: dict[str, str] = {
 #: money ruling scopes to producers and to consumers that subtract or compare.
 _DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contribution")
 
+#: The money fields `fin_performance_indices` computes. The two VARIANCES are why this verb is
+#: in scope at all -- they are subtractions -- and the six quantities are the operands they and
+#: the four indices were taken over, carried so a consumer can check the response against
+#: itself without a second implementation of the verb.
+_INDEX_MONEY_FIELDS = ("bcws", "bcwp", "acwp", "cum_bcws", "cum_bcwp", "cum_acwp",
+                       "cost_variance", "schedule_variance")
 
-def _emit_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+
+def _emit_money(
+    rows: list[dict[str, Any]],
+    *,
+    money_fields: tuple[str, ...],
+    ratio_fields: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     """Convert the exact figures to the edge representation the cards read.
 
     EVERY MONEY FIELD CARRIES AN EXACT STRING BESIDE THE FLOAT, which is engine-cost's pattern
@@ -243,16 +255,19 @@ def _emit_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unused by the one calculation that needed it.
     """
     for row in rows:
-        for key in _DRIVER_MONEY_FIELDS:
+        for key in money_fields:
             value = row.get(key)
             if isinstance(value, Decimal):
                 exact = _money(value)
                 row[f"{key}_exact"] = str(exact)
                 row[key] = float(exact)
-        share = row.get("share_of_total")
-        if isinstance(share, Decimal):
-            row["share_of_total_exact"] = str(share)
-            row["share_of_total"] = float(share)
+        # RATIOS ARE NOT QUANTIZED, and they are carried exact for the same reason money is:
+        # a consumer that compares two indices should read the authority, not the float edge.
+        for key in ratio_fields:
+            value = row.get(key)
+            if isinstance(value, Decimal):
+                row[f"{key}_exact"] = str(value)
+                row[key] = float(value)
     return rows
 
 
@@ -795,12 +810,25 @@ def fin_performance_indices(
     # this engine's vocabulary for "an index, or None where the denominator is zero". A copy
     # inside the module would duplicate a NAMED RULE and let the two drift; an import would
     # give a measure module a dependency on the engine it is meant to be liftable out of.
-    quantities = ((period, *_totals(state, wp_ids, [period])) for period in periods_in(window))
-    return index_series.build(
-        quantities,
-        ratio=_ratio,
-        scope_label=scope_label,
-        amount_unit=program.value_unit,
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES `cost_variance`
+    # and `schedule_variance` -- two subtractions -- so the money ruling scopes it by its own
+    # test rather than by analogy, and the FINDING is the difference rather than either
+    # operand. `_ratio` divides Decimals and returns a Decimal, so the four indices come back
+    # exact as well.
+    quantities = ((period, *_totals_exact(state, wp_ids, [period]))
+                  for period in periods_in(window))
+    return _emit_money(
+        index_series.build(
+            quantities,
+            ratio=_ratio,
+            scope_label=scope_label,
+            amount_unit=program.value_unit,
+        ),
+        money_fields=_INDEX_MONEY_FIELDS,
+        # THE INDICES ARE RATIOS AND ARE NOT QUANTIZED -- a factor, not an amount. Carried
+        # exact beside the float so a consumer COMPARING two indices reads the authority,
+        # while the card takes the float at the edge.
+        ratio_fields=("cpi", "spi", "cum_cpi", "cum_spi"),
     )
 
 
@@ -979,7 +1007,11 @@ def fin_variance_drivers(
     # change; the figures moved here because the INPUTS changed type, which is this verb's
     # doing and not the module's. That the seam absorbed a money-representation change without
     # editing is the strongest evidence available that it was cut in the right place.
-    return _emit_money(variance_driver_ranking.rank_drivers(scored, top_n=top_n))
+    return _emit_money(
+        variance_driver_ranking.rank_drivers(scored, top_n=top_n),
+        money_fields=_DRIVER_MONEY_FIELDS,
+        ratio_fields=("share_of_total",),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
