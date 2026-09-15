@@ -31,8 +31,18 @@ EXPECTED="Lane: ${WT}/${BR}"
 
 # `git rev-parse` on the rule commit can fail in a shallow clone or a fresh fetch that has not
 # seen it. REFUSING THERE WOULD BLOCK EVERY PUSH, so an unresolvable rule commit means "cannot
-# know" and the hook stands aside — the seal still reports after the fact. A guard that fails
-# closed on its own missing input is a guard that gets uninstalled.
+# know" and the hook stands aside — the seal still reports after the fact.
+#
+# AND THIS IS NOT R-012 INVERTED, which is what the next reader will think. R-012 fails CLOSED
+# because a service with a missing declaration has a readiness probe to refuse through: the
+# refusal is visible, addressed to an operator, and the service stays up while it is fixed. A
+# CLIENT-SIDE HOOK HAS NO SUCH SURFACE. One that blocks every push on its own missing input is
+# removed within the hour — `git push --no-verify`, or `core.hooksPath` unset — and then the
+# rule has NEITHER arm rather than one.
+#
+# So the division is deliberate: the SEAL is the fail-closed half and refuses in CI where a
+# refusal is seen and cannot be locally disabled; the HOOK's job is to be PRESENT. A guard that
+# survives is worth more than a guard that is correct and gone.
 if ! git rev-parse --verify --quiet "${RULE_COMMIT}^{commit}" >/dev/null; then
     echo "pre-push: ${RULE_COMMIT} not in this clone; skipping the Lane-trailer check." >&2
     exit 0

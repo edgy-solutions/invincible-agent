@@ -2752,6 +2752,62 @@ built to share** — same question, same subject, same verb, short summaries on 
 `derived_from_artifact_id` — the RELATION — resolved what three reads on the description could
 not.** *Select on the relation between two records, never on their common description.*
 
+## R-066 — A HOOK BROKEN BY ENCODING FAILS TOTALLY AND SILENTLY
+
+**Measured 2026-09-15 while building the pre-push trailer guard.** A Python rewrite converted 100
+line endings to CRLF. After it:
+
+    bash -n .githooks/pre-push   ->  syntax error near unexpected token `newline`, line 52
+    sh   -n .githooks/pre-push   ->  clean
+
+**Two shells disagreeing about a script that had not changed reads as a syntax bug in the
+script.** It is not; it is the file. And the runtime failure is worse than the check's: **git
+prints the hook's error and carries on**, so the push succeeds, the rule the hook enforces is
+simply off, and nothing anywhere says so. A guard that cannot run is indistinguishable from a
+guard that ran and approved.
+
+**THE PIN IS THE FIX, AND THE SEAL ON THE PIN IS WHAT MAKES IT THE REPOSITORY'S.**
+`.gitattributes` carries `.githooks/* text eol=lf` beside the `*.sh` pin that was already there
+for the same reason; a seal asserts the hook has zero CRLF **and** that the pin exists. Without
+the second arm the check passes in this working copy and the hook is broken in the next one —
+a property of a checkout rather than of the repository, which is the same distinction as a TTL on
+someone's disk (R-064).
+
+### R-066.1 — THREE "NO SUCH FILE" ERRORS FOR A FILE THAT WAS PRESENT
+
+The same build produced three failures in a row, all reporting absence about something present:
+
+    bash -n <Windows path>    backslashes stripped   -> "No such file or directory"
+    bash -n C:/...            Git Bash wants /c/...  -> "No such file or directory"
+    CRLF in the script        the file is fine       -> a syntax error at line 52
+
+> **An addressing failure and an absence report the same way.** The tool is telling you what it
+> could not reach, and a reader hears what is not there.
+
+It is the probe-sent-the-wrong-field-name shape (R-057's instrument half) in a different costume:
+the instrument could not ask the question, and its inability was reported in the vocabulary of an
+answer.
+
+**How to apply:** when a tool reports a file missing, `ls` it before believing the tool — and when
+two tools disagree about one unchanged file, suspect the FILE's encoding before either tool.
+
+### R-066.2 — A CLIENT-SIDE GUARD FAILS OPEN, AND THAT IS NOT R-012 INVERTED
+
+R-012 fails CLOSED: a service with a missing declaration refuses through its readiness probe, and
+that refusal is visible, addressed to an operator, and leaves the service up while it is fixed.
+
+**A client-side hook has no such surface.** One that blocks every push on its own missing input —
+a shallow clone that lacks the rule commit — is removed within the hour, by `--no-verify` or by
+unsetting `core.hooksPath`, and then the rule has NEITHER arm rather than one.
+
+> **A guard that survives is worth more than a guard that is correct and gone.**
+
+So the division is deliberate and asserted: the **seal** is the fail-closed half, refusing in CI
+where a refusal is seen and cannot be locally disabled; the **hook's** job is to be PRESENT. The
+reason is recorded beside the skip, because the next reader meets fail-open and reaches for R-012.
+
+---
+
 ---
 
 ## Why this file exists at all
