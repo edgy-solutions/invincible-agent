@@ -187,6 +187,138 @@ def merge_neo4j_predicate_edge(
         )
 
 
+# ── PARAMETERISED_BY: the verb is reachable from a class it TAKES, not only one it is ABOUT ──
+#
+# Contract (one declaration, in tests/routing/test_the_pool_reaches_parameterised_verbs.py):
+#
+#     (verb_subject:OntologyClass)-[:PARAMETERISED_BY]->(referent:OntologyClass)
+#         verb_iri : the verb's registered `iri`, joining back to the verb relationship
+#         slot     : the declaring slot's name
+#         required : the slot's own flag, ALWAYS written, true or false
+#
+# THE DIRECTION IS FORCED, NOT CHOSEN. The ruling said "an edge from the verb to each referent
+# class". A verb in this graph IS a relationship, and NEO4J CANNOT ORIGINATE AN EDGE AT A
+# RELATIONSHIP — so it runs from the verb's SUBJECT class and carries `verb_iri` to say which
+# verb it speaks for. Without that property one edge would admit EVERY verb on that subject.
+#
+# `required` IS ALWAYS WRITTEN, including false. The pool filters with
+# `coalesce(p.required, false) = true`, which is DEFENCE against a missing property rather than
+# permission to omit it: an edge with no `required` is one the pool silently ignores, and that
+# shortfall is invisible from both sides. Writing false also keeps the consumer's control arm
+# meaningful — an arm asserting "a required:false edge does not widen the pool" is asserting
+# against a case that cannot occur if this function never writes one.
+#
+# ONLY SPOKEN SLOTS CARRY A REFERENT, so only spoken slots can parameterise. A handle is
+# resolved by the dispatcher and was never something a speaker names. Nothing is filtered on
+# `kind` here — the absence of `referent` already encodes it, and a second gate would be a
+# second implementation of that rule.
+_PARAMETERISED_SYNC_DELETE = """
+MATCH (vsubj:OntologyClass {uri: $input_uri})-[p:PARAMETERISED_BY]->(:OntologyClass)
+WHERE p.verb_iri = $verb_iri
+DELETE p
+RETURN count(p) AS deleted
+"""
+
+_PARAMETERISED_MERGE = """
+MATCH (vsubj:OntologyClass {uri: $input_uri})
+MATCH (ref:OntologyClass {uri: $referent_uri})
+WITH vsubj, ref
+CALL apoc.merge.relationship(
+    vsubj,
+    'PARAMETERISED_BY',
+    {verb_iri: $verb_iri, slot: $slot},
+    $props,
+    ref,
+    $props
+) YIELD rel
+RETURN rel.slot AS slot
+"""
+
+
+def sync_parameterised_by_edges(
+    *,
+    driver: Any,
+    verb_iri: str,
+    input_uri: str,
+    slots: Any,
+) -> dict:
+    """Make this verb's PARAMETERISED_BY edges EXACTLY match its current declaration.
+
+    A SYNC, NOT A MERGE, and the difference is a real defect rather than tidiness. MERGE alone
+    is ACCRETIVE: a slot removed from a manifest leaves its edge behind, and that edge keeps
+    widening the pool for a parameter the verb no longer takes — a verb admitted for a reason
+    that has ceased to be true. Deleting this verb's edges first makes the edge set a statement
+    about the CURRENT declaration rather than about every declaration there has ever been.
+
+    Scoped to `verb_iri`: a concurrent registration of a DIFFERENT verb on the same subject
+    class keeps its edges, the same containment `compensate_neo4j_predicate_edge` gets from
+    filtering on identity.
+
+    Returns ``{"written": [...], "unresolved": [...], "deleted": n}``. `unresolved` names slots
+    whose referent class has no OntologyClass node — REPORTED, never silently dropped.
+
+    WHY UNRESOLVED IS NOT AN EXCEPTION. `merge_neo4j_predicate_edge` raises when the input or
+    output class is missing, because without them the verb cannot be reached at all. A missing
+    REFERENT is different in kind: the verb is still reachable through its own subject by the
+    coverage leg, so raising here would turn a working registration into an outage over a
+    widening it never had. Silence is the other error — that is the silent-shortfall shape, a
+    pool that is correct and short at once — so the caller is handed the names and logs them.
+    """
+    declarations = [d for d in (slots or []) if isinstance(d, dict) and d.get("referent")]
+
+    with driver.session() as session:
+        rec = session.run(
+            _PARAMETERISED_SYNC_DELETE, input_uri=input_uri, verb_iri=verb_iri
+        ).single()
+        deleted = int(rec["deleted"]) if rec else 0
+
+        written: list = []
+        unresolved: list = []
+        for decl in declarations:
+            slot_name = str(decl.get("name") or "")
+            if not slot_name:
+                continue
+            row = session.run(
+                _PARAMETERISED_MERGE,
+                input_uri=input_uri,
+                referent_uri=str(decl["referent"]),
+                verb_iri=verb_iri,
+                slot=slot_name,
+                # bool() is deliberate: a manifest carrying required="false" (a STRING) would
+                # otherwise be written truthy, and the pool's `= true` would admit an optional
+                # slot — the unconstrained enum ADR-0018 exists to prevent.
+                props={"required": bool(decl.get("required", False))},
+            ).single()
+            if row is None:
+                unresolved.append({"slot": slot_name, "referent": str(decl["referent"])})
+            else:
+                written.append(slot_name)
+
+    if unresolved:
+        logger.warning(
+            "parameterised_by: %d slot(s) declare a referent with no OntologyClass node, so "
+            "%s will NOT be reachable through them: %s. The verb is still reachable through "
+            "its own subject; this is a shortfall in the widening, not an outage.",
+            len(unresolved), verb_iri, unresolved,
+        )
+
+    return {"written": written, "unresolved": unresolved, "deleted": deleted}
+
+
+def compensate_parameterised_by_edges(
+    *,
+    driver: Any,
+    verb_iri: str,
+    input_uri: str,
+) -> int:
+    """DELETE this verb's PARAMETERISED_BY edges. Idempotent; returns the count removed."""
+    with driver.session() as session:
+        rec = session.run(
+            _PARAMETERISED_SYNC_DELETE, input_uri=input_uri, verb_iri=verb_iri
+        ).single()
+    return int(rec["deleted"]) if rec else 0
+
+
 def compensate_neo4j_predicate_edge(
     *,
     driver: Any,

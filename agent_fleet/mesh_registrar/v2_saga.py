@@ -47,6 +47,7 @@ so a retried registration sees the same end state.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -209,6 +210,40 @@ def run_registration_saga(
         )
         forward_retry_attempts += attempts
         neo4j_written = True
+
+        # Step: PARAMETERISED_BY, so the pool reaches this verb from a class it TAKES ---------
+        #
+        # DERIVED FROM `rel_props["slots"]`, NOT FROM A SECOND PARAMETER, and that is the whole
+        # point. The edges and the relationship property then state one declaration; a separate
+        # `slots=` argument could carry a different value than the one written to the graph,
+        # which is the two-readers-disagreeing defect the edge design exists to avoid.
+        #
+        # NON-FATAL BY DESIGN. The verb edge is already committed. A parameterisation failure
+        # costs the WIDENING — the verb stays reachable through its own subject via the coverage
+        # leg — so compensating the whole registration would remove a working verb to protect an
+        # enhancement it never had. Logged at ERROR with the verb named, and the next
+        # registration (the reregister hook backfills) retries the sync from scratch, because
+        # the write is a SYNC rather than an append and so carries no partial state forward.
+        try:
+            _pb = substrate.sync_parameterised_by_edges(
+                driver=driver,
+                verb_iri=verb_iri,
+                input_uri=input_uri,
+                slots=json.loads(rel_props.get("slots") or "[]"),
+            )
+            if _pb["written"] or _pb["deleted"]:
+                logger.info(
+                    "parameterised_by: %s wrote %d edge(s), removed %d stale",
+                    verb_iri, len(_pb["written"]), _pb["deleted"],
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "parameterised_by: sync FAILED for %s (%s: %s). The verb is registered and "
+                "reachable through its own subject, but NOT through classes it merely takes as "
+                "parameters. This is a shortfall in the pool, not an outage: a question whose "
+                "only resolvable instance is one of those parameters will not reach this verb.",
+                verb_iri, type(exc).__name__, exc,
+            )
     except Exception as exc:  # noqa: BLE001
         # Nothing wrote (or N partially wrote but the retry harness
         # treated it as failure — apoc.merge.relationship is atomic per
