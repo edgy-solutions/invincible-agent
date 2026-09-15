@@ -393,9 +393,40 @@ list means domain-agnostic."*
 **I CANNOT BOUND THE BLAST RADIUS FROM THIS REPO, which is the reason to ask rather than pick.**
 A derived census of all 38 `register_engine_to_mesh` call sites under `agent_fleet/` shows every
 one passes `domains=` — but three pass a variable or a request field, and registrants OUTSIDE this
-repo (doc-tools' sync, SDK `MeshTool` emits) are not visible here at all. **How many rows actually
-carry `domains == []` is a live Weaviate question**, and it is the number that decides whether this
-is a no-op or a routing outage.
+repo (doc-tools' sync, SDK `MeshTool` emits) are not visible here at all.
+
+### THE CENSUS LINE — measured against live sandbox 2026-09-14
+
+RULED 2026-09-14: ADR-0009 stands; the class collection comes under it. The measurement changed
+what that means. `tests/sandbox_e2e/_probe_domain_agnostic_rows.py`, read-only aggregate counts:
+
+    Predicate       129 rows,  27 with len(domains) == 0   ->  21% ARE domain-agnostic
+    OntologyClass 21078 rows,   0 domain-agnostic          ->  8 distinct domains, none empty
+
+**SOMEBODY DID REGISTER AGNOSTIC ON PURPOSE, 27 TIMES.** A fifth of the routing table. Deleting
+ADR-0009's branch would have taken all 27 out of every domain-scoped search.
+
+**AND THE CLASS BRANCH WOULD BE DEAD CODE: zero of 21,078 rows carry no domain.** All eight domain
+values are non-empty and they sum to the total. So the rule is satisfied vacuously in data, and
+writing the branch would be a guard that cannot fire.
+
+**WORSE, IT CANNOT BE WRITTEN AT ALL ON THIS SCHEMA — and that is why the two call sites differ.
+The divergence is in the SCHEMA, not in engine-o's code:**
+
+    Predicate      invertedIndexConfig.indexPropertyLength = True    -> len(domains)==0 filters
+    OntologyClass  invertedIndexConfig.indexPropertyLength = unset   -> len(domain)==0 RAISES
+
+Verified by running the filter: *"Property length must be indexed to be filterable! add
+`indexPropertyLength`"*. And `_weaviate_hybrid_search_sync` wraps its query in
+`except Exception: print(...); return []` — **so adding that branch would not fail loudly, it
+would empty the class candidate pool in silence.** Routing down, service green. The setting is
+immutable after collection creation, so enabling it means recreating `OntologyClass` and
+re-ingesting 21,078 objects: a prime-shaped migration, not a toggle.
+
+**WHAT LANDED INSTEAD IS A TRIPWIRE.** The probe asserts the premise the missing branch rests on —
+zero agnostic class rows — and reds the day one appears, naming what it would take to serve it. A
+revisit-later that cannot go stale is a check that goes red when the world changes; the number in
+this paragraph would otherwise be a figure outliving its measurement.
 
 **6. AND ONE DEFAULT WORTH PINNING BEFORE IT BECOMES A CONTRACT.** The class search declares
 `limit: int = 10`; the predicate search requires `limit` from its caller. Two doors of one
