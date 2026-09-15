@@ -2294,7 +2294,48 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # entity_refs (or with entity_refs that all return 0) still
     # abstains to UNKNOWN. The probe is the property guard against
     # this branch over-firing or being silently removed.
-    if not candidates and request.entity_refs:
+    # ── A CLASS HIT THAT CANNOT ANSWER IS NOT EVIDENCE THE ENTITY WAS UNDERSTOOD ────────
+    #
+    # RULED 2026-09-15, and it loosens the guard above by exactly one term. The original
+    # condition was `not candidates` — the phone book fires only when class recall returned
+    # NOTHING. Measured: "tell me about the wiring loom" with `entity_refs=['wiring loom']`
+    # recalls `pcn#SustainmentNotice`, which is WRONG and non-empty, so the fan-out never
+    # fired and engine-safety's provider — registered, discoverable, and able to resolve the
+    # hazard — was never asked.
+    #
+    # That is the guard's OWN original defect one step over. Its comment records the first
+    # one: the fan-out "ran only AFTER class recall succeeded — meaning when class recall
+    # failed, it never fired." The fix handled the case that failed and left its sibling
+    # inverted, which is a fix measured on one input.
+    #
+    # THE SIGNAL IS THE ONE THAT EXISTS TODAY. The ruled form was "no candidate cleared the
+    # confidence floor" — and there is no floor to clear: every class candidate comes back
+    # with `score: None` because hybrid search is running lexical-only, so the same three
+    # classes answer three unrelated queries. A floor comparison would either never fire or
+    # always fire. `_preempted_subject_is_unanswerable` is already computed two branches
+    # down and needs no score: a class carrying NO VERB in the asked domains cannot answer
+    # the question, whatever recall thought of it.
+    #
+    # THE PRECEDENCE RULE SURVIVES UNCHANGED, which is what makes this narrow rather than
+    # blanket: an ANSWERABLE class hit still wins, and raw text with no `entity_refs` still
+    # never reaches the phone book. When real scores exist the floor becomes a SECOND
+    # condition beside this one, not a replacement.
+    _recall_is_non_evidence = not candidates
+    if candidates and request.entity_refs:
+        _top_uri = str((candidates[0] or {}).get("uri") or "")
+        _guard_domains = request.domains or (
+            [request.domain] if request.domain else [])
+        if _top_uri and await _preempted_subject_is_unanswerable(
+            _top_uri, _guard_domains
+        ):
+            _recall_is_non_evidence = True
+            print(
+                f"[Engine O] class recall returned {_top_uri} which carries no verb in "
+                f"domains={_guard_domains!r} — treating it as non-evidence and asking the "
+                f"instance providers about {request.entity_refs!r}"
+            )
+
+    if _recall_is_non_evidence and request.entity_refs:
         for entity_ref in request.entity_refs:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
@@ -2302,7 +2343,16 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
-            instance_provenance["preemption_path"] = "class_recall_empty_fallback"
+            # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
+            # `class_recall_empty_fallback`, which was true while the only condition was an
+            # EMPTY recall. This branch now also fires on a non-empty recall whose top class
+            # cannot answer, and a reader of that provenance would have been told the recall
+            # was empty when it was not — a precise, confident, wrong account of why the
+            # phone book was asked.
+            instance_provenance["preemption_path"] = (
+                "class_recall_empty_fallback" if not candidates
+                else "class_recall_unanswerable_fallback"
+            )
             if instance_subject is not None:
                 # POST-PREEMPTION PRODUCTIVITY CHECK — site 1 of 2. BOTH preemption
                 # returns need it: a check on one is silent by construction on the other,
@@ -3365,6 +3415,57 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # upstream looks healthy.
         resolved_id = prov.get("instance_id") if prov.get("instance_resolved") else None
         resolved_class = prov.get("instance_class_uri") or _subject
+
+        # ── THE REFERENT IS THE DISCRIMINATOR WHEN BINDING ──────────────────────────────
+        #
+        # MEASURED 2026-09-15. "the chafed wiring loom hazard" extracts to `wiring loom`,
+        # and at that width the fan-out returns CSI-5001 at 0.70 and HAZ-1001 at 0.70 — a
+        # TIE ACROSS TWO CLASSES, with nothing in either engine's scoring able to separate
+        # them. Whichever the fan-out picked, the type check below rejected half the time as
+        # `wrong_class`, and the slot went unfilled WITH THE RIGHT ANSWER IN THE CANDIDATE
+        # LIST. The `banana 4` shape one layer over: a token generic enough to be a word in
+        # two vocabularies.
+        #
+        # **IT IS NOT A TIE FOR THIS SLOT.** `draftRiskAssessment.hazard_id` declares
+        # `safety:Hazard`; the slot already said which class it wants, and the declaration is
+        # exactly the discriminator the scorers lack. So the bind is chosen from the
+        # referent's own class rather than taken blind and then refused.
+        #
+        # THE MENU STAYS UNSCOPED, which is the distinction that makes this safe. `cands`
+        # above is untouched — every class, every name-match, so a person disambiguating
+        # still sees the collision. The comment above rules that filtering the MENU would
+        # empty it for the case that most needs one; this filters only the ANSWER. Show
+        # everything by that name; bind the kind that was asked for.
+        _referent_bound = False
+        if referent and cands:
+            _same_class = [
+                c for c in cands
+                if str(c.get("class_uri") or "") == referent and c.get("instance_id")
+            ]
+            if _same_class and (not resolved_id or resolved_class != referent):
+                _pick = max(_same_class, key=lambda c: float(c.get("score") or 0.0))
+                _slots_logger.info(
+                    "fill_slots: %s.%s bound %s from the slot's referent %s "
+                    "(the fan-out's winner was %s) - the declaration disambiguated a "
+                    "cross-class tie the scorers could not",
+                    request.verb_iri, name, _pick.get("instance_id"), referent,
+                    resolved_id or "none",
+                )
+                resolved_id = _pick.get("instance_id")
+                resolved_class = referent
+                prov = {**prov, "instance_label": _pick.get("label", "")}
+                _referent_bound = True
+                # `outcome` IS DELIBERATELY UNCHANGED. It is a shared vocabulary —
+                # `slot_disposition` partitions it into ASK_WITH_CANDIDATES and
+                # ABSTAIN_OUTCOMES — and a fifth value would pass BOTH sets unrecognised and
+                # fall through to "bound" by accident rather than by decision. That is the
+                # prefix-registry shape: an unknown value is accepted, routes nowhere, and
+                # reports success. The file's own rule above says an addition is flagged to
+                # the elicitation lane, not smuggled in.
+                #
+                # The fact still travels, as its own field, where a reader can act on it
+                # without any partition having to recognise it.
+
         if resolved_id and referent and resolved_class and resolved_class != referent:
             _slots_logger.warning(
                 "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
@@ -3384,6 +3485,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
                                 "instance_id": resolved_id,
                                 "instance_label": prov.get("instance_label", ""),
+                                "referent_disambiguated": _referent_bound,
                                 "candidates": cands}
         else:
             # REMOVED, not left as the raw string. See FillSlotsResponse.resolution.

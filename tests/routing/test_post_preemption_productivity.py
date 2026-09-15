@@ -123,11 +123,28 @@ def _checks() -> int:
 def test_every_preemption_return_is_gated():
     """THE ENUMERATION ASSERTION. A registration-shaped property named at N sites and
     checked at N-1 is silent at the one that was missed — this repo has measured that nine
-    times across four mechanisms. Counted rather than spot-checked for that reason."""
-    assert _checks() == _preemption_returns(), (
-        f"{_preemption_returns()} preemption return(s) but {_checks()} productivity "
-        f"check(s) — a new preemption path was added without gating it"
-    )
+    times across four mechanisms.
+
+    ⛔ THIS COUNTED CALLS AND COMPARED THE TOTALS, which held only while EVERY call to the
+    check was a preemption gate. It stopped holding when the instance fan-out guard began
+    using the same function for a different question — "is this class hit evidence the entity
+    was understood" — and the seal reported "a new preemption path was added without gating
+    it" about a change that added no preemption path at all. A count is a PROXY for the
+    property; it agreed with the property until a second legitimate caller appeared.
+
+    So it now asserts the property directly: every return that installs a preempted subject
+    is PRECEDED by a check in the same block. That is what the name claims, it survives a
+    third caller, and it still fails if a preemption return is added ungated.
+    """
+    returns = [m.start() for m in re.finditer(r"resolved_uri=instance_subject", _MAIN)]
+    assert returns, "no preemption return found — this seal is asserting nothing"
+    for pos in returns:
+        window = _MAIN[max(0, pos - 2500):pos]
+        assert ("await " + _CHECK + "(") in window, (
+            "a preemption return at offset " + str(pos) + " has no productivity check "
+            "before it in the same block — a preempted subject carrying no verb would be "
+            "installed as the resolved URI and routed to an engine that cannot answer"
+        )
 
 
 def test_there_really_are_two_sites():

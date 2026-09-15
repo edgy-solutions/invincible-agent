@@ -2647,6 +2647,62 @@ fixed by amending); R-058.1.
 
 ---
 
+## R-064 — PRESENT ON THE MACHINE THAT WROTE IT, ABSENT EVERYWHERE IT MATTERS
+
+**The TTL-not-in-the-manifest shape, restated for a BUILD INPUT.**
+
+`cost_agent.package_export` needs the pinned Pyodide runtime. It lived in `.pyodide-cache/` —
+**gitignored, zero tracked files.** Every developer who had ever built a package had it; CI had
+nothing to copy; every deployed engine refused the export by name, honestly and permanently.
+
+It was not missing. It was *somewhere that is not the place the work happens* — which is exactly
+`iof_mro.ttl` on disk and absent from `CANONICAL_TTL_MANIFEST`, and exactly a hand-run Cypher
+that no bootstrap reproduces.
+
+> **The act that needs the input fetches it, pinned — a human's disk is never the source.**
+
+Here: CI runs the builder's own `--fetch-runtime` at the pinned `PYODIDE_VERSION`, and git does
+not carry 14 MB. The fetch step **refuses** rather than building a crippled image: an image with
+the builder and half a runtime passes every test and fails at answer time with a missing-files
+list, which is the slow way to learn CI had no network.
+
+**THE TELL is a capability that works for everyone who built it and for nobody else** — and it
+reads as working, because the people asking are the people who have it.
+
+---
+
+## R-065 — NO FIXTURE DRAWN FROM THIS REPO CAN DISCRIMINATE TWO RULES A REAL CHECKOUT BOTH SATISFIES
+
+`_repo_root()` was changed from *"does this tree look like a checkout"* (`scripts/` and
+`agent_fleet/`) to *"can a package be built here"* (the builder and the runtime). The seal asserted
+the new rule. **Restoring the old one under a different variable name killed nothing.**
+
+Two reasons, and the second is the one that generalises:
+
+  1. the assertion matched a STRING, so a rename evaded it; and
+  2. **a real checkout satisfies BOTH rules**, so every fixture available in the tree agrees with
+     both, and the seal could not have discriminated however it was written.
+
+> **The distinguishing case did not exist in the repository and had to be CONSTRUCTED** — a
+> flattened `/app`: `scripts/` holding the builder, `.pyodide-cache/` holding the runtime, and no
+> `agent_fleet/` anywhere. The old rule answers None there; the new one resolves.
+
+This is `lane/32`'s stub from the other side. There, a double supplied the property under test and
+so could never see its absence. Here, every available fixture satisfied the property under test
+and so could never see which rule produced it. **Both are the subject and the instrument agreeing
+because they were drawn from the same place.**
+
+**AND IT IS WHY A BUILD SEAL RUNS AGAINST THE IMAGE, NOT THE TREE.** The tree is the one
+environment where the question cannot be asked: everything the deployed artifact might lack is
+present. The started-service CI seal has the same justification — a liveness check against a pod
+asks the service its opinion of itself; a check against the image asks what was shipped.
+
+Related: R-041; [[a-seal-that-defends-a-choice]] — a seal defending a choice must assert its own
+fixture distinguishes the rejected rule, which is this law's instruction rather than its
+observation; R-057.
+
+---
+
 ---
 
 ## Why this file exists at all
