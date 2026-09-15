@@ -28,6 +28,34 @@ review on either constant catches drift.**"* And the migration note instructs: *
 construction three times for exactly this reason; here it is guarding the numerical compatibility
 of every stored vector.
 
+## A SECOND LIVE INSTANCE, IN THE SAME FILE, THAT THIS PACKET MISSED
+
+Found by `doc-tools-7f` while reading the marker contract; confirmed here on the identical line:
+
+    doc-tools  embed.py:50   model = os.getenv("LLM_EMBED_MODEL", DEFAULT_EMBED_MODEL)
+    engine-o   embed.py:125  model = os.getenv("LLM_EMBED_MODEL", DEFAULT_EMBED_MODEL)
+
+**The model is ENV-OVERRIDABLE AT RUNTIME.** So the defect is not only two constants drifting from
+each other — **it is one constant drifting from what the process actually did.** A deployment that
+sets `LLM_EMBED_MODEL` embeds with something the constant does not name, today, with nothing
+recording it. The two repos would agree perfectly while both disagreed with the vectors on disk.
+
+**THIS IS WHY THE MARKER MUST RECORD AN OBSERVATION, NOT A RESTATEMENT.** If the writer stamps
+`DEFAULT_EMBED_MODEL` and the reader compares `DEFAULT_EMBED_MODEL`, the check compares two
+BELIEFS and passes — inheriting the exact weakness it was built to remove. So on both sides:
+
+* `model` is the **resolved** value from `_resolve_endpoint()`, never the module constant;
+* `dimension` is the **observed** length of a real vector, never `EXPECTED_EMBED_DIM`.
+
+Once both halves record observations, **the two `embed.py` constants stop being the contract at
+all** — which is what the ruling intended and what this packet's own first proposal (one shared
+constant) would NOT have achieved: it would have made the two sides agree with each other while
+leaving both free to disagree with the substrate.
+
+**A reader-side consequence worth keeping:** `dimension` then has TWO independent witnesses — the
+marker's claim, and the stored vectors themselves (768 on both collections, measured). Their
+disagreement is detectable with no version machinery at all.
+
 ## Why the existing safety net covers the harmless half
 
 The comment names a real net, and is honest about its reach:
