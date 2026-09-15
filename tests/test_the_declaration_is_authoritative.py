@@ -124,12 +124,48 @@ def test_CONTROL_an_undeclared_kind_still_gets_nothing():
     assert tuple(ht.verbs_for_kind("totally_made_up")) == ()
 
 
-def test_CONTROL_the_code_table_still_serves_a_kind_no_row_covers():
-    """The tables become the FALLBACK, not the dead code. Deleting them is the cutover's other
-    half and is gated on cortex-ui-ba's parity seal — asserted here so a premature deletion
-    reds rather than silently widening every uncovered kind to nothing."""
-    assert ht._VERBS_BY_KIND, "the interim per-kind table was emptied before the parity seal"
-    assert ht._DEFAULT_VERBS == frozenset({"approved", "rejected"})
+# ── THE M3.3 CUTOVER GATE ───────────────────────────────────────────────────────────────────
+#
+# The arm below asserts the state the cutover LEAVES BEHIND, and until that merge lands the
+# tables are still present — so on master it would be red rather than premature. It skips while
+# they exist and fires once they are gone, and the skip names what it does not prove.
+#
+# WITHOUT THE GATE THIS FIX IS THE SAME ORDERING TRAP IT WAS WRITTEN TO CLEAR: correct on the
+# merged tree, red on the branch that has to land first.
+_CUTOVER_LANDED = not hasattr(ht, "_VERBS_BY_KIND")
+
+
+@pytest.mark.skipif(
+    not _CUTOVER_LANDED,
+    reason=(
+        "the M3.3 cutover has not merged: `_VERBS_BY_KIND` still exists, so the tables are "
+        "still the fallback. This arm asserts they STAYED gone and proves nothing until the "
+        "deletion lands."
+    ),
+)
+def test_CONTROL_the_code_tables_STAYED_gone_after_the_cutover():
+    """THE GUARD'S REASON SURVIVES INVERTED, which is R-054 applied to a control.
+
+    This asserted the tables were still POPULATED: *"the interim per-kind table was emptied
+    before the parity seal"*. That was a guard against emptying them TOO EARLY — a premature
+    deletion would have silently widened every uncovered kind to nothing, and the assertion made
+    it red instead.
+
+    The condition it waited on has been met: the parity seal landed and the M3.3 cutover is
+    ruled. So the guard is not obsolete — **its subject moved from "not yet" to "not again"**.
+    A reinstated table is now the hazard, because the declaration is the only source and a code
+    table beside it is a second answer to "what does this species accept", with the one that
+    answers first winning silently.
+
+    Deleting the assertion along with the tables would have been the same mistake in the other
+    direction: the reason it existed does not expire when the thing it guarded does.
+    """
+    for table in ("_VERBS_BY_KIND", "_DEFAULT_VERBS", "_REASON_REQUIRED"):
+        assert not hasattr(ht, table), (
+            f"{table} is back after the M3.3 cutover. The declaration is the only source; a "
+            f"table beside it restores exactly the bypass the cutover removed — an undeclared "
+            f"species handed approved/rejected by a caller going around the card."
+        )
 
 # ---------------------------------------------------------------------------------------
 # ONE RETURN TYPE, AND ORDER PRESERVED WHERE IT EXISTS
