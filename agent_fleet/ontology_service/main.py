@@ -31,6 +31,7 @@ import weaviate
 import weaviate.classes as wvc
 from neo4j import GraphDatabase
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -332,21 +333,55 @@ def _require_capability(caller, capability: str, what: str) -> str:
     return who or "none"
 
 
-_JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
-_JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
-_JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
-# The SPARQL UPDATE endpoint (writes) — engine-o's ONE write path, used only by the pcn
-# disposition-state stamp. Derived from the read endpoint (…/ds/sparql -> …/ds/update).
-_JENA_UPDATE_ENDPOINT = os.getenv("JENA_UPDATE_ENDPOINT", "") or (_JENA_ENDPOINT.replace("/sparql", "/update") if _JENA_ENDPOINT else "")
+# Jena posture — endpoint, credential and the write endpoint — derived by a PURE module so the
+# rule is testable without booting this one (rdflib/weaviate/baml are imported at module scope,
+# so importing main.py in a test costs a stub harness — tests/test_predicate_hybrid_search.py
+# has the only one). Flatten-aware import, same shape as registry_views.
+# RULED 2026-09-13: FUSEKI_PASSWORD HAS NO DEFAULT. A configured endpoint without a credential
+# fails READINESS naming the variable, instead of authenticating with a literal out of source.
+try:
+    from substrate_posture import jena_posture as _jena_posture, neo4j_posture as _neo4j_posture, missing_declarations as _missing_declarations  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.substrate_posture import jena_posture as _jena_posture, neo4j_posture as _neo4j_posture, missing_declarations as _missing_declarations
+
+_JENA = _jena_posture(os.environ)
+_JENA_ENDPOINT = _JENA.endpoint
+_JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
+
+
+def _jena_client() -> httpx.AsyncClient:
+    """THE ONE PLACE a Jena connection is constructed.
+
+    Extracted at the fourth consumer. Two properties live here and nowhere else, which is the
+    point of there being one factory: the credential comes from the posture (never a literal),
+    and **no TLS verification override is passed**. The four call sites used to carry
+    `verify=False` each. That was inert against today's `http://…:3030/ds/query` — TLS
+    verification applies to https — which is exactly what made it dangerous: a latent override
+    waiting for the first deployment to point `externalFuseki.url` at an https endpoint, where
+    it would have disabled verification silently and nothing would have gone red.
+    """
+    if _JENA.missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"deploy fault: Jena endpoint configured but {', '.join(_JENA.missing)} is not set",
+        )
+    return httpx.AsyncClient(timeout=5.0, auth=_JENA.auth)
+
+
 _LOCAL_GRAPH = None
 
 # Weaviate Configuration
 _WEAVIATE_CLIENT = None
 
-# Neo4j Configuration
-_NEO4J_URI = os.getenv("NEO4J_URI", "bolt://iagent-neo4j:7687")
-_NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
-_NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+# Neo4j Configuration — RULED 2026-09-14: `NEO4J_URI` has NO DEFAULT.
+# It was `bolt://iagent-neo4j:7687`: a hardcoded in-cluster address standing in for a missing
+# declaration, the shape the service-URL ruling prohibited for peer URLs. Undeclared now fails
+# readiness by name; declared-empty means "this deployment has no graph" and stays ready.
+# The password lost its literal `"password"` default in the same arc — found by writing the
+# credential check over the CLASS of secret-ish variables rather than the one that was reported.
+_NEO4J = _neo4j_posture(os.environ)
+_NEO4J_URI = _NEO4J.uri
+_NEO4J_USER, _NEO4J_PASSWORD = _NEO4J.auth if _NEO4J.auth else ("neo4j", "")
 _NEO4J_DRIVER = None
 
 # ---------------------------------------------------------------------------
@@ -502,7 +537,7 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
     if _JENA_ENDPOINT:
         try:
-            async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+            async with _jena_client() as client:
                 resp = await client.post(
                     _JENA_ENDPOINT,
                     data={"query": scoped_query},
@@ -1069,8 +1104,26 @@ def _weaviate_hybrid_search_sync(
             for obj in response.objects
         ]
     except Exception as e:
-        print(f"Weaviate OntologyClass search failed: {e}")
-        return []
+        # RULED 2026-09-14: A MID-QUERY FAILURE IS A REFUSAL, NEVER AN EMPTY SUCCESS.
+        #
+        # This used to `return []`, and the caller that reads it is `/resolve`, whose very next
+        # step is the COLD START FALLBACK: it prints "WEAVIATE COLD START DETECTED", reads
+        # `_SPARQL_MAINTENANCE_CLASSES` out of the RDF graph, and answers from the MAINTENANCE
+        # ontology. So a transient Weaviate error did not produce a missing answer — it produced a
+        # confident WRONG-DOMAIN one, under a banner announcing a diagnosis that was false.
+        #
+        # An empty RESULT still means cold start and still takes that path. Only the FAILURE is
+        # separated out, which is the entire distinction: ADR-0009 makes Weaviate required routing
+        # infrastructure and requires a 503 "rather than silently degrading".
+        logging.error("Weaviate OntologyClass search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate OntologyClass search failed — routing cannot proceed. This is a "
+                "substrate failure, not an empty result; an empty result is a cold start and is "
+                f"served from the graph instead. Cause: {e}"
+            ),
+        ) from e
 
 
 async def weaviate_hybrid_search(
@@ -1292,9 +1345,24 @@ def _predicate_hybrid_search_sync(
         out.sort(key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True)
         return out
     except Exception as e:
-        # Routing accelerator — failures degrade the system, not crash it.
-        print(f"[ontology-service] Predicate hybrid search failed: {e}")
-        return []
+        # RULED 2026-09-14, same rule as the OntologyClass search above.
+        #
+        # The comment here used to read "Routing accelerator — failures degrade the system, not
+        # crash it." That stance predates ADR-0009, which makes Weaviate REQUIRED routing
+        # infrastructure and has `/search_predicates` return 503 when it is unavailable "rather
+        # than silently degrading to exact-match". The route already honours that for an absent
+        # client or collection; this handler was the hole underneath it — the same failure, one
+        # frame down, answered with an empty success.
+        #
+        # An empty list from here means NO PREDICATE MATCHED, and that is now its only meaning.
+        logging.error("[ontology-service] Predicate hybrid search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate Predicate search failed — routing cannot proceed. This is a substrate "
+                f"failure, not an empty candidate set. Cause: {e}"
+            ),
+        ) from e
 
 
 async def predicate_hybrid_search(
@@ -2226,7 +2294,48 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # entity_refs (or with entity_refs that all return 0) still
     # abstains to UNKNOWN. The probe is the property guard against
     # this branch over-firing or being silently removed.
-    if not candidates and request.entity_refs:
+    # ── A CLASS HIT THAT CANNOT ANSWER IS NOT EVIDENCE THE ENTITY WAS UNDERSTOOD ────────
+    #
+    # RULED 2026-09-15, and it loosens the guard above by exactly one term. The original
+    # condition was `not candidates` — the phone book fires only when class recall returned
+    # NOTHING. Measured: "tell me about the wiring loom" with `entity_refs=['wiring loom']`
+    # recalls `pcn#SustainmentNotice`, which is WRONG and non-empty, so the fan-out never
+    # fired and engine-safety's provider — registered, discoverable, and able to resolve the
+    # hazard — was never asked.
+    #
+    # That is the guard's OWN original defect one step over. Its comment records the first
+    # one: the fan-out "ran only AFTER class recall succeeded — meaning when class recall
+    # failed, it never fired." The fix handled the case that failed and left its sibling
+    # inverted, which is a fix measured on one input.
+    #
+    # THE SIGNAL IS THE ONE THAT EXISTS TODAY. The ruled form was "no candidate cleared the
+    # confidence floor" — and there is no floor to clear: every class candidate comes back
+    # with `score: None` because hybrid search is running lexical-only, so the same three
+    # classes answer three unrelated queries. A floor comparison would either never fire or
+    # always fire. `_preempted_subject_is_unanswerable` is already computed two branches
+    # down and needs no score: a class carrying NO VERB in the asked domains cannot answer
+    # the question, whatever recall thought of it.
+    #
+    # THE PRECEDENCE RULE SURVIVES UNCHANGED, which is what makes this narrow rather than
+    # blanket: an ANSWERABLE class hit still wins, and raw text with no `entity_refs` still
+    # never reaches the phone book. When real scores exist the floor becomes a SECOND
+    # condition beside this one, not a replacement.
+    _recall_is_non_evidence = not candidates
+    if candidates and request.entity_refs:
+        _top_uri = str((candidates[0] or {}).get("uri") or "")
+        _guard_domains = request.domains or (
+            [request.domain] if request.domain else [])
+        if _top_uri and await _preempted_subject_is_unanswerable(
+            _top_uri, _guard_domains
+        ):
+            _recall_is_non_evidence = True
+            print(
+                f"[Engine O] class recall returned {_top_uri} which carries no verb in "
+                f"domains={_guard_domains!r} — treating it as non-evidence and asking the "
+                f"instance providers about {request.entity_refs!r}"
+            )
+
+    if _recall_is_non_evidence and request.entity_refs:
         for entity_ref in request.entity_refs:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
@@ -2234,7 +2343,16 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
-            instance_provenance["preemption_path"] = "class_recall_empty_fallback"
+            # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
+            # `class_recall_empty_fallback`, which was true while the only condition was an
+            # EMPTY recall. This branch now also fires on a non-empty recall whose top class
+            # cannot answer, and a reader of that provenance would have been told the recall
+            # was empty when it was not — a precise, confident, wrong account of why the
+            # phone book was asked.
+            instance_provenance["preemption_path"] = (
+                "class_recall_empty_fallback" if not candidates
+                else "class_recall_unanswerable_fallback"
+            )
             if instance_subject is not None:
                 # POST-PREEMPTION PRODUCTIVITY CHECK — site 1 of 2. BOTH preemption
                 # returns need it: a check on one is silent by construction on the other,
@@ -3297,6 +3415,57 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # upstream looks healthy.
         resolved_id = prov.get("instance_id") if prov.get("instance_resolved") else None
         resolved_class = prov.get("instance_class_uri") or _subject
+
+        # ── THE REFERENT IS THE DISCRIMINATOR WHEN BINDING ──────────────────────────────
+        #
+        # MEASURED 2026-09-15. "the chafed wiring loom hazard" extracts to `wiring loom`,
+        # and at that width the fan-out returns CSI-5001 at 0.70 and HAZ-1001 at 0.70 — a
+        # TIE ACROSS TWO CLASSES, with nothing in either engine's scoring able to separate
+        # them. Whichever the fan-out picked, the type check below rejected half the time as
+        # `wrong_class`, and the slot went unfilled WITH THE RIGHT ANSWER IN THE CANDIDATE
+        # LIST. The `banana 4` shape one layer over: a token generic enough to be a word in
+        # two vocabularies.
+        #
+        # **IT IS NOT A TIE FOR THIS SLOT.** `draftRiskAssessment.hazard_id` declares
+        # `safety:Hazard`; the slot already said which class it wants, and the declaration is
+        # exactly the discriminator the scorers lack. So the bind is chosen from the
+        # referent's own class rather than taken blind and then refused.
+        #
+        # THE MENU STAYS UNSCOPED, which is the distinction that makes this safe. `cands`
+        # above is untouched — every class, every name-match, so a person disambiguating
+        # still sees the collision. The comment above rules that filtering the MENU would
+        # empty it for the case that most needs one; this filters only the ANSWER. Show
+        # everything by that name; bind the kind that was asked for.
+        _referent_bound = False
+        if referent and cands:
+            _same_class = [
+                c for c in cands
+                if str(c.get("class_uri") or "") == referent and c.get("instance_id")
+            ]
+            if _same_class and (not resolved_id or resolved_class != referent):
+                _pick = max(_same_class, key=lambda c: float(c.get("score") or 0.0))
+                _slots_logger.info(
+                    "fill_slots: %s.%s bound %s from the slot's referent %s "
+                    "(the fan-out's winner was %s) - the declaration disambiguated a "
+                    "cross-class tie the scorers could not",
+                    request.verb_iri, name, _pick.get("instance_id"), referent,
+                    resolved_id or "none",
+                )
+                resolved_id = _pick.get("instance_id")
+                resolved_class = referent
+                prov = {**prov, "instance_label": _pick.get("label", "")}
+                _referent_bound = True
+                # `outcome` IS DELIBERATELY UNCHANGED. It is a shared vocabulary —
+                # `slot_disposition` partitions it into ASK_WITH_CANDIDATES and
+                # ABSTAIN_OUTCOMES — and a fifth value would pass BOTH sets unrecognised and
+                # fall through to "bound" by accident rather than by decision. That is the
+                # prefix-registry shape: an unknown value is accepted, routes nowhere, and
+                # reports success. The file's own rule above says an addition is flagged to
+                # the elicitation lane, not smuggled in.
+                #
+                # The fact still travels, as its own field, where a reader can act on it
+                # without any partition having to recognise it.
+
         if resolved_id and referent and resolved_class and resolved_class != referent:
             _slots_logger.warning(
                 "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
@@ -3316,6 +3485,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
                                 "instance_id": resolved_id,
                                 "instance_label": prov.get("instance_label", ""),
+                                "referent_disambiguated": _referent_bound,
                                 "candidates": cands}
         else:
             # REMOVED, not left as the raw string. See FillSlotsResponse.resolution.
@@ -3495,8 +3665,39 @@ async def classes(request: ResolveRequest) -> dict:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
-    """Simple liveness probe."""
-    return {"status": "ok", "jena_reachable": _JENA_ENDPOINT != ""}
+    """READINESS. The chart probes this path; liveness is a separate TCP probe, so refusing here
+    removes the pod from the Service without restarting it — the right failure for a deploy fault.
+
+    A configured Jena endpoint with no credential is exactly that fault, and the refusal NAMES the
+    variable: a 503 that does not say which one is a crash with better manners.
+
+    `jena_configured` replaces the former `jena_reachable`, which reported `endpoint != ""` — a
+    CONFIGURATION read wearing a reachability name. Nothing consumed the old key.
+
+    THE MISSING LIST COMES FROM ONE FUNCTION covering every substrate, never from a condition
+    restated here. A probe that checks two of three postures is the unasserted-join defect and it
+    reads exactly like a complete check.
+    """
+    missing = _missing_declarations(os.environ)
+    if missing:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not-ready",
+                "detail": (
+                    "deploy fault: "
+                    + ", ".join(missing)
+                    + " is not declared — engine-o will not substitute a default for it. "
+                    "Declare it, or declare it EMPTY to say this deployment has no such substrate."
+                ),
+                "missing": list(missing),
+            },
+        )
+    return {
+        "status": "ok",
+        "jena_configured": _JENA.configured,
+        "neo4j_configured": _NEO4J.configured,
+    }
 
 @app.get("/personas")
 async def list_personas() -> dict:
@@ -3665,8 +3866,17 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
 # ---------------------------------------------------------------------------
 async def _execute_sparql_update(update: str) -> None:
     if not _JENA_UPDATE_ENDPOINT:
-        raise HTTPException(status_code=503, detail="Jena update endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+        # NAMED. "not configured" sends the reader to the code; the variable sends them to the
+        # chart, which is where the fix is. Since 2026-09-14 this endpoint is never derived from
+        # the query endpoint, so an absent declaration is the only way to arrive here.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "deploy fault: JENA_UPDATE_ENDPOINT is not declared — engine-o will not derive a "
+                "write endpoint from the query endpoint"
+            ),
+        )
+    async with _jena_client() as client:
         resp = await client.post(_JENA_UPDATE_ENDPOINT, data={"update": update})
         resp.raise_for_status()
 
@@ -3831,7 +4041,7 @@ async def instances_by_property(request: InstancesByPropertyRequest) -> dict:
 async def _run_construct_turtle(query: str) -> str:
     if not _JENA_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+    async with _jena_client() as client:
         resp = await client.post(_JENA_ENDPOINT, data={"query": query}, headers={"Accept": "text/turtle"})
         resp.raise_for_status()
         return resp.text
@@ -3840,7 +4050,7 @@ async def _run_construct_turtle(query: str) -> str:
 async def _run_ask(query: str) -> bool:
     if not _JENA_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
-    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+    async with _jena_client() as client:
         resp = await client.post(_JENA_ENDPOINT, data={"query": query},
                                  headers={"Accept": "application/sparql-results+json"})
         resp.raise_for_status()

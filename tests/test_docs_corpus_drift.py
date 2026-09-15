@@ -157,7 +157,11 @@ def test_every_page_carries_a_locator_and_a_sha_that_match_the_file():
     assert rows, "no page carries a locator; this test is asserting nothing"
 
     for path in gen.pages():
-        on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
+        # THROUGH THE GENERATOR'S OWN NORMALISATION. Hashing raw working-tree bytes here
+        # made this seal agree with a Windows-generated TTL and disagree with every Linux
+        # consumer — the instrument sharing the producer's platform bug and so confirming
+        # it. The sha must be a property of the CONTENT, not of the checkout.
+        on_disk = hashlib.sha256(gen.page_bytes(path)).hexdigest()
         computed_sha, key = gen.page_locator(path)
         assert computed_sha == on_disk, "the generator's sha is not the sha of the file it read"
         assert key in rows, (
@@ -263,3 +267,57 @@ def test_page_bodies_do_not_share_the_ontology_bucket():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+def test_THE_SHA_IS_A_PROPERTY_OF_THE_CONTENT_not_of_the_checkout():
+    """A page's sha must not depend on which platform ran the generator.
+
+    ⛔ IT DID, AND IT COST A FLEET ROLL. `git` stores LF and checks out CRLF on Windows, and the
+    generator hashed working-tree bytes — so on `rolling-a-service.md`:
+
+        working tree (CRLF)    899eb4469f5b   <- what a Windows regeneration wrote
+        git blob / Linux image 1b6db61a4e32   <- what every consumer computes
+
+    The prime refused the whole upload, CORRECTLY: the key would have named a body nothing could
+    resolve, and every doc answer would resolve to nothing at answer time. I regenerated on
+    Windows, committed, rolled — and it refused again with a DIFFERENT wrong sha. **The second
+    failure was indistinguishable from the first**, which is what makes this worth sealing rather
+    than remembering.
+
+    THE OLD SEAL COULD NOT SEE IT because it recomputed with `path.read_bytes()` — the producer's
+    own platform bug, in the instrument. It agreed with the Windows TTL and disagreed with the
+    cluster, which is the instrument and the subject sharing a defect rather than a surface.
+
+    This asserts against `git cat-file`, which is the one reading of a file that is the same on
+    every machine.
+    """
+    import hashlib
+    import importlib.util
+    import subprocess
+
+    sys.path.insert(0, str(ROOT))
+    spec = importlib.util.spec_from_file_location("gen_docs_corpus", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    checked = 0
+    for path in gen.pages():
+        blob = subprocess.run(
+            ["git", "cat-file", "-p", f"HEAD:docs/runbooks/{path.name}"],
+            cwd=str(ROOT), capture_output=True, timeout=60,
+        )
+        if blob.returncode != 0:
+            continue                      # not committed yet; the drift seals above own that
+        want = hashlib.sha256(blob.stdout).hexdigest()
+        got, _key = gen.page_locator(path)
+        assert got == want, (
+            f"{path.name}: the generator hashes to {got[:12]} but the COMMITTED content hashes "
+            f"to {want[:12]}. The sha is a property of this checkout rather than of the content "
+            f"— almost always CRLF in the working tree. `gen.page_bytes` must normalise line "
+            f"endings, and the upload must use the same bytes."
+        )
+        checked += 1
+    assert checked >= 5, (
+        f"only {checked} page(s) could be compared against git — this seal is quantifying over "
+        f"almost nothing and would pass on a tree where every page had drifted"
+    )

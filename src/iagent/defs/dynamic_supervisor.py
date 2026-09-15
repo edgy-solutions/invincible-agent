@@ -726,11 +726,48 @@ def _classify_route(
         # found nothing, every time, silently: a single-asset verb would dispatch against a
         # set query on the pre-resolved path while the normal path correctly asked.
         _pre_instance = str(pre_resolved.get("subject_instance_id") or "")
+        # ── THE ASK'S EMPTY INSTANCE MUST NOT DECIDE THE ANSWER TURN ────────────────────────
+        #
+        # `_pre_resolved_from_ask` builds this route from the ASK artifact, where by construction
+        # nothing was bound — so `subject_instance_id` is empty there and rides forward onto the
+        # turn that finally supplies one. Measured on artifact-2-1789404372153: the pick bound
+        # `program_id: NP-MERIDIAN`, `not _pre_instance` still reported SET, the verb was flagged
+        # `needs_instance`, and the dispatch abstained FOR THE REASON THE ASK HAD JUST BEEN
+        # ANSWERED. `invincible-agent-22`'s finding, and it is every engine's, not graph-host's.
+        #
+        # THE NAMES ARE DERIVED FROM THE CARRIED SET, not passed as a list. The gateway forwards
+        # the provenance-keyed union `_accumulated_slots` walks out of the lineage, so the ask
+        # turn and the answer turn share one payload shape.
+        from iagent_pure.verb_eligibility import (  # noqa: PLC0415
+            promotable_instance_from_slots,
+            turn_is_set_shaped,
+        )
+        _pre_bound = {str(k) for k in (pre_resolved.get("accumulated_slots") or {})}
         _pre_arity_flagged: list = []
         if _pre_verbs:
-            _pre_verbs, _pre_arity_flagged = _filter_verbs_by_arity(
-                _pre_verbs, not _pre_instance,
-            )
+            # PER VERB, because the gate is a property of the VERB'S DECLARATION rather than of
+            # the turn. `turn_is_set_shaped` reads the verb's own slots: one that is both
+            # `required` and a `referent` is the slot that makes the verb single-arity AND the
+            # slot whose binding supplies the instance.
+            #
+            # A VERB DECLARING NO SUCH SLOT IS UNAFFECTED BY CONSTRUCTION, and that is the gate
+            # rather than a branch someone could later simplify away. It matters because three
+            # engines of four never pass `arity` at registration, and `subject_instance_id`
+            # reaches the generalist fallback as `resolved_instance_id` — after which Engine A
+            # does NOT re-resolve. An ungated promotion would change Engine A's behaviour on
+            # every cost, finance and safety verb as a side effect of repairing graph-host.
+            # The call is UNCHANGED except for its second argument: `turn_is_set_shaped` is a
+            # strict refinement of `not _pre_instance` — with no bound slots known it returns
+            # exactly that — so the flagging, the `needs_instance` mutation and the kept-not-
+            # excluded disposal all stay the gate they already were.
+            _kept, _pre_arity_flagged = [], []
+            for _cv in _pre_verbs:
+                _one, _flagged = _filter_verbs_by_arity(
+                    [_cv], turn_is_set_shaped(_pre_instance, _cv, _pre_bound),
+                )
+                _kept.extend(_one)
+                _pre_arity_flagged.extend(_flagged)
+            _pre_verbs = _kept
         _pre_truth = next(
             (cv for cv in (_pre_verbs or []) if cv.get("verb_iri") == _pre_verb),
             None,
@@ -745,6 +782,36 @@ def _classify_route(
             # acted on and re-confirmed against the compat-walk one line above. Reporting a
             # fabricated 0.9-ish score would be the worse lie.
             _pre_predicate["score"] = 1.0
+            # ── THE RECORD MUST SAY WHAT HAPPENED ───────────────────────────────────────────
+            #
+            # The gate above now reads the chain's bound slots; without this the RECORD still
+            # did not. A turn that bound `program_id` from an offered menu projected
+            # `instance_resolved: false` with an empty identifier - a resolved turn reporting as
+            # unresolved, which is a self-consistent false record and therefore invisible to any
+            # consistency check (R-056: both halves derive from this one field).
+            #
+            # PROMOTION IS GATED ON PROVENANCE, NOT ON SHAPE, because this field does not stop
+            # at the projection - it reaches the generalist fallback as `resolved_instance_id`
+            # and Engine A does NOT re-resolve. `picked` and `filled` have been past a validator
+            # (a menu this system enumerated; the slot filler resolving against the graph).
+            # `supplied` has not, and is refused: promoting it would have an engine act on an
+            # unchecked caller string. `spoken` is excluded pending a ruling - see
+            # NON_PROMOTABLE_SLOT_SOURCES, where every source carries its reason.
+            #
+            # AN ALREADY-RESOLVED SUBJECT WINS. If the ask genuinely carried an instance there is
+            # nothing to promote, and overwriting it with a slot value would be this defect in
+            # the other direction.
+            _promoted = None
+            if not _pre_instance:
+                _promoted = promotable_instance_from_slots(
+                    _pre_truth, pre_resolved.get("accumulated_slots") or {},
+                )
+                if _promoted:
+                    context.log.info(
+                        "instance_promoted verb_iri=%s slot=%s source=%s - the record now "
+                        "reports the instance this turn bound",
+                        _pre_verb, _promoted[1], _promoted[2],
+                    )
             context.log.info(
                 "routing_decision PRE-RESOLVED subject_uri=%s verb_iri=%s "
                 "compatible_count=%d - /resolve and /classify_predicate skipped",
@@ -766,8 +833,8 @@ def _classify_route(
                     for v in _pre_arity_flagged
                 ],
                 "fallback_reason": None,
-                "subject_instance_id": str(
-                    pre_resolved.get("subject_instance_id") or ""
+                "subject_instance_id": (
+                    _pre_instance or (_promoted[0] if _promoted else "")
                 ),
                 "subject_instance_label": str(
                     pre_resolved.get("subject_instance_label") or ""
@@ -896,17 +963,21 @@ def _classify_route(
     # ARITY GATE (query-shape eligibility, ADR-0008 follow-up). Query-arity
     # comes from the abstention arc's own signal: the subject resolved to a
     # CLASS with no specific instance (subject_instance_id empty) → a
-    # SET/collection query → single-asset verbs cannot answer it. Remove
-    # verbs that POSITIVELY declare arity="single" BEFORE the classifier
-    # sees them, so a set-query can never resolve to a single-asset verb
-    # (the `show me data about customers → describeAsset → assets:[]`
-    # defect). Verbs with arity set/any/null are kept (null = unclassified
-    # → never over-excluded during backfill). Runs only when subject !=
-    # UNKNOWN (abstention already short-circuited nothing-resolved above),
-    # so "no instance" here means class-only/set, NEVER abstention — the
-    # two gates read the resolution signal consistently. Deterministic, no
-    # LLM; composes with the domain scope into the (domain ∩ arity)
-    # eligibility intersection the enforcement arc extends with permission.
+    # SET/collection query → single-asset verbs cannot answer it as asked.
+    #
+    # ⛔ THIS COMMENT SAID "REMOVE ... BEFORE THE CLASSIFIER SEES THEM" AND THE GATE STOPPED
+    # REMOVING ON 2026-09-04. It FLAGS `needs_instance` and KEEPS the verb as a candidate —
+    # see `filter_verbs_by_arity`, whose docstring carries the H06 ruling: excluding the only
+    # verb that fits abstains FOR THE REASON IT WOULD HAVE ASKED ABOUT. The comment survived
+    # the change describing the opposite disposal, directly above code doing the new one, and
+    # a stale claim is pre-authenticated: it was true when written and reads as true now.
+    #
+    # Verbs with arity set/any/null are unflagged (null = unclassified → never over-flagged
+    # during backfill). Runs only when subject != UNKNOWN (abstention already short-circuited
+    # nothing-resolved above), so "no instance" here means class-only/set, NEVER abstention —
+    # the two gates read the resolution signal consistently. Deterministic, no LLM; composes
+    # with the domain scope into the (domain ∩ arity) eligibility intersection the enforcement
+    # arc extends with permission.
     # THE ELIGIBILITY TRACE. Accumulated across every gate, carried on telemetry into the
     # routing materialization, and rendered by the decision path — so a removed candidate
     # leaves evidence instead of a shorter list. Declared here, before the first gate, so a
@@ -1888,7 +1959,14 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.primary_selection import pick_primary
-from iagent_pure.slot_acceptance import accept_slots, decode_declarations
+from iagent_pure.slot_acceptance import (
+    SLOT_SOURCE_FILLED,
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+    SLOT_SOURCE_SUPPLIED,
+    accept_slots,
+    decode_declarations,
+)
 # EXTRACTED 2026-09-08 so the BFF's direct re-ask calls the SAME two rules rather than a
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
@@ -2386,6 +2464,13 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # `config.slots` still wins when present: a caller that supplies slots explicitly is
     # not overridden by a model. Extraction fills the gap, it does not take the wheel.
     spoken = dict(config.slots or {})
+    # ── PROVENANCE, TRACKED BESIDE EVERY MERGE INTO `spoken` ────────────────────────────
+    #
+    # `spoken` is assembled from four distinct origins and then flattened; after the last
+    # merge there is no way to tell them apart. The distinction is what decides whether a
+    # value may later be promoted to a resolved instance, so it is recorded as it arrives.
+    # Config slots came from an API CALLER and no validator has seen them.
+    _slot_sources: dict = {k: SLOT_SOURCE_SUPPLIED for k in spoken}
     declared = predicate.get("slots")
     resolution: Dict[str, Any] = {}
 
@@ -2405,6 +2490,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # out of prose.
     if config.spoken_slot and config.spoken_answer:
         spoken = {**spoken, config.spoken_slot: config.spoken_answer}
+        # Typed against a RESPEAK ask where no menu existed — not `picked`.
+        _slot_sources[config.spoken_slot] = SLOT_SOURCE_SPOKEN
         context.log.info(
             "respeak_answer slot=%s carried as a spoken value (not bound: no menu was "
             "offered, so it resolves like any other thing the user said)",
@@ -2438,6 +2525,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 "bound_slots_accepted verb_iri=%s %s", predicate.get("verb_iri"), picked
             )
             spoken = {**spoken, **picked}
+            # Chosen from a menu THIS SYSTEM enumerated, validated by `validate_bound_slots`
+            # against that menu at this hop. The one human-answer source a validator has seen.
+            _slot_sources.update({k: SLOT_SOURCE_PICKED for k in picked})
             # THE PICK GETS A ROW. `slot_resolution` is what the disclosure strip
             # renders, and a slot the user chose from a menu had no entry in it — so
             # the strip drew nothing for the one thing the person did most directly.
@@ -2453,8 +2543,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             declarations=declared,
         )
         spoken, resolution = filled.slots, filled.resolution
+        # Extracted from the question by the slot filler, which resolves against the graph.
+        _slot_sources.update({k: SLOT_SOURCE_FILLED for k in (spoken or {})})
 
-    accepted = accept_slots(spoken, declared)
+    accepted = accept_slots(spoken, declared, _slot_sources)
+    if getattr(accepted, "unsourced", ()):
+        context.log.warning(
+            "accepted slot(s) %s carry NO source - they will not be carried to the next hop",
+            list(accepted.unsourced),
+        )
     for refusal in accepted.refusals:
         # LOUD, per the ruling. A dropped slot is a question the system did not answer as
         # asked, and the whole finding is that this used to happen in total silence.
@@ -2589,6 +2686,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     ),
                     "accepted_slots": MetadataValue.text(
                         json.dumps(accepted.params, default=str)
+                    ),
+                    # THE FIELD THAT WAS READ AND NEVER WRITTEN. Without it every chain-slot
+                    # lookup returns {} and the gate's bound-slot read plus the instance
+                    # promotion are inert, with their seals green on fabricated input (R-057).
+                    "bound_slot_sources": MetadataValue.text(
+                        json.dumps(
+                            getattr(accepted, "bound_slot_sources", {}) or {}, default=str,
+                        )
                     ),
                     # STRUCTURED, NOT PROSE. This was `[str(r) for r in refusals]`, which
                     # renders as "program_id='meridian' refused (undeclared)" — and a surface

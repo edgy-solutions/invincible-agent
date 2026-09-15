@@ -1,0 +1,4 @@
+# Intentionally empty. The default source for optional image payloads: a COPY needs a source
+# that EXISTS, so an optional asset is expressed as a build-arg pointing here by default and at
+# the real directory for the one service that needs it. See PACKAGE_RUNTIME_SRC in
+# .github/workflows/build-containers.yml.

@@ -124,8 +124,35 @@ def page_locator(path: pathlib.Path) -> tuple[str, str]:
     is resolved from `ONTOLOGY_BUCKET` at read time so a locator does not hard-code one
     deployment's bucket.
     """
-    body_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    body_sha = hashlib.sha256(page_bytes(path)).hexdigest()
     return body_sha, f"docs/pages/{body_sha}/{path.name}"
+
+
+def page_bytes(path: Path) -> bytes:
+    """The page's bytes with LINE ENDINGS NORMALISED — the form git stores and Linux reads.
+
+    ⛔ WITHOUT THIS THE CORPUS CANNOT BE GENERATED CORRECTLY ON WINDOWS, and the failure is
+    silent until a prime runs. Measured 2026-09-14 on `rolling-a-service.md`:
+
+        working tree (CRLF)   899eb4469f5b   <- what the generator wrote into the TTL
+        git blob / image (LF) 1b6db61a4e32   <- what every consumer computes
+
+    `git` checks these out with CRLF on Windows and stores LF, so hashing the working-tree bytes
+    makes the sha a property of WHOSE MACHINE RAN THE GENERATOR. A Windows regeneration writes a
+    sha no Linux consumer can ever reproduce; the prime then refuses the whole upload, and it
+    refuses CORRECTLY — the key would name a body nothing could resolve.
+
+    It cost a fleet roll: the drift had been red for days, I regenerated on Windows, committed,
+    rolled, and the prime refused again with a DIFFERENT wrong sha. The second failure looked
+    identical to the first, which is what makes this worth a paragraph rather than a line.
+
+    THE UPLOAD USES THIS TOO (`prime_databases.upload_doc_pages`), so the stored object and its
+    declared sha agree on every platform rather than only on the one that happens to run CI.
+    """
+    # The characters are NAMED, never written: an escape for a line ending, inside a file
+    # about line endings, is exactly where an escape collapses into the byte it denotes.
+    CRLF, LF = bytes([13, 10]), bytes([10])
+    return path.read_bytes().replace(CRLF, LF)
 
 
 def _prefix_bindings(used: set[str]) -> str:

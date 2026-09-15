@@ -146,14 +146,44 @@ def test_the_routing_query_is_the_phrase_or_the_users_query_and_nothing_else():
     )
 
 
+#: Every expression allowed to supply `question_text`, each a VERBATIM read of what the user
+#: typed. Enumerated rather than pattern-matched, so a new site must be CONSIDERED.
+_VERBATIM_QUESTION_SOURCES = {
+    "user_query",                                 # the graph path
+    'getattr(request, "message", "") or ""',      # the outer boundary, which has no user_query
+}
+
+
 def test_question_text_on_the_artifact_is_the_users_message():
     """What a reader sees on the rail. A composed value here is the defect wearing its most
-    visible costume."""
-    i = _GW.index('"question_text": ')
-    line = _GW[i:_GW.index("\n", i)]
-    assert line.strip() == '"question_text": user_query,', (
-        f"question_text is composed: {line!r}"
+    visible costume.
+
+    THIS INDEXED THE FIRST OCCURRENCE IN THE FILE and asserted one exact line. When the outer
+    boundary added a SECOND artifact-construction site, defined earlier in the module, the seal
+    read that one and reported a composition defect against a line that composes nothing. A seal
+    over a population of one, written when the population was one.
+
+    Checking EVERY site is the stronger claim anyway: the original was satisfiable by a second
+    site composing freely, as long as the first stayed clean.
+    """
+    sites, start = [], 0
+    while True:
+        i = _GW.find('"question_text": ', start)
+        if i == -1:
+            break
+        sites.append(_GW[i:_GW.index(chr(10), i)].strip().rstrip(","))
+        start = i + 1
+    assert len(sites) >= 2, (
+        f"found {len(sites)} question_text site(s); the boundary artifact and the graph path "
+        f"are both expected, so this seal no longer covers what it names"
     )
+    for site in sites:
+        expr = site.split(":", 1)[1].strip()
+        assert expr in _VERBATIM_QUESTION_SOURCES, (
+            f"question_text is composed: {site!r}. It must be a verbatim read of what the user "
+            f"typed. If this is a new legitimate source, add it to _VERBATIM_QUESTION_SOURCES "
+            f"after checking it copies rather than builds."
+        )
 
 
 def test_no_fstring_builds_a_query_from_a_slot_anywhere_in_the_pure_layer():
