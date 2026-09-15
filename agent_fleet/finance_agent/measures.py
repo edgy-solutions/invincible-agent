@@ -230,6 +230,13 @@ _DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contri
 _INDEX_MONEY_FIELDS = ("bcws", "bcwp", "acwp", "cum_bcws", "cum_bcwp", "cum_acwp",
                        "cost_variance", "schedule_variance")
 
+#: The money fields `fin_burn_rate` computes. `trailing_rate` IS money -- an amount per period,
+#: not a ratio -- so it quantizes with the rest; `runway_periods` is a count of periods and is
+#: handled as a ratio. The two sit beside each other and are different kinds, which is the
+#: distinction this table exists to record rather than leave to a reader's inference.
+_BURN_MONEY_FIELDS = ("burn", "planned", "variance_to_plan", "cum_burn", "cum_planned",
+                      "budget_remaining", "trailing_rate")
+
 
 def _emit_money(
     rows: list[dict[str, Any]],
@@ -865,14 +872,34 @@ def fin_burn_rate(
     # `_bcwp` IS DROPPED HERE RATHER THAN CARRIED. The module takes (period, planned, burn);
     # earned value plays no part in a burn series, and handing a measure a quantity it must
     # ignore is how an unused field later acquires a use nobody intended.
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES variance_to_plan
+    # (planned - burn) and budget_remaining (BAC - cumulative burn) -- two subtractions, so the
+    # money ruling scopes it by its own test rather than by analogy.
+    #
+    # THE BAC IS CONVERTED TOO, and the reason is narrower than it first looks.
+    #
+    # ⚠ I FIRST WROTE THAT THIS REMOVES A MIXED-TYPE SUBTRACTION. It does not: `int - Decimal`
+    # is exact and lossless, so with today's integer BAC the conversion is a NO-OP -- a
+    # mutation removing it survives the whole suite, and that survivor is honest.
+    #
+    # WHAT IT ACTUALLY GUARDS is a FLOAT bac, which raises `TypeError: unsupported operand
+    # type(s) for -: 'float' and 'decimal.Decimal'` the moment the seed carries one. That is a
+    # real and cheap protection; it is simply not the one I claimed. The seal exercises the
+    # float case, because a guard whose only evidence is an integer fixture is untested.
     quantities = ((period, bcws, acwp)
                   for period, (bcws, _bcwp, acwp)
-                  in ((p, _totals(state, wp_ids, [p])) for p in periods))
-    return burn_series.build(
-        quantities,
-        budget_at_completion=program.bac,
-        scope_label=program.name,
-        value_unit=program.value_unit,
+                  in ((p, _totals_exact(state, wp_ids, [p])) for p in periods))
+    return _emit_money(
+        burn_series.build(
+            quantities,
+            budget_at_completion=Decimal(str(program.bac)),
+            scope_label=program.name,
+            value_unit=program.value_unit,
+        ),
+        money_fields=_BURN_MONEY_FIELDS,
+        # RUNWAY IS A COUNT OF PERIODS, not an amount -- dimensionless, so it is NOT quantized.
+        # Rounding a forecast horizon to the cent would be putting a currency on a duration.
+        ratio_fields=("runway_periods",),
     )
 
 
