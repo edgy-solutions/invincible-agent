@@ -207,3 +207,82 @@ def test_the_COMPARISON_verb_agrees_with_this_module_on_every_method():
             f"{method}: the comparison verb says {row['eac']} and the calculation verb says "
             f"{direct[0]['eac']} — two implementations of one formula have drifted"
         )
+
+
+@pytest.mark.parametrize("method,cpi,spi,expected", [
+    ("REMAINING_AT_BUDGET", None, None, None),   # projects no index, so it always answers
+    ("REMAINING_AT_BUDGET", 0.8, 0.9, None),
+    ("CPI", None, 0.9, "CPI"),
+    ("CPI", 0, 0.9, "CPI"),
+    ("CPI", 0.8, None, None),                    # SPI is not its business
+    ("CPI_SPI", None, 0.9, "CPI"),
+    ("CPI_SPI", 0.8, None, "SPI"),
+    ("CPI_SPI", None, None, "CPI"),              # both absent: the COST index is reported
+    ("CPI_SPI", 0.8, 0.9, None),
+])
+def test_missing_index_names_WHICH_index_a_method_needed_and_did_not_get(
+        method, cpi, spi, expected):
+    """A FACT ABOUT THE COMPUTATION, NOT A SENTENCE — the caller phrases the refusal.
+
+    `CPI` IS NAMED FIRST WHEN BOTH ARE ABSENT, matching the behaviour this replaced: a program
+    with no cost performance has a larger problem than a missing schedule index, and that is
+    the one to report.
+
+    **None of this was reachable in the reference seed**, where all three methods answer. It
+    became one parametrize once the decision moved into a module that takes the indices as
+    arguments — seventh instance of a rule becoming checkable by being lifted.
+    """
+    assert M.missing_index(method, cpi=cpi, spi=spi) == expected
+
+
+def test_missing_index_is_NONE_exactly_when_the_method_ANSWERS():
+    """THE JOIN between the explanation and the outcome. A method that answers must not also
+    report a missing index, and one that refuses must name one — otherwise a row could carry a
+    forecast AND a reason it could not be computed, which is two answers to one question."""
+    for method in M.FORMULA:
+        for cpi in (None, 0, 0.8):
+            for spi in (None, 0, 0.9):
+                answered = M.estimate_at_completion(
+                    method, cpi=cpi, spi=spi, **QUANTITIES) is not None
+                named = M.missing_index(method, cpi=cpi, spi=spi) is not None
+                assert answered != named, (
+                    f"{method} cpi={cpi} spi={spi}: answered={answered} but "
+                    f"missing_index reported {named}"
+                )
+
+
+def test_the_COMPARISON_verb_keeps_an_undefined_methods_ROW_with_its_reason():
+    """The deliberate difference between the two verbs, sealed now that one module serves both.
+
+    `fin_eac_comparison` KEEPS the row and explains; `fin_eac_calculation` RAISES. **A
+    comparison that dropped a method would show two forecasts where three were asked for.**
+
+    REACHED VIA A WINDOW WITH NO REPORTED FACTS — the seed's own periods, six of which carry
+    nothing. Without that window every method answers and this entire path is unexercised,
+    which is how it stood until this commit.
+    """
+    from agent_fleet.finance_agent import measures as engine
+    from agent_fleet.finance_agent.entities import periods_in
+    from agent_fleet.finance_agent.seed import build_seed
+
+    state = build_seed()
+    wps = {w.wp_id for w in state.work_packages
+           if w.ca_id in {c.ca_id for c in state.accounts_of("NP-MERIDIAN")}}
+    empty = [p for p in periods_in(None) if engine._totals(state, wps, [p]) == (0, 0, 0)]
+    assert len(empty) >= 2, "the seed no longer has unreported periods; this path is unreachable"
+
+    rows = engine.fin_eac_comparison(state, program_id="NP-MERIDIAN", window=empty[:2])
+    assert len(rows) == len(M.FORMULA), "a method was DROPPED rather than explained"
+
+    by_method = {r["method"]: r for r in rows}
+    assert by_method["CPI"]["eac"] is None
+    assert "CPI" in by_method["CPI"]["unavailable_reason"]
+    assert by_method["CPI_SPI"]["eac"] is None
+    assert by_method["CPI_SPI"]["unavailable_reason"]
+
+    # REMAINING_AT_BUDGET PROJECTS NO INDEX, so it answers where the other two cannot — the
+    # property that made the "every method undefined" refusal unreachable.
+    assert by_method["REMAINING_AT_BUDGET"]["eac"] is not None
+    assert by_method["REMAINING_AT_BUDGET"].get("unavailable_reason") is None, (
+        "a method that answered also carried a reason it could not be computed"
+    )

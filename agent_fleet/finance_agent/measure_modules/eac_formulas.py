@@ -100,3 +100,28 @@ def derived(eac: Any, *, bac: Any, acwp: Any, bcwp: Any,
         "etc": eac - acwp,
         "percent_complete": ratio(bcwp, bac),
     }
+
+
+def missing_index(method: str, *, cpi: Optional[Any], spi: Optional[Any]) -> Optional[str]:
+    """Which index a method needed and did not get, or None if it could answer.
+
+    A FACT ABOUT THE COMPUTATION, NOT A SENTENCE. The caller phrases the refusal, because the
+    wording is the engine's vocabulary and two verbs word it differently on purpose:
+    `fin_eac_comparison` keeps an undefined method's ROW with a reason beside it, while
+    `fin_eac_calculation` RAISES. **That difference is deliberate** — a comparison that dropped
+    a method would show two forecasts where three were asked for — and a module that returned a
+    finished sentence would flatten it.
+
+    Same split as `funding_grid` returning the residual and letting its caller write the note.
+
+    CPI IS NAMED FIRST FOR CPI_SPI, matching the original: with both absent the caller is told
+    about the cost index, because a program with no cost performance has a larger problem than
+    a missing schedule index and that is the one to report.
+    """
+    if not REQUIRES_INDEX.get(method, False):
+        return None
+    if not cpi:
+        return "CPI"
+    if method == "CPI_SPI" and not spi:
+        return "SPI"
+    return None

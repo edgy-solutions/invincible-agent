@@ -757,16 +757,27 @@ def fin_eac_comparison(
     d_spi = (d_bcwp / d_bcws) if d_bcws else Decimal("0")
 
     def compute(method: str) -> tuple[Optional[Decimal], Optional[str]]:
-        if method == "REMAINING_AT_BUDGET":
-            return d_acwp + (d_bac - d_bcwp), None
+        """ONE IMPLEMENTATION OF THE FORMULAS, in `eac_formulas` (ADR-0053 §2, 2026-09-15).
+
+        THIS VERB CARRIED ITS OWN COPY until now — three formulas reimplemented in Decimal,
+        agreeing with `fin_eac_calculation`'s by luck rather than by construction, and NOT
+        covered by §2a's transcription seal even though these are the three figures a customer
+        sees side by side. A registry row would have made the module authoritative while this
+        verb went on computing from something nobody transcribed.
+
+        THE REASON STAYS HERE, AND THAT IS THE POINT OF THE SPLIT. This verb keeps an undefined
+        method's ROW with a reason; `fin_eac_calculation` raises. The difference is deliberate —
+        a comparison that dropped a method would show two forecasts where three were asked for —
+        so the module reports WHICH INDEX is missing and this verb writes the sentence.
+        """
+        eac = eac_formulas.estimate_at_completion(
+            method, bac=d_bac, bcwp=d_bcwp, acwp=d_acwp, cpi=d_cpi, spi=d_spi)
+        if eac is not None:
+            return eac, None
+        missing = eac_formulas.missing_index(method, cpi=d_cpi, spi=d_spi)
         if method == "CPI":
-            if not d_cpi:
-                return None, "no cost performance reported, so there is no CPI to project"
-            return d_bac / d_cpi, None
-        if not (d_cpi and d_spi):
-            missing = "CPI" if not d_cpi else "SPI"
-            return None, f"no {missing} could be derived from the reported periods"
-        return d_acwp + (d_bac - d_bcwp) / (d_cpi * d_spi), None
+            return None, "no cost performance reported, so there is no CPI to project"
+        return None, f"no {missing} could be derived from the reported periods"
 
     rows: list[dict[str, Any]] = []
     for method in EAC_METHODS:
