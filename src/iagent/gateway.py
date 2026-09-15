@@ -845,6 +845,78 @@ async def get_task_kinds(current_user: User = Depends(get_current_user)):
     return {"composed": kinds is not None, "kinds": kinds or {}}
 
 
+@app.get("/templates")
+async def get_templates(current_user: User = Depends(get_current_user)):
+    """Every RATIFIED canvas template — the menu, readable without attempting a seed.
+
+    R-039's read-path rule, and the companion to `/task_kinds` for the same reason: a client
+    rendering a picker needs to know WHAT EXISTS before it can offer one, and the only way to
+    learn it today is to seed a board and see whether the id was recognised. The registry is
+    already the authority — `ratified_template_ids` derives it from the directory on every call,
+    deliberately uncached — and this exposes it rather than adding a second source.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds` and for its reasoning: this returns the
+    SHAPE of a board — its id, title, description and panel count — never a board, never a
+    card, and never anything read out of the substrate. Withholding it would protect nothing,
+    because the seed verb's own refusal already names the ratified set to anyone who guesses
+    wrong; it would only force the probing this endpoint exists to remove.
+
+    THREE STATES, NOT TWO, and the flag is the difference. `composed: false` with an empty list
+    is NOT "nothing is ratified": it is "the directory could not be read", which is the
+    None-is-not-empty distinction `/task_kinds` turns on and the same one that would otherwise
+    let a deployment accident render as an empty picker a user reads as a complete menu.
+
+    A TEMPLATE THAT WILL NOT LOAD IS NAMED, NEVER DROPPED. `load_template` validates and raises
+    rather than returning a default — correctly, because a wrong board is harder to notice than
+    a missing one. Silently omitting it here would undo that: the list would be SHORTER and
+    nothing would say why, and a shorter list reads as the complete set. So it comes back in
+    `unreadable` with its reason, and the picker can show what it cannot offer.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from .canvas_template import (
+        load_template, ratified_template_ids, template_ref,
+    )
+
+    def _read():
+        ids = ratified_template_ids()
+        rows, broken = [], []
+        for tid in ids:
+            try:
+                t = load_template(tid)
+            except Exception as exc:  # noqa: BLE001
+                # The id IS ratified — it is in the directory — and the file does not parse or
+                # does not validate. That is a different fact from "not ratified" and the
+                # caller needs both.
+                broken.append({"template_id": tid,
+                               "reason": f"{type(exc).__name__}: {exc}"[:300]})
+                continue
+            rows.append({
+                "template_id": t.template_id,
+                "title": t.title,
+                "description": t.description,
+                # THE CONTENT HASH, so a client can tell a template that CHANGED from one that
+                # merely still exists. A picker holding a stale ref offers a board whose shape
+                # has moved under it.
+                "template_ref": template_ref(t),
+                "panels": len(t.panels),
+                "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+            })
+        return rows, broken
+
+    try:
+        templates, unreadable = await run_in_threadpool(_read)
+        composed = True
+    except Exception as exc:  # noqa: BLE001
+        # The DIRECTORY itself is unreadable — not one file. `ratified_template_ids` returns []
+        # for a missing directory, which is indistinguishable from "none ratified" at this
+        # layer, so anything raising out of the read is reported as not-composed rather than as
+        # an empty menu.
+        logger.warning("/templates could not compose the registry: %s", exc)
+        templates, unreadable, composed = [], [], False
+
+    return {"composed": composed, "templates": templates, "unreadable": unreadable}
+
+
 # ── PCN/PDN disposition review — start ────────────────────────────────────────
 class ReviewStartRequest(_BaseModel):
     """Start a grouped disposition review for a notice. The extraction-sourced fields
