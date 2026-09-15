@@ -2875,6 +2875,41 @@ allowed to change. If the live source is, the assertion is about a moment and mu
 
 ---
 
+## R-070 — A SEAL THAT READS COMMITTED HISTORY IS BLIND AT THE MOMENT IT IS NEEDED
+
+`tests/test_chart_version_tracks_chart_content.py` asserts that chart content did not move after
+the last `Chart.yaml` edit. It is a correct rule and it was **GREEN** through `e36aa55`, which
+added `GRAPH_HOST_POSTGRES_DSN` to `values.yaml` without a bump. The release workflow refused the
+push minutes later.
+
+Nothing was wrong with the seal's logic. Its inputs are `git log` queries, so at the instant the
+suite ran — change in the working tree, not yet committed — the newest commit touching `helm/`
+*was* still an ancestor of the newest commit touching `Chart.yaml`. **The check ran, its premise
+was true, and it answered a question about a state that had already been published.**
+
+> The only person who can fix this cheaply is the one who has not committed yet, and that is
+> exactly the person a committed-history seal cannot speak to. Once the commit is pushed, R-030
+> forbids rewriting it and the remedy is always a follow-up commit.
+
+Same shape as the Lane trailer, whose exemption list grew four entries in one day before the rule
+moved into a pre-push hook (R-058.1): *a check whose remedy is always "record it and move on" is
+reporting, not enforcing.*
+
+**THE RULE.** A seal over version control state declares which state it reads. If it reads
+committed history, it carries a companion arm over `git status` that fires **before** the commit,
+and that arm needs a fixture — it is silent in a clean tree, and silence is indistinguishable
+from correctness. Synthetic input, never a touched file: a run that mutates the tree it is
+measuring is invalid in both directions.
+
+**AND THE COMPANION ARM'S FIRST DRAFT WAS ITSELF THE BUG IT EXISTS TO CATCH.** It parsed
+`git status --porcelain` with a fixed `line[3:]` slice through a helper that `.strip()`s stdout —
+which eats the leading space of the two-column status **on the first line only**. The arm
+reported `elm/invincible-agent/Chart.yaml` and failed a correctly-bumped tree. A path mangled by
+one character is still path-SHAPED, so it read as a finding rather than as a broken instrument.
+Parse by separator, not by offset, wherever a helper may have normalised the text.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
