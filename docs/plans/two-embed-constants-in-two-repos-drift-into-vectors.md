@@ -2,7 +2,7 @@
 id:         two-embed-constants-in-two-repos-drift-into-vectors
 status:     open
 owner:      invincible-agent-28 [5401d7] — ia-eo / lane/eo
-blocked-on: a ruling on where the embedding contract lives — the twin is in doc-tools, so no change inside this repo can make the two agree
+blocked-on: the writer half — doc-tools-7f records the model as collection metadata; the reader half is this lane's and waits on SDK v0.9.0
 trigger:
 closed-by:
 repo:       invincible-agent
@@ -66,16 +66,54 @@ one, the assertion is *implementation vs collection*. **Nothing in it makes the 
 and the writer's constant agree with each other** — they are two copies in two repos, and the
 interface only sees one of them.
 
-## The shape when it lands — a ruling first, because the fix crosses a repo boundary
+## RULED 2026-09-14 — IT CLOSES AT THE COLLECTION, NOT IN CODE REVIEW
 
-1. **One home for the contract.** The candidates are: publish it from the SDK (both repos already
-   depend on `iagent-mesh`), or a small shared leaf like `provenance-telemetry`'s. Either way the
-   two `embed.py` files import rather than declare. **This is the ruling the packet is blocked on**
-   — it changes a doc-tools dependency and is not this lane's to make.
-2. **Until then, the seal that is possible from one side:** assert the LOCAL constant against the
-   SUBSTRATE — fetch one stored vector, compare `len()` with `EXPECTED_EMBED_DIM` at startup or in
-   a probe. It catches the dimension half from either repo independently, without a shared import.
-   The numbers above are that check run by hand.
-3. **The model half needs a writer-side record**, which is doc-tools': a model marker per
-   collection. Named here because no change in this repo can produce it, and because it is also
-   what turns `MeshVectors.embedding_model` from a vacuous self-comparison into a real assertion.
+The ruling does not try to make the two copies agree. **It gives both sides one witness they must
+each agree with, and puts it where the vectors are:**
+
+* **The WRITER records the embedding model NAME AND VERSION as collection metadata**, when it
+  creates the collection or first writes to it. That is `doc-tools`' ingest, since it creates them.
+* **`MeshVectors` asserts its `embedding_model` against that metadata AT OPEN** — before a single
+  vector is written or read. A mismatch is a **refusal naming both**, not a warning and not a
+  degraded search.
+
+**Then the two hand-copied constants may drift all they like.** They stop being the contract; the
+collection is. A reader embedding with the wrong model cannot reach the vectors at all, which is
+the property the dimension lock gives for the dim and could never give for the model.
+
+**AT OPEN is the load-bearing half.** Asserting per query would spend a round trip on every search
+and still leave the first write unguarded — and the failure this prevents is a WRITE with the
+wrong model just as much as a read. Open is the one moment both sides pass through.
+
+**ADDED WHILE THEY STILL AGREE, which is the only time it is cheap.** 768 on both sides today. A
+check added after a divergence has to be a migration; added now it is a constant and an assertion.
+
+**The halves have owners:** the reader half is this lane's (waits on SDK `v0.9.0`, which carries
+the Protocol). The writer half is `doc-tools-7f`'s.
+
+## The shape when it lands
+
+**Superseded note:** this section previously proposed ONE HOME for the contract — both `embed.py`
+files importing from the SDK or a shared leaf. **The ruling rejected that framing**, and the
+reason is worth keeping: a shared constant makes the two sides agree with *each other*, which
+still leaves nobody agreeing with the VECTORS. The collection is the only witness that has seen
+what was actually written.
+
+1. **WRITER (doc-tools-7f):** record the embedding model **name and version** as collection
+   metadata at create-or-first-write. Both collections carry none today — `vectorizer: None`,
+   `moduleConfig: {}`, no property that could hold one (measured above).
+2. **READER (this lane), on SDK `v0.9.0`:** `MeshVectors` reads that metadata **at open** and
+   asserts it against its own `embedding_model`. A mismatch **refuses, naming both** — the
+   configured model and the collection's — so the message says which side to change.
+3. **Sequencing:** the reader's assertion must tolerate metadata being ABSENT until the writer
+   lands, and that tolerance is the one thing to be careful with. **Absent must not be silently
+   treated as matching** — that is the vacuous self-comparison this packet exists to prevent. It
+   is a distinct, named state: *the collection cannot say*, reported once at open rather than
+   swallowed.
+4. **The seal, both directions:** metadata matching the model opens; metadata naming a different
+   model refuses and the message contains both names; metadata absent opens with the gap reported.
+   Three fixtures, because a fixture that only exercises the matching case cannot tell the
+   assertion from its absence.
+5. **What this deliberately does NOT do:** make the two `embed.py` constants agree. They may drift;
+   the collection is the contract. If they drift apart, the first side to open against a collection
+   written by the other refuses — which is the outcome, not a gap in it.
