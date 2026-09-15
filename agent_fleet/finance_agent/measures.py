@@ -247,6 +247,33 @@ _BURN_MONEY_FIELDS = ("burn", "planned", "variance_to_plan", "cum_burn", "cum_pl
 #: consumer can check the response against itself.
 _EAC_MONEY_FIELDS = ("eac", "vac", "etc", "bac", "bcws", "bcwp", "acwp")
 
+#: The money fields `fin_funding_status` computes. FIVE of them are subtractions -- shortfall,
+#: gap, at_risk and the two balances -- and the rest are the operands they were taken over,
+#: carried under BOTH vocabularies because the grid publishes each cell twice.
+_FUNDING_MONEY_FIELDS = ("required", "committed", "secured", "shortfall", "gap", "at_risk",
+                         "authorized", "obligated", "expended",
+                         "unobligated_balance", "unexpended_balance")
+
+#: The money fields `fin_variance_analysis` computes on EVERY node. `variance` and `residual`
+#: are the two subtractions; the three quantities are the operands they were taken over.
+_TREE_MONEY_FIELDS = ("variance", "residual", "bcws", "bcwp", "acwp")
+
+
+def _emit_money_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`_emit_money` over a NESTED result.
+
+    THE FLAT HELPER REACHES ONLY THE ROOT, and a tree whose root carries floats while its
+    contributors carry Decimals is the worst of both: it type-checks at the top, and a consumer
+    summing the children against the parent gets a TypeError three levels down. The standing
+    seal found exactly that when this pass first converted the quantities without an edge.
+    """
+    for node in nodes:
+        _emit_money([node], money_fields=_TREE_MONEY_FIELDS,
+                    ratio_fields=("share_of_root",))
+        if node.get("contributors"):
+            _emit_money_tree(node["contributors"])
+    return nodes
+
 
 def _emit_money(
     rows: list[dict[str, Any]],
@@ -460,15 +487,23 @@ def fin_variance_analysis(
 
     all_wps = {w.wp_id for w in state.work_packages
                if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
-    root_bcws, root_bcwp, root_acwp = _totals(state, all_wps, periods)
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb produces
+    # `variance` and `residual`, both subtractions. The ROOT is converted here and
+    # every node below inherits it, so one boundary serves the whole tree.
+    root_bcws, root_bcwp, root_acwp = _totals_exact(state, all_wps, periods)
     root_variance = _variance(variance_kind, root_bcws, root_bcwp, root_acwp)
-    floor = decomposition_policy.materiality_floor(root_variance, materiality)
+    # THE FRACTION IS CONVERTED AT THE SAME BOUNDARY AS THE MONEY. `Decimal * float` raises,
+    # so a Decimal root variance and a float materiality cannot meet -- found by this step-2
+    # pass, not by reading the module, whose "type-agnostic" claim held for +, - and / between
+    # LIKE types and not for a magnitude multiplied by a fraction.
+    floor = decomposition_policy.materiality_floor(
+        root_variance, Decimal(str(materiality)))
 
     def node(
         level: str, entity_id: str, entity_name: str, wp_ids: set[str],
         depth: int, extra: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        bcws, bcwp, acwp = _totals(state, wp_ids, periods)
+        bcws, bcwp, acwp = _totals_exact(state, wp_ids, periods)
         variance = _variance(variance_kind, bcws, bcwp, acwp)
         rec: dict[str, Any] = {
             "level": level,
@@ -544,8 +579,8 @@ def fin_variance_analysis(
             ]
         return []
 
-    return [node("program", program.program_id, program.name, all_wps, depth=0,
-                 extra={"bac": program.bac})]
+    return _emit_money_tree([node("program", program.program_id, program.name, all_wps, depth=0,
+                                  extra={"bac": program.bac})])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1100,12 +1135,24 @@ def fin_funding_status(
     # behaviour-preserving). The window filter stays HERE — which rows exist is a question
     # about state, and R-029 found a dropped filter answering a one-quarter question with the
     # programme's whole history.
+    # DECIMAL AT THE BOUNDARY (ADR-0053 §7 step 2). This verb produces FIVE subtractions --
+    # shortfall, gap, at_risk and the two balances -- so the money ruling scopes it several
+    # times over. The module is type-agnostic and needed no change.
+    #
+    # THE VERDICT IS COMPUTED ON THE SAME EXACT VALUES the arithmetic uses, not on the floats
+    # they came from: a funding state decided from one representation beside figures derived
+    # from another is two answers to one question, and the disagreement would appear only at a
+    # boundary.
     cells = ((line.line_id, line.name, line.period,
-              line.authorized, line.obligated, line.expended)
+              Decimal(str(line.authorized)), Decimal(str(line.obligated)),
+              Decimal(str(line.expended)))
              for line in state.funding
              if line.program_id == program_id and line.period in periods)
-    return funding_grid.build(
-        cells,
-        verdict=_funding_state,
-        order=lambda period: PERIOD_ORDER[period],
+    return _emit_money(
+        funding_grid.build(
+            cells,
+            verdict=_funding_state,
+            order=lambda period: PERIOD_ORDER[period],
+        ),
+        money_fields=_FUNDING_MONEY_FIELDS,
     )

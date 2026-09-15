@@ -72,6 +72,11 @@ def materiality_floor(root_variance: Any, materiality: Any) -> Any:
     variance inside a $2,000 account is 50% and drills; against the root it is noise. **The root
     is the question that was asked, so the root is the scale that matters** — and a
     parent-relative floor would drill deepest exactly where the amounts are smallest.
+
+    ⚠ BOTH ARGUMENTS MUST BE THE SAME NUMERIC KIND. `Decimal * float` raises, so a Decimal
+    root variance needs a Decimal fraction — the caller converts at the boundary where it
+    converts its money. This module does not coerce: a silent conversion here would be the
+    module deciding a representation question that belongs to whoever owns the data.
     """
     return abs(root_variance) * materiality
 

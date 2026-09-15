@@ -63,6 +63,37 @@ def _label(row: dict[str, Any]) -> str:
     return "?"
 
 
+#: Keys whose value is a NESTED list of rows rather than a figure. Compared by recursing
+#: instead of by equality, because a whole-object diff of a tree prints the entire subtree as
+#: one "moved value" — named, unreadable, and useless for finding what actually changed.
+#: §6b's rule again: a moved value the report cannot NAME is one nobody can look up, and a
+#: value it names in 4,000 characters is named the way a haystack names a needle.
+_NESTED_KEYS = ("contributors",)
+
+
+def _compare_rows(before: dict[str, Any], after: dict[str, Any],
+                  moved: list[str], added: set[str], removed: set[str],
+                  prefix: str = "") -> int:
+    """Compare one row, recursing into nested row lists. Returns the unchanged-field count."""
+    added |= {prefix + k for k in set(after) - set(before)}
+    removed |= {prefix + k for k in set(before) - set(after)}
+    unchanged = 0
+    label = _label(after)
+    for key in set(before) & set(after):
+        if key in _NESTED_KEYS:
+            kids_before, kids_after = before[key] or [], after[key] or []
+            if len(kids_before) != len(kids_after):
+                moved.append(f"{label}.{key}: {len(kids_before)} rows -> {len(kids_after)}")
+                continue
+            for kb, ka in zip(kids_before, kids_after):
+                unchanged += _compare_rows(kb, ka, moved, added, removed, prefix)
+        elif before[key] != after[key]:
+            moved.append(f"{label}.{key}: {before[key]!r} -> {after[key]!r}")
+        else:
+            unchanged += 1
+    return unchanged
+
+
 def compare(
     old_fn: Callable[..., Iterable[dict[str, Any]]],
     new_fn: Callable[..., Iterable[dict[str, Any]]],
@@ -87,16 +118,7 @@ def compare(
             )
         rows += len(after)
         for row_before, row_after in zip(before, after):
-            added |= set(row_after) - set(row_before)
-            removed |= set(row_before) - set(row_after)
-            for key in set(row_before) & set(row_after):
-                if row_before[key] != row_after[key]:
-                    moved.append(
-                        f"{_label(row_after)}.{key}: "
-                        f"{row_before[key]!r} -> {row_after[key]!r}"
-                    )
-                else:
-                    unchanged += 1
+            unchanged += _compare_rows(row_before, row_after, moved, added, removed)
 
     return {
         "cases": len(cases), "rows": rows,
