@@ -2808,6 +2808,71 @@ reason is recorded beside the skip, because the next reader meets fail-open and 
 
 ---
 
+## R-067 — A CHECK THAT A FLAG IS MENTIONED IS NOT A CHECK THAT THE INVOCATION PARSES
+
+The workflow's fetch step contained `--fetch-runtime`. The seal asserted exactly that, and passed.
+The command could not run:
+
+    build_cost_package.py: error: the following arguments are required: --recipient
+
+`--recipient` was `required=True` unconditionally, so the flag's own documented standalone use —
+*"download the pinned Pyodide runtime into --runtime-dir"* — was unreachable. **The string was
+present and the behaviour was absent**, and the build failed at the first push.
+
+> **An assertion satisfied by TEXT rather than by BEHAVIOUR passes for the wrong reason.**
+
+Same family as a slice that runs too wide: neither fails, both agree with something adjacent to
+the claim. **The fix is the same in both cases — run the exact thing.** For a CI command that
+means invoking it in the seal, or at minimum reading the parser's own declaration rather than the
+caller's spelling of it.
+
+---
+
+## R-068 — MOVE WORKTREE ON PURPOSE BEFORE TRUSTING A SEAL
+
+Moving Lane 1 out of the shared tree into `ia-01` was ruled for a different reason entirely — a
+branch hazard. It also turned out to be **a population change**, and it found FOUR seals that were
+statements about a working copy rather than about the repository, in one afternoon.
+
+`.pyodide-cache/` is gitignored, so it exists in whichever checkout last fetched it and in no
+other. Three seals passed only where the runtime happened to sit — **two of them written about
+exactly that hazard**, in the same change that named it. The fourth compared a trailer to a
+registry that had moved.
+
+> **A worktree move is the cheapest population change available**, and green-wherever-the-
+> environment-obliged is invisible until the environment stops obliging.
+
+**How to apply:** a seal that reads the filesystem, git state, or anything outside the tracked tree
+has not been tested until it has run somewhere else. A fresh worktree costs one command. It is the
+same instrument as a planted control — it asks whether the green was about the subject or about
+the room.
+
+Related: R-064 (present on the machine that wrote it); R-065 (no fixture from this repo can
+discriminate two rules a real checkout both satisfies) — this is the operational move that makes
+both of those findable rather than argued.
+
+---
+
+## R-069 — A TRAILER IS A PAST-TENSE CLAIM; A REGISTRY IS PRESENT-TENSE
+
+`Lane: invincible-agent/lane/ca-m33-cutover` was **correct when it was written**: that lane works
+in the shared tree, which was then checked out at their branch. It became "unregistered" the
+moment the shared tree was parked back on master — and the pair seal failed correct history.
+
+> **A worktree's branch moves. A trailer does not.** Comparing a record of what WAS to a registry
+> of what IS makes true history fail, which is the stale-claim shape running backwards.
+
+**THE FIX IS TO CHECK EACH HALF AGAINST WHAT IS DURABLE ABOUT IT.** The worktree must be one the
+registry knows — worktrees are long-lived and that is what catches `ia-28`, a name no worktree has
+ever had. The branch must be a ref git knows, local or remote — that is what catches `lane/28`,
+which nobody has pushed. `ia-28/lane/28` still fails both, which is the control that keeps the
+loosening honest.
+
+**The general form:** when an assertion compares a record to a live source, ask which one is
+allowed to change. If the live source is, the assertion is about a moment and must say which.
+
+---
+
 ---
 
 ## Why this file exists at all
