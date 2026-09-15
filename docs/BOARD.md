@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **136 of 148 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **139 of 151 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -36,6 +36,14 @@ _Coverage: **136 of 148 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 
 ## open
 
+- **a-failed-ancestor-walk-narrows-verb-compatibility-in-silence** — A Neo4j failure in the subClassOf walk returns an empty chain, and /classify_predicate then judges verb compatibility against the raw subject alone — which is the inheritance gap ADR-0018's amendment was written to close, reappearing as a failure mode rather than a design gap.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshGraph contract — ancestors() is one of its named operations, and this decides what its failure means
+  → [docs/plans/a-failed-ancestor-walk-narrows-verb-compatibility-in-silence.md](plans/a-failed-ancestor-walk-narrows-verb-compatibility-in-silence.md)
+
+- **a-failed-provider-lookup-reports-no-provider-is-registered** — A Neo4j failure in provider discovery returns no providers, and /enumerate_instances renders that as outcome no_provider, detail "no mesh:enumerateInstances provider is registered" — a false statement about the registry, in the field a person reads. The same module argues against this one screen below.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshGraph contract — the fix changes what /enumerate_instances returns, and the outcome vocabulary is the interface's
+  → [docs/plans/a-failed-provider-lookup-reports-no-provider-is-registered.md](plans/a-failed-provider-lookup-reports-no-provider-is-registered.md)
+
 - **a-fallback-that-absorbs-every-failure-reports-none** — THE DISCRIMINATING INFORMATION ALREADY EXISTS AT ALL THREE LAYERS AND IS THROWN AWAY BEFORE THE CARD. `X-Presentation-Path` already told seams 8 and 9 apart while the card did not; `select_archetype` already returns a provenance naming which refusal fired; the supervisor already logs the timeout and the no_match. THIS IS A PLUMBING REQUEST, NOT A BUILD REQUEST — carry what exists to the surface that renders. The cost of not doing so, measured: three unrelated seams — a missing rendersAs binding, a fill_slots timeout that turned a specified question into an ask, and a subject-coverage gap that made four verbs non-candidates — ALL rendered as `Knowledge Document / No content available`. A fourth path reaches the same floor (subject_unknown → generalist fallback). Diagnosis took a night because the card carried no discriminating information, and fixing the first seam changed nothing observable, which ARGUED FOR THE WRONG CONCLUSION. The law: a fallback that absorbs every failure class reports none of them.
   status: open · owner: agent
   → [docs/plans/a-fallback-that-absorbs-every-failure-reports-none.md](plans/a-fallback-that-absorbs-every-failure-reports-none.md)
@@ -63,6 +71,10 @@ _Coverage: **136 of 148 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-resolved-relative-period-must-be-disclosed** — THE ANCHOR STEP IS NOT DONE WITHOUT THIS. "what does spend look like this quarter" now resolves to window=["FY26-Q4"] using a fiscal calendar the user never saw and cannot check. That is an assumption the system made on the user's behalf, and an undisclosed assumption is the silent-narrowing failure the carry work removed, reintroduced one layer up. The strip already renders resolved ROUTING (subject, verb, confidence); it must also render resolved PARAMETERS, at minimum any whose value the user did not literally say. Nothing in invincible-agent blocks this — the resolved value is in `params` on the dispatch payload today.
   status: open · owner: cortex · repo: cortex-ui (strip), invincible-agent (the resolved value is already on the wire)
   → [docs/plans/a-resolved-relative-period-must-be-disclosed.md](plans/a-resolved-relative-period-must-be-disclosed.md)
+
+- **a-sparql-failure-is-read-as-an-empty-graph** — engine-o's execute_sparql returns [] on any Jena failure, so five routes and two internal gates read "the substrate failed" as "the graph holds nothing". One of them is the cold-start fallback that exists to cover a Weaviate failure.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshOntology/MeshVectors contract — this changes what seven consumers see, and they change with it
+  → [docs/plans/a-sparql-failure-is-read-as-an-empty-graph.md](plans/a-sparql-failure-is-read-as-an-empty-graph.md)
 
 - **a-spoken-handle-can-forge-the-change-log** — MEASURED on real bytes. `run_measure` injects route-supplied arguments into the SAME `params` dict a caller's values land in, and for `plan_session_changes` it uses `params.setdefault(...)` — so a CALLER-SUPPLIED value WINS. A spoken `ops: []` makes the change log report ZERO changes for a scenario that has one; a spoken `scenario_name` relabels the artifact anything the speaker likes. This is the DECISION-ARTIFACT verb (INV-4, "why did we move this?"), so the failure mode is forged provenance rather than a wrong number. Reachable today: cortex-bff's /plan/measure forwards `body.params` verbatim. Its two sibling injection sites use ASSIGNMENT and are safe — nobody chose the difference, it fell out of `=` vs `setdefault`. FIX IS ONE WORD, not applied: engine-p is fenced. The new carry path is already guarded (iagent_pure/slot_acceptance.py).
   status: open · owner: unassigned · blocked-on: human approval to touch engine-p (fenced for the night of 2026-08-28)
