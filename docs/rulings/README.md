@@ -2346,6 +2346,26 @@ unless somebody says so.
 
 ### R-058.1 — THE REMEDY, RATIFIED 2026-09-14
 
+> ### ⛔ SUPERSEDED SPELLING — `Lane: lane/91 (invincible-agent-81)`
+>
+> **Ratified in conversation, then superseded by [`11b4070`](#) an hour later. Do not reinstate
+> it on the strength of finding the ratification.**
+>
+> `lane/91 (invincible-agent-81)` was ratified for `lane/91` — branch first, session in
+> parentheses — with the reasoning *"sessions die and branches are the record"*. That reasoning
+> was right and the conclusion was not: it put the session address **in** the trailer anyway,
+> which is precisely what R-058.1 forbids. **The session address is a third thing.**
+>
+> **And `lane/91` is the case R-058.1 describes.** That lane's session is `invincible-agent-81`
+> and its worktree is `ia-91` — the numbers do not match, the mismatch was known to the lane, and
+> the superseded spelling recorded both halves of it as though the pairing were meaningful.
+>
+> **CANONICAL: `Lane: ia-91/lane/91`.** Recorded here rather than left in a thread, because the
+> ratification is precise, dated and findable, and a reader who finds it without this line has
+> every reason to trust it — the same mechanism as
+> [[a-stale-claim-is-pre-authenticated]], applied to a decision that was correct when it was made.
+
+
 **`Lane: <worktree>/<branch>` as a trailer on every commit**, e.g. `Lane: ia-01/lane/01`.
 
 **IT NAMES THE DURABLE KEY, NOT THE ADDRESS** — the way the roster does. A session id
