@@ -4154,6 +4154,8 @@ class FindCompatibleVerbsResponse(BaseModel):
 # rejects it on implicit-grouping grounds. The form below is the one
 # that passes cypher-shell validation against the live graph.
 _FIND_COMPAT_VERBS_CYPHER = """
+// LEG 1 - COVERAGE. Verbs whose registered `input_uri` covers the subject's class chain.
+// This is ADR-0018's original rule and it is unchanged.
 MATCH (start:OntologyClass {uri: $subject_uri})
 MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(scope:OntologyClass)
 WITH start, collect(DISTINCT scope) AS scopes
@@ -4177,7 +4179,7 @@ RETURN DISTINCT
     //
     // COMMENT SYNTAX IS `//`, NOT `--`. The first version of this block used SQL-style
     // `--`; Neo4j rejected the ENTIRE query with a SyntaxError and /find_compatible_verbs
-    // returned 500 — routing down, from a comment. Verified on the live graph:
+    // returned 500 - routing down, from a comment. Verified on the live graph:
     // `RETURN 1 -- c` raises CypherSyntaxError, `RETURN 1 // c` returns normally.
     //
     // THE FIFTH ENUMERATION IN THIS CHAIN, and every earlier one dropped a key in
@@ -4186,8 +4188,52 @@ RETURN DISTINCT
     // property that exists on the relationship still reaches nobody unless it is named
     // HERE, and the failure looks exactly like "the verb declared nothing".
     coalesce(r.slots, '[]')       AS slots,
-    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
-ORDER BY hops ASC, verb_iri ASC
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops,
+    'subject'                     AS compatibility
+
+UNION ALL
+
+// LEG 2 - PARAMETERISATION. Verbs that declare a REQUIRED slot whose referent covers the
+// subject. Such a verb is still compatible with the subject under ADR-0018 - it is
+// PARAMETERISED BY it rather than ABOUT it - so the guarantee is preserved: a verb with
+// neither coverage nor a referent match still never enters the classifier's enum.
+//
+// WHY THIS LEG EXISTS, measured 2026-09-15. `how concentrated is purchasing on lot 4`
+// resolved its subject to cost#ProductionLot (0.90) over cost#Supplier (0.29), because the
+// only resolvable instance in the sentence is the lot. `costSupplierConcentration` hangs off
+// cost#Supplier and declares `lot` as a REQUIRED slot with referent cost#ProductionLot - so
+// the verb that answers the question could not enter the enum, and the classifier picked
+// correctly from the five ProductionLot verbs it was given. The synonym
+// "how concentrated is purchasing" sits on the right verb and never got to compete.
+//
+// EDGES, NOT A PARSE. `r.slots` is a JSON string, so reading referents in Cypher would mean
+// parsing the declaration at query time - a SECOND implementation of it, which is how two
+// readers of one declaration come to disagree. The registrar derives this edge from the row
+// it already holds, and the pool reads edges through the same door coverage uses.
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(ref:OntologyClass)
+MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
+WHERE coalesce(p.required, false) = true AND p.verb_iri IS NOT NULL
+MATCH (vsubj)-[r]->(o:OntologyClass)
+WHERE r.iri = p.verb_iri
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    // THE VERB'S OWN SUBJECT, not the resolved one. This is the half that makes the binding
+    // correct downstream: the answer is about SUPPLIERS, and the resolved lot goes into the
+    // slot. Returning the resolved subject here would say the verb is about the lot.
+    vsubj.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
+    r.required_args               AS required_args,
+    coalesce(r.slots, '[]')       AS slots,
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(ref))) AS hops,
+    'referent'                    AS compatibility
 """
 
 
