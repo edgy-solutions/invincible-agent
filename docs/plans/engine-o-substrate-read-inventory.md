@@ -428,6 +428,30 @@ zero agnostic class rows — and reds the day one appears, naming what it would 
 revisit-later that cannot go stale is a check that goes red when the world changes; the number in
 this paragraph would otherwise be a figure outliving its measurement.
 
+### §7c — AN EXCEPTION RETURNED AS AN EMPTY SUCCESS: the ruled two, and the three the ruling did not name
+
+RULED 2026-09-14 and FIXED for the two Weaviate searches: a mid-query failure now refuses with a
+503 instead of returning `[]`. **The consumer is what made it urgent.** `/resolve` reads an empty
+candidate list, prints **"WEAVIATE COLD START DETECTED"**, falls back to
+`_SPARQL_MAINTENANCE_CLASSES` and answers from the MAINTENANCE ontology — so a transient Weaviate
+error produced a confident WRONG-DOMAIN answer under a banner naming a false diagnosis. Not a
+missing answer: a wrong one. An empty RESULT still means cold start and still takes that path;
+only the FAILURE is separated out.
+
+**THEN THE SAME CHECK WAS RUN OVER THE WHOLE MODULE**, because a reported defect is a sample. An
+AST walk for every `except` handler returning an empty container finds **five** sites. Partitioned,
+every member in the basis or excluded WITH A REASON:
+
+| site | substrate | disposition |
+|---|---|---|
+| `_weaviate_hybrid_search_sync` | Weaviate | **FIXED** — refuses 503 |
+| `_predicate_hybrid_search_sync` | Weaviate | **FIXED** — refuses 503 |
+| `execute_sparql` (L571) | Jena | **BASIS, not fixed** — a SPARQL failure returns `[]`, and its callers include `/policy_rules`, `/resolve_instance` and the cold-start fallback itself. Changing it touches every SPARQL consumer, so it is a ruling, not a lane's call. |
+| `_discover_enumerate_providers` (L1539) | Neo4j | **BASIS, not fixed** — a discovery failure returns no providers, which renders as *"this class cannot be listed"*. That exact SYMPTOM has been produced once before by a different cause (a hardwired `ENUMERATE_INSTANCES_URL`), and the module's own comment records it. |
+| `_get_subject_ancestor_chain` (L4282) | Neo4j | **BASIS, not fixed** — an empty chain silently narrows verb compatibility to the raw subject, which is the inheritance gap ADR-0018's amendment exists to close. |
+| `_served_class_uris` (L2006) | Neo4j | **EXCLUDED, with its reason already written**: *"RETURNS AN EMPTY SET ON ANY FAILURE, AND THE CALLER MUST READ THAT AS 'DO NOT FILTER'"*. It degrades OPEN on purpose — failing closed would empty the candidate pool and take routing down globally. This is the one case where an empty success is the correct answer, and it says so. |
+| `_decode_declarations` (L3177) | — | **EXCLUDED** — a JSON decode, no substrate behind it. Different family. |
+
 **6. AND ONE DEFAULT WORTH PINNING BEFORE IT BECOMES A CONTRACT.** The class search declares
 `limit: int = 10`; the predicate search requires `limit` from its caller. Two doors of one
 interface, one of which has already invented a bound. Pick it in the interface and read it from
