@@ -2344,6 +2344,30 @@ so."* **A correction to a misattribution must not create a second one in the oth
 Being named in a thread is not review, and a reader six weeks out cannot tell the difference
 unless somebody says so.
 
+### R-058.2 — A WRONG CLAIM CAN BE CHECKED AGAINST THE WORLD; A WRONG ATTRIBUTION CORRUPTS THE CHECK
+
+**Found by `invincible-agent-28`, against their own relay.** Architect-ruled as R-058's mechanism
+stated from the inside, which is why it is placed here rather than given its own number.
+
+They relayed the architect's `retrieval_mode` ruling to the SDK lane as **"your `retrieval_mode`"**
+and built an argument on it: *you already have the HOW axis, do not design the WHETHER axis
+separately.* It was never that lane's. They searched five repos, found **zero** occurrences, and
+said they nearly took it on 28's say-so —
+
+> **because being told "this is yours" reads as a reminder rather than as an assertion.**
+
+**THE PERSON NAMED AS THE SOURCE IS THE ONE LEAST LIKELY TO CHECK WHETHER THEY ARE.** An
+attribution is what someone uses to decide *whether to check at all*, so a false one spends an
+authority that never existed — and it spends it on the one reader positioned to catch it.
+
+**THE TELL IS THAT CORRECTING IT MADE THE RECOMMENDATION STRONGER.** "Do not build two axes
+separately" collapses to "there is one decision" once the first axis turns out not to exist. An
+attribution whose removal *improves* the argument was load-bearing and unexamined — it was doing
+work, and nobody had looked at it.
+
+**REMEDY: name WHO ruled and WHEN, and quote rather than paraphrase. Never let an attribution ride
+inside a possessive pronoun.** "Your X" asserts ownership in a word that reads as courtesy.
+
 ### R-058.1 — THE REMEDY, RATIFIED 2026-09-14
 
 **`Lane: <worktree>/<branch>` as a trailer on every commit**, e.g. `Lane: ia-01/lane/01`.
@@ -2399,6 +2423,37 @@ Related: [[a-stale-claim-is-pre-authenticated]] — precision makes a claim more
 is the same mechanism applied to provenance; R-056 (two declarations that never meet); R-057 (the
 cutoff-in-the-future is that law inside the check itself);
 [[an-adr-does-not-allocate-a-component-name]] — the other place one name is read as two things.
+
+---
+
+## R-059 — A JUSTIFICATION NOBODY TESTED OUTLIVES WHAT IT JUSTIFIED
+
+**Offered by `invincible-agent-28` against their own work; numbered here per R-021.**
+
+**A reason is the least-checked sentence in a change.** The claim gets reviewed and the code gets
+tested; the justification is read as background. So it survives the thing it was written to
+support, and is still being cited after it stops being true.
+
+    "main.py imports rdflib/weaviate/baml at module scope, so NO TEST CAN IMPORT IT"
+
+That justified putting rules in a pure module. It went into **three files, several commit
+messages and a lane handoff.** It is false: `tests/test_predicate_hybrid_search.py` stubs those
+dependencies and imports it, and that test already existed when the claim was written.
+
+**The design survived on COST** — one stub harness exists, and behavioural assertions belong
+there — **but the absolute did not.**
+
+> **AN ABSOLUTE INVITES NO CHECK.** A reader who doubted *"no test CAN import it"* would have to
+> prove a negative. Say what you **checked** — *"no test imports it today"*, one grep, and true —
+> rather than what is impossible.
+
+**AND PUSHED COMMIT MESSAGES CANNOT BE CORRECTED**, so the correcting commit must NAME the
+earlier ones that carry the wrong version. Otherwise the correction is one message against
+several, and the several are the ones a reader finds first.
+
+Related: R-058.2 — a reason nobody tested and a source nobody checked, the same week and the same
+shape; [[a-docstring-is-not-evidence]]; [[a-justification-invented-downstream-fits-by-construction]]
+— there the reason was built to fit a conclusion, here it was true once and never re-read.
 
 ---
 

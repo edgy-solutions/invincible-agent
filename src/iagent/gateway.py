@@ -5709,6 +5709,24 @@ async def _stream_direct_outcome(
             retryable=True,
             cause="engine_did_not_answer",
         )
+        # ── THE ARTIFACT RECORDS ITS OWN CAUSE ──────────────────────────────────────────
+        #
+        # Without this the `failed` artifact says WHICH VERB was tried and nothing about what
+        # came back, and the answer lives only in a pod log that rotates. Measured on
+        # artifact-2-1789439072125: the engine replied
+        # `{"loc":["body","fn"],"msg":"Field required"}` — the refusal was built to NAME THE
+        # ARGUMENT — and recovering it took a replay against the live pod with a hand-rebuilt
+        # request body, because the artifact recorded neither the cause nor the body.
+        #
+        # Same class as the missing `verb_iri` one layer over, and the same repair: a failure
+        # recorded where nobody reads is a failure nobody can act on.
+        if getattr(outcome, "failure_cause", None):
+            bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+            bundle["resolved_intent"]["failure_cause"] = outcome.failure_cause
+            logger.warning(
+                "direct path failure cause for run %s: %s",
+                session_id, json.dumps(outcome.failure_cause, default=str)[:600],
+            )
         bundle["status"] = "failed"
         return
 

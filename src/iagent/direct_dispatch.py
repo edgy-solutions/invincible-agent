@@ -140,6 +140,11 @@ class DirectOutcome:
     slots_mat: Optional[dict] = None
     #: The engine's own response body, verbatim.
     engine_response: Optional[dict] = None
+    #: WHY A FAILED DISPATCH FAILED — status, body, exception — so the artifact records its own
+    #: cause. Without it a `failed` artifact says WHICH VERB was tried and nothing about what
+    #: came back, and the answer lives only in a pod log that rotates. Same class as the missing
+    #: `verb_iri`: a failure recorded where nobody reads is a failure nobody can act on.
+    failure_cause: Optional[dict] = None
     predicate: Optional[dict] = None
     accepted_params: Dict[str, Any] = field(default_factory=dict)
     refusals: List[dict] = field(default_factory=list)
@@ -567,10 +572,16 @@ def dispatch_pre_resolved(
     if not endpoint:
         return DirectOutcome(FALL_BACK, f"verb {verb} has no endpoint")
     _stage(STAGE_CALLING, "started")
+    # THE BODY IS NAMED ONCE AND SENT ONCE. Built here rather than inline so the failure record
+    # below carries THE REQUEST THAT WAS ACTUALLY MADE, not a reconstruction of it. Recovering
+    # artifact-2-1789439072125's cause needed a hand-rebuilt body replayed against the pod, and
+    # then a second read of both sides to trust the reconstruction — two reads because the one
+    # thing that would have settled it in one was never written down.
+    _request_body = {"query": user_query, "params": params}
     try:
         resp = _post(
             endpoint,
-            json={"query": user_query, "params": params},
+            json=_request_body,
             headers=headers or None,
             timeout=engine_timeout,
         )
@@ -580,12 +591,39 @@ def dispatch_pre_resolved(
         # A TYPED FAILURE, not a fall-back. The verb was right and the engine did not answer;
         # re-running the whole thing through Dagster would call the same engine again and
         # produce the same failure a further twenty seconds later.
+        #
+        # ── THE CAUSE IS CAPTURED, NOT JUST THE EXCEPTION'S str() ────────────────────────────
+        #
+        # `{exc}` on an HTTPError is "422 Client Error: ... for url: ..." — the STATUS and the
+        # URL, and none of the BODY. The body is where the answer is: measured on
+        # artifact-2-1789439072125, the engine replied
+        # `{"loc":["body","fn"],"msg":"Field required"}` and the artifact recorded no cause at
+        # all, so reconstructing it took a replay against the live pod. The refusal was built to
+        # NAME THE ARGUMENT and the naming was thrown away one layer up.
+        _cause: Dict[str, Any] = {
+            "exception": type(exc).__name__,
+            "message": str(exc)[:600],
+            # WHAT WE SENT, beside what came back. A 422 naming a field is only actionable
+            # against the body that omitted it — "missing `fn`" and the body that had no `fn`
+            # are one fact in two halves, and either alone still needs the other fetched.
+            "endpoint": str(endpoint),
+            "request_body": _request_body,
+        }
+        _r = getattr(exc, "response", None)
+        if _r is not None:
+            # Bounded: an engine that returns a page of HTML must not push the verb and the gate
+            # out of the record this exists to keep readable.
+            _cause["status_code"] = getattr(_r, "status_code", None)
+            try:
+                _cause["body"] = _r.text[:1200]
+            except Exception:  # noqa: BLE001
+                _cause["body"] = "<unreadable>"
         _stage(STAGE_CALLING, "failed")
         return DirectOutcome(
             ABSTAIN, f"engine did not answer: {type(exc).__name__}: {exc}",
             routing_mat=routing_mat, graph_trace_mat=graph_trace_mat,
             slots_mat=slots_mat, predicate=predicate, accepted_params=params,
-            refusals=refusals,
+            refusals=refusals, failure_cause=_cause,
         )
 
     _stage(STAGE_CALLING, "completed")
