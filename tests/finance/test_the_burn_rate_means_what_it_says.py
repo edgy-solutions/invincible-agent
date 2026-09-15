@@ -127,6 +127,17 @@ def test_the_runway_is_over_the_TRAILING_RATE_and_not_the_cumulative_burn(rows):
 
     PERIODS, NOT A DATE — converting would need a period-to-date map this model does not hold,
     and inventing one is how a forecast acquires a precision its inputs never had.
+
+    ── THE DOMAIN FACT THAT DECIDES THIS SEAL'S SCOPE ───────────────────────────────────────
+    **On the first row there is one period of history, so the cumulative burn IS the trailing
+    rate.** They are the same number by arithmetic, not by coincidence, and no seed can change
+    it.
+
+    So the control below is *"differ somewhere"*, not *"differ everywhere"*. My first version
+    required them to disagree on every row and **failed against correct code** — an
+    over-constrained seal, the kind whose only repair is deleting the extra claim. The
+    property that makes the mutation detectable is that the two diverge AT ALL; requiring more
+    was a stronger claim than the domain makes.
     """
     for row in rows:
         if row["runway_periods"] is None:
