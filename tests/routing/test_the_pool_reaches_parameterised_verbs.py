@@ -39,9 +39,33 @@ query reads it; neither side can assert the pair alone, which is the failure mod
 build succeed while an engine refuses. Written here so the shape is one declaration:
 
     (verb_subject:OntologyClass)-[:PARAMETERISED_BY]->(referent:OntologyClass)
-        verb_iri : the verb's registered iri, joining back to the verb relationship
-        slot     : the declaring slot's name
-        required : the slot's own required flag, ALWAYS written, true or false
+        verb_iri  : the verb's registered iri
+        _tool_urn : the PROVIDER's urn - identity is the PAIR, exactly as for the predicate edge
+        slot      : the declaring slot's name
+        required  : the slot's own required flag, ALWAYS written, true or false
+
+IDENTITY IS (verb_iri, _tool_urn), AND LEAVING OUT THE PROVIDER IS AN ACTIVE DEFECT, not a
+theoretical one. `v2_substrate.py` already records the lesson for the predicate edge - "without
+_tool_urn in the match-key, N providers offering the same predicate collapse into one edge with
+last-write-wins" - and the same arithmetic applies here. Measured on the live graph 2026-09-15:
+
+    13  verbs registered by MORE THAN ONE provider
+     4  of those carry referent-bearing slots
+     8  providers on mesh:resolveInstance alone
+
+`mesh:finVarianceDrivers` is the worked example: `engine_fin_finance` registers it FROM
+`fin#Program` and `engine_fin_finance_by_subject` registers it FROM `fin#ControlAccount`, and
+BOTH declare `program_id` with referent `fin#Program`. Two providers, two different subject
+classes, one verb_iri.
+
+  * JOINING on verb_iri alone would let one provider's parameterisation admit ANOTHER
+    provider's verb - the pool returns a row the declaration never authorised.
+  * SYNC-DELETING on verb_iri alone is worse and it is silent: whichever provider registers
+    second deletes the first one's edge and rewrites only its own. The pool then goes short for
+    a verb nobody changed, until that provider happens to re-register.
+
+Both arms of the identity, both sides of the join. The registrar scopes its delete to
+(verb_iri, _tool_urn); this query joins on the same pair.
 
 AN EDGE IS WRITTEN FOR EVERY REFERENT-CARRYING SLOT, REQUIRED OR NOT, and the pool does the
 filtering. iagent-mesh-sdk-ca asked which of three registrar behaviours this contract means -
@@ -188,6 +212,34 @@ def test_THE_JOIN_BACK_TO_THE_VERB_IS_BY_IRI():
     assert "r.iri = p.verb_iri" in leg2, (
         "the leg does not join the edge back to a specific verb, so a single parameterisation "
         "edge admits every verb registered on that subject class"
+    )
+
+
+def test_THE_JOIN_CARRIES_THE_PROVIDER_IDENTITY_not_just_the_verb():
+    """ONE PROVIDER'S PARAMETERISATION MUST NOT ADMIT ANOTHER PROVIDER'S VERB.
+
+    Identity for a registered verb is the PAIR (iri, _tool_urn) - `v2_substrate.py` says so in
+    its own words: "without _tool_urn in the match-key, N providers offering the same predicate
+    collapse into one edge with last-write-wins". A parameterisation edge keyed on the verb alone
+    re-introduces exactly that collapse one relationship over.
+
+    NOT HYPOTHETICAL. Measured on the live graph: 13 verbs have more than one provider and 4 of
+    those carry referent slots. `mesh:finVarianceDrivers` is registered by engine_fin_finance
+    FROM fin#Program and by engine_fin_finance_by_subject FROM fin#ControlAccount, both declaring
+    program_id with referent fin#Program.
+
+    Exercised against sandbox with two providers of one verb where only A is parameterised:
+    A admitted, B excluded, exactly one row, graph left clean.
+    """
+    _, leg2 = _legs()
+    assert "r._tool_urn = p._tool_urn" in leg2, (
+        "the parameterisation leg joins on verb_iri alone, so ONE provider's declared parameter "
+        "admits EVERY provider registered under that iri - a row the declaration never "
+        "authorised, and invisible from inside the query"
+    )
+    assert "p._tool_urn IS NOT NULL" in leg2, (
+        "an edge written without a provider urn is silently ignored rather than reported; the "
+        "registrar must always write it"
     )
 
 

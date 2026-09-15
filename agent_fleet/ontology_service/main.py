@@ -4213,9 +4213,18 @@ UNION ALL
 MATCH (start:OntologyClass {uri: $subject_uri})
 MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(ref:OntologyClass)
 MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
-WHERE coalesce(p.required, false) = true AND p.verb_iri IS NOT NULL
+WHERE coalesce(p.required, false) = true
+  AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
 MATCH (vsubj)-[r]->(o:OntologyClass)
-WHERE r.iri = p.verb_iri
+// IDENTITY IS (verb_iri, _tool_urn), THE SAME PAIR THE PREDICATE EDGE USES. Joining on
+// verb_iri alone would let ONE provider's parameterisation admit ANOTHER provider's verb:
+// measured 2026-09-15, 13 verbs are registered by more than one provider and 4 of those
+// carry referent slots - `mesh:finVarianceDrivers` is offered by engine_fin_finance FROM
+// Program and by engine_fin_finance_by_subject FROM ControlAccount, both declaring
+// program_id. The registrar file already records this lesson for the predicate edge:
+// "without _tool_urn in the match-key, N providers offering the same predicate collapse
+// into one edge with last-write-wins".
+WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
