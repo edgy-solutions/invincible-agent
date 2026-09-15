@@ -1959,7 +1959,14 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.primary_selection import pick_primary
-from iagent_pure.slot_acceptance import accept_slots, decode_declarations
+from iagent_pure.slot_acceptance import (
+    SLOT_SOURCE_FILLED,
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+    SLOT_SOURCE_SUPPLIED,
+    accept_slots,
+    decode_declarations,
+)
 # EXTRACTED 2026-09-08 so the BFF's direct re-ask calls the SAME two rules rather than a
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
@@ -2457,6 +2464,13 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # `config.slots` still wins when present: a caller that supplies slots explicitly is
     # not overridden by a model. Extraction fills the gap, it does not take the wheel.
     spoken = dict(config.slots or {})
+    # ── PROVENANCE, TRACKED BESIDE EVERY MERGE INTO `spoken` ────────────────────────────
+    #
+    # `spoken` is assembled from four distinct origins and then flattened; after the last
+    # merge there is no way to tell them apart. The distinction is what decides whether a
+    # value may later be promoted to a resolved instance, so it is recorded as it arrives.
+    # Config slots came from an API CALLER and no validator has seen them.
+    _slot_sources: dict = {k: SLOT_SOURCE_SUPPLIED for k in spoken}
     declared = predicate.get("slots")
     resolution: Dict[str, Any] = {}
 
@@ -2476,6 +2490,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # out of prose.
     if config.spoken_slot and config.spoken_answer:
         spoken = {**spoken, config.spoken_slot: config.spoken_answer}
+        # Typed against a RESPEAK ask where no menu existed — not `picked`.
+        _slot_sources[config.spoken_slot] = SLOT_SOURCE_SPOKEN
         context.log.info(
             "respeak_answer slot=%s carried as a spoken value (not bound: no menu was "
             "offered, so it resolves like any other thing the user said)",
@@ -2509,6 +2525,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 "bound_slots_accepted verb_iri=%s %s", predicate.get("verb_iri"), picked
             )
             spoken = {**spoken, **picked}
+            # Chosen from a menu THIS SYSTEM enumerated, validated by `validate_bound_slots`
+            # against that menu at this hop. The one human-answer source a validator has seen.
+            _slot_sources.update({k: SLOT_SOURCE_PICKED for k in picked})
             # THE PICK GETS A ROW. `slot_resolution` is what the disclosure strip
             # renders, and a slot the user chose from a menu had no entry in it — so
             # the strip drew nothing for the one thing the person did most directly.
@@ -2524,8 +2543,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             declarations=declared,
         )
         spoken, resolution = filled.slots, filled.resolution
+        # Extracted from the question by the slot filler, which resolves against the graph.
+        _slot_sources.update({k: SLOT_SOURCE_FILLED for k in (spoken or {})})
 
-    accepted = accept_slots(spoken, declared)
+    accepted = accept_slots(spoken, declared, _slot_sources)
+    if getattr(accepted, "unsourced", ()):
+        context.log.warning(
+            "accepted slot(s) %s carry NO source - they will not be carried to the next hop",
+            list(accepted.unsourced),
+        )
     for refusal in accepted.refusals:
         # LOUD, per the ruling. A dropped slot is a question the system did not answer as
         # asked, and the whole finding is that this used to happen in total silence.
@@ -2660,6 +2686,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     ),
                     "accepted_slots": MetadataValue.text(
                         json.dumps(accepted.params, default=str)
+                    ),
+                    # THE FIELD THAT WAS READ AND NEVER WRITTEN. Without it every chain-slot
+                    # lookup returns {} and the gate's bound-slot read plus the instance
+                    # promotion are inert, with their seals green on fabricated input (R-057).
+                    "bound_slot_sources": MetadataValue.text(
+                        json.dumps(
+                            getattr(accepted, "bound_slot_sources", {}) or {}, default=str,
+                        )
                     ),
                     # STRUCTURED, NOT PROSE. This was `[str(r) for r in refusals]`, which
                     # renders as "program_id='meridian' refused (undeclared)" — and a surface

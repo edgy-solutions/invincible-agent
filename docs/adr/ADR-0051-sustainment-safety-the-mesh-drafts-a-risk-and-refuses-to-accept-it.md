@@ -633,6 +633,41 @@ asserts it, so the asymmetry is measured rather than remembered.)*
 - **A second extraction path in this repo is refused by name.** Two writers of the same instance
   types is the fork that makes provenance unanswerable.
 
+### §6.1 — Where the instances land, and it is a RULE rather than a convention
+
+**PRODUCERS WITH DIFFERENT REPRODUCIBILITY DO NOT SHARE A GRAPH.** Added 2026-09-14, because the
+obvious way to seed sandbox hazards — a TTL in the prime manifest — is wrong in a way that only
+shows up on somebody else's data.
+
+| | graph | who writes it | what the prime does |
+|---|---|---|---|
+| **vocabulary** | `http://internal/{DOMAIN}` | this repo's manifest | **drops and re-lands** it every run |
+| **instances** | `http://internal/{DOMAIN}_INSTANCES` | runtime producers (doc-tools) | **never touches it** |
+
+The split is **enforced by the clearer, not left to discipline** (`prime_databases.py`, the
+2026-07-23 invariant), and its own comment names the cost of getting it wrong: an earlier glob over
+`http://internal/*` "would have wiped real extracted parts **on the very prime run meant to enable
+the pcn dogfood**." A manifest TTL carrying `safety:Hazard` instances would put them in the
+vocabulary graph — the one that is dropped — and would put a non-reproducible producer's data in a
+reproducible producer's graph, which is the arrangement that invariant exists to prevent.
+
+**SO THE SEEDED FIXTURE LANDS THROUGH A RE-RUNNABLE SEED FOLDED INTO THE `ontologySeed` JOB** at
+prime+5, in `scripts/seed_mro_extension_runtime.py`'s shape, writing into `_INSTANCES`. That script
+states the reason in one line — *"promoted to the gated `ontologySeed` helm Job so a fresh cluster
+reaches working routing with **zero hand-run scripts**"* — and it is the rule this ADR adopts:
+**fold, do not hand-run.** Hand-seeded sandbox state that no bootstrap reproduces is the debt that
+has already cost this fleet a class of failures nobody could re-create.
+
+**WHAT THAT SEED IS FOR, STATED NOW SO IT IS NOT INFERRED LATER.** Not resolution — Engine S's
+instance provider resolves `HAZ-1003` from the engine's own fixture, and step 2 of the walk
+(resolve → measure → render) **never touches the graph**. The seed exists for the Saturday ruling's
+actual subject: **derived objects and state living in the graph, source truth read by URN.** Those
+are different requirements, and they were indistinguishable while nothing resolved at all.
+
+**The writer is therefore sequenced AFTER a walk that draws or names its own failure**, rather than
+built against an inferred requirement — which is the same refusal this ADR makes elsewhere about a
+key nothing has been shown to need.
+
 ---
 
 ## §7 — Refused, by name

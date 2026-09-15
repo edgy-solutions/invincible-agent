@@ -102,9 +102,36 @@ class Refusal(NamedTuple):
         return f"{self.name}={self.spoken!r} refused ({self.reason})"
 
 
+# ── WHERE A BOUND VALUE CAME FROM ───────────────────────────────────────────────────────────
+#
+# THE VOCABULARY LIVES HERE, not at the reader, because this module is the one door every
+# binding passes through. It was declared in `gateway.py` and consumed there; the writer and
+# the promotion rule then needed it too, and a second copy is how a rename makes a feature stop
+# silently. Gateway imports these.
+#
+# The distinction is NOT cosmetic and the split must survive refactoring: `picked` and `spoken`
+# both mean "a person answered", and only `picked` was validated against a menu THIS SYSTEM
+# enumerated. Flattening them loses the one fact the promotion rule turns on.
+SLOT_SOURCE_PICKED = "picked"        # chosen from a menu this system offered
+SLOT_SOURCE_SPOKEN = "spoken"        # typed in answer to a RESPEAK ask (no menu existed)
+SLOT_SOURCE_SUPPLIED = "supplied"    # sent by an API caller with the request
+SLOT_SOURCE_FILLED = "filled"        # extracted from the question by the slot filler
+
+SLOT_SOURCES = (
+    SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED,
+)
+
+
 class Acceptance(NamedTuple):
     params: dict[str, Any]
     refusals: list[Refusal]
+    #: `{slot: {"value": v, "source": s}}` for ACCEPTED params only — the provenance record the
+    #: chain reads back. A refused slot is not a binding and must not appear here.
+    bound_slot_sources: dict[str, Any] = {}
+    #: Accepted params whose caller named no source. NOT silently defaulted: an invented source
+    #: would launder a caller string past the menu check, which is the one thing the split
+    #: protects. Surfaced so a caller that forgets is visible rather than quietly unprovenanced.
+    unsourced: tuple[str, ...] = ()
 
     @property
     def clean(self) -> bool:
@@ -123,6 +150,7 @@ WRONG_SHAPE = "wrong-shape"
 def accept_slots(
     spoken: Mapping[str, Any] | None,
     declared: Sequence[Mapping[str, Any]] | str | None,
+    sources: Mapping[str, str] | None = None,
 ) -> Acceptance:
     """Filter `spoken` down to what `declared` permits.
 
@@ -139,12 +167,14 @@ def accept_slots(
     declared = decode_declarations(declared)
 
     if not spoken:
-        return Acceptance({}, [])
+        return Acceptance({}, [], {}, ())
 
     if not declared:
         # Fail closed — see the module docstring. This is the branch that keeps the carry
         # dark until declarations are actually projected.
-        return Acceptance({}, [Refusal(n, NO_DECLARATIONS, v) for n, v in sorted(spoken.items())])
+        return Acceptance(
+            {}, [Refusal(n, NO_DECLARATIONS, v) for n, v in sorted(spoken.items())], {}, (),
+        )
 
     by_name = {d["name"]: d for d in declared}  # decode_declarations already filtered
 
@@ -263,4 +293,30 @@ def accept_slots(
 
         params[name] = value
 
-    return Acceptance(params, refusals)
+    # ── THE PROVENANCE RECORD, WRITTEN ONCE, HERE ───────────────────────────────────────────
+    #
+    # `bound_slot_sources` was READ by `_accumulated_slots` and written NOWHERE — measured
+    # 2026-09-14 against the database: 356 artifacts carried `resolved_intent`, ZERO carried
+    # this field. So the chain-slot carry, the arity gate's bound-slot read and the instance
+    # promotion were all inert in production while every seal over them was green, because the
+    # seals supplied the field the world did not (R-057).
+    #
+    # IT IS BUILT AT THIS ONE SITE ON PURPOSE. Every path — the fast dispatch and the
+    # supervisor — already passes through `accept_slots` to project onto the declaration, so
+    # writing it here means no path can acquire a binding without recording where it came from.
+    # Building it per call site is precisely how "the pre-resolved site" turned out to be two.
+    #
+    # ACCEPTED PARAMS ONLY. A refused slot is not a binding; recording one would put a value
+    # the verb rejected into the set a later hop treats as already answered.
+    _src = dict(sources or {})
+    _bound: dict[str, Any] = {}
+    _unsourced: list[str] = []
+    for _name, _value in params.items():
+        _s = str(_src.get(_name) or "")
+        if not _s:
+            # NOT DEFAULTED. An invented source would launder an unvalidated value past the
+            # menu check — the same refusal `_accumulated_slots` makes on the read side.
+            _unsourced.append(_name)
+            continue
+        _bound[_name] = {"value": _value, "source": _s}
+    return Acceptance(params, refusals, _bound, tuple(_unsourced))

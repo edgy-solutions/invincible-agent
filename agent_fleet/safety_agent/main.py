@@ -7,6 +7,17 @@ ADR-0045's ruling applied a third time: analysis engines read, they do not mutat
 they read. Engine S does NOT register `mesh:resolveInstance` for SUSTAINMENT — that provider
 exists (`ontology_service/main.py:598`) and a second one is a second truth.
 
+**SCOPED 2026-09-14, because the sentence above was read as broader than it is and the walk
+proved it had to be.** Engine S now DOES register `mesh:resolveInstance` — for its own
+`safety:` classes only. Those are two different claims and the distinction is the whole rule:
+Engine O resolves SUSTAINMENT's instances and remains the only truth about them; nothing
+resolved `safety:Hazard`, so "draft a risk assessment for HAZ-1003" answered *"no provider in
+the mesh recognizes it"* while the identifier sat in this engine's own fixture. A SECOND
+PROVIDER FOR ONE CLASS IS A SECOND TRUTH; A FIRST PROVIDER FOR AN UNCLAIMED CLASS IS THE
+ABSENCE BEING FIXED. `maint:WorkOrder` is deliberately left unclaimed for exactly this reason —
+see `instances.py`, where the open scope question is written down rather than answered by
+convenience.
+
 THE REFUSAL THIS ENGINE IS BUILT AROUND. No verb here can accept a risk. Acceptance is a
 HumanTask disposition by an entitled authority (ADR-0051 §5, §7), and seal 4 enumerates the
 mesh's registered verbs to assert that none of them writes `acceptance_status = accepted`.
@@ -16,9 +27,10 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # TRANSPORT AUTH IS A BIRTH RULE (runbook §6), and this engine was born without it until the
@@ -41,14 +53,17 @@ COMPONENT = "engine-safety"
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
     # Getting this order backwards cost Engine P a full roll: the import failed, the helper
     # became None, and twelve registrations were skipped while the engine reported healthy.
+    import instances as instances_mod
     import measures
     import slots as slots_mod
 except ImportError:
+    from agent_fleet.safety_agent import instances as instances_mod  # type: ignore[no-redef]
     from agent_fleet.safety_agent import measures  # type: ignore[no-redef]
     from agent_fleet.safety_agent import slots as slots_mod  # type: ignore[no-redef]
 
 SAFETY = "http://internal/sustainment/safety#"
 MAINT = "http://internal/maintenance#"
+MESH = "http://invincible-agent/mesh#"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # THE ENGINE'S SCOPE — and these two names must EXIST IN THE POLICY VOCABULARIES,
@@ -289,6 +304,74 @@ async def lifespan(app: FastAPI):
             failed.append((v["verb"], str(exc)))
             print(f"[engine-safety] REGISTRATION FAILED {v['verb']}: {exc}")
 
+    # ── THE INSTANCE PROVIDERS (ADR-0031), ADDED 2026-09-14 AFTER THE WALK STOPPED ON THEM ──
+    #
+    # A SCOPE RULE NEEDS SOMETHING TO PREFER — engine-cost's sentence, and the same argument
+    # applies here for the same reason. Until these rows exist, `HAZ-1003` is a name no provider
+    # claims: the ask falls to General search and ends in an unrelated refusal, which is what the
+    # walk measured. Registering them gives the resolver a correct claim to prefer over a
+    # phone-book hit from some engine matching a digit.
+    provider_specs = (
+        {
+            "name": "engine_safety_sustainment_resolve_instance",
+            "verb": "mesh:resolveInstance",
+            "input_uri": MESH + "InstanceIdentifier",
+            "output_uri": MESH + "InstanceResolution",
+            "endpoint_url": f"{base}/resolve_instance",
+            "synonyms": ["which hazard", "which critical item", "which write-up",
+                         "resolve hazard", "look up hazard by name"],
+            "description": (
+                "Resolves a spoken safety name — a hazard, a safety-critical item or a "
+                "write-up — to its identifier in the safety model, by exact match then "
+                "contained phrase then token overlap. Returns candidates with class URI, "
+                "label and score, highest first. An empty list is a first-class answer: the "
+                "provider abstains below its floor rather than offering a least-bad match, "
+                "because a wrong instance resolved confidently makes the verb answer about "
+                "the wrong subject. A BARE NUMBER IS NOT A NAME here: `1003` does not resolve "
+                "to HAZ-1003, because a provider that claims every digit in the fleet "
+                "displaces every rival's correct answer. Resolves SAFETY classes only — work "
+                "orders belong to the maintenance plane and are deliberately not claimed."
+            ),
+        },
+        {
+            "name": "engine_safety_sustainment_enumerate_instances",
+            "verb": "mesh:enumerateInstances",
+            "input_uri": MESH + "InstanceClass",
+            "output_uri": MESH + "InstanceEnumeration",
+            "endpoint_url": f"{base}/enumerate_instances",
+            "synonyms": ["which hazards", "list critical items", "what write-ups",
+                         "show me the hazards", "enumerate hazards"],
+            "description": (
+                "Lists the members of a safety class — hazards, safety-critical items, "
+                "write-ups — so an elicitation can offer a menu for a slot the speaker never "
+                "filled. Answers with one of three NAMED outcomes: members, too_many (the "
+                "class is real and larger than a menu, with its count), or unsupported (this "
+                "provider does not hold that class, with the list of classes it does). "
+                "`unsupported` is never spelled as an empty member list: a class nobody here "
+                "holds and a class held with zero members are different facts, and collapsing "
+                "them offers 'no options' for a question this engine was never asked."
+            ),
+        },
+    )
+    for spec in provider_specs:
+        try:
+            register_engine_to_mesh(
+                name=spec["name"],
+                verb=spec["verb"],
+                input_uri=spec["input_uri"],
+                output_uri=spec["output_uri"],
+                endpoint_url=spec["endpoint_url"],
+                description=spec["description"],
+                verb_synonyms=spec["synonyms"],
+                owner_persona=OWNER_PERSONA,
+                domains=DOMAINS,
+                mint=_mint,
+            )
+            attempted.append(spec["verb"])
+        except Exception as exc:  # noqa: BLE001
+            failed.append((spec["verb"], str(exc)))
+            print(f"[engine-safety] REGISTRATION FAILED {spec['verb']}: {exc}")
+
     # ── THIS SAYS "ATTEMPTED", NOT "REGISTERED", AND THE DIFFERENCE WAS MEASURED ────────
     #
     # The line here used to read `registered {n}/{len(VERBS)}` and it COULD NOT FAIL.
@@ -310,7 +393,12 @@ async def lifespan(app: FastAPI):
     # re-specified by its newest caller. What IS mine is declining to print a word I cannot
     # support — the count is of ATTEMPTS, which is exactly what this loop can observe.
     print(
-        f"[engine-safety] registration ATTEMPTED for {len(attempted)}/{len(VERBS)} verbs "
+        # THE DENOMINATOR COUNTS THE PROVIDER ROWS TOO. It read `len(VERBS)` and the two
+        # instance providers pushed the numerator past it — "5/3", a count that is wrong in the
+        # direction that looks like success. Derived from both populations rather than a literal,
+        # so a row added to either is counted without an edit here.
+        f"[engine-safety] registration ATTEMPTED for "
+        f"{len(attempted)}/{len(VERBS) + len(provider_specs)} registrations "
         "(the helper does not report emit success — read the mesh census for what landed)"
     )
     if failed:
@@ -349,6 +437,40 @@ class MeasureRequest(BaseModel):
     params: Dict[str, Any] = {}
 
 
+class ResolveRequest(BaseModel):
+    """The mesh's resolveInstance request. THE FIELD IS `identifier`, NOT `text`.
+
+    ⛔ COPIED FIELD-FOR-FIELD FROM THE PROVIDERS THAT ALREADY WORK, not re-derived. Engine F
+    shipped this model requiring `text`, registered correctly as a `mesh:resolveInstance`
+    provider, and was UNCALLABLE BY ONE: Engine O's fan-out sends `{"identifier", "query"}`, so
+    every real call was a 422 while the graph said the provider was registered, by name, at the
+    right endpoint. Registered is not participating — a registration describes an edge and says
+    nothing about the payload the consumer actually sends. The contract's whole value is that
+    the providers agree, so agreement beats elegance here.
+    """
+
+    identifier: str = ""
+    query: str = ""
+    class_uri: Optional[str] = None
+
+
+class EnumerateRequest(BaseModel):
+    class_uri: str
+    #: 25, MATCHING engine-cost's CORRECTED DEFAULT rather than the fleet's invented 8.
+    #:
+    #: That 8 was never a caller's judgement about what fits — the caller OMITS the limit, so
+    #: each provider's own default applies, and three providers inventing 8 separately is not a
+    #: fleet default, it is the same guess made three times. It put "9 exist" on a card beside an
+    #: EMPTY menu, because nine members against a bound of eight answers `too_many`: a refusal
+    #: designed to protect an ask became the reason the ask had nothing to show.
+    #:
+    #: A provider knows its own cardinality where the caller cannot. This engine's largest class
+    #: is well under 25, so the bound has headroom and `too_many` stays reserved for a class that
+    #: is genuinely larger than a menu. The durable fix is the disposition SENDING the limit it
+    #: can render, at which point this default stops mattering.
+    limit: int = 25
+
+
 @app.get("/health", tags=["ops"])
 async def health() -> Dict[str, Any]:
     """Liveness only.
@@ -382,6 +504,23 @@ async def verbs() -> Dict[str, Any]:
     }
 
 
+@app.post("/resolve_instance", tags=["safety"])
+async def resolve_instance(req: ResolveRequest) -> Dict[str, Any]:
+    """Resolve a spoken safety name to an identifier in this engine's model."""
+    return {
+        "output_uri": MESH + "InstanceResolution",
+        "query": req.identifier,
+        "candidates": instances_mod.resolve(req.identifier, req.class_uri),
+        "provider": "engine_safety_sustainment",
+    }
+
+
+@app.post("/enumerate_instances", tags=["safety"])
+async def enumerate_instances(req: EnumerateRequest) -> Dict[str, Any]:
+    """List the members of a safety class, or refuse in one of two NAMED ways."""
+    return instances_mod.enumerate_class(req.class_uri, req.limit)
+
+
 @app.post("/analyze", tags=["safety"])
 async def analyze(req: MeasureRequest) -> Dict[str, Any]:
     """Run one verb.
@@ -395,6 +534,63 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
         return {"refused": True, "reason": f"unknown verb '{req.fn}'",
                 "known": sorted(BY_FN)}
 
+    fn = getattr(measures, req.fn)
+
+    # ── AN UNEXPECTED KEY IS A 422 NAMING THE ARGUMENT, NEVER A 500 ─────────────────────────
+    #
+    # `fn(**req.params)` unfiltered raises `TypeError: got an unexpected keyword argument` for
+    # ANY key the caller adds, and FastAPI turns that into a 500 with no body. MEASURED against
+    # this engine before the guard: `{"subject": "safety:Hazard"}` and `{"hazard_id": "HAZ-1003"}`
+    # each killed the call on arrival — and a 500 with no body is indistinguishable, from the
+    # surface, from the blank card a missing rendering produces. Two unrelated defects with one
+    # symptom is how an afternoon goes.
+    #
+    # THE GATEWAY'S `accept_slots` PROJECTION IS SUPPOSED TO STOP THIS UPSTREAM, and this guard
+    # exists anyway: an engine that dies on an unexpected kwarg is trusting a caller it cannot
+    # see. Belt and braces — the same posture the safety task kinds take by keeping `accepted`
+    # in the global verb set until the cutover reads rows.
+    #
+    # THE REFUSAL IS BUILT FROM THE SIGNATURE, not from a hand-kept list, so a slot added to a
+    # measure is accepted here the moment it exists and a slot removed stops being accepted in
+    # the same edit. A hand-written allowlist would be a second declaration of the signature,
+    # and the two would disagree on the first change.
+    import inspect
+
+    params = inspect.signature(fn).parameters.values()
+    accepted = {
+        p.name for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    # A MEASURE DECLARING `**kwargs` ACCEPTS ANYTHING, AND THE GUARD MUST SAY SO. Without this
+    # the check refuses every key for such a function, because its named set is empty — an
+    # over-constrained guard failing HONEST data, which is the kind that gets deleted rather
+    # than fixed. No measure takes `**kwargs` today; the seal's own stub does, and that is how
+    # this surfaced: the guard answered 422 to a call it had no business refusing.
+    takes_any = any(p.kind is p.VAR_KEYWORD for p in params)
+    unexpected = [] if takes_any else sorted(set(req.params) - accepted)
+    if unexpected:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "refused": True,
+                "reason": f"{req.fn} does not accept {', '.join(unexpected)}",
+                "unexpected": unexpected,
+                # WHAT IT *DOES* ACCEPT, from the declaration — a refusal that names only what
+                # was wrong makes the caller guess at what would be right.
+                "accepts": sorted(accepted - {"state"}),
+                "slots": slots_mod.slots_for(req.fn),
+            },
+        )
+
+    # ── THE MANDATORY-SLOT REFUSAL RUNS *AFTER* THE UNEXPECTED-KEY ONE, DELIBERATELY ────────
+    #
+    # It used to run first, and the ordering hid the more diagnostic answer: a caller sending
+    # `hazard_id` to a verb whose slot is `work_order_id` got back "missing required slot(s)"
+    # and no mention of the key it DID send. The seal caught it — `assess_deferral_risk`
+    # answered 200 to an unexpected key because its mandatory slot was absent in the same call.
+    #
+    # An unexpected key means the caller's model of this verb is wrong, which usually EXPLAINS
+    # the missing slot rather than being a second independent fault. Naming the wrong key first
+    # answers both; naming the missing slot first answers neither.
     missing = slots_mod.missing_mandatory(req.fn, req.params)
     if missing:
         return {
@@ -404,8 +600,33 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
             "slots": slots_mod.slots_for(req.fn),
         }
 
-    fn = getattr(measures, req.fn)
-    result = fn(**req.params)
+    # ── AND NO MEASURE MAY DIE WITHOUT WRITING A RESPONSE ───────────────────────────────────
+    #
+    # The guard above stops the ONE exception we found. This stops the CLASS. An unhandled
+    # exception in this handler produces no body, and from the caller's side that is
+    # indistinguishable from an engine that is merely slow — 58 seconds of learning nothing
+    # that 5 milliseconds could have told it. The artifact reads FAILED with 0 bytes and points
+    # at the dispatch, which is the one place the cause is not.
+    #
+    # NOT A BARE `except` AROUND EVERYTHING: the refusals above are DECIDED answers and return
+    # normally. This wraps only the measure call, so a bug inside a measure is reported as a
+    # bug inside that measure, by name, with the params that reached it.
+    try:
+        result = fn(**req.params)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=500,
+            content={
+                "refused": True,
+                "reason": f"{req.fn} raised {type(exc).__name__}: {exc}",
+                "fn": req.fn,
+                # THE PARAMS AS RECEIVED, because the first question about a failed dispatch is
+                # always "what did it actually get sent" and the answer has been unavailable
+                # every time it has been asked.
+                "params_received": sorted(req.params),
+            },
+        )
+
     result["output_uri"] = spec["output_uri"]
     # NAMES NO ARCHETYPE. The card shape is the presentation layer's decision
     # (ADR-0017); an engine that names one is deciding how it is drawn.

@@ -134,34 +134,33 @@ def test_EVERY_KNOWN_SOURCE_IS_IN_EXACTLY_ONE_SET():
         assert why and why.strip(), f"{src} is excluded with no reason"
 
 
-def test_THE_JOIN_the_pure_sets_cover_the_gateway_vocabulary():
+def test_THE_JOIN_the_partition_covers_the_whole_vocabulary():
     """THE INVARIANT BETWEEN TWO DECLARATIONS, which is the kind nothing else checks.
 
-    The source names are declared in `gateway.py` (`SLOT_SOURCE_*`) and partitioned here. Two
-    correct declarations that never meet is the shape that let `instance_resolved` and the arity
-    gate disagree about nothing for three months.
+    ⛔ THIS READ THE CONSTANTS OUT OF `gateway.py` BY REGEX AND WENT RED WHEN THEY MOVED —
+    correctly. The vocabulary was declared in gateway, and then the writer needed it and so did
+    the promotion rule; three copies of four names is how a rename makes a feature stop
+    SILENTLY, with the reader refusing every row as "unknown source" and reporting a clean
+    empty chain. It now lives in `iagent_pure.slot_acceptance`, the one door every binding
+    passes through, and this seal imports the object instead of parsing for it.
 
-    A RENAME upstream is what this catches. An ADDED source falls through to "not promoted",
-    which is safe — but a renamed one would make promotion quietly stop happening, and a feature
-    that silently stops is worse than one that fails.
+    The floor is what caught the move: it refused to quantify over an empty set rather than
+    passing vacuously, which is the whole reason a floor is written before the assertion.
     """
-    gw = _GW.read_text(encoding="utf-8")
-    declared = set(re.findall(r'^SLOT_SOURCE_\w+\s*=\s*"(\w+)"', gw, re.M))
-    assert len(declared) >= 4, (
-        f"parsed only {declared} from gateway.py — the SLOT_SOURCE_* shape moved and this seal "
-        f"is quantifying over almost nothing"
-    )
+    from iagent_pure.slot_acceptance import SLOT_SOURCES
+
+    assert len(SLOT_SOURCES) >= 4, f"the vocabulary shrank to {SLOT_SOURCES}"
     known = set(PROMOTABLE_SLOT_SOURCES) | set(NON_PROMOTABLE_SLOT_SOURCES)
-    missing = declared - known
+    missing = set(SLOT_SOURCES) - known
     assert not missing, (
-        f"gateway declares slot source(s) {sorted(missing)} that this module has neither "
-        f"promoted nor excluded. Add each to PROMOTABLE_SLOT_SOURCES or to "
-        f"NON_PROMOTABLE_SLOT_SOURCES with its reason — never leave one undecided."
+        f"slot source(s) {sorted(missing)} are neither promoted nor excluded. Add each to "
+        f"PROMOTABLE_SLOT_SOURCES or to NON_PROMOTABLE_SLOT_SOURCES with its reason — never "
+        f"leave one undecided, because whichever branch it reaches first will decide it."
     )
-    stale = known - declared
+    stale = known - set(SLOT_SOURCES)
     assert not stale, (
-        f"this module partitions source(s) {sorted(stale)} that gateway no longer declares — a "
-        f"rename upstream would make promotion silently stop happening"
+        f"{sorted(stale)} is partitioned here but is no longer a declared source — a rename "
+        f"upstream would make promotion silently stop happening"
     )
 
 
@@ -228,8 +227,28 @@ def test_THE_FAST_PATH_PROMOTES_INTO_THE_RECORD():
     """Both of this module's record sites write `instance_id`, so promoting it once fixes both
     — which is why the promotion goes on the variable and not on each call."""
     src = _src(_DD)
-    assert "promotable_instance_from_slots(truth, chain_slots or {})" in src, (
+    assert "promotable_instance_from_slots(truth, _provenance)" in src, (
         "the fast path never promotes, so its record still reports a bound turn as unresolved"
+    )
+    # ⛔ THE ANTI-REGRESSION ARM, and it is the defect this seal SHIPPED WITH.
+    #
+    # The first version promoted from `chain_slots` — what the ANCESTORS bound. The pick that
+    # answers an ask arrives on THIS turn and is in no ancestor, so the promotion read the one
+    # place the value could never be. Measured live on artifact-4-1789438505471: its own record
+    # carried {"program_id": {"value": "NP-MERIDIAN", "source": "picked"}} and its parent the
+    # ask carried {} — and the verb was still flagged `needs_instance`.
+    #
+    # Every assertion in this file passed throughout, because the fixtures hand the predicate a
+    # populated dict and never model WHERE that dict comes from.
+    assert "promotable_instance_from_slots(truth, chain_slots" not in src, (
+        "the promotion reads chain_slots — the ancestors' bindings — so this turn's own pick is "
+        "invisible to it and the answer turn is flagged for the reason it was just answered"
+    )
+    assert "_bound_names = {str(k) for k in (chain_slots or {})}" not in src, (
+        "the arity gate reads chain_slots alone; the turn's pick must be merged in"
+    )
+    assert "_provenance = {" in src, (
+        "the merged chain-plus-this-turn provenance is gone"
     )
     assert "if not instance_id:" in src, (
         "promotion is attempted even when the ask genuinely carried an instance"

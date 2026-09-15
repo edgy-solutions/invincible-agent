@@ -44,6 +44,21 @@ _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     # accepted, and never match a payload — a card falling through to KNOWLEDGE_DOCUMENT with
     # "No content available", indistinguishable from having no binding at all.
     "cost:": "http://invincible-agent/cost#",
+    # safety: (Engine S, ADR-0051). Same requirement and the same silent failure as the two
+    # above — plus a trap that makes this row easy to get WRONG rather than merely easy to
+    # forget, which is why the IRI is spelled out here beside its neighbours:
+    #
+    #   fin:    http://invincible-agent/fin#
+    #   cost:   http://invincible-agent/cost#
+    #   safety: http://internal/sustainment/safety#     <- DIFFERENT AUTHORITY AND PATH
+    #
+    # Safety is `internal/sustainment/...`, not `invincible-agent/...`, because it extends the
+    # SUSTAINMENT plane the domain ontologies already occupy. Anyone adding this by pattern from
+    # the two lines above writes the wrong IRI, and the failure is the quiet one: the row
+    # registers, reports accepted, never matches a payload, and the card falls through to
+    # KNOWLEDGE_DOCUMENT with "No content available" — indistinguishable from having no binding
+    # at all, which is the state the safety walk spent an afternoon inside.
+    "safety:": "http://internal/sustainment/safety#",
 }
 
 
@@ -377,6 +392,54 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "archetype": "STEP_LADDER",
         "expected_fields": ["name", "rate", "basis", "amount", "running_total", "value_unit"],
         "description": "Renders cost:PriceComposition as a STEP_LADDER - the ordered walk from base cost to price, each step naming the figure it was struck on and the running total after it. `basis` is what makes the walk checkable: overhead is struck on labor-plus-fringe, not on the previous running total, and a reader verifying the arithmetic cannot recover that from the amounts",
+    },
+    # ── Engine S — SUSTAINMENT SAFETY (ADR-0051) ──────────────────────────────────────────
+    #
+    # THREE ROWS, WRITTEN AFTER A WALK SPENT AN AFTERNOON ON THEIR ABSENCE. The three output
+    # classes were declared in `safety_extension.ttl`, Contract D accepted them, the verbs
+    # registered and routed at 0.98 — and every card came back 0 bytes, because a class being
+    # DECLARED and a class being DRAWABLE are different claims with different checks. The HUD
+    # said so all along: `CARD CHOSEN (NOT DECLARED FOR THIS TYPE) · payload-only`.
+    #
+    # Contract D checks that a class EXISTS and never what KIND it is, so nothing upstream of
+    # here could have caught it. That is the fifth mechanism of "registered is not
+    # participating": registered, routable, and drawable by nothing.
+    {
+        "subject_uri": "safety:OrphanedHazardSet",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "value_label", "value_unit", "scope_label"],
+        "description": "Renders safety:OrphanedHazardSet as a CONTRIBUTION_RANKING - live hazards with no owned, field-verified mitigation. ORDER AND MAGNITUDE ARE DIFFERENT QUANTITIES and the legend is what keeps that honest: rows are ranked severity-first then age, which is the verb's claim about what matters, while the BAR is days open, because a ranking draws a magnitude and severity is an ordinal with no length. The bars are therefore not monotonic with rank. `favourable` is deliberately absent - an unattended hazard has no favourable direction, so the card shows 'no direction stated' rather than colouring rows against a claim nobody made",
+    },
+    # ── THE TWO BELOW ARE KNOWLEDGE_DOCUMENT BY RULING, NOT BY FIT ────────────────────────
+    #
+    # Both are single-subject statements rather than rankings or series, and no declared
+    # archetype carries a severity/probability pair with its citation. KNOWLEDGE_DOCUMENT is
+    # the universal treatment - its renderer accepts any string and publishes an empty refusal
+    # vocabulary - so these draw today with the disclosure strip.
+    #
+    # A SAFETY ARCHETYPE IS THE RIGHT ANSWER AND IS NOT THIS LANE'S TO MINT. The argument for
+    # it is the MIL-STD-882E severity vocabulary: I-IV with Table III's probability letters is
+    # a real shape no existing archetype expresses, and `mesh:HazardDeclaration` is NOT it -
+    # its declared severity set is CRITICAL/WARNING/INFO, so binding to it would assert a
+    # vocabulary the payload does not speak and produce the same blank card one layer along.
+    # Unbound beats mis-bound; prose beats mis-bound too, and it beats blank.
+    {
+        "subject_uri": "safety:DeferralRiskCard",
+        "object_uri": "mesh:KnowledgeDocument",
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "expected_fields": ["work_order_id", "is_critical", "checked_against",
+                            "reopens_hazard", "severity", "probability"],
+        "description": "Renders safety:DeferralRiskCard as a KNOWLEDGE_DOCUMENT - what deferring one work order costs, including the explicit not-critical statement and how many critical items it was checked against, because an empty answer and a completed check are different facts and prose can say so",
+    },
+    {
+        "subject_uri": "safety:RiskAssessmentDraft",
+        "object_uri": "mesh:KnowledgeDocument",
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "expected_fields": ["hazard_id", "severity", "probability", "risk_level",
+                            "acceptance_audience", "citations"],
+        "description": "Renders safety:RiskAssessmentDraft as a KNOWLEDGE_DOCUMENT - a DRAFTED severity and probability with the matrix cell that produced the level and the audience whose acceptance it would require. Prose is the honest treatment for a draft that is explicitly not a decision: no archetype should make it look like one",
     },
 ]
 
