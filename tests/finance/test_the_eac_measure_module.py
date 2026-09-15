@@ -165,3 +165,45 @@ def test_the_module_declares_a_version_and_imports_nothing_from_the_engine():
            ("entities", "seed", "state", "agent_fleet", "requests", "httpx", "neo4j",
             "urllib", "datetime", "time", "random", "os"))]
     assert not bad, f"a measure module may carry no engine dependency; imports {bad}"
+
+
+def test_the_COMPARISON_verb_agrees_with_this_module_on_every_method():
+    """⚠ THE FORMULAS LIVE IN TWO PLACES, AND NOTHING ASSERTED THEY AGREE.
+
+    `fin_eac_comparison` carries its own `compute(method)` reimplementing all three formulas in
+    Decimal, independent of the module `fin_eac_calculation` now uses. They agree today —
+    checked before this was written, so this seal is pinning a true state rather than reporting
+    a defect.
+
+    **THE DUPLICATION MATTERS BECAUSE OF §2a.** The transcription seal above makes the
+    PUBLISHED FORMULA the check for `eac_formulas`. The comparison verb does not use that
+    module, so its figures — the three a customer sees side by side — are not covered by it. A
+    registry row would make `eac_formulas` authoritative while the comparison verb went on
+    computing from a copy nobody transcribed.
+
+    **This is the join, and it is the cheap half.** The durable fix is for the comparison verb
+    to CALL the module, which §2 requires anyway ("runs every registered method and no
+    unregistered one") and which is recorded as its own item rather than done inside an
+    extraction.
+    """
+    from decimal import Decimal
+
+    from agent_fleet.finance_agent import measures as engine
+    from agent_fleet.finance_agent.seed import build_seed
+
+    state = build_seed()
+    compared = {r["method"]: r for r in engine.fin_eac_comparison(state,
+                                                                  program_id="NP-MERIDIAN")}
+    assert set(compared) == set(M.FORMULA), (
+        f"the comparison verb reports {sorted(compared)}, the module declares "
+        f"{sorted(M.FORMULA)} — a method in one and not the other is invisible to both"
+    )
+
+    for method, row in compared.items():
+        if row.get("eac") is None:
+            continue
+        direct = engine.fin_eac_calculation(state, program_id="NP-MERIDIAN", method=method)
+        assert abs(Decimal(str(row["eac"])) - Decimal(str(direct[0]["eac"]))) < Decimal("0.01"), (
+            f"{method}: the comparison verb says {row['eac']} and the calculation verb says "
+            f"{direct[0]['eac']} — two implementations of one formula have drifted"
+        )

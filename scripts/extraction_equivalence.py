@@ -50,6 +50,19 @@ def load_module(path: str, name: str = "_pre_extraction"):
     return module
 
 
+#: Row identity, tried in order. A moved value the report cannot NAME is a moved value nobody
+#: can look up — and the whole point of §6b's two numbers is that each move is attributable.
+#: `?` only when a row carries none of these, which is itself worth seeing.
+_LABEL_KEYS = ("period", "entity_id", "subject_id", "method", "program_id", "line_id")
+
+
+def _label(row: dict[str, Any]) -> str:
+    for key in _LABEL_KEYS:
+        if row.get(key) is not None:
+            return str(row[key])
+    return "?"
+
+
 def compare(
     old_fn: Callable[..., Iterable[dict[str, Any]]],
     new_fn: Callable[..., Iterable[dict[str, Any]]],
@@ -79,8 +92,8 @@ def compare(
             for key in set(row_before) & set(row_after):
                 if row_before[key] != row_after[key]:
                     moved.append(
-                        f"{row_after.get('period', row_after.get('entity_id', '?'))}"
-                        f".{key}: {row_before[key]!r} -> {row_after[key]!r}"
+                        f"{_label(row_after)}.{key}: "
+                        f"{row_before[key]!r} -> {row_after[key]!r}"
                     )
                 else:
                     unchanged += 1

@@ -239,6 +239,12 @@ _INDEX_MONEY_FIELDS = ("bcws", "bcwp", "acwp", "cum_bcws", "cum_bcwp", "cum_acwp
 _BURN_MONEY_FIELDS = ("burn", "planned", "variance_to_plan", "cum_burn", "cum_planned",
                       "budget_remaining", "trailing_rate")
 
+#: The money fields `fin_eac_calculation` computes. `vac` and `etc` are the two SUBTRACTIONS
+#: that put this verb in the money ruling's scope; `eac` is the forecast they are taken from,
+#: and the four quantities are the operands all three were computed over -- carried so a
+#: consumer can check the response against itself.
+_EAC_MONEY_FIELDS = ("eac", "vac", "etc", "bac", "bcws", "bcwp", "acwp")
+
 
 def _emit_money(
     rows: list[dict[str, Any]],
@@ -595,8 +601,13 @@ def fin_eac_calculation(
     periods = periods_in(window)
     wp_ids = {w.wp_id for w in state.work_packages
               if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
-    bcws, bcwp, acwp = _totals(state, wp_ids, periods)
-    bac = program.bac
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES `vac`
+    # (BAC - EAC) and `etc` (EAC - ACWP) -- two subtractions, so the money ruling scopes
+    # it by its own test. `_ratio` divides Decimals and returns one, so cpi, spi and
+    # percent_complete come back exact too, and the module is type-agnostic so it needed
+    # no change at all.
+    bcws, bcwp, acwp = _totals_exact(state, wp_ids, periods)
+    bac = Decimal(str(program.bac))
 
     cpi = _ratio(bcwp, acwp)
     spi = _ratio(bcwp, bcws)
@@ -617,7 +628,7 @@ def fin_eac_calculation(
             f"to project. A different method or a wider window may be answerable."
         )
 
-    return [{
+    return _emit_money([{
         "program_id": program.program_id,
         "program_name": program.name,
         # THE METHOD AND ITS FORMULA RIDE ON THE ROW. Not metadata: they are the half of
@@ -635,7 +646,13 @@ def fin_eac_calculation(
         "reported_periods": len({f.period for f in state.facts_for(wp_ids, periods)}),
         "value_unit": program.value_unit,
         "scope_label": program.name,
-    }]
+    }],
+        money_fields=_EAC_MONEY_FIELDS,
+        # THE INDICES AND THE PROGRESS FRACTION ARE RATIOS -- factors, not amounts -- so they
+        # are carried exact but NOT quantized. Rounding percent_complete to the cent would be
+        # putting a currency on a proportion.
+        ratio_fields=("cpi", "spi", "percent_complete"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
