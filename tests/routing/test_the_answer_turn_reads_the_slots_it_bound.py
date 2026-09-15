@@ -154,8 +154,17 @@ def test_THE_OLD_BOOLEAN_IS_GONE_FROM_THE_PRE_RESOLVED_SITE():
     """`not _pre_instance` is the read that was wrong. Leaving it beside the new call would be
     two gates disagreeing, with the stricter one winning silently."""
     src = _src(_SUP)
-    assert "not _pre_instance" not in src, (
-        "the pre-resolved site still passes the ask's empty subject as the query shape"
+    # ⛔ THIS MATCHED `not _pre_instance` BARE AND WENT RED AGAINST CORRECT CODE. The promotion
+    # added `if not _pre_instance:` — a guard that is right, reads the same field, and is not
+    # the gate at all. The assertion was written against a STRING and could not tell the gate's
+    # ARGUMENT from an unrelated correct use of the same expression.
+    #
+    # Third time this shape has bitten in this file's lineage, so the fix is to anchor on what
+    # makes it the gate: the trailing comma that marks it as `filter_verbs_by_arity`'s second
+    # POSITIONAL ARGUMENT. `if not _pre_instance:` ends in a colon and cannot match.
+    assert "not _pre_instance," not in src, (
+        "the pre-resolved site still passes the ask's empty subject as the query shape — the "
+        "gate's second argument is the bare boolean again"
     )
 
 
@@ -189,23 +198,54 @@ def test_FLAGGED_IS_NOT_EXCLUDED_at_the_consumer():
     assert '"flags": flags,' in src, "the split half is computed and never surfaced"
 
 
-def test_THE_SPLIT_IS_ADDITIVE_UNTIL_THE_CONSUMER_READS_IT():
-    """SEQUENCING, asserted so the second half is not landed blind.
+def test_THE_NARROWING_LANDED_AND_ONE_PARTITION_DECIDES_BOTH_HALVES():
+    """The additive window is CLOSED, and this replaces the assertion that held it open.
 
-    `cortex-ui/src/lib/routing.ts::readExclusions` has no disposal awareness and renders every
-    row as "excluded by {gate}". Its own comment records the fix for arity rows being SILENTLY
-    DISCARDED there. Dropping the flagged rows out of `excluded` before that reader changes
-    would re-open the identical defect from the producer's side — the same row vanishing from
-    the panel whose job is explaining an empty card.
+    `test_THE_SPLIT_IS_ADDITIVE_UNTIL_THE_CONSUMER_READS_IT` lived here and named itself as
+    the thing to delete when the consumer caught up. It was deleted by the commit that
+    narrowed `excluded`, which is the expiry working as designed rather than a test being
+    dropped — R-055's temporary state that could say it was temporary.
 
-    A mislabel a reader can question beats an absence neither end can see. When cortex-ui reads
-    `flags`, this assertion is what gets deleted, deliberately, by whoever lands that change.
+    THE GATE FOR DELETING IT WAS THE SERVING SURFACE, NOT `main`. cortex-ui `e1f9722` was
+    verified in the pod (`version.json`, plus the rendered wording, with a positive control
+    on the grep) before this landed. Merged-not-deployed is the same window one repo over,
+    and it fails the same way with both suites green — R-055.1.
+
+    WHAT IS ASSERTED NOW is the shape the consumer asked for and that is stronger than what
+    the dispatch specified: ONE partition decides both halves. Two independent comprehensions
+    would let a row that is neither `flagged` nor recognised land in both or in neither, and
+    a `flagged` half computed as "everything not removed" absorbs any THIRD disposal the gate
+    ever adds and renders it as a live candidate — a claim about a decision, made from not
+    recognising a word.
     """
     src = _src(_GW)
+    assert "flags, excluded = [], []" in src, (
+        "the two halves are no longer computed from one partition — a row that is neither "
+        "flagged nor recognised can now land in both or in neither"
+    )
     assert "excluded = [r for r in excluded if not" not in src, (
-        "`excluded` was narrowed while cortex-ui still renders it as the only list — the "
-        "flagged rows now appear NOWHERE. Land the cortex-ui `flags` render first, then narrow "
-        "and delete this assertion."
+        "the narrowing was re-implemented as a filter over the whole list, which is the "
+        "derived-from-absence shape the partition exists to prevent"
+    )
+    assert '_raw_excluded' in src, (
+        "the parsed payload and the narrowed half share a name again, so the partition reads "
+        "its own output"
+    )
+
+
+def test_AN_ABSENT_DISPOSAL_READS_AS_REMOVED():
+    """Deliberate, on this ruling's own trade. Every row predating the field meant removed,
+    and a mislabel is visible where a disappearance is not — so the UNRECOGNISED case must
+    fall to `excluded`, never to `flags`.
+
+    Asserted on the branch rather than on data because this handler needs a live request, an
+    authenticated user and a resolved projection row; what is checkable here is that the
+    positive test is on `flagged` and the fallback is the other arm.
+    """
+    src = _src(_GW)
+    assert 'if isinstance(_r, dict) and _r.get("disposal") == "flagged":' in src, (
+        "the partition no longer tests POSITIVELY for `flagged` — if it tests for `removed` "
+        "instead, an unrecognised third disposal renders as a live candidate"
     )
 
 

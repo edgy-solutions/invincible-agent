@@ -109,7 +109,14 @@ def test_no_declarations_refuses_EVERYTHING():
 def test_nothing_spoken_is_not_a_refusal():
     """Distinguishes 'asked for nothing' from 'asked and was refused' — today's every-call
     case, and it must not fill the log with noise."""
-    assert accept_slots({}, []) == ({}, [])
+    # ASSERTED ON THE TWO FIELDS THIS TEST IS ABOUT, not on tuple identity. It compared the
+    # whole NamedTuple to `({}, [])` and broke the day `Acceptance` grew `bound_slot_sources`
+    # — a seal that fails on a purely additive change is testing the shape of the container
+    # rather than the claim in its name, and the next person's instinct is to widen the
+    # literal rather than ask what it meant.
+    _a = accept_slots({}, [])
+    assert _a.params == {}
+    assert _a.refusals == []
     assert accept_slots(None, None).clean
 
 

@@ -93,7 +93,7 @@ the notice is part of the ruling rather than an implementation detail.
 | # | ruling | where |
 |---|---|---|
 | a | **The author sees what they can act on, and nothing more.** ⟺ **AMENDED 2026-09-12.** `see ⟺ can_act` is **the substrate's shape**, not a gap in an implementation — the projection materialises one row per authorized ACTOR, so viewability and act-ability derive from one Topaz answer and cannot diverge. The earlier reading described a view-only author audience as though it were available; it is not, and saying so plainly is the honest version. **The inert grant is withdrawn** — see the note below. | §5:290 |
-| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. | §5:312 |
+| b | **`rejected` is reason-required too**, not only `accepted` — both verbs. Seal 6 mutates them **separately**, because one mutation covering both passes with one still wired. *(Kill counts prove guard-is-right, never guard-is-reachable — R-056.)* | §5:312 |
 | c | **`trendMishaps` → slice 3.** | §3:242 |
 | d | **SAFETY compartment deferred.** | §9:435 |
 | e | **The acceptance verb is `accepted`, NOT the seed's `approved`.** RULED 2026-09-11, architect. A risk is *accepted* by an authority — MIL-STD-882's word, and the ADR's whole claim. `approved` is the generic seed's verb for generic things. A queue showing both side by side is showing **two different acts, correctly**; the declaration row's label makes it explicit. The SDK constrains verb strings nowhere, deliberately, so this is expressible without asking anyone's permission. | §5 |
@@ -995,6 +995,12 @@ undefined share, rank from `0`:
     every one reddened exactly ONE test, and always a test written in the same commit
     the standing seal stayed GREEN through all five
 
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
+
 It exercises the verb at two call sites and asserts its contract **shape**. It never asserted the
 ordering, the zero-drop, the rank numbering, or the withheld tail — *which is to say, none of the
 algorithm being moved.* **The green before and after was real and weak:** it proved the verb still
@@ -1022,6 +1028,12 @@ seal's age, it does not decay.** Required instrument for the remaining four extr
 **The number is what prompted the mutation** — ten days in a moving tree was enough to ask whether
 the seal still pinned anything, and the answer was that it never had. Recorded as commands rather
 than as a figure, per the ADR.
+
+> **READ EVERY KILL COUNT IN THIS REGISTER UNDER R-056.** A mutation run proves
+> **guard-is-RIGHT**; it can never prove **guard-is-REACHABLE**, because *the fixture supplies
+> the triggering input.* A full kill sheet is half the evidence, and the half it omits is
+> whether the world can produce the row at all. Pair every count with a trace of each half of
+> the comparison back to its source.
 
 ### Scope held where it was tempting to widen
 
@@ -2054,6 +2066,289 @@ something**, not merely that it runs.
 
 Related: [[a-guard-that-cannot-fire]] — the WEAKENED form, where the guard runs, its premise is
 true, and it answers a weaker question.
+
+## R-055 — THE OTHER HALF OF R-054: THE INTERMEDIATE STATE CAN FAIL ABSENT, AND ABSENCE HAS NO SURFACE
+
+**Architect-ratified 2026-09-14, on Lane 1's measurement, as a correction to the architect's own
+ruling.** The ruling given was "split `eligibility_excluded` into `flags` and `excluded`". What
+shipped was ADDITIVE — `flags` emitted, `excluded` left whole — and the architect ruled the
+amendment better than the original *for the reason it was measured*.
+
+R-054 names the order and one failure mode. This is the second mode, and it inverts the remedy.
+
+**R-054's intermediate state is PERMISSIVE: a gate says yes to everything.** The seal answers by
+asserting the gate REFUSES something.
+
+**This one is ABSENT: a fact stops reaching the surface that explains it.** No gate opened. No
+arm was taken unconditionally. A row simply stopped being rendered, and *there is nothing to
+assert against* — the producer's tests pass because it emits correct data, and the consumer's
+tests pass because it correctly renders what it is given.
+
+WHAT WAS MEASURED. `eligibility_excluded` carries rows the arity gate KEPT (`disposal:
+"flagged"`) since the H06 ruling of 2026-09-04 stopped it excluding. So a live candidate renders
+under a key whose name says it was deleted. Narrowing the producer is obviously right — and
+`cortex-ui`'s `readExclusions` has **no `disposal` awareness at all**, and its own comment
+records the recent fix for arity rows *being silently discarded there*. Narrowing first would
+have re-opened that identical defect **from the producer's side**: the same row vanishing from
+the same panel, whose only job is explaining an empty card.
+
+**MISLABEL IS VISIBLE; ABSENCE ISN'T.** A reader who sees "excluded by arity" on a live candidate
+can question it, and one day will. A reader who sees nothing has no thread to pull — and neither
+end is wrong, so neither end gets a bug report. That is the whole trade, and it decides the order.
+
+**THE RULE.** When a field's MEANING splits across a producer/consumer boundary:
+
+1. The producer emits the new shape **additively**. Both keys carry the rows.
+2. The consumer reads the new shape and stops reading the old.
+3. **Only then** the producer narrows.
+
+**AND THE TEMPORARY STATE CARRIES ITS OWN EXPIRY.** A seal asserts the producer has *not* narrowed
+yet, stating why, and naming itself as the assertion to delete when step 2 lands. Without that,
+step 3 is a good idea somebody has in six months with none of this context — which is how the
+consumer's original discard defect got written in the first place.
+
+    test_THE_SPLIT_IS_ADDITIVE_UNTIL_THE_CONSUMER_READS_IT   ← deleted BY the change it guards
+
+A temporary state that cannot say it is temporary is just a permanent state nobody chose.
+
+Worked example: `3e0fba2`, `tests/routing/test_the_answer_turn_reads_the_slots_it_bound.py`.
+
+### R-055.1 — "THE CONSUMER READS IT" MEANS THE SERVING SURFACE, NOT `main`
+
+Added 2026-09-14, on the first application of this ruling, which nearly failed at step 3.
+
+The consumer landed steps 1 and 2 and reported step 3 unblocked. It was not. The sandbox was
+still serving a build from the previous day:
+
+    version.json          git_sha 435ae7e...   built_at 2026-09-13T03:56Z
+    grep "excluded by"            -> found      (CONTROL: grep works on this bundle)
+    grep "candidates flagged"     -> nothing
+
+— and the image for the merged commit was **still building**. Narrowing then would have blanked
+the panel with both repos' suites green, which is this ruling's own failure mode, reached through
+the door the ruling opens.
+
+**MERGED-NOT-DEPLOYED IS THE SAME WINDOW AS NARROWED-NOT-READ, one repo over.** So step 2 is not
+"the consumer's change is on main"; it is **"the serving surface answers with the new shape"**,
+proven by readback with a positive control, exactly as any other absence assertion.
+
+**AND THE PULL IS ASYMMETRIC, WHICH IS WHY THIS NEEDS WRITING DOWN.** The same session that
+refused to take the producer's payload shape from a dispatch — and went and measured it in the
+serving pod, correctly — then read its OWN side's readiness off `main`. Nobody was careless. The
+instinct to verify someone else's claim is simply stronger than the instinct to verify your own
+repo's state, and the second is the one that ships.
+
+### R-055.2 — A FIXTURE WRITTEN FROM AN ACCOUNT OF A PAYLOAD AGREES WITH THE ACCOUNT
+
+**Found by `cortex-ui-60`, in its own work, and reported against itself.**
+
+Its existing fixture in `attemptFailed.test.tsx` carried **no `disposal` field at all** — it had
+been built from a description of the payload in a dispatch message rather than from the producer.
+It passed. It passed *as a removal*, which is precisely the mislabel this whole packet exists to
+fix, and it would have stayed green through a blank panel.
+
+**A fixture written from an account of a payload agrees with the account, not with the payload**
+— and it goes green while the thing it models is wrong. It is the same defect as a corpus row
+written from what the router SHOULD say, and the same as a docstring standing in for evidence:
+a second-hand description acquires the authority of the thing it describes, and tests built on
+it verify the description.
+
+This is what makes the ordering law EVIDENCED rather than merely prudent: the consumer's own
+test suite could not have caught the narrowing, because its fixture disagreed with the producer
+in exactly the field the narrowing turns on.
+
+Related: [[a-docstring-is-not-evidence]]; [[a-stale-claim-is-pre-authenticated]];
+[[an-absence-assertion-is-worth-its-control]] — the readback in R-055.1 needed one, and had one.
+
+### R-055.3 — PARTITION, DO NOT FILTER, AND TAKE THE NEW KEY FIRST
+
+Also `cortex-ui-60`'s, and both points improve on the dispatch that asked for them.
+
+**PARTITION.** A `flagged` half computed as "everything not `removed`" absorbs any THIRD disposal
+the gate ever adds and renders it as a live candidate — **a claim about a decision, made from not
+recognising a word.** Neither half may be derived from the other's absence. Sealed with a
+`deferred` row that must land in NEITHER half.
+
+**TAKE THE NEW KEY FIRST.** While both keys carry the same rows, reading both naively lists every
+flagged candidate twice and the fix looks like a new defect. Taking `flags` before `excluded`
+classifies a doubled row by the KEY rather than by its own field: the same answer today, and the
+right one for a flag row that arrives with no `disposal` — a case **only the additive window
+makes reachable.** The window does work beyond what it was opened for.
+
+**AN ABSENT `disposal` READS AS REMOVED**, deliberately: every row predating the field meant that,
+and by this ruling's own trade a mislabel is visible where a disappearance is not.
+
+Related: R-054 (the permissive arm, same ordering law); [[a-plausible-negative-is-not-a-considered-one]]
+— an empty list reads as a deliberate "nothing was excluded"; [[read-the-consumer-of-what-you-fixed]]
+— this was found by opening the consumer, and by nothing else.
+
+---
+
+## R-056 — AGREEMENT IS NOT CORROBORATION WHEN THERE IS ONLY ONE WITNESS
+
+**Found 2026-09-14 by Lane 1 and `cortex-ui-60` in the same exchange, each catching the other's
+half.** Numbered here because it is an instrument law, not a routing fact.
+
+A consistency check was built between two fields of one record: the arity gate's `flagged`
+disposal and the projection's `instance_resolved`. A `flagged` row on an artifact reporting
+`instance_resolved: true` would be a record denying itself — a defect nameable on the turn
+instead of inferred from a total. It is a good idea. **It cannot fire.**
+
+    gateway.py:3340,3399        "instance_resolved": bool(md.get("subject_instance_id"))
+    dynamic_supervisor.py:956   query_is_set = not subject_instance_id
+    dynamic_supervisor.py:728   _pre_instance = pre_resolved.get("subject_instance_id")
+
+**Both halves derive from ONE field.** A flag is emitted only when the gate saw no instance,
+which means that field is empty, which means `instance_resolved` renders false. The contradiction
+is unreachable by construction. (Confirmed exhaustively: `instance_id` is assigned once at
+`direct_dispatch.py:198` and read at `:214`, `:374`, `:460` with no rebinding — a reassignment
+between the gate's read and the materialization's was the one thing that could have made it
+reachable, and there isn't one.)
+
+**AND THE DEFECT THAT PROMPTED ALL OF THIS WOULD NEVER HAVE TRIPPED IT.** On the NP-MERIDIAN
+turn, `subject_instance_id` was empty and `instance_resolved` was false. **The two halves AGREED,
+and both were wrong**, because the bound value was in the chain's slots where neither looked.
+
+> **A record can be self-consistent and false, and a consistency check is blind to exactly that.
+> Agreement is not corroboration when there is only one witness.**
+
+**THE CHEAP INSTRUMENT** (`cortex-ui-60`'s, and it costs a minute): **trace each half of a
+comparison back to its SOURCE. If they meet at one variable, it is an identity wearing a check's
+clothes.**
+
+**WHY NO TEST RUN FINDS THIS, and this is the part that generalises.** Mutation testing proves
+*guard-is-right*; it can never prove *guard-is-reachable*, **because the fixture supplies the
+triggering input.** Three mutants were killed here over a proven-green baseline — including an
+always-contradicted control, correctly insisted upon, which is precisely the test that catches a
+renderer bug and is silent on reachability. A full kill sheet says nothing about whether the
+world can produce the row.
+
+**THE DISPOSAL IS RELABEL, NOT DELETE.** Asserting that two declarations of one fact agree is a
+JOIN ASSERTION, and the join is what nobody checks — both halves had rendered happily alone since
+June. It is worth keeping as a REGRESSION guard: the day someone makes the gate read a different
+field than the projection, it is the only thing watching. What it must never be read as is a
+partition of the existing population. **A clean result from a check that cannot fail is worse
+than no check, because it looks like evidence** — so every surface rendering the stamp carries
+`ZERO CONTRADICTED IS NOT EVIDENCE OF ZERO DEFECTS` in the same breath, for the reader in six
+weeks who finds a clean panel and banks it.
+
+### R-056.1 — BOTH SESSIONS RAN A BLIND SCAN THE SAME HOUR, AND ONLY A PLANTED CONTROL CAUGHT IT
+
+Two NUL-byte sweeps, two different shells, two silent instrument failures:
+
+    grep -P '\x00'     unsupported in this shell -> matched nothing, reported CLEAN
+    grep $'\x00'       collapsed to an EMPTY pattern -> matched every line:
+                       "322 NUL-carrying lines" in a 321-line file
+
+**Neither tool errored. Both produced a confident, well-formed, wrong answer** — one a false
+all-clear, one a false alarm whose arithmetic was the only tell. In each case the thing that
+caught it was a control planted BEFORE the sweep, never the sweep itself.
+
+An absence assertion is worth its control, and **the control has to run through the same
+instrument the claim does** — a scan proving a planted NUL is findable, in the same shell, in the
+same invocation shape.
+
+Related: [[a-guard-that-cannot-fire]] — the BORN DEAD form;
+[[the-instrument-and-the-subject-share-a-surface]]; [[an-absence-assertion-is-worth-its-control]];
+[[assert-on-the-claim-not-its-neighbour]]; R-055.2 — a fixture written from an account of a
+payload, which is the same substitution at the input end.
+
+---
+
+## R-057 — AN INSTRUMENT THAT CANNOT ASK THE QUESTION ANSWERS ANYWAY, WITH THE REASSURING WORD
+
+**Architect-ruled 2026-09-14: the two instrument instances of this week are ONE LAW.** Filed with
+a third, found the same day, which is the most expensive of the three.
+
+    grep -P '\x00'              unsupported in this shell -> matched nothing -> "CLEAN", 1199 files
+    grep $'\x00'                collapsed to an EMPTY pattern -> matched every line
+    a seal over `bound_slot_sources`   the FIXTURE supplies the field -> 17 green assertions
+
+**None of the three errored.** Each returned a well-formed, confident answer, and in two of them
+that answer was the reassuring one. **A tool that cannot reach the question does not say so — it
+reports the default outcome of not finding anything, which is indistinguishable from the good
+news.** The false-alarm case (the empty pattern) was caught within a minute because its arithmetic
+was absurd. The false all-clears were not caught by anything except a planted control.
+
+**THE THIRD INSTANCE IS THE SHAPE AT FULL SIZE.** A gate fix and a provenance-gated promotion were
+written, sealed with 17 assertions across two sites, mutation-checked, committed, rolled to the
+cluster and REPORTED AS FIXED. Then:
+
+    356 AnswerArtifacts carry `resolved_intent`
+      0 carry `bound_slot_sources`
+        the field is READ in one place and WRITTEN nowhere but a test fixture
+
+So `turn_is_set_shaped(instance, verb, set())` degrades to exactly `not instance` — the behaviour
+it replaced — and `promotable_instance_from_slots(verb, {})` returns `None` on its first line.
+**The whole arc is inert in production, and every seal is green because the seals supply the
+input the world does not.**
+
+> **This is R-056's law applied to the instrument instead of the guard: a test cannot tell you
+> whether the data it fabricates exists.** Mutation testing, coverage and a kill sheet are all
+> computed inside the fixture's world.
+
+**THE CHECK, and it is the same one in all three cases: ASK THE INSTRUMENT A QUESTION YOU KNOW
+THE ANSWER TO, THROUGH THE PATH THE CLAIM USES.** Plant a NUL and prove the scan finds it. Count
+the rows in production that carry the field before trusting a seal that reads it. A control that
+reaches the answer by a different route is a second claim, not a control.
+
+**AND THE PRODUCTION COUNT IS THE ONE THAT WAS SKIPPED.** Two reachability traces had already run
+on this change — one found the wrong call site, one confirmed the payload was set by the gateway.
+Both traced CODE. Neither asked whether any artifact in the database had ever carried the field,
+which is one query and would have stopped the work before the first commit.
+
+Related: R-056 (guard-is-right vs guard-is-reachable — this is its instrument half);
+[[an-absence-assertion-is-worth-its-control]]; [[a-sample-is-not-the-population]];
+[[assert-on-the-claim-not-its-neighbour]].
+
+---
+
+## R-058 — A CITATION IS NOT A SIGNATURE
+
+**Found 2026-09-14 by `invincible-agent-81`, against a misattribution aimed at them.** They were
+told their chain-slot loop fix had been inert in production. It was not their fix.
+
+They checked rather than recalled — every file their commits touched — and the set excludes the
+entire routing surface. What IS theirs is the MEASUREMENT the code cites: the four-hop walk,
+`1m15 / 1m42 / 2m07 / 2m34` against `1m16` in one hop. They reported it, said twice that the loop
+was someone else's to fix, and did not touch it. `_accumulated_slots`' docstring then recorded:
+
+    MEASURED 2026-09-12 by invincible-agent-81 on the rolled fleet
+
+> **The credit is correct and it reads as authorship.** A reader looking for an OWNER finds the
+> person who took the reading rather than the person who wrote the line — and the citation is
+> precise, dated and verifiable, which makes it *more* convincing, not less.
+
+**AND GIT CANNOT CORRECT IT.** Measured on this repo: **every commit in the last forty, across
+every lane, is authored `Chris Nogradi <cnogradi@gmail.com>`.** One human identity, many agents.
+So `git log --author` disambiguates nothing, `git blame` names the human who owns the machine,
+and the only reliable test is the one 81 used — *which files has this lane ever touched.* That is
+a reconstruction, not a record, and it works only while a lane is alive to be asked.
+
+Three of the last sixty commit messages name their authoring lane. The fix's own commit
+(`8c7422c`) names the measurer in its body and its author nowhere.
+
+**THE RULE.** Attribute the measurement **and** name the author, or the two collapse the first
+time somebody needs an owner. A commit that cites a finding should say who wrote the code as
+plainly as it says who took the reading — the trailer is the natural place, since `Co-Authored-By`
+already names the model and not the lane.
+
+**THE COST WHEN THEY COLLAPSE** is not embarrassment; it is a dispatch sent to someone who cannot
+act on it, while the person who can never hears. Here it cost one round trip because the repair
+was already built. On a live defect it would have cost the time it took for the wrong lane to
+prove a negative about itself.
+
+**AND THE SECOND HALF OF 81'S REPLY IS THE PART TO KEEP:** *"nothing owed from me, and nothing
+verified by me either — I have not reviewed `c4f15ab` and should not be recorded as having done
+so."* **A correction to a misattribution must not create a second one in the other direction.**
+Being named in a thread is not review, and a reader six weeks out cannot tell the difference
+unless somebody says so.
+
+Related: [[a-stale-claim-is-pre-authenticated]] — precision makes a claim more trusted, and this
+is the same mechanism applied to provenance; R-056 (two declarations that never meet);
+[[an-adr-does-not-allocate-a-component-name]] — the other place one name is read as two things.
+
+---
 
 ---
 

@@ -3273,40 +3273,38 @@ def _project_route_decision(mat: dict) -> dict | None:
     #
     # Same honest-empty discipline as the pool above: absent projects to [], never a crash.
     try:
-        excluded = json.loads(md.get("eligibility_excluded") or "[]")
-        if not isinstance(excluded, list):
-            excluded = []
+        _raw_excluded = json.loads(md.get("eligibility_excluded") or "[]")
+        if not isinstance(_raw_excluded, list):
+            _raw_excluded = []
     except (ValueError, TypeError):
-        excluded = []
+        _raw_excluded = []
 
     # ── FLAGGED IS NOT EXCLUDED, AND ONE LIST CANNOT SAY BOTH ──────────────────────────────
     #
     # The field is named `eligibility_excluded` and the arity gate stopped excluding on
     # 2026-09-04 — it FLAGS `needs_instance` and KEEPS the verb as a candidate, because
     # removing the only verb that fits abstains for the reason it would have asked about.
-    # Every such entry carries `disposal: "flagged"`, so the distinction is in the data and
-    # was nowhere in the read: a reader of this list sees a candidate that is still live,
-    # under a key whose name says it was deleted.
+    # Every such entry carries `disposal: "flagged"`, so the distinction was in the data and
+    # nowhere in the read: a live candidate rendered under a key whose name says it was
+    # deleted.
     #
-    # That is the plausible-negative shape one layer along — "excluded" reads as a decision
-    # somebody made, and here it is the opposite decision. The producers already separate
-    # them; this is the consumer catching up. `excluded` keeps its name and now means what
-    # it says; `flags` is the other half, and neither is derived from the other's absence.
-    flags = [r for r in excluded if isinstance(r, dict) and r.get("disposal") == "flagged"]
+    # THE NARROWING LANDS HERE, AND ONLY NOW. It was held additive — both keys carrying the
+    # flagged rows — until the consumer read the new shape AT THE SERVING SURFACE, which is
+    # `cortex-ui` e1f9722, verified in the pod rather than on main (R-055.1: merged-is-not-
+    # deployed is the same window one repo over). `readExclusions` now PARTITIONS on
+    # `disposal` and takes `flags` first, so neither half is derived from the other's absence
+    # and a third disposal cannot be absorbed into either.
     #
-    # ⚠ `excluded` IS NOT NARROWED YET, AND THAT IS THE ORDER RATHER THAN AN OMISSION.
-    #
-    # `cortex-ui/src/lib/routing.ts::readExclusions` has NO disposal awareness — it renders
-    # every row as "excluded by {gate}" — and its own comment records the fix for arity rows
-    # being SILENTLY DISCARDED there, because the reader keyed on `verb` while the producer
-    # sends `uri`. Dropping the flagged rows out of `excluded` here would re-open that exact
-    # defect from the producer's side: the same arity row vanishing from the same panel, whose
-    # whole job is explaining an empty card.
-    #
-    # So this step is ADDITIVE. `flags` is emitted, both keys carry the flagged rows, and the
-    # narrowing lands with the cortex-ui change that reads `flags` and labels it a flag instead
-    # of a removal. Trading a mislabel for an absence would be the worse half of the trade, and
-    # an absence is the thing neither end can see.
+    # Both halves are computed from one partition rather than two comprehensions, so a row
+    # that is neither `flagged` nor recognised cannot silently land in both or in neither.
+    flags, excluded = [], []
+    for _r in _raw_excluded:
+        # An ABSENT `disposal` reads as removed, deliberately: every row predating the field
+        # meant exactly that, and a mislabel is visible where a disappearance is not.
+        if isinstance(_r, dict) and _r.get("disposal") == "flagged":
+            flags.append(_r)
+        else:
+            excluded.append(_r)
 
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
@@ -3882,14 +3880,21 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
 #: carry both rules, so flattening these into a single dict would make the loop disappear and
 #: silently delete that refusal. If a future change cannot express this distinction, the change
 #: is wrong however clean the chain looks afterward.
-SLOT_SOURCE_PICKED = "picked"        # chosen from a menu this system offered
-SLOT_SOURCE_SPOKEN = "spoken"        # typed in answer to a RESPEAK ask (no menu existed)
-SLOT_SOURCE_SUPPLIED = "supplied"    # sent by an API caller with the request
-SLOT_SOURCE_FILLED = "filled"        # extracted from the question by the slot filler
-
-_SLOT_SOURCES = (
-    SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED,
+# ⛔ THESE MOVED TO `iagent_pure.slot_acceptance` AND ARE IMPORTED, NOT REDECLARED.
+#
+# They were declared here and consumed here, and then the WRITER needed them (accept_slots is
+# the one door every binding passes through) and so did the promotion rule. Three copies of a
+# four-name vocabulary is how a rename makes a feature stop silently — the reader would refuse
+# every row as "unknown source" and report a clean empty chain.
+from iagent_pure.slot_acceptance import (  # noqa: E402
+    SLOT_SOURCE_FILLED,
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+    SLOT_SOURCE_SUPPLIED,
+    SLOT_SOURCES as _SLOT_SOURCES,
 )
+
+_ = (SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED)
 
 
 def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
@@ -5258,6 +5263,10 @@ async def generate_dagster_stream(
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
                     "accepted_slots": _j("accepted_slots", {}),
+                    # THE PROVENANCE RECORD. Read by `_accumulated_slots` on the next hop;
+                    # written nowhere until 2026-09-14, which made the whole chain-slot carry
+                    # inert in production with every seal over it green (R-057).
+                    "bound_slot_sources": _j("bound_slot_sources", {}),
                     "refused_slots": _j("refused_slots", []),
                     "slot_resolution": _j("slot_resolution", {}),
                     # The subject the verb was chosen for — see the producer. Without it
@@ -5633,6 +5642,18 @@ async def _stream_direct_outcome(
         bundle["resolved_intent"]["accepted_slots"] = json.loads(
             _slots_md.get("accepted_slots") or "{}"
         )
+        # ── THE PROVENANCE RECORD, ON THE PATH THAT ACTUALLY RUNS ────────────────────────
+        #
+        # TWO COMPOSITION SITES, and this is the one a pick-answer reaches. Writing the field
+        # only at the classify-path site above would have left the writer as inert as the
+        # reader it was built to feed — "one site" turning out to be two for the third time on
+        # this arc, which is why it is asserted rather than remembered.
+        try:
+            _bss = json.loads(_slots_md.get("bound_slot_sources") or "{}")
+        except (ValueError, TypeError):
+            _bss = {}
+        if isinstance(_bss, dict) and _bss:
+            bundle["resolved_intent"]["bound_slot_sources"] = _bss
         bundle["resolved_intent"]["refused_slots"] = json.loads(
             _slots_md.get("refused_slots") or "[]"
         )

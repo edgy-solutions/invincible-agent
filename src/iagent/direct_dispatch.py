@@ -41,12 +41,17 @@ that is meant to be strictly an optimisation.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from iagent.verb_lookup import find_compatible_verbs
+from iagent_pure.slot_acceptance import (
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+)
 from iagent_pure.slot_disposition import (
     ABSTAIN as _ABSTAIN_ACTION,
     ASK as _ASK,
@@ -61,7 +66,11 @@ from iagent_pure.routing_record import (
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity,
     predicate_from_compat_record,
+    promotable_instance_from_slots,
+    turn_is_set_shaped,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DirectOutcome",
@@ -209,9 +218,33 @@ def dispatch_pre_resolved(
         return DirectOutcome(FALL_BACK, f"verifier unreachable: {err}")
 
     # ── 2. ARITY. The flag is not on the record; the filter puts it there ───────────────
+    #
+    # ⛔ THIS IS THE SITE THE DEFECT WAS MEASURED ON, and it is the one that RUNS. The
+    # supervisor has the same gate for the fallback path; a pick-answer reaches here first.
+    #
+    # `instance_id` comes from the ASK artifact's `resolved_intent`, and the ask is by
+    # construction the turn where nothing was named — so it is empty here and rides forward
+    # onto the turn that finally supplies one. The picked value lands in `chain_slots`
+    # (`{"program_id": {"value": "NP-MERIDIAN", "source": "picked"}}`), which nothing read.
+    # So `not instance_id` reported SET on the exact turn that named the instance, the gate
+    # flagged `needs_instance`, and the dispatch abstained FOR THE REASON THE ASK HAD JUST
+    # BEEN ANSWERED.
+    #
+    # PER VERB, because the gate is a property of the VERB'S DECLARATION: the slot that is
+    # both `required` and a `referent` forces `arity: single` AND is the slot whose binding
+    # supplies the instance. A verb declaring no such slot is unaffected BY CONSTRUCTION,
+    # which is what makes this safe for the three engines of four that declare no arity.
+    _bound_names = {str(k) for k in (chain_slots or {})}
     flagged: List[dict] = []
     if verbs:
-        verbs, flagged = filter_verbs_by_arity(verbs, not instance_id)
+        _kept: List[dict] = []
+        for _cv in verbs:
+            _one, _f = filter_verbs_by_arity(
+                [_cv], turn_is_set_shaped(instance_id, _cv, _bound_names),
+            )
+            _kept.extend(_one)
+            flagged.extend(_f)
+        verbs = _kept
 
     truth = next((cv for cv in (verbs or []) if cv.get("verb_iri") == verb), None)
     if truth is None:
@@ -228,6 +261,29 @@ def dispatch_pre_resolved(
     # 0.9-ish score would be the worse lie; the verb was carried from a decision a person
     # acted on and re-confirmed against the compat-walk one line above.
     predicate["score"] = 1.0
+
+    # ── THE RECORD MUST SAY WHAT HAPPENED ───────────────────────────────────────────────
+    #
+    # The gate above reads the bound slots; without this the RECORD still would not, and both
+    # record sites below write `instance_id`. A turn that bound `program_id` from an offered
+    # menu would project `instance_resolved: false` with an empty identifier — a resolved turn
+    # reporting as unresolved, which is self-consistent and false and therefore invisible to
+    # any consistency check between those two fields (R-056).
+    #
+    # GATED ON PROVENANCE, NOT SHAPE. This field reaches the generalist fallback as
+    # `resolved_instance_id` and Engine A does NOT re-resolve it, so only a value a validator
+    # has already seen may be promoted: `picked` (a menu this system enumerated) and `filled`
+    # (the slot filler, resolving against the graph). A caller-`supplied` id is REFUSED —
+    # promoting it would have an engine act on an unchecked caller string. `spoken` is excluded
+    # pending a ruling. Every source carries its reason in NON_PROMOTABLE_SLOT_SOURCES.
+    if not instance_id:
+        _promoted = promotable_instance_from_slots(truth, chain_slots or {})
+        if _promoted:
+            instance_id = _promoted[0]
+            logger.info(
+                "instance_promoted verb_iri=%s slot=%s source=%s - the record now reports "
+                "the instance this turn bound", verb, _promoted[1], _promoted[2],
+            )
 
     # ── 3. SLOTS. Validated against the menu that offered them, not splatted ────────────
     _declared = predicate.get("slots") or []
@@ -258,6 +314,19 @@ def dispatch_pre_resolved(
     _chain = {k: v.get("value") for k, v in (chain_slots or {}).items() if isinstance(v, dict)}
     _supplied = {**_chain, **dict(bound_slots or {})}
 
+    # ── WHERE EACH VALUE CAME FROM, tracked alongside the merge that produces it ────────
+    #
+    # Built here because this is where the layers are still distinguishable: one line later
+    # `_supplied` is a flat dict and the provenance is unrecoverable. An inherited slot keeps
+    # the source it was BOUND with — re-labelling it by the hop that carried it would turn a
+    # caller-supplied id into a pick after one hop, which is the exact laundering the split
+    # exists to prevent.
+    _sources: Dict[str, str] = {
+        k: str(v.get("source") or "")
+        for k, v in (chain_slots or {}).items() if isinstance(v, dict)
+    }
+    _sources.update({k: SLOT_SOURCE_PICKED for k in dict(bound_slots or {})})
+
     # ── THE SPOKEN ANSWER IS AN ANSWER, and this path was DROPPING IT ───────────────────
     #
     # MEASURED 2026-09-08 23:34. `spoken_answer` was a parameter this function accepted and
@@ -284,8 +353,11 @@ def dispatch_pre_resolved(
         ]
         if len(_unfilled) == 1:
             _supplied[_unfilled[0]] = spoken_answer
+            # TYPED, WITH NO MENU BEHIND IT. Not `picked`: nothing enumerated this value, so
+            # it is not promotable to a resolved instance until a resolver has seen it.
+            _sources[_unfilled[0]] = SLOT_SOURCE_SPOKEN
 
-    acceptance = accept_slots(_supplied, _declared)
+    acceptance = accept_slots(_supplied, _declared, _sources)
     params = dict(getattr(acceptance, "params", {}) or {})
     refusals = [
         {"name": r.name, "reason": r.reason, "spoken": r.spoken}
@@ -450,10 +522,21 @@ def dispatch_pre_resolved(
             graph_trace_mat=graph_trace_mat, predicate=predicate, refusals=refusals,
         )
 
+    if getattr(acceptance, "unsourced", ()):
+        # A BINDING WITH NO PROVENANCE IS A HOLE IN THE CHAIN, not a detail. It will not be
+        # carried forward, so the next hop re-asks a slot this one answered.
+        logger.warning(
+            "accepted slot(s) %s carry NO source — they will not be carried to the next hop",
+            list(acceptance.unsourced),
+        )
     slots_mat = materialization(
         verb_iri=verb,
         disposition="route",
         accepted_slots=_json(params),
+        # THE FIELD THAT WAS READ AND NEVER WRITTEN. Without it `_accumulated_slots` returns
+        # {} for every chain, and the gate's bound-slot read plus the instance promotion are
+        # both inert while their seals stay green (R-057).
+        bound_slot_sources=_json(getattr(acceptance, "bound_slot_sources", {}) or {}),
         refused_slots=_json(refusals),
         slot_resolution=_json(getattr(acceptance, "resolution", {}) or {}),
         subject_uri=subject,

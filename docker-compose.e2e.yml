@@ -95,6 +95,11 @@ services:
       - SMOLAGENTS_MODEL=gpt-oss-128k:120b
       - OLLAMA_BASE_URL=http://ai1:11434/v1
       - JENA_SPARQL_ENDPOINT=
+      # DECLARED EMPTY ON PURPOSE. This stack has no Neo4j service, and since 2026-09-14
+      # `NEO4J_URI` has no default — an UNDECLARED one fails readiness by name, so the healthcheck
+      # below would never go green and every service depending on engine-o would wait out its 60
+      # retries. Empty says "this deployment has no graph"; absent says "somebody forgot".
+      - NEO4J_URI=
       - BAML_LOG_LEVEL=info
       - PYTHONUNBUFFERED=1
     healthcheck:
