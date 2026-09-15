@@ -227,6 +227,49 @@ number, on this seed.
 here, and it must not be cited as a correctness result it has not earned. I took that sentence
 from a docstring and was one review from publishing it.
 
+#### 6a. QUANTIZE AFTER, NEVER BEFORE, A DERIVATION
+
+*Added 2026-09-14 from `fin_burn_rate`'s step-2 pass — `lane/91 (invincible-agent-81)`.*
+
+**A figure derived from a money quantity is computed from the UNQUANTIZED value and rounded at
+the end.** Rounding first folds a presentation decision into the result.
+
+`fin_burn_rate` divides the remaining budget by a trailing mean of three burns. That mean lands
+on a repeating decimal — `1,338,333.3333…` presented as `1,338,333.33` — and dividing by the
+**presented** figure instead of the computed one shifts the runway by `0.0033`. **Small,
+plausible, and untraceable**: nothing in the response would say the forecast had been rounded
+before it was divided, and no reader could audit it.
+
+> **This is what makes "money in Decimal" mean something for ratios and forecasts rather than
+> only for totals.** A total rounded to the cent is correct. A *divisor* rounded to the cent is
+> a different calculation wearing the same name.
+
+**Seal:** recompute the derived figure from the row's own exact column and the unrounded
+operand. Mutation — divide by the quantized rate — **red**.
+
+#### 6b. A HARNESS THAT CANNOT RETURN CLEAN AFTER AN EXPECTED CHANGE WILL BE IGNORED
+
+*Added 2026-09-14 — `lane/91 (invincible-agent-81)`.*
+
+The equivalence harness §7 requires compares the pre-change function against the new one. Written
+as a **whole-object** comparison it reports a diff for every **added** field — so the moment a
+verb takes its step-2 pass and gains its `_exact` columns, that harness reports diffs **forever**,
+for a change that was expected and correct. Measured: 10 of 10 cases "differing" with **zero**
+shared-key values moved.
+
+**That is the red-that-teaches-people-to-skip shape.** An instrument whose alarm cannot be
+cleared by doing the right thing stops being read, and the next real regression arrives inside
+noise somebody has learned to wave through.
+
+**So an equivalence harness reports two numbers, separately:**
+
+    shared-key values moved   ->  must be 0, or each one named
+    fields added / removed    ->  expected on a step-2 pass; a REMOVAL is a finding
+
+A harness that cannot say which of the two it is measuring should say so in its output or be
+retired. **Same rule as a seal: an instrument that cannot distinguish the cases it is trusted to
+distinguish is not weak, it is misleading.**
+
 ### 7. Migration order for finance
 
 `fin_eac_comparison` **done**. **`fin_variance_drivers` next**, and the reason is the money
