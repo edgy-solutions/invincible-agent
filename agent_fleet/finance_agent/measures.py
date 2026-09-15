@@ -30,14 +30,16 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from measure_modules import burn_series, index_series, variance_driver_ranking
+    from measure_modules import (
+        burn_series, eac_formulas, index_series, variance_driver_ranking,
+    )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
     from agent_fleet.finance_agent.measure_modules import (
-        burn_series, index_series, variance_driver_ranking,
+        burn_series, eac_formulas, index_series, variance_driver_ranking,
     )
 
 FIN = "http://invincible-agent/fin#"
@@ -599,12 +601,12 @@ def fin_eac_calculation(
     cpi = _ratio(bcwp, acwp)
     spi = _ratio(bcwp, bcws)
 
-    if method == "REMAINING_AT_BUDGET":
-        eac: Optional[float] = acwp + (bac - bcwp)
-    elif method == "CPI":
-        eac = (bac / cpi) if cpi else None
-    else:  # CPI_SPI
-        eac = (acwp + (bac - bcwp) / (cpi * spi)) if (cpi and spi) else None
+    # THIS VERB GATHERS AND REFUSES; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-15
+    # behaviour-preserving). The three formulas are the unit a §2 registry row points at, and
+    # §2a's transcription seal compares that row's clause against `eac_formulas.FORMULA`.
+    eac: Optional[float] = eac_formulas.estimate_at_completion(
+        method, bac=bac, bcwp=bcwp, acwp=acwp, cpi=cpi, spi=spi,
+    )
 
     if eac is None:
         # UNDEFINED IS NOT ZERO. With no cost or schedule performance reported there is no
@@ -624,13 +626,11 @@ def fin_eac_calculation(
         "method": method,
         "formula": EAC_FORMULA[method],
         "eac": eac,
-        # Variance at completion — how far the forecast lands from the budget.
-        "vac": bac - eac,
-        # Estimate to complete — what the remaining work is forecast to cost from here.
-        "etc": eac - acwp,
+        # vac, etc and percent_complete follow from the forecast and are derived together, so
+        # a change to one cannot silently disagree with its neighbours.
+        **eac_formulas.derived(eac, bac=bac, acwp=acwp, bcwp=bcwp, ratio=_ratio),
         "bac": bac, "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
         "cpi": cpi, "spi": spi,
-        "percent_complete": _ratio(bcwp, bac),
         "as_of_period": periods[-1] if periods else None,
         "reported_periods": len({f.period for f in state.facts_for(wp_ids, periods)}),
         "value_unit": program.value_unit,
