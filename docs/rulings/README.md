@@ -2910,6 +2910,74 @@ Parse by separator, not by offset, wherever a helper may have normalised the tex
 
 ---
 
+## R-071 — A COMMAND'S COVERAGE AND A SENTENCE'S CLAIM ARE TWO DIFFERENT THINGS
+
+> The defect doesn't live at a scale, it lives in the gap between what the command covered and
+> what the sentence claimed. **Say what a command covered in the same breath as what it found,
+> and treat a definite article in a finding as a question.**
+
+Three instances in one day, three scales, one habit — recorded by `invincible-agent-28`:
+
+| the command | the sentence |
+|---|---|
+| `limit 200` over 21,547 rows, unordered | a claim about the population |
+| three of eleven grep hits read | a claim about all eleven |
+| `kubectl -A` against ONE cluster | *"the cluster"* |
+
+**THE SAMPLE WAS BIASED TOWARD THE ANSWER IT COULD NOT SHOW.** An unordered `limit` returns
+whichever shard segment answers first, which in that case was the segment least likely to contain
+what was being looked for. A sample is not merely partial — it can be partial in the direction
+that hides the thing.
+
+***"The cluster"* is the world you hold credentials for.** The fleet has at least two and one sits
+behind the work-cluster fence, so a definite article silently promoted a scoped read into a
+universal claim. That is why the rule is about the ARTICLE and not about the flag.
+
+**THE DISPOSITION: NARROW, DO NOT RETRACT.** All three operational conclusions survived the
+narrowing. In the NetworkPolicy case the useful statement split into two — *the chart carries no
+manifest, so it cannot apply one anywhere* (checkable everywhere) and *ca's lint is the only
+instrument in any deployment the chart governs* (true where credentials reach) — and both are
+true once separated. A finding that overclaims is usually a true finding wearing a borrowed scope,
+and deleting it loses the measurement along with the error.
+
+See [[a-sample-is-not-the-population]], [[assert-on-the-claim-not-its-neighbour]].
+
+---
+
+## R-072 — THREE WAYS A WRITTEN CLAIM GOES WRONG, IN ORDER OF COST
+
+`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-055:
+
+> meaning where nobody reads it · a claim that **BECAME** false · a claim that was **NEVER** true
+
+**THE ORDERING IS THE INSIGHT.** The first two had a moment when checking would have worked. The
+third never did — it was born wrong and aged into authority, which makes it the cheapest to have
+caught and the longest-lived.
+
+Their three instances, all from one day:
+
+1. **Meaning where nobody reads it.** A tripwire whose docstring said exactly what its red meant,
+   triaged as flakiness twice. The explanation existed and was not where the reader was.
+2. **A claim that became false.** A handoff line — *"`caller=` was not adopted because that
+   parameter does not exist in dag-tools yet"* — true when written, still being read as the
+   current reason. See [[a-stale-claim-is-pre-authenticated]].
+3. **A claim that was never true.** An allowlist seal whose OPENING SENTENCE asserted that a
+   NetworkPolicy exists. It would have failed the first time anybody looked, and nobody did.
+
+**A SEAL'S OPENING SENTENCE INHERITS THE AUTHORITY OF EVERY GREEN RUN UNDER IT.** That is what
+makes the third kind expensive: the file accumulates credibility from its passing arms, and the
+prose at the top is read as having been verified by them. It was not. Nothing in a suite checks a
+docstring's first line.
+
+**So the fix belongs at the SEAL, not in a docstring beside it** — an arm that asserts the thing
+the sentence claims, or the sentence rewritten to claim only what an arm covers. Correcting the
+prose alone leaves the same shape one edit later.
+
+Compare R-070: a seal blind at the moment it is needed is the mechanism failing; this is the
+PROSE failing while the mechanism is fine. Both report green.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
