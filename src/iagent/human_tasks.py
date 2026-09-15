@@ -727,7 +727,37 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
     says so is a lie the audit trail keeps. Only `pending` is load-bearing for queue queries;
     everything else is terminal, so widening the terminal vocabulary is safe."""
     now = int(time.time() * 1000)
-    status = decision if decision in ("approved", "acknowledged", "redriven") else "rejected"
+
+    # ── THE DECISION IS THE STATUS ──────────────────────────────────────────────────────────
+    #
+    # ⛔ THIS COERCED EVERY UNLISTED VERB TO "rejected", four lines below a docstring that says
+    # it must not: *"a projection that says so is a lie the audit trail keeps."* The rule was
+    # WRITTEN and not implemented, and the allowlist happened to cover exactly the verbs that
+    # existed when it was typed.
+    #
+    # MEASURED 2026-09-15 against the composed declaration: THIRTEEN verbs are declared and the
+    # allowlist named THREE. So `accepted`, `concurred`, `not_concurred`, `returned_for_rework`,
+    # `linked`, `new_hazard`, `dismissed`, `redrafted` and `withdrawn` all stored as REJECTED —
+    # and under ADR-0051 a risk ACCEPTANCE recorded as its opposite is the one act whose record
+    # IS the evidence.
+    #
+    # Latent rather than bleeding when found: zero safety verbs had been resolved, so every
+    # existing row still agrees. Fixed in that state deliberately — "the walk found it" is a
+    # worse morning than "the walk confirmed it was fixed".
+    #
+    # WHY WIDENING IS SAFE, and it is the docstring's own argument: only `pending` is
+    # load-bearing for queue queries; everything else is terminal.
+    if decision == "pending":
+        # THE ONE VALUE THAT IS NOT TERMINAL. A species declaring `pending` as a verb would
+        # make a resolved task indistinguishable from an open one and it would rejoin every
+        # queue — so this refuses rather than writing it. Unreachable through `validate_decision`
+        # (a declaration would have to name it), which is exactly why it is asserted here: the
+        # guard is against a future declaration, not against today's callers.
+        raise ValueError(
+            "'pending' cannot be a resolution: it is the only status the queue reads as OPEN, "
+            "and storing it would return a resolved task to every queue that skips it."
+        )
+    status = decision
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
