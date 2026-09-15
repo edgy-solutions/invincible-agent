@@ -30,13 +30,15 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from measure_modules import variance_driver_ranking
+    from measure_modules import index_series, variance_driver_ranking
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from agent_fleet.finance_agent.measure_modules import variance_driver_ranking
+    from agent_fleet.finance_agent.measure_modules import (
+        index_series, variance_driver_ranking,
+    )
 
 FIN = "http://invincible-agent/fin#"
 
@@ -785,36 +787,21 @@ def fin_performance_indices(
                   if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
         scope_label = program.name
 
-    periods = periods_in(window)
-    rows: list[dict[str, Any]] = []
-    cum_bcws = cum_bcwp = cum_acwp = 0.0
-    for period in periods:
-        bcws, bcwp, acwp = _totals(state, wp_ids, [period])
-        if bcws == 0 and bcwp == 0 and acwp == 0:
-            # DELIBERATE-ABSENT. A period with nothing reported is not a period of zero
-            # performance; emitting a row would draw a point on the trend line asserting
-            # the program stopped, which is a claim the data does not make.
-            continue
-        cum_bcws += bcws
-        cum_bcwp += bcwp
-        cum_acwp += acwp
-        rows.append({
-            "period": period,
-            "scope_label": scope_label,
-            "cpi": _ratio(bcwp, acwp),
-            "spi": _ratio(bcwp, bcws),
-            "cum_cpi": _ratio(cum_bcwp, cum_acwp),
-            "cum_spi": _ratio(cum_bcwp, cum_bcws),
-            "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
-            "cum_bcws": cum_bcws, "cum_bcwp": cum_bcwp, "cum_acwp": cum_acwp,
-            "cost_variance": bcwp - acwp,
-            "schedule_variance": bcwp - bcws,
-            # THE RATIOS ARE DIMENSIONLESS; the amounts beside them are not. Stating the
-            # unit of the amounts on the row keeps the response honest without putting a
-            # currency on a ratio — the reason this verb is absent from VALUE_UNIT.
-            "amount_unit": program.value_unit,
-        })
-    return rows
+    # THIS VERB GATHERS; THE MODULE COMPUTES. ADR-0053 §1, extracted 2026-09-14
+    # behaviour-preserving — the seam that makes the module's "no I/O" true rather than
+    # aspirational, and the same one `variance_driver_ranking` uses.
+    #
+    # `_ratio` IS PASSED IN RATHER THAN IMPORTED THERE. It has eleven call sites here and is
+    # this engine's vocabulary for "an index, or None where the denominator is zero". A copy
+    # inside the module would duplicate a NAMED RULE and let the two drift; an import would
+    # give a measure module a dependency on the engine it is meant to be liftable out of.
+    quantities = ((period, *_totals(state, wp_ids, [period])) for period in periods_in(window))
+    return index_series.build(
+        quantities,
+        ratio=_ratio,
+        scope_label=scope_label,
+        amount_unit=program.value_unit,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
