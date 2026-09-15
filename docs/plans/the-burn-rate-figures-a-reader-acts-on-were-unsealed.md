@@ -3,6 +3,7 @@ id:         the-burn-rate-figures-a-reader-acts-on-were-unsealed
 status:     closed
 owner:      lane/91 (invincible-agent-81)
 blocked-on:
+closed-by:  b42ce8f
 repo:       invincible-agent
 code-site:  agent_fleet/finance_agent/measures.py (fin_burn_rate), tests/finance/test_the_burn_rate_means_what_it_says.py
 summary:    Two figures in fin_burn_rate could be silently wrong with the full suite green — variance_to_plan with its sign flipped, and budget_remaining ignoring spend. THE CODE WAS CORRECT; nothing asserted that it was. Found by R-029's mutate-the-unit check before an ADR-0053 §7 extraction, sealed in b42ce8f. Filed separately from the extraction per the rule that a correctness gap found during a refactor does not ride in the refactor.
