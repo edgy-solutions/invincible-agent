@@ -110,19 +110,38 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
     return False
 
 
-# Engine O is EXCLUDED BY DESIGN and that exclusion is CORRECT — verified against the live
-# graph, not inferred from the comment claiming it. Engine O self-registers
-# `mesh:resolveInstance` in its own lifespan with the note "runs every boot, survives
-# re-prime", and the graph holds exactly 1 resolveInstance row (measured 2026-08-22). So its
-# registration lands without the re-register hook and adding it here would change the restart
-# behaviour of the ontology service to fix nothing.
+# Engine O is EXCLUDED BY DESIGN, and the exclusion rests on a measurement of the WRONG
+# PROPERTY. This is recorded rather than quietly fixed because the measurement was careful.
 #
-# Recorded rather than silently allowed, because the FIRST measurement said 0 rows and looked
-# like a real gap — that query named a Weaviate field (`verb`) that does not exist, errored,
-# and counted zero. The correct field is `verb_iri`. A waiver resting on a number is only as
-# good as the query behind it.
+# WHAT WAS MEASURED: Engine O self-registers `mesh:resolveInstance` in its own lifespan with
+# the note "runs every boot, survives re-prime", and the graph holds exactly 1
+# resolveInstance row (2026-08-22; independently confirmed 2026-09-15, still 1). The first
+# attempt read 0 rows because the query named a Weaviate field that does not exist — a
+# waiver resting on a number is only as good as the query behind it, and that catch is why
+# this comment reads as trustworthy.
+#
+# WHAT IT DOES NOT ESTABLISH: **measured under `wipe: false`; the post-wipe control has not
+# been run.** The sandbox overlay sets `wipe: false`, so the prime re-ingests without
+# clearing verb edges. The row being PRESENT therefore says nothing about whether it would
+# be RESTORED after a wipe — and a wipe is the only condition the re-register hook exists
+# for. Nothing was destroyed, so nothing was proven about recovery.
+#
+# THE CONTROL THAT WOULD SETTLE IT, ruled 2026-09-15: run a wipe-and-prime ONCE,
+# deliberately, in an ephemeral namespace or a scheduled sandbox window, and assert that
+# engine-o's provider row AND cortex_bff_orchestration's two rows return through the hook
+# chain. Until that runs, this waiver is provisional and this comment says so.
+#
+# AND THE POPULATION HERE DOES NOT REACH THE BFF. This seal derives its registering set from
+# `agent_fleet/` module directories, so `src/iagent/gateway.py` — which registers via
+# `register_engine_to_mesh as _register_verb` and holds 2 live provider rows — is invisible
+# to it: neither on the re-register list nor waived, because it is not in the population at
+# all. A hand-drawn population is a sample; this one is a sample of one directory.
 WAIVED_BY_DESIGN = {
-    "engine-o": "registry consumer; self-registers resolveInstance every boot (1 row, verified)",
+    "engine-o": (
+        "registry consumer; self-registers resolveInstance every boot. 1 row measured "
+        "under wipe:false — the post-wipe control has NOT been run, so this waiver is "
+        "provisional"
+    ),
 }
 
 
