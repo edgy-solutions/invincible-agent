@@ -106,6 +106,28 @@ def test_THE_TRAILER_FORM_IS_PARSEABLE():
     assert not _TRAILER.search("Lane:"), "an empty trailer must not parse"
 
 
+#: COMMITS EXEMPT BY NAME, EACH WITH ITS REASON. Ruled 2026-09-14: published history is not
+#: rewritten to satisfy a lint (R-030, and this file's own docstring), and an exclusion WITH A
+#: REASON fails loudly where a rewrite fails silently.
+#:
+#: Four of `lane/91`'s non-compliant commits are exempt BY ANCESTRY — `11b4070` is not among
+#: their forebears, so they were written under the spelling that preceded the pair rule and no
+#: list is needed for them. The two below DO descend from it, and they are the honest case: the
+#: rule was already in this lane's tree, carried in by a master merge, and the lane kept using
+#: the superseded spelling for two more commits.
+#:
+#: **THE LESSON IS THE REASON, NOT THE EXEMPTION.** A merge can bring a NEW SEAL, and running
+#: only the directories you edited will not find it. Both commits ran `tests/finance/` and
+#: `tests/cost/` green and never ran this file.
+_EXEMPT: dict[str, str] = {
+    "57e3aa3bd6570b725d91088609333dd05d903f94":
+        "ratified spelling superseded by 11b4070 after this was written; the architect ratified "
+        "`Lane: lane/91 (invincible-agent-81)` an hour before the pair rule landed",
+    "6186339d9aa940df82f055a2e9a835d6f4d6f48b":
+        "ratified spelling superseded by 11b4070 after this was written; same lane, same hour",
+}
+
+
 @pytest.mark.parametrize(
     "sha,subject,body",
     _bound_commits() or [("", "", "")],
@@ -115,6 +137,18 @@ def test_A_COMMIT_MADE_AFTER_THE_RULING_NAMES_ITS_LANE(sha: str, subject: str, b
     """THE SEAL. Binds forward only; published history is not rewritten to satisfy it."""
     if not sha:
         pytest.skip("no commits after the cutoff yet — the rule binds forward")
+
+    if sha in _EXEMPT:
+        # SELF-RETIRING. If an exempt commit ever DOES carry a valid trailer the entry is stale,
+        # and a stale exemption is a standing permission nobody reviews — so this reds and says
+        # to delete it, rather than quietly covering a commit that no longer needs covering.
+        assert not _TRAILER.search(body or ""), (
+            f"{sha[:12]} is on the exemption list but now carries a valid trailer. Delete its "
+            f"entry from `_EXEMPT`: an exemption that outlives its reason is a hole with a "
+            f"comment on it."
+        )
+        pytest.skip(f"exempt: {_EXEMPT[sha]}")
+
     assert _TRAILER.search(body or ""), (
         f"{sha[:12]} ({subject[:60]!r}) carries no `Lane:` trailer.\n"
         f"Add `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01` — as a trailer. Git's "
