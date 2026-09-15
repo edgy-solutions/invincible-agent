@@ -41,43 +41,77 @@ _REPO = Path(__file__).resolve().parents[1]
 #:
 #: This is a DATE rather than a sha because lanes carry unmerged work whose shas are not
 #: reachable from here — a sha cutoff would exempt nothing on a branch that has not merged.
-#: One second before `b466612`, the commit implementing this rule — so the rule's own commit is
-#: the FIRST one bound by it, rather than the rule exempting its own author.
+#: The commit that RATIFIED the trailer. A commit is bound iff this is in its ancestry.
 #:
-#: ⛔ THE FIRST VALUE WAS A ROUND 23:00 AND SAT IN THE FUTURE. Every commit was exempt, the
-#: parametrised assertion had an empty population, and the seal reported `1 skipped` — which in
-#: a run of hundreds reads exactly like a pass. A cutoff nobody has reached yet is a guard that
-#: cannot fire, and I built one into the guard against not-firing. Proved by probe afterwards:
-#: an empty commit with no trailer reds this file.
-_BINDS_AFTER = "2026-09-14T19:53:27-05:00"
+#: THIS WAS A WALL-CLOCK CUTOFF AND THE BOUNDARY WAS THE DEFECT, found by the `lane/eo` lane
+#: when the seal reddened four of their commits. A date assumes the rule is visible to everyone
+#: the moment it lands on master. IN A WORKTREE FLEET IT IS VISIBLE WHEN A LANE MERGES IT, and
+#: lanes run behind BY DESIGN. Their four were written 20:02-21:37 — after the 19:53 cutoff and
+#: before the rule existed in their tree, because that lane was 25 commits behind. The seal saw
+#: them only once they merged master, which is the moment it became possible to comply and far
+#: too late to have complied.
+#:
+#: AND THE SEAL DEMANDED A FIX IT ALSO FORBIDS: all four are pushed, and retro-fitting means
+#: rewriting published history, which the rule below refuses on R-030 grounds. A check whose
+#: only remedy is prohibited is not a check, it is a trap.
+#:
+#: `--is-ancestor` is the property the date was approximating. Measured before adopting: 16
+#: commits bound by date, 12 with the rule in ancestry, difference exactly the four named. It
+#: still binds the rule's OWN commit, since b466612 is an ancestor of itself — the property the
+#: "one second before" cutoff was built to get. And an unmerged lane is exempt only until it
+#: merges the rule; every commit it writes after that is bound. The gap is bounded and
+#: self-closing, and no lane reaches master without that merge.
+_RULE_COMMIT = "b466612"
 
-#: `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01`. The branch half may contain `/`.
 _TRAILER = re.compile(r"^Lane:\s*(\S+?)/(\S+)\s*$", re.M)
 
 
 def _git(*args: str) -> str:
+    # ENCODING IS EXPLICIT. `text=True` decodes with the LOCALE codec — cp1252 on Windows — and
+    # commit bodies in this repo carry em-dashes and other non-cp1252 characters. The decode
+    # fails inside a subprocess reader thread and `stdout` comes back as None, which surfaces as
+    # `AttributeError: NoneType has no attribute split` far from its cause. It only appeared once
+    # this stopped windowing by date and began reading every commit — the wider population found
+    # the first body the narrow one never reached.
     return subprocess.run(
-        ["git", *args], cwd=str(_REPO), capture_output=True, text=True, timeout=120,
-    ).stdout
+        ["git", *args], cwd=str(_REPO), capture_output=True,
+        encoding="utf-8", errors="replace", timeout=120,
+    ).stdout or ""
 
 
 def _bound_commits() -> list[tuple[str, str, str]]:
-    """(sha, subject, body) for non-merge commits after the cutoff, reachable from HEAD.
+    """(sha, subject, body) for non-merge commits that HAVE THE RULE IN THEIR ANCESTRY.
 
-    MERGES ARE EXEMPT and that is deliberate: a merge commit is made by whoever integrates, and
-    its authorship question is answered by the branch it brings in, not by the merge itself.
+    A lane cannot comply with a rule that is not yet in its tree, and lanes run behind by
+    design, so membership is `_RULE_COMMIT is an ancestor of this commit` rather than a date.
+
+    ONE `rev-list` RATHER THAN A `merge-base` PER COMMIT. The per-commit loop was correct and
+    took 134 SECONDS on this history — a cost paid by every suite run, which is how a seal gets
+    deselected and then deleted. `--ancestry-path A..HEAD` is the set of commits on a path from
+    A, which is the same set; verified against the slow form before switching (13 and 13).
+
+    `_RULE_COMMIT` IS ADDED BACK EXPLICITLY. `A..HEAD` excludes A, but A IS its own ancestor, so
+    the rule binds the commit that created it. That was the whole point of the superseded
+    "one second before" cutoff, and dropping it here would quietly exempt the rule from itself.
+
+    MERGES ARE EXEMPT, deliberately: a merge commit is made by whoever integrates, and its
+    authorship question is answered by the branch it brings in.
     """
-    out = _git(
-        "log", f"--since={_BINDS_AFTER}", "--no-merges",
-        "--format=%H%x1f%s%x1f%b%x1e", "HEAD",
-    )
+    bound = set(_git("rev-list", "--ancestry-path", "--no-merges",
+                     f"{_RULE_COMMIT}..HEAD").split())
+    rule_sha = _git("rev-parse", _RULE_COMMIT).strip()
+    if rule_sha:
+        bound.add(rule_sha)
+
+    fmt = "%H" + chr(31) + "%s" + chr(31) + "%b" + chr(30)
+    out = _git("log", "--no-merges", f"--format={fmt}", "HEAD")
     rows = []
-    for rec in out.split("\x1e"):
-        rec = rec.strip("\n")
+    for rec in out.split(chr(30)):
+        rec = rec.strip(chr(10))
         if not rec:
             continue
-        parts = rec.split("\x1f")
-        if len(parts) >= 3:
+        parts = rec.split(chr(31))
+        if len(parts) >= 3 and parts[0] in bound:
             rows.append((parts[0], parts[1], parts[2]))
     return rows
 
