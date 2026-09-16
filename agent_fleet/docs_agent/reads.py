@@ -71,32 +71,49 @@ class DocPageReader(Protocol):
              broken silently is the `banana 4` failure applied to documents: a plausible winner
              chosen on no evidence, indistinguishable from a confident answer.
 
-        **KEY 1 IS BLOCKED AND THE CAUSE IS MEASURED, NOT ASSUMED.** Ordering by audience needs the
-        caller's persona, and no persona crosses the engine boundary: the only originator identity
-        an engine receives is `X-Originator-Email` and `X-Originator-Sub` (derived — those are the
-        only two spellings anywhere in `agent_fleet/` or `src/`). The persona exists upstream on
-        the caller record and does not travel.
+        **KEY 1 IS NOT DELIVERABLE ON THIS ROUTE, AND MY FIRST STATEMENT OF WHY WAS WRONG.**
 
-        SO THERE IS NO `audience` PARAMETER, AND ITS ABSENCE IS THE SAME RULING AS `page_by_iri`'s
-        removal. Adding one that every caller passes `None` to would be a parameter with no
-        working consumer — declared-but-unsupplied instead of declared-but-uncalled, the same
-        defect wearing the other hat.
+        What this file said: *"the only originator identity an engine receives is
+        `X-Originator-Email` and `X-Originator-Sub` — those are the only two spellings anywhere in
+        `agent_fleet/` or `src/`."* **Measured again after `invincible-agent-65` challenged it, and
+        every one of those occurrences is in a COMMENT or an error-message string.** No code sets
+        or reads either header. The quoted `X-` headers that actually exist are `X-Accel-Buffering`,
+        `X-Auth-Status`, `X-Frontend-Id`, `X-Presentation-Path`, `X-Session-Id` and `X-Trace-Id`,
+        and none of them carries identity.
 
-        **RULED 2026-09-16, AND IT HAS AN OWNER: the gateway threads the caller's persona on the
-        dispatch**, the way it already passes a `run_id` — a fact the gateway holds, the engine
-        needs, and the wire never carried. Lane 1's change, filed by name, and this parameter
-        appears the moment it lands.
+        I grepped for a header NAME and found people TALKING about header names, then wrote the
+        result down as a derivation — the word "derived" doing the work that a measurement should
+        have. A comment is not evidence, and an instrument that matches its subject's description
+        rather than its subject is the same shape whichever direction it points.
 
-        ONE CORRECTION TO THE PRECEDENT, checked rather than repeated: `run_id` travels as a
-        **body field** on the dispatch (`src/iagent/gateway.py:2302`), not as a header. The only
-        `X-` originator spellings in the tree are still `Email` and `Sub`. That makes the change
-        smaller than a new header would be, and it is the difference between citing a pattern and
-        citing a mechanism.
+        **WHAT IS ACTUALLY TRUE, verified line by line:**
 
-        UNTIL IT LANDS the precedence is key 2 then key 3 — most recently ingested body, then the
-        whole list. Key 1 stays declared here so the eo lane implements TOWARD it rather than
-        around it: an ordering built without a slot for audience is one that has to be rewritten
-        rather than extended.
+          `src/iagent/direct_dispatch.py:201`   `acting_persona: str` — already a parameter
+          `src/iagent/direct_dispatch.py:491`   already passed on
+          `src/iagent/direct_dispatch.py:604`   `_request_body = {"query", "params", "thread_id"}`
+                                                — the persona is dropped HERE and only here
+
+        So this is **not a gateway change**. The persona is already in scope at the dispatch site
+        and absent from one dict: one key, one line, no new parameter and no new header. My earlier
+        note calling it a gateway change was wrong in the same breath as the header claim, and for
+        the same reason — I reasoned from a precedent instead of from the call site.
+
+        **AND THE SCOPE OF THE GAP IS THE DIRECT PATH, NOT THE FLEET.** The specialist dispatch
+        carries `user_persona` already (`src/iagent/defs/dynamic_supervisor.py:76`, `:116`,
+        `:1698`). So `mesh:explain` reached through direct dispatch is blind to persona and reached
+        through the specialist path is not — an asymmetry, not an absence. Saying "no persona
+        crosses the engine boundary" was true of this caller and false of the system, which is the
+        difference between a finding and an overreach.
+
+        SO THERE IS STILL NO `audience` PARAMETER, AND THE REASON IS UNCHANGED BY ANY OF THIS: a
+        parameter every caller passes `None` to is declared-but-UNSUPPLIED, which is
+        declared-but-uncalled wearing the other hat. It appears when the direct path carries the
+        value. Key 1 stays written down and marked undeliverable so the eo lane implements TOWARD
+        it — an ordering built with no slot for audience is rewritten when the value arrives rather
+        than extended.
+
+        UNTIL THEN the precedence is key 2 then key 3: most recently ingested body, then the whole
+        tied list.
         """
 
 
