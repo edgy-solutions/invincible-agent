@@ -119,3 +119,69 @@ stated publicly and the patterns are not.
 fleet-wide write census; until that lands the population is derived from the four known write
 paths (registration, artifact writer, human tasks/grants, doc-tools ingest) and is **a sample
 wearing a census's clothes** unless labelled.
+
+---
+
+# The data-class ADR — what the artifacts say, read before drafting
+
+## §6.1 is stronger than the packet's summary, and it names its own measured cost
+
+Verbatim, `ADR-0051` §6.1:
+
+> **PRODUCERS WITH DIFFERENT REPRODUCIBILITY DO NOT SHARE A GRAPH.** Added 2026-09-14, because the
+> obvious way to seed sandbox hazards — a TTL in the prime manifest — is wrong in a way that only
+> shows up on somebody else's data.
+
+| | graph | who writes it | what the prime does |
+|---|---|---|---|
+| **vocabulary** | `http://internal/{DOMAIN}` | this repo's manifest | **drops and re-lands** it every run |
+| **instances** | `http://internal/{DOMAIN}_INSTANCES` | runtime producers | **never touches it** |
+
+The cost is not hypothetical and §6.1 quotes it: an earlier glob over `http://internal/*` *"would
+have wiped real extracted parts **on the very prime run meant to enable the pcn dogfood**."*
+
+## THE ARGUMENT FOR THE ADR IS IN THE GAP BETWEEN §6.1's CLAIM AND THE MECHANISM
+
+§6.1 says the split is *"enforced by the clearer, not left to discipline."* **Read the clearer and
+the enforcement turns out to be conditional in a way §6.1 does not state.**
+
+`setup/prime_databases.py:398`:
+
+> THE DROP SET IS DERIVED FROM THIS FIELD. `clear_ontology_graphs()` computes
+> `{f"http://internal/{e['domain']}"}` over this manifest, so a new domain becomes an eighth graph
+> picked up automatically — no change to the clearer is needed, and none should be made.
+
+Measured against the manifest today: **22 entries, 9 domains, and NO `_INSTANCES` domain among
+them.** So an instance graph is safe from the clearer **because nobody has filed an instance
+producer in the manifest** — not because anything refuses one. §6.1 identifies filing one as
+precisely the tempting mistake, and the clearer cannot tell a vocabulary entry from an instance
+entry: both are rows with a `domain`.
+
+> **Reproducibility is currently asserted by ABSENCE FROM A LIST, and absence is the one state a
+> derived population cannot distinguish from an omission.** A missing row and a row nobody wrote
+> look identical — the shape this repo has now paid for in doc pages, in registry sites, and in a
+> census that printed a complete-looking table.
+
+**That is the ADR's load-bearing argument, and it comes from the artifacts rather than from the
+dispatch: the class turns a negative into a positive.** Declared per graph, the clearer reads
+`reproducibility: rebuildable` and drops what SAYS it can be rebuilt, instead of dropping what
+happens to be listed. An instance producer filed in the manifest then fails at the declaration
+rather than at somebody else's data.
+
+## §6.1 already contains the discipline applied to `page_by_iri` tonight
+
+> **The writer is therefore sequenced AFTER a walk that draws or names its own failure**, rather
+> than built against an inferred requirement — which is the same refusal this ADR makes elsewhere
+> about a key nothing has been shown to need.
+
+Same law as *declared-but-uncalled comes out* and *no parameter until something can fill it*. The
+data-class ADR should cite it rather than restate it: **a declaration with no witness is the shape,
+and it has now appeared in a graph writer, an SDK Protocol operation, and a function parameter.**
+
+## `fold, do not hand-run`
+
+§6.1's seeding rule, quoted from `seed_mro_extension_runtime.py`: *"promoted to the gated
+`ontologySeed` helm Job so a fresh cluster reaches working routing with **zero hand-run scripts**."*
+Hand-seeded state no bootstrap reproduces is a fourth reproducibility state that the four-field
+class must be able to express or refuse — **it is neither rebuildable nor stateful-authored; it is
+stateful-and-unreproducible, which is the debt, not a class to legitimise.**
