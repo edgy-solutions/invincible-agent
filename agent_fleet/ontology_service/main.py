@@ -4112,6 +4112,16 @@ class CompatibleVerb(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     hops: int = 0
+    #: WHICH RULE ADMITTED THIS VERB, and it decides how the classifier must be told
+    #: about it. `subject` = the verb operates ON this class. `referent` = the verb is
+    #: PARAMETERISED BY it and answers about its own class.
+    #:
+    #: NOT COSMETIC. Measured 2026-09-16: the classifier was handed a referent-admitted
+    #: verb under the enum's uniform "operates on X" framing, scored it SECOND of seven
+    #: on semantics, and refused it on SUBSTRATE grounds — "none of the predicates that
+    #: operate on ProductionLot provide supplier-concentration information". It was
+    #: right about the framing and the framing was wrong.
+    compatibility: str = "subject"
     # WHAT THE VERB TAKES — the same family as `arity` and `required_args` below: a
     # DECLARED fact asserted at registration and never inferred. Carried as the JSON
     # STRING the graph holds, because a Neo4j property cannot hold a list of maps;
@@ -4291,6 +4301,34 @@ async def find_compatible_verbs(
             detail=f"Neo4j compatibility query failed: {exc}",
         ) from exc
 
+    # ── DEDUPE THE TWO LEGS, SUBJECT WINNING ────────────────────────────────────────────
+    #
+    # A verb that declares a required slot whose referent IS its own subject class is admitted
+    # by BOTH legs — `costLotBreakdown` operates on ProductionLot and takes a `lot`. Measured
+    # 2026-09-15 on the live graph: twelve rows for cost#ProductionLot, SEVEN DISTINCT VERBS,
+    # five of them returned twice.
+    #
+    # It is not a correctness bug — the classifier picks one verb and a duplicate candidate
+    # cannot produce a wrong answer — but it is a WRONG COUNT everywhere a count is shown, and
+    # padding in the enum the LLM reads. `candidate_count: 12` on a card is a statement about
+    # seven things.
+    #
+    # SUBJECT WINS, and the direction matters rather than being arbitrary: a verb reachable
+    # BOTH ways is one that operates on the subject, and that is the stronger claim. Reporting
+    # it as `referent` would say the answer is about some other class when it is about this one,
+    # which is the binding that decides whether an instance is bound or goes in a slot.
+    _seen: dict = {}
+    _deduped: list[dict] = []
+    for _r in rows:
+        _key = (_r.get("verb_iri"), _r.get("endpoint_url"))
+        _prev = _seen.get(_key)
+        if _prev is None:
+            _seen[_key] = len(_deduped)
+            _deduped.append(_r)
+        elif _r.get("compatibility") == "subject" and _deduped[_prev].get("compatibility") != "subject":
+            _deduped[_prev] = _r
+    rows = _deduped
+
     entitled = {d.upper() for d in (request.entitled_domains or [])}
     verbs: list[CompatibleVerb] = []
     for row in rows:
@@ -4325,6 +4363,7 @@ async def find_compatible_verbs(
             # miss any one and the verb reports declaring nothing, with no error anywhere.
             slots=str(row.get("slots") or "[]"),
             hops=int(row.get("hops") or 0),
+            compatibility=str(row.get("compatibility") or "subject"),
         ))
 
     return FindCompatibleVerbsResponse(
@@ -4371,6 +4410,10 @@ class ClassifyPredicateRequest(BaseModel):
     # endpoint falls back to the prior behavior of using Weaviate hybrid
     # as the recall step (subject is reasoning context only).
     compatible_verb_iris: list[str] = Field(default_factory=list)
+    #: verb_iri -> "subject" | "referent": WHICH RULE ADMITTED EACH CANDIDATE.
+    #: Absent or unknown reads as "subject", which is the pre-widening behaviour, so a
+    #: supervisor that has not learned the field gets exactly the old enum text.
+    verb_compatibility: dict[str, str] = Field(default_factory=dict)
 
 
 class ClassifyPredicateResponse(BaseModel):
@@ -4676,7 +4719,31 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         if cand.get("verb_type") and cand["verb_type"] not in desc_bits:
             desc_bits.append(f"verb_type={cand['verb_type']}")
         input_uri = cand.get("input_uri") or ""
-        if input_uri:
+        # HOW THIS VERB RELATES TO THE SUBJECT, and there are now TWO ANSWERS.
+        #
+        # `/find_compatible_verbs` admits a verb either because its `input_uri` covers the
+        # subject (`subject`) or because it declares a REQUIRED SLOT whose referent covers it
+        # (`referent`). Describing both with "operates on X" is true of the first and FALSE of
+        # the second, and the LLM reasons on this text.
+        #
+        # MEASURED 2026-09-16: "how concentrated is purchasing on lot 4" returned
+        # NO_VERB_CLASSIFIED with the reasoning "none of the predicates that operate on
+        # ProductionLot provide supplier-concentration information".
+        # `costSupplierConcentration` scored 0.269 — SECOND of seven — and was refused on
+        # SUBSTRATE grounds. The model was right about the framing; the framing was wrong.
+        # This is the same refusal the `_pick_best_per_verb` comment above already records,
+        # reached by a new road.
+        _compat = (request.verb_compatibility or {}).get(verb_iri) or "subject"
+        if _compat == "referent" and input_uri:
+            # The verb answers about ITS OWN class and takes the resolved subject as a
+            # PARAMETER. Said in the terms the answer path already uses, because the binding
+            # is the same fact: the instance goes in the slot, not in the subject.
+            desc_bits.append(
+                f"answers about {input_uri}, PARAMETERISED BY the subject — the subject is an "
+                f"argument to this verb rather than the thing it operates on, so a question "
+                f"naming the subject is served by this verb when it asks about {input_uri}"
+            )
+        elif input_uri:
             inh = _inheritance_phrase(input_uri)
             if inh:
                 # The graph walked subClassOf* and confirmed the subject
