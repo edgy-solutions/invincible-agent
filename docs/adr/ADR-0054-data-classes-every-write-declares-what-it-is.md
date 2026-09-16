@@ -13,7 +13,8 @@ were one — and §2 carries a **worked example of a combination no shape covers
 intent), which is the reader's first evidence that the shapes are not the schema. **Declaration and
 enforcement points only; no store is reclassified by this ADR**, and the population it governs is
 **provisional** (see §7). The eo lane's fleet-wide write census is the first thing that runs against
-it.
+it. **Amended the same day** — see the amendment section: four answers to its first consumer's
+review, and the class does NOT transition.
 **Date:** 2026-09-16
 **Deciders:** Architect (the four fields and the three enforcement points), Platform team
 **Related — CITED REPO-QUALIFIED, because two of these numbers exist in both repos:**
@@ -257,6 +258,95 @@ was **not added**. A graph writer, an SDK operation, and a function parameter �
 shapes.** This ADR cites it rather than restating it, and obeys it: the fields are declared because
 three enforcement points will read them, and `releasability` is reserved precisely because nothing
 reads it yet.
+
+## AMENDMENT 2026-09-16 — four answers from the first consumer, and two notes
+
+**Raised by `openddil-contracts`' architecture review while drafting
+`openddil:ADR-0042`, which is this ADR's first consumer.** Folded in as an
+amendment rather than edited into the sections above, because this ADR is Accepted and the
+questions are more legible beside their answers than dissolved into the text that prompted them.
+
+**The pairing did what a pairing is for: the schema met its first uncovered case in a neighbour's
+hardest store, and the case wrote a value this vocabulary does not contain.** That is the whole
+argument for drafting the two together, and it happened before either was enforced.
+
+### 1. The class is PER STORE and does not transition. `pending` is a ROW's status.
+
+The review asked whether a class has a lifecycle, since an intent's looks like it moves:
+`authority: upstream, pending` at raise, `external system of record` at acceptance; `flush-up`
+becoming `none`.
+
+**It does not move, and the appearance came from a value that should not exist.** `pending` is not
+a qualifier on `authority` — **it is the intent row's reconciliation status.** An intent row lives
+in the intent store, and that store is `stateful · authority: upstream · flush-up` from the moment
+it is created until long after: acceptance changes **the row's status**, and the row's outcome
+persists on it (`openddil:ADR-0040`'s Limits requires exactly that). Nothing about the store
+changed.
+
+> **A class with a lifecycle would reintroduce the per-write field this ADR removed at
+> ratification.** If a class can transition, something must carry the current value per row, and
+> that is a field a caller fills in — which can disagree with the store it lands in, and gives the
+> census nothing countable. The status is a row's; the class is the store's; they are different
+> facts and the intent case is where they look alike.
+
+### 2. `rebuildable` NAMES ITS PRODUCER, and the clearer refuses one that does not
+
+**The review caught an asymmetry this ADR had not priced.** §5 covers enforcement switched on
+before the count returns zero. It does not cover a **misdeclaration**, and for `rebuildable` a
+misdeclaration inverts the failure: the clearer *drops* what declares itself rebuildable, so a
+store wrongly declared is not kept-stale, it is **dropped and never re-landed**.
+
+So: **a `rebuildable` declaration names the producer that re-lands it** — the manifest entry, the
+seed job — and **the clearer refuses a `rebuildable` declaration with no producer.**
+
+**The witness is a bootstrap that has been SEEN to rebuild it**, which is §8's own discipline
+applied to this ADR's own field: a declaration with no witness. Without a producer, a store
+declaring `rebuildable` is the hand-seeded case of §5 wearing the wrong label — and the label is
+the one that gets it deleted.
+
+### 3. Sync obligation says NOTHING about retention
+
+The review's question, and it is exactly the right one: *a queue that drains and forgets is
+`flush-up`; custody that retains after flush is also `flush-up`.*
+
+**Both are `flush-up`, and this field is not where they differ.** Whether the local copy survives
+the flush is the **retention rail row's** question, per kind. Stated explicitly here because the
+first consumer's load-bearing line depends on the answer — `openddil:ADR-0042`'s *"a queue that
+only drains upward is not custody"* is a **retention** claim, and reading it off the sync
+obligation would make it unstatable.
+
+### 4. Releasability is reserved at ROW granularity
+
+`openddil:ADR-0029` stamps labels per row — originator, audience, by the party that knows. **A
+per-store reservation would mislead the adopter into thinking a store has a releasability**, which
+is the wrong shape to leave a door open in. The reservation stands; its granularity is the row's,
+matching where that ADR put it.
+
+### Note A — the citation convention, in force from this date
+
+**`openddil:ADR-NNNN` and `iagent:ADR-NNNN`.** Five numbers — 0029, 0031, 0034, 0035, 0037 — now
+name a different document in each corpus, and this ADR's Related block handles it by hand with a
+sentence explaining why. **That does not survive the tenth.** Both repos' decision-index checkers
+should validate a cross-repo reference the way they validate a local one; until they do, the
+qualifier is the discipline.
+
+### Note B — PROV-O alignment, noted and NOT designed
+
+The four fields are provenance-and-lifecycle concepts and map onto PROV-O: **`authority` is
+`wasAttributedTo`, `reproducibility` is `wasGeneratedBy`, and `sync obligation` is the activity
+that moves data across a boundary.**
+
+**Noted here rather than designed**, so that when OpenDDIL's semantic-layer ADR lands these fields
+are in its alignment table **by prior declaration rather than by later retrofit** — which is that
+side's own intake rule applied to this side's schema. Designing the alignment now would be
+guessing at a table that does not exist, which §6 already refused to do for releasability.
+
+### Note C — the subject merge is smaller than it reads
+
+Carried from `openddil:ADR-0042`'s two-corpora finding: *one subject record carrying both attribute
+families* invites a new record type. **The merge point already exists — one `sub` from the shared
+identity provider, with two attribute families keyed by it.** A join on a key both sides already
+carry, not a schema either side has to author.
 
 ## Consequences
 
