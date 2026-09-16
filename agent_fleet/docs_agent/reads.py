@@ -80,8 +80,23 @@ class DocPageReader(Protocol):
         SO THERE IS NO `audience` PARAMETER, AND ITS ABSENCE IS THE SAME RULING AS `page_by_iri`'s
         removal. Adding one that every caller passes `None` to would be a parameter with no
         working consumer — declared-but-unsupplied instead of declared-but-uncalled, the same
-        defect wearing the other hat. It goes in when something can fill it, which is a gateway
-        change rather than an engine one.
+        defect wearing the other hat.
+
+        **RULED 2026-09-16, AND IT HAS AN OWNER: the gateway threads the caller's persona on the
+        dispatch**, the way it already passes a `run_id` — a fact the gateway holds, the engine
+        needs, and the wire never carried. Lane 1's change, filed by name, and this parameter
+        appears the moment it lands.
+
+        ONE CORRECTION TO THE PRECEDENT, checked rather than repeated: `run_id` travels as a
+        **body field** on the dispatch (`src/iagent/gateway.py:2302`), not as a header. The only
+        `X-` originator spellings in the tree are still `Email` and `Sub`. That makes the change
+        smaller than a new header would be, and it is the difference between citing a pattern and
+        citing a mechanism.
+
+        UNTIL IT LANDS the precedence is key 2 then key 3 — most recently ingested body, then the
+        whole list. Key 1 stays declared here so the eo lane implements TOWARD it rather than
+        around it: an ordering built without a slot for audience is one that has to be rewritten
+        rather than extended.
         """
 
 
