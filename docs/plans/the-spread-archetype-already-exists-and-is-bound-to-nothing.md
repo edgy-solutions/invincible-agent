@@ -5,7 +5,7 @@ owner:
 blocked-on:
 repo:       invincible-agent (+ cortex-ui for the contract's field list)
 code-site:  agent_fleet/presentation_agent/capabilities.py (no row claims COMPETING_MEASURES), agent_fleet/presentation_agent/main.py (_PROJECTED_ARCHETYPES passthrough), cortex-ui/src/components/planning/CompetingMeasures.contract.ts
-summary:    STEPS 1-4 DONE 2026-09-15 - the field-name join, the reference_value emitter, the capability row and the verdict, in that order, because binding before the join renders a card with a blank high and low while every layer stays green. THE ARCHETYPE WAS NEVER MISSING: COMPETING_MEASURES existed end to end since 2026-09-11 with this verb named in its contract header as its first consumer. AND IT WAS NEVER 'BOUND TO NOTHING' EITHER - that was my second wrong diagnosis; cortex-ui's DERIVED_BINDINGS binds it, and all six archetypes I had called unbound. TWO MIRRORS of one binding set, each complete on its own side, which is why neither repo's tests saw the row missing from one of them. STILL OPEN, for whoever owns them: 18 mirror rows outside the fin namespace, derived and left unpartitioned on purpose, plus scope_label - declared by the contract and emitted per-row by every finance verb, on the envelope of none.
+summary:    STEPS 1-4 DONE 2026-09-15 and THE MIRROR IS NOW RATIFIED FLEET-WIDE: PRESENTATION_CAPABILITIES is the declaration the mesh advertises, cortex-ui's DERIVED_BINDINGS is the mirror, every row must appear in both, and a row in one only is a defect regardless of prefix. The archetype was never missing - COMPETING_MEASURES existed end to end since 2026-09-11 with this verb named in its contract header as its first consumer - and it was never bound to nothing either, which was my second wrong diagnosis: the frontend mirror bound it, and all six archetypes I had called unbound. TWO MIRRORS OF ONE BINDING SET, each complete on its own side, which is why neither repo's tests saw the row missing from one. OPEN: the 18 rows that were already out of step at ratification, now a DEBT REGISTER that only shrinks - new one-sided rows fail, and an entry that stops being a gap fails until its lane deletes it. Lane 1 routes; attribution is by subject namespace and is a guess, not a signature.
 ---
 
 # The SPREAD archetype already exists, under another name, bound to nothing
@@ -214,3 +214,63 @@ Listed in `_CONTRACT_FIELDS_SUPPLIED_PER_ROW` with that scope, and **the seal re
 rot**: the entry fails if the contract stops declaring the field, and fails if it starts arriving
 on the envelope. What it does *not* claim is that a card reads it from the rows and is therefore
 fine — that is unchecked, and a residue named is not a residue excused.
+
+
+---
+
+# RATIFIED FLEET-WIDE 2026-09-15 — the residue is now a register, not an exemption
+
+I scoped the first mirror seal to `fin:` and filed the other 18 rows unpartitioned, because the
+ownership split was observed in two files and written down nowhere. **It is written down now:**
+`PRESENTATION_CAPABILITIES` is the declaration the mesh advertises, `DERIVED_BINDINGS` is the
+mirror, **every row appears in both, and a row in one only is a defect regardless of prefix.**
+
+## ⚠ Read BOTH consumers before concluding the backend table is retired
+
+`capability_registry.union_menu` carries a prominent note — *"WHY NOT `capabilities.py` … that
+backend copy resurrected the two-masters defect … every row it held is now DERIVED on the UI
+side"* — which reads like the file is out of the live path, and would make this ratification
+institutionalise the very defect that note describes killing.
+
+**It is not out of the live path.** That note is about the **anonymous fallback MENU**, which
+reads the runtime registry instead of the table. **Mesh registration is a different consumer**:
+`presentation_agent/main.py`'s lifespan iterates `PRESENTATION_CAPABILITIES` and calls
+`register_presentation_to_mesh` for every row. Two consumers, one file, opposite conclusions if
+you stop at the first comment you find.
+
+Checked before extending the seal, because the ruling's premise depended on it.
+
+## The register, and why it is not an exclusion list
+
+The 18 rows that were already out of step are declared with the date they were declared. Two
+assertions make it a debt rather than a drawer:
+
+- a one-sided binding **not** in the register **fails** — new defects are blocked;
+- a register entry that has **stopped** being a gap **fails** — a lane that fixes a row must
+  delete its line in the same commit.
+
+**It can only shrink.** Plus a control proving a one-sided row outside the register surfaces at
+all, since a register already containing every difference would pass over any two sets.
+
+Attribution is by **subject namespace** — `mesh:` to planning/cortex, `safety:` to the safety
+lane — and that is a heuristic stated as one. Nobody signed for these rows; *a citation is not a
+signature*, so Lane 1 routes and the comment says how the guess was made.
+
+## And the skip-derivation needed a second hop
+
+The three new mirror tests skip through a **helper**, and the skip-path seal's population was
+"a test whose own body names `pytest.skip`" — so it silently lost them. **A derivation that stops
+at the direct case reads as complete and is a sample**, which is the third time this lane has
+written that sentence today.
+
+Now two hops: every function whose body skips, transitively, then every zero-argument test that
+reaches one. Forced population went from 2 to 6.
+
+Mutations: 6 of 6 red — a fin row dropped from the backend mirror; a backend row the frontend
+lacks; a real gap deleted from the register; the register excusing a row that is not a gap;
+prefix expansion removed; and a planted skip the forcing cannot flip, which fails with the exact
+`DID NOT RAISE` its own comment predicts.
+
+**The first version of that last mutant survived, and the mutant was wrong, not the seal** — I
+planted a skip whose condition was already true, so it skipped when called and the forcing
+appeared to work. *The survivor is usually the test's setup or its reach, not its assertion.*

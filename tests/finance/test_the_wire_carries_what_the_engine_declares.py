@@ -318,28 +318,47 @@ def test_THE_SKIP_PATH_ACTUALLY_WORKS(monkeypatch):
     any reason. It asserts the mechanism raises Skipped rather than NameError — which is the
     failure that actually happened — not that the condition was correctly judged.
     """
-    # BOTH SKIPPING TESTS, by name and derived from the source rather than listed: a third one
-    # written the same way tomorrow is the case this is guarding against.
+    # DERIVED IN TWO HOPS, because one hop stopped being enough on 2026-09-15. The original
+    # filter was "a test whose own body names pytest.skip" — and three new tests skip through a
+    # HELPER (`_mirrors`) instead, so the population silently lost them. **A derivation that
+    # stops at the direct case reads as complete and is a sample.**
+    #
+    # Hop 1: every module-level function whose body names `pytest.skip(` — helpers included.
+    # Hop 2: every zero-argument test that names one of those, transitively.
     src = Path(__file__).read_text(encoding="utf-8")
     # NAMED VIA chr(10), NOT AN ESCAPE. A backslash-n written into a patch script run
     # through a heredoc collapses into a real newline and splits the string literal — the
     # same collapse that has cost this lane three times. Name the character.
     _NL = chr(10)
-    bodies = src.split(_NL + 'def ')
-    # ZERO-ARGUMENT TESTS ONLY, and not this one. A test taking fixtures cannot be called
-    # directly, and this test's own body names pytest.skip — including itself would make it
-    # recurse into a TypeError that looks like the defect rather than the filter.
-    skippers = []
-    for b in bodies:
-        if not b.startswith('test_') or 'pytest.skip(' not in b:
-            continue
+    bodies = {}
+    for b in src.split(_NL + 'def '):
         name, _, rest = b.partition('(')
+        if name and name.replace('_', '').isalnum():
+            bodies[name] = (rest, b)
+
+    skipping = {n for n, (_, b) in bodies.items() if 'pytest.skip(' in b}
+    # Transitive closure: a helper that calls a skipping helper also skips.
+    for _ in range(len(bodies)):
+        grown = skipping | {
+            n for n, (_, b) in bodies.items() if any(s + '(' in b for s in skipping)
+        }
+        if grown == skipping:
+            break
+        skipping = grown
+
+    skippers = []
+    for name in sorted(skipping):
+        if not name.startswith('test_'):
+            continue          # a helper is reached THROUGH its test, not called directly
         if name == 'test_THE_SKIP_PATH_ACTUALLY_WORKS':
-            continue
-        if rest.split(')', 1)[0].strip():
+            continue          # names pytest.skip itself; calling it would recurse
+        if bodies[name][0].split(')', 1)[0].strip():
             continue          # takes fixtures - not directly callable
         skippers.append(name)
-    assert skippers, "no test in this file skips - this seal has gone vacuous"
+    assert len(skippers) >= 4, (
+        f"expected at least the four known skipping tests, derived {skippers} — the derivation "
+        f"is stale, and a shrinking population is how this seal goes quiet rather than red"
+    )
 
     # ⚠ THE POPULATION IS DERIVED; THE FORCING IS NOT, AND THAT IS THE SEAM.
     # This seal finds every skipping test by reading the source — which it did, immediately, for
@@ -458,7 +477,6 @@ def test_the_partition_can_actually_FAIL():
 # -- SEAL 5 -- the cross-repo mirror, for the subjects THIS engine owns -------------------
 
 _CORTEX = _ROOT.parent / "cortex-ui" / "src" / "registry" / "assembleCapabilities.ts"
-_FIN = "http://invincible-agent/fin#"
 
 
 def _expand(uri: str) -> str:
@@ -481,20 +499,48 @@ def _expand(uri: str) -> str:
     return uri
 
 
-def test_the_two_MIRRORS_agree_on_every_fin_subject():
-    """CROSS-REPO, AND SCOPED TO WHAT THIS ENGINE OWNS.
+_MESH = "http://invincible-agent/mesh#"
+_SAFETY = "http://internal/sustainment/safety#"
 
-    `PRESENTATION_CAPABILITIES` here and `DERIVED_BINDINGS` in cortex-ui are two mirrors of one
-    binding set. `fin:EstimateAtCompletionComparison` was in the frontend's and not in this one
-    — bound, drawable, contract and all, and never advertised by the engine that produces it.
-    Neither repo's own tests could see it, because each was complete on its own side.
+#: THE 18 ROWS THAT WERE ALREADY OUT OF STEP WHEN THE MIRROR WAS RATIFIED (2026-09-15).
+#:
+#: A DEBT REGISTER, NOT AN EXCLUSION LIST, and the difference is enforced below: an entry that
+#: STOPS being a mismatch FAILS this seal. It can only shrink, and a lane that fixes a row must
+#: delete its line in the same commit. That is what keeps it from becoming the drawer every
+#: exclusion list turns into.
+#:
+#: OWNING LANE IS ATTRIBUTED BY SUBJECT NAMESPACE, and that is a heuristic, not a record: the
+#: `mesh:` rows are the planning/cortex vocabulary and the `safety:` rows are the safety lane's.
+#: Nobody signed for them — **a citation is not a signature** — so Lane 1 routes, and this
+#: comment says how the guess was made rather than presenting it as an assignment.
+_MIRROR_GAPS_AT_RATIFICATION = {
+    # FRONTEND BINDS, BACKEND DOES NOT ADVERTISE — 15, all mesh: vocabulary.
+    # Drawable by a registered frontend; the mesh advertises nothing, so nothing routes to them.
+    (_MESH + "CanvasSeedResult", _MESH + "CanvasSeed"),
+    (_MESH + "ContributionSequence", _MESH + "IntervalTimeline"),
+    (_MESH + "DecisionArtifact", _MESH + "DecisionRecord"),
+    (_MESH + "EffectSet", _MESH + "DeltaSet"),
+    (_MESH + "FundingGapSet", _MESH + "ShortfallGrid"),
+    (_MESH + "HumanApprovalTask", _MESH + "ApprovalTask"),
+    (_MESH + "InstancesByProperty", _MESH + "InstancesByProperty"),
+    (_MESH + "IntervalSchedule", _MESH + "IntervalTimeline"),
+    (_MESH + "LoadThresholdGrid", _MESH + "ThresholdGrid"),
+    (_MESH + "MaturityMatrix", _MESH + "MatrixGrid"),
+    (_MESH + "PartObsolescenceReviewBatch", _MESH + "GroupedReview"),
+    (_MESH + "PeriodCostSeries", _MESH + "PeriodSeries"),
+    (_MESH + "SlotElicitation", _MESH + "AskCard"),
+    (_MESH + "WithheldPanel", _MESH + "NamedHole"),
+    (_MESH + "WorkflowObservation", _MESH + "WorkflowObservation"),
+    # BACKEND ADVERTISES, FRONTEND DOES NOT BIND — 3, the safety lane's.
+    # Registered to the mesh; no component will ever be chosen for them.
+    (_SAFETY + "DeferralRiskCard", _MESH + "KnowledgeDocument"),
+    (_SAFETY + "OrphanedHazardSet", _MESH + "ContributionRanking"),
+    (_SAFETY + "RiskAssessmentDraft", _MESH + "KnowledgeDocument"),
+}
 
-    SCOPED TO `fin:` DELIBERATELY. The full diff also shows 15 `mesh:` subjects the frontend
-    binds alone and 3 `safety:` subjects this backend advertises alone. Those may be correct —
-    the split by subject ownership is observed, not ratified — and asserting over them would be
-    this lane ruling on two others' designs. Derived and FILED rather than silently excluded:
-    `docs/plans/the-spread-archetype-already-exists-and-is-bound-to-nothing.md`.
-    """
+
+def _mirrors() -> tuple[set, set]:
+    """The two mirrors, both sides expanded. Skips where cortex-ui is not a sibling."""
     if not _CORTEX.is_file():
         pytest.skip("cortex-ui is not a sibling on disk; the cross-repo half cannot run here")
 
@@ -503,29 +549,88 @@ def test_the_two_MIRRORS_agree_on_every_fin_subject():
     back = {
         (_expand(c["subject_uri"]), _expand(c["object_uri"]))
         for c in PRESENTATION_CAPABILITIES
-        if _expand(c["subject_uri"]).startswith(_FIN)
     }
-    text = _CORTEX.read_text(encoding="utf-8")
     front = {
         (_expand(s), _expand(o))
         for s, o in re.findall(
-            r'subject_uri:\s*"([^"]+)",\s*\n\s*object_uri:\s*"([^"]+)"', text
+            r'subject_uri:\s*"([^"]+)",\s*\n\s*object_uri:\s*"([^"]+)"',
+            _CORTEX.read_text(encoding="utf-8"),
         )
-        if _expand(s).startswith(_FIN)
     }
+    assert len(back) >= 20 and len(front) >= 30, (
+        f"a mirror parsed to almost nothing (back={len(back)}, front={len(front)}); "
+        f"a mirror check over an empty set agrees perfectly"
+    )
+    return back, front
 
-    assert back and front, (
-        "one side parsed to nothing, and a mirror check over an empty set agrees perfectly"
+
+def test_the_two_MIRRORS_agree_FLEET_WIDE():
+    """RATIFIED 2026-09-15, and no longer scoped to `fin:`.
+
+    **`PRESENTATION_CAPABILITIES` is the declaration the mesh advertises** — the presentation
+    agent registers every row of it at lifespan through `register_presentation_to_mesh` — and
+    cortex-ui's `DERIVED_BINDINGS` is the mirror. **Every row must appear in both, and a row in
+    one only is a defect regardless of prefix.**
+
+    ⚠ READ THIS BEFORE CONCLUDING `capabilities.py` IS RETIRED. `capability_registry.union_menu`
+    carries a prominent note — *"WHY NOT `capabilities.py` … every row it held is now DERIVED on
+    the UI side"* — which reads like the file is out of the live path. It is not. That note is
+    about the **anonymous fallback MENU**, which reads the runtime registry instead of this
+    table. Mesh registration is a different consumer and still reads it. Two consumers, one
+    file, opposite conclusions if you stop at the first comment you find.
+
+    ── WHAT THIS CATCHES, MEASURED ──────────────────────────────────────────────────────────
+    `fin:EstimateAtCompletionComparison` was in the frontend mirror and not this one for four
+    days: bound, drawable, contract and glyph in place, and **never advertised by the engine
+    that produces it**. Each mirror was complete on its own side, so no per-repo check could
+    see it. **A mirror check is the only instrument that sees a row present in one master and
+    absent from the other.**
+    """
+    back, front = _mirrors()
+    gaps = (front - back) | (back - front)
+    new = sorted(gaps - _MIRROR_GAPS_AT_RATIFICATION)
+    assert not new, (
+        "these bindings are declared in ONE mirror only and are not in the ratification "
+        "register:\n  "
+        + "\n  ".join(f"{s} -> {o}" for s, o in new)
+        + "\n\nA row the backend advertises and the frontend does not bind is registered with "
+        "no component that will ever be chosen for it. A row the frontend binds and the "
+        "backend does not advertise is drawable and unroutable. Add the missing side, or — if "
+        "this is a deliberate staging step — add it to _MIRROR_GAPS_AT_RATIFICATION and route "
+        "it, remembering the register only ever shrinks."
     )
-    only_front = sorted(s.split("#")[-1] for s, _ in front - back)
-    only_back = sorted(s.split("#")[-1] for s, _ in back - front)
-    assert not only_front, (
-        f"cortex-ui binds these fin subjects and this engine advertises none of them: "
-        f"{only_front} — drawable by the frontend, invisible to the mesh"
+
+
+def test_the_mirror_register_ONLY_SHRINKS():
+    """THE RATCHET, and it is what makes the register a debt rather than a drawer.
+
+    An entry that has stopped being a mismatch must be DELETED, not left standing. A register
+    that keeps excusing rows nobody needs excused is how an exclusion list stops being read —
+    the same shape as a tombstone for a row the seed no longer ships, which keeps deleting
+    nothing while reading as deliberate.
+    """
+    back, front = _mirrors()
+    gaps = (front - back) | (back - front)
+    fixed = sorted(_MIRROR_GAPS_AT_RATIFICATION - gaps)
+    assert not fixed, (
+        "these are registered as known mirror gaps and are no longer gaps:\n  "
+        + "\n  ".join(f"{s} -> {o}" for s, o in fixed)
+        + "\n\nDelete them from _MIRROR_GAPS_AT_RATIFICATION in the commit that fixed them. "
+        "The register only shrinks; an entry left behind reads as an open defect to everyone "
+        "who checks the list instead of the mirrors."
     )
-    assert not only_back, (
-        f"this engine advertises these fin subjects and cortex-ui binds none of them: "
-        f"{only_back} — registered, and no component will ever be chosen for them"
+
+
+def test_the_mirror_check_can_actually_FAIL():
+    """THE CONTROL. Two sets compared against a register that already contains every
+    difference will pass no matter what the sets say, unless a difference outside the register
+    can exist."""
+    back, front = _mirrors()
+    invented = ("http://invincible-agent/mesh#NoSuchSubject", "http://invincible-agent/mesh#X")
+    assert invented not in _MIRROR_GAPS_AT_RATIFICATION
+    gaps = ((front | {invented}) - back) | (back - (front | {invented}))
+    assert gaps - _MIRROR_GAPS_AT_RATIFICATION, (
+        "a one-sided binding outside the register does not surface; the seal above cannot fail"
     )
 
 _CONTRACT_FILE = (_ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
