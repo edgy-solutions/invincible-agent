@@ -5,7 +5,7 @@ owner:
 blocked-on:
 repo:       invincible-agent (+ cortex-ui for the contract's field list)
 code-site:  agent_fleet/presentation_agent/capabilities.py (no row claims COMPETING_MEASURES), agent_fleet/presentation_agent/main.py (_PROJECTED_ARCHETYPES passthrough), cortex-ui/src/components/planning/CompetingMeasures.contract.ts
-summary:    The archetype three competing forecasts need already exists end to end as COMPETING_MEASURES - projector passthrough, frontend component, contract, glyph - and no capability row claims it, so fin_eac_comparison is bound to nothing. Not a new archetype and not cortex-60's work. Three unasserted joins between individually-correct declarations: the missing row, a projector allowlist that passes lowest_eac/highest_eac while the contract reads lowest_value/highest_value, and a reference_value the frontend declares and nobody emits. Derived rather than grepped, the unbound set is SIX archetypes, not one.
+summary:    STEPS 1-4 DONE 2026-09-15 (binding, field-name join, reference_value emitter, verdict); OPEN for the residue nobody owns yet - 18 mirror rows outside the fin namespace, unpartitioned on purpose, and scope_label declared by the contract and emitted per-row by every finance verb. The archetype three competing forecasts need already exists end to end as COMPETING_MEASURES - projector passthrough, frontend component, contract, glyph - and no capability row claims it, so fin_eac_comparison is bound to nothing. Not a new archetype and not cortex-60's work. Three unasserted joins between individually-correct declarations: the missing row, a projector allowlist that passes lowest_eac/highest_eac while the contract reads lowest_value/highest_value, and a reference_value the frontend declares and nobody emits. Derived rather than grepped, the unbound set is SIX archetypes, not one.
 ---
 
 # The SPREAD archetype already exists, under another name, bound to nothing
@@ -140,3 +140,77 @@ assertion that they are the same list.
 
 Steps 1–4 are all in this lane's fence. **None of it is cortex-60's**, beyond confirming
 `reference_value` and that the contract's field list is the one the component actually reads.
+
+
+---
+
+# CLOSED 2026-09-15 — and the diagnosis changed TWICE on the way
+
+**Steps 1–4 are done.** The passthrough carries `lowest_value`/`highest_value`/`reference_value`,
+the engine emits `reference_value`, the capability row exists, `fin_eac_comparison` has its
+`VERDICT` entry, and the census seal's skip is gone. Four seals, 8 of 8 mutations red.
+
+## The first correction: it was never a missing archetype
+
+Dispatched as "a SPREAD archetype cortex-60 needs to build". `COMPETING_MEASURES` already existed
+at every layer with this verb named in its contract header as its first consumer.
+
+## The second correction: it was never "bound to nothing" either
+
+I wrote that no registry claimed it. **Wrong.** cortex-ui's `DERIVED_BINDINGS` binds
+`fin:EstimateAtCompletionComparison -> mesh:CompetingMeasures`, with the same `object_uri` I then
+wrote into the backend row — and it binds **all six** of the archetypes I had listed as unbound.
+
+There are **two mirrors of one binding set**: `PRESENTATION_CAPABILITIES` here and
+`DERIVED_BINDINGS` there. The archetype was bound in one and not the other, so:
+
+- the frontend would draw it, and
+- the mesh never advertised it, so nothing would route to it.
+
+**Each mirror was complete on its own side.** That is why neither repo's tests saw it, and it is
+a sharper statement of the same law: *every endpoint verified, the join unasserted* — except the
+endpoints here are two registries that are supposed to be copies.
+
+## The prefix trap, walked into and caught
+
+My first mirror diff reported the 7 cost rows as mismatched. They are not: the backend spells
+them `cost:CategoryBreakdown` and the frontend
+`http://invincible-agent/cost#CategoryBreakdown`. **Same binding, two spellings**, and this repo
+has already paid for exactly that — six `fin:` rows were refused by Contract D for being emitted
+compact. Expanding both sides first is why the real diff is 25 shared rather than 18.
+
+`test_the_two_MIRRORS_agree_on_every_fin_subject` expands through the module's own
+`_IRI_PREFIXES_FOR_LOOKUP` rather than a transcribed copy.
+
+## The residue, derived and deliberately unasserted
+
+With prefixes expanded, the full mirror diff is:
+
+    FRONTEND BINDS, BACKEND DOES NOT (15)   all mesh: subjects — CanvasSeedResult,
+        ContributionSequence, DecisionArtifact, EffectSet, FundingGapSet, HumanApprovalTask,
+        InstancesByProperty, IntervalSchedule, LoadThresholdGrid, MaturityMatrix,
+        PartObsolescenceReviewBatch, PeriodCostSeries, SlotElicitation, WithheldPanel,
+        WorkflowObservation
+
+    BACKEND ADVERTISES, FRONTEND DOES NOT (3)   safety:DeferralRiskCard,
+        safety:OrphanedHazardSet, safety:RiskAssessmentDraft
+
+**The `fin:` half is sealed in both directions. The other 18 are not, on purpose.** The pattern is
+that engine-namespace subjects are advertised by the backend and `mesh:` vocabulary is bound by
+the frontend — but that is **observed in two files, not written down anywhere**, and asserting it
+would be this lane ruling on the planning and safety lanes' designs.
+
+Whoever owns those two should partition them: each row either in both mirrors, or on an exclusion
+list **with a reason**. The derivation is in the seal.
+
+## And `scope_label` is declared by the contract and emitted by no finance verb
+
+Ten envelope fields are declared; nine now arrive. `scope_label` is on the **rows** of every
+finance verb and on the envelope of none — the assembler builds `value_unit`, `value_label`,
+`series`, `reference` and `verdict` at envelope level and has never built this one. Fleet-wide,
+not specific to this verb.
+
+Listed in `_CONTRACT_FIELDS_SUPPLIED_PER_ROW` with that scope, and **the seal refuses to let it
+rot**: the entry fails if the contract stops declaring the field, and fails if it starts arriving
+on the envelope. What it does *not* claim is that a card reads it from the rows and is therefore
+fine — that is unchecked, and a residue named is not a residue excused.

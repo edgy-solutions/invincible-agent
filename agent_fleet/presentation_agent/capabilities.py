@@ -302,6 +302,28 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
                             "share_of_total", "favourable", "value_unit"],
         "description": "Renders fin:VarianceDriverRanking as a CONTRIBUTION_RANKING — ordered contributors whose signed magnitudes sum to the variance they explain",
     },
+    # ── THE ROW THAT WAS MISSING FOR FOUR DAYS ───────────────────────────────────────────
+    #
+    # `COMPETING_MEASURES` went into the projector on 2026-09-11 with a component, a contract
+    # and a glyph, and its contract header names estimate-at-completion by all three
+    # earned-value formulas as ITS FIRST CONSUMER. No row ever claimed it, so the verb its
+    # passthrough was written for rendered as nothing at all.
+    #
+    # NEITHER SIDE WAS WRONG AND NO PER-SIDE CHECK COULD SEE IT. The archetype was declared,
+    # the verb was declared, and the relation between them was declared nowhere. Derived
+    # rather than grepped, SIX archetypes in that table are claimed by no row; this closes
+    # the one with a verb waiting, and `test_every_archetype_in_the_projector_is_CLAIMED`
+    # now refuses the next.
+    {
+        "subject_uri": "fin:EstimateAtCompletionComparison",
+        "object_uri": "mesh:CompetingMeasures",
+        "archetype": "COMPETING_MEASURES",
+        "expected_fields": ["method", "formula", "value", "unavailable_reason",
+                            "spread", "spread_percent_of_bac", "lowest_value", "highest_value",
+                            "reference_value", "methods_compared", "methods_answered",
+                            "all_methods_answered", "value_unit"],
+        "description": "Renders fin:EstimateAtCompletionComparison as COMPETING_MEASURES — all three EAC formulas side by side with the SPREAD as the finding; R-001 rules that pinning one estimate hides the divergence, and an undefined method KEEPS ITS ROW with its reason so three rows are never mistaken for three answers",
+    },
     {
         "subject_uri": "fin:EstimateAtCompletion",
         "object_uri": "mesh:ForecastMeasure",

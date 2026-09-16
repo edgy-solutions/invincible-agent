@@ -605,10 +605,27 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     #
     # These are ENVELOPE facts, not per-row ones — a per-row copy of an envelope fact is a
     # fact that can disagree with itself, and the card would have to choose a row to believe.
-    "COMPETING_MEASURES": ("rows", ("spread", "spread_percent_of_bac", "lowest_eac",
-                                    "highest_eac", "methods_compared", "methods_answered",
-                                    "all_methods_answered", "value_unit", "value_label",
-                                    "scope_label")),
+    # ⚠ WIDENED 2026-09-15, AND THE FOUR DAYS IT SAT WRONG ARE THE POINT. This tuple was
+    # written the same day the archetype was, from the engine's summary keys — and the engine
+    # emits the low/high pair under TWO names, saying beside them that `lowest_eac` is a
+    # coined summary name with "no claim to stay" and the structural one "should be
+    # preferred". This allowlist kept the one the contract does NOT read.
+    #
+    # Nothing was red. The engine emitted `lowest_value`, the contract declared it, and the
+    # list between them dropped it — so binding the capability row without this edit would
+    # have drawn a card with a blank high and low and every layer's own tests green.
+    # `reference_value` is the same shape one step worse: declared by the contract and, until
+    # today, emitted by nobody at all.
+    #
+    # THE DOMAIN-NAMED PAIR IS KEPT rather than swapped out. Nothing is known to read it, but
+    # "nothing reads it" is exactly the claim this whole class of defect is made of, and
+    # retiring a field the engine still emits is a separate decision from fixing a join.
+    "COMPETING_MEASURES": ("rows", ("spread", "spread_percent_of_bac",
+                                    "lowest_value", "highest_value", "reference_value",
+                                    "lowest_eac", "highest_eac",
+                                    "methods_compared", "methods_answered",
+                                    "all_methods_answered", "verdict", "value_unit",
+                                    "value_label", "scope_label")),
     "STEP_LADDER": ("steps", ("price", "unit_price", "value_unit", "sums", "quantity", "rate_vintage", "scope_label")),
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),

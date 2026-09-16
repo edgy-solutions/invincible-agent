@@ -341,7 +341,19 @@ def test_THE_SKIP_PATH_ACTUALLY_WORKS(monkeypatch):
         skippers.append(name)
     assert skippers, "no test in this file skips - this seal has gone vacuous"
 
+    # ⚠ THE POPULATION IS DERIVED; THE FORCING IS NOT, AND THAT IS THE SEAM.
+    # This seal finds every skipping test by reading the source — which it did, immediately, for
+    # the mirror seal added 2026-09-15 — but each skip has its OWN condition, and neutralising
+    # one says nothing about another. The list below is therefore a hand-kept part inside a
+    # derived seal, and the failure mode is loud on purpose: a new skip whose condition is not
+    # neutralised here runs to completion and this test FAILS with "DID NOT RAISE", naming it.
+    #
+    # Loud is the requirement. A forcing mechanism that silently missed a condition would report
+    # the skip path tested when it had never run — the exact defect this seal exists to catch,
+    # one level up.
     monkeypatch.setattr(sys.modules[__name__], "_cortex_declared_archetypes", lambda: {})
+    monkeypatch.setattr(sys.modules[__name__], "_CORTEX", Path("no-such-sibling-repo.ts"))
+    monkeypatch.setattr(sys.modules[__name__], "_CONTRACT_FILE", Path("no-such-contract.ts"))
     for name in skippers:
         fn = getattr(sys.modules[__name__], name)
         with pytest.raises(pytest.skip.Exception):
@@ -361,3 +373,243 @@ def test_EVERY_pytest_SKIP_IN_THIS_FILE_HAS_ITS_IMPORT():
             "this file calls into pytest and never imports it — the skip path raises NameError "
             "in the only condition it exists to handle"
         )
+
+
+# -- SEAL 4 -- the join that was missing, from the other direction -----------------------
+#
+# The passthrough seal above asks "does a field this verb declares survive its archetype".
+# It cannot ask "does this archetype have a verb at all", and that is how COMPETING_MEASURES
+# sat in the projector from 2026-09-11 to 2026-09-15 with a component, a contract, a glyph
+# and a contract header naming its first consumer BY NAME — claimed by no backend row, so the
+# verb its passthrough was written for rendered as nothing.
+#
+# The registrar's unrenderable-output refusal, from the other end: an archetype nothing binds
+# is registered and drawable by nobody.
+
+#: Archetypes in the projector with no BACKEND capability row, each with the reason it needs
+#: none. NOT a convenience list — every entry is a claim, and every claim was checked.
+#:
+#: All five are bound in cortex-ui's `DERIVED_BINDINGS`
+#: (`src/registry/assembleCapabilities.ts`), read 2026-09-15. Their subjects are `mesh:`
+#: vocabulary rather than an engine namespace, and this backend's table advertises the subjects
+#: ITS OWN engines produce. Two mirrors of one binding set, split by who owns the subject.
+#:
+#: ⚠ THE SPLIT IS OBSERVED, NOT RATIFIED. Nobody has written down that `mesh:` subjects are the
+#: frontend's to bind; it is what the two files DO. Recorded as the reason because it is the
+#: true one, and flagged because a reason describing a pattern is weaker than one citing a
+#: decision.
+_ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR = {
+    "CANVAS_SEED": "mesh:CanvasSeedResult -> mesh:CanvasSeed, in DERIVED_BINDINGS",
+    "INTERVAL_TIMELINE": "mesh:IntervalSchedule and mesh:ContributionSequence, in DERIVED_BINDINGS",
+    "MATRIX_GRID": "mesh:MaturityMatrix -> mesh:MatrixGrid, in DERIVED_BINDINGS",
+    "PERIOD_SERIES": "mesh:PeriodCostSeries -> mesh:PeriodSeries, in DERIVED_BINDINGS",
+    "THRESHOLD_GRID": "mesh:LoadThresholdGrid -> mesh:ThresholdGrid, in DERIVED_BINDINGS",
+}
+
+
+def test_every_archetype_in_the_projector_is_CLAIMED_or_EXCUSED_BY_NAME():
+    """PARTITIONED, not filtered: every archetype the projector can draw is either claimed by a
+    backend capability row or carries a written reason it is not.
+
+    A name in neither set FAILS. That is the whole mechanism — an archetype quietly added to
+    the projector and bound by nobody is the state this seal exists to end, and it is the state
+    COMPETING_MEASURES was in for four days.
+    """
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    projected = set(_projector_passthrough())
+    claimed = {c["archetype"] for c in PRESENTATION_CAPABILITIES}
+    excused = set(_ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR)
+
+    orphans = sorted(projected - claimed - excused)
+    assert not orphans, (
+        "these archetypes are in the projector's table, claimed by no capability row, and "
+        f"carry no stated reason: {orphans}\n"
+        "An archetype nothing binds is registered and drawable by nobody. Either add a "
+        "capability row whose `archetype` is this name, or add it to "
+        "_ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR WITH the binding that covers it."
+    )
+
+    # AND THE EXCLUSION LIST IS NOT A DRAWER. An entry for an archetype the projector no longer
+    # carries is a stale excuse that keeps excusing nothing — the same shape as a tombstone for
+    # a row the seed does not ship, which keeps deleting nothing.
+    stale = sorted(excused - projected)
+    assert not stale, f"excused archetypes no longer in the projector: {stale}"
+
+    # A REASON IS REQUIRED TO BE ONE. An empty string satisfies the partition and says nothing,
+    # which is how every exclusion list rots.
+    for name, why in _ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR.items():
+        assert why and len(why) > 20, f"{name} is excused without a usable reason"
+
+
+def test_the_partition_can_actually_FAIL():
+    """THE CONTROL. A partition over two sets passes by construction unless something can fall
+    outside both — so a name in neither must be shown to fall out."""
+    projected = set(_projector_passthrough())
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    claimed = {c["archetype"] for c in PRESENTATION_CAPABILITIES}
+    excused = set(_ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR)
+    assert (projected | {"AN_ARCHETYPE_NOBODY_DECLARED"}) - claimed - excused, (
+        "a name in neither set does not fall out of the partition; the seal above cannot fail"
+    )
+
+
+# -- SEAL 5 -- the cross-repo mirror, for the subjects THIS engine owns -------------------
+
+_CORTEX = _ROOT.parent / "cortex-ui" / "src" / "registry" / "assembleCapabilities.ts"
+_FIN = "http://invincible-agent/fin#"
+
+
+def _expand(uri: str) -> str:
+    """Compact and expanded spellings are the SAME binding, and this repo has already paid for
+    forgetting it: six `fin:` rows were refused by Contract D because the subject was emitted
+    COMPACT. A diff over unexpanded URIs reports every cost row as a mismatch — measured, it
+    reported seven — and a prefix absent from the map passes through verbatim, so the row
+    registers, reports accepted, and never matches.
+    """
+    # THE PRIVATE NAME ON PURPOSE. `_IRI_PREFIXES_FOR_LOOKUP` is the ONE map the module
+    # expands with, and a second copy transcribed into this seal would agree with itself
+    # while disagreeing with the code — which is the defect this whole file is about.
+    from agent_fleet.presentation_agent.capabilities import (
+        _IRI_PREFIXES_FOR_LOOKUP as PREFIXES,
+    )
+
+    for p, full in PREFIXES.items():
+        if uri.startswith(p):
+            return full + uri[len(p):]
+    return uri
+
+
+def test_the_two_MIRRORS_agree_on_every_fin_subject():
+    """CROSS-REPO, AND SCOPED TO WHAT THIS ENGINE OWNS.
+
+    `PRESENTATION_CAPABILITIES` here and `DERIVED_BINDINGS` in cortex-ui are two mirrors of one
+    binding set. `fin:EstimateAtCompletionComparison` was in the frontend's and not in this one
+    — bound, drawable, contract and all, and never advertised by the engine that produces it.
+    Neither repo's own tests could see it, because each was complete on its own side.
+
+    SCOPED TO `fin:` DELIBERATELY. The full diff also shows 15 `mesh:` subjects the frontend
+    binds alone and 3 `safety:` subjects this backend advertises alone. Those may be correct —
+    the split by subject ownership is observed, not ratified — and asserting over them would be
+    this lane ruling on two others' designs. Derived and FILED rather than silently excluded:
+    `docs/plans/the-spread-archetype-already-exists-and-is-bound-to-nothing.md`.
+    """
+    if not _CORTEX.is_file():
+        pytest.skip("cortex-ui is not a sibling on disk; the cross-repo half cannot run here")
+
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    back = {
+        (_expand(c["subject_uri"]), _expand(c["object_uri"]))
+        for c in PRESENTATION_CAPABILITIES
+        if _expand(c["subject_uri"]).startswith(_FIN)
+    }
+    text = _CORTEX.read_text(encoding="utf-8")
+    front = {
+        (_expand(s), _expand(o))
+        for s, o in re.findall(
+            r'subject_uri:\s*"([^"]+)",\s*\n\s*object_uri:\s*"([^"]+)"', text
+        )
+        if _expand(s).startswith(_FIN)
+    }
+
+    assert back and front, (
+        "one side parsed to nothing, and a mirror check over an empty set agrees perfectly"
+    )
+    only_front = sorted(s.split("#")[-1] for s, _ in front - back)
+    only_back = sorted(s.split("#")[-1] for s, _ in back - front)
+    assert not only_front, (
+        f"cortex-ui binds these fin subjects and this engine advertises none of them: "
+        f"{only_front} — drawable by the frontend, invisible to the mesh"
+    )
+    assert not only_back, (
+        f"this engine advertises these fin subjects and cortex-ui binds none of them: "
+        f"{only_back} — registered, and no component will ever be chosen for them"
+    )
+
+_CONTRACT_FILE = (_ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
+                  / "CompetingMeasures.contract.ts")
+
+
+# -- SEAL 6 -- the field-name join, which is the half that renders blanks ----------------
+#
+# Binding an archetype is not the same as feeding it. `COMPETING_MEASURES`' passthrough was
+# written the same day the archetype was, from the engine's summary keys — and the engine emits
+# the low/high pair under TWO names, saying beside them that `lowest_eac` is a coined summary
+# name with "no claim to stay". The allowlist kept the one the contract does NOT read.
+#
+# So the row could have been bound and the card would have drawn a blank high and low, with the
+# engine's tests green (it emits the field), the contract's tests green (it declares it), and
+# the projector's own shape test green (the tuple parses). **Every endpoint verified, the join
+# asserted nowhere.**
+
+#: Contract envelope fields this engine supplies PER ROW rather than on the envelope, with the
+#: reason. Checked 2026-09-15: `scope_label` is on the rows of every finance verb and on the
+#: envelope of none — the response assembler builds `value_unit`, `value_label`, `series`,
+#: `reference` and `verdict` at envelope level and has never built this one.
+#:
+#: ⚠ WHAT THIS DOES NOT CLAIM: that a card reads it from the rows and is therefore fine. That is
+#: unchecked. It is listed as a KNOWN DIVERGENCE with its scope, not as a resolved one — the
+#: difference between a residue named and a residue excused.
+_CONTRACT_FIELDS_SUPPLIED_PER_ROW = {
+    "scope_label": (
+        "on the rows of every finance verb, on the envelope of none; the assembler in "
+        "finance_agent/main.py builds value_unit/value_label/series/reference/verdict at "
+        "envelope level and never this one. Fleet-wide, not specific to this verb."
+    ),
+}
+
+
+def test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES():
+    """CROSS-REPO, AND THE ONE THAT WOULD HAVE CAUGHT THE BLANK CARD.
+
+    Reads the frontend contract's own envelope list — not a copy of it kept here, which would
+    agree with itself — and checks each name against BOTH the projector's allowlist and a LIVE
+    payload from the verb. A field must be emitted AND survive the passthrough; either alone
+    renders nothing and looks correct from that side.
+    """
+    if not _CONTRACT_FILE.is_file():
+        pytest.skip("cortex-ui is not a sibling on disk; the cross-repo half cannot run here")
+
+    text = _CONTRACT_FILE.read_text(encoding="utf-8")
+    block = text.split("COMPETING_MEASURES_ENVELOPE_FIELDS")[1].split("]")[0]
+    declared = set(re.findall(r'"(\w+)",', block))
+    assert len(declared) >= 8, (
+        "parsed almost nothing from the contract — the export moved, and an empty expectation "
+        "is satisfied by any payload at all"
+    )
+
+    from fastapi.testclient import TestClient
+
+    from agent_fleet.finance_agent.main import app
+
+    passthrough = set(_projector_passthrough()["COMPETING_MEASURES"][1])
+    with TestClient(app) as client:
+        payload = client.post(
+            "/measure/fin_eac_comparison", json={"params": {"program_id": "NP-MERIDIAN"}}
+        ).json()
+
+    expected = declared - set(_CONTRACT_FIELDS_SUPPLIED_PER_ROW)
+
+    dropped = sorted(expected - passthrough)
+    assert not dropped, (
+        f"the contract reads {dropped} and the projector's allowlist drops them — the card "
+        f"draws blanks while the engine, the contract and the tuple's own shape test all pass"
+    )
+    unemitted = sorted(expected - set(payload))
+    assert not unemitted, (
+        f"the contract reads {unemitted} and the payload carries no such key — declared by the "
+        f"consumer and emitted by nobody, which is what `reference_value` was until today"
+    )
+
+    # THE RESIDUE IS NOT A DRAWER EITHER. An entry for a field the contract stopped declaring
+    # is a standing excuse for nothing, and one that starts arriving on the envelope should be
+    # deleted from here rather than left reading as a known gap.
+    for name, why in _CONTRACT_FIELDS_SUPPLIED_PER_ROW.items():
+        assert name in declared, f"{name} is excused but the contract no longer declares it"
+        assert name not in payload, (
+            f"{name} now arrives on the envelope — delete its entry rather than leave a "
+            f"resolved divergence reading as an open one"
+        )
+        assert len(why) > 40, f"{name} is excused without a usable reason"

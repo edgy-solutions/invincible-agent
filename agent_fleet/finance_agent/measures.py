@@ -102,6 +102,16 @@ def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, An
         # stay, and the structural name is the one that should be preferred.
         "lowest_value": float(low),
         "highest_value": float(high),
+        # THE THING THE PERCENTAGE IS A PERCENTAGE OF. `spread_percent_of_bac` travelled for
+        # four days with its denominator left on the ROWS, so a card drawing "the spread against
+        # the reference" had the ratio and not the quantity — and the archetype's contract has
+        # declared `reference_value` the whole time with nobody emitting it.
+        #
+        # STRUCTURALLY NAMED, like `lowest_value` beside it: the card knows it compares several
+        # methods against one reference and does not need to know the reference is a budget at
+        # completion. None where the rows carry no BAC, by the absent-means-silent rule — a
+        # zero reference would make every spread infinite-looking rather than unmeasured.
+        "reference_value": float(bac) if bac else None,
     }
 
 
@@ -313,14 +323,16 @@ VERDICT: dict[str, Any] = {
     # "reported (see artifact)", not two — the brief renders every one of them.
     "fin_eac_calculation": _verdict_eac,
     "fin_variance_drivers": _verdict_drivers,
-    # ⛔ `fin_eac_comparison` IS NOT HERE, AND A STANDING SEAL IS WHY. It is bound to NO
-    # archetype, so an envelope field it declares survives no passthrough —
-    # `test_every_envelope_field_a_verb_declares_survives_its_archetype_passthrough` refuses
-    # it, correctly. The brief reads the payload directly and WOULD have used the verdict, but
-    # adding a field to a verb nothing can draw is not the retirement of `unsummarised`; it is
-    # the same gap one layer along. `_verdict_eac_spread` is kept and sealed, ready for the
-    # commit that binds the verb. Reported rather than worked around: weakening another lane's
-    # seal to fit my addition is the move the seal exists to prevent.
+    # BOUND 2026-09-15, AND THE REASON IT WAS ABSENT WAS NEVER A MISSING VERDICT. The verb was
+    # bound to NO ARCHETYPE, so an envelope field it declared survived no passthrough and a
+    # standing seal refused it — correctly, and it stayed refused rather than being worked
+    # around.
+    #
+    # `COMPETING_MEASURES` turned out to exist at EVERY layer since 2026-09-11 — projector
+    # passthrough, component, contract, glyph — with this verb named in its contract header as
+    # its FIRST CONSUMER, and nothing had ever joined the two. The archetype was not missing.
+    # The capability row was.
+    "fin_eac_comparison":      _verdict_eac_spread,
 }
 
 VALUE_LABEL: dict[str, str] = {

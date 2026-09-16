@@ -57,14 +57,6 @@ def test_EVERY_verb_leads_with_a_figure_and_not_with_a_pointer(client, fn):
     """
     from agent_fleet.graph_host.graphs.fin_program_brief import _headline
 
-    if fn == "fin_eac_comparison":
-        # ⛔ THE ONE VERB THAT STILL FALLS BACK, and the reason is not a missing verdict.
-        # It is bound to NO archetype, so an envelope field it declares survives no
-        # passthrough and a standing seal refuses it. `_verdict_eac_spread` exists and is
-        # sealed below, ready for the commit that binds the verb. Listed here with its reason
-        # rather than silently excluded from the census.
-        pytest.skip("unbound to any archetype; binding it is presentation-lane work")
-
     headline = _headline(_payload(client, fn))
     assert headline != "reported (see artifact)", (
         f"{fn} leads the brief with a pointer; add a VERDICT entry"
