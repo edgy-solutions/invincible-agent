@@ -845,6 +845,78 @@ async def get_task_kinds(current_user: User = Depends(get_current_user)):
     return {"composed": kinds is not None, "kinds": kinds or {}}
 
 
+@app.get("/templates")
+async def get_templates(current_user: User = Depends(get_current_user)):
+    """Every RATIFIED canvas template — the menu, readable without attempting a seed.
+
+    R-039's read-path rule, and the companion to `/task_kinds` for the same reason: a client
+    rendering a picker needs to know WHAT EXISTS before it can offer one, and the only way to
+    learn it today is to seed a board and see whether the id was recognised. The registry is
+    already the authority — `ratified_template_ids` derives it from the directory on every call,
+    deliberately uncached — and this exposes it rather than adding a second source.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds` and for its reasoning: this returns the
+    SHAPE of a board — its id, title, description and panel count — never a board, never a
+    card, and never anything read out of the substrate. Withholding it would protect nothing,
+    because the seed verb's own refusal already names the ratified set to anyone who guesses
+    wrong; it would only force the probing this endpoint exists to remove.
+
+    THREE STATES, NOT TWO, and the flag is the difference. `composed: false` with an empty list
+    is NOT "nothing is ratified": it is "the directory could not be read", which is the
+    None-is-not-empty distinction `/task_kinds` turns on and the same one that would otherwise
+    let a deployment accident render as an empty picker a user reads as a complete menu.
+
+    A TEMPLATE THAT WILL NOT LOAD IS NAMED, NEVER DROPPED. `load_template` validates and raises
+    rather than returning a default — correctly, because a wrong board is harder to notice than
+    a missing one. Silently omitting it here would undo that: the list would be SHORTER and
+    nothing would say why, and a shorter list reads as the complete set. So it comes back in
+    `unreadable` with its reason, and the picker can show what it cannot offer.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from .canvas_template import (
+        load_template, ratified_template_ids, template_ref,
+    )
+
+    def _read():
+        ids = ratified_template_ids()
+        rows, broken = [], []
+        for tid in ids:
+            try:
+                t = load_template(tid)
+            except Exception as exc:  # noqa: BLE001
+                # The id IS ratified — it is in the directory — and the file does not parse or
+                # does not validate. That is a different fact from "not ratified" and the
+                # caller needs both.
+                broken.append({"template_id": tid,
+                               "reason": f"{type(exc).__name__}: {exc}"[:300]})
+                continue
+            rows.append({
+                "template_id": t.template_id,
+                "title": t.title,
+                "description": t.description,
+                # THE CONTENT HASH, so a client can tell a template that CHANGED from one that
+                # merely still exists. A picker holding a stale ref offers a board whose shape
+                # has moved under it.
+                "template_ref": template_ref(t),
+                "panels": len(t.panels),
+                "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+            })
+        return rows, broken
+
+    try:
+        templates, unreadable = await run_in_threadpool(_read)
+        composed = True
+    except Exception as exc:  # noqa: BLE001
+        # The DIRECTORY itself is unreadable — not one file. `ratified_template_ids` returns []
+        # for a missing directory, which is indistinguishable from "none ratified" at this
+        # layer, so anything raising out of the read is reported as not-composed rather than as
+        # an empty menu.
+        logger.warning("/templates could not compose the registry: %s", exc)
+        templates, unreadable, composed = [], [], False
+
+    return {"composed": composed, "templates": templates, "unreadable": unreadable}
+
+
 # ── PCN/PDN disposition review — start ────────────────────────────────────────
 class ReviewStartRequest(_BaseModel):
     """Start a grouped disposition review for a notice. The extraction-sourced fields
@@ -2403,6 +2475,17 @@ async def canvas_lineage_edges(
         return {"edges": []}
 
 
+def _allowed_or_empty(kind: str) -> list:
+    """`verbs_for_kind` or `[]` — never a raise, because every caller of this is already
+    reporting a refusal and a second failure there loses the first one."""
+    from . import human_tasks
+
+    try:
+        return list(human_tasks.verbs_for_kind(kind))
+    except Exception:  # noqa: BLE001 — the refusal being reported matters more than this detail
+        return []
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -2462,6 +2545,21 @@ async def act_on_human_task(
     # unauthorized caller through a validation error) and before any write.
     try:
         human_tasks.validate_decision(match.get("kind") or "", req.decision, req.comment)
+    except human_tasks.TaskKindSetUnknown as exc:
+        # THE RULED REFUSAL, CARRIED TO THE CARD RATHER THAN DROPPED AS A 500. A species the seed
+        # does not carry cannot be answered while the overlay is unset or unreadable, and the
+        # honest answer to cannot-know is a refusal that SAYS WHY — not the generic pair a code
+        # table used to remember, and not a silent dead task.
+        #
+        # It is a 409, not a 422: the request is well formed and the caller did nothing wrong;
+        # this deployment cannot currently answer for that species. A 422 would blame the caller
+        # for a configuration they cannot see.
+        raise HTTPException(status_code=409, detail={
+            "error": "task_kind_set_unknown",
+            "kind": match.get("kind"),
+            "allowed": [],
+            "message": str(exc),
+        })
     except human_tasks.InvalidDecisionForKind as exc:
         raise HTTPException(status_code=422, detail={
             "error": "invalid_decision_for_kind",
@@ -2474,7 +2572,9 @@ async def act_on_human_task(
             # `sorted()` looks like tidiness rather than a decision, which is why it survived
             # unexamined. Flagged by iagent-mesh-sdk-ca from the call sites rather than from
             # reasoning about them.
-            "allowed": list(human_tasks.verbs_for_kind(match.get("kind") or "")),
+            # GUARDED: this call is INSIDE an exception handler, so a raise here replaces a
+            # structured refusal with a 500 — the error path becoming an error surface.
+            "allowed": _allowed_or_empty(match.get("kind") or ""),
             "message": str(exc),
         })
 
@@ -5104,6 +5204,17 @@ async def _generate_dagster_stream_inner(
     _direct = None
     if _pre_resolved:
         _direct_stages: list = []
+        # ONE RUN, ONE THREAD - minted here because this is where a run begins, and the
+        # stateful graph rows contract on `thread_id = run id`. Before this, the dispatch
+        # body carried no thread at all and `fin_program_brief` refused every call with a
+        # 422 (artifact-2-1789497046894); the NP-MERIDIAN pick was correct and the answer
+        # still never arrived.
+        #
+        # NOT `session_id`, which is the nearest thing already in scope and is WRONG in the
+        # direction that looks right: it would scope checkpoint state to a SESSION, so the
+        # second question of a session would resume the first one's state and reducers that
+        # append would merge two answers. A session is not a run.
+        _run_id = 'run-' + uuid.uuid4().hex
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -5117,6 +5228,7 @@ async def _generate_dagster_stream_inner(
                     chain_slots=_chain_slots,
                     spoken_answer=request.spoken_answer or "",
                     user_query=user_query,
+                    run_id=_run_id,
                     entitled_domains=entitled_domains or [],
                     acting_persona=user_persona,
                     ontology_url=_DAGSONTOLOGY_SVC_URL,

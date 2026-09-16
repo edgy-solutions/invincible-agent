@@ -109,14 +109,24 @@ def _load_builder(m: GraphManifest):
 #:
 #: `langgraph-checkpoint-postgres` is a declared dependency of this engine and
 #: `AsyncPostgresSaver` is the intended end state — `graph_host/__init__.py` names it as the
-#: one part of Engine B worth keeping. It is NOT wired: `graphHost.env` is `{}` in values.yaml
-#: and no DSN reaches this pod, so there is nothing to connect to yet.
+#: one part of Engine B worth keeping.
 #:
-#: IN-MEMORY IS SUFFICIENT FOR WHAT THE ROWS ACTUALLY DECLARE TODAY and that is a measured
-#: claim, not a convenience. `fin_program_brief`'s row says `thread_id = run id`: state scoped
-#: to ONE run, and the graph runs straight through with no interrupt, so nothing ever resumes
-#: a thread in a second process. Postgres buys durability ACROSS pods and restarts, which
-#: matters the moment a graph interrupts for a human — `HumanAwaitStep` — and not before.
+#: IT IS WIRED NOW, and this paragraph said the opposite for as long as it was true. It read
+#: "It is NOT wired: `graphHost.env` is `{}` in values.yaml and no DSN reaches this pod" —
+#: accurate when written, false from `e36aa55`, which composed
+#: `GRAPH_HOST_POSTGRES_DSN` from the shared BPMN parts. Measured in the running pod on
+#: 2026-09-15: `[engine-lg] checkpointer: postgres (durable=True, ready=True)`.
+#:
+#: A STALE NEGATIVE IS THE EXPENSIVE KIND. A reader arriving at a 422 about `thread_id`
+#: would have read this and concluded no checkpointer could be active, then looked for the
+#: cause somewhere it was not. The claim was precise, sourced and wrong, which is what made
+#: it credible — so it names its own supersession rather than being quietly deleted.
+#:
+#: WHAT THE ROWS DECLARE IS UNCHANGED. `fin_program_brief`'s row says `thread_id = run id`:
+#: state scoped to ONE run, and the graph runs straight through with no interrupt, so
+#: nothing resumes a thread in a second process. Postgres buys durability ACROSS pods and
+#: restarts, which matters the moment a graph interrupts for a human — `HumanAwaitStep`.
+#: The difference is that the durability is now real rather than pending.
 #:
 #: SO THE DEGRADATION IS NAMED WHERE IT CAN BE READ, not left to be inferred: the saver in use
 #: is logged at boot and reported by `/health`. A durable-looking declaration served by
@@ -124,11 +134,125 @@ def _load_builder(m: GraphManifest):
 _CHECKPOINT_DSN_ENV = "GRAPH_HOST_POSTGRES_DSN"
 
 
+#: The saver opened by the lifespan, or None when no DSN was declared. Module-level because
+#: `load_graphs` compiles against it and the lifespan must therefore open it FIRST.
+_SAVER: Any = None
+
+#: What actually happened when we tried, so readiness and `/health` read the same fact rather
+#: than each deriving one. R-012: the two reads answer different questions and neither may
+#: guess. `open_error` is kept verbatim — a DSN that is declared and unreachable is a
+#: different failure from one that was never declared, and they need different fixes.
+_SAVER_STATUS: dict = {"kind": "in-process", "durable": False,
+                       "dsn_configured": False, "open_error": None}
+
+
+async def _open_saver(stack: Any) -> None:
+    """Open the durable checkpointer if a DSN is declared. NO DEFAULT DSN — R-012.
+
+    A plausible default here would point at *some* Postgres and silently checkpoint a
+    programme's brief into whatever it reached. Absent means absent, and readiness says so.
+    """
+    global _SAVER
+    dsn = os.getenv(_CHECKPOINT_DSN_ENV)
+    _SAVER_STATUS.update({"dsn_configured": bool(dsn), "open_error": None})
+    if not dsn:
+        _SAVER = None
+        _SAVER_STATUS.update({"kind": "in-process", "durable": False})
+        return
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        saver = await stack.enter_async_context(AsyncPostgresSaver.from_conn_string(dsn))
+        # ASSERTED REACHABLE AT OPEN, not on first use. `setup()` creates the checkpoint
+        # tables and round-trips the connection, so a DSN that is declared-but-wrong fails
+        # HERE, named, instead of at the first graph a user runs.
+        await saver.setup()
+        _SAVER = saver
+        _SAVER_STATUS.update({"kind": "postgres", "durable": True})
+    except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+        _SAVER = None
+        _SAVER_STATUS.update({"kind": "in-process", "durable": False,
+                              "open_error": f"{type(exc).__name__}: {exc}"})
+
+
 def _saver_for(m: GraphManifest) -> Any:
-    """The checkpointer a row's `checkpointer: true` actually gets."""
+    """The checkpointer a row's `checkpointer: true` actually gets.
+
+    Falls back to process memory when no durable saver opened, so the engine still SERVES
+    rather than crash-looping — readiness is what refuses, per R-011/R-012, because a failing
+    liveness probe on a missing config turns a slow dependency into a crash loop.
+    """
     from langgraph.checkpoint.memory import InMemorySaver
 
-    return InMemorySaver()
+    return _SAVER if _SAVER is not None else InMemorySaver()
+
+
+def checkpointer_readiness() -> tuple[bool, dict]:
+    """R-012's THREE STATES, and the middle one is why this is not just `durable or fail`.
+
+        stateful rows AND no durable saver   -> NOT READY, naming the variable
+        NO stateful rows AND no DSN          -> ready; `/health` says in-process
+        durable saver open                   -> ready
+
+    A row declaring `checkpointer: true` served by process memory is a promise the engine
+    cannot keep across a restart or a second replica. Refusing readiness removes the pod from
+    the Service rather than killing it, which is the correct cost: the config is wrong, not
+    the code.
+    """
+    stateful = sorted(gid for gid, (mm, _g) in (_LOADED or {}).items() if mm.checkpointer)
+    if not stateful:
+        return True, {"checkpointing": "not required — no admitted row declares one",
+                      **_SAVER_STATUS}
+    if _SAVER_STATUS.get("durable"):
+        # THE REPORT MUST AGREE WITH THE OBJECTS, and this is the only check that can tell
+        # them apart. `load_graphs` COMPILES each stateful row against whatever `_saver_for`
+        # returns at that moment. Open the saver AFTER compilation and every graph carries an
+        # InMemorySaver while `_SAVER_STATUS` says durable — the engine reports durability it
+        # does not have, readiness passes, and the loss shows up only as a thread that will not
+        # resume, on a restart, in production.
+        #
+        # THIS IS THE `registered 3/3` SHAPE FOR DURABILITY: a status line derived from the
+        # ATTEMPT rather than from the RESULT. So it is derived from the result — identity, not
+        # truthiness, because an InMemorySaver is perfectly truthy.
+        wrong = sorted(
+            gid for gid, (mm, g) in (_LOADED or {}).items()
+            if mm.checkpointer and getattr(g, "checkpointer", None) is not _SAVER
+        )
+        if wrong:
+            return False, {
+                "checkpointing": "REPORTED DURABLE, COMPILED AGAINST SOMETHING ELSE",
+                "stateful_graphs": stateful,
+                "reason": (
+                    f"{wrong} compiled against a checkpointer that is not the opened saver. "
+                    f"The saver must be opened BEFORE load_graphs, which compiles against it; "
+                    f"opened afterwards it is held by nothing while this engine reports "
+                    f"durable. Ordering defect in the lifespan, not configuration."
+                ),
+                **_SAVER_STATUS,
+            }
+        return True, {"checkpointing": "durable", "stateful_graphs": stateful, **_SAVER_STATUS}
+    if _SAVER_STATUS.get("open_error"):
+        return False, {
+            "checkpointing": "DECLARED BUT UNREACHABLE",
+            "stateful_graphs": stateful,
+            "reason": (
+                f"{_CHECKPOINT_DSN_ENV} is set and the checkpointer could not be opened: "
+                f"{_SAVER_STATUS['open_error']}. These graphs would checkpoint to process "
+                f"memory and lose their threads on restart."
+            ),
+            **_SAVER_STATUS,
+        }
+    return False, {
+        "checkpointing": "UNDECLARED",
+        "stateful_graphs": stateful,
+        "reason": (
+            f"{_CHECKPOINT_DSN_ENV} is not set, and {len(stateful)} admitted row(s) declare "
+            f"`checkpointer: true`: {stateful}. Set it in graphHost.env. Serving these from "
+            f"process memory would honour the declaration only until the next restart, and "
+            f"not at all across replicas."
+        ),
+        **_SAVER_STATUS,
+    }
 
 
 def checkpointer_durability() -> dict:
@@ -141,17 +265,17 @@ def checkpointer_durability() -> dict:
     import os
 
     stateful = sorted(gid for gid, (mm, _g) in (_LOADED or {}).items() if mm.checkpointer)
+    ready, detail = checkpointer_readiness()
     return {
-        "saver": "in-memory",
-        "durable_across_restarts": False,
+        "saver": _SAVER_STATUS["kind"],
+        "durable_across_restarts": bool(_SAVER_STATUS["durable"]),
         "stateful_graphs": stateful,
-        "postgres_dsn_configured": bool(os.environ.get(_CHECKPOINT_DSN_ENV)),
-        "note": (
-            "state is scoped to this process. Every ratified row today declares "
-            "thread_id = run id and runs straight through, so nothing resumes a thread in a "
-            "second process. A graph that INTERRUPTS for a human needs AsyncPostgresSaver "
-            f"and a {_CHECKPOINT_DSN_ENV}; the dependency is declared and the DSN is not wired."
-        ),
+        "postgres_dsn_configured": bool(_SAVER_STATUS["dsn_configured"]),
+        "open_error": _SAVER_STATUS["open_error"],
+        # THE BOOLEAN IS NOT LEFT TO BE READ. A field nobody looks at is the log line nobody
+        # greps; readiness is the half that ACTS, and this says which way it went.
+        "ready": ready,
+        "detail": detail.get("reason") or detail.get("checkpointing"),
     }
 
 
@@ -247,18 +371,34 @@ from contextlib import asynccontextmanager  # noqa: E402
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _LOADED
-    _LOADED = load_graphs()
+    # THE SAVER OPENS BEFORE THE GRAPHS, and the order is load-bearing rather than tidy:
+    # `load_graphs` COMPILES each stateful row against the saver, so a saver opened afterwards
+    # would be held by nothing. The graphs would compile against process memory and the engine
+    # would report durable.
+    from contextlib import AsyncExitStack
 
-    # NO SUCCESS LINE THAT DOES NOT CHECK SUCCESS. This says what was LOADED, which is a fact
-    # this line can see. It deliberately does not say "registered": `✅ Registered` printed on a
-    # path that did not register is the single most expensive line this repo has shipped — an
-    # engine logged fourteen ticks and booted green while every registration failed.
-    print(f"[{COMPONENT}] {len(_LOADED)} ratified graph(s) loaded: {sorted(_LOADED)}", flush=True)
+    async with AsyncExitStack() as stack:
+        await _open_saver(stack)
+        _LOADED = load_graphs()
 
-    if os.getenv("MESH_REGISTER_ON_STARTUP", "false").lower() in ("1", "true", "yes"):
-        await asyncio.get_running_loop().run_in_executor(None, _register_all)
-    yield
-    _LOADED = {}
+        # NO SUCCESS LINE THAT DOES NOT CHECK SUCCESS. This says what was LOADED, which is a
+        # fact this line can see. It deliberately does not say "registered": `✅ Registered`
+        # printed on a path that did not register is the single most expensive line this repo
+        # has shipped — an engine logged fourteen ticks and booted green while every
+        # registration failed.
+        print(f"[{COMPONENT}] {len(_LOADED)} ratified graph(s) loaded: {sorted(_LOADED)}",
+              flush=True)
+        # SAID AT BOOT, not only on a probe nobody calls. Which saver is in use decides whether
+        # a stateful row's promise survives this pod.
+        _ok, _detail = checkpointer_readiness()
+        print(f"[{COMPONENT}] checkpointer: {_SAVER_STATUS['kind']} "
+              f"(durable={_SAVER_STATUS['durable']}, ready={_ok}) "
+              f"{_detail.get('reason') or ''}".rstrip(), flush=True)
+
+        if os.getenv("MESH_REGISTER_ON_STARTUP", "false").lower() in ("1", "true", "yes"):
+            await asyncio.get_running_loop().run_in_executor(None, _register_all)
+        yield
+        _LOADED = {}
 
 
 _announce_transport_auth(component=COMPONENT)
@@ -331,6 +471,26 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
             ),
         )
 
+    # THE THREAD IS THE CALLER'S RUN, AND THE OLD FALLBACK WAS A SHARED ONE. This read
+    # `request.thread_id or graph_id`: every request arriving without a thread_id checkpointed
+    # into a single thread NAMED AFTER THE GRAPH. On process memory that was already wrong and
+    # bounded; against a durable saver it is a cross-caller state leak — the next caller
+    # resumes the previous caller's brief, and reducers that append would merge two programmes'
+    # findings into one answer.
+    #
+    # So for a STATEFUL row the thread is required and its absence is a 422 naming it (the row
+    # declares `thread_id = run id`; the router supplies it). A stateless row keeps the old
+    # tolerance, because nothing is written and there is nothing to collide.
+    if m.checkpointer and not request.thread_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{graph_id} declares `checkpointer: true`, so it needs a thread_id to "
+                f"checkpoint under — the row's contract is `thread_id = run id`. Refused "
+                f"rather than defaulted: the old default was the graph's own name, which "
+                f"every caller would have shared."
+            ),
+        )
     state = dict(request.params)
     state["identity"] = identity
     config: dict = {"configurable": {"thread_id": request.thread_id or graph_id,
@@ -389,7 +549,13 @@ async def ready() -> dict:
     st = registration_status()
     if not registration_is_ready():
         raise HTTPException(status_code=503, detail=st)
-    return {"status": "ready", **st}
+    # R-012: A MISSING DECLARATION FAILS READINESS, NAMING THE VARIABLE. Checked after
+    # registration so the two reasons never merge into one unreadable 503 — a reader must be
+    # able to tell "the mesh has not accepted me yet" from "my state has nowhere durable to go".
+    ck_ok, ck = checkpointer_readiness()
+    if not ck_ok:
+        raise HTTPException(status_code=503, detail={"status": "checkpointer-not-ready", **ck})
+    return {"status": "ready", **st, "checkpointing": ck.get("checkpointing")}
 
 
 if __name__ == "__main__":

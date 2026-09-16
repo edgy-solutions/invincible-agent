@@ -15,3 +15,10 @@ baml_shared/baml_client/** text eol=lf
 # stays CRLF locally and breaks only on the Linux side. Found 2026-08-22 when a "CI-matching"
 # run died before its first test.
 *.sh text eol=lf
+
+# Shell hooks MUST be LF. A CRLF hook does not run: bash reports a syntax error at the first
+# line with an argument, git prints it and continues, and the rule it enforces is silently off.
+# Found 2026-09-15 when a Python rewrite of .githooks/pre-push converted 100 line endings and
+# `bash -n` began failing at line 52 while `sh -n` still passed — the two shells disagreeing is
+# what made it look like a syntax bug rather than an encoding one.
+.githooks/* text eol=lf

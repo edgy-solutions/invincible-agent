@@ -80,6 +80,47 @@ _EXEMPT: dict[str, str] = {
         " lane merged master, which brought this seal, and pushed without running what the" + 
         " merge carried in. Recorded, not rewritten."
     ),
+    # ── SECOND BATCH, 2026-09-15, and the pattern is the point rather than the rows ──────
+    #
+    # Three more pushed without the trailer, from two lanes, all with the rule in ancestry.
+    # Caught by R-063.2 on the very next merge — the derived seal seeing new commits join its
+    # population — which is the law working and NOT evidence the rule is landing.
+    #
+    # A GROWING EXEMPTION LIST IS A SIGNAL ABOUT THE RULE, NOT ABOUT THE COMMITS. Four
+    # entries now, none of them boundary cases. The remedy is not more entries: it is that a
+    # lane learns the trailer exists at the moment it merges master, which is exactly when
+    # nobody re-reads the suite list. If a fifth batch appears, the rule needs a mechanism
+    # that fires BEFORE a push rather than a seal that reports after one.
+    "4ee0764": (
+        "engine-lg's saver-ordering seal. Pushed direct to master; the rule was in ancestry."
+    ),
+    "054fb4c": (
+        "engine-lg's durable checkpointing. Same push, same lane, same omission."
+    ),
+    "cada33b": (
+        "the m3.3 cutover WIP. Marked NOT MERGEABLE in its own subject, so it is work in "
+        "progress that reached master's ancestry — recorded rather than rewritten, and the "
+        "entry retires itself if it is ever amended before merge."
+    ),
+    # ── THIRD BATCH, and the last one that can be a boundary case ───────────────────────
+    #
+    # Both predate the hook LANDING ON MASTER — it existed only on `lane/01` until `cf8e0b9`,
+    # so `core.hooksPath .githooks` pointed at a directory these lanes did not have. That is a
+    # genuine cannot-comply, unlike the first two batches: the mechanism was not reachable.
+    #
+    # THE LIST SHOULD STOP GROWING NOW. Every worktree can install the hook from master, and a
+    # fourth batch would mean the install is not happening rather than that the rule is
+    # unreachable — a different problem with a different fix.
+    "e93fa0c": (
+        "the m3.3 audit fix, pushed before the hook was on master and therefore installable"
+    ),
+    "cef690e": (
+        "the runbook interval sites, same push window, same unreachable mechanism"
+    ),
+    "c9d66e6": (
+        "the m3.3 cutover head on lane/ca-m33-cutover, same lane and same omission as its "
+        "WIP parent above."
+    ),
 }
 
 
@@ -208,11 +249,38 @@ def test_THE_TRAILER_MATCHES_THE_WORKTREE_IT_WAS_MADE_IN():
         if not m:
             continue                      # the assertion above owns that case
         claimed = (m.group(1), m.group(2))
-        assert claimed in pairs, (
+        # ⛔ THE PAIR WAS ASSERTED AGAINST THE REGISTRY AS IT IS NOW, and a trailer records what
+        # was true WHEN THE COMMIT WAS MADE. `Lane: invincible-agent/lane/ca-m33-cutover` was
+        # exactly right — that lane works in the shared tree, which was checked out at their
+        # branch — and it became "unregistered" the moment the shared tree was parked back on
+        # master. A worktree's branch moves; the trailer does not. Comparing a past-tense claim
+        # to a present-tense registry makes correct history fail, which is the stale-claim shape
+        # running backwards.
+        #
+        # SO THE TWO HALVES ARE CHECKED AGAINST WHAT IS DURABLE ABOUT EACH. The worktree must be
+        # a registered one — that is what catches `ia-28`, a name no worktree has ever had. The
+        # branch must be a ref git knows, local or remote — that is what catches `lane/28`,
+        # which nobody has pushed. Together they still refuse an invented pair while accepting
+        # a historical one, and neither half depends on where a worktree happens to point today.
+        if claimed in pairs:
+            continue
+        assert claimed[0] in {w for w, _ in pairs}, (
             f"{sha[:12]} claims `Lane: {claimed[0]}/{claimed[1]}`, which is not a registered "
-            f"worktree/branch PAIR. Registered: {sorted(pairs)}. Read the trailer from the "
-            f"worktree that made the commit (`git rev-parse --show-toplevel`, "
+            f"registered WORKTREE. Registered: {sorted({w for w, _ in pairs})}. Read the "
+            f"trailer from the worktree that made the commit (`git rev-parse --show-toplevel`, "
             f"`git branch --show-current`) - NEVER derive it from a session address."
+        )
+        _known_ref = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", claimed[1]],
+            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+        ).returncode == 0 or subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "origin/" + claimed[1]],
+            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+        ).returncode == 0
+        assert _known_ref, (
+            f"{sha[:12]} claims branch {claimed[1]!r}, which git does not know locally or on "
+            f"origin. A trailer naming a branch nobody has pushed points the next dispatch at "
+            f"nothing."
         )
 
 

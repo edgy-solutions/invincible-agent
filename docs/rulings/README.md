@@ -2592,6 +2592,31 @@ written — and never ran the trailer seal a master merge had just carried in.
 rather than a lane being behind: `lane/eo` and `lane/91` hit the same check from different
 directions within an hour, neither having been able to comply.
 
+### R-063.2 — A MERGE ALSO ENLARGES THE POPULATION OF SEALS THAT ALREADY EXISTED
+
+**Found against my own application of R-063, within the hour of filing it.**
+
+I merged a lane's commit, correctly ran the new seal FILE it brought (`tests/graph_host/…`, 39
+passed), and pushed. Master went red on `test_every_import_is_a_declared_dependency` — an OLD
+seal, which I did not run, because the merge brought it no changes.
+
+**It did not need to.** That seal scopes over `tests/`, so a new test file joins its population by
+existing. The merge added `from typing_extensions import …`, a distribution no pyproject names,
+and the seal caught it exactly as designed.
+
+> **"Run what the merge brought" is not "run the files the merge touched."** New code enters the
+> populations of every derived seal, and a derived seal's whole point is that it quantifies over
+> a set nobody maintains by hand.
+
+**How to apply:** after a merge, run the new files AND the seals that derive their population from
+a directory or a glob — those are precisely the ones a merge can break without touching. When in
+doubt the full suite is the answer, which is again why a seal's cost decides whether it survives.
+
+**AND THE FIX WAS THE FIXTURE AGREEING WITH ITS SUBJECT.** Both graphs the seal exercises import
+`Annotated` and `TypedDict` from `typing`; the test imported them from `typing_extensions`. A
+fixture importing what its subject does not is a small version of the stub problem that same seal
+was written about — the state type would be built by a different mechanism than the graphs'.
+
 **How to apply:** after a merge, the population of relevant suites is not the one you reasoned
 about before it. Run what the merge brought, or run everything — and note that "run everything"
 is only sustainable if the seals are cheap, which is why **a seal's cost is part of whether it
@@ -2621,6 +2646,413 @@ Related: R-030 (published history is not rewritten — the reason the trailer wa
 fixed by amending); R-058.1.
 
 ---
+
+## R-064 — PRESENT ON THE MACHINE THAT WROTE IT, ABSENT EVERYWHERE IT MATTERS
+
+**The TTL-not-in-the-manifest shape, restated for a BUILD INPUT.**
+
+`cost_agent.package_export` needs the pinned Pyodide runtime. It lived in `.pyodide-cache/` —
+**gitignored, zero tracked files.** Every developer who had ever built a package had it; CI had
+nothing to copy; every deployed engine refused the export by name, honestly and permanently.
+
+It was not missing. It was *somewhere that is not the place the work happens* — which is exactly
+`iof_mro.ttl` on disk and absent from `CANONICAL_TTL_MANIFEST`, and exactly a hand-run Cypher
+that no bootstrap reproduces.
+
+> **The act that needs the input fetches it, pinned — a human's disk is never the source.**
+
+Here: CI runs the builder's own `--fetch-runtime` at the pinned `PYODIDE_VERSION`, and git does
+not carry 14 MB. The fetch step **refuses** rather than building a crippled image: an image with
+the builder and half a runtime passes every test and fails at answer time with a missing-files
+list, which is the slow way to learn CI had no network.
+
+**THE TELL is a capability that works for everyone who built it and for nobody else** — and it
+reads as working, because the people asking are the people who have it.
+
+---
+
+## R-065 — NO FIXTURE DRAWN FROM THIS REPO CAN DISCRIMINATE TWO RULES A REAL CHECKOUT BOTH SATISFIES
+
+`_repo_root()` was changed from *"does this tree look like a checkout"* (`scripts/` and
+`agent_fleet/`) to *"can a package be built here"* (the builder and the runtime). The seal asserted
+the new rule. **Restoring the old one under a different variable name killed nothing.**
+
+Two reasons, and the second is the one that generalises:
+
+  1. the assertion matched a STRING, so a rename evaded it; and
+  2. **a real checkout satisfies BOTH rules**, so every fixture available in the tree agrees with
+     both, and the seal could not have discriminated however it was written.
+
+> **The distinguishing case did not exist in the repository and had to be CONSTRUCTED** — a
+> flattened `/app`: `scripts/` holding the builder, `.pyodide-cache/` holding the runtime, and no
+> `agent_fleet/` anywhere. The old rule answers None there; the new one resolves.
+
+This is `lane/32`'s stub from the other side. There, a double supplied the property under test and
+so could never see its absence. Here, every available fixture satisfied the property under test
+and so could never see which rule produced it. **Both are the subject and the instrument agreeing
+because they were drawn from the same place.**
+
+**AND IT IS WHY A BUILD SEAL RUNS AGAINST THE IMAGE, NOT THE TREE.** The tree is the one
+environment where the question cannot be asked: everything the deployed artifact might lack is
+present. The started-service CI seal has the same justification — a liveness check against a pod
+asks the service its opinion of itself; a check against the image asks what was shipped.
+
+Related: R-041; [[a-seal-that-defends-a-choice]] — a seal defending a choice must assert its own
+fixture distinguishes the rejected rule, which is this law's instruction rather than its
+observation; R-057.
+
+---
+
+---
+
+## R-055 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+
+**Three shapes in one day, filed as one entry because they will be recognised faster as a family
+than as instances.** In every one the failure **was** recorded, correctly, by code that was doing
+its job — and every one produced **a surface that looked fine over something that did not
+happen.**
+
+| shape | where the truth was | what the reader saw |
+|---|---|---|
+| **the LOG** | four WARNING lines: `mint failed 5/5` | `registered 3/3`, pod `1/1 Ready`, mesh empty |
+| **the COLUMN** | `status: failed` in the artifact row | a blank card, indistinguishable from an empty success |
+| **the WRONG COLUMN** | `routing.excluded[]` named the gate | `resolved_intent` held slots and no verb |
+
+**ALL THREE WERE FOUND BY READING THE ROW RATHER THAN THE SCREEN**, and none was found by the
+thing that was supposed to report it.
+
+### The third is the subtlest and cost the most
+
+`artifact-2-1789404372153`, `status: failed` in 191ms, entire intent:
+
+    {"refused_slots": [], "accepted_slots": {"program_id": "NP-MERIDIAN"}}
+
+**The slot that was bound, and not the verb that refused it.** Three reads to learn that
+`mesh:finProgramBrief` was excluded on an **arity** gate immediately after an elicitation supplied
+its one slot.
+
+**NOTHING WAS LOST. IT WAS UNFINDABLE FROM WHERE A READER STARTS.** The field naming the ACTION had
+been dropped from the field recording the INTENT — so a reader who opened `resolved_intent`, *the
+field whose name promises exactly that*, saw slots and no verb. **Both halves were recorded
+correctly and separately, and nothing named the verb in the field that would have joined them.**
+
+> **Recorded in a column a reader does not start from is the same as not recorded, for anyone
+> diagnosing under time.**
+
+### The remedy is not "log more"
+
+Each repair puts the fact **where the person who hits it is already looking**: the registration
+returns a result its caller counts; the card names `status` and the exclusion reason; the artifact
+carries the verb beside the slots. **None of the three added information — all three moved it.**
+
+### And the method note is the law from the retraction, proven
+
+`invincible-agent-22` misidentified an artifact by selecting on **the fields the ask/answer pair is
+built to share** — same question, same subject, same verb, short summaries on both. **One query on
+`derived_from_artifact_id` — the RELATION — resolved what three reads on the description could
+not.** *Select on the relation between two records, never on their common description.*
+
+## R-066 — A HOOK BROKEN BY ENCODING FAILS TOTALLY AND SILENTLY
+
+**Measured 2026-09-15 while building the pre-push trailer guard.** A Python rewrite converted 100
+line endings to CRLF. After it:
+
+    bash -n .githooks/pre-push   ->  syntax error near unexpected token `newline`, line 52
+    sh   -n .githooks/pre-push   ->  clean
+
+**Two shells disagreeing about a script that had not changed reads as a syntax bug in the
+script.** It is not; it is the file. And the runtime failure is worse than the check's: **git
+prints the hook's error and carries on**, so the push succeeds, the rule the hook enforces is
+simply off, and nothing anywhere says so. A guard that cannot run is indistinguishable from a
+guard that ran and approved.
+
+**THE PIN IS THE FIX, AND THE SEAL ON THE PIN IS WHAT MAKES IT THE REPOSITORY'S.**
+`.gitattributes` carries `.githooks/* text eol=lf` beside the `*.sh` pin that was already there
+for the same reason; a seal asserts the hook has zero CRLF **and** that the pin exists. Without
+the second arm the check passes in this working copy and the hook is broken in the next one —
+a property of a checkout rather than of the repository, which is the same distinction as a TTL on
+someone's disk (R-064).
+
+### R-066.1 — THREE "NO SUCH FILE" ERRORS FOR A FILE THAT WAS PRESENT
+
+The same build produced three failures in a row, all reporting absence about something present:
+
+    bash -n <Windows path>    backslashes stripped   -> "No such file or directory"
+    bash -n C:/...            Git Bash wants /c/...  -> "No such file or directory"
+    CRLF in the script        the file is fine       -> a syntax error at line 52
+
+> **An addressing failure and an absence report the same way.** The tool is telling you what it
+> could not reach, and a reader hears what is not there.
+
+It is the probe-sent-the-wrong-field-name shape (R-057's instrument half) in a different costume:
+the instrument could not ask the question, and its inability was reported in the vocabulary of an
+answer.
+
+**How to apply:** when a tool reports a file missing, `ls` it before believing the tool — and when
+two tools disagree about one unchanged file, suspect the FILE's encoding before either tool.
+
+### R-066.2 — A CLIENT-SIDE GUARD FAILS OPEN, AND THAT IS NOT R-012 INVERTED
+
+R-012 fails CLOSED: a service with a missing declaration refuses through its readiness probe, and
+that refusal is visible, addressed to an operator, and leaves the service up while it is fixed.
+
+**A client-side hook has no such surface.** One that blocks every push on its own missing input —
+a shallow clone that lacks the rule commit — is removed within the hour, by `--no-verify` or by
+unsetting `core.hooksPath`, and then the rule has NEITHER arm rather than one.
+
+> **A guard that survives is worth more than a guard that is correct and gone.**
+
+So the division is deliberate and asserted: the **seal** is the fail-closed half, refusing in CI
+where a refusal is seen and cannot be locally disabled; the **hook's** job is to be PRESENT. The
+reason is recorded beside the skip, because the next reader meets fail-open and reaches for R-012.
+
+---
+
+## R-067 — A CHECK THAT A FLAG IS MENTIONED IS NOT A CHECK THAT THE INVOCATION PARSES
+
+The workflow's fetch step contained `--fetch-runtime`. The seal asserted exactly that, and passed.
+The command could not run:
+
+    build_cost_package.py: error: the following arguments are required: --recipient
+
+`--recipient` was `required=True` unconditionally, so the flag's own documented standalone use —
+*"download the pinned Pyodide runtime into --runtime-dir"* — was unreachable. **The string was
+present and the behaviour was absent**, and the build failed at the first push.
+
+> **An assertion satisfied by TEXT rather than by BEHAVIOUR passes for the wrong reason.**
+
+Same family as a slice that runs too wide: neither fails, both agree with something adjacent to
+the claim. **The fix is the same in both cases — run the exact thing.** For a CI command that
+means invoking it in the seal, or at minimum reading the parser's own declaration rather than the
+caller's spelling of it.
+
+---
+
+## R-068 — MOVE WORKTREE ON PURPOSE BEFORE TRUSTING A SEAL
+
+Moving Lane 1 out of the shared tree into `ia-01` was ruled for a different reason entirely — a
+branch hazard. It also turned out to be **a population change**, and it found FOUR seals that were
+statements about a working copy rather than about the repository, in one afternoon.
+
+`.pyodide-cache/` is gitignored, so it exists in whichever checkout last fetched it and in no
+other. Three seals passed only where the runtime happened to sit — **two of them written about
+exactly that hazard**, in the same change that named it. The fourth compared a trailer to a
+registry that had moved.
+
+> **A worktree move is the cheapest population change available**, and green-wherever-the-
+> environment-obliged is invisible until the environment stops obliging.
+
+**How to apply:** a seal that reads the filesystem, git state, or anything outside the tracked tree
+has not been tested until it has run somewhere else. A fresh worktree costs one command. It is the
+same instrument as a planted control — it asks whether the green was about the subject or about
+the room.
+
+Related: R-064 (present on the machine that wrote it); R-065 (no fixture from this repo can
+discriminate two rules a real checkout both satisfies) — this is the operational move that makes
+both of those findable rather than argued.
+
+---
+
+## R-069 — A TRAILER IS A PAST-TENSE CLAIM; A REGISTRY IS PRESENT-TENSE
+
+`Lane: invincible-agent/lane/ca-m33-cutover` was **correct when it was written**: that lane works
+in the shared tree, which was then checked out at their branch. It became "unregistered" the
+moment the shared tree was parked back on master — and the pair seal failed correct history.
+
+> **A worktree's branch moves. A trailer does not.** Comparing a record of what WAS to a registry
+> of what IS makes true history fail, which is the stale-claim shape running backwards.
+
+**THE FIX IS TO CHECK EACH HALF AGAINST WHAT IS DURABLE ABOUT IT.** The worktree must be one the
+registry knows — worktrees are long-lived and that is what catches `ia-28`, a name no worktree has
+ever had. The branch must be a ref git knows, local or remote — that is what catches `lane/28`,
+which nobody has pushed. `ia-28/lane/28` still fails both, which is the control that keeps the
+loosening honest.
+
+**The general form:** when an assertion compares a record to a live source, ask which one is
+allowed to change. If the live source is, the assertion is about a moment and must say which.
+
+---
+
+---
+
+## R-070 — A SEAL THAT READS COMMITTED HISTORY IS BLIND AT THE MOMENT IT IS NEEDED
+
+`tests/test_chart_version_tracks_chart_content.py` asserts that chart content did not move after
+the last `Chart.yaml` edit. It is a correct rule and it was **GREEN** through `e36aa55`, which
+added `GRAPH_HOST_POSTGRES_DSN` to `values.yaml` without a bump. The release workflow refused the
+push minutes later.
+
+Nothing was wrong with the seal's logic. Its inputs are `git log` queries, so at the instant the
+suite ran — change in the working tree, not yet committed — the newest commit touching `helm/`
+*was* still an ancestor of the newest commit touching `Chart.yaml`. **The check ran, its premise
+was true, and it answered a question about a state that had already been published.**
+
+> The only person who can fix this cheaply is the one who has not committed yet, and that is
+> exactly the person a committed-history seal cannot speak to. Once the commit is pushed, R-030
+> forbids rewriting it and the remedy is always a follow-up commit.
+
+Same shape as the Lane trailer, whose exemption list grew four entries in one day before the rule
+moved into a pre-push hook (R-058.1): *a check whose remedy is always "record it and move on" is
+reporting, not enforcing.*
+
+**THE RULE.** A seal over version control state declares which state it reads. If it reads
+committed history, it carries a companion arm over `git status` that fires **before** the commit,
+and that arm needs a fixture — it is silent in a clean tree, and silence is indistinguishable
+from correctness. Synthetic input, never a touched file: a run that mutates the tree it is
+measuring is invalid in both directions.
+
+**AND THE COMPANION ARM'S FIRST DRAFT WAS ITSELF THE BUG IT EXISTS TO CATCH.** It parsed
+`git status --porcelain` with a fixed `line[3:]` slice through a helper that `.strip()`s stdout —
+which eats the leading space of the two-column status **on the first line only**. The arm
+reported `elm/invincible-agent/Chart.yaml` and failed a correctly-bumped tree. A path mangled by
+one character is still path-SHAPED, so it read as a finding rather than as a broken instrument.
+Parse by separator, not by offset, wherever a helper may have normalised the text.
+
+---
+
+## R-071 — A COMMAND'S COVERAGE AND A SENTENCE'S CLAIM ARE TWO DIFFERENT THINGS
+
+> The defect doesn't live at a scale, it lives in the gap between what the command covered and
+> what the sentence claimed. **Say what a command covered in the same breath as what it found,
+> and treat a definite article in a finding as a question.**
+
+Three instances in one day, three scales, one habit — recorded by `invincible-agent-28`:
+
+| the command | the sentence |
+|---|---|
+| `limit 200` over 21,547 rows, unordered | a claim about the population |
+| three of eleven grep hits read | a claim about all eleven |
+| `kubectl -A` against ONE cluster | *"the cluster"* |
+
+**THE SAMPLE WAS BIASED TOWARD THE ANSWER IT COULD NOT SHOW.** An unordered `limit` returns
+whichever shard segment answers first, which in that case was the segment least likely to contain
+what was being looked for. A sample is not merely partial — it can be partial in the direction
+that hides the thing.
+
+***"The cluster"* is the world you hold credentials for.** The fleet has at least two and one sits
+behind the work-cluster fence, so a definite article silently promoted a scoped read into a
+universal claim. That is why the rule is about the ARTICLE and not about the flag.
+
+**THE DISPOSITION: NARROW, DO NOT RETRACT.** All three operational conclusions survived the
+narrowing. In the NetworkPolicy case the useful statement split into two — *the chart carries no
+manifest, so it cannot apply one anywhere* (checkable everywhere) and *ca's lint is the only
+instrument in any deployment the chart governs* (true where credentials reach) — and both are
+true once separated. A finding that overclaims is usually a true finding wearing a borrowed scope,
+and deleting it loses the measurement along with the error.
+
+
+**AND THE SAME GAP OPENS WHEN THE SENTENCE IS ABOUT THE WORK RATHER THAN THE INSTRUMENT.** Two
+instances the same day, neither with any instrument pointed at it:
+
+* **Lane 1's, cost an exchange.** Declined to take a stale-xfail fix off another lane on the
+  stated reason *"it collides on their rebase in a file they are actively holding"*. Never
+  measured. The other lane believed it for a full exchange and did not measure it either;
+  `git diff --name-only origin/master...HEAD` then showed five commits, seven files, no overlap.
+  The deferral bought nothing but a day of the hole staying open.
+* **`invincible-agent-28`'s, cost a VIOLATION.** Bumped the SDK pin for engine-o alone, reasoning
+  *"moving fifteen pins is a fleet change with a roll behind it, not a lane's."* `test_lock_coherence`
+  refused the result: **the fleet pin is a single value by construction.** So "bump one engine" was
+  not a smaller, safer version of the act — it WAS the act, done wrongly.
+
+> **Restraint was not the conservative option; it was the only wrong one available.**
+
+**THE TELL IS IDENTICAL IN BOTH AND IT IS WHY THIS BELONGS IN THE REGISTER:** both would have
+checked a claim about the CODE. Neither checked a claim about the SHAPE OF THE WORK — *what this
+lane may do*, *what belongs to someone else*, *what is too big to attempt* — because a reason for
+doing LESS does not feel like something that needs evidence. A positive claim proposes an action
+and the action draws review; an obstacle proposes nothing, closes the question, and leaves no
+reviewer. It also reads as caution, so challenging it looks reckless rather than rigorous.
+
+**The rule, therefore, covers both halves:** state what a command covered beside what it found,
+AND state a blocker as a checkable claim and check it. Where it cannot be checked cheaply, say
+*"I believe X blocks this and have not verified it"* — so the other party knows a load-bearing
+premise is untested rather than settled.
+
+See [[a-sample-is-not-the-population]], [[assert-on-the-claim-not-its-neighbour]].
+
+---
+
+## R-072 — THREE WAYS A WRITTEN CLAIM GOES WRONG, IN ORDER OF COST
+
+`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-055:
+
+> meaning where nobody reads it · a claim that **BECAME** false · a claim that was **NEVER** true
+
+**THE ORDERING IS THE INSIGHT.** The first two had a moment when checking would have worked. The
+third never did — it was born wrong and aged into authority, which makes it the cheapest to have
+caught and the longest-lived.
+
+Their three instances, all from one day:
+
+1. **Meaning where nobody reads it.** A tripwire whose docstring said exactly what its red meant,
+   triaged as flakiness twice. The explanation existed and was not where the reader was.
+2. **A claim that became false.** A handoff line — *"`caller=` was not adopted because that
+   parameter does not exist in dag-tools yet"* — true when written, still being read as the
+   current reason. See [[a-stale-claim-is-pre-authenticated]].
+3. **A claim that was never true.** An allowlist seal whose OPENING SENTENCE asserted that a
+   NetworkPolicy exists. It would have failed the first time anybody looked, and nobody did.
+
+**A SEAL'S OPENING SENTENCE INHERITS THE AUTHORITY OF EVERY GREEN RUN UNDER IT.** That is what
+makes the third kind expensive: the file accumulates credibility from its passing arms, and the
+prose at the top is read as having been verified by them. It was not. Nothing in a suite checks a
+docstring's first line.
+
+**So the fix belongs at the SEAL, not in a docstring beside it** — an arm that asserts the thing
+the sentence claims, or the sentence rewritten to claim only what an arm covers. Correcting the
+prose alone leaves the same shape one edit later.
+
+Compare R-070: a seal blind at the moment it is needed is the mechanism failing; this is the
+PROSE failing while the mechanism is fine. Both report green.
+
+---
+
+## R-073 — `unsummarised`: A FOURTH DISPOSITION THAT RETIRES BY TEST
+
+The NP-MERIDIAN brief (`artifact-10-1789516344356`) rendered three rows, two of which read
+*"reported (see artifact)"*. That is not a finding and not a hole, and **none of the three
+existing dispositions names it.** The caller is entitled, the verb RAN, the hop artifact exists
+and the brief genuinely derives from it — what is missing is a quotable verdict.
+
+The producer's own contract table says why the near neighbours are wrong
+(`agent_fleet/presentation_agent/main.py:527`, mirroring `cortex-ui/.../NamedHole.contract.ts`):
+
+    unentitled   the caller may not invoke this panel's verb   -> NAMED_HOLE
+    unavailable  the verb failed, timed out, or was refused    -> whole-board refusal
+    empty        the verb answered and legitimately has nothing -> the panel's own rowless card
+
+> "the card refuses anything but `unentitled` … drawing a hole for those would erase the
+> distinction between three different answers."
+
+**Drawing it as `unentitled` tells a reader they lack an entitlement they have. Drawing it as
+`empty` erases a distinction the comment above exists to keep — there IS content. Drawing nothing
+hides a row that has a source.** Raised by `cortex-ui-60` before the payload existed rather than
+read off the wire afterwards, which is the only cheap moment to settle a vocabulary term.
+
+**THE RULING.** A fourth disposition, `unsummarised` — *content exists, verdict absent* — rendered
+as the FINDING row with its artifact link and the label *"no verdict emitted by
+`<verb>`"*, **never as a hole**.
+
+**IT IS TEMPORARY BY CONSTRUCTION, AND THAT IS THE LOAD-BEARING HALF.** Its repair lives on the
+producer: once the verbs emit a verdict line the way `fin_burn_rate` does, nothing can produce it.
+So the seal that lands WITH the disposition asserts that **no built-in verb produces
+`unsummarised`** — the term retires by TEST rather than by somebody remembering it was meant to be
+temporary. A vocabulary term with no expiry mechanism is permanent whatever its docstring says;
+compare R-072's third kind, a claim that was never true aging into authority.
+
+**OWNERS, and each half is refused by the others if it lands alone:**
+
+| who | what |
+|---|---|
+| `cortex-ui-60` | adds it to `NamedHole.contract.ts` — they own the contract |
+| presentation producer | accepts it at `main.py:527`, in the same act |
+| lane 32 | emits it on the brief row instead of printing "see artifact" |
+| lane 91 | makes it unreachable: the verbs emit a verdict (favourable / adverse / none stated) |
+
+**AND THE DISPOSITION IS THE FIELD, NOT THE NAME.** *"Carry the hole by name"* was the original
+wording and it is underspecified: `{hole: "cost_variance"}` leaves the card choosing among states
+with three different repairs and three different readers, and the honest guess is no render at all.
+A row carries `{row: "cost_variance", disposition: "unsummarised", artifact: "..."}` or it carries
+nothing a card can draw. Same absent-versus-empty rule as `disposal` and `failure_cause`.
 
 ---
 
