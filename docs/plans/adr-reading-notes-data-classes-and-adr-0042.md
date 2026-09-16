@@ -302,3 +302,66 @@ door:**
 
 **What is genuinely new is only this:** the four fields as one declared object, carried in three
 write interfaces' signatures, so that crossing a boundary is unwritable rather than reviewed.
+
+## ADR-0031's addendum — the same line, drawn a third time
+
+> **OpenDDIL holds the STATE of the world.** … observation and derivation over a fleet that exists
+> right now.
+> **The reasoning plane holds KNOWLEDGE about the world.** … true of a platform CLASS and changes
+> when a manual is revised, not when an asset moves.
+>
+> That line is the same one the wear-component manifest drew (GD-14): **a fact about a platform
+> class does not belong in a per-asset record.** Here it is drawn between systems rather than
+> between files.
+
+**THAT IS ADR-0051 §6.1's SPLIT, DRAWN BETWEEN SYSTEMS INSTEAD OF BETWEEN GRAPHS** — and GD-14
+drew it between files. Three instances, three granularities, one line: vocabulary is knowledge
+(true of a class, changes when someone revises it); instances are state (true of a thing that
+exists now). **So the reproducibility field is not an implementation detail of our prime; it is a
+recurring boundary that three ratified documents have found independently.**
+
+*Self-check, since it is cheap:* the doc corpus this lane just built is KNOWLEDGE by that line —
+true of a class, changing when a page is revised — which is why it is rebuildable and prime-wiped,
+and the split agrees with the design rather than merely permitting it.
+
+`OpenDDIL proposes; the system of record disposes` is also the third appearance of ADR-0040 §7's
+custody line and our own *acceptance is not a verb*.
+
+## ADR-0035's six classes — and class 6 is an argument about OUR SHAPE
+
+Two of the six are already how this lane builds, which is a useful confirmation rather than a find:
+
+* **Class 2 — absence renders as absence, never as a zero**, with two distinct empty states
+  *"because the operator's next action differs"*. That is `BodyUnavailable` versus
+  `BodyShaMismatch`, and the abstain that names its subject.
+* **Class 3 — "Honesty is asymmetric on purpose: we are quicker to say we have lost something than
+  to say we have it back."**
+
+**Class 4 is the sentence for the data-class ADR's centre:**
+
+> **a session-scoped accumulator never wears the noun of a durable record.** "Expended" alone is a
+> stockpile claim. "Expended since session start" is an observation claim, which is what the data
+> is.
+
+A value's NOUN must match its class. That is the whole ADR in one line, arrived at from the
+rendering side.
+
+### Class 6 is a warning about the four-field shape itself
+
+> ADR-0026 established that entity posture is three orthogonal axes, and that **collapsing them is
+> lossy**. The corollary at the presentation layer: **a value derived from one axis may not be
+> rendered in another axis's words.**
+
+**THE PACKET GIVES FOUR FIELDS AND THREE LIFECYCLE SHAPES, AND THE SHAPES ARE COMBINATIONS OF THE
+FIELDS.** `rebuildable`, `stateful iagent-authored`, `of-record-elsewhere` each fix several axes at
+once. Class 6 says what goes wrong if the names replace the fields: **"stateful" starts meaning
+things about authority and sync obligation that it does not carry**, and a store that is stateful
+with an upstream authority has no honest name.
+
+So the ADR must say it: **the three shapes are NAMES FOR COMMON COMBINATIONS, never a substitute
+for declaring the four.** The class is four fields; the shapes are shorthand, and a store that fits
+none of them declares its fields anyway rather than being forced into the nearest.
+
+**That is also how `fold, do not hand-run`'s debt stays a refusal rather than a fifth shape** —
+hand-seeded state declares `reproducibility: stateful` and has no bootstrap, and the honest outcome
+is that the census refuses it, not that it earns a name.
