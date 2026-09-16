@@ -72,6 +72,26 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     # not have known about the rule is exempt, and a lane behind master is exempt only until it
     # merges the rule. Merges are skipped — a merge commit's authorship question is answered by
     # the branch it brings in.
+    #
+    # `--not --remotes` IS LOAD-BEARING AND WAS MISSING. A commit already reachable from ANY
+    # remote-tracking ref has been PUBLISHED, and this push is not the act that publishes it —
+    # so it is not this push's to vouch for.
+    #
+    # WITHOUT IT THE HOOK DEMANDED A RULING VIOLATION. `--ancestry-path` does not exclude
+    # master's commits, because once a lane has been merged to master every LATER master commit
+    # is a DESCENDANT of that lane's last-pushed tip — so a lane that merges master back in finds
+    # all of it inside `remote_sha..local_sha`. Measured on a simulated lane/5f push:
+    #
+    #     without --not --remotes    99 commits checked, 99 of them already on origin/master
+    #     with    --not --remotes     0
+    #
+    # And the refusal text below says "these commits are not pushed, so amending is not a rewrite
+    # of published history". For those 99 that sentence was FALSE, and a lane following the
+    # instruction literally would have rewritten other lanes' published commits — R-030, demanded
+    # by the guard written to uphold it. The clause makes the sentence true by construction.
+    #
+    # Reported by invincible-agent-f3, who hit it, diagnosed it, measured both directions, and
+    # declined both `--no-verify` and amending someone else's history to get past it.
     while read -r sha; do
         [ -n "$sha" ] || continue
         git merge-base --is-ancestor "$RULE_COMMIT" "$sha" 2>/dev/null || continue
@@ -84,7 +104,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
             echo "  $(git log -1 --format='%h %s' "$sha")" >&2
             bad=1
         fi
-    done < <(git rev-list --ancestry-path --no-merges "$range" 2>/dev/null || true)
+    done < <(git rev-list --ancestry-path --no-merges "$range" --not --remotes 2>/dev/null || true)
 done
 
 if [ "$bad" -ne 0 ]; then
