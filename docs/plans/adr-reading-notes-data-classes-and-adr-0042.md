@@ -365,3 +365,58 @@ none of them declares its fields anyway rather than being forced into the neares
 **That is also how `fold, do not hand-run`'s debt stays a refusal rather than a fifth shape** —
 hand-seeded state declares `reproducibility: stateful` and has no bootstrap, and the honest outcome
 is that the census refuses it, not that it earns a name.
+
+## AUDIT-2026-08-08 — and the line ADR-0042 must not step over
+
+**The audit declares its own unverified status, and that governs how ADR-0042 may use it:**
+
+> Live verification of any classification (no populated-cluster access). **This table is derived
+> from charts and source, not observed behaviour under an actual sever.**
+
+So the severance-tolerance classifications are a **reading**, not a measurement. ADR-0042's
+multi-tier custody rules rest on them, and the ADR must say that plainly rather than inheriting
+their confidence — *a skip is not a pass*, one repo over and one artifact class along. **Custody
+under severance has never been watched happening.**
+
+**Three findings bear directly on custody:**
+
+* **The reachback failure is WRITE-SIDE, not read-side.** `projector-<edge>` *"reads a local broker
+  and writes a root database"*, and its non-tolerance is that *"the data reaches it fine during
+  severance; it simply cannot store it anywhere the local tier can read."* That is the shape intent
+  custody exists to answer: the problem is never getting the fact, it is having somewhere local and
+  durable to put it.
+* **The sweep paid for itself by finding a twin.** `cm-service` is structurally identical to
+  fusion — a third instance of one shape, found by deriving the inventory rather than listing the
+  known cases. *"Will the sweep surface another one: yes, and it is fusion's twin."*
+* **The constraint is concentrated.** Only Restate constrains tier placement, and it constrains
+  exactly two services — so custody at a severed intermediate tier is *"a two-service problem, not
+  a stack-wide one"*.
+
+---
+
+# Reading complete — what the two drafts now rest on
+
+**THE DATA-CLASS ADR.** Its shape is fixed by ADR-0035 class 6 before a word is written: **four
+fields are the declaration, three shapes are names for common combinations, and a store fitting
+none of them declares its fields anyway.** Collapsing four axes into three names is lossy exactly
+where the odd case lives — *stateful with an upstream authority* — which is the case the FRACAS and
+OpenDDIL work is about. It opens on ADR-0035 class 4: **a value's noun must match its class.**
+
+Its argument is the gap between §6.1's claim of enforcement and the clearer's derived drop set:
+reproducibility is asserted by **absence from a list**, and absence is the one state a derived
+population cannot distinguish from an omission. Its enforcement framing is borrowed from OpenDDIL
+ADR-0034 — *unwritable rather than audited-for*. Its rollout is ADR-0029 §7 — label first, hard gate
+at zero per environment, population derived at run time. Its fourth field is **reserved, not
+defined**, on ADR-0029 §3's reasoning. Its population is **provisional** until the eo lane's write
+census lands.
+
+**ADR-0042.** Scope is ADR-0040's gaps 3 and 4 only. Custody attaches to §7's line; retention is
+half-ruled in Limits and the degraded-mode paragraph is the template for severance outlasting it;
+sanitization is VE-7's gate at egress, which for intent means **at tier replication**, rule public
+and patterns not. Multi-tier custody rests on an inventory **derived from charts and source and
+never observed under a sever**, and the ADR says so.
+
+**Every mechanism in both is cited to the document that registered it.** Three citations moved
+during the reading — `asserted-locally-unconfirmed` (ADR-0040 §3, not ADR-0035), sanitization
+(ADR-0037 registers, ADR-0040 points), and ADR-0034 (two repos, one number) — and one of the three
+was a correction to my own first correction.
