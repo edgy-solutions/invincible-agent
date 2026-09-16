@@ -202,9 +202,125 @@ def _verdict_burn(rows: list[dict[str, Any]]) -> Optional[str]:
 #: reader could redo from the chart. They say nothing about whether that is ACCEPTABLE, which
 #: is a programmatic judgement this engine has no standing to make and does not have the
 #: inputs for. If a phrasing ever implies one, it belongs to the finance group, not here.
+def _verdict_variance_tree(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The LARGEST contributor and its share of the root. A restatement, not a judgement.
+
+    The tree already publishes `share_of_root` on every node; this names the biggest one. A
+    reader could redo it from the chart, which is the test for whether a line belongs here.
+
+    ABSENT WHEN THE ROOT VARIANCE IS ZERO — a decomposition of nothing has no largest
+    contributor, and "0% of nothing" is a sentence that reads as information.
+
+    THE SIGN IS NOT INTERPRETED. A favourable contributor inside an unfavourable root has a
+    NEGATIVE share, and reporting it as "accounts for -11%" is the arithmetic rather than a
+    claim about whether that is good — which is the finance group's call and not this engine's.
+    """
+    if not rows:
+        return None
+    root = rows[0]
+    contributors = root.get("contributors") or []
+    if not contributors or not root.get("variance"):
+        return None
+    biggest = max(contributors, key=lambda c: abs(c.get("variance") or 0))
+    share = biggest.get("share_of_root")
+    if share is None:
+        return None
+    return (f"{biggest.get('entity_name', biggest.get('entity_id'))} accounts for "
+            f"{share:.0%} of the variance")
+
+
+def _verdict_funding(rows: list[dict[str, Any]]) -> Optional[str]:
+    """How many lines are SHORT and by how much, counted from the rows' own verdicts.
+
+    COUNTED FROM `state`, NOT RE-DERIVED. The producer already decided each cell's funding
+    state; recomputing the condition here would be a second implementation that can disagree
+    with the column beside it.
+
+    ABSENT WHEN NOTHING IS SHORT, which is the honest silence — a brief that says "0 lines
+    short" has spent a line to say nothing, and a card with no caption reads correctly.
+    """
+    short = [r for r in rows if r.get("state") == "short"]
+    if not short:
+        return None
+    total = sum(r.get("shortfall") or 0 for r in short)
+    unit = short[0].get("value_unit") or ""
+    return (f"{len(short)} of {len(rows)} funding lines short, "
+            f"totalling {total:,.0f} {unit}".rstrip())
+
+
+def _verdict_eac(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The forecast against the budget, by the declared VAC convention.
+
+    ABOVE/BELOW IS A DIRECTION, NOT A JUDGEMENT. `vac` is BAC - EAC and its sign convention is
+    declared, so naming which side of the budget the forecast lands on is arithmetic a reader
+    could redo. Whether an overrun of this size is ACCEPTABLE is the finance group's call.
+
+    ABSENT WHEN THE FORECAST LANDS ON THE BUDGET — a line saying "0 above budget" spends a
+    sentence to say nothing.
+    """
+    if not rows:
+        return None
+    row = rows[0]
+    vac, unit = row.get("vac"), row.get("value_unit") or ""
+    if not vac:
+        return None
+    side = "below" if vac > 0 else "above"
+    return (f"{row.get('method', 'forecast')}: {abs(vac):,.0f} {unit} {side} budget".replace(
+        "  ", " "))
+
+
+def _verdict_eac_spread(rows: list[dict[str, Any]]) -> Optional[str]:
+    """How far apart the methods land. THE SPREAD IS THE FINDING (R-001).
+
+    Computed from the rows' own exact column, not from the float edge — this is the
+    subtraction the money ruling names, and reading `eac` here would make the exact column
+    decorative.
+
+    ABSENT WHEN FEWER THAN TWO METHODS ANSWERED, because a spread over one figure is zero by
+    construction and reads as agreement rather than as absence.
+    """
+    exact = [Decimal(r["eac_exact"]) for r in rows if r.get("eac_exact") is not None]
+    if len(exact) < 2:
+        return None
+    unit = rows[0].get("value_unit") or ""
+    return (f"{len(exact)} methods span {float(max(exact) - min(exact)):,.0f} {unit}".rstrip())
+
+
+def _verdict_drivers(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The top-ranked driver and its share. Same restatement as the tree's, one level down.
+
+    THE ROWS ARRIVE RANKED, so this reads the first rather than re-sorting — a second ordering
+    here could disagree with the one the card draws.
+    """
+    if not rows:
+        return None
+    top = rows[0]
+    share = top.get("share_of_total")
+    if share is None:
+        return None
+    return (f"{top.get('entity_name', top.get('entity_id'))} accounts for "
+            f"{share:.0%} of the variance")
+
+
 VERDICT: dict[str, Any] = {
     "fin_performance_indices": _verdict_indices,
     "fin_burn_rate": _verdict_burn,
+    # ADDED 2026-09-15 to retire `unsummarised`: without these the brief falls back to
+    # "reported (see artifact)", which tells a reader the figure exists and not what it is.
+    "fin_variance_analysis": _verdict_variance_tree,
+    "fin_funding_status": _verdict_funding,
+    # THE CENSUS, not the two that were reported. Five verbs fell back to
+    # "reported (see artifact)", not two — the brief renders every one of them.
+    "fin_eac_calculation": _verdict_eac,
+    "fin_variance_drivers": _verdict_drivers,
+    # ⛔ `fin_eac_comparison` IS NOT HERE, AND A STANDING SEAL IS WHY. It is bound to NO
+    # archetype, so an envelope field it declares survives no passthrough —
+    # `test_every_envelope_field_a_verb_declares_survives_its_archetype_passthrough` refuses
+    # it, correctly. The brief reads the payload directly and WOULD have used the verdict, but
+    # adding a field to a verb nothing can draw is not the retirement of `unsummarised`; it is
+    # the same gap one layer along. `_verdict_eac_spread` is kept and sealed, ready for the
+    # commit that binds the verb. Reported rather than worked around: weakening another lane's
+    # seal to fit my addition is the move the seal exists to prevent.
 }
 
 VALUE_LABEL: dict[str, str] = {

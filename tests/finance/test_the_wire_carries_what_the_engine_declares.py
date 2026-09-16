@@ -66,7 +66,10 @@ def test_the_measure_response_BODY_carries_every_declared_envelope_field():
     for fn, ref in measures.REFERENCE.items():
         assert _envelope(fn).get("reference") == ref, f"{fn}: `reference` absent or altered"
     for fn, verdict_of in measures.VERDICT.items():
-        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN")
+        # `_KW` HERE TOO. `_envelope` above honours it and this direct call did not, so a
+        # verb with a mandatory slot raised TypeError the moment it gained a VERDICT
+        # entry. Two call sites in one seal disagreeing about how to invoke a verb.
+        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
         expected = verdict_of(rows)
         body = _envelope(fn)
         if expected is None:

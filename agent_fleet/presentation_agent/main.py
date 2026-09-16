@@ -637,7 +637,7 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # initiative" fall through to KNOWLEDGE_DOCUMENT and answer
     # "No content available." Picked up here because the arm is mechanical
     # once the contract exists.
-    "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label")),
+    "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label", "verdict")),
 
     # ── ENGINE F (FINANCE), ADR-0045. Added 2026-09-02, MEASURED FIRST. ────────────────
     #
@@ -661,13 +661,21 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # is RECURSIVE — rows[0] carries a nested `contributors` — and rows pass through
     # VERBATIM here, so the nesting survives, which is what ADR-0045 required when it
     # ruled the verb returns the tree and refused flattening.
-    "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label")),
-    "CONTRIBUTION_RANKING": ("rows", ("value_label", "value_unit", "scope_label")),
-    "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label")),
+    "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label", "verdict")),
+    "CONTRIBUTION_RANKING": ("rows",
+                            ("value_label", "value_unit", "scope_label", "verdict")),
+    "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label", "verdict")),
     # MULTI_SERIES (ADR-0045 follow-on, 2026-09-02). `series` is in the PASSTHROUGH and the
     # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb
     # that forgets to declare its series produces a card that refuses by name rather than one
     # that plots whatever numbers it can find.
+    # `verdict` ADDED TO THREE MORE ARCHETYPES 2026-09-15, and the 2026-09-03 note below is
+    # exactly why it was needed again. Three finance verbs gained a VERDICT entry to retire the
+    # brief's "reported (see artifact)" fallback, and the seal caught the same silent drop one
+    # archetype along: the BRIEF reads the payload directly and got the line, while every CARD
+    # was handed a payload with the field removed. **The same addition, visible on one wire and
+    # silent on the other**, which is the contrast the note already describes.
+    #
     # `reference` and `verdict` ADDED 2026-09-03, and their absence is the reason this comment
     # is long. THE ENGINE EMITTED BOTH CORRECTLY THE WHOLE TIME — verified at its own wire:
     # /measure/fin_performance_indices returns them at the top level. THIS ALLOWLIST DROPPED
