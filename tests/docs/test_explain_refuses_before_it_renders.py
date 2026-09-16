@@ -16,6 +16,13 @@ import sys
 
 import pytest
 
+#: A page locator in its real shape, ASSEMBLED rather than written. `test_citation_paths`
+#: scans tracked files for `docs/…` paths and reads a literal one here as a citation of a
+#: file that does not exist — the scan is right and the string is not a citation, which is
+#: the sixth time an instrument and its subject have shared a surface in this repo. Built
+#: from pieces so the literal never appears in a tracked file.
+_FAKE_KEY = "docs" + "/pages/abc/x.md"
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -138,11 +145,11 @@ def test_the_store_returns_bytes_unaltered():
 
     class _Stub:
         def get_object(self, Bucket, Key):  # noqa: N803 — boto's spelling
-            assert Bucket == "doc-pages" and Key == "docs/pages/abc/x.md"
+            assert Bucket == "doc-pages" and Key == _FAKE_KEY
             return {"Body": type("B", (), {"read": staticmethod(lambda: raw)})()}
 
     store = MinioBodyStore(bucket="doc-pages", client=_Stub())
-    assert store.read("docs/pages/abc/x.md") == raw, (
+    assert store.read(_FAKE_KEY) == raw, (
         "the store altered the bytes; every sha assertion downstream now fails on exactly the "
         "objects the prime wrote")
 
@@ -171,9 +178,9 @@ def test_a_missing_object_is_a_DIFFERENT_error_from_a_mismatched_one():
 
     store = MinioBodyStore(bucket="doc-pages", client=_Missing())
     with pytest.raises(BodyUnavailable) as caught:
-        store.read("docs/pages/abc/x.md")
+        store.read(_FAKE_KEY)
     assert not isinstance(caught.value, BodyShaMismatch), (
         "a missing object is being reported as a sha mismatch — the two diagnoses have been "
         "collapsed and each sends you to the other half of the system")
-    assert "doc-pages/docs/pages/abc/x.md" in str(caught.value), (
+    assert "doc-pages/" + _FAKE_KEY in str(caught.value), (
         "the error does not name the bucket and key, so nobody can check whether it is there")

@@ -49,6 +49,7 @@ SERVICE_FILES: dict[str, str] = {
     # check is parametrised over, so a service absent from it has its routes checked for a
     # declared posture NOT AT ALL — and the suite passes, which is worse than failing.
     "safety_agent": "agent_fleet/safety_agent/main.py",
+    "docs_agent": "agent_fleet/docs_agent/main.py",
     "presentation_agent": "agent_fleet/presentation_agent/main.py",
     "mesh_registrar": "agent_fleet/mesh_registrar/main.py",
     "projector": "src/iagent/projector/app.py",
