@@ -184,3 +184,83 @@ def test_a_missing_object_is_a_DIFFERENT_error_from_a_mismatched_one():
         "collapsed and each sends you to the other half of the system")
     assert "doc-pages/" + _FAKE_KEY in str(caught.value), (
         "the error does not name the bucket and key, so nobody can check whether it is there")
+
+
+# ── ORDERING AND TIES ─────────────────────────────────────────────────────────────────────────
+
+def test_the_protocol_declares_one_operation_not_two():
+    """RULED: declared-but-uncalled comes out. An operation with zero callers is a name with no
+    working consumer, and implementing it would be implementing against a docstring."""
+    from agent_fleet.docs_agent.reads import DocPageReader
+
+    ops = [n for n in dir(DocPageReader) if not n.startswith("_")]
+    assert ops == ["page_for_subject"], (
+        f"the reader Protocol declares {ops}. Anything beyond page_for_subject must have a real "
+        f"caller in this engine — grep for it before adding it back.")
+
+    # THE CONTROL, and it is the one that matters: the surviving operation IS called. A Protocol
+    # trimmed to one uncalled operation would satisfy the assertion above.
+    import pathlib
+    src = pathlib.Path(
+        __file__).resolve().parents[2].joinpath("agent_fleet/docs_agent/main.py").read_text(
+        encoding="utf-8")
+    assert "page_for_subject(" in src, (
+        "the engine no longer calls page_for_subject — then it too is declared-but-uncalled and "
+        "the same ruling applies to it")
+
+
+def test_the_response_is_always_a_LIST_even_for_one_page():
+    """ONE SHAPE. A response that is a card sometimes and a list other times makes every consumer
+    branch, and the branch nobody writes is the plural one."""
+    import agent_fleet.docs_agent.main as m
+
+    body = PAGE.read_bytes()
+    row = _row(body)
+
+    class _Reader:
+        def page_for_subject(self, subject_iri):
+            return [row]
+
+    class _Store:
+        def read(self, locator):
+            return body
+
+    prev_r, prev_s = m.READER, m.STORE
+    try:
+        m.READER, m.STORE = _Reader(), _Store()
+        out = m.explain_endpoint(m.ExplainRequest(params={"subject": "mesh:resolveInstance"}))
+    finally:
+        m.READER, m.STORE = prev_r, prev_s
+
+    assert isinstance(out["pages"], list) and out["page_count"] == 1
+    assert out["pages"][0]["body"] == body.decode("utf-8")
+
+
+def test_a_TIE_RENDERS_BOTH_rather_than_picking_the_first():
+    """The `banana 4` failure applied to documents: a plausible winner chosen on no evidence is
+    indistinguishable from a confident answer. The reader orders; anything still tied is shown."""
+    import agent_fleet.docs_agent.main as m
+
+    body = PAGE.read_bytes()
+    a = _row(body, iri="http://invincible-agent/docs#runbook-a", title="A")
+    b = _row(body, iri="http://invincible-agent/docs#runbook-b", title="B")
+
+    class _Reader:
+        def page_for_subject(self, subject_iri):
+            return [a, b]
+
+    class _Store:
+        def read(self, locator):
+            return body
+
+    prev_r, prev_s = m.READER, m.STORE
+    try:
+        m.READER, m.STORE = _Reader(), _Store()
+        out = m.explain_endpoint(m.ExplainRequest(params={"subject": "mesh:resolveInstance"}))
+    finally:
+        m.READER, m.STORE = prev_r, prev_s
+
+    assert out["page_count"] == 2, "a tie was broken silently — one page was dropped"
+    assert [p["title"] for p in out["pages"]] == ["A", "B"], (
+        "the reader's order was not preserved; ordering is the reader's job and reordering here "
+        "would break the precedence it applied")

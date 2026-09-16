@@ -7,7 +7,8 @@ dependencies = [
     # PINNED TO A TAG, matched to the fleet pin: this package governs fleet auth, so a floating
     # ref would let one SDK commit change every engine's security behaviour at rebuild.
     # `tests/test_lock_coherence.py` polices drift. v0.9.1 is also the release whose Protocol
-    # declares `page_for_subject` and `page_by_iri` — this engine is their first consumer.
+    # declares `page_for_subject` — this engine is its first consumer, and the ONE operation
+    # is one because the second was removed for having no caller rather than implemented.
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.1",
     "fastapi",
     # THE SERVER, AND ONLY ONE. The agent image's CMD branches: hypercorn if

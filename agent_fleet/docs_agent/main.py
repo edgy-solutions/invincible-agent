@@ -26,7 +26,7 @@ naming it vaguely is how a header goes stale while still reading as true.
 * **BODIES: WIRED.** Ruled 2026-09-15 — fetching a fixed object by a locator the graph handed you
   is not a substrate read (no query, no language, no choice of what to read), so it sits outside
   the one-client rule rather than being an exception to it. `body_store.py` holds that client.
-* **THE GRAPH: NOT WIRED.** `MeshGraph`'s two operations are declared in the v0.9.1 Protocol and
+* **THE GRAPH: NOT WIRED.** `MeshGraph`'s ONE operation is declared in the v0.9.1 Protocol and
   its Neo4j implementation belongs to the eo lane. This engine is that client's first consumer
   and will not hold a driver in the meantime, so `/explain` answers **503 naming the missing
   dependency** and `/health` reports `ready: false` with the reason. A refusal by name is the
@@ -135,7 +135,7 @@ STORE: Optional[BodyStore] = MinioBodyStore()
 _NO_READER = (
     "engine-docs has no MeshGraph reader wired. The verb is registered, the corpus is primed and "
     "the page bodies are readable; what is missing is the one client the ADR requires an engine "
-    "to read the GRAPH through, whose two operations are declared in the v0.9.1 Protocol and "
+    "to read the GRAPH through, whose one operation is declared in the v0.9.1 Protocol and "
     "whose Neo4j implementation belongs to the eo lane. This engine will not hold a driver in "
     "the meantime — a refusal naming the dependency is the correct interim, and a stub would not "
     "be."
@@ -283,17 +283,34 @@ def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
         # because nobody writes a page for a task nobody has done.
         return explain_mod.abstain(subject)
 
-    row = rows[0]
-    try:
-        body = STORE.read(row.source)
-    except BodyUnavailable as exc:
-        # DISTINCT FROM A MISMATCH ON PURPOSE. Missing means the prime did not put it there;
-        # mismatched means something wrote over it. One error for both sends the next reader to
-        # the wrong half of the system.
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    try:
-        return explain_mod.explain(row, body)
-    except explain_mod.BodyShaMismatch as exc:
-        # REFUSED, NOT ANNOTATED. Text that is not what was indexed is wrong in the one way a
-        # reader cannot detect: the wrong page is fluent, well-formed and roughly on topic.
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # EVERY SURVIVING ROW IS RENDERED. This took `rows[0]` and that was the defect: the reader
+    # orders, and anything still tied after ordering is a tie the engine must SHOW rather than
+    # break. Picking the first of several is a winner chosen on no evidence and indistinguishable
+    # from a confident answer — the `banana 4` failure, applied to documents.
+    #
+    # ONE SHAPE, ALWAYS A LIST, even for the overwhelmingly common single-page answer. A response
+    # that is a card sometimes and a list other times makes every consumer branch, and the branch
+    # nobody writes is the plural one.
+    pages = []
+    for row in rows:
+        try:
+            body = STORE.read(row.source)
+        except BodyUnavailable as exc:
+            # DISTINCT FROM A MISMATCH ON PURPOSE. Missing means the prime did not put it there;
+            # mismatched means something wrote over it. One error for both sends the next reader
+            # to the wrong half of the system.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        try:
+            pages.append(explain_mod.explain(row, body))
+        except explain_mod.BodyShaMismatch as exc:
+            # REFUSED, NOT ANNOTATED, AND THE WHOLE ANSWER FAILS rather than the one page being
+            # dropped. A list quietly one page shorter is the silently-shorter-board failure:
+            # the reader cannot see what is missing, and the remaining pages look complete.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "archetype": explain_mod.ARCHETYPE,
+        "subject": subject,
+        "pages": pages,
+        "page_count": len(pages),
+    }
