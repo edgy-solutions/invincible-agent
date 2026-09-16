@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Refuse a push carrying a commit that is bound by the trailer rule and does not have it.
+#
+# WHY A HOOK AND NOT ONLY A SEAL. `tests/test_every_commit_names_its_lane.py` reports the
+# omission AFTER the push, and by then the commit is published and R-030 forbids rewriting it —
+# so the only remedy is an exemption entry. Four entries accumulated in one day, from three
+# lanes, none of them a boundary case. A lane learns the trailer exists at the moment it merges
+# master, which is exactly when nobody re-reads the suite list (R-063).
+#
+# THE EXEMPTION LIST WAS THE SIGNAL. It said the rule was not reaching people in time, not that
+# the commits were unusual. A check that can only report is a check whose remedy is always
+# "record it and move on".
+#
+# THE VALUE IS PRODUCED BY THE ACT, NEVER TYPED. `--show-toplevel` and `--show-current` are read
+# from the worktree the push is running in, so the trailer cannot name a lane that is not this
+# one. That is the whole of R-058.1: a session address predicts neither half, and a hand-typed
+# pair is how `ia-28/lane/28` was written for a lane that works in `ia-74`. Same construction as
+# the roll script deriving its image tag rather than accepting one.
+#
+# Install per worktree (hooks are NOT shared between worktrees by default):
+#     git config core.hooksPath .githooks
+set -euo pipefail
+
+RULE_COMMIT="b466612"          # the commit that ratified the trailer; see R-058.1
+TRAILER_RE='^Lane:[[:space:]]*[^[:space:]/]+/[^[:space:]]+[[:space:]]*$'
+
+# The lane THIS worktree is, derived rather than declared.
+WT="$(basename "$(git rev-parse --show-toplevel)")"
+BR="$(git rev-parse --abbrev-ref HEAD)"
+EXPECTED="Lane: ${WT}/${BR}"
+
+# `git rev-parse` on the rule commit can fail in a shallow clone or a fresh fetch that has not
+# seen it. REFUSING THERE WOULD BLOCK EVERY PUSH, so an unresolvable rule commit means "cannot
+# know" and the hook stands aside — the seal still reports after the fact.
+#
+# AND THIS IS NOT R-012 INVERTED, which is what the next reader will think. R-012 fails CLOSED
+# because a service with a missing declaration has a readiness probe to refuse through: the
+# refusal is visible, addressed to an operator, and the service stays up while it is fixed. A
+# CLIENT-SIDE HOOK HAS NO SUCH SURFACE. One that blocks every push on its own missing input is
+# removed within the hour — `git push --no-verify`, or `core.hooksPath` unset — and then the
+# rule has NEITHER arm rather than one.
+#
+# So the division is deliberate: the SEAL is the fail-closed half and refuses in CI where a
+# refusal is seen and cannot be locally disabled; the HOOK's job is to be PRESENT. A guard that
+# survives is worth more than a guard that is correct and gone.
+if ! git rev-parse --verify --quiet "${RULE_COMMIT}^{commit}" >/dev/null; then
+    echo "pre-push: ${RULE_COMMIT} not in this clone; skipping the Lane-trailer check." >&2
+    exit 0
+fi
+
+# PRESENCE ONLY — NOT THE PAIR, and that is deliberate rather than a gap.
+#
+# A commit cherry-picked or rebased from another lane legitimately carries THAT lane's trailer:
+# it is the author, and rewriting the trailer to this worktree would be a false attribution of
+# exactly the kind R-058.2 is about. So the hook asks "does this commit name a lane" — the
+# question whose answer is always yes-or-no here — and `test_every_commit_names_its_lane.py`
+# asks the one that needs the registry: is the named worktree/branch a REGISTERED PAIR. The
+# hook is the fast local refusal; the seal is the authority on validity.
+bad=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    # A deletion pushes the all-zero local sha; there are no commits to check.
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+
+    if [ -z "${remote_sha//0/}" ]; then
+        # New branch on the remote: check everything it adds that descends from the rule.
+        range="${RULE_COMMIT}..${local_sha}"
+    else
+        range="${remote_sha}..${local_sha}"
+    fi
+
+    # `--ancestry-path` from the rule is the same membership the seal uses: a commit that could
+    # not have known about the rule is exempt, and a lane behind master is exempt only until it
+    # merges the rule. Merges are skipped — a merge commit's authorship question is answered by
+    # the branch it brings in.
+    while read -r sha; do
+        [ -n "$sha" ] || continue
+        git merge-base --is-ancestor "$RULE_COMMIT" "$sha" 2>/dev/null || continue
+        if ! git log -1 --format='%B' "$sha" | grep -Eq "$TRAILER_RE"; then
+            if [ "$bad" -eq 0 ]; then
+                echo "" >&2
+                echo "PUSH REFUSED: commit(s) with no 'Lane:' trailer." >&2
+                echo "" >&2
+            fi
+            echo "  $(git log -1 --format='%h %s' "$sha")" >&2
+            bad=1
+        fi
+    done < <(git rev-list --ancestry-path --no-merges "$range" 2>/dev/null || true)
+done
+
+if [ "$bad" -ne 0 ]; then
+    cat >&2 <<EOF
+
+Every commit that descends from ${RULE_COMMIT} carries a trailer naming the LANE that
+made it — git's author field is one human identity across every worktree, so without
+it a commit has no recoverable owner once its session ends (R-058, R-058.1).
+
+For this worktree that is exactly:
+
+    ${EXPECTED}
+
+Derived from \`git rev-parse --show-toplevel\` and \`--show-current\` here, not typed.
+Do NOT copy it from a session name: a session address predicts neither half.
+
+Amend the trailer in (these commits are not pushed, so amending is not a rewrite of
+published history), then push again.
+EOF
+    exit 1
+fi
+
+exit 0

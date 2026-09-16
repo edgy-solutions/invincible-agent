@@ -44,8 +44,8 @@ docs:runbook-adding-a-task-kind a mesh:DocPage ;
   rdfs:label "Adding a task kind" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a/adding-a-task-kind.md" ;
-  mesh:body_sha "d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a" ;
+  mesh:source "docs/pages/d3b771d7aca79b9f8c29592d24794b232a344d496835caeaef25136d1d0a676c/adding-a-task-kind.md" ;
+  mesh:body_sha "d3b771d7aca79b9f8c29592d24794b232a344d496835caeaef25136d1d0a676c" ;
   mesh:explains mesh:DispositionReview .
 
 docs:runbook-adding-an-archetype a mesh:DocPage ;
@@ -71,8 +71,8 @@ docs:runbook-rolling-a-service a mesh:DocPage ;
   rdfs:label "Rolling a service" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/443828da33e02779becca2e63255b4233a959189856198edc5c90b1f087900d2/rolling-a-service.md" ;
-  mesh:body_sha "443828da33e02779becca2e63255b4233a959189856198edc5c90b1f087900d2" .
+  mesh:source "docs/pages/1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e/rolling-a-service.md" ;
+  mesh:body_sha "1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e" .
 # rolling-a-service.md: explains none — an honest row, not an omission.
 
 docs:runbook-writing-a-walk-sheet a mesh:DocPage ;

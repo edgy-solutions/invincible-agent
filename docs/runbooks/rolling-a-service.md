@@ -167,10 +167,31 @@ is the cheapest possible way to show it. If the held-back service does NOT come 
 behind, the census is the thing under test, not the fleet.
 
 ```bash
-uv run --frozen python scripts/version_census.py -n <ns> --expect $SHA
+uv run --frozen python scripts/version_census.py -n <ns>
 ```
 
-### `--expect HEAD` is wrong the moment a docs commit lands after a build
+### DO NOT PASS `--expect` AFTER A ROLL — the default already knows
+
+**The census defaults to the tag in the release record** (`helm get values`), which is **written by
+the act of rolling**. So the post-roll check takes no argument, and there is nothing to get wrong:
+
+    uv run --frozen python scripts/version_census.py -n <ns>
+
+**`--expect` is for asking "is the fleet at THIS sha" deliberately** — auditing a suspected drift,
+or checking a sha you did not roll. **It is never the post-roll check.**
+
+**MEASURED 2026-09-14, on the instrument's own author.** I passed `--expect $(git rev-parse
+origin/master)` out of habit after a roll. A docs-only commit had landed between the build and the
+check, so master was one commit past the rolled image — and the census correctly reported **all 18
+services stale** against an image that does not exist. Re-run with no argument: **17 current, 1
+real failure.**
+
+**The earlier rule here said "pass the sha you rolled, not HEAD." That was the right diagnosis and
+the wrong remedy** — it left a habit with somewhere to land, and the habit is what fired. `d8e9a40`
+had already removed the need for the argument; the runbook had not caught up. **A rule that tells
+you which value to type is weaker than one that tells you not to type a value.**
+
+### (historical) `--expect HEAD` is wrong the moment a docs commit lands after a build
 
 Pass **the sha you rolled**, not `HEAD`. A docs-only or test-only commit moves `HEAD` past the
 image without changing it, and `--expect HEAD` then reports the entire fleet stale for a

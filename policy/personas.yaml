@@ -45,3 +45,23 @@ personas:
   # that ADR's enum predates chart 0.3.12, and the catalog rego now walks the directory
   # rather than enumerating a hardcoded list, so adding a persona here needs no code change.
   - COST_ANALYST
+
+  # Engine S's author/drafter role (ADR-0051) — MIL-STD-882E's system safety engineer: the
+  # person who drafts a risk assessment and answers a redraft, and who is NOT the person who
+  # accepts the residual risk. That separation is the whole of ADR-0051 §7, and it holds here
+  # by construction rather than by rule: ACCEPTANCE IS A TASK DISPOSITION, carried by the
+  # `risk_acceptance_*:SUSTAINMENT` audiences in task_grants.yaml, and no cell grants it.
+  # A safety engineer holding this persona can ASK (open the hazard list, draft an assessment)
+  # and cannot SIGN. Added 2026-09-14.
+  #
+  # THIS PERSONA IS A LABEL ON THE ANSWER, NOT A FILTER ON IT — measured, not assumed.
+  # `src/iagent/auth.py:278` flattens entitlements to `{c.domain for c in cells}` and the
+  # persona half is discarded before any verb filter runs; it survives as the answering VOICE
+  # (`answerer_persona`) and as the `can_assume` check on a cell override. So naming a persona
+  # here scopes nothing on its own — the DOMAIN half of the cell is what reaches the gate.
+  #
+  # Same ADR-0009 note as PROGRAM_FINANCE_ANALYST and COST_ANALYST above: the header's
+  # instruction to update that ADR's persona enum predates chart 0.3.12 and there is no live
+  # enum there to update. `domains.yaml` carried the identical stale instruction and did not
+  # carry the correction until 2026-09-14; it does now.
+  - SAFETY_ENGINEER

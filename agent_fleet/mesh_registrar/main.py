@@ -167,13 +167,22 @@ class RegistrationManifest(BaseModel):
     slots: List[dict] = Field(
         default_factory=list,
         description="What the verb TAKES — one record per parameter, "
-                    "{name, kind, type, required, values?, default?}, kind being one of "
+                    "{name, kind, type, required, referent?, values?, default?}, kind being one of "
                     "spoken-mandatory | spoken-optional | handle | ceremony. Derived by "
                     "the engine from its own function signatures, never hand-written. "
                     "The router uses it as the acceptance schema for extracted slots: a "
                     "spoken value for a `handle` kind is refused rather than merged. "
                     "Absent means [] means the router refuses every spoken slot for this "
                     "verb, which is the pre-slot behaviour."
+                    " — `referent` IS THE CLASS URI OF WHAT THE SLOT IDENTIFIES, and it was "
+                    "missing from this description while engines emitted it: "
+                    "utils/slot_declarations.py attaches it from a `referents` map and "
+                    "cost_agent/slots.py from `_REFERENT_KIND`. ONLY SPOKEN SLOTS CARRY ONE "
+                    "— a handle is resolved by the dispatcher and was never something a "
+                    "speaker names, so a handle slot can never parameterise a verb. Listed "
+                    "here because the PARAMETERISED_BY derivation reads exactly this field, "
+                    "and a shape description that omits the field a consumer depends on is "
+                    "read as that field not existing."
     )
 
     # ── SECOND SPECIES: presentations are triples, not verb edges ────────────

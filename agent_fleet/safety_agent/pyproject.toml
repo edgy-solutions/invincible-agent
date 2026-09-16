@@ -1,0 +1,61 @@
+[project]
+name = "safety-agent"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Mesh membership package — transport auth (the app dependency) + the ONE general mint.
+    # PINNED TO A TAG, matched to the fleet pin, same as every other engine: this package
+    # governs fleet auth, so a floating ref would let one SDK commit change every engine's
+    # security behaviour at rebuild. `tests/test_lock_coherence.py` polices drift.
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.8.1",
+    "fastapi",
+    # THE SERVER, AND ONLY ONE, WHICH IS A DELIBERATE DEPARTURE FROM engine-cost'S LIST.
+    # The agent image's CMD branches: hypercorn if `/app/.venv/bin/hypercorn` exists, else
+    # uvicorn. Declaring hypercorn makes the first branch win deterministically, so uvicorn
+    # would be a dependency no path can reach. engine-cost declares both because its Procfile
+    # names uvicorn while its list named hypercorn — a real mismatch, and the fix there was to
+    # declare what actually launches. That is the same rule applied here, not a different one:
+    # this engine has NO Procfile, so the CMD is the whole launch story.
+    "hypercorn",
+    "pydantic",
+    # `agent_fleet/utils/mesh_registration.py` is copied into /app/utils and reaches the
+    # registrar over HTTP. Declared because the engine imports it at startup, not because the
+    # base image happens to carry it — the latent-break class engine-cost's comment names.
+    "httpx",
+    # ── THE ONE CHOICE IN THIS FILE, AND IT IS NOT A DRIVER ──────────────────────────────
+    #
+    # `matrix.py` parses `safety_risk_matrix.ttl` — a LOCAL FILE — to resolve severity ×
+    # probability to a risk level and that level to its acceptance audience. rdflib is a
+    # FORMAT library in this use: it opens no connection, holds no credential, and speaks to
+    # no substrate. That is why it belongs here and is NOT what the driver ban refuses; the
+    # ban is about an engine reaching a datastore directly, and parsing a file it ships with
+    # is the opposite of that.
+    #
+    # IT IS ALSO NOT OPTIONAL, despite the import being deferred inside a function.
+    # `import rdflib` sits inside the resolver rather than at module scope, so the module
+    # imports fine without it and the ENGINE STARTS — then `draftRiskAssessment` and
+    # `assessDeferralRisk` raise on their first real call. A dependency whose absence moves
+    # the failure from startup to first use is the worst of both: healthy pod, dead verb.
+    "rdflib",
+]
+
+# DELIBERATELY THIN, and the omissions are the argument.
+#
+# NO python-dotenv. Both sibling engines declare it; nothing in this engine or in the `utils/`
+# modules it imports references it. Copying a sibling's list is how an unused dependency becomes
+# a permanent one, and this engine's list should be readable as a statement of what it needs.
+#
+# NO LLM client, NO smolagents, NO DataHub, NO restate, and NO DATABASE DRIVER of any kind.
+# Engine S is governed READING: it composes over planes the mesh already exposes and never
+# reaches a substrate itself (ADR-0035's two planes, ADR-0049's bypass refusal). A driver
+# appearing in this list would mean the engine had started talking to a store directly, which
+# is a design change and not a packaging one — so it should be hard to add here, and visible.
+#
+# WHY THIS FILE DID NOT EXIST UNTIL 2026-09-14, recorded because the failure mode is the point.
+# `Dockerfile.agent` COPYs `${AGENT_DIR}/pyproject.toml*` — a GLOB, which matches zero files
+# without erroring — and then runs `uv sync` only `if [ -f "pyproject.toml" ]`. With neither
+# file present the build did nothing, REPORTED SUCCESS, and produced an image with no
+# `/app/.venv`. The CMD then failed with `/bin/sh: 1: /app/.venv/bin/python: not found` and the
+# engine crash-looped: 8 restarts in 17 minutes, the only service down in an otherwise green
+# roll. A conditional written to tolerate an absent file cannot distinguish "this service needs
+# no venv" from "this service's inputs are missing".

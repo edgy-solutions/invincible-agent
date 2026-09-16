@@ -845,6 +845,78 @@ async def get_task_kinds(current_user: User = Depends(get_current_user)):
     return {"composed": kinds is not None, "kinds": kinds or {}}
 
 
+@app.get("/templates")
+async def get_templates(current_user: User = Depends(get_current_user)):
+    """Every RATIFIED canvas template — the menu, readable without attempting a seed.
+
+    R-039's read-path rule, and the companion to `/task_kinds` for the same reason: a client
+    rendering a picker needs to know WHAT EXISTS before it can offer one, and the only way to
+    learn it today is to seed a board and see whether the id was recognised. The registry is
+    already the authority — `ratified_template_ids` derives it from the directory on every call,
+    deliberately uncached — and this exposes it rather than adding a second source.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds` and for its reasoning: this returns the
+    SHAPE of a board — its id, title, description and panel count — never a board, never a
+    card, and never anything read out of the substrate. Withholding it would protect nothing,
+    because the seed verb's own refusal already names the ratified set to anyone who guesses
+    wrong; it would only force the probing this endpoint exists to remove.
+
+    THREE STATES, NOT TWO, and the flag is the difference. `composed: false` with an empty list
+    is NOT "nothing is ratified": it is "the directory could not be read", which is the
+    None-is-not-empty distinction `/task_kinds` turns on and the same one that would otherwise
+    let a deployment accident render as an empty picker a user reads as a complete menu.
+
+    A TEMPLATE THAT WILL NOT LOAD IS NAMED, NEVER DROPPED. `load_template` validates and raises
+    rather than returning a default — correctly, because a wrong board is harder to notice than
+    a missing one. Silently omitting it here would undo that: the list would be SHORTER and
+    nothing would say why, and a shorter list reads as the complete set. So it comes back in
+    `unreadable` with its reason, and the picker can show what it cannot offer.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from .canvas_template import (
+        load_template, ratified_template_ids, template_ref,
+    )
+
+    def _read():
+        ids = ratified_template_ids()
+        rows, broken = [], []
+        for tid in ids:
+            try:
+                t = load_template(tid)
+            except Exception as exc:  # noqa: BLE001
+                # The id IS ratified — it is in the directory — and the file does not parse or
+                # does not validate. That is a different fact from "not ratified" and the
+                # caller needs both.
+                broken.append({"template_id": tid,
+                               "reason": f"{type(exc).__name__}: {exc}"[:300]})
+                continue
+            rows.append({
+                "template_id": t.template_id,
+                "title": t.title,
+                "description": t.description,
+                # THE CONTENT HASH, so a client can tell a template that CHANGED from one that
+                # merely still exists. A picker holding a stale ref offers a board whose shape
+                # has moved under it.
+                "template_ref": template_ref(t),
+                "panels": len(t.panels),
+                "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+            })
+        return rows, broken
+
+    try:
+        templates, unreadable = await run_in_threadpool(_read)
+        composed = True
+    except Exception as exc:  # noqa: BLE001
+        # The DIRECTORY itself is unreadable — not one file. `ratified_template_ids` returns []
+        # for a missing directory, which is indistinguishable from "none ratified" at this
+        # layer, so anything raising out of the read is reported as not-composed rather than as
+        # an empty menu.
+        logger.warning("/templates could not compose the registry: %s", exc)
+        templates, unreadable, composed = [], [], False
+
+    return {"composed": composed, "templates": templates, "unreadable": unreadable}
+
+
 # ── PCN/PDN disposition review — start ────────────────────────────────────────
 class ReviewStartRequest(_BaseModel):
     """Start a grouped disposition review for a notice. The extraction-sourced fields
@@ -2403,6 +2475,17 @@ async def canvas_lineage_edges(
         return {"edges": []}
 
 
+def _allowed_or_empty(kind: str) -> list:
+    """`verbs_for_kind` or `[]` — never a raise, because every caller of this is already
+    reporting a refusal and a second failure there loses the first one."""
+    from . import human_tasks
+
+    try:
+        return list(human_tasks.verbs_for_kind(kind))
+    except Exception:  # noqa: BLE001 — the refusal being reported matters more than this detail
+        return []
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -2462,6 +2545,21 @@ async def act_on_human_task(
     # unauthorized caller through a validation error) and before any write.
     try:
         human_tasks.validate_decision(match.get("kind") or "", req.decision, req.comment)
+    except human_tasks.TaskKindSetUnknown as exc:
+        # THE RULED REFUSAL, CARRIED TO THE CARD RATHER THAN DROPPED AS A 500. A species the seed
+        # does not carry cannot be answered while the overlay is unset or unreadable, and the
+        # honest answer to cannot-know is a refusal that SAYS WHY — not the generic pair a code
+        # table used to remember, and not a silent dead task.
+        #
+        # It is a 409, not a 422: the request is well formed and the caller did nothing wrong;
+        # this deployment cannot currently answer for that species. A 422 would blame the caller
+        # for a configuration they cannot see.
+        raise HTTPException(status_code=409, detail={
+            "error": "task_kind_set_unknown",
+            "kind": match.get("kind"),
+            "allowed": [],
+            "message": str(exc),
+        })
     except human_tasks.InvalidDecisionForKind as exc:
         raise HTTPException(status_code=422, detail={
             "error": "invalid_decision_for_kind",
@@ -2474,7 +2572,9 @@ async def act_on_human_task(
             # `sorted()` looks like tidiness rather than a decision, which is why it survived
             # unexamined. Flagged by iagent-mesh-sdk-ca from the call sites rather than from
             # reasoning about them.
-            "allowed": list(human_tasks.verbs_for_kind(match.get("kind") or "")),
+            # GUARDED: this call is INSIDE an exception handler, so a raise here replaces a
+            # structured refusal with a 500 — the error path becoming an error surface.
+            "allowed": _allowed_or_empty(match.get("kind") or ""),
             "message": str(exc),
         })
 
@@ -3273,11 +3373,38 @@ def _project_route_decision(mat: dict) -> dict | None:
     #
     # Same honest-empty discipline as the pool above: absent projects to [], never a crash.
     try:
-        excluded = json.loads(md.get("eligibility_excluded") or "[]")
-        if not isinstance(excluded, list):
-            excluded = []
+        _raw_excluded = json.loads(md.get("eligibility_excluded") or "[]")
+        if not isinstance(_raw_excluded, list):
+            _raw_excluded = []
     except (ValueError, TypeError):
-        excluded = []
+        _raw_excluded = []
+
+    # ── FLAGGED IS NOT EXCLUDED, AND ONE LIST CANNOT SAY BOTH ──────────────────────────────
+    #
+    # The field is named `eligibility_excluded` and the arity gate stopped excluding on
+    # 2026-09-04 — it FLAGS `needs_instance` and KEEPS the verb as a candidate, because
+    # removing the only verb that fits abstains for the reason it would have asked about.
+    # Every such entry carries `disposal: "flagged"`, so the distinction was in the data and
+    # nowhere in the read: a live candidate rendered under a key whose name says it was
+    # deleted.
+    #
+    # THE NARROWING LANDS HERE, AND ONLY NOW. It was held additive — both keys carrying the
+    # flagged rows — until the consumer read the new shape AT THE SERVING SURFACE, which is
+    # `cortex-ui` e1f9722, verified in the pod rather than on main (R-055.1: merged-is-not-
+    # deployed is the same window one repo over). `readExclusions` now PARTITIONS on
+    # `disposal` and takes `flags` first, so neither half is derived from the other's absence
+    # and a third disposal cannot be absorbed into either.
+    #
+    # Both halves are computed from one partition rather than two comprehensions, so a row
+    # that is neither `flagged` nor recognised cannot silently land in both or in neither.
+    flags, excluded = [], []
+    for _r in _raw_excluded:
+        # An ABSENT `disposal` reads as removed, deliberately: every row predating the field
+        # meant exactly that, and a mislabel is visible where a disappearance is not.
+        if isinstance(_r, dict) and _r.get("disposal") == "flagged":
+            flags.append(_r)
+        else:
+            excluded.append(_r)
 
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
@@ -3338,6 +3465,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             # contest, not just the winner (losers first-class).
             "candidates": candidates,
             "excluded": excluded,
+            "flags": flags,
         }
 
     # Fallback projection — surface that the pipeline GENUINELY fell
@@ -3393,6 +3521,7 @@ def _project_route_decision(mat: dict) -> dict | None:
         # so "why did nothing win" is visible with scores.
         "candidates": candidates,
         "excluded": excluded,
+        "flags": flags,
     }
 
 
@@ -3851,14 +3980,21 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
 #: carry both rules, so flattening these into a single dict would make the loop disappear and
 #: silently delete that refusal. If a future change cannot express this distinction, the change
 #: is wrong however clean the chain looks afterward.
-SLOT_SOURCE_PICKED = "picked"        # chosen from a menu this system offered
-SLOT_SOURCE_SPOKEN = "spoken"        # typed in answer to a RESPEAK ask (no menu existed)
-SLOT_SOURCE_SUPPLIED = "supplied"    # sent by an API caller with the request
-SLOT_SOURCE_FILLED = "filled"        # extracted from the question by the slot filler
-
-_SLOT_SOURCES = (
-    SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED,
+# ⛔ THESE MOVED TO `iagent_pure.slot_acceptance` AND ARE IMPORTED, NOT REDECLARED.
+#
+# They were declared here and consumed here, and then the WRITER needed them (accept_slots is
+# the one door every binding passes through) and so did the promotion rule. Three copies of a
+# four-name vocabulary is how a rename makes a feature stop silently — the reader would refuse
+# every row as "unknown source" and report a clean empty chain.
+from iagent_pure.slot_acceptance import (  # noqa: E402
+    SLOT_SOURCE_FILLED,
+    SLOT_SOURCE_PICKED,
+    SLOT_SOURCE_SPOKEN,
+    SLOT_SOURCE_SUPPLIED,
+    SLOT_SOURCES as _SLOT_SOURCES,
 )
+
+_ = (SLOT_SOURCE_PICKED, SLOT_SOURCE_SPOKEN, SLOT_SOURCE_SUPPLIED, SLOT_SOURCE_FILLED)
 
 
 def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
@@ -4518,6 +4654,133 @@ async def _get_ui_payload_output(run_id: str) -> dict:
 
 async def generate_dagster_stream(
     request: InterviewRequest,
+    trace_id: str = "",
+    user_id: str = "default_testing_user",
+    user_email: str = "",
+    user_persona: str | None = None,
+    entitled_domains: list[str] | None = None,
+    entitlement_source: str = "fallback",
+    caller_token: str = "",
+) -> AsyncGenerator[str, None]:
+    """THE OUTER BOUNDARY. Every turn that reaches here produces an artifact.
+
+    ⛔ WHAT THIS IS FOR, measured 2026-09-14 and the worst failure of the day. A one-word slip
+    inside the body — `bound_slots` where the name in scope was `request.bound_slots` — raised
+    `NameError` mid-stream. The generator stopped. **Nothing else happened.** No route decision,
+    no materializations, no artifact: not `failed`, not `complete`, NOTHING. The rail showed no
+    new row, and the card held only the question text.
+
+    So the whole failure-recording arc built that same day could not see it, and never could:
+
+        You cannot record an absence. Everything else records WHAT HAPPENED;
+        this dispatch never happened.
+
+    **TWO WAYS OUT WITHOUT WRITING, AND BOTH ARE CLOSED HERE.**
+
+    1. An exception escapes the body — the `NameError` case. Caught below; a `failed` artifact
+       is written carrying the exception text as its cause, and a terminal error event is
+       emitted so the card renders the failure instead of the question.
+    2. The body returns having never flipped `status` off `pending`. The bundle's own comment
+       says it: *"If neither flip happens before stream_end, the bundle is NOT dispatched."* No
+       exception is involved, and the outcome is identical — silence. The sentinel below makes
+       that case write too.
+
+    **WHY A WRAPPER RATHER THAN A try/except INSIDE THE BODY.** The body is long and builds its
+    bundle partway through; a handler inside it can only cover the part after the bundle exists,
+    and the defect that prompted this fired BEFORE that point. The wrapper knows enough from its
+    own parameters to write a complete, honest, minimal artifact without depending on how far the
+    body got — which is the only version that covers the failure that actually happened.
+
+    The artifact it writes is deliberately thin: id, question, who asked, `failed`, and the cause.
+    A richer one would need the body's state, and needing the body's state is what made the gap.
+    """
+    _wrote = False
+
+    try:
+        async for _ev in _generate_dagster_stream_inner(
+            request,
+            trace_id=trace_id,
+            user_id=user_id,
+            user_email=user_email,
+            user_persona=user_persona,
+            entitled_domains=entitled_domains,
+            entitlement_source=entitlement_source,
+            caller_token=caller_token,
+        ):
+            _wrote = True
+            yield _ev
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "generate_dagster_stream raised for session %s — writing a failed artifact so the "
+            "turn is not silent", getattr(request, "session_id", "?"),
+        )
+        _cause = {
+            "exception": type(exc).__name__,
+            "message": str(exc)[:1200],
+            "where": "generate_dagster_stream",
+        }
+        try:
+            await _dispatch_answer_artifact(
+                _boundary_failure_bundle(
+                    request, user_id, user_persona, entitled_domains,
+                    entitlement_source, _cause,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            # THE WRITER ITSELF FAILING MUST NOT SWALLOW THE ORIGINAL. A raise here would
+            # replace a diagnosable engine failure with a storage failure, and the reader would
+            # chase the wrong one.
+            logger.exception("boundary artifact write FAILED; original cause: %s", _cause)
+        if not _wrote:
+            # Nothing reached the client at all, so the card has nothing to render. Emit the
+            # terminal pair rather than leaving the connection to time out — a hung stream and a
+            # failed one look identical to a person and only one of them is true.
+            yield _perror(
+                "The turn failed before it produced an answer.",
+                kind="stream",
+                retryable=True,
+                cause="stream_raised",
+            )
+            yield _sse("stream_end", "{}")
+        return
+
+
+def _boundary_failure_bundle(
+    request: "InterviewRequest",
+    user_id: str,
+    user_persona: str | None,
+    entitled_domains: list[str] | None,
+    entitlement_source: str,
+    cause: dict,
+) -> dict:
+    """The thinnest honest artifact: who asked what, that it failed, and why.
+
+    `status` is `failed` EXPLICITLY. The writer requires it at construction precisely so a
+    forgotten status cannot persist as `complete`, and this is the path where forgetting would
+    be easiest — nothing here knows whether an answer was nearly ready.
+    """
+    return {
+        "id": (getattr(request, "artifact_id", "") or f"artifact-boundary-{int(time.time()*1000)}"),
+        "question_text": getattr(request, "message", "") or "",
+        "message_id": getattr(request, "session_id", "") or "",
+        "valid_as_of": int(time.time() * 1000),
+        "status": "failed",
+        "produced_by": {"actor_type": "agent", "actor_id": "cortex-bff"},
+        "produced_for": {
+            "user_id": user_id,
+            "is_authenticated": True,
+            "user_persona": user_persona,
+            "entitled_domains": entitled_domains or [],
+            "entitlement_source": entitlement_source,
+        },
+        "resolved_intent": {"failure_cause": cause},
+        "routing": None,
+        "sources": [],
+    }
+
+
+async def _generate_dagster_stream_inner(
+    request: InterviewRequest,
     trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
     user_id: str = "default_testing_user",
     # ADR-0025 hop 2: caller's entitlement key (email); threaded to Engine D
@@ -4670,6 +4933,40 @@ async def generate_dagster_stream(
             _answering_artifact_id, len(_chain_slots), session_id,
             {k: v["source"] for k, v in _chain_slots.items()},
         )
+
+    # ── THE ANSWER TURN CARRIES THE ASK'S ACCUMULATED SET ────────────────────────────────────
+    #
+    # `_pre_resolved_from_ask` builds the route from the ASK artifact, and the ask is by
+    # construction the turn where nothing was bound — so `subject_instance_id` is necessarily
+    # empty there and rode forward onto the turn that finally supplied one. Measured on
+    # artifact-2-1789404372153: the pick bound `program_id: NP-MERIDIAN`, the arity gate still
+    # saw a set query, and the dispatch abstained FOR THE REASON THE ASK HAD JUST BEEN ANSWERED.
+    #
+    # THE SET TRAVELS, NOT A LIST OF NAMES. Names alone would be a third thing the ask's payload
+    # does not carry that the answer turn needs — the defect's own shape one more time. The
+    # provenance-keyed union is what `_accumulated_slots` already walks out of the lineage, so
+    # the ask turn and the answer turn share ONE payload shape and the consumer derives what it
+    # needs from it.
+    #
+    # PRE-RESOLVED ONLY. The classified path has no ask, so it has no unpromoted instance —
+    # carrying this there would feed a state that cannot arise, and a dead branch under a seal
+    # reads as coverage.
+    if _pre_resolved:
+        # ⛔ THE CHAIN ALONE IS NOT "WHAT THIS TURN HAS BOUND", and sending only it reproduced
+        # the original defect inside its own fix. `_chain_slots` is what the ANCESTORS bound;
+        # the pick that answers an ask arrives on THIS turn, in `bound_slots`, and is by
+        # construction in no ancestor. Measured on artifact-4-1789438505471: its own record
+        # carried {"program_id": {"value": "NP-MERIDIAN", "source": "picked"}} while its parent
+        # — the ask — carried {}. The consumer looked only where the value could never be.
+        #
+        # So the field means EVERYTHING BOUND AS OF THIS TURN, ancestors plus this turn's own
+        # answer, and the nearest binding wins for the same reason `_accumulated_slots` lets the
+        # nearest hop win: a person who answers a slot twice meant the second answer.
+        _this_turn = {
+            k: {"value": v, "source": SLOT_SOURCE_PICKED}
+            for k, v in dict(request.bound_slots or {}).items()
+        }
+        _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
     mode: str
     entity_refs: list[str] = []
@@ -4907,6 +5204,17 @@ async def generate_dagster_stream(
     _direct = None
     if _pre_resolved:
         _direct_stages: list = []
+        # ONE RUN, ONE THREAD - minted here because this is where a run begins, and the
+        # stateful graph rows contract on `thread_id = run id`. Before this, the dispatch
+        # body carried no thread at all and `fin_program_brief` refused every call with a
+        # 422 (artifact-2-1789497046894); the NP-MERIDIAN pick was correct and the answer
+        # still never arrived.
+        #
+        # NOT `session_id`, which is the nearest thing already in scope and is WRONG in the
+        # direction that looks right: it would scope checkpoint state to a SESSION, so the
+        # second question of a session would resume the first one's state and reducers that
+        # append would merge two answers. A session is not a run.
+        _run_id = 'run-' + uuid.uuid4().hex
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -4920,6 +5228,7 @@ async def generate_dagster_stream(
                     chain_slots=_chain_slots,
                     spoken_answer=request.spoken_answer or "",
                     user_query=user_query,
+                    run_id=_run_id,
                     entitled_domains=entitled_domains or [],
                     acting_persona=user_persona,
                     ontology_url=_DAGSONTOLOGY_SVC_URL,
@@ -5207,6 +5516,10 @@ async def generate_dagster_stream(
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
                     "accepted_slots": _j("accepted_slots", {}),
+                    # THE PROVENANCE RECORD. Read by `_accumulated_slots` on the next hop;
+                    # written nowhere until 2026-09-14, which made the whole chain-slot carry
+                    # inert in production with every seal over it green (R-057).
+                    "bound_slot_sources": _j("bound_slot_sources", {}),
                     "refused_slots": _j("refused_slots", []),
                     "slot_resolution": _j("slot_resolution", {}),
                     # The subject the verb was chosen for — see the producer. Without it
@@ -5582,9 +5895,45 @@ async def _stream_direct_outcome(
         bundle["resolved_intent"]["accepted_slots"] = json.loads(
             _slots_md.get("accepted_slots") or "{}"
         )
+        # ── THE PROVENANCE RECORD, ON THE PATH THAT ACTUALLY RUNS ────────────────────────
+        #
+        # TWO COMPOSITION SITES, and this is the one a pick-answer reaches. Writing the field
+        # only at the classify-path site above would have left the writer as inert as the
+        # reader it was built to feed — "one site" turning out to be two for the third time on
+        # this arc, which is why it is asserted rather than remembered.
+        try:
+            _bss = json.loads(_slots_md.get("bound_slot_sources") or "{}")
+        except (ValueError, TypeError):
+            _bss = {}
+        if isinstance(_bss, dict) and _bss:
+            bundle["resolved_intent"]["bound_slot_sources"] = _bss
         bundle["resolved_intent"]["refused_slots"] = json.loads(
             _slots_md.get("refused_slots") or "[]"
         )
+        # ── THE VERB AND THE DISPOSITION TRAVEL WITH THE SLOTS ────────────────────────────
+        #
+        # This wrote ONLY the two slot keys onto whatever `resolved_intent` already held — and
+        # on the direct path that is nothing. Measured on artifact-2-1789404372153: a FAILED
+        # artifact whose entire intent was
+        #
+        #     {"refused_slots": [], "accepted_slots": {"program_id": "NP-MERIDIAN"}}
+        #
+        # while artifact-1 and the older cost artifact both carry `verb_iri`, `disposition`,
+        # `subject_uri` and `owner_persona`.
+        #
+        # **A FAILED ARTIFACT WITH NO VERB IS UNATTRIBUTABLE BY CONSTRUCTION.** It took three
+        # reads of the artifact store to learn which verb had been refused, and the answer was
+        # sitting in `routing.excluded[]` the whole time — in a different column, because the
+        # field that names the action had been dropped from the field that records the intent.
+        #
+        # Written with `setdefault` rather than assignment: where a fuller intent already exists
+        # (the classify path fills it in above) this must not overwrite it with the direct
+        # path's view. Only the absent keys are supplied.
+        for _k in ("verb_iri", "disposition", "subject_uri", "owner_persona",
+                   "subject_instance_id", "subject_instance_label", "slot_resolution"):
+            _v = _slots_md.get(_k)
+            if _v not in (None, ""):
+                bundle["resolved_intent"].setdefault(_k, _v)
 
     if outcome.kind == direct_dispatch.ABSTAIN:
         # THE VERB WAS RIGHT AND THE ENGINE DID NOT ANSWER. The routing record above is
@@ -5599,6 +5948,24 @@ async def _stream_direct_outcome(
             retryable=True,
             cause="engine_did_not_answer",
         )
+        # ── THE ARTIFACT RECORDS ITS OWN CAUSE ──────────────────────────────────────────
+        #
+        # Without this the `failed` artifact says WHICH VERB was tried and nothing about what
+        # came back, and the answer lives only in a pod log that rotates. Measured on
+        # artifact-2-1789439072125: the engine replied
+        # `{"loc":["body","fn"],"msg":"Field required"}` — the refusal was built to NAME THE
+        # ARGUMENT — and recovering it took a replay against the live pod with a hand-rebuilt
+        # request body, because the artifact recorded neither the cause nor the body.
+        #
+        # Same class as the missing `verb_iri` one layer over, and the same repair: a failure
+        # recorded where nobody reads is a failure nobody can act on.
+        if getattr(outcome, "failure_cause", None):
+            bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+            bundle["resolved_intent"]["failure_cause"] = outcome.failure_cause
+            logger.warning(
+                "direct path failure cause for run %s: %s",
+                session_id, json.dumps(outcome.failure_cause, default=str)[:600],
+            )
         bundle["status"] = "failed"
         return
 
@@ -5703,22 +6070,43 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
         # init paths above each flip it to 'complete' (happy path,
         # final_payload received + parsed) or 'failed' (any _perror
         # branch). If we land here with status still 'pending', some
-        # exit path was added without a status flip — log loudly and
-        # skip the dispatch rather than letting an honest-pending
-        # leak through. (We do NOT default to 'failed' here because
-        # that would re-create the trap one layer over: the dispatch
-        # site has no idea what actually happened; only the gateway
-        # exit paths know.)
+        # exit path was added without a status flip.
+        #
+        # ⛔ THIS USED TO SKIP THE WRITE, and the reasoning was careful and wrong in one step:
+        # *"we do NOT default to 'failed' because the dispatch site has no idea what actually
+        # happened; only the gateway exit paths know."* True about the DETAIL and false about
+        # the FACT. **"The turn ended without recording an outcome" is itself what happened**,
+        # and it is recordable honestly — naming the condition rather than guessing a cause.
+        #
+        # Skipping conflated *do not invent a cause* with *do not write anything*, and the
+        # second is what produced silence: no artifact, no row in the rail, nothing for a reader
+        # to pull on. Measured 2026-09-14 on the sibling path, where a NameError ended the
+        # stream and the turn left no trace at all — you cannot record an absence, so the fix is
+        # to stop producing one.
+        #
+        # The cause below says exactly and only what is known. It does not claim the engine
+        # failed, because nobody here knows that.
         if bundle["status"] == "pending":
             logger.error(
-                "AnswerArtifact dispatch ABORTED: bundle.status is still "
-                "'pending' at stream_end for artifact %s. Some Graph "
-                "Path exit path failed to flip status. Skipping write "
-                "rather than persisting an honest-pending; investigate "
-                "the gateway exit paths.",
+                "AnswerArtifact still 'pending' at stream_end for artifact %s — some exit path "
+                "returned without recording an outcome. Writing it as FAILED with that as the "
+                "cause rather than skipping, so the turn is not silent.",
                 bundle["id"],
             )
-            return
+            bundle["status"] = "failed"
+            _ri = dict(bundle.get("resolved_intent") or {})
+            _ri.setdefault("failure_cause", {
+                "exception": "NoOutcomeRecorded",
+                "message": (
+                    "the stream ended with status still 'pending': an exit path returned "
+                    "without flipping status to complete or failed. The turn's outcome was "
+                    "never recorded; this artifact exists so the turn is not silent."
+                ),
+                "where": "_dispatch_answer_artifact",
+            })
+            bundle["resolved_intent"] = _ri
+            # NO `return` HERE, and its removal is the whole change. The old code logged and
+            # returned; the log was the only trace, in a pod whose logs rotate.
 
         _writer = get_writer()
         if _writer is not None:

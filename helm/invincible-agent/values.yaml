@@ -495,7 +495,28 @@ graphHost:
     name: graph-host
     tag: ""
   port: 8098
-  env: {}
+  env:
+    # ── DURABLE CHECKPOINTING (R-012 shape) ───────────────────────────────────────────
+    #
+    # engine-lg compiles every graph whose manifest row declares `checkpointer: true`
+    # against an AsyncPostgresSaver opened from this DSN. WITHOUT IT the host serves those
+    # rows from PROCESS MEMORY and /ready returns 503 checkpointer-not-ready — the posture
+    # working, not a regression: a row declaring durable per-thread state is being answered
+    # by something that loses it on restart.
+    #
+    # NO DEFAULT IN THE ENGINE, per R-012. A plausible default would aim at SOME Postgres and
+    # silently checkpoint a programme brief into whatever it reached. The chart is the only
+    # layer that knows which database this deployment means, so the chart declares it.
+    #
+    # COMPOSED FROM THE SHARED PARTS, exactly as the frontend composes PROJECTOR_POSTGRES_DSN:
+    # the four BPMN_POSTGRES_* values and the password already reach every engine pod through
+    # envFrom, so one secret stays one place and a per-cluster Postgres override moves this
+    # with it instead of leaving a second literal pointing at the old host.
+    #
+    # THE SAME DATABASE THE GATEWAY HUMAN TASKS USE — ruled, rather than a new one: a graph
+    # that interrupts for a human and the task representing that interrupt belong in one
+    # store, and two would make "did this resume" answerable only by joining across them.
+    GRAPH_HOST_POSTGRES_DSN: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
   resources:
     requests:
       cpu: 100m
@@ -1060,7 +1081,24 @@ primeSubstrate:
   # silently moves back out. That is exactly how this defect survived: the outer bound was
   # widened to 40m for this reason and the inner one was never revisited.
   # tests/test_prime_timeout_bounds_agree.py asserts the ordering.
-  ingestTimeout: 3600
+  # RAISED 2026-09-14 from 3600 BECAUSE THE WORK GREW, not to silence a red. The docs-corpus
+  # merge added a prime-manifest entry, taking the serialised queue to 11 batches x 360s =
+  # 3960s -- past the 3600s bound. test_prime_timeout_bounds_agree caught it at HEAD before any
+  # roll, which is the seal doing exactly its 2026-08-22 job: two bounds on one operation, set
+  # independently, and the inner one silently shorter than the work it waits on.
+  #
+  # THE DISTINCTION THAT MATTERS: changing a bound to make a red go away is the move this seal
+  # exists to prevent. This is the other case -- the measured queue moved, so the bound follows
+  # it, and the arithmetic is recorded so the next reader can tell which happened.
+  #
+  # 4800s leaves ~840s over the measured queue. HELM_TIMEOUT went 75m -> 100m in the same
+  # change, because the seal requires >= 600s between them: ontologySeed and reregister run
+  # AFTER the prime inside the same helm window and need room that is not the prime's.
+  # EMPTY ON PURPOSE -- the prime DERIVES this from the manifest it is about to run.
+  # A number here is a number somebody must remember to move when an ontology is added,
+  # which is exactly how the 2026-09-14 red happened: docs-corpus added an entry and the
+  # bound stayed still. Set it ONLY to override the derivation, and say why.
+  ingestTimeout: ""
   # When true (AND wipe=true), escalates to a NUCLEAR wipe: additionally
   # deletes the answer-durability graph AND resets the Postgres projection
   # stores (answer_artifact_projection / human_task_projection truncated,

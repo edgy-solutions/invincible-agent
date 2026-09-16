@@ -123,8 +123,13 @@ def test_a_NAMED_HOLE_row_returning_the_SAME_holes_PASSES(client):
          "holes": [{"source": "fin_burn_rate", "reason": "not entitled"}]}
     ))
 
+    # THREAD NAMED, because fin_program_brief declares `checkpointer: true` and the host now
+    # refuses to default it. These two calls previously rode the old `or graph_id` fallback —
+    # the shared-thread collision itself — so the guard finding its own test callers is the
+    # guard working.
     r = c.post("/graphs/fin_program_brief",
-               json={"params": {"program_id": "PGM-001"}}, headers=_IDENT)
+               json={"params": {"program_id": "PGM-001"}, "thread_id": "enforce-row-seal"},
+               headers=_IDENT)
 
     assert r.status_code == 200, (
         f"a named-hole row's declared output was rejected: {r.status_code} {r.text[:200]}. The "
@@ -166,6 +171,11 @@ def test_an_IDENTIFIED_caller_still_gets_through(client):
     m, _real = host._LOADED["fin_program_brief"]
     host._LOADED["fin_program_brief"] = (m, _stub_graph({"summary": "ran"}))
 
+    # THREAD NAMED, because fin_program_brief declares `checkpointer: true` and the host now
+    # refuses to default it. These two calls previously rode the old `or graph_id` fallback —
+    # the shared-thread collision itself — so the guard finding its own test callers is the
+    # guard working.
     r = c.post("/graphs/fin_program_brief",
-               json={"params": {"program_id": "PGM-001"}}, headers=_IDENT)
+               json={"params": {"program_id": "PGM-001"}, "thread_id": "enforce-row-seal"},
+               headers=_IDENT)
     assert r.status_code == 200, f"an identified caller was refused: {r.status_code} {r.text[:200]}"

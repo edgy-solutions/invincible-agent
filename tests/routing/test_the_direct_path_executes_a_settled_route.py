@@ -107,6 +107,9 @@ def run(monkeypatch):
                           "subject_instance_id": instance, "subject_instance_label": label},
             bound_slots=bound if bound is not None else {"lot": "4"},
             spoken_answer=spoken, user_query="where did the money go",
+            # The run this dispatch is. Required rather than defaulted: a stateful row
+            # refuses a call without one, and the callee must not invent it.
+            run_id="run-test-settled-route",
             entitled_domains=["PRODUCTION_COST"], acting_persona="COST_ANALYST",
             ontology_url="http://engine-o", accept_slots=accept_slots, post=_post,
             on_stage=lambda kind, status: stages.append((kind, status)),

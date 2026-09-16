@@ -210,6 +210,8 @@ def _dispatch(monkeypatch, *, bound, chain, slots=(_LOT,)):
                       "subject_instance_id": "", "subject_instance_label": ""},
         bound_slots=bound, chain_slots=chain, spoken_answer="",
         user_query="where did the money go", entitled_domains=["PRODUCTION_COST"],
+        # Required, never defaulted — the callee must not invent a run identity.
+        run_id="run-test-chain-carry",
         acting_persona="COST_ANALYST", ontology_url="http://engine-o",
         accept_slots=accept_slots, post=_post, on_stage=lambda *a: None,
     )

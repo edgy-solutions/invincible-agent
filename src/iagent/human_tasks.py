@@ -389,32 +389,52 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
 # milestone's own north star ("quorum and claiming change by editing the YAML — zero code").
 # They are here rather than there because the provenance bug could not wait for M3; see
 # docs/reference/m3-grouped-review-definition-design.md §"TWO interim per-kind tables".
-_VERBS_BY_KIND: dict[str, frozenset[str]] = {
-    "extraction_refusal": frozenset({"acknowledged", "redriven"}),
-}
-_DEFAULT_VERBS = frozenset({"approved", "rejected"})
+# ── THE TWO PER-KIND CODE TABLES ARE GONE (M3.3 cutover, 2026-09-15) ────────────────────────
+# `_VERBS_BY_KIND`, `_DEFAULT_VERBS` and `_REASON_REQUIRED` lived here. A declared row is now the
+# ONLY source of what a species accepts and which of its verbs need a reason.
+#
+# THEY RETIRED TOGETHER, which was the standing ruling: a served declaration that says how a task
+# RENDERS while a code table still decides what it can DO is the worse half surviving.
+#
+# WHAT REPLACED THE FALLBACK IS A REFUSAL, NOT A DEFAULT. The tables were what made an abstaining
+# gate safe — "undeclared kinds keep today's verbs". With nothing behind the declaration,
+# "I cannot know the set" must not silently become "this kind accepts nothing": that is a DEAD
+# TASK, rendering as an ordinary card with no buttons and no error anywhere. So an unresolvable
+# set now RAISES, naming the variable. A refusal is recoverable; a dead task is not visible.
 
-# Verbs whose meaning is empty without a stated reason. "Parts entered in the legacy system"
-# and "notice withdrawn by the vendor" are entirely different facts about the pipeline, and a
-# bare acknowledgement erases the difference — which is precisely the evidence ADR-0034 needs.
-#
-# `accepted` ADDED 2026-09-11 for ADR-0051 (sustainment safety), belt-and-braces alongside the
-# declaration's own `reason_required`. A declared `reason_required` does NOTHING at runtime today:
-# this set is consulted by `validate_decision` WITHOUT reference to `kind`, and declarations are
-# not wired into this module at all. Declared-and-unenforced is the `isRegisteredKind` shape, and
-# for a RISK ACCEPTANCE it is precisely the gap ADR-0051 exists to close — an authority taking on
-# residual risk with no stated rationale is the one act in that domain whose record IS the reason.
-# This entry is the enforcement until the declaration is read; the cutover's parity arm asserts the
-# row property when this global goes away.
-#
-# NO EXISTING SPECIES ACCEPTS `accepted`, so this entry is inert until the safety kinds land —
-# which is the whole reason it is safe to add ahead of them. `rejected` is NOT added here and the
-# reason is measured, not stylistic: it is in `accepts` for access_request, grouped_review and
-# workflow_ack, and this set is kind-blind, so adding it would make EVERY rejection in the fleet
-# reason-required — three other species' behaviour changed from the safety lane, to enforce a
-# property for a kind that does not exist yet. It lands with the safety kinds in ADR-0051
-# increment 3, so the cost arrives with the benefit.
-_REASON_REQUIRED = frozenset({"acknowledged", "accepted"})
+
+def _seed_rows() -> dict:
+    """The SEED rows alone, for when the overlay cannot be resolved.
+
+    The seed ships in the image and is always readable; only the overlay half is ever unset,
+    mistyped or unreadable. Keeping them separable is what lets a deployment accident degrade to
+    "domain species unanswerable" instead of "every task in the fleet refused".
+    """
+    global _SEED_ROWS_CACHE
+    if _SEED_ROWS_CACHE is not None:
+        return _SEED_ROWS_CACHE
+    try:
+        from iagent_mesh.task_kinds import load_task_kinds  # noqa: PLC0415
+
+        rows = {str(getattr(k, "kind", "")): k for k in load_task_kinds(_DECL_DIR)}
+        _SEED_ROWS_CACHE = {k: v for k, v in rows.items() if k}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read the seed task kinds from %s (%s) — nothing can be "
+                       "answered from the seed either", _DECL_DIR, exc)
+        _SEED_ROWS_CACHE = {}
+    return _SEED_ROWS_CACHE
+
+
+_SEED_ROWS_CACHE: Optional[dict] = None
+
+
+class TaskKindSetUnknown(RuntimeError):
+    """The composed task-kind set could not be determined, so no verb question can be answered.
+
+    Before the M3.3 cutover this state fell back to a code table. There is no table now, and the
+    honest answer to "what does this species accept" when the set is unknowable is neither a
+    verb list nor an empty one — it is a refusal that names what to configure.
+    """
 
 
 class InvalidDecisionForKind(ValueError):
@@ -470,7 +490,7 @@ def _declared_kinds() -> "frozenset[str] | None":
     **because the design requires it to be** — domain species live in a work-side overlay and
     a test fails the build if one enters this repo. **Refusing on absence from a partial set is
     a searched zero read as a structural zero**, and it is the same mistake as reading "not in
-    `_VERBS_BY_KIND`" as "not declared", one level up.
+    a code table" as "not declared", one level up.
 
     SO THE GATE RESOLVES AGAINST THE COMPOSED SET, and **returns None when no overlay path is
     configured** — because then this process genuinely cannot tell "undeclared" from "declared
@@ -485,7 +505,9 @@ def _declared_kinds() -> "frozenset[str] | None":
     if not raw:
         logger.warning(
             "%s is unset, so the task-kind set is the SEED HALF ONLY and cannot be trusted to "
-            "be complete — undeclared kinds keep today's verbs. Set it to the deployment's "
+            "be complete. SEEDED species still answer from their own rows; a DOMAIN species the "
+            "seed does not carry is REFUSED, naming this variable — the code-table fallback that "
+            "used to guess for it was deleted at the M3.3 cutover. Set it to the deployment's "
             "overlay directory (empty string is not the same as 'no domain species'; point it "
             "at an empty dir to assert there are none).",
             _OVERLAY_DIRS_ENV,
@@ -579,7 +601,7 @@ def _ordered(verbs) -> "tuple[str, ...]":
 def verbs_for_kind(kind: str) -> "tuple[str, ...]":
     """The verbs this species accepts. **An UNDECLARED kind accepts nothing.**
 
-    THE DEFECT THIS CLOSES. An unknown kind fell through to `_DEFAULT_VERBS` and was handed
+    THE DEFECT THIS CLOSED. An unknown kind fell through to a code-table default and was handed
     `approved`/`rejected` — so a caller bypassing the card could dispose a species nobody
     declared. cortex-ui closed the render half (`21b2bae`: the verb block is gated on
     `isRegisteredKind`, which finally has a caller, and the fixture asserts `buttons()` is
@@ -593,9 +615,10 @@ def verbs_for_kind(kind: str) -> "tuple[str, ...]":
     **This makes no task deader than it already is on screen.** The card already offers
     nothing for these kinds; this stops the API accepting what the card refuses.
 
-    NOT IN `_VERBS_BY_KIND` IS NOT THE SAME AS NOT DECLARED. Three of the four ratified kinds
-    are absent from that table and correctly ride `_DEFAULT_VERBS` — the table is an interim
-    per-kind override, not the registry.
+    THE TABLES ARE GONE (M3.3, 2026-09-15) AND THE DECLARATION IS THE ONLY SOURCE. While they
+    stood, "not in `_VERBS_BY_KIND`" was not "not declared" — three of the four ratified kinds
+    were absent from it and correctly rode its default. That distinction is what the cutover
+    removed the need for.
 
     **THE DECLARATION IS AUTHORITATIVE WHERE IT EXISTS.** The first cut read the registry for
     MEMBERSHIP and never for CONTENT: a declared kind passed the gate and was then handed the
@@ -608,14 +631,30 @@ def verbs_for_kind(kind: str) -> "tuple[str, ...]":
     were worse: `concurred` was refused outright, so §4.3.7's two-act sequence could not be
     performed through the gate at all.
 
-    **READING the declaration is not gated on the M3.3 cutover; DELETING `_VERBS_BY_KIND` is.**
-    So the consumer half lands now and the deletion waits for cortex-ui-ba's parity seal, as
-    sequenced. The code tables become the fallback for kinds no declaration covers — which is
-    belt-and-braces in the direction R-004(f) meant, rather than a table that silently outranks
-    a ratified row.
+    **BOTH HALVES HAVE LANDED.** The consumer half read the declaration while the tables still
+    stood as a fallback; the cutover deleted them once cortex-ui-ba's parity seal was green on
+    the pinned state. There is no fallback now, which is why an unresolvable set RAISES rather
+    than returning nothing.
     """
     declared = _declared_kinds()
-    if declared is not None and kind not in declared:
+    if declared is None:
+        # THE OVERLAY IS UNKNOWABLE — THE SEED IS NOT. Only the overlay half can be missing,
+        # mistyped or unreadable; `policy/task_kinds/` ships in the image. So a SEEDED species
+        # still answers from its own row, and only a kind the seed does not cover is genuinely
+        # unanswerable. Refusing everything here would take every task in the fleet down over a
+        # typo in one variable — the exact accident an existing seal was written to prevent, and
+        # deleting the code table must not reintroduce it by the back door.
+        row = _seed_rows().get(kind)
+        if row is not None:
+            return _ordered(getattr(row, "accepts", None) or ())
+        raise TaskKindSetUnknown(
+            f"cannot answer what {kind!r} accepts: it is not in the seed, and the overlay is "
+            f"unknown because {_OVERLAY_DIRS_ENV} is unset or unreadable. Before the M3.3 "
+            f"cutover this fell back to a code table; there is none now. Point the variable at "
+            f"the deployment's overlay directory, or at an empty directory to assert there are "
+            f"no domain species."
+        )
+    if kind not in declared:
         # `()` NOT `frozenset()`. This branch was missed when the others became tuples, and
         # a function returning two container types depending on which branch it takes is the
         # defect iagent-mesh-sdk-ca flagged for the pin — a caller that works in a deployment
@@ -629,7 +668,9 @@ def verbs_for_kind(kind: str) -> "tuple[str, ...]":
         # A row declaring NO verbs is a declaration nobody can act on. Falling back to the
         # table here would hand it the generic pair and call that the row's meaning.
         return ()
-    return _ordered(_VERBS_BY_KIND.get(kind, _DEFAULT_VERBS))
+    # NO FALLBACK. A kind inside the composed set with no row is a contradiction, not a
+    # default: `declared` IS the set of kinds with rows.
+    return ()
 
 
 def reason_required_for(kind: str) -> frozenset[str]:
@@ -645,13 +686,18 @@ def reason_required_for(kind: str) -> frozenset[str]:
     # `_declared_kinds()`, so calling this function FIRST — before any `verbs_for_kind` — read
     # an empty dict and silently returned the kind-blind global set. An ordering dependency
     # that produces a plausible answer rather than an error, found by this function's own seal.
-    _declared_kinds()
+    if _declared_kinds() is None:
+        row = _seed_rows().get(kind)
+        if row is not None:
+            return frozenset(str(v) for v in (getattr(row, "reason_required", None) or ()))
+        raise TaskKindSetUnknown(
+            f"cannot answer which of {kind!r}'s verbs need a reason: it is not in the seed, and "
+            f"the overlay is unknown because {_OVERLAY_DIRS_ENV} is unset or unreadable"
+        )
     row = _DECLARED_ROWS.get(kind)
-    if row is not None:
-        declared = getattr(row, "reason_required", None)
-        if declared is not None:
-            return frozenset(str(v) for v in (declared or ()))
-    return _REASON_REQUIRED
+    if row is None:
+        return frozenset()
+    return frozenset(str(v) for v in (getattr(row, "reason_required", None) or ()))
 
 
 def validate_decision(kind: str, decision: str, comment: str = "") -> None:
@@ -681,7 +727,37 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
     says so is a lie the audit trail keeps. Only `pending` is load-bearing for queue queries;
     everything else is terminal, so widening the terminal vocabulary is safe."""
     now = int(time.time() * 1000)
-    status = decision if decision in ("approved", "acknowledged", "redriven") else "rejected"
+
+    # ── THE DECISION IS THE STATUS ──────────────────────────────────────────────────────────
+    #
+    # ⛔ THIS COERCED EVERY UNLISTED VERB TO "rejected", four lines below a docstring that says
+    # it must not: *"a projection that says so is a lie the audit trail keeps."* The rule was
+    # WRITTEN and not implemented, and the allowlist happened to cover exactly the verbs that
+    # existed when it was typed.
+    #
+    # MEASURED 2026-09-15 against the composed declaration: THIRTEEN verbs are declared and the
+    # allowlist named THREE. So `accepted`, `concurred`, `not_concurred`, `returned_for_rework`,
+    # `linked`, `new_hazard`, `dismissed`, `redrafted` and `withdrawn` all stored as REJECTED —
+    # and under ADR-0051 a risk ACCEPTANCE recorded as its opposite is the one act whose record
+    # IS the evidence.
+    #
+    # Latent rather than bleeding when found: zero safety verbs had been resolved, so every
+    # existing row still agrees. Fixed in that state deliberately — "the walk found it" is a
+    # worse morning than "the walk confirmed it was fixed".
+    #
+    # WHY WIDENING IS SAFE, and it is the docstring's own argument: only `pending` is
+    # load-bearing for queue queries; everything else is terminal.
+    if decision == "pending":
+        # THE ONE VALUE THAT IS NOT TERMINAL. A species declaring `pending` as a verb would
+        # make a resolved task indistinguishable from an open one and it would rejoin every
+        # queue — so this refuses rather than writing it. Unreachable through `validate_decision`
+        # (a declaration would have to name it), which is exactly why it is asserted here: the
+        # guard is against a future declaration, not against today's callers.
+        raise ValueError(
+            "'pending' cannot be a resolution: it is the only status the queue reads as OPEN, "
+            "and storing it would return a resolved task to every queue that skips it."
+        )
+    status = decision
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
