@@ -376,6 +376,16 @@ jobs:
           # cortex-bff does NOT need a line: its image copies the whole repo (see its own
           # comment above), which is why /app/policy is complete there and per-file here.
           COPY policy/overlays/ /app/policy/overlays/
+          # THE FOURTH, and the comment above has now come true three times in a row, which is
+          # the argument for stopping counting and shipping the directory. ADR-0053 §2 method
+          # rows: the EAC formulas as ratified DATA, so a figure carrying `method: CPI` under §5
+          # names something checkable rather than a label.
+          #
+          # SHIPPED ONE RELEASE AHEAD OF ITS CONSUMER, deliberately. Nothing imports the method
+          # registry at runtime yet. If this COPY and the import landed together and the COPY
+          # were the half that slipped, the finance engine would not boot at all -- so the data
+          # rides in first and the runtime starts depending on it next.
+          COPY policy/measures/ /app/policy/measures/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/

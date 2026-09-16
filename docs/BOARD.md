@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -384,6 +384,10 @@ _Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: unassigned · blocked-on: the slot_declarations extraction (Lane 1) — this packet is its INPUT, not its blocker
   → [docs/plans/the-manifest-is-the-fourth-consumer-not-the-third.md](plans/the-manifest-is-the-fourth-consumer-not-the-third.md)
 
+- **the-method-rows-are-not-yet-the-runtime-source** — ADR-0053 section 2 wants EACMethod's values to be the rows that exist; the rows and their composer landed 2026-09-15 and the engine still reads the Literal. Deliberate sequencing, not an unfinished edit - the import would be at module scope with every verb behind it, so a COPY that slipped means a finance engine that does not boot while the suite stays green. Data and COPY in one release, the runtime depending on them in the next; a seal pins the COPY line so the second half cannot land against a missing first. Also records the one thing the rows still owe: derived_from.clause names each formula and does not number a clause.
+  status: open · owner: unassigned · blocked-on: policy/measures/ COPY riding into a built agent image
+  → [docs/plans/the-method-rows-are-not-yet-the-runtime-source.md](plans/the-method-rows-are-not-yet-the-runtime-source.md)
+
 - **the-sixteen-master-reds-named** — FIFTEEN now (row 6 closed by 74, `89d76d0`). The reds that reproduce on master, each named with what it actually waits on. THE HEADLINE IS THAT NONE OF THEM IS WAITING ON A RULING. They are waiting on live graph state (7), a source defect with a named owner (1), a resolver decision from the domain-scoping arc (3), and corpus expectations against a live model (5). "Awaiting rulings" was the status nobody had checked.
   status: open · owner: invincible-agent-01
   → [docs/plans/the-sixteen-master-reds-named.md](plans/the-sixteen-master-reds-named.md)
@@ -391,6 +395,10 @@ _Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **the-slot-filler-belongs-where-the-verb-is-known** — BUILT AND MEASURED 2026-08-29 (7 of 7 against pre-registered expectations; see the tail of this doc). Deviation recorded: NOT TypeBuilder — the constraint a dynamic class would buy already exists downstream in slot_acceptance, and two enforcement points would be one more registry to keep in agreement. THE RECORDED RULING COULD NOT BE BUILT AS STATED, and this says so rather than quietly redesigning. The ruling was "/route_intent calls BOTH ExtractIntent and RouteIntent in sequence". /route_intent receives ONLY the query — ADR-0009 Step F'.6 removed candidate_verb, and verb resolution now happens in the SUPERVISOR via /search_predicates + /classify_predicate. At /route_intent time there is no verb, so no intent class, so no declarations to fill against or validate with. The ruling's own reasoning survives intact and points one hop later: fill slots WHERE THE VERB IS KNOWN, which is execute_subtask, immediately before the carry. Recommended: a new /fill_slots(query, verb_iri, declarations) endpoint, generic over declarations via TypeBuilder — the pattern this repo already uses for the predicate dynamic enum — so every engine that declares slots gets filling for free rather than planning getting a bespoke path. BAML's existing RouteIntent (18 hand-maintained typed intents, 0 callers) is NOT the vehicle: it re-routes, which would put a second router in disagreement with the graph. Blocked on the projection either way, because a filler with no declarations has nothing to fill.
   status: open · owner: unassigned
   → [docs/plans/the-slot-filler-belongs-where-the-verb-is-known.md](plans/the-slot-filler-belongs-where-the-verb-is-known.md)
+
+- **the-spread-archetype-already-exists-and-is-bound-to-nothing** — The archetype three competing forecasts need already exists end to end as COMPETING_MEASURES - projector passthrough, frontend component, contract, glyph - and no capability row claims it, so fin_eac_comparison is bound to nothing. Not a new archetype and not cortex-60's work. Three unasserted joins between individually-correct declarations: the missing row, a projector allowlist that passes lowest_eac/highest_eac while the contract reads lowest_value/highest_value, and a reference_value the frontend declares and nobody emits. Derived rather than grepped, the unbound set is SIX archetypes, not one.
+  status: open · owner: unassigned · repo: invincible-agent (+ cortex-ui for the contract's field list)
+  → [docs/plans/the-spread-archetype-already-exists-and-is-bound-to-nothing.md](plans/the-spread-archetype-already-exists-and-is-bound-to-nothing.md)
 
 - **the-telemetry-contract-check-gates-nothing** — build-containers.yml has ZERO `needs:`, so `build` and `lint` run in parallel. The ADR-0038 telemetry mapping truth-check is a STEP IN LINT — it runs, it reports honestly, and it gates nothing: a red mapping produces a failed lint job beside a successful build job, and the image ships. doc-tools solved the same problem with `build-and-push: needs: telemetry-contract`. Fix is a decision about CI critical path, not a defect repair.
   status: open · owner: unassigned

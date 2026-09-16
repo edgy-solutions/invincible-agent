@@ -1,0 +1,33 @@
+# RATIFIED METHOD ROW — ADR-0053 §2. One file, one method, reviewed like a grant.
+method_id: CPI
+name: CPI-based estimate at completion
+description: >-
+  Projects the whole budget forward at the cost efficiency achieved so far. The most commonly
+  cited EAC and the one a reader assumes when a forecast carries no method name, which is the
+  argument for the mandatory slot rather than a default.
+
+module: agent_fleet.finance_agent.measure_modules.eac_formulas
+function: estimate_at_completion
+version: "1.0.0"
+
+# The slot this row is a value of. ADR-0053 §2: slot vocabularies attach FROM THE REGISTRY, so
+# the three values stop being a Literal nobody can extend without an edit to a signature.
+slot: method
+slot_of: fin_eac_calculation
+
+# DATA, not a branch. A refusal's reachability becomes a property of the registry rather than
+# something discovered by reading code — which is how an unreachable refusal got written here
+# once already.
+requires_index: true
+
+derived_from:
+  authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+  clause: EAC (CPI-based)
+  citation: name-only          # see README — a numbered clause is owed, not invented
+  # THE TRANSCRIPTION §2a SEALS AGAINST. Parsed and EVALUATED by the seal against the module,
+  # never string-compared: two copies of one wrong formula agree perfectly.
+  #
+  # ⚠ IT DIVIDES. With CPI below one — work costing more than it earns — dividing RAISES the
+  # forecast and multiplying lowers it. That is not a margin of error, it REVERSES the finding,
+  # and `BAC * CPI` survived a 151-test green suite.
+  transcription: EAC = BAC / CPI
