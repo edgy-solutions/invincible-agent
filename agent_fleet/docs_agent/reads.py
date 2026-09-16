@@ -49,7 +49,17 @@ class PageRow:
 
 @runtime_checkable
 class DocPageReader(Protocol):
-    """The mesh operations `engine-docs` calls. Implemented by `MeshGraph`, not by this engine."""
+    """The mesh operations `engine-docs` calls. Implemented by `MeshOntology`, not by this engine.
+
+    **CORRECTED 2026-09-15: `MeshOntology`, NOT `MeshGraph` — the store, measured.** This file
+    named MeshGraph when it was written, reasonably: "the graph is the index" reads as Neo4j. The
+    corpus is `setup/ontologies/docs_corpus.ttl`, primed into `internal/DOCS`, and `DocPage`
+    individuals declare zero `owl:Class` — so doc-tools' `sync_jena_ontologies_to_neo4j` takes its
+    class-less third case and SKIPS the Neo4j write. `prime_databases.py:456` states the
+    consequence: *"the Jena named-graph load — which is where the doc route reads — still
+    succeeds."* **There are no DocPage rows in Neo4j by design**, so an implementation behind
+    MeshGraph would have had nothing to read.
+    """
 
     def page_for_subject(self, subject_iri: str) -> list[PageRow]:
         """Pages whose `mesh:explains` includes `subject_iri`. Empty is an answer, not an error."""
