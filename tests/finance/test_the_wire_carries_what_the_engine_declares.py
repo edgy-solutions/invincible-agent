@@ -718,3 +718,58 @@ def test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES():
             f"resolved divergence reading as an open one"
         )
         assert len(why) > 40, f"{name} is excused without a usable reason"
+
+
+def test_every_prefix_EITHER_mirror_USES_can_actually_be_EXPANDED():
+    """⚠ THE SILENT FAILURE MODE OF THE MIRROR CHECK ABOVE, closed before it fires.
+
+    `_expand` returns an unrecognised URI **verbatim**. That is the documented behaviour of the
+    prefix table and the reason this repo has been bitten before: *an unknown prefix passes
+    through, so the row registers, reports accepted, and never matches.*
+
+    Applied to a mirror check, it is worse than a missed expansion. Two sides holding the same
+    binding under an unmappable prefix — one compact, one full — **diff as a MISMATCH that is
+    not one**; two sides holding different bindings that happen to share a compact spelling can
+    **diff as agreement**. Either way the seal reports confidently and wrongly, and nothing in
+    it looks broken.
+
+    ── THIS IS NOT HYPOTHETICAL, AND THE EVIDENCE IS A RED TEST ON MASTER ───────────────────
+    `tests/planning/test_lookup_prefixes_are_derived.py` has been failing on master since before
+    this lane's work, with exactly this: *"only the WRITER knows ['docs:']"* — `docs:` is a
+    namespace the writer puts on the wire and `_IRI_PREFIXES_FOR_LOOKUP` **cannot expand**. The
+    map the mirror check depends on is already known-incomplete, by a seal in another lane.
+
+    Measured 2026-09-15: the prefixes actually used across both mirrors are `cost:`, `fin:`,
+    `mesh:`, `safety:` — **all four mappable**, so the mirror result stands today. This test is
+    what makes that a CHECKED fact rather than a lucky one, and it goes red on the day a `docs:`
+    subject is bound while the map still lacks it.
+    """
+    back, front = _mirrors()
+
+    from agent_fleet.presentation_agent.capabilities import (
+        _IRI_PREFIXES_FOR_LOOKUP as PREFIXES,
+    )
+
+    # Read the RAW spellings, not the expanded pairs — an expanded URI cannot show the defect,
+    # because passing through verbatim is exactly what it looks like when it works.
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    raw = {c["subject_uri"] for c in PRESENTATION_CAPABILITIES}
+    raw |= {c["object_uri"] for c in PRESENTATION_CAPABILITIES}
+    for s, o in re.findall(
+        r'subject_uri:\s*"([^"]+)",\s*\n\s*object_uri:\s*"([^"]+)"',
+        _CORTEX.read_text(encoding="utf-8"),
+    ):
+        raw |= {s, o}
+
+    compact = {u.split(":", 1)[0] + ":" for u in raw if not u.startswith("http")}
+    assert compact, "no compact URI in either mirror — this guard has gone vacuous"
+    unmappable = sorted(compact - set(PREFIXES))
+    assert not unmappable, (
+        f"these prefixes are USED in a binding and cannot be expanded: {unmappable}\n"
+        f"_expand returns them verbatim, so the same binding spelled compact on one side and "
+        f"full on the other diffs as a mismatch that is not one — and two different bindings "
+        f"sharing a compact spelling diff as agreement. Add them to "
+        f"_IRI_PREFIXES_FOR_LOOKUP; see tests/planning/test_lookup_prefixes_are_derived.py, "
+        f"which has been reporting `docs:` missing from that very map."
+    )
