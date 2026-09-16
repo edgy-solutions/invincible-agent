@@ -3006,6 +3006,56 @@ PROSE failing while the mechanism is fine. Both report green.
 
 ---
 
+## R-073 — `unsummarised`: A FOURTH DISPOSITION THAT RETIRES BY TEST
+
+The NP-MERIDIAN brief (`artifact-10-1789516344356`) rendered three rows, two of which read
+*"reported (see artifact)"*. That is not a finding and not a hole, and **none of the three
+existing dispositions names it.** The caller is entitled, the verb RAN, the hop artifact exists
+and the brief genuinely derives from it — what is missing is a quotable verdict.
+
+The producer's own contract table says why the near neighbours are wrong
+(`agent_fleet/presentation_agent/main.py:527`, mirroring `cortex-ui/.../NamedHole.contract.ts`):
+
+    unentitled   the caller may not invoke this panel's verb   -> NAMED_HOLE
+    unavailable  the verb failed, timed out, or was refused    -> whole-board refusal
+    empty        the verb answered and legitimately has nothing -> the panel's own rowless card
+
+> "the card refuses anything but `unentitled` … drawing a hole for those would erase the
+> distinction between three different answers."
+
+**Drawing it as `unentitled` tells a reader they lack an entitlement they have. Drawing it as
+`empty` erases a distinction the comment above exists to keep — there IS content. Drawing nothing
+hides a row that has a source.** Raised by `cortex-ui-60` before the payload existed rather than
+read off the wire afterwards, which is the only cheap moment to settle a vocabulary term.
+
+**THE RULING.** A fourth disposition, `unsummarised` — *content exists, verdict absent* — rendered
+as the FINDING row with its artifact link and the label *"no verdict emitted by
+`<verb>`"*, **never as a hole**.
+
+**IT IS TEMPORARY BY CONSTRUCTION, AND THAT IS THE LOAD-BEARING HALF.** Its repair lives on the
+producer: once the verbs emit a verdict line the way `fin_burn_rate` does, nothing can produce it.
+So the seal that lands WITH the disposition asserts that **no built-in verb produces
+`unsummarised`** — the term retires by TEST rather than by somebody remembering it was meant to be
+temporary. A vocabulary term with no expiry mechanism is permanent whatever its docstring says;
+compare R-072's third kind, a claim that was never true aging into authority.
+
+**OWNERS, and each half is refused by the others if it lands alone:**
+
+| who | what |
+|---|---|
+| `cortex-ui-60` | adds it to `NamedHole.contract.ts` — they own the contract |
+| presentation producer | accepts it at `main.py:527`, in the same act |
+| lane 32 | emits it on the brief row instead of printing "see artifact" |
+| lane 91 | makes it unreachable: the verbs emit a verdict (favourable / adverse / none stated) |
+
+**AND THE DISPOSITION IS THE FIELD, NOT THE NAME.** *"Carry the hole by name"* was the original
+wording and it is underspecified: `{hole: "cost_variance"}` leaves the card choosing among states
+with three different repairs and three different readers, and the honest guess is no render at all.
+A row carries `{row: "cost_variance", disposition: "unsummarised", artifact: "..."}` or it carries
+nothing a card can draw. Same absent-versus-empty rule as `disposal` and `failure_cause`.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
