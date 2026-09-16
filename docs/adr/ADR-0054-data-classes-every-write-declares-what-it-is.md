@@ -6,8 +6,14 @@
 That sentence is this ADR's whole subject, moved from the rendering layer to the storage layer. A
 value's **noun must match its class**, and today the mesh has no place to write the class down.
 
-**Status:** Proposed — decision recorded 2026-09-16. **Declaration and enforcement points only; no
-store is reclassified by this ADR**, and the population it governs is **provisional** (see §7).
+**Status:** **ACCEPTED 2026-09-16**, with two amendments taken at ratification and folded in
+rather than appended: §2 now states that **the class is a property of the STORE**, declared once,
+with a write carrying it by naming the store — reconciling two claims the draft made as if they
+were one — and §2 carries a **worked example of a combination no shape covers** (edge-authored
+intent), which is the reader's first evidence that the shapes are not the schema. **Declaration and
+enforcement points only; no store is reclassified by this ADR**, and the population it governs is
+**provisional** (see §7). The eo lane's fleet-wide write census is the first thing that runs against
+it.
 **Date:** 2026-09-16
 **Deciders:** Architect (the four fields and the three enforcement points), Platform team
 **Related — CITED REPO-QUALIFIED, because two of these numbers exist in both repos:**
@@ -70,7 +76,20 @@ rather than chosen.
 
 ## 2. Decision — four fields, and the three shapes are NOT a substitute for them
 
-**Every write in the mesh carries a declared class of four fields:**
+**THE CLASS IS A PROPERTY OF THE STORE, DECLARED ONCE. A WRITE CARRIES IT BY NAMING THE STORE.**
+
+Stated first because the title is a slogan and this is the claim. *"Every write declares what it
+is"* and *"a declaration per store"* are different assertions, and only the second is enforceable:
+a per-write declaration is a field a caller fills in, which can disagree with the store it lands
+in and gives the census nothing countable. A per-store declaration is one row per store, and a
+write inherits it.
+
+**That is what makes §4's third enforcement point mean anything:** the write interface refuses a
+store whose class it may not write — the registrar cannot be handed a `stateful` store, the trace
+writer cannot be handed a `rebuildable` one — so the disagreement is caught at the interface rather
+than discovered in the data. And it gives the census **one thing to count**: stores, not writes.
+
+**A store's class is four fields:**
 
 | field | values | what it answers |
 |---|---|---|
@@ -103,6 +122,33 @@ with an upstream authority** is exactly what the FRACAS and OpenDDIL work is abo
 
 > **A store that fits none of the three shapes declares its four fields anyway**, rather than being
 > filed under the nearest. The shapes are shorthand for a reader; the declaration is the four.
+
+### The worked example, because a rule with no instance is a rule nobody applies
+
+**Edge-authored intent fits none of the three shapes, and it is the case the companion ADR attaches
+to.** OpenDDIL ADR-0040 §3 names it: a locally-raised action is *"intent the system of record has
+never seen and may reject"*, rendered as `asserted-locally-unconfirmed`, *"which is neither
+measured nor derived — and it must never present as an accepted transaction."*
+
+Its four fields:
+
+| field | value | why |
+|---|---|---|
+| reproducibility | `stateful` | a maintainer's action at a severed site is not rebuildable from seed and overlay by anything |
+| authority | `upstream`, **pending** | ADR-0040 §7: *"OpenDDIL holds intent durably and authoritatively as intent. It never holds the transaction."* Local authority over what happened here; central authority over the record |
+| sync obligation | `flush-up` | it reconciles toward the authority when the link returns, and never downward |
+| releasability | reserved (§6) | |
+
+**No shape name fits.** It is not `rebuildable`; it is not `stateful` iagent-authored, because the
+authority is elsewhere; and it is not `of-record-elsewhere`, because the record does not exist yet
+anywhere — that shape describes a **mirror of an accepted fact**, and this is a request that may be
+refused. Forced into the nearest, it would be filed as `of-record-elsewhere` and would then claim a
+transaction that nobody has made — **which is precisely the failure ADR-0040 §3 exists to prevent,
+arriving through a schema instead of through a screen.**
+
+**That is the class-6 rule doing what it says**, and it is the reader's first evidence that the
+shapes are not the schema. The custody, retention and reconciliation rules for this combination are
+the companion ADR's subject, not this one's.
 
 ## 3. `write-back` is a value the class can carry and nobody may set casually
 
@@ -238,6 +284,10 @@ reads it yet.
 
 ## Indicators we got this wrong
 
+- **A STORE'S CLASS DISAGREES WITH THE INTERFACE THAT WROTE IT.** The strongest one: §2's
+  per-store declaration and §4's interface refusal have come apart, and a write reached a store its
+  writer should not have been handed. Everything else here is a design drifting; this is the
+  mechanism not holding.
 - **A store declares a shape name and nothing declares its four fields.** §2 failed, and `stateful`
   has started meaning things it does not carry.
 - **An enforcement point is switched on before the count returns zero in that environment**, and a
