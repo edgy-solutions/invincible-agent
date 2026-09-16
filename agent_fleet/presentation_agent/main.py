@@ -505,6 +505,34 @@ except ImportError:
 #: Value is (required_fields, optional_fields). A component needs its required fields or it
 #: cannot draw; the optional ones travel only when the producer supplied them, same
 #: absent-means-silent rule as the passthrough below.
+#: THE DISPOSITION VOCABULARY, AND WHICH OF THEM MAY DRAW A HOLE.
+#:
+#: Mirrors cortex-ui/src/components/registry/NamedHole.contract.ts, which refuses anything but
+#: `unentitled` BY NAME. Declared here because the comment on NAMED_HOLE below described that
+#: refusal for months while THIS FILE PERFORMED NONE OF IT — the projector checked that
+#: `disposition` was PRESENT and never what it SAID. A producer emitting
+#: `disposition: "unsummarised"` would have drawn a named hole, and the only thing that would
+#: have caught it is a validator in another repo at the far end of the wire.
+#:
+#: That is R-072's third kind: a sentence describing a guard, sitting beside code that does not
+#: implement it, inheriting the authority of every green run in the file.
+#:
+#: WHY ONLY `unentitled` DRAWS A HOLE (ADR-0050 §5 via ADR-0049 Ruling 4):
+#:   unentitled    the caller may not invoke this panel's verb        -> NAMED_HOLE
+#:   unavailable   the verb failed, timed out, or was refused         -> whole-board refusal
+#:   empty         the verb answered and legitimately has nothing     -> the panel's rowless card
+#:   unsummarised  content exists, verdict absent (R-073)             -> the FINDING row
+#:
+#: Drawing any of the other three as a hole tells a reader they lack access they HOLD, which is
+#: the one error on this surface that cannot be taken back.
+_DISPOSITIONS: frozenset = frozenset(
+    {"unentitled", "unavailable", "empty", "unsummarised"}
+)
+
+#: The subset a NAMED_HOLE may carry. A frozenset of one, deliberately: the next disposition to
+#: be added must be a decision about THIS line rather than a value that arrives and is drawn.
+_HOLE_DISPOSITIONS: frozenset = frozenset({"unentitled"})
+
 _FLAT_ARCHETYPES: Dict[str, tuple] = {
     # Fields read from cortex-ui/src/components/elicitation/Elicitation.contract.ts, not
     # invented here. `slot` is the only required one: which declaration is missing.
@@ -562,6 +590,35 @@ def _project_flat_archetype(
             "cannot say what it is asking for.", archetype, missing,
         )
         return None
+
+    # THE VALUE, NOT ONLY THE PRESENCE — and THREE OUTCOMES NEED THREE MESSAGES.
+    #
+    # `cortex-ui-60` found the collapse on their side while adding `unsummarised`: two refusal
+    # reasons were sharing one message, and the middle one is NOT A MISTAKE AT ALL —
+    #
+    #   absent         a required field was omitted           -> fix the producer
+    #   NOT A HOLE     understood, another surface draws it    -> NOTHING IS WRONG
+    #   unrecognised   means nothing to this vocabulary        -> fix the producer
+    #
+    # A correct routing decision reported in the words of a parse failure sends someone to fix
+    # something that is not broken. So the middle case logs at INFO and names where the value
+    # belongs, and only the outer two are warnings.
+    if archetype == "NAMED_HOLE":
+        disposition = str(resp.get("disposition") or "")
+        if disposition not in _DISPOSITIONS:
+            logger.warning(
+                "render_ui: NAMED_HOLE carries disposition %r, which is not in the declared "
+                "vocabulary %s; refusing. Fix the producer — an undeclared disposition cannot "
+                "be routed to any surface.", disposition, sorted(_DISPOSITIONS),
+            )
+            return None
+        if disposition not in _HOLE_DISPOSITIONS:
+            logger.info(
+                "render_ui: disposition %r is understood and does NOT draw a hole; another "
+                "surface owns it. This is a routing decision, not a defect — nothing to fix.",
+                disposition,
+            )
+            return None
 
     component: Dict[str, Any] = {
         "archetype": archetype,
