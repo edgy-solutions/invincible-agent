@@ -185,3 +185,42 @@ and it has now appeared in a graph writer, an SDK Protocol operation, and a func
 Hand-seeded state no bootstrap reproduces is a fourth reproducibility state that the four-field
 class must be able to express or refuse — **it is neither rebuildable nor stateful-authored; it is
 stateful-and-unreproducible, which is the debt, not a class to legitimise.**
+
+## ADR-0034 — and WHICH ADR-0034 is a citation that moves, the third
+
+The packet's reading list puts ADR-0034 **"on our side"**. Our ADR-0034 is
+`trust-lifecycle-admission-policy-decision-records-autonomous-path` and **does not contain the
+word "propagating"**. The propagating/terminal typing is **OpenDDIL's** ADR-0034,
+`tier-analytics-are-deployment-configuration`, which is also what ADR-0040's own Related section
+means when it cites *"ADR-0034 — propagating-vs-terminal typing, which §5 reuses for writes."*
+
+**Both are plausibly in scope and for different halves**, so this is an ambiguity rather than an
+error: ours bears on authority location and decision records for the data-class ADR; OpenDDIL's is
+the typing ADR-0042 inherits. **Two repos, one number, and a reading list that does not say which
+— the fleet already knows this shape from `engine-f` the prose name versus `engine-f` the
+component.** Both drafts should cite repo-qualified.
+
+### The typing, verbatim, and the sentence that transfers
+
+> - **Propagating** — associative/algebraic, safe to emit upward: `count`, `sum`, `min`, `max`,
+>   `worst-of`, `distinct`, `mean-via-(mean,count)`.
+> - **Terminal** — lossy, valid only at the point of presentation: `top-N`, percentile snapshots.
+>
+> **The config schema rejects a terminal operation on any stream marked for upward emission.**
+
+and the line that is the whole argument for a declared class, already written one repo over:
+
+> `top-N` becomes what it always was: a presentation-layer operation. The truncation bug becomes
+> **unwritable** rather than merely audited-for — **the difference between "we checked" and "the
+> system won't let you."**
+
+**THAT IS THE ENFORCEMENT FRAMING THE DATA-CLASS ADR SHOULD BORROW RATHER THAN INVENT.** Our
+argument is the same one: a cross-boundary write becomes *unwritable* because the interface's
+signature carries the class, not *audited-for* because someone reads the diff. And the four-field
+class's **sync obligation** (none / flush-up / mirror-down / write-back) is the direct analogue of
+propagating/terminal — a typing of what may cross a boundary, and in which direction.
+
+**One more sentence worth stealing:** *"The audit's classification table is the seed of this type
+table."* That is exactly the move being asked of §6.1 — a table in prose becoming a type the schema
+enforces — and it means the data-class ADR is not inventing a mechanism but repeating one that has
+already been ratified next door.
