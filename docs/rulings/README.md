@@ -3103,6 +3103,43 @@ goes. See R-072: an implied guarantee nobody stated is the third kind waiting to
 
 ---
 
+## R-075 — IF A MESSAGE STRING ENUMERATES ANYTHING, THE ENUMERATION IS A FIELD
+
+`cortex-ui-60`'s, and the sentence that makes it a rule is theirs:
+
+> **A card can build prose from data and cannot reliably recover data from prose.**
+
+Three instances in one night, which is what makes it a class rather than three fixes:
+
+| | the flattening | what it cost |
+|---|---|---|
+| `expert_response.candidates` | verb IRIs written into a sentence | the field has no reader in cortex; candidates render as prose |
+| `not_in_model` available dates | a list written into "Available dates: …" | a menu's worth of information arrives as a paragraph |
+| *"carry the hole by name"* | a name with no disposition | **caught BEFORE the payload existed** — became R-073 |
+
+**THE THIRD IS THE ONE THAT WENT RIGHT, AND THE ONLY DIFFERENCE WAS TIMING.** It was raised while
+the payload was still being written. The other two were found after the wire had already carried
+prose, and one of them had a producer that got it right — the cost engine emits
+`{"refused": True, "outcome": kind, "reason": message, "available": [...]}`, with `available` as a
+FIELD and its own comment saying *"same key as VintageRequired above, so a consumer reads one field
+for what may I say instead."* **The flattening happened downstream of a producer that had already
+done the right thing**, which is why nobody on either end saw it.
+
+**This is R-055's shape at the presentation layer.** R-055 is meaning recorded where nobody reads
+it; this is meaning recorded in a form nobody can read *back*. A sentence listing options is a menu
+that has been flattened, and the flattening is lossy in exactly the direction that matters.
+
+**How to apply.** When writing a message that names more than one of anything — options, dates,
+candidates, verbs, reasons — the list goes in a field and the message may quote it. Never the other
+way round. The test is whether a consumer would have to parse the sentence to act: if so, the
+sentence is carrying data and the data has no home.
+
+**And the cheap moment is before the payload exists.** All three were the same defect; only the one
+raised during design cost nothing. See R-073, which exists because the disposition question was
+asked while the shape was still being decided.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
