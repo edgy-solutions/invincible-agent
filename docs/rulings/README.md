@@ -2940,6 +2940,34 @@ instrument in any deployment the chart governs* (true where credentials reach) �
 true once separated. A finding that overclaims is usually a true finding wearing a borrowed scope,
 and deleting it loses the measurement along with the error.
 
+
+**AND THE SAME GAP OPENS WHEN THE SENTENCE IS ABOUT THE WORK RATHER THAN THE INSTRUMENT.** Two
+instances the same day, neither with any instrument pointed at it:
+
+* **Lane 1's, cost an exchange.** Declined to take a stale-xfail fix off another lane on the
+  stated reason *"it collides on their rebase in a file they are actively holding"*. Never
+  measured. The other lane believed it for a full exchange and did not measure it either;
+  `git diff --name-only origin/master...HEAD` then showed five commits, seven files, no overlap.
+  The deferral bought nothing but a day of the hole staying open.
+* **`invincible-agent-28`'s, cost a VIOLATION.** Bumped the SDK pin for engine-o alone, reasoning
+  *"moving fifteen pins is a fleet change with a roll behind it, not a lane's."* `test_lock_coherence`
+  refused the result: **the fleet pin is a single value by construction.** So "bump one engine" was
+  not a smaller, safer version of the act — it WAS the act, done wrongly.
+
+> **Restraint was not the conservative option; it was the only wrong one available.**
+
+**THE TELL IS IDENTICAL IN BOTH AND IT IS WHY THIS BELONGS IN THE REGISTER:** both would have
+checked a claim about the CODE. Neither checked a claim about the SHAPE OF THE WORK — *what this
+lane may do*, *what belongs to someone else*, *what is too big to attempt* — because a reason for
+doing LESS does not feel like something that needs evidence. A positive claim proposes an action
+and the action draws review; an obstacle proposes nothing, closes the question, and leaves no
+reviewer. It also reads as caution, so challenging it looks reckless rather than rigorous.
+
+**The rule, therefore, covers both halves:** state what a command covered beside what it found,
+AND state a blocker as a checkable claim and check it. Where it cannot be checked cheaply, say
+*"I believe X blocks this and have not verified it"* — so the other party knows a load-bearing
+premise is untested rather than settled.
+
 See [[a-sample-is-not-the-population]], [[assert-on-the-claim-not-its-neighbour]].
 
 ---
