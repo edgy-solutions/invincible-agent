@@ -1138,6 +1138,70 @@ services:
           instance_id and label. Same identity gap and the same incidental bound as resolve
           above — the menu bound of 8 truncates larger classes to a count, which is not a gate."
 
+  docs_agent:
+    file: agent_fleet/docs_agent/main.py
+    inbound_transport_auth: engine-docs
+    notes: |
+      engine-docs — the corpus answering for itself (ADR-0037). ONE VERB, mesh:explain, which
+      returns a reviewed write-up covering a named thing: the prose an author wrote and a
+      reviewer approved, carried whole rather than summarised. Governed READING only; nothing
+      here mutates anything.
+
+      Cluster-internal: reached via cortex-bff and the mesh fan-outs, never by a browser. Takes
+      the mesh transport-auth dependency in OBSERVE posture like every other engine.
+
+      WHAT IT CAN DISCLOSE IS THE WHOLE OF A PLATFORM RUNBOOK, and that is the row to re-read
+      when the corpus grows. Today every page is a platform runbook committed to this public
+      repository, so the content is already releasable and this engine discloses nothing a git
+      clone does not. THAT CHANGES THE MOMENT A WORK-SIDE PAGE IS INGESTED: an ADR-0036 overlay
+      corpus is a customer's internal documentation, and a verb that returns a page whole has no
+      way to return less of it. When the overlay lands, these rows are re-classified and the
+      audience_hint — which is display routing and explicitly NOT authz — must not be mistaken
+      for the gate that decision needs.
+    routes:
+      - method: GET
+        path: /version
+        identity: none
+        gate: none
+        exposes: build-identity
+        consumers: [operator, version-census, cortex-bff]
+        class: releasable_by_design
+        justification: >-
+          The commit sha baked into the image at build time. RELEASABLE BY DESIGN and
+          deliberately ungated, for the same reason as every other engine's: it is read from
+          outside the cluster and by /fleet/version from inside it, and a gate here would make
+          "is the fix deployed?" require the credential you are usually debugging. Mounted by
+          agent_fleet/utils/version_endpoint.py, so it is not @app-decorated in the service file
+          and the route scanner cannot see it — this declaration is the only record.
+      - method: GET
+        path: /health
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: liveness, verb list, and WHICH HALF OF THE READ PATH IS WIRED
+        consumers: [kubelet, operator]
+        class: releasable_by_design
+        justification: >-
+          Reports reader_wired / body_store_wired / ready and, when not ready, the reason. That
+          is deliberately more than liveness: an engine that reported ready while unable to
+          answer would be discovered by a user, and carrying the degradation as a field is how
+          an operator finds it first. It names a missing DEPENDENCY, never a credential, an
+          address or a bucket's contents.
+      - method: POST
+        path: /explain
+        identity: "initiator via transport auth"
+        gate: "transport auth (OBSERVE)"
+        exposes: the full text of one documentation page
+        consumers: [cortex-bff, mesh fan-out]
+        class: releasable_by_design
+        justification: >-
+          Returns a page from the platform corpus whole, with its audience hint and the seals it
+          cites. Releasable TODAY because every page is a platform runbook already public in
+          this repository. RE-CLASSIFY WHEN THE WORK-SIDE OVERLAY LANDS — that corpus is a
+          customer's internal documentation and this verb cannot return part of a page. Refuses
+          with 409 when the bytes read back do not match the sha the graph indexed, 502 when the
+          locator names no object, and 503 while the graph reader is unwired; none of those
+          three carries store contents or credentials.
+
   safety_agent:
     file: agent_fleet/safety_agent/main.py
     inbound_transport_auth: engine-safety

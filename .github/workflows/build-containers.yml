@@ -94,6 +94,15 @@ jobs:
           - service: safety-agent
             path: agent_fleet/safety_agent
             port: "8099"
+          # engine-docs, the corpus answering for itself (ADR-0037). Image name is
+          # docs-agent; the SERVICE it runs as is engine-docs; the values key is engineDocs.
+          # Port must match the chart's engineDocs.port or the readiness probe hits a closed
+          # port. WITHOUT THIS ENTRY NO IMAGE IS EVER BUILT at any pinned sha — the omission
+          # with no error message, because nothing fails until a deploy asks for a tag that
+          # was never produced.
+          - service: docs-agent
+            path: agent_fleet/docs_agent
+            port: "8100"
           # engine-lg, the graph host. RIDES Dockerfile.agent, which already carries
           # ARG GIT_SHA / ENV IAGENT_GIT_SHA and is built with --build-arg
           # GIT_SHA=${{ github.sha }} — so no new stage and no new build-arg are needed, and
