@@ -224,3 +224,81 @@ propagating/terminal — a typing of what may cross a boundary, and in which dir
 table."* That is exactly the move being asked of §6.1 — a table in prose becoming a type the schema
 enforces — and it means the data-class ADR is not inventing a mechanism but repeating one that has
 already been ratified next door.
+
+## ADR-0047 (ours) — the sync-obligation field's hardest value is already refused
+
+§4 gives the **mirror-with-provenance** shape in one sentence, and it is the same shape
+`mesh:DocPage` arrived at independently — *locator plus hash, never a second copy*:
+
+> the recipient holds the content and iagent holds the thin reference — the `PublishedArtifact`
+> records the locator and the hash, never a second copy of what was sent. Rule 1's *purpose*
+> (iagent must not be able to present stale content as live) is preserved exactly; only the party
+> holding the content changes.
+
+And the field value `write-back` is **already refused for the export case, with its reason**:
+
+> **NON-GOAL, stated with its reason: there is no write-back path.** … it is a **different
+> decision** with its own identity, authorization, provenance and admission questions … **It must
+> arrive as its own ruled decision, never as scope creep on an export.** A write-back bolted onto a
+> read-only package is an unauthenticated external write path into a governed store.
+
+ADR-0040's `of-record-elsewhere` says the same from the other side — *"a mirror with provenance and
+a write-back contract, never the authority."*
+
+> **SO `write-back` IS A VALUE THE CLASS CAN CARRY AND NOBODY CAN SET CASUALLY.** Two ratified ADRs
+> agree that instantiating one is its own decision. The data-class ADR should say that declaring
+> `sync: write-back` on a store REQUIRES a ruling naming the authority, the submitter's identity and
+> what an accepted correction changes — otherwise the field becomes the scope creep ADR-0047
+> refuses, wearing a schema.
+
+## ADR-0029 — releasability, and §7 is the rollout the data-class ADR needs
+
+**§3: labels are provenance, stamped at ingress, never re-derived.** Same doctrine as our own
+"provenance is a field never a join". And `policy_label` is **reserved, not defined**:
+
+> A structured confidentiality label is a real requirement for some programs and a premature
+> abstraction for OpenDDIL today; reserving the field number keeps the door open without shipping a
+> shape we would have to guess at.
+
+**That is the honest option for our fourth field.** Releasability can be *reserved* rather than
+invented, citing this reasoning, instead of our ADR shipping a taxonomy it would be guessing at.
+
+**§7 IS THE ONE THAT CHANGES OUR ROLLOUT, and it is the hazard our clearer inherits exactly:**
+
+> Deny-unlabeled is only safe once every row is labelled. Turning it on against a partially
+> -labelled dataset **silently blanks legitimate data, and the failure mode is indistinguishable
+> from correct enforcement — an operator sees an empty screen either way.**
+
+Our version: a clearer that drops what declares itself rebuildable, run against a partially
+-declared manifest, **keeps** the undeclared instead of dropping it — the mirror failure, equally
+indistinguishable. So the sequencing is theirs, verbatim: **label first, enforce second, never the
+reverse**, with a hard gate that must return zero before the clearer reads the class in that
+environment, and the census's *"refuses an unclassified store"* is what makes that gate real.
+
+And the distinction that keeps it honest:
+
+> Entities without a derivable national origin … receive a default from deployment configuration —
+> so that **"unlabelled" means "genuinely unknown", not "we haven't got to it yet"**.
+
+**Plus the constraint on the gate itself, which is our own derive-the-population law ratified next
+door:**
+
+> The gate must enumerate the labelled tables from `information_schema` at run time. **It must never
+> carry a hardcoded list.**
+
+## Where the data-class ADR now stands before a word is drafted
+
+**Almost every mechanism it needs is ratified precedent, in someone's words rather than mine:**
+
+| the ADR needs | already ruled, cite it |
+|---|---|
+| a prose table becoming an enforced type | OpenDDIL ADR-0034 — *"the audit's classification table is the seed of this type table"* |
+| enforcement that refuses rather than audits | OpenDDIL ADR-0034 — *"we checked"* vs *"the system won't let you"* |
+| the reproducibility split itself | ADR-0051 §6.1, with its measured cost |
+| why a declaration beats absence-from-a-list | the clearer's own derived drop set, and three instances this week |
+| the hardest sync value | ADR-0047 §4's refusal + ADR-0040's `of-record-elsewhere` |
+| releasability without inventing a taxonomy | ADR-0029 §3's *reserved, not defined* |
+| the rollout, and its indistinguishable failure | ADR-0029 §7 — label first, hard gate, derived population |
+
+**What is genuinely new is only this:** the four fields as one declared object, carried in three
+write interfaces' signatures, so that crossing a boundary is unwritable rather than reviewed.
