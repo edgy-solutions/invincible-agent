@@ -601,7 +601,31 @@ def dispatch_pre_resolved(
     # Safe for engines that do not want it: no engine request model in this repo sets
     # `extra="forbid"` (checked across agent_fleet/ and src/), so an unrecognised key is
     # ignored rather than answered with the 422 this line exists to prevent.
-    _request_body = {"query": user_query, "params": params, "thread_id": run_id}
+    # THE CALLER'S PERSONA TRAVELS, and it is the same defect `thread_id` was: a fact the
+    # gateway already holds that the wire never carried. `acting_persona` has been a
+    # parameter of this function since it was written and is used at the record site above;
+    # it was simply never put in the body.
+    #
+    # SPELLED `user_persona` FOR PARITY WITH THE SPECIALIST PATH, which sends
+    # `user_persona` for the CALLER and reserves `persona`/`answerer_persona` for the
+    # answering side. The gateway passes `acting_persona=user_persona`, so this is the
+    # asker, not the answerer, and an engine reading one wire name on one route and a
+    # different one on the other is how a field becomes untrustworthy.
+    #
+    # WHAT IT UNBLOCKS: `mesh:explain` orders candidate pages by audience match FIRST — a
+    # how-to written for an ARCHITECT is the wrong answer for a DATA_ENGINEER even when
+    # both pages are correct. With no persona on the wire that key was undeliverable, so
+    # the engine fell through to recency and rendered the whole tied list.
+    #
+    # AND THE ABSENCE WAS AN ASYMMETRY, NOT A GAP IN THE FLEET: the specialist dispatch
+    # has carried persona all along. `mesh:explain` was blind through THIS route and
+    # sighted through the other one.
+    _request_body = {
+        "query": user_query,
+        "params": params,
+        "thread_id": run_id,
+        "user_persona": acting_persona,
+    }
     try:
         resp = _post(
             endpoint,

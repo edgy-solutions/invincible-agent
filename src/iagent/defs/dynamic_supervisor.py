@@ -1049,6 +1049,40 @@ def _classify_route(
         else []
     )
 
+    # ── WHICH RULE ADMITTED EACH VERB, CARRIED RATHER THAN DROPPED ──────────────────────────
+    #
+    # THE POOL NOW HAS TWO LEGS AND THE CLASSIFIER WAS TOLD ABOUT ONE. `/find_compatible_verbs`
+    # returns verbs whose `input_uri` covers the subject (`subject`) AND verbs that declare a
+    # required slot whose referent covers it (`referent`). The line above flattens both to bare
+    # IRIs, and the enum the LLM reads describes every entry with its own "operates on X"
+    # clause — true of the first leg, FALSE OF THE SECOND.
+    #
+    # MEASURED 2026-09-16 on the live fleet, and the classifier was right rather than confused:
+    #
+    #     "how concentrated is purchasing on lot 4"  -> NO_VERB_CLASSIFIED
+    #     "none of the predicates that operate on ProductionLot provide supplier-concentration
+    #      information"
+    #     costSupplierConcentration scored 0.269, SECOND of seven, and was refused on SUBSTRATE
+    #
+    # It saw the verb, ranked it, and rejected it because it had been told the enum operates on
+    # ProductionLot — and `costSupplierConcentration` operates on Supplier. The framing was
+    # uniform and had stopped being true.
+    #
+    # `ontology_service` already records this failure mode for a different cause: "the last
+    # description's `operates on X` clause may be incompatible with the resolved subject. The
+    # LLM then refuses on substrate grounds even though a compatible registration exists."
+    # The widening reached that trap by a new road.
+    #
+    # SO THE LABEL TRAVELS. A referent-admitted verb is described as PARAMETERISED BY the
+    # subject and answering about its OWN class — "about the suppliers on this lot; the lot goes
+    # in the slot" — which is the same binding the pool already encodes and the answer path
+    # already honours. It is the LLM that was reasoning on a story nobody had updated.
+    verb_compatibility = {
+        v.get("verb_iri"): (v.get("compatibility") or "subject")
+        for v in (compatible_verbs or [])
+        if v.get("verb_iri")
+    }
+
     # When the subject is resolved AND Neo4j returns ZERO compatible
     # verbs, that's a hard no-match: no engine in the registry can
     # operate on this subject's class chain. Route to generalist
@@ -1117,6 +1151,10 @@ def _classify_route(
                 # compatible verbs. Empty = unconstrained (Weaviate
                 # hybrid as before).
                 "compatible_verb_iris": compatible_verb_iris,
+                # Which leg admitted each verb. Absent => "subject" for every entry,
+                # which is exactly the pre-widening behaviour, so an engine-o that has
+                # not yet learned the field keeps working and reads the old story.
+                "verb_compatibility": verb_compatibility,
             },
             timeout=30,  # LLM call inside; longer than /search_predicates.
         )
@@ -2389,6 +2427,71 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         }
 
     if status == _ROUTING_NO_MATCH:
+        # ── AN ABSTAIN IS NOT A COVERAGE GAP ────────────────────────────────────────────────
+        #
+        # ADR-0008 sends a registry COVERAGE GAP to the generalist, and that is right for
+        # `subject_unknown`, `no_compatible_verbs` and `domain_scope_excluded` — in each of
+        # those nothing in the registry could have served the question.
+        #
+        # `no_verb_classified` IS A DIFFERENT FACT. Candidates existed, the classifier read
+        # them, and it declined to guess. Sending that to a generalist turns the system's most
+        # honest answer into a search: measured 2026-09-16, "how concentrated is purchasing on
+        # lot 4" abstained correctly and then rendered as a DATA_ENGINEERING catalog refusal
+        # from Engine A — a question about cost answered with an entitlement complaint about
+        # DataHub. The user is told they lack access to something they never asked for.
+        #
+        # SO THE ABSTAIN IS THE ANSWER, AND IT CARRIES ITS CANDIDATES. "No verb fit; these were
+        # considered" is actionable — the reader can rephrase toward one of them — where a
+        # catalog refusal is not actionable in any direction.
+        _fb_reason = (telemetry or {}).get("fallback_reason")
+        # `candidate_verbs` IS THE TELEMETRY KEY, not `candidate_verb_iris`. The latter is the
+        # field name on classify's RESPONSE; the supervisor reads it into `candidates` and
+        # stores it under the shorter name. Reading the response's spelling here returns an
+        # empty list on every call — the message would render "No registered capability fit"
+        # and never name one, which is the abstain WITHOUT the part that makes it actionable.
+        # Caught by checking the key rather than the shape: an empty list is a legal value, so
+        # nothing would have failed.
+        _considered = [
+            c for c in ((telemetry or {}).get("candidate_verbs") or [])
+            if c and c != "UNKNOWN"
+        ]
+        if _fb_reason == "no_verb_classified":
+            context.log.info(
+                "routing_abstain_rendered sub_query=%r considered=%s — NOT falling through to "
+                "the generalist; the classifier declined among real candidates.",
+                sub_query, _considered,
+            )
+            return {
+                "persona": config.user_persona,
+                "user_persona": config.user_persona,
+                "answerer_persona": config.user_persona,
+                "predicate_verb_iri": None,
+                "fallback_reason": "no_verb_classified",
+                "fallback_score": None,
+                "sub_query": sub_query,
+                # NOT `no_match`: the card must be able to tell "nothing covers this" from
+                # "something might, and the system would not guess which".
+                "route_status": "abstained",
+                "expert_response": {
+                    "status": "no_verb_classified",
+                    "reason": "no_verb_classified",
+                    "message": (
+                        "No registered capability confidently fit that question. "
+                        + (
+                            "These were considered: " + ", ".join(_considered) + ". "
+                            "Naming one, or rephrasing toward it, will route."
+                            if _considered else
+                            "Nothing comparable was in scope for this subject."
+                        )
+                    ),
+                    # THE CANDIDATES TRAVEL AS DATA, not only inside the sentence, so a card can
+                    # draw them as choices rather than re-parsing prose.
+                    "candidates": _considered,
+                    "data": "",
+                    "sources": [],
+                },
+            }
+
         # Per ADR-0008: registry coverage gap → generalist fallback.
         return _call_engine_a_fallback(
             context,
