@@ -20,12 +20,18 @@ not come up.
   §7  `/version` from the first commit, reporting the sha baked into the image.
   §8  registration checks its own success, and readiness FAILS ON GAVE UP.
 
-THE READ PATH IS NOT WIRED AND SAYS SO — a degradation must name itself. `MeshGraph` does not
-exist yet (verified: absent from this repo and from `iagent-mesh` v0.8.1), and this engine is
-being built as its first consumer rather than around a driver it would later have to give up. So
-`/explain` answers `503` with the reason and the missing dependency NAMED, and the same guard
-appears in `/health`. An engine that returned a plausible empty answer instead would be the
-failure this whole corpus is written against.
+HALF THE READ PATH IS WIRED AND THE HEADER SAYS WHICH HALF — a degradation must name itself, and
+naming it vaguely is how a header goes stale while still reading as true.
+
+* **BODIES: WIRED.** Ruled 2026-09-15 — fetching a fixed object by a locator the graph handed you
+  is not a substrate read (no query, no language, no choice of what to read), so it sits outside
+  the one-client rule rather than being an exception to it. `body_store.py` holds that client.
+* **THE GRAPH: NOT WIRED.** `MeshGraph`'s two operations are declared in the v0.9.1 Protocol and
+  its Neo4j implementation belongs to the eo lane. This engine is that client's first consumer
+  and will not hold a driver in the meantime, so `/explain` answers **503 naming the missing
+  dependency** and `/health` reports `ready: false` with the reason. A refusal by name is the
+  correct interim; a stub that returned a plausible empty answer would be the failure this whole
+  corpus is written against.
 """
 from __future__ import annotations
 
@@ -45,10 +51,12 @@ from iagent_mesh.transport_auth import make_transport_auth_dependency as _transp
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
     import explain as explain_mod
     import slots as slots_mod
+    from body_store import BodyUnavailable, MinioBodyStore
     from reads import BodyStore, DocPageReader
 except ImportError:  # pragma: no cover — exercised by the flat-layout seal
     from agent_fleet.docs_agent import explain as explain_mod
     from agent_fleet.docs_agent import slots as slots_mod
+    from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
     from agent_fleet.docs_agent.reads import BodyStore, DocPageReader
 
 COMPONENT = "engine-docs"
@@ -118,12 +126,19 @@ def _catalogue_agrees() -> None:
 #: Set once the mesh client exists. Until then the engine registers, serves, and refuses to
 #: answer — in that order, and each of the three is deliberate.
 READER: Optional[DocPageReader] = None
-STORE: Optional[BodyStore] = None
+
+#: RULED 2026-09-15: the engine fetches the body itself. Fetching a fixed object by a locator the
+#: graph handed you is not a substrate read — no query, no language, no choice of what to read —
+#: so it is outside the one-client rule rather than an exception to it.
+STORE: Optional[BodyStore] = MinioBodyStore()
 
 _NO_READER = (
-    "engine-docs has no MeshGraph reader wired. The verb is registered and the corpus is primed; "
-    "what is missing is the one client the ADR requires an engine to read through, which does "
-    "not exist yet. This engine will not hold a driver in the meantime."
+    "engine-docs has no MeshGraph reader wired. The verb is registered, the corpus is primed and "
+    "the page bodies are readable; what is missing is the one client the ADR requires an engine "
+    "to read the GRAPH through, whose two operations are declared in the v0.9.1 Protocol and "
+    "whose Neo4j implementation belongs to the eo lane. This engine will not hold a driver in "
+    "the meantime — a refusal naming the dependency is the correct interim, and a stub would not "
+    "be."
 )
 
 
@@ -269,7 +284,13 @@ def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
         return explain_mod.abstain(subject)
 
     row = rows[0]
-    body = STORE.read(row.source)
+    try:
+        body = STORE.read(row.source)
+    except BodyUnavailable as exc:
+        # DISTINCT FROM A MISMATCH ON PURPOSE. Missing means the prime did not put it there;
+        # mismatched means something wrote over it. One error for both sends the next reader to
+        # the wrong half of the system.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     try:
         return explain_mod.explain(row, body)
     except explain_mod.BodyShaMismatch as exc:

@@ -124,3 +124,56 @@ def test_the_core_holds_no_driver():
             assert banned not in src, (
                 f"{pathlib.Path(module.__file__).name} imports {banned!r} — engine-docs is meant "
                 f"to be the first engine born without a driver, and the seam is this file")
+
+
+# ── THE BODY STORE ────────────────────────────────────────────────────────────────────────────
+
+def test_the_store_returns_bytes_unaltered():
+    """A helpful transformation here breaks the sha assertion downstream while looking like
+    tidiness — decoding, normalising newlines, stripping a BOM. The store's whole job is to be
+    boring."""
+    from agent_fleet.docs_agent.body_store import MinioBodyStore
+
+    raw = b"# A page\r\n\xef\xbb\xbfwith a BOM and CRLF\r\n"
+
+    class _Stub:
+        def get_object(self, Bucket, Key):  # noqa: N803 — boto's spelling
+            assert Bucket == "doc-pages" and Key == "docs/pages/abc/x.md"
+            return {"Body": type("B", (), {"read": staticmethod(lambda: raw)})()}
+
+    store = MinioBodyStore(bucket="doc-pages", client=_Stub())
+    assert store.read("docs/pages/abc/x.md") == raw, (
+        "the store altered the bytes; every sha assertion downstream now fails on exactly the "
+        "objects the prime wrote")
+
+
+def test_a_work_side_locator_is_refused_BY_NAME_not_guessed_at():
+    """The discriminator is the scheme, as the vocabulary says. Guessing a bucket for a URN would
+    read someone else's object or 404 confusingly; naming the refusal says which store is meant."""
+    from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
+
+    store = MinioBodyStore(bucket="doc-pages", client=object())
+    for foreign in ("s3://someone-else/p.md", "urn:li:dataset:(x,y,z)"):
+        with pytest.raises(BodyUnavailable) as caught:
+            store.read(foreign)
+        assert foreign in str(caught.value), "the refusal does not name the locator it refused"
+
+
+def test_a_missing_object_is_a_DIFFERENT_error_from_a_mismatched_one():
+    """Missing means the prime did not put it there; mismatched means something wrote over it.
+    One error for both sends the next reader to the wrong half of the system."""
+    from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
+    from agent_fleet.docs_agent.explain import BodyShaMismatch
+
+    class _Missing:
+        def get_object(self, Bucket, Key):  # noqa: N803
+            raise KeyError("NoSuchKey")
+
+    store = MinioBodyStore(bucket="doc-pages", client=_Missing())
+    with pytest.raises(BodyUnavailable) as caught:
+        store.read("docs/pages/abc/x.md")
+    assert not isinstance(caught.value, BodyShaMismatch), (
+        "a missing object is being reported as a sha mismatch — the two diagnoses have been "
+        "collapsed and each sends you to the other half of the system")
+    assert "doc-pages/docs/pages/abc/x.md" in str(caught.value), (
+        "the error does not name the bucket and key, so nobody can check whether it is there")
