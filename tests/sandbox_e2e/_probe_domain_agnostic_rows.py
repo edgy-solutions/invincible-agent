@@ -23,9 +23,19 @@ length filter added there would not error loudly — **it would empty the class 
 silence.** Routing down, service green. That combination is why this probe exists rather than a
 patch.
 
-THIS IS A TRIPWIRE, NOT A REPORT. A revisit-later that cannot go stale is a check that goes red
-when the world changes: if a domain-agnostic OntologyClass row ever appears, the class side needs
-a rule it currently cannot express, and someone has to be told.
+THIS IS A PROBE, NOT A SEAL, AND THE DIFFERENCE IS NOT A DETAIL. It is run on demand — it needs a
+port-forward and a live substrate, which CI does not have — so **it cannot go red on its own.** A
+collected seal risks being triaged as flakiness at the failure line; this one risks never firing at
+all, which is the other failure and the one that reads as safety.
+
+**Its trigger has an OWNER and an OCCASION, which is the only mitigation here that is not a claim:**
+`doc-tools-7f` asked for it to be re-run after the next prime, for their own reason — whether a
+re-ingest rewrites existing rows decides whether their 2026-09-12 derived-labels fix is live. **A
+trigger somebody else is waiting on is the only kind that reliably fires.** If that stops being
+true, this file is a report with a date on it, not a check.
+
+What it asserts when it IS run: if a domain-agnostic OntologyClass row ever appears, the class side
+needs a rule it currently cannot express, and someone has to be told.
 
 Run (read-only, aggregate counts only — no object contents leave the cluster):
 

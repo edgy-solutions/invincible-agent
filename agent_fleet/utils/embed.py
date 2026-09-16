@@ -50,6 +50,7 @@ collections are created WITHOUT a `vectorizer_config`; we always pass
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 import httpx
 
 
@@ -151,7 +152,59 @@ def _post_embedding(input_payload, timeout: float) -> list:
             f"Embedding endpoint {base_url} returned an empty response for "
             f"model={model!r}: {payload!r}"
         )
+    _record_served(payload.get("model"), model)
     return data
+
+
+#: What the SERVER said it served on the last call, and what we asked for.
+#: RULED 2026-09-15: a vector's identity is what PRODUCED it, not what the code believes.
+#: `model` here is env-overridable (`LLM_EMBED_MODEL`, L125), so `DEFAULT_EMBED_MODEL` records an
+#: INTENT; the response's `model` records the ACT. They can differ two ways — a deployment
+#: overriding the variable, and an endpoint serving something other than what was asked for — and
+#: the second is invisible to every constant on either side of the wire.
+#: Measured 2026-09-15 against the configured endpoint: the response carries
+#: `"model": "nomic-embed-text"`, unversioned, in the same payload as the vector it describes.
+_LAST_SERVED: tuple[str | None, str] | None = None
+
+
+def _record_served(served: str | None, requested: str) -> None:
+    global _LAST_SERVED
+    _LAST_SERVED = (served, requested)
+
+
+@dataclass(frozen=True)
+class EmbeddingObservation:
+    """What a real embedding call OBSERVED — never what a constant declares.
+
+    This is the reader's half of the `MeshCollectionMeta` contract: the marker beside a vector
+    collection records the model that produced its vectors, and a reader comparing its own
+    MODULE CONSTANT against that marker would be comparing two beliefs. It has to compare what
+    THIS process would actually embed with.
+    """
+
+    served: str | None
+    """What the endpoint said it served. `None` if the response omitted it — absent is a STATE."""
+
+    requested: str
+    """What we asked for — kept so `served != requested` is visible rather than merged away."""
+
+    dimension: int
+    """The length of the vector we actually got, never `EXPECTED_EMBED_DIM`."""
+
+    @property
+    def diverged(self) -> bool:
+        """The endpoint served something other than what was requested."""
+        return self.served is not None and self.served != self.requested
+
+
+def observe_query_embedding(text: str, timeout: float = 30.0) -> EmbeddingObservation:
+    """Embed a probe and report what the endpoint ACTUALLY did.
+
+    One call, one response: the identity and the vector cannot come from different moments.
+    """
+    vector = embed_query(text, timeout=timeout)
+    served, requested = _LAST_SERVED if _LAST_SERVED else (None, _resolve_endpoint()[2])
+    return EmbeddingObservation(served=served, requested=requested, dimension=len(vector))
 
 
 def embed_document(text: str, timeout: float = 30.0) -> list[float]:
