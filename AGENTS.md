@@ -609,6 +609,34 @@ apply" is a sound argument and an easy one to get subtly wrong (a partially-stag
 untracked file the tests import, a `.pyc` shadowing a change). Materialising the tree costs
 seconds and converts the argument into an observation.
 
+#### AND READ THE SUITE'S EXIT CODE, NOT THE PIPELINE'S — RULED 2026-09-17
+
+**A verify-then-commit chain reads the exit code of the LAST command in the pipe, which is
+usually `tail`.** So this runs the commit on a red suite, silently:
+
+```bash
+pytest tests/... -q | tail -3 && git add <paths> && git commit -F -     # WRONG
+```
+
+`pytest` fails, `tail` succeeds, `&&` sees `tail`, and a failing tree is committed with a message
+claiming it was sealed. **The output on screen even shows the failure** — which is why it survives
+review: the red is visible and the gate is not looking at it.
+
+```bash
+pytest tests/... -q > /tmp/o.txt 2>&1; RC=$?; tail -3 /tmp/o.txt; echo "rc=$RC"   # RIGHT
+[ "$RC" -eq 0 ] && git add <paths> && git commit -F - <<'MSG' ...
+```
+
+**Capture `$?` before anything else touches the pipeline.** This is the same rule as the
+already-recorded one about a run that never started reporting `rc=0` — the earlier instance was a
+missing `pytest-timeout` and this one is a `tail`, and both are the exit code of something other
+than the thing being gated on.
+
+**It went wrong three times in two days and the third cost a committed red.** It was corrected the
+same day, and the corrected form caught the next red *before* the commit — the law proven by its
+first success rather than by its next failure.
+
+
 ### In a contended tree, EDIT THROUGH THE EDITOR — a script write is invisible to the tracking
 
 **Editing a file with a script (`sed -i`, a python rewrite) bypasses the editor's change
