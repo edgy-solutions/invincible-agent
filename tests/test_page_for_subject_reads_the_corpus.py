@@ -61,13 +61,13 @@ def test_a_relationship_typed_target_is_FOUND(run):
     matches triples. If this ever fails, the store assumption in the module docstring is wrong and
     the operation has moved.
     """
-    pages = page_for_subject("mesh:seedCanvas", run=run)
+    pages = page_for_subject("mesh:seedCanvas", run=run, graph=DOCS_GRAPH)
     assert pages, "a relationship-typed explains target returned nothing"
     assert any("canvas" in p["iri"].lower() for p in pages)
 
 
 def test_all_seven_fields_come_back(run):
-    page = page_for_subject("mesh:seedCanvas", run=run)[0]
+    page = page_for_subject("mesh:seedCanvas", run=run, graph=DOCS_GRAPH)[0]
     for field in ("iri", "title", "doc_kind", "audience_hint", "source", "body_sha", "explains"):
         assert field in page, f"{field} missing from the row"
     assert page["body_sha"] and page["body_sha"] in page["source"], (
@@ -78,7 +78,7 @@ def test_all_seven_fields_come_back(run):
 
 def test_explains_carries_the_PAGE_S_FULL_CLAIM_not_the_matched_target(run):
     """The second `mesh:explains` pattern earns its place here or it is a duplicate."""
-    page = page_for_subject("mesh:seedCanvas", run=run)[0]
+    page = page_for_subject("mesh:seedCanvas", run=run, graph=DOCS_GRAPH)[0]
     assert len(page["explains"]) >= 2, page["explains"]
     assert any("seedCanvas" in e for e in page["explains"])
 
@@ -87,7 +87,7 @@ def test_the_subject_may_arrive_as_a_CURIE_an_IRI_or_a_BARE_NAME(run):
     """`subject` is the RAW SLOT VALUE — the verb is polymorphic, so the slot declares no referent.
     All three spellings name the same target and must find the same page."""
     got = [
-        {p["iri"] for p in page_for_subject(s, run=run)}
+        {p["iri"] for p in page_for_subject(s, run=run, graph=DOCS_GRAPH)}
         for s in ("mesh:seedCanvas", "http://invincible-agent/mesh#seedCanvas", "seedCanvas")
     ]
     assert got[0] == got[1] == got[2] and got[0], got
@@ -96,14 +96,14 @@ def test_the_subject_may_arrive_as_a_CURIE_an_IRI_or_a_BARE_NAME(run):
 def test_an_unresolvable_subject_is_EMPTY_and_does_not_raise(run):
     """A gap in the writing, not a failure of the question — and the corpus's normal state.
     engine-docs turns this into an abstain naming the subject; a raise would be a 500."""
-    assert page_for_subject("mesh:nothingExplainsThisYet", run=run) == []
-    assert page_for_subject("", run=run) == []
+    assert page_for_subject("mesh:nothingExplainsThisYet", run=run, graph=DOCS_GRAPH) == []
+    assert page_for_subject("", run=run, graph=DOCS_GRAPH) == []
 
 
 def test_an_EMPTY_CORPUS_is_also_empty_and_not_an_error():
     """THE CONTROL that keeps the arm above from being satisfied by a query that never matches."""
     empty = rdflib.Dataset()
-    assert page_for_subject("mesh:seedCanvas", run=lambda q: list(empty.query(q))) == []
+    assert page_for_subject("mesh:seedCanvas", run=lambda q: list(empty.query(q)), graph=DOCS_GRAPH) == []
 
 
 # ── ordering: ruled, and unwitnessed ────────────────────────────────────────────────────────
@@ -157,3 +157,23 @@ def test_the_query_parses_for_every_slot_shape():
 
     for subject in ("mesh:seedCanvas", "http://x/y#z", "bare", 'quote"inside'):
         prepareQuery(build_page_for_subject_query(subject))
+
+
+def test_the_builder_EMITS_NO_GRAPH_CLAUSE_BY_DEFAULT():
+    """THE FLEET PATH IS THE EXECUTOR PATH, and the default has to suit it rather than this file.
+
+    `execute_sparql` wraps every query in its own `VALUES ?__mesh_g ... GRAPH ?__mesh_g { ... }`
+    by brace surgery on the text. A builder emitting its own GRAPH clause hands that wrapper a
+    nested scope it never expected — and the route would have been the ONLY caller taking that
+    path, so a test written against this file's explicit-graph usage would have stayed green over
+    it. That is the instrument and the subject diverging, so it is asserted directly.
+    """
+    assert "GRAPH <" not in build_page_for_subject_query("mesh:seedCanvas")
+    assert "GRAPH <" in build_page_for_subject_query("mesh:seedCanvas", graph=DOCS_GRAPH)
+
+
+def test_both_forms_parse():
+    from rdflib.plugins.sparql import prepareQuery
+
+    prepareQuery(build_page_for_subject_query("mesh:seedCanvas"))
+    prepareQuery(build_page_for_subject_query("mesh:seedCanvas", graph=DOCS_GRAPH))

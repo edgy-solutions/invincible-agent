@@ -54,7 +54,7 @@ def _local_name(subject: str) -> str:
     return subject.strip()
 
 
-def build_page_for_subject_query(subject: str) -> str:
+def build_page_for_subject_query(subject: str, *, graph: Optional[str] = None) -> str:
     """Pages whose `mesh:explains` includes `subject`, with every field the row carries.
 
     THE SECOND `mesh:explains` PATTERN IS NOT A DUPLICATE. The first selects the page by the
@@ -63,10 +63,20 @@ def build_page_for_subject_query(subject: str) -> str:
     """
     literal = sparql_lit(subject)
     local = sparql_lit(_local_name(subject))
+    # WHO SCOPES THE GRAPH IS THE CALLER'S TO SAY, AND GETTING IT WRONG IS SILENT.
+    # engine-o's `execute_sparql` WRAPS every query in
+    # `VALUES ?__mesh_g { <internal/{DOM}> <internal/{DOM}_INSTANCES> } GRAPH ?__mesh_g { ... }`
+    # by brace surgery on the text. A builder that emits its own GRAPH clause hands that wrapper
+    # a nested scope it did not expect — so the route passes `graph=None` and lets the executor
+    # scope, while a direct executor (a test over the corpus file, or any caller holding its own
+    # store) passes the graph explicitly. **The default is None because the fleet path is the
+    # executor path**, and a default that suits the test would be wrong where it matters.
+    opening = f"  GRAPH <{graph}> {{" if graph else "  {"
+    closing = "  }" if graph else "  }"
     return f"""{_PREFIXES}
 SELECT ?iri ?title ?doc_kind ?audience_hint ?source ?body_sha ?ex
 WHERE {{
-  GRAPH <{DOCS_GRAPH}> {{
+{opening}
     ?iri a mesh:DocPage ;
          mesh:explains ?matched ;
          mesh:explains ?ex .
@@ -80,7 +90,7 @@ WHERE {{
       || STRENDS(STR(?matched), "#{local}")
       || STRENDS(STR(?matched), "/{local}")
     )
-  }}
+{closing}
 }}"""
 
 
@@ -146,6 +156,7 @@ def page_for_subject(
     *,
     run: Callable[[str], Sequence[dict]],
     audience: Optional[str] = None,
+    graph: Optional[str] = None,
 ) -> list[dict]:
     """Pages explaining `subject`, ordered. **Empty is an answer and never raises.**
 
@@ -156,4 +167,6 @@ def page_for_subject(
     """
     if not (subject or "").strip():
         return []
-    return order_pages(rows_to_pages(run(build_page_for_subject_query(subject))), audience)
+    return order_pages(
+        rows_to_pages(run(build_page_for_subject_query(subject, graph=graph))), audience
+    )

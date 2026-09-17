@@ -1891,6 +1891,19 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY
 
 try:
+    from doc_pages import (  # type: ignore[no-redef]
+        build_page_for_subject_query as _build_page_query,
+        order_pages as _order_doc_pages,
+        rows_to_pages as _doc_rows_to_pages,
+    )
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.doc_pages import (
+        build_page_for_subject_query as _build_page_query,
+        order_pages as _order_doc_pages,
+        rows_to_pages as _doc_rows_to_pages,
+    )
+
+try:
     from state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query  # type: ignore[no-redef]
     from state_sparql import sparql_lit as _sparql_lit  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -4067,6 +4080,42 @@ _CHANGE_CLASS_PRED = os.getenv("POLICY_CHANGE_CLASS_PRED", "http://internal/sust
 class PolicyRulesRequest(BaseModel):
     graph: str                       # the named graph / domain to read (e.g. "SUSTAINMENT")
     ruleset_label: str = ""          # advisory (v1: one ruleset per graph); echoed for traceability
+
+
+# ---------------------------------------------------------------------------
+# POST /page_for_subject — engine-docs' one mesh read (ADR-0037's corpus).
+#
+# THE STORE IS JENA, NOT NEO4J, AND THAT IS THE FINDING THIS ROUTE ENCODES. `DocPage`
+# individuals declare zero `owl:Class`, so doc-tools' `sync_jena_ontologies_to_neo4j` takes its
+# class-less third case and SKIPS the Neo4j write — `prime_databases.py:456`: *"the Jena
+# named-graph load, which is where the doc route reads, still succeeds."* There are no DocPage
+# rows in Neo4j by design, so this is a MeshOntology operation and lives on engine-o's SPARQL
+# executor rather than its driver.
+#
+# WHY A ROUTE AND NOT AN IMPORT. `doc_pages` holds no driver and engine-docs could import it —
+# but it would then need an executor, which means a Jena client, which is the driver that engine
+# being "born without one" exists to demonstrate. Calling a named operation on a peer is the
+# permitted pattern; holding a store address is not.
+#
+# EMPTY IS AN ANSWER AND NEVER A FAILURE. engine-docs turns `[]` into an abstain naming the
+# subject; a 500 here would make "nothing explains this yet" — the normal state of a young
+# corpus — indistinguishable from a broken read.
+# ---------------------------------------------------------------------------
+class PageForSubjectRequest(BaseModel):
+    subject: str
+    audience: Optional[str] = None
+
+
+@app.post("/page_for_subject")
+async def page_for_subject_route(request: PageForSubjectRequest) -> dict:
+    """Pages whose `mesh:explains` includes `subject`, in the ruled order.
+
+    `subject` is the RAW SLOT VALUE — a CURIE in the happy case and sometimes a NAME, because the
+    verb is polymorphic over every class and the slot declares no referent.
+    """
+    rows = await execute_sparql(_build_page_query(request.subject), domain="DOCS")
+    pages = _order_doc_pages(_doc_rows_to_pages(rows), request.audience)
+    return {"subject": request.subject, "pages": pages, "count": len(pages)}
 
 
 @app.post("/policy_rules")
