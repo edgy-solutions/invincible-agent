@@ -20,11 +20,24 @@ global:
   imageTag: ""
   # -- The floor when neither a component tag nor `imageTag` is set.
   #
-  # `latest` and NOT `Chart.AppVersion`: CI publishes `:<git-sha>` and `:latest` and nothing
-  # else, so AppVersion names an image that has never existed. Every values file was already
-  # working around it with per-component `tag: ""`, which is exactly what made a global
-  # pin unreachable.
-  defaultImageTag: "latest"
+  # EMPTY, SO THE FLOOR IS `Chart.Version` — set this to override it.
+  #
+  # IT USED TO BE `latest`, FOR A REASON THAT IS NO LONGER TRUE. The note here read: "`latest`
+  # and NOT `Chart.AppVersion`: CI publishes `:<git-sha>` and `:latest` and nothing else, so
+  # AppVersion names an image that has never existed." Correct when written. As of 2026-09-17
+  # the release workflow retags every image BY DIGEST to the chart version on each chart
+  # release, so `:0.3.77` names the exact bytes `:<sha>` named — and a chart that resolves to
+  # its OWN images is the point.
+  #
+  # `latest` IS THE DRIFT. An unpinned deploy got whatever `latest` happened to be at PULL
+  # time: a different artifact on Tuesday than on Monday, from the same chart, with nothing
+  # recording that they differed. A chart version makes "install 0.3.77" mean one thing
+  # forever.
+  #
+  # NOT `Chart.AppVersion`, which is the application's calendar version and moves on a
+  # different clock from the chart's contents — the images are built from the commit the CHART
+  # was released at.
+  defaultImageTag: ""
   imagePullPolicy: IfNotPresent
   # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
   clusterDomain: ""

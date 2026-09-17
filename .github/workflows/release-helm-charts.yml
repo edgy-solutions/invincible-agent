@@ -7,12 +7,28 @@ on:
       - main
     paths:
       - 'helm/**'
+  # MANUAL RUN FOR A RELEASE THAT SHIPPED BEFORE THE RETAG EXISTED. 0.3.77 was published with
+  # images tagged only by sha, and the retag needs `write:packages` — which CI's own token has
+  # and a person's PAT generally does not. Rather than hand someone a credential to run a
+  # script locally, the act happens where the credential already lives.
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: 'Chart version to retag images to (e.g. 0.3.77)'
+        required: true
+      sha:
+        description: 'Commit whose images are retagged (full 40-char sha)'
+        required: true
 
 jobs:
   release:
     # Need write permissions for the release to push assets and update gh-pages branch index
     permissions:
       contents: write
+      # RETAGGING PUSHES TO GHCR. Without this the retag step 403s at PUSH while every
+      # digest READ succeeds - a failure that looks like a registry problem and is a scope
+      # problem. Measured: a PAT with repo+workflow read all 18 digests and pushed none.
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -51,6 +67,7 @@ jobs:
       # the outside — the same class as a `:latest` image tag. So the drift FAILS here,
       # at the only point that can still see both halves.
       - name: Refuse to publish a chart whose version did not move
+        if: github.event_name != 'workflow_dispatch'
         run: |
           version="$(helm show chart helm/invincible-agent | awk '/^version:/ {print $2}')"
           tag="invincible-agent-${version}"
@@ -63,6 +80,7 @@ jobs:
           echo "Chart version ${version} is unpublished — proceeding to release."
 
       - name: Run chart-releaser
+        if: github.event_name != 'workflow_dispatch'
         uses: helm/chart-releaser-action@v1.6.0
         with:
           charts_dir: helm
@@ -71,3 +89,63 @@ jobs:
           skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      # ── RETAG EVERY IMAGE TO THE CHART VERSION, BY DIGEST ────────────────────────────────
+      #
+      # A chart that resolves to its OWN images is the point. `global.defaultImageTag` was
+      # `latest`, so an unpinned deploy got whatever `latest` happened to be AT PULL TIME — a
+      # different artifact on Tuesday than on Monday, from the same chart, with nothing
+      # recording that they differed. After this step `:0.3.77` names the exact bytes
+      # `:<sha>` named, and "install 0.3.77" means one thing forever.
+      #
+      # BY DIGEST, NOT BY TAG: `imagetools create -t repo:<ver> repo@<digest>` points the new
+      # name at the BYTES, not at another name that can itself move.
+      #
+      # THE POPULATION IS DERIVED from build-containers.yml's matrix — a hand-kept service list
+      # in this file would be right the day it was written and silently short the day a service
+      # was added.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag images to the chart version, by digest
+        id: retag
+        run: |
+          version="${{ inputs.chart_version }}"
+          if [ -z "${version}" ]; then
+            version="$(helm show chart helm/invincible-agent | awk '/^version:/ {print $2}')"
+          fi
+          sha="${{ inputs.sha }}"
+          if [ -z "${sha}" ]; then sha="${{ github.sha }}"; fi
+          # `|| rc=$?` IS LOAD-BEARING, not defensive. A GitHub `run:` block is `bash -e`, so a
+          # non-zero exit aborts the step AT the python line and `rc=$?` below never runs. The
+          # three-state handling underneath it read as deliberate and COULD NOT FIRE: exit 3
+          # would have failed the release rather than warned. Found by reading the shell that
+          # runs this, not the branch that looks correct.
+          rc=0
+          python scripts/retag_images_by_digest.py \
+            --chart-version "${version}" \
+            --sha "${sha}" \
+            --manifest image-digests.json || rc=$?
+          # 3 = some images are not published yet (the matrix may still be building). Visible,
+          # not fatal — distinct from 1, which is a retag that FAILED. Same three-state
+          # discipline the census uses: a thing that did not happen is not a thing that broke.
+          if [ "$rc" = "3" ]; then
+            echo "::warning::some images were missing for ${{ github.sha }}; see image-digests.json"
+          elif [ "$rc" != "0" ]; then
+            exit "$rc"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # THE MANIFEST IS THE CHECKABLE ARTEFACT. It records service -> digest, plus what was
+      # MISSING and what FAILED — a manifest listing only successes is a claim that its list is
+      # everything. Anyone can verify it against the registry without trusting this run.
+      - name: Attach the digest manifest to the chart release
+        run: |
+          gh release upload "invincible-agent-${{ steps.retag.outputs.version }}" \
+            image-digests.json --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
