@@ -26,12 +26,23 @@ naming it vaguely is how a header goes stale while still reading as true.
 * **BODIES: WIRED.** Ruled 2026-09-15 — fetching a fixed object by a locator the graph handed you
   is not a substrate read (no query, no language, no choice of what to read), so it sits outside
   the one-client rule rather than being an exception to it. `body_store.py` holds that client.
-* **THE GRAPH: NOT WIRED.** `MeshGraph`'s ONE operation is declared in the v0.9.1 Protocol and
-  its Neo4j implementation belongs to the eo lane. This engine is that client's first consumer
-  and will not hold a driver in the meantime, so `/explain` answers **503 naming the missing
-  dependency** and `/health` reports `ready: false` with the reason. A refusal by name is the
-  correct interim; a stub that returned a plausible empty answer would be the failure this whole
-  corpus is written against.
+* **THE CORPUS READ: WIRED, 2026-09-17.** `ontology_reader.py` calls engine-o's
+  `POST /page_for_subject` — a named operation over one `httpx` call, no query and no store
+  connection — which is what keeps this the first engine born without a driver.
+
+**THREE CLAIMS THAT STOOD HERE WERE WRONG, AND THEY WERE IN THE SENTENCE AN OPERATOR ONLY EVER
+READS WHEN SOMETHING IS ALREADY BROKEN.** Corrected by `invincible-agent-28`, who built the door:
+
+* **`MeshGraph` → `MeshOntology`.** Wrong interface.
+* **Neo4j → JENA.** Wrong store, **and I had established this myself and then written the
+  opposite.** `DocPage` individuals declare zero `owl:Class`, so doc-tools' sync takes its
+  class-less third case and skips the Neo4j write — which is the argument I put in
+  `prime_databases.py` for why the manifest row is safe: *"the Jena named-graph load — which is
+  where the doc route reads — still succeeds."* **There are no `DocPage` rows in Neo4j by design**,
+  so the implementation I kept naming would have had nothing to read.
+* **`page_for_subject` is not in the SDK at v0.9.1.** It is declared in this engine's own
+  `reads.py`. I later verified that `order_pages` was absent from that tag and reported it — and
+  did not go back and check the neighbouring claim I had repeated from the same sentence.
 """
 from __future__ import annotations
 
@@ -52,11 +63,15 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIR
     import explain as explain_mod
     import slots as slots_mod
     from body_store import BodyUnavailable, MinioBodyStore
+    from ontology_reader import OntologyDocPageReader, ReaderUnavailable
     from reads import BodyStore, DocPageReader
 except ImportError:  # pragma: no cover — exercised by the flat-layout seal
     from agent_fleet.docs_agent import explain as explain_mod
     from agent_fleet.docs_agent import slots as slots_mod
     from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
+    from agent_fleet.docs_agent.ontology_reader import (
+        OntologyDocPageReader, ReaderUnavailable,
+    )
     from agent_fleet.docs_agent.reads import BodyStore, DocPageReader
 
 COMPONENT = "engine-docs"
@@ -123,9 +138,10 @@ def _catalogue_agrees() -> None:
             f"as NO_VERB_CLASSIFIED: an information gap wearing a threshold gap's clothes.")
 
 
-#: Set once the mesh client exists. Until then the engine registers, serves, and refuses to
-#: answer — in that order, and each of the three is deliberate.
-READER: Optional[DocPageReader] = None
+#: WIRED 2026-09-17 to engine-o's named operation. Declared-and-never-assigned is what kept this
+#: engine permanently 503 while reading as ready-when-the-client-lands, which is the
+#: declaration-with-no-witness shape appearing in a module global instead of a Protocol.
+READER: Optional[DocPageReader] = OntologyDocPageReader()
 
 #: RULED 2026-09-15: the engine fetches the body itself. Fetching a fixed object by a locator the
 #: graph handed you is not a substrate read — no query, no language, no choice of what to read —
@@ -133,12 +149,10 @@ READER: Optional[DocPageReader] = None
 STORE: Optional[BodyStore] = MinioBodyStore()
 
 _NO_READER = (
-    "engine-docs has no MeshGraph reader wired. The verb is registered, the corpus is primed and "
-    "the page bodies are readable; what is missing is the one client the ADR requires an engine "
-    "to read the GRAPH through, whose one operation is declared in the v0.9.1 Protocol and "
-    "whose Neo4j implementation belongs to the eo lane. This engine will not hold a driver in "
-    "the meantime — a refusal naming the dependency is the correct interim, and a stub would not "
-    "be."
+    "engine-docs cannot reach the corpus read. The verb is registered, the pages are primed into "
+    "Jena and the bodies are readable; what is missing is a route to engine-o's "
+    "POST /page_for_subject. Check ONTOLOGY_SERVICE_URL and that engine-o is serving. This engine "
+    "holds no driver, so it refuses rather than reading the store itself."
 )
 
 
@@ -277,7 +291,13 @@ def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
     if READER is None or STORE is None:
         raise HTTPException(status_code=503, detail=_NO_READER)
 
-    rows = READER.page_for_subject(subject)
+    try:
+        rows = READER.page_for_subject(subject)
+    except ReaderUnavailable as exc:
+        # NOT AN ABSTAIN. "The corpus could not be consulted" and "nothing explains this" must not
+        # render alike: the first is a reader who should come back, the second is a gap in the
+        # writing. Collapsing them is how an outage reads as an empty corpus.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not rows:
         # A gap in the writing, not a failure of the question — and the corpus's normal state,
         # because nobody writes a page for a task nobody has done.

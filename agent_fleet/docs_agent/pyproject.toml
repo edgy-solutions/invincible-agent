@@ -40,12 +40,17 @@ dependencies = [
 # DELIBERATELY THIN, and the omissions are the argument.
 #
 # NO neo4j, NO weaviate, NO SPARQLWrapper, NO langfuse. engine-docs is meant to be the FIRST
-# ENGINE BORN WITHOUT A DRIVER: it reads the graph through `MeshGraph`, whose two operations it
-# was the first consumer to name. Until that client exists the engine registers, serves, and
-# answers 503 with the dependency NAMED — a refusal by name rather than a stub, because a stub
-# that returned a plausible empty answer is the failure this corpus is written against. A graph
-# driver appearing in this list would mean that decision had been quietly reversed, which is a
-# design change and not a packaging one, so it should be hard to add here and visible when it is.
+# ENGINE BORN WITHOUT A DRIVER: it reads the corpus through engine-o's named operation
+# `POST /page_for_subject` over httpx — one call, no query, no store connection — rather than by
+# reaching Jena itself. A store driver appearing in this list would mean that decision had been
+# quietly reversed, which is a design change and not a packaging one, so it should be hard to add
+# here and visible when it is.
+#
+# CORRECTED 2026-09-17: this said `MeshGraph`, said "two operations", and said the SDK declared
+# them. All three were wrong — it is `MeshOntology`, the store is JENA not Neo4j, and
+# `page_for_subject` is declared in this engine's own `reads.py` and not at v0.9.1. Left as a
+# correction rather than a clean rewrite, because the wrong version is what makes the tag pin
+# above readable: the pin is for transport auth and the mint, not for an operation it never had.
 #
 # NO pyyaml. The frontmatter is read by `scripts/generate_docs_corpus.py` at BUILD time, never by
 # the engine: what the engine receives is triples the prime landed and bytes the prime uploaded.
