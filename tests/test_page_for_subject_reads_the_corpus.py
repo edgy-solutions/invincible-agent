@@ -116,28 +116,63 @@ _PAGES = [
 ]
 
 
-def test_without_an_audience_the_order_is_a_STABLE_IDENTITY():
-    """Neither ruled key exists yet: no audience reaches the operation, and the corpus carries no
-    timestamp. **Ordering by something arbitrary would manufacture a winner** — the defect f3
-    removed when they replaced `rows[0]` with rendering every surviving row."""
-    assert [p["iri"] for p in order_pages(_PAGES)] == ["docs:a", "docs:b", "docs:c"]
+def test_RECENCY_orders_most_recent_first():
+    """THE SECOND KEY, LIVE SINCE 5f's `98aef67`. This arm replaced one that asserted the stamp's
+    ABSENCE — the tripwire fired exactly as designed and named what to implement."""
+    pages = [
+        {"iri": "docs:old", "source_committed_at": "2026-09-12T22:04:37-05:00"},
+        {"iri": "docs:new", "source_committed_at": "2026-09-15T08:32:52-05:00"},
+        {"iri": "docs:mid", "source_committed_at": "2026-09-12T22:50:06-05:00"},
+    ]
+    assert [p["iri"] for p in order_pages(pages)] == ["docs:new", "docs:mid", "docs:old"]
 
 
-def test_with_an_audience_the_MATCHES_COME_FIRST_and_ties_keep_their_order():
-    out = [p["iri"] for p in order_pages(_PAGES, audience="data_engineer")]
-    assert out[0] == "docs:b", out
-    assert out[1:] == ["docs:a", "docs:c"], "a stable sort keeps the tie's order rather than picking"
+def test_an_UNSTAMPED_page_sorts_LAST_and_is_not_dated_here():
+    """5f's generator REFUSES an uncommitted page rather than substituting mtime or `now`, because
+    a fabricated timestamp would then order the corpus. A page without one comes from a corpus
+    generated before the stamp existed — it ties, it is not invented a date."""
+    pages = [
+        {"iri": "docs:none"},
+        {"iri": "docs:stamped", "source_committed_at": "2026-09-12T22:04:37-05:00"},
+    ]
+    assert [p["iri"] for p in order_pages(pages)] == ["docs:stamped", "docs:none"]
 
 
-def test_the_corpus_carries_NO_TIMESTAMP_which_is_why_recency_is_unwitnessed():
-    """THE MISSING INPUT, ASSERTED RATHER THAN DESCRIBED. When 5f stamps
-    `mesh:source_committed_at`, this goes red — at the failure line, naming what to implement —
-    instead of the ordering rule quietly staying half-applied for another month."""
-    text = _CORPUS.read_text(encoding="utf-8")
-    assert "source_committed_at" not in text, (
-        "the corpus now carries a commit timestamp — order_pages can implement the ruled second "
-        "key (most recent body) and this assertion should be replaced by one that exercises it"
-    )
+def test_AUDIENCE_outranks_recency_because_the_rule_says_audience_FIRST():
+    """The keys are ordered, not blended. An older page for the right audience beats a newer one
+    for the wrong audience — that is what "audience match first, then most recent body" means."""
+    pages = [
+        {"iri": "docs:new-wrong", "audience_hint": "ARCHITECT",
+         "source_committed_at": "2026-09-15T08:32:52-05:00"},
+        {"iri": "docs:old-right", "audience_hint": "DATA_ENGINEER",
+         "source_committed_at": "2026-09-12T22:04:37-05:00"},
+    ]
+    out = [p["iri"] for p in order_pages(pages, audience="data_engineer")]
+    assert out == ["docs:old-right", "docs:new-wrong"], out
+
+
+def test_EQUAL_ON_BOTH_KEYS_STAYS_A_TIE():
+    """THE CONTROL AGAINST MANUFACTURING A WINNER. Anything level after both keys is rendered as a
+    list by the consumer; ordering by insertion, IRI or sha here would reintroduce the `rows[0]`
+    defect `8a424d6` removed."""
+    pages = [
+        {"iri": "docs:b", "audience_hint": "A", "source_committed_at": "2026-09-12T22:04:37-05:00"},
+        {"iri": "docs:a", "audience_hint": "A", "source_committed_at": "2026-09-12T22:04:37-05:00"},
+    ]
+    assert [p["iri"] for p in order_pages(pages)] == ["docs:b", "docs:a"]
+
+
+def test_the_QUERY_SELECTS_the_stamp_whether_or_not_this_corpus_carries_it():
+    """THE ARM THAT REPLACED THE ABSENCE PIN, and it holds in both worlds.
+
+    The stamp is live on `lane/5f` and has not reached master, so THIS tree's corpus has none —
+    which would make an assertion about corpus content green for the wrong reason. What must be
+    true regardless is that the query ASKS for it, optionally, so the day the corpus merges the
+    ordering works without another change here.
+    """
+    q = build_page_for_subject_query("mesh:seedCanvas")
+    assert "mesh:source_committed_at ?committed" in q
+    assert "OPTIONAL" in q, "the stamp must be optional or a corpus without it returns nothing"
 
 
 def test_rows_to_pages_groups_the_cross_product():
@@ -177,3 +212,38 @@ def test_both_forms_parse():
 
     prepareQuery(build_page_for_subject_query("mesh:seedCanvas"))
     prepareQuery(build_page_for_subject_query("mesh:seedCanvas", graph=DOCS_GRAPH))
+
+
+def test_NO_SUBJECT_YET_RESOLVES_TO_TWO_PAGES_so_ordering_has_no_live_case(run):
+    """THE ORDERING RULE IS IMPLEMENTED AND UNEXERCISED BY REAL DATA, and that is worth an arm
+    rather than a sentence.
+
+    Measured against the corpus: 14 distinct `mesh:explains` targets, **none on more than one
+    page**. So every real call returns zero or one page, `order_pages` never chooses, and both
+    ruled keys — audience and recency — are exercised only by the unit fixtures above.
+
+    **This reds the day a second page explains an existing target**, which is the day the ordering
+    stops being theoretical and starts deciding what a person reads first. That is when someone
+    should look at it on purpose, rather than discovering it decided something.
+    """
+    targets: dict[str, set] = {}
+    text = _CORPUS.read_text(encoding="utf-8")
+    current = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("docs:") and " a mesh:DocPage" in stripped:
+            current = stripped.split()[0]
+        elif current and "mesh:explains" in stripped:
+            for tok in stripped.replace("mesh:explains", "").replace(";", "").replace(".", "").split(","):
+                tok = tok.strip()
+                if tok:
+                    targets.setdefault(tok, set()).add(current)
+        elif current and stripped.endswith(".") and "mesh:explains" not in stripped:
+            pass
+    shared = {t: pages for t, pages in targets.items() if len(pages) > 1}
+    assert not shared, (
+        f"a target now explains more than one page: {shared}. `order_pages` is now DECIDING what "
+        f"a reader sees first — audience match, then most recent commit, ties rendered as a list. "
+        f"Check it against the real pair rather than the unit fixtures, and replace this arm with "
+        f"one that asserts the chosen order."
+    )

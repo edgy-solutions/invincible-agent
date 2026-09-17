@@ -74,7 +74,7 @@ def build_page_for_subject_query(subject: str, *, graph: Optional[str] = None) -
     opening = f"  GRAPH <{graph}> {{" if graph else "  {"
     closing = "  }" if graph else "  }"
     return f"""{_PREFIXES}
-SELECT ?iri ?title ?doc_kind ?audience_hint ?source ?body_sha ?ex
+SELECT ?iri ?title ?doc_kind ?audience_hint ?source ?body_sha ?committed ?ex
 WHERE {{
 {opening}
     ?iri a mesh:DocPage ;
@@ -85,6 +85,7 @@ WHERE {{
     OPTIONAL {{ ?iri mesh:audience_hint ?audience_hint }}
     OPTIONAL {{ ?iri mesh:source ?source }}
     OPTIONAL {{ ?iri mesh:body_sha ?body_sha }}
+    OPTIONAL {{ ?iri mesh:source_committed_at ?committed }}
     FILTER (
       STR(?matched) = "{literal}"
       || STRENDS(STR(?matched), "#{local}")
@@ -115,6 +116,7 @@ def rows_to_pages(rows: Sequence[dict]) -> list[dict]:
                 "audience_hint": row.get("audience_hint") or "",
                 "source": row.get("source") or "",
                 "body_sha": row.get("body_sha") or "",
+                "source_committed_at": row.get("committed") or "",
                 "explains": [],
             },
         )
@@ -127,28 +129,48 @@ def rows_to_pages(rows: Sequence[dict]) -> list[dict]:
 
 
 def order_pages(pages: Sequence[dict], audience: Optional[str] = None) -> list[dict]:
-    """The ruled order — audience match first, then most recent body, ties as a list.
+    """The ruled order — audience match first, then most recent body, ties rendered as a list.
 
-    **BOTH INPUTS ARE MISSING TODAY AND THIS FUNCTION SAYS SO RATHER THAN SUBSTITUTING.**
+    **THE SECOND KEY IS LIVE AS OF 5f's `98aef67`:** the generator stamps
+    `mesh:source_committed_at` from each page's source commit (`git log -1 --format=%cI`), eight
+    pages with eight distinct stamps, so it DISCRIMINATES rather than tying everything.
 
-        audience   no audience reaches the operation. `acting_persona` is in scope at the dispatch
-                   site and is not put in the request body — one key in one dict. Until it lands,
-                   callers pass `None` and this is a stable identity.
-        recency    THE CORPUS CARRIES NO TIMESTAMP. `body_sha` is a content hash, not a time.
-                   `mesh:source_committed_at` is 5f's to stamp from each page's source commit —
-                   a rebuildable fact derived from the act — and it is what will give this rule
-                   its second key.
+    **A COMMIT TIME, NOT AN INGEST TIME, and the reason decides the semantics.** One prime lands
+    the whole corpus, so every page shares an ingest timestamp to the second and "most recently
+    ingested" separates nothing. The source commit does. **It ORDERS; it does not ASSESS** — a page
+    whose last commit was a typo fix outranks one untouched for a year, which is right for choosing
+    between two candidates and wrong as a claim about maintenance. Anything reading this as
+    freshness is reading a claim the field does not make.
 
-    **A STABLE IDENTITY IS THE HONEST BEHAVIOUR, not a defect.** With neither key available every
-    page ties, and a tie is exactly what the consumer renders: engine-docs' `8a424d6` replaced
-    `rows[0]` with rendering every surviving row, because *picking the first of several is a winner
-    chosen on no evidence and indistinguishable from a confident answer*. Ordering by something
-    arbitrary here — insertion order, IRI, sha — would manufacture that winner.
+    **A MISSING STAMP SORTS LAST AND IS NOT INVENTED.** 5f's generator refuses an uncommitted page
+    rather than substituting mtime or `now`, because a fabricated timestamp would then order the
+    corpus. A page arriving here without one is a page from a corpus generated before the stamp
+    existed, and it ties with its peers rather than being dated by this function.
+
+        audience   still unwitnessed on the direct-dispatch route — engine-docs sends
+                   `audience: null` DELIBERATELY rather than omitting the field, because no persona
+                   reaches it and a guess would order by an audience nobody asserted.
+        recency    LIVE. Descending, so most-recent first.
+
+    **STABLE, so a tie stays a tie.** Anything still level after both keys is rendered as a list by
+    the consumer — `8a424d6` replaced `rows[0]` for that reason, and ordering by insertion, IRI or
+    sha here would manufacture the winner that fix removed.
     """
+    ordered = sorted(
+        pages,
+        key=lambda p: (p.get("source_committed_at") or "") == "",   # stamped before unstamped
+    )
+    ordered = sorted(
+        ordered, key=lambda p: (p.get("source_committed_at") or ""), reverse=True
+    )
+    # re-apply the unstamped-last rule, which the descending sort above would otherwise invert
+    ordered = [p for p in ordered if p.get("source_committed_at")] + [
+        p for p in ordered if not p.get("source_committed_at")
+    ]
     if not audience:
-        return list(pages)
+        return ordered
     wanted = audience.strip().upper()
-    return sorted(pages, key=lambda p: (p.get("audience_hint", "").strip().upper() != wanted,))
+    return sorted(ordered, key=lambda p: (p.get("audience_hint", "").strip().upper() != wanted,))
 
 
 def page_for_subject(
