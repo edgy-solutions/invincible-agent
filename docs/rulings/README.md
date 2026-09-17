@@ -3140,6 +3140,59 @@ asked while the shape was still being decided.
 
 ---
 
+## R-076 — A PRODUCER CAN DO THE RIGHT THING, DOCUMENT IT, AND THE CONSUMER IS NEVER WRITTEN
+
+R-075's corollary, and the half that rule does not reach.
+
+R-075 catches a producer that flattens a list into a sentence. **This is a producer that got it
+right** — emitted the enumeration as a field, and wrote a comment naming who would read it —
+**and a reader that does not exist.**
+
+    cost_agent    {"refused": true, "outcome": "not_in_model", "reason": "...",
+                   "available": [...]}
+                  with the comment: "same key as VintageRequired above, so a CONSUMER READS ONE
+                  FIELD for what may I say instead"
+
+    src/iagent            grep '"available"'  ->  ZERO hits
+    presentation_agent    grep '"available"'  ->  no match
+    cortex-ui             nothing to read, because nothing sends it
+
+> **Both ends correct, the wire empty.** `available` was never flattened downstream. It was never
+> read at all, since the day it was added, and nothing failed for as long as that lasted.
+
+**THE DOCUMENTED CONSUMER IS WHAT MAKES IT EXPENSIVE.** A field emitted with no comment is an
+open question. A field emitted with *"a consumer reads one field for…"* reads as a wired contract
+to everyone downstream of it — the producer's own confidence is what stops the next person
+looking. This is [[a-stale-claim-is-pre-authenticated]] applied to a claim that was never true
+rather than one that became false: the sentence describes an arrangement that did not exist when
+it was written.
+
+**AND IT COMPOUNDS WITH THE SHAPE SPLIT.** The same refusal kind arrived BOTH WITH and WITHOUT the
+field — `NotInModel` could not always compute the list, `CompositionError` recomputed it — so any
+consumer eventually written against one branch would have been wrong about the other. **A field
+with no reader has no pressure keeping its shape consistent.**
+
+### The seal
+
+The one already ruled for `bound_slot_sources`: **a field a producer emits for a consumer has a
+reader in the tree, or the emission is a claim.** Assert the reader exists; a grep for the field
+name outside the producer is enough, and it fails the day the emission is added without one.
+
+### How it was found, and that is the reusable part
+
+`cortex-ui-60` was told the field was renderable today. **They traced it instead of building on
+the claim** — each grep run to completion, each exit code checked — and reported that the location
+was one layer further out than the person who told them had put it. Second time in one session
+that tracing rather than accepting produced the finding; the first was the `main.py` that was
+pushed on a branch nobody had looked at.
+
+Compare R-074: a conclusion is trusted or rejected whole. **"You can render that today" is a
+conclusion.** The measurement behind it — *which files read the field* — is the thing that could
+be checked, and checking it cost four greps and saved a renderer built against a field that cannot
+arrive.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

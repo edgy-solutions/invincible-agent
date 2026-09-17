@@ -288,7 +288,7 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
     _rows = sorted((repo / "policy" / "graphs").glob("*.yaml"))
     walked.append(f"engine catalogues (agent_fleet/*/main.py, {len(_cat)} file(s))")
     walked.append(f"ratified graph rows (policy/graphs/*.yaml, {len(_rows)} file(s))")
-    walked.append("registration call sites (agent_fleet/*/*.py, register_engine_to_mesh)")
+    walked.append("registration call sites (agent_fleet/** + src/iagent/**, alias-resolved)")
     _WALKED_SOURCES.clear()
     _WALKED_SOURCES.extend(walked)
     for pyf in _cat:
@@ -299,49 +299,25 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
         for m in re.finditer(r'"verb"\s*:\s*"(mesh:[A-Za-z_][A-Za-z0-9_]*)"', text):
             out.setdefault(m.group(1), f"catalogue: {pyf.parent.name}")
 
-    # THIRD SOURCE: THE REGISTRATION CALL SITES THEMSELVES, read by AST.
+    # THIRD SOURCE: THE REGISTRATION CALL SITES, via the SHARED SCANNER.
     #
-    # THE REGEX ABOVE KNOWS ONE OF TWO SPELLINGS. It matches the DICT form
-    # `"verb": "mesh:X"` and misses the KEYWORD form `verb="mesh:X"` — which is how most
-    # engines actually call `register_engine_to_mesh`. Measured 2026-09-17: nineteen live
-    # camelCase verbs reported UNDECLARED, and `mesh:analyzeDataset` was sitting at
-    # `agent_fleet/data_analyst/main.py:165` in a file this function already walks, spelled
-    # the other way. The census was reading the right file and looking for the wrong shape.
+    # The inline AST walk that used to live here was the census's own second implementation of
+    # "who registers what" - and the exclusion seal had a THIRD, as a regex, and the two
+    # disagreed. `iagent_pure.registration_sites` is now the one derivation both read.
     #
-    # A SOURCE-TEXT PATTERN CANNOT SEE THE FORM THE SOURCE ACTUALLY TAKES — the same defect
-    # as a seal that grepped for `"referent": "..."` when referents are written
-    # `_IDP + "Initiative"`, and the same remedy: parse, do not match.
-    #
-    # DERIVED FROM THE CALL, NOT FROM A DIRECTORY. `agent_fleet/*/*.py` rather than
-    # `*/main.py`, because a registration does not have to live in main.py and two of the
-    # missing verbs did not.
-    for pyf in sorted((repo / "agent_fleet").glob("*/*.py")):
-        if "__pycache__" in str(pyf):
-            continue
-        try:
-            tree = ast.parse(pyf.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, SyntaxError):
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            fn = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if fn != "register_engine_to_mesh":
-                continue
-            for kw in node.keywords:
-                if kw.arg != "verb":
-                    continue
-                v = kw.value
-                if isinstance(v, ast.Constant) and isinstance(v.value, str):
-                    out.setdefault(v.value, f"registration: {pyf.parent.name}/{pyf.name}")
-    for row in _rows:
-        try:
-            text = row.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        m = re.search(r'^\s*verb:\s*(mesh:[A-Za-z_][A-Za-z0-9_]*)\s*$', text, re.M)
-        if m:
-            out.setdefault(m.group(1), f"ratified row: policy/graphs/{row.name}")
+    # WHY IT IS NOT A REGEX: matching `"verb": "mesh:X"` and not the keyword form
+    # `verb="mesh:X"` hid THIRTEEN live verbs, one of them in a file this function already
+    # walked. Matching the helper by NAME and not by ALIAS hid the gateway's two entirely.
+    sys.path.insert(0, str(repo / "src"))
+    try:
+        from iagent_pure.registration_sites import scan as _scan, python_files as _pyf
+    except Exception:  # noqa: BLE001 - a census must report, never fail to run
+        _scan = None
+    if _scan is not None:
+        _sites = _scan(_pyf(repo / "agent_fleet", repo / "src"), root=repo)
+        for _v, _where in _sites.verbs.items():
+            out.setdefault(_v, "registration: " + _where)
+
     # FOURTH SOURCE: THE PRIMED ONTOLOGIES. A structural relation - subClassOf, hasPart,
     # rendersAs - is declared in a TTL and REGISTERED BY NOBODY, so every call-site source
     # above is blind to it by construction. The census's own rule says these belong in a
@@ -476,9 +452,21 @@ def report_verb_delta(namespace: str, repo: Path) -> int:
               f"declaration in any source this census walks.")
         for t in undeclared:
             print(f"           {t}")
+        # NAME THE WALK BESIDE THE FINDING, and name its SCOPE. `invincible-agent-28`
+        # measured the cost of not doing it: their write census walked THIS REPO and would
+        # have concluded "five edge types have no writer" when the writer is one repo over,
+        # in doc-tools' ingest. A CENSUS ANSWERS ABOUT WHAT IT WALKED, and the sentence it
+        # produces does not say so unless you make it. The addition branch above already
+        # lists the sources; the STATE branch said "any source this census walks" and left
+        # the reader to guess which, which is the same omission one line smaller.
+        for src in _WALKED_SOURCES:
+            print(f"           walked: {src}")
+        print(f"           walked: THIS REPOSITORY ONLY ({repo.name}) - an edge type "
+              f"written by another repo's ingest is reported here as claimed by nobody.")
         print("       This is STATE, not news - printed every run, and it does NOT change the "
               "exit code. A type here is either structural (and belongs in a declaration "
-              "source the census walks) or declared somewhere this census cannot see.")
+              "source the census walks), declared somewhere this census cannot see, or "
+              "written by a repo outside the walk above.")
     else:
         print("")
         print("       UNDECLARED: none - every live relationship type is attributable.")
