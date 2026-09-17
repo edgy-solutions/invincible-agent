@@ -145,6 +145,61 @@ def test_THE_REASONING_TRAVELS_WITH_THE_HOOK(marker: str):
     assert marker in _hook()
 
 
+def test_PUBLISHED_COMMITS_ARE_NOT_THIS_PUSHS_TO_VOUCH_FOR():
+    """`--not --remotes`, and its absence made the hook demand the rule it enforces be broken.
+
+    MEASURED on a simulated `lane/5f` push — their remote tip, then a merge of `origin/master`
+    into it, which is what every lane does when it takes master:
+
+        without `--not --remotes`    99 commits checked, 99 already on origin/master
+        with    `--not --remotes`     0
+
+    `--ancestry-path` does NOT exclude them, which is the part that is easy to get wrong: once a
+    lane has been merged to master, every LATER master commit is a DESCENDANT of that lane's
+    last-pushed tip, so all of it falls inside `remote_sha..local_sha`.
+
+    > **THE REFUSAL WAS WORSE THAN A FALSE POSITIVE.** Its text says *"these commits are not
+    > pushed, so amending is not a rewrite of published history"* — false for all 99. A lane
+    > following the instruction literally would have rewritten other lanes' published commits.
+    > **The guard written to uphold R-030 was instructing its violation**, and the only ways past
+    > it were `--no-verify` or doing exactly that.
+
+    Reported by `invincible-agent-f3`, who hit it, measured both directions, and refused both
+    escapes rather than taking either.
+
+    A commit reachable from any remote-tracking ref has been published, and THIS push is not the
+    act that publishes it. That is also why the hook needs no exemption table while the seal does:
+    every exempt commit on master is published, so the hook never sees one.
+    """
+    src = _hook()
+    assert "--not --remotes" in src, (
+        "the hook checks commits that are already published, so a lane merging master is told to "
+        "amend other lanes' history — the R-030 violation this rule exists to prevent"
+    )
+    i = src.index("git rev-list")
+    line = src[i:src.index(chr(10), i)]
+    assert "--not --remotes" in line, (
+        "`--not --remotes` is present but not on the rev-list that selects the commits to "
+        "check, so it constrains nothing: " + line.strip()
+    )
+
+
+def test_THE_REFUSALS_CLAIM_ABOUT_PUBLISHED_HISTORY_IS_TRUE_BY_CONSTRUCTION():
+    """The message and the selection are two halves of one claim, and only the pair is checkable.
+
+    The text promises the named commits are unpushed. That is a statement ABOUT THE SELECTION, so
+    it is true only while the selection excludes published commits — which is what the clause
+    above does. Asserted together because the message was correct prose beside a query that made
+    it false, and neither half looks wrong alone.
+    """
+    src = _hook()
+    assert "not pushed" in src and "rewrite" in src
+    assert "--not --remotes" in src, (
+        "the refusal still promises the commits are unpushed while the selection no longer "
+        "guarantees it"
+    )
+
+
 def test_THE_HOOK_IS_LF_ONLY():
     """A CRLF hook DOES NOT RUN, and it fails in the way that looks like something else.
 

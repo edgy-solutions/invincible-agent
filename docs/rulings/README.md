@@ -3056,6 +3056,90 @@ nothing a card can draw. Same absent-versus-empty rule as `disposal` and `failur
 
 ---
 
+## R-074 — A CONCLUSION IS TRUSTED OR REJECTED WHOLE; A MEASUREMENT CAN BE COMBINED
+
+`invincible-agent-28`'s, and it is a property of how three lanes worked rather than of the thing
+they were working on.
+
+The fleet pin was dispatched as `v0.9.0`. It landed on `v0.9.1`, and **three lanes each supplied
+one reason none of the others had:**
+
+| lane | the half they had actually looked at |
+|---|---|
+| `iagent-mesh-sdk-ca` | the fastapi guard is absent from 0.9.0, and 0.9.0 is already on PyPI and immutable |
+| `invincible-agent-28` | 0.9.0 carries `version: str`, the marker shape that was ruled against |
+| `ia-01/lane/01` | 0.9.0 is an ANCESTOR of the SDK's master, and the resolved artifact carries neither |
+
+**None of the three could have produced the other two.** Each was independently sufficient, and
+each came from someone who had run a different command for a different reason.
+
+> **Had any one of us reported only the conclusion — "pin 0.9.1" — the other two reasons would
+> have been invisible and the target would have rested on whoever spoke first.** That is how a
+> wrong pin reaches sixteen packages with everyone nodding.
+
+**THE ASYMMETRY IS THE RULE.** A conclusion is atomic: a reader can accept it or reject it, and
+nothing in it can be checked against what they already know. A MEASUREMENT has parts — a command,
+a population, a number — so a second reader can test it against their own, notice it covers a
+case theirs does not, or find it contradicts something only they can see. **Measurements
+accumulate; conclusions compete.**
+
+This is the constructive form of R-071. That entry says to state what a command covered beside
+what it found; this one says why it pays even when nobody doubts you: **the reason you report is
+the only one anybody else can build on.**
+
+### The corollary: remove the inference, do not warn about it
+
+The same exchange produced its own best illustration. 28 measured that Weaviate preserves
+`creationTimeUnix` across a replace-on-deterministic-UUID — 132 of 132 Predicate rows, one 81-day
+gap — and **expected a caveat to be added to `marker_is_stale`**. The ruling instead renamed the
+predicate to `marker_predates_collection` and declared freshness **out of scope in the contract**.
+
+> **A name that overclaims is read; a docstring that corrects it is not.**
+
+A caveat leaves the wrong inference available and asks each reader to remember the correction.
+Narrowing the name removes the inference. Same disposition as R-071's *narrow, do not retract* —
+the marker still proves model identity and dimension with two witnesses; only the freshness claim
+goes. See R-072: an implied guarantee nobody stated is the third kind waiting to be born.
+
+---
+
+## R-075 — IF A MESSAGE STRING ENUMERATES ANYTHING, THE ENUMERATION IS A FIELD
+
+`cortex-ui-60`'s, and the sentence that makes it a rule is theirs:
+
+> **A card can build prose from data and cannot reliably recover data from prose.**
+
+Three instances in one night, which is what makes it a class rather than three fixes:
+
+| | the flattening | what it cost |
+|---|---|---|
+| `expert_response.candidates` | verb IRIs written into a sentence | the field has no reader in cortex; candidates render as prose |
+| `not_in_model` available dates | a list written into "Available dates: …" | a menu's worth of information arrives as a paragraph |
+| *"carry the hole by name"* | a name with no disposition | **caught BEFORE the payload existed** — became R-073 |
+
+**THE THIRD IS THE ONE THAT WENT RIGHT, AND THE ONLY DIFFERENCE WAS TIMING.** It was raised while
+the payload was still being written. The other two were found after the wire had already carried
+prose, and one of them had a producer that got it right — the cost engine emits
+`{"refused": True, "outcome": kind, "reason": message, "available": [...]}`, with `available` as a
+FIELD and its own comment saying *"same key as VintageRequired above, so a consumer reads one field
+for what may I say instead."* **The flattening happened downstream of a producer that had already
+done the right thing**, which is why nobody on either end saw it.
+
+**This is R-055's shape at the presentation layer.** R-055 is meaning recorded where nobody reads
+it; this is meaning recorded in a form nobody can read *back*. A sentence listing options is a menu
+that has been flattened, and the flattening is lossy in exactly the direction that matters.
+
+**How to apply.** When writing a message that names more than one of anything — options, dates,
+candidates, verbs, reasons — the list goes in a field and the message may quote it. Never the other
+way round. The test is whether a consumer would have to parse the sentence to act: if so, the
+sentence is carrying data and the data has no home.
+
+**And the cheap moment is before the payload exists.** All three were the same defect; only the one
+raised during design cost nothing. See R-073, which exists because the disposition question was
+asked while the shape was still being decided.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

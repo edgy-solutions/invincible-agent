@@ -67,6 +67,14 @@ docs:runbook-adding-an-engine a mesh:DocPage ;
     mesh:InstanceResolution ,
     mesh:InstanceEnumeration .
 
+docs:runbook-pinning-the-fleet-sdk a mesh:DocPage ;
+  rdfs:label "Runbook — pinning the fleet to an SDK release" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/1ac690edcdd442c442285f843b4aa6512e6bedc3ac5ee0c715d7e9a66fe057b7/pinning-the-fleet-sdk.md" ;
+  mesh:body_sha "1ac690edcdd442c442285f843b4aa6512e6bedc3ac5ee0c715d7e9a66fe057b7" .
+# pinning-the-fleet-sdk.md: explains none — an honest row, not an omission.
+
 docs:runbook-rolling-a-service a mesh:DocPage ;
   rdfs:label "Rolling a service" ;
   mesh:doc_kind "how-to" ;

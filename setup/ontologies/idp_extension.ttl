@@ -76,3 +76,33 @@ idp:Job a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Job" ;
     rdfs:comment "A single execution unit (Dagster op, dbt model run, Airflow task) within a Pipeline. Queries about last execution time, run history, alerts, or failures of a specific job target this class." .
+
+# ── PLANNING SCOPE CLASSES, minted 2026-09-16 ───────────────────────────────────────────────
+#
+# WHY THEY EXIST AND WHY THEY DID NOT. Three planning verbs declare a REQUIRED SLOT whose
+# referent is one of these classes — `planCostCurve` and `planSchedule` take
+# `scope_initiative_id`, `planDependencyNeighborhood` takes `project_id` — and the classes were
+# never declared. The registrar reported it exactly, once per verb, at the first backfill:
+#
+#   "1 slot(s) declare a referent with no OntologyClass node, so mesh:planCostCurve will NOT be
+#    reachable through them ... The verb is still reachable through its own subject; this is a
+#    shortfall in the widening, not an outage."
+#
+# Measured before minting, per ADR-0007: `Initiative` appears NOWHERE in the graph under any
+# namespace, and `Project` exists only as `s3kl#Project` — a different ontology answering a
+# different question, not a name to borrow. Nothing already carried these.
+#
+# THE SEAL IS THE WARNING COUNT GOING TO ZERO at the next reregister, not a test in this file.
+#
+# Definitions follow this file's own rule: what the class IS, no quoted queries, no example
+# identifiers, no sibling class names as filler.
+
+idp:Initiative a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Initiative" ;
+    rdfs:comment "A funded, named body of work inside a portfolio, holding budget and a time-phased plan of its own and persisting across the projects that deliver it. It is the unit money is allocated to and reported against, and the scope a spend curve or a delivery timeline is narrowed to when the whole portfolio is too coarse an answer. Distinct from the work items beneath it, which carry dates and dependencies but not funding." .
+
+idp:Project a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Project" ;
+    rdfs:comment "A discrete, scheduled unit of delivery with a start, a finish, and declared predecessor and successor relationships to other such units. It is the node a dependency graph is drawn from — what must complete before it can begin, and what waits on it — and the level at which slip propagates. Carries dates and sequencing rather than an allocated budget." .
