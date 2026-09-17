@@ -6108,6 +6108,62 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
             # NO `return` HERE, and its removal is the whole change. The old code logged and
             # returned; the log was the only trace, in a pod whose logs rotate.
 
+        # ── A FAILURE WITH NO CAUSE IS THE SAME SILENCE ONE STATE OVER ──────────────────────
+        #
+        # The branch above catches `pending` — a route that returned without recording an
+        # outcome at all. It does NOT catch a route that recorded `failed` and no reason, and
+        # that is the shape safety's dispatch produces.
+        #
+        # MEASURED on artifact-1-1789497444373, "draft a risk assessment for HAZ-1003":
+        # status `failed`, `duration_ms` 58757, and NO `failure_cause`. The resolution had
+        # worked perfectly — `outcome: exact`, the hazard's full label bound — and then
+        # something waited 59 seconds and the record said nothing about what. 74 could not
+        # replay it because there was no request to replay.
+        #
+        # WHY IT ESCAPED: the cause writer lives in `direct_dispatch`'s `except`, so the
+        # graph-host route records its cause and the per-verb `/measure/{fn}` route safety uses
+        # records none. FIVE call sites in this file set `status = "failed"` and ONE of them
+        # writes a cause. Extending that writer to each route is the fix that has to be
+        # repeated every time a route is added; this is the exit they all pass through.
+        #
+        # IT DOES NOT CLAIM THE ENGINE FAILED, because nobody here knows that. It records the
+        # one fact available at this exit — the turn ended failed and the path that failed it
+        # left no reason — plus whatever routing metadata the bundle already carries, so the
+        # next diagnosis starts at the right pod instead of at this function.
+        if bundle.get("status") == "failed":
+            _ri = dict(bundle.get("resolved_intent") or {})
+            if not _ri.get("failure_cause"):
+                _inline = bundle.get("routing_inline") or {}
+                if isinstance(_inline, str):
+                    try:
+                        _inline = json.loads(_inline)
+                    except Exception:  # noqa: BLE001 — diagnostics must not raise here
+                        _inline = {}
+                _handled = (_inline.get("handled_by") or {}) if isinstance(_inline, dict) else {}
+                logger.error(
+                    "AnswerArtifact %s is FAILED with no failure_cause — the route that failed "
+                    "it recorded no reason. Writing a typed cause naming that, rather than "
+                    "leaving an artifact that says a turn failed and nothing about why.",
+                    bundle.get("id"),
+                )
+                _ri["failure_cause"] = {
+                    "exception": "NoCauseRecorded",
+                    "message": (
+                        "the turn ended FAILED and the path that failed it recorded no cause. "
+                        "This is not a claim that the engine failed — it is the absence of a "
+                        "record, written down so the absence is visible in the artifact rather "
+                        "than only in a log."
+                    ),
+                    "where": "_dispatch_answer_artifact",
+                    # WHAT IS KNOWN, so a replay starts somewhere. Empty when the bundle
+                    # carried no routing either, which is itself the finding.
+                    "route_status": (_inline.get("route_status") if isinstance(_inline, dict) else None) or "",
+                    "engine_name": _handled.get("engine_name") or "",
+                    "endpoint_url": _handled.get("endpoint_url") or "",
+                    "duration_ms": bundle.get("duration_ms"),
+                }
+                bundle["resolved_intent"] = _ri
+
         _writer = get_writer()
         if _writer is not None:
             # Compose the factual S·P headline HERE — the single write
