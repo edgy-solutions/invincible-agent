@@ -321,14 +321,30 @@ def test_the_IMPORTED_SDK_IS_THE_PINNED_ARTIFACT_not_a_working_tree():
 
 
 def test_the_predicate_this_module_COMPILES_AGAINST_exists():
-    """A rename to `marker_predates_collection` is RULED AND PENDING. `mesh_vectors` calls
-    `marker_is_stale` because that is the name at the pinned tag. When the rename lands and the old
-    name goes, this reds — at the failure line, saying which name to move to — rather than failing
-    at import somewhere that looks like a bad pin."""
-    from iagent_mesh.interfaces import marker_is_stale  # noqa: F401
+    """MOVED 2026-09-17 to `marker_predates_collection`, the name at the fleet pin `v0.9.2`.
 
-    assert callable(marker_is_stale), (
-        "marker_is_stale is gone from the pinned SDK. The ruled replacement is "
-        "marker_predates_collection — update mesh_vectors._ensure_opened and this assertion "
-        "together, and bump the pin in the same commit."
+    This arm previously pinned `marker_is_stale` as the name compiled against, so that the day it
+    went the failure would say which name to move to. It went the other way — the replacement
+    arrived first and this lane was the live consumer the expand/contract interval existed for, so
+    the move is deliberate rather than forced.
+
+    **IT NOW ASSERTS THE OLD NAME IS NOT WHAT WE CALL**, which is the half that keeps the alias
+    contractable: if anything here drifts back onto `marker_is_stale`, the SDK cannot remove it.
+    """
+    import agent_fleet.ontology_service.mesh_vectors as mv
+    from iagent_mesh.interfaces import marker_predates_collection
+
+    assert callable(marker_predates_collection)
+
+    src = (_REPO / "agent_fleet" / "ontology_service" / "mesh_vectors.py").read_text("utf-8")
+    tree = __import__("ast").parse(src)
+    called = {
+        n.func.id
+        for n in __import__("ast").walk(tree)
+        if isinstance(n, __import__("ast").Call) and isinstance(n.func, __import__("ast").Name)
+    }
+    assert "marker_predates_collection" in called, "the module no longer calls the current name"
+    assert "marker_is_stale" not in called, (
+        "this module is back on the deprecated alias — the SDK cannot contract it while a caller "
+        "remains, and this lane is the caller the interval was opened for"
     )

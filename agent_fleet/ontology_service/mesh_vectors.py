@@ -15,10 +15,11 @@ WHAT THE CONTRACT ASKS FOR, and where each part lives:
                                     never `DEFAULT_EMBED_MODEL`
     the marker is checked AT OPEN   once per collection, before the first search
 
-**`marker_is_stale` IS THE NAME AT `v0.9.1`, AND A RENAME IS RULED AND PENDING.** The architect
-ruled the predicate should be called `marker_predates_collection` — that name exists in no tag and
-on no branch as of this writing, so compiling against it would fail at import in a way that reads
-as a bad PIN rather than a bad NAME. When ca lands the rename, both sides move deliberately.
+**MOVED TO `marker_predates_collection` AT `v0.9.2`**, which is the fleet pin. It was
+`marker_is_stale` — a name asserting a CONCLUSION the predicate cannot reach, since what it
+computes is *absent-or-older-than-the-oldest-object*. The old name survives as a deprecating alias
+**only until this caller moved**, which is now: expand/contract with a live consumer, and this lane
+was the consumer. The alias can contract in the next release.
 
 **WHAT THIS READER CANNOT PROVE, stated because a populated field invites the opposite inference:**
 a non-stale verdict is UNPROVEN, never freshness. doc-tools replaces objects on deterministic
@@ -36,7 +37,7 @@ from iagent_mesh.interfaces import (  # noqa: F401 — CollectionMarker is part 
     Initiator,
     MESH_COLLECTION_META,
     ServiceIdentityRefused,
-    marker_is_stale,
+    marker_predates_collection,
     read_collection_marker,
 )
 from iagent_mesh.results import MeshResult
@@ -154,7 +155,7 @@ class WeaviateVectors:
                     f"produced {observed_dim}. The vectors and the query do not share a space."
                 )
             oldest = self._oldest(collection) if self._oldest else None
-            if marker_is_stale(marker, oldest):
+            if marker_predates_collection(marker, oldest):
                 self._report(
                     f"{collection}: the marker predates the collection's oldest object — it may "
                     f"describe vectors that no longer exist. Treating as ABSENT."
