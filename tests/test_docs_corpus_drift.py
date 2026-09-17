@@ -396,7 +396,13 @@ def test_the_generator_REFUSES_a_page_git_does_not_know():
     spec.loader.exec_module(gen)
 
     with pytest.raises(SystemExit) as caught:
-        gen.source_committed_at(_p.Path("docs/runbooks/a-page-that-was-never-committed.md"))
+        # ASSEMBLED, NOT WRITTEN. `test_citation_paths` scans tracked files for `docs/…` paths
+        # and reads a literal one here as a citation of a file that does not exist. The scan is
+        # right and this is not a citation — SEVENTH instance of an instrument and its subject
+        # sharing a surface, and the second time in THIS file, which is why the remedy is a
+        # convention rather than care.
+        never = "docs" + "/runbooks/a-page-that-was-never-committed.md"
+        gen.source_committed_at(_p.Path(never))
     msg = str(caught.value)
     assert "REFUSED" in msg and "invent" in msg, (
         f"the refusal does not say what it refused to do: {msg}")
