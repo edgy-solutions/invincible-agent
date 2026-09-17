@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ast
 import re
 import subprocess
 import sys
@@ -287,6 +288,7 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
     _rows = sorted((repo / "policy" / "graphs").glob("*.yaml"))
     walked.append(f"engine catalogues (agent_fleet/*/main.py, {len(_cat)} file(s))")
     walked.append(f"ratified graph rows (policy/graphs/*.yaml, {len(_rows)} file(s))")
+    walked.append("registration call sites (agent_fleet/*/*.py, register_engine_to_mesh)")
     _WALKED_SOURCES.clear()
     _WALKED_SOURCES.extend(walked)
     for pyf in _cat:
@@ -296,6 +298,42 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
             continue
         for m in re.finditer(r'"verb"\s*:\s*"(mesh:[A-Za-z_][A-Za-z0-9_]*)"', text):
             out.setdefault(m.group(1), f"catalogue: {pyf.parent.name}")
+
+    # THIRD SOURCE: THE REGISTRATION CALL SITES THEMSELVES, read by AST.
+    #
+    # THE REGEX ABOVE KNOWS ONE OF TWO SPELLINGS. It matches the DICT form
+    # `"verb": "mesh:X"` and misses the KEYWORD form `verb="mesh:X"` — which is how most
+    # engines actually call `register_engine_to_mesh`. Measured 2026-09-17: nineteen live
+    # camelCase verbs reported UNDECLARED, and `mesh:analyzeDataset` was sitting at
+    # `agent_fleet/data_analyst/main.py:165` in a file this function already walks, spelled
+    # the other way. The census was reading the right file and looking for the wrong shape.
+    #
+    # A SOURCE-TEXT PATTERN CANNOT SEE THE FORM THE SOURCE ACTUALLY TAKES — the same defect
+    # as a seal that grepped for `"referent": "..."` when referents are written
+    # `_IDP + "Initiative"`, and the same remedy: parse, do not match.
+    #
+    # DERIVED FROM THE CALL, NOT FROM A DIRECTORY. `agent_fleet/*/*.py` rather than
+    # `*/main.py`, because a registration does not have to live in main.py and two of the
+    # missing verbs did not.
+    for pyf in sorted((repo / "agent_fleet").glob("*/*.py")):
+        if "__pycache__" in str(pyf):
+            continue
+        try:
+            tree = ast.parse(pyf.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if fn != "register_engine_to_mesh":
+                continue
+            for kw in node.keywords:
+                if kw.arg != "verb":
+                    continue
+                v = kw.value
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    out.setdefault(v.value, f"registration: {pyf.parent.name}/{pyf.name}")
     for row in _rows:
         try:
             text = row.read_text(encoding="utf-8", errors="replace")
@@ -304,6 +342,23 @@ def _declared_verbs(repo: Path) -> "dict[str, str]":
         m = re.search(r'^\s*verb:\s*(mesh:[A-Za-z_][A-Za-z0-9_]*)\s*$', text, re.M)
         if m:
             out.setdefault(m.group(1), f"ratified row: policy/graphs/{row.name}")
+    # FOURTH SOURCE: THE PRIMED ONTOLOGIES. A structural relation - subClassOf, hasPart,
+    # rendersAs - is declared in a TTL and REGISTERED BY NOBODY, so every call-site source
+    # above is blind to it by construction. The census's own rule says these belong in a
+    # declaration source; the TTL is that source.
+    _ttl = sorted((repo / "setup" / "ontologies").glob("*.ttl"))
+    walked.append(f"primed ontologies (setup/ontologies/*.ttl, {len(_ttl)} file(s))")
+    _WALKED_SOURCES.clear()
+    _WALKED_SOURCES.extend(walked)
+    for ttl in _ttl:
+        try:
+            text = ttl.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r"[\s;,(]mesh:([A-Za-z_][A-Za-z0-9_]*)", text):
+            out.setdefault("mesh:" + m.group(1), "ontology: " + ttl.name)
+            out.setdefault(m.group(1), "ontology: " + ttl.name)
+
     return out
 
 
@@ -395,6 +450,38 @@ def report_verb_delta(namespace: str, repo: Path) -> int:
                 "BLIND IN THAT DIRECTION and the list above is what it can see. Structural "
                 "edges (HAS_PART, INSTANCE_OF) belong here; a camelCase verb does not."
             )
+
+    # -- STANDING STATE, PRINTED EVERY RUN --------------------------------------------
+    #
+    # EVERYTHING ABOVE IS A DELTA, AND A DELTA ANNOUNCES A GAP EXACTLY ONCE.
+    # `PARAMETERISED_BY` was reported as an unattributed ADDITION on the roll that introduced
+    # it and was never mentioned again - the next run said "unchanged since the last snapshot"
+    # and printed nothing, because the gap had stopped being NEWS while remaining entirely
+    # TRUE.
+    #
+    # An instrument that reports only change cannot report a standing condition, and the
+    # condition it stops reporting is the one that has been true longest. So the undeclared
+    # set is printed as STATE: every run, whether or not it moved.
+    #
+    # IT DOES NOT CHANGE THE EXIT CODE. A NEW undeclared verb is news and still exits 3; a
+    # standing one is a fact about today that a reader should see without it re-alarming every
+    # run. Collapsing those makes a census cry wolf until someone stops reading it.
+    undeclared = sorted(
+        t for t in live_set
+        if not (declared.get(t) or declared.get("mesh:" + t))
+    )
+    if undeclared:
+        print("")
+        print(f"       UNDECLARED: {len(undeclared)} live relationship type(s) match no "
+              f"declaration in any source this census walks.")
+        for t in undeclared:
+            print(f"           {t}")
+        print("       This is STATE, not news - printed every run, and it does NOT change the "
+              "exit code. A type here is either structural (and belongs in a declaration "
+              "source the census walks) or declared somewhere this census cannot see.")
+    else:
+        print("")
+        print("       UNDECLARED: none - every live relationship type is attributable.")
 
     _VERB_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     _VERB_SNAPSHOT.write_text(
