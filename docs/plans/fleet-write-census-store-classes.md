@@ -125,31 +125,124 @@ instrument rather than by the architect.
 
 ---
 
+## 3c. What the census REFUSES under `fold, do not hand-run` — **nothing, and that took two fixes to learn**
+
+The ruling: *"a script that is the ONLY bootstrap for a store is `fold, do not hand-run`'s debt,
+refused by the census until it's folded."* Applied to the 17 resolved stores:
+
+| verdict | stores | meaning |
+|---|---|---|
+| **REFUSED** | **0** | no store's only writers are unfolded hand-run scripts |
+| ingest door | 2 | `neo4j:OntologyClass`, `weaviate:OntologyClass` — folded writer is doc-tools |
+| mixed | 3 | `datahub:catalog`, `sql:human_task_projection`, `weaviate:Predicate` — a folded writer exists here, so their scripts are ordinary writes |
+| folded | 12 | no hand-run debt |
+
+**THE FIRST RUN REFUSED TWO STORES AND BOTH WERE WRONG.** `neo4j:OntologyClass` and
+`weaviate:OntologyClass` are written by doc-tools' ingest — folded, and invisible from this tree.
+The prime's own comment says it: *"the registrar / ingest MERGE it."* (The registrar only `MATCH`es
+those nodes; it writes the edges BETWEEN nodes it did not create.) **That is the conformance-seal
+ruling from the other side: a repo that cannot see the writes must not claim they conform, and
+must not claim they are ABSENT.**
+
+**THE SECOND RUN ALSO SAID REFUSED, AND THAT ONE WAS MY REGEX.** The cross-repo check was built and
+silently matched nothing — its pattern carried a real newline inside a bracket expression (from
+using `chr(10)` to dodge an escape) *and* a literal backspace byte where a word boundary was meant.
+It returned "(none)" and the two false refusals stood, now wearing a check that appeared to have
+cleared them. **A broken check that returns a clean negative is worse than no check**, because the
+first version at least had no evidence behind it.
+
+### The limits of this zero, stated because a zero invites the least doubt
+
+- **It runs over the 56 resolved sites only.** A store whose sole folded writer sits among the 32
+  unresolved would appear refused. It is a lower bound on folded-ness, never a proof of absence.
+- **"Invoked by a bootstrap" is a name search**, so a script merely *discussed* in folded code would
+  read as folded. The one case where it decided an outcome — `sql:lots`/`rates`/`results`, folded on
+  `scripts/build_cost_dataset.py` — was checked by hand: `agent_fleet/cost_agent/measures.py:888`
+  really does `import build_cost_dataset as dataset_builder`. The others were decided by their home
+  directory, not by the name search.
+- **A false FOLDED hides debt**, which is the direction this check is weakest in, and the direction
+  a zero makes hardest to question.
+
+---
+
 ## 4. The second consumer — which of the thirteen edge types belongs to which write interface
 
 | edge type | written by | interface |
 |---|---|---|
 | `CITES` · `DERIVED_FROM` · `PRODUCED_BY` · `PRODUCED_FOR` | `src/iagent/answer_artifact_writer.py` (also named in `gateway.py`) | **the artifact writer** |
 | `PARAMETERISED_BY` | `agent_fleet/mesh_registrar/v2_substrate.py` | **the registrar** |
-| `GOVERNED_BY` · `HAS_CHILD` · `REPLACED_BY` · `REQUIRES_TOOL` · `SUBJECT_TO` | **doc-tools** — `plugins/{compliance,maintenance,sustainment,training}.py`, `parsers/{mil_40051,s1000d}_ingest.py` | **A THIRD WRITER, IN A SIBLING REPO** |
-| `HAS_PART` · `REFERENCES` | named in this tree, `MERGE`d by nothing in it | **no writer found** |
-| `INSTANCE_OF` | named only in ADR-0021's prose here | **no code writer found** |
+| `GOVERNED_BY` · `HAS_CHILD` · `REPLACED_BY` · `REQUIRES_TOOL` · `SUBJECT_TO` · `HAS_PART` · `REFERENCES` · `INSTANCE_OF` | **doc-tools** — `plugins/{compliance,maintenance,sustainment,training,manufacturing}.py`, `parsers/{mil_40051,s1000d}_ingest.py` | **THE INGEST DOOR, IN A SIBLING REPO** |
 
-**FIVE OF THIRTEEN ARE WRITTEN BY NEITHER DOOR.** ADR-0054 §4 puts enforcement at *the write
+**EIGHT OF THIRTEEN ARE WRITTEN BY THE INGEST DOOR, AND THE PARTITION IS NOW COMPLETE.**
+4 (artifact writer) + 1 (registrar) + 8 (ingest) = 13, with no residue and nothing undecided.
+
+**CORRECTED 2026-09-17, AND THE CORRECTION IS THE INTERESTING PART.** This table first reported
+five, with `HAS_PART`, `REFERENCES` and `INSTANCE_OF` as *"no writer found"* — and said explicitly
+that filing them under doc-tools to complete the table *"would be inventing the tidy answer."*
+Master then landed `596c279`, another lane's registrar/SDK conformance seal, carrying live-graph
+counts this census could not reach: `INSTANCE_OF` 21, `HAS_CHILD` 54, `SUBJECT_TO` 20,
+`GOVERNED_BY` 7, `REQUIRES_TOOL` 2, `HAS_PART` 1, `REPLACED_BY` 1, `REFERENCES` 1 — all attributed
+to doc-tools' domain-plugin ingest. **I did not adopt that attribution; I measured it**, and all
+three do carry `MERGE` sites there (`s1000d_ingest.py`, `mil_40051_ingest.py`,
+`plugins/manufacturing.py`).
+
+So the tidy answer was the true one — and refusing to assert it unmeasured was still right, because
+the same refusal is what makes this line worth reading now. The three were absent from my table
+because of **my search's reach**, not the fleet's state: I had grepped doc-tools for the five I
+already suspected rather than for all thirteen. *A list checked against the names you expect
+confirms your expectation.*
+
+ ADR-0054 §4 puts enforcement at *the write
 interface*, and the artifact writer and the registrar are the two this repo has. The five above are
 `MERGE`d by doc-tools plugins and parsers — a third writer, in a different repository, reaching the
 same Neo4j. An enforcement point placed on the two doors here **cannot see 38% of the structural
 edge types**, and the graph will not look any different for it.
 
-> **Their absence from this tree reads exactly like absence from the fleet.** Grepping here returns
-> zero files for all five — a clean, confident, wrong negative. It took a search in the sibling repo
-> to turn that zero into a writer, which is the same shape §1 of this document is about.
+> **CORRECTED, AND THE CORRECTION IS WORSE THAN THE WARNING.** I first wrote that grepping this
+> tree for these types returns *zero* files — a clean, confident, wrong negative. **It returns
+> six.** A measurement snapshot (`docs/measurements/verb-snapshot-b967f57-rev112.txt`), two ingest
+> tests, and two fixtures all name them. My zero came from my own scan's filters: `.txt` was not in
+> its suffix list and `tests/` was not in its scopes at all.
+>
+> So the hazard for a seal built here is not an empty set that looks suspicious. It is **a false
+> NON-zero**: the seal finds a snapshot showing the edges exist and tests exercising the producer,
+> concludes the types are present, and asserts compliance **over evidence ABOUT a writer rather
+> than over the writer** — and that passes review, forever. Found by `lane/5f`, not by me; I had
+> warned them about the opposite failure using a figure my own instrument had narrowed.
 
-`HAS_PART`, `REFERENCES` and `INSTANCE_OF` are a different case and are **not** being reported as
-doc-tools' — they are named in this tree and written by nothing found in either repo. Whether they
-are aspirational vocabulary, written by a third party, or written through a path neither search
-covers is **unresolved**, and filing them under doc-tools to complete the table would be inventing
-the tidy answer.
+**INDEPENDENT CORROBORATION IS WHY THIS IS A FINDING AND NOT A HUNCH.** Two lanes reached the
+third writer from opposite directions in the same week — this census by parsing write sites, and
+`596c279` by reconciling the SDK's declaration against the registrar's writes — and neither read
+the other's work first. That seal also declines to read the graph for its *declared-but-never-
+written* direction, for exactly the reason the ruling gives: the live edges have another repo as
+their author, so a graph-reading seal would red on someone else's correct behaviour.
+
+---
+
+## 3b. The two rulings this census produced
+
+**A TRANSACTION ACROSS FOUR NODE KINDS IS CLASSIFIED BY ITS STRICTEST STORE.** §4's per-store
+refusal has no single store to check when one atomic write lands in four, so the ruling is:
+**the write interface checks EVERY target store in the transaction and refuses if any one of them
+is a class it may not write — all-or-nothing on the strictest.** That is the honest reading of
+"unwritable" for an atomic write: there is no half-refusal available, because there is no half
+transaction. `answer_artifact_writer._tx_merge` is the worked case — six statements across `Actor`,
+`AnswerArtifact`, `Source` and `WatermarkSequence`, one fate. Goes into the §4 amendment.
+
+**THE DOC-TOOLS CONFORMANCE SEAL CANNOT LIVE IN THIS REPO.** Derive its population by grepping
+`invincible-agent` and it asserts compliance over an **empty set, forever** — all eight ingest-door
+edge types return zero files here. The ruled split:
+
+| where | what it asserts |
+|---|---|
+| the SDK | **declares** the ingest door's edge types |
+| doc-tools, in its own repo | asserts **its own conformance** against that declaration |
+| this repo's seal | asserts only that **no writer HERE emits an ingest-door type** |
+
+This is the *form-checked, existence-not-checked* rule from the citation checker, applied to a
+seal: **a repo that cannot see the writes must not claim they conform.** A seal is a claim about a
+population, and a population derived where the members cannot exist is a green that means nothing —
+the same shape as this document's §0, one level up.
 
 ---
 
