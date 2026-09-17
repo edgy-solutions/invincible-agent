@@ -13,8 +13,11 @@ were one — and §2 carries a **worked example of a combination no shape covers
 intent), which is the reader's first evidence that the shapes are not the schema. **Declaration and
 enforcement points only; no store is reclassified by this ADR**, and the population it governs is
 **provisional** (see §7). The eo lane's fleet-wide write census is the first thing that runs against
-it. **Amended the same day** — see the amendment section: four answers to its first consumer's
-review, and the class does NOT transition.
+it. **Amended twice** — 2026-09-16, four answers to its first consumer's review, and the class
+does NOT transition; **2026-09-17, five from the fleet-wide write census**, which widens
+`rebuildable` to reach a durable log, classifies scripts by their targets, and gives §4 a **third
+door that lives in another repo**. The census has landed, so §7's "provisional" is history rather
+than state.
 **Date:** 2026-09-16
 **Deciders:** Architect (the four fields and the three enforcement points), Platform team
 **Related — CITED REPO-QUALIFIED, because two of these numbers exist in both repos:**
@@ -101,8 +104,10 @@ than discovered in the data. And it gives the census **one thing to count**: sto
 
 **Three lifecycle shapes are named for the common combinations, with their first consumers:**
 
-- **`rebuildable`** — ontology, vectors, registrations, `PARAMETERISED_BY`, markers. The prime may
-  drop and re-land it.
+- **`rebuildable`** — ontology, vectors, registrations, `PARAMETERISED_BY`, markers, **and
+  projections over a durable log**. Reproducible by a bootstrap from a durable, declared source —
+  seed, overlay, manifest, or log — **with the producer named as its witness** (widened
+  2026-09-17; see the second amendment).
 - **`stateful`, iagent-authored** — artifacts, lineage, `bound_slot_sources`, assessments and
   acceptances, checkpoints. Preserved; retention is a rail row per kind; `valid_until` honoured.
 - **`of-record-elsewhere`** — FRACAS: Eagle events, CAPA records. OpenDDIL: any intent once
@@ -237,8 +242,14 @@ repo's words.
 
 ## 7. The population is PROVISIONAL and this ADR says so
 
-The input is the eo lane's fleet-wide write census. **Until it lands, the population is derived
-from four known write paths** — registration, the artifact writer, human tasks and grants, and
+**THE CENSUS HAS LANDED — 88 write sites, packet `fleet-write-census-store-classes` on `lane/eo`
+— so this section's "provisional" no longer describes the state.** Cite 88 with the packet
+rather than alone: the figure moved from an earlier 67 when three defects in the census's own
+instrument were found and shown, which is the reason to carry its source.
+
+*The paragraph below is kept as written, because it is what the ADR claimed before the census and
+the second amendment is what changed it.* The input is the eo lane's fleet-wide write census.
+**Until it lands, the population is derived from four known write paths** — registration, the artifact writer, human tasks and grants, and
 doc-tools ingest — **and four known paths is a sample wearing a census's clothes unless it is
 labelled.** It is labelled here.
 
@@ -347,6 +358,146 @@ Carried from `openddil:ADR-0042`'s two-corpora finding: *one subject record carr
 families* invites a new record type. **The merge point already exists — one `sub` from the shared
 identity provider, with two attribute families keyed by it.** A join on a key both sides already
 carry, not a schema either side has to author.
+
+## AMENDMENT 2026-09-17 — five from the write census, and the pair's SECOND uncovered case
+
+**The census landed and the population is no longer provisional.** The packet
+`fleet-write-census-store-classes` (by its header id, **on `lane/eo` and not yet in this tree** —
+cited by id rather than by path, because a `docs/…` path here would be a claim that the file is
+present, and `test_citation_paths` refused exactly that) derives **88 write sites**. It records
+three defects in its own instrument that moved the figure from an earlier 67, which is why the
+number travels with its source rather than alone.
+
+**THIS IS THE SECOND TIME THE PAIRING HAS FOUND SOMETHING NEITHER DOCUMENT COULD ALONE, AND TWICE
+IS THE PATTERN WORTH NAMING.** The first was `openddil:ADR-0042`'s edge-authored intent **stressing
+this schema** — a combination no shape covered, which produced §2's worked example. This one is the
+mirror: **the schema missed a door that was always there.** A case stressing the rules, then rules
+missing a case — the convergence is doing the job it was set up to do, and it is doing it before
+either side is enforced.
+
+### 1. §2 widens — a projection IS `rebuildable`, and the test is the LOG's durability
+
+The census found **nine sites across three projection tables** (`human_task_projection`,
+`answer_artifact_projection`, and `projector_cursor` / `projector_skip_log` beside them) that §2's
+text did not decide — because §2 defined `rebuildable` as *"the prime may drop and re-land it"*,
+which is seed and overlay, and **a projection rebuilds from a log.**
+
+**The ruled definition, replacing that phrasing:**
+
+> `rebuildable` — **reproducible by a bootstrap from a durable, declared source: seed, overlay,
+> manifest, OR LOG — with the producer named as its witness.**
+
+So a projector rebuilding rows from the artifact log **is** `rebuildable`, with producer = that
+projector over that log. A projector whose log is **not durable** is `stateful` with a missing
+bootstrap — which is §5's hand-seeded refusal, reached by the rules rather than by exception.
+
+> **The nine sites turn on whether their log is declared durable, and that is a fact to READ, not
+> a class to argue.**
+
+This composes with the first amendment's witness rule rather than sitting beside it: naming the
+producer was already required, and widening the source is what lets a projector be the producer.
+
+### 2. Scripts are not stores. Their targets are.
+
+**45 of the census's 88 write sites are in `scripts/`** — over half — and the open question was
+whether §4's enforcement governs them.
+
+**It governs them through their targets.** A one-shot script is a **writer**, and its write is
+classified by the store it lands in:
+
+- a script writing to an unclassified store is **one unclassified write**, counted against that
+  store;
+- a script that is the **only bootstrap** for a store is `fold, do not hand-run`'s debt, refused by
+  the census until it is folded.
+
+**Scripts do not get a class; they get a target.** That is what keeps more than half the write
+sites governed without inventing a fourth door for them — and it is the same move as §2's shapes:
+the classification lives on the thing that persists, not on the thing that acts.
+
+### 3. §4 gains a THIRD door, and it is in another repo
+
+The census measured thirteen structural edge types against their writers, and **the partition is
+complete with no residue**:
+
+| writer | count | types |
+|---|---|---|
+| artifact writer | **4** | `CITES`, `DERIVED_FROM`, `PRODUCED_BY`, `PRODUCED_FOR` |
+| registrar | **1** | `PARAMETERISED_BY` |
+| **ingest (doc-tools)** | **8** | `GOVERNED_BY`, `HAS_CHILD`, `REPLACED_BY`, `REQUIRES_TOOL`, `SUBJECT_TO`, `HAS_PART`, `REFERENCES`, `INSTANCE_OF` |
+
+4 + 1 + 8 = 13. **Nothing undecided, which is a stronger result than the first count gave.**
+
+> **AND THE FIRST COUNT WAS FIVE, CORRECTED TO EIGHT THE SAME DAY — the correction's cause is
+> worth more than the number.** Three types were reported as *"no writer found in either repo"*
+> because the search had been run against **the five already suspected** rather than against all
+> thirteen. In the census owner's own words: **a list checked against the names you expect confirms
+> your expectation.** All three do carry MERGE sites — `parsers/s1000d_ingest.py`,
+> `parsers/mil_40051_ingest.py`, `plugins/manufacturing.py` — and what surfaced them was another
+> lane's conformance seal landing with live-graph counts the census could not reach, whose
+> attribution was then **measured rather than adopted**.
+
+The eight are MERGEd by doc-tools' plugins and parsers.
+
+**That is not a violation. It is the writer §4 forgot to name**, because this ADR was written from
+*this repo's* write paths and the ingest door is in another one. §4's enforcement point 3 is
+amended to:
+
+> **The registrar and INGEST write `rebuildable`; the trace writer writes `stateful`; the sync
+> adapter alone crosses a location boundary.** Three doors, one of them in another repo, all
+> declared.
+
+**doc-tools declares its eight edge types the way the registrar declares `PARAMETERISED_BY`** — a
+declaration in the producer, not an exception in the consumer.
+
+### 4. An atomic write across several stores is classified by its STRICTEST target
+
+**One statement here lands in four node kinds**, so a per-store refusal that checks one store is a
+refusal that can be walked around by writing several at once.
+
+> **The interface checks EVERY store in the transaction and refuses if any one of them is a class
+> it may not write.**
+
+Without that sentence §4's refusal is per-statement rather than per-transaction, and the strictest
+target's class is the one that binds — the same reasoning as a `worst-of` roll-up, and for the same
+reason: the weakest link decides, and taking the most permissive target would let a transaction
+launder a write through its easiest member.
+
+**The worked case is `answer_artifact_writer._tx_merge`**: six statements across `Actor`,
+`AnswerArtifact`, `Source` and `WatermarkSequence` under one `execute_write`. **All-or-nothing on
+the strictest, and there is no half-refusal because there is no half transaction.**
+
+### 5. Where the ingest door's conformance is asserted, and why it cannot be asserted here
+
+**In doc-tools' repo, against the SDK's declaration. This repo's seal asserts only that no writer
+HERE emits an ingest-door type.**
+
+**THE REASON IS A MEASUREMENT, AND IT IS SHARPER THAN THE WARNING IT CORRECTS.** The caution raised
+was that grepping this tree for the five edge types returns **zero** — a clean, confident, wrong
+negative. Measured 2026-09-17, it returns **six files**, and what they are is the finding:
+
+    GOVERNED_BY · HAS_CHILD · REPLACED_BY · SUBJECT_TO   docs/measurements/verb-snapshot-…txt
+    REQUIRES_TOOL                                        + two ingest tests, two fixtures
+
+**Not a false zero — a FALSE NON-ZERO, which survives review better because it looks like
+presence.** A seal deriving its population from this repo would not find nothing and look
+suspicious. It would find a **measurement snapshot showing the edges exist** and **tests exercising
+doc-tools' producer**, conclude the types are present, and assert compliance over **evidence about
+a writer rather than over the writer** — passing forever.
+
+> That is [`a search by name finds prose about the name`](../principles/a-search-by-name-finds-prose-about-the-name.md)
+> arriving at a seal's own population. **Evidence about a writer is not the writer**, and the
+> distinction is invisible to a grep because both are the same characters.
+
+So the basis is the **declaration**, not a scan. **The SDK declares the ingest door's edge types;
+doc-tools asserts its OWN conformance in its own repo against that declaration; this repo asserts
+only the complement — that no writer here emits an ingest-door type.** Two seals, two populations,
+neither of them a search for a name.
+
+**A REPO THAT CANNOT SEE THE WRITES MUST NOT CLAIM THEY CONFORM**, which is the citation checker's
+form-checked-but-existence-unchecked rule applied to a seal rather than to a link. And another
+lane's conformance seal already got the matching half right unprompted: it deliberately does **not**
+read the graph for its declared-but-never-written direction, **because the live edges have another
+repo as their author and a graph-reading seal would go red on someone else's correct behaviour.**
 
 ## Consequences
 
