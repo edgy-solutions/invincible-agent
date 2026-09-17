@@ -461,6 +461,31 @@ ORDER BY ?label
 """
 
 
+# THE OUTCOME DECISION IS A PURE MODULE, so the rule separating "nothing matched" from "could not
+# ask" is unit-testable where this file needs a stub harness. Placed beside its only consumer
+# rather than in the import block below, because a reader of `execute_sparql` needs it here.
+#
+# **PACKAGE PATH FIRST, AND THIS ONE DEVIATES FROM THE CONVENTION ON PURPOSE.** Every other
+# flatten-aware import in this file tries the flat name first. That is safe for FUNCTIONS and DATA:
+# two module objects holding two equal functions behave identically. It is NOT safe for an
+# EXCEPTION TYPE. Under the flat path this module is `read_outcome`; under the package path it is
+# `agent_fleet.ontology_service.read_outcome` — two module objects, and therefore TWO DISTINCT
+# CLASSES with the same name. A caller writing `except SubstrateUnavailable` against one of them
+# does not catch the other, so the refusal this module exists to raise sails straight past the
+# handler written to receive it, and the caller sees an unhandled error instead of the outage it
+# was told about. Measured 2026-09-17: three arms using `pytest.raises` failed exactly this way in
+# the full suite while passing standalone, because the suite put both paths on `sys.path`.
+#
+# Package-first costs nothing where the package is absent (it simply falls through to the flat
+# import), and where the package IS importable it guarantees one canonical class.
+try:
+    from agent_fleet.ontology_service.read_outcome import (
+        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    from read_outcome import (  # type: ignore[no-redef]
+        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+
+
 def _get_local_graph() -> rdflib.Graph:
     """Lazy-load the local rdflib fallback only when needed."""
     global _LOCAL_GRAPH
@@ -534,8 +559,12 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
             if last_brace_idx != -1:
                 scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]
 
+    attempts: list[StoreAttempt] = []
+
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
-    if _JENA_ENDPOINT:
+    if not _JENA_ENDPOINT:
+        attempts.append(StoreAttempt("jena", declared=False, error="JENA_QUERY_ENDPOINT unset"))
+    else:
         try:
             async with _jena_client() as client:
                 resp = await client.post(
@@ -543,33 +572,47 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
                     data={"query": scoped_query},
                     headers={"Accept": "application/sparql-results+json"}
                 )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    bindings = data.get("results", {}).get("bindings", [])
-                    results = []
-                    for b in bindings:
-                        row_dict = {k: v["value"] for k, v in b.items()}
-                        results.append(row_dict)
-                    return results
-        except Exception as e:
-            print(f"Jena cluster unreachable or failed ({e}), triggering fallback...")
+            if resp.status_code == 200:
+                bindings = resp.json().get("results", {}).get("bindings", [])
+                attempts.append(StoreAttempt(
+                    "jena", rows=[{k: v["value"] for k, v in b.items()} for b in bindings]
+                ))
+            else:
+                # A NON-200 WAS ALREADY NOT A RETURN, it just fell through to a fallback that
+                # cannot serve anyone. Now it is recorded as the failure it is.
+                attempts.append(StoreAttempt("jena", status=resp.status_code,
+                                             error=f"HTTP {resp.status_code}"))
+        except Exception as e:  # noqa: BLE001
+            attempts.append(StoreAttempt("jena", error=f"{type(e).__name__}: {e}"))
 
     # 🐢 PATH B: Local rdflib Fallback
-    try:
-        g = _get_local_graph()
-        rows = g.query(scoped_query)
-        results = []
-        for row in rows:
-            # Safely convert rdflib result row, preserving None types to avoid 'None' strings
-            row_dict = {
-                str(k): str(v) if v is not None else None 
-                for k, v in row.asdict().items()
-            }
-            results.append(row_dict)
-        return results
-    except Exception as e:
-        print(f"Local rdflib fallback failed: {e}")
-        return []
+    #
+    # **MEASURED DEAD FOR ALL EIGHT CALL SITES (2026-09-17), AND LEFT IN PLACE DELIBERATELY.**
+    # `_get_local_graph` returns a plain `rdflib.Graph`; the scoping wrap above injects
+    # `GRAPH ?__mesh_g`; rdflib RAISES on a named-graph pattern against a single graph. Seven
+    # callers pass a query the wrap scopes and the eighth already spells `GRAPH ?g` itself, so
+    # every one of them takes this path only to raise. The 44KB of real triples it parses is why
+    # this reads as healthy from outside — the data is there and unreachable through the only
+    # path that reads it.
+    #
+    # Removing a fallback another lane may depend on is not this lane's call, so the change here
+    # is that its failure STOPS BEING AN EMPTY SUCCESS. If it is ever repaired (a `Dataset` with
+    # the two named graphs), it starts answering and `mode` will say so without another edit.
+    if not attempts or not attempts[0].answered:
+        try:
+            rows = _get_local_graph().query(scoped_query)
+            attempts.append(StoreAttempt("rdflib", rows=[
+                # Safely convert rdflib result row, preserving None types to avoid 'None' strings
+                {str(k): str(v) if v is not None else None for k, v in row.asdict().items()}
+                for row in rows
+            ]))
+        except Exception as e:  # noqa: BLE001
+            attempts.append(StoreAttempt("rdflib", error=f"{type(e).__name__}: {e}"))
+
+    # A REFUSAL, NEVER A CONFIDENT ZERO. `empty` still returns `[]` — that is the case `[]` always
+    # meant correctly — but a store that could not be asked now raises instead of agreeing that
+    # nothing matched. See `read_outcome` and tests/test_an_outage_is_not_an_empty_answer.py.
+    return rows_or_refuse(outcome(attempts, what="execute_sparql"), what="execute_sparql")
 
 
 async def _get_active_ontology_classes(domain: str = "MAINTENANCE") -> str:
@@ -1517,7 +1560,7 @@ class _ResolverOutcome:
         self.elapsed_s = elapsed_s
 
 
-def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
+def _discover_enumerate_providers(refresh: bool = False) -> MeshResult:
     """Registered `mesh:enumerateInstances` providers, cached on the resolver TTL.
 
     Deliberately the same shape and the same cache discipline as
@@ -1528,16 +1571,28 @@ def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
     now = time.time()
     if (not refresh and _ENUMERATE_PROVIDERS_CACHE is not None
             and (now - _ENUMERATE_PROVIDERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S):
-        return _ENUMERATE_PROVIDERS_CACHE
+        return (MeshResult.answered(_ENUMERATE_PROVIDERS_CACHE)
+                if _ENUMERATE_PROVIDERS_CACHE else MeshResult.empty())
     if not _NEO4J_DRIVER:
-        return []
+        # THE REGISTRY WAS NEVER CONFIGURED. Distinct from "the registry is empty", which is a
+        # claim about the data, and from "the registry could not be read", which is an outage.
+        return MeshResult.unreachable(
+            "enumerate-provider discovery: no Neo4j driver is configured"
+        )
     try:
         with _NEO4J_DRIVER.session() as session:
             rows = session.run(_ENUMERATE_PROVIDERS_CYPHER).data()
     except Exception as exc:  # noqa: BLE001
+        # **THE LOG ALREADY KNEW AND THE RETURN VALUE COULD NOT SAY.** This printed "no providers
+        # this call" and returned `[]`, which the caller rendered as "no provider is registered" —
+        # a confident claim about the REGISTRY made from an OUTAGE. The caller is careful about
+        # exactly this distinction one level down (it counts an unreachable provider apart from a
+        # provider that answered empty); it was handed a `[]` that could not carry it.
         print(f"[Engine O] enumerate-provider discovery failed ({type(exc).__name__}) — "
-              f"no providers this call")
-        return []
+              f"the registry could not be READ; this is not an empty registry")
+        return MeshResult.failed(
+            f"enumerate-provider discovery: {type(exc).__name__}: {exc}"
+        )
     discovered = []
     for r in rows:
         if not r.get("endpoint_url"):
@@ -1557,10 +1612,10 @@ def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
     _ENUMERATE_PROVIDERS_CACHE_TS = now
     print(f"Discovered {len(discovered)} mesh:enumerateInstances provider(s): "
           f"{[(d['provider'], d['timeout_s']) for d in discovered]}")
-    return discovered
+    return MeshResult.answered(discovered) if discovered else MeshResult.empty()
 
 
-def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
+def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
     """Read the registry for engines registered as mesh:resolveInstance.
 
     Returns a list of ``{endpoint_url, provider, timeout_s, domains}``
@@ -1584,9 +1639,18 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         and not refresh
         and (now - _INSTANCE_RESOLVERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S
     ):
-        return _INSTANCE_RESOLVERS_CACHE
+        return (MeshResult.answered(_INSTANCE_RESOLVERS_CACHE)
+                if _INSTANCE_RESOLVERS_CACHE else MeshResult.empty())
     if not _NEO4J_DRIVER:
-        return []
+        return MeshResult.unreachable(
+            "instance-resolver discovery: no Neo4j driver is configured"
+        )
+    # **NO `try` HERE, AND THAT IS A REAL ASYMMETRY WITH THE TWIN**, whose docstring says "a reader
+    # who learns one of these knows the other". `_discover_enumerate_providers` SWALLOWS a query
+    # failure; this one lets it propagate. Both are defensible and they are not the same, so the
+    # shared sentence was doing work it had not earned. Left propagating — an exception a caller
+    # can see beats a swallowed one — and NAMED rather than quietly aligned, because making them
+    # identical is a behaviour change for whoever depends on this raising.
     with _NEO4J_DRIVER.session() as session:
         rows = session.run(_INSTANCE_RESOLVERS_CYPHER).data()
     discovered = []
@@ -1632,7 +1696,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         f"providers (TTL={_INSTANCE_RESOLVERS_TTL_S}s): "
         f"{[(r['provider'], r['endpoint_url'], r['timeout_s']) for r in _INSTANCE_RESOLVERS_CACHE]}"
     )
-    return _INSTANCE_RESOLVERS_CACHE
+    return (MeshResult.answered(_INSTANCE_RESOLVERS_CACHE)
+            if _INSTANCE_RESOLVERS_CACHE else MeshResult.empty())
 
 
 async def _call_resolver(
@@ -1717,7 +1782,18 @@ async def _resolve_instance(
     (one or more providers ran out of budget — the failure mode that
     used to hide as ``empty`` until the 2s strangle bug was caught).
     """
-    resolvers = _discover_instance_resolvers()
+    discovery = _discover_instance_resolvers()
+    if discovery.outcome in ("failed", "unreachable"):
+        # THE REGISTRY COULD NOT BE READ. This function's docstring is proud of separating `empty`
+        # from `timeout` one level down — "the failure mode that used to hide as empty". Discovery
+        # had no way to make that same distinction until now, and reported `no_providers`.
+        return None, {
+            "instance_resolved": False,
+            "instance_match": "registry_unavailable",
+            "instance_n": 0,
+            "instance_detail": discovery.detail or "the resolver registry could not be read",
+        }
+    resolvers = list(discovery.rows)
     if not resolvers:
         return None, {
             "instance_resolved": False,
@@ -2105,7 +2181,14 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
-    providers = _discover_enumerate_providers()
+    discovery = _discover_enumerate_providers()
+    if discovery.outcome in ("failed", "unreachable"):
+        # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
+        # it counts a provider that answered empty apart from one that was unreachable. The same
+        # care now reaches the DISCOVERY step, which previously collapsed into `no_provider`.
+        return {"outcome": "registry_unavailable", "members": [], "count": 0,
+                "detail": discovery.detail or "the provider registry could not be read"}
+    providers = list(discovery.rows)
     if not providers:
         return {"outcome": "no_provider", "members": [], "count": 0,
                 "detail": "no mesh:enumerateInstances provider is registered"}
@@ -4103,7 +4186,11 @@ class PolicyRulesRequest(BaseModel):
 # ---------------------------------------------------------------------------
 class PageForSubjectRequest(BaseModel):
     subject: str
-    audience: Optional[str] = None
+    # `str | None`, NOT `Optional[str]`, AND THE COMMENT ABOVE IS WHY IT MATTERS. This file carries
+    # `from __future__ import annotations`, `Optional` is never imported here, and Pydantic v2
+    # resolves field annotations at runtime — so the original spelling made this route return 500
+    # on EVERY call, including the empty-is-an-answer case the comment above exists to protect.
+    audience: str | None = None
 
 
 @app.post("/page_for_subject")
@@ -4506,7 +4593,7 @@ RETURN scope.uri AS uri, scope.label AS label, hops
 """
 
 
-async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> list[dict]:
+async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> MeshResult:
     """Walk the subClassOf chain from ``subject_uri`` up to ``max_hops``.
 
     Returns ordered list of ``{uri, label, hops}`` dicts, where hops=0 is
@@ -4515,11 +4602,28 @@ async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> li
     inheritance rather than against the raw input_uri string —
     addresses the subClassOf-LLM-gap ADR-0018 amendment from 2026-06-11.
 
-    Empty list when subject doesn't exist as :OntologyClass (or Neo4j
-    is unreachable; we degrade silently rather than fail the route).
+    Empty list when subject doesn't exist as :OntologyClass.
+
+    **"WE DEGRADE SILENTLY RATHER THAN FAIL THE ROUTE" WAS THE OLD SENTENCE, AND WHAT IT COST IS
+    WORTH STATING.** The consumer builds `ancestor_hops` from this chain and `_inheritance_phrase`
+    returns `None` for every candidate when it is empty — so a Neo4j outage sends the LLM back to
+    validating a verb against the raw `input_uri` string, which is the EXACT regression ADR-0018's
+    2026-06-11 amendment exists to fix. The ADR still reads as satisfied, because all the code is
+    there. An absent chain and an unreadable one produced the same `[]`.
+
+    The route still does not fail — that part of the old choice stands — but the two are now
+    DISTINGUISHABLE, and the caller logs the difference instead of proceeding as if inheritance
+    had been checked and found nothing.
+
+    **STILL UNRULED AND FLAGGED RATHER THAN DECIDED HERE:** whether `/classify_predicate` should
+    tell its own caller that inheritance validation was unavailable. That needs a response-contract
+    field, `reasoning` is parsed by consumers and is not the place to smuggle it, and a contract
+    change is the architect's call, not this lane's.
     """
-    if not _NEO4J_DRIVER or not subject_uri or subject_uri == "UNKNOWN":
-        return []
+    if not subject_uri or subject_uri == "UNKNOWN":
+        return MeshResult.empty()
+    if not _NEO4J_DRIVER:
+        return MeshResult.unreachable("ancestor chain: no Neo4j driver is configured")
     cypher = _SUBJECT_ANCESTOR_CHAIN_CYPHER.replace("$MAXHOPS$", str(max_hops))
 
     def _run() -> list[dict]:
@@ -4527,9 +4631,10 @@ async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> li
             return [dict(r) for r in session.run(cypher, subject_uri=subject_uri)]
 
     try:
-        return await asyncio.to_thread(_run)
-    except Exception:
-        return []
+        rows = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return MeshResult.failed(f"ancestor chain: {type(exc).__name__}: {exc}")
+    return MeshResult.answered(rows) if rows else MeshResult.empty()
 
 
 @app.post("/classify_predicate", response_model=ClassifyPredicateResponse)
@@ -4685,7 +4790,16 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     # found the match, but its reasoning never reached the prompt.
     # See STATE_2026_06_11.md "subClassOf doesn't reach the LLM" and
     # the ADR-0018 amendment it cites.
-    ancestor_chain = await _get_subject_ancestor_chain(request.subject_uri or "")
+    _chain = await _get_subject_ancestor_chain(request.subject_uri or "")
+    if _chain.outcome in ("failed", "unreachable"):
+        # **THE INHERITANCE CHECK DID NOT HAPPEN, AND THAT IS NOT THE SAME AS FINDING NO ANCESTORS.**
+        # Proceeding is still the ruled behaviour (a 500 here would be worse), but it proceeds
+        # WITHOUT the subClassOf evidence ADR-0018's amendment added — so it says so, once, loudly,
+        # instead of looking identical to a subject that genuinely has no parents.
+        print(f"[Engine O] classify_predicate: subClassOf chain UNAVAILABLE for "
+              f"{request.subject_uri!r} ({_chain.detail}) — the LLM is validating against the raw "
+              f"input_uri string, which is the ADR-0018 gap, not a subject with no ancestors")
+    ancestor_chain = list(_chain.rows)
     # Quick-lookup map: ancestor_uri -> hops (0 = subject itself).
     ancestor_hops: dict[str, int] = {a["uri"]: a["hops"] for a in ancestor_chain}
     # Pretty-printed chain like "idp:Table ⊆ idp:Dataset", used when

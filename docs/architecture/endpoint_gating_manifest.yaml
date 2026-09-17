@@ -327,6 +327,14 @@ services:
         class: internal
         justification: "Property -> instance lookup. READ. Same closure condition."
       - method: POST
+        path: /page_for_subject
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [engine-docs]
+        class: internal
+        justification: "Doc pages explaining a subject. READ over Jena's internal/DOCS graph. Same closure condition as the other internal reads. NOTE the corpus is NOT domain-scoped the way the ontology graphs are, so entitlement filtering does not happen here - engine-docs is the only declared consumer and the gate lives at its front door."
+      - method: POST
         path: /write_item_state
         identity: "transport auth (CallerIdentity.authz_id)"
         gate: can_invoke(mesh:writeItemState)
