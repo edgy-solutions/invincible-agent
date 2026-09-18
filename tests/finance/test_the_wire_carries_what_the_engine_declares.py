@@ -733,11 +733,17 @@ def test_every_prefix_EITHER_mirror_USES_can_actually_be_EXPANDED():
     **diff as agreement**. Either way the seal reports confidently and wrongly, and nothing in
     it looks broken.
 
-    ── THIS IS NOT HYPOTHETICAL, AND THE EVIDENCE IS A RED TEST ON MASTER ───────────────────
-    `tests/planning/test_lookup_prefixes_are_derived.py` has been failing on master since before
-    this lane's work, with exactly this: *"only the WRITER knows ['docs:']"* — `docs:` is a
-    namespace the writer puts on the wire and `_IRI_PREFIXES_FOR_LOOKUP` **cannot expand**. The
-    map the mirror check depends on is already known-incomplete, by a seal in another lane.
+    ── THIS IS NOT HYPOTHETICAL, AND THE EVIDENCE WAS A RED TEST — SINCE FIXED ──────────────
+    When this guard was written (2026-09-15) `tests/planning/test_lookup_prefixes_are_derived.py`
+    was failing on master with exactly this: *"only the WRITER knows ['docs:']"* — a namespace the
+    writer put on the wire that `_IRI_PREFIXES_FOR_LOOKUP` could not expand. **The map the mirror
+    check depends on was known-incomplete, and a seal in another lane knew it before I did.**
+
+    ⚠ **THAT GAP IS CLOSED.** The 2026-09-18 merge brought the fix: `docs:` is in the map and that
+    seal passes. Recorded in the PAST TENSE deliberately — a docstring that keeps saying a test is
+    red after someone fixed it is a stale claim wearing evidence's clothes, and precision makes it
+    MORE believed, not less. **The guard is not retired with the instance**: the map can go
+    incomplete again the next time a namespace is added, and this is what notices.
 
     Measured 2026-09-15: the prefixes actually used across both mirrors are `cost:`, `fin:`,
     `mesh:`, `safety:` — **all four mappable**, so the mirror result stands today. This test is
