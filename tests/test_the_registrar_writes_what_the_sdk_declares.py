@@ -41,6 +41,15 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 _REGISTRAR = _ROOT / "agent_fleet" / "mesh_registrar" / "v2_substrate.py"
 
+#: BOTH DOORS, now that the write census has landed and the trace writer's set is declared rather
+#: than unset. ADR-0054 names two; the census partitions all thirteen structural types 13/13 with
+#: the remaining eight belonging to doc-tools' ingest — a THIRD door, in a sibling repo, which is
+#: a finding rather than an entry and therefore has no row here.
+_SOURCES = {
+    "registrar": _REGISTRAR,
+    "trace_writer": _ROOT / "src" / "iagent" / "answer_artifact_writer.py",
+}
+
 #: A Cypher relationship type is SCREAMING_CASE here. Two write forms, and the first version of
 #: this derivation knew only the second — `PARAMETERISED_BY` goes through apoc, so a
 #: bracket-only regex MISSED THE WRITE ITS AUTHOR HAD JUST MADE. An enumeration that cannot see a
@@ -62,17 +71,17 @@ def _cypher_strings(path: Path) -> list:
             if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
-def written_edge_types() -> set:
-    """The STRUCTURAL edge types this registrar actually writes, derived from its Cypher."""
+def written_edge_types(interface: str = "registrar") -> set:
+    """The STRUCTURAL edge types ``interface`` actually writes, derived from its own Cypher."""
     found = set()
-    for s in _cypher_strings(_REGISTRAR):
+    for s in _cypher_strings(_SOURCES[interface]):
         if "apoc.merge.relationship" in s or "-[" in s:
             found |= set(_APOC_LITERAL.findall(s))
             found |= set(_BRACKET_LITERAL.findall(s))
     return found
 
 
-def _declared() -> set:
+def _declared(interface: str = "registrar") -> set:
     try:
         from iagent_mesh.edge_types import declared_edge_types
     except ImportError:
@@ -81,7 +90,7 @@ def _declared() -> set:
             "A PASS: the registrar's writes are UNVERIFIED against any declaration until the "
             "fleet pin moves. Re-run after the pin."
         )
-    return set(declared_edge_types("registrar"))
+    return set(declared_edge_types(interface))
 
 
 # ── the derivation must be shown to work before either direction is trusted ──────────────
@@ -123,33 +132,44 @@ def test_the_dynamic_verb_write_is_recognised_and_excluded():
 
 # ── the two directions ───────────────────────────────────────────────────────────────────
 
-def test_EVERY_TYPE_THE_REGISTRAR_WRITES_IS_DECLARED():
+@pytest.mark.parametrize("interface", sorted(_SOURCES))
+def test_EVERY_TYPE_A_DOOR_WRITES_IS_DECLARED(interface):
     """A structural edge type written and not declared is a write path the census will report
     forever and nobody owns."""
-    undeclared = written_edge_types() - _declared()
+    undeclared = written_edge_types(interface) - _declared(interface)
     assert not undeclared, (
-        f"the registrar writes {sorted(undeclared)} and the SDK declares none of them. Add them "
-        f"to iagent_mesh.edge_types.REGISTRAR_EDGE_TYPES, or route the write through a door "
-        f"that owns it."
+        f"{interface} writes {sorted(undeclared)} and the SDK declares none of them. Add them to "
+        f"iagent_mesh.edge_types, or route the write through a door that owns it."
     )
 
 
-def test_EVERY_TYPE_THE_SDK_DECLARES_IS_ACTUALLY_WRITTEN():
+@pytest.mark.parametrize("interface", sorted(_SOURCES))
+def test_EVERY_TYPE_THE_SDK_DECLARES_IS_ACTUALLY_WRITTEN(interface):
     """THE ARM THAT CLOSES THE CROSS-REPO DRIFT, and the reason this file exists.
 
-    Rename the type in v2_substrate.py and the SDK keeps declaring a type nobody emits. Without
-    this direction the census reports an undeclared type while the SDK quietly declares a dead
-    one, and neither repo can see the disagreement.
+    Rename the type in the writing module and the SDK keeps declaring a type nobody emits.
+    Without this direction the census reports an undeclared type while the SDK quietly declares a
+    dead one, and neither repo can see the disagreement.
 
     NOT checked against the graph: live edges prove a writer existed somewhere, and doc-tools
-    writes several types this interface does not. The question is whether THIS interface still
-    writes what it promised.
+    writes eight types neither door does. The question is whether THIS interface still writes
+    what it promised.
     """
-    unwritten = _declared() - written_edge_types()
+    unwritten = _declared(interface) - written_edge_types(interface)
     assert not unwritten, (
-        f"the SDK declares {sorted(unwritten)} for the registrar and this registrar writes none "
-        f"of them. Either a write was renamed or removed and the declaration was not, or the "
-        f"declaration was never true. Both are the silent cross-repo drift this arm exists for — "
-        f"a live edge of that type in the graph does NOT clear it, because another writer may be "
-        f"the author."
+        f"the SDK declares {sorted(unwritten)} for {interface} and that module writes none of "
+        f"them. Either a write was renamed or removed and the declaration was not, or the "
+        f"declaration was never true. A live edge of that type does NOT clear it — another "
+        f"writer may be the author."
     )
+
+
+def test_THE_DERIVATION_REPRODUCES_THE_CENSUS_PARTITION():
+    """CROSS-CHECK AGAINST A DIFFERENT METHOD. The eo lane's write census partitioned all thirteen
+    types by walking the fleet; this file derives two of the three sets by AST over the writing
+    modules. Two instruments, one answer — and if they ever disagree, the census is the authority
+    and this derivation is the thing to fix, because membership is DERIVED not guessed."""
+    assert written_edge_types("trace_writer") == {
+        "CITES", "DERIVED_FROM", "PRODUCED_BY", "PRODUCED_FOR"
+    }, "the artifact writer's writes no longer match the census's partition for it"
+    assert written_edge_types("registrar") == {"PARAMETERISED_BY"}
