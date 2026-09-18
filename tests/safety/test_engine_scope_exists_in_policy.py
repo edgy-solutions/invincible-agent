@@ -47,6 +47,7 @@ _NO_SCOPE_YET: dict[str, str] = {
     "data_analyst": "Engine DA serves every caller; its scope is the per-asset dataset gate, not a domain.",
     "datahub_wrapper": "catalog wrapper — DATA_ENGINEERING gating is the 2026-07-02 stopgap on query_metadata, not a verb domain.",
     "graph_host": "registers from policy/graphs/*.yaml ROWS, which carry their own owner_persona and domains per graph.",
+    "docs_agent": "the corpus answers ABOUT the system (ADR-0037) — runbooks, ADRs and how-do-I prose — not about a domain's subjects, so it is domain-agnostic for the same reason neo4j_expert and weaviate_expert are. FLAGGED AT MERGE 2026-09-17: the engine declared no domains by OMISSION rather than by decision, and this entry is the decision being made explicitly. If the corpus ever carries a page whose CONTENT is domain-sensitive, this stops being true and the row becomes a per-page gate, not a verb domain.",
     "neo4j_expert": "substrate expert, domain-agnostic by design — it answers about the graph, not about a domain's subjects.",
     "ontology_service": "Engine O is the resolver; its registrations are per-domain providers named at each call site.",
     "restate_analyst": "the workflow substrate registers infrastructural verbs, not domain ones.",

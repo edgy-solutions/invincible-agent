@@ -201,7 +201,13 @@ async def lifespan(app: FastAPI):
                 verb=v["verb"],
                 input_uri=v["input_uri"],
                 output_uri=v["output_uri"],
-                endpoint_url=f"{base}/explain",
+                # DERIVED FROM THE LOOP VARIABLE, and the value is identical today because
+                # there is exactly one verb. That is precisely why the literal was
+                # indistinguishable from the bug: the registrar bakes ONE URL PER VERB, so a
+                # hardcoded path sends every future verb to the same address, and the second
+                # verb is the one that would have found it -- in production, as a verb that
+                # registers, reports accepted, and answers with its sibling's handler.
+                endpoint_url=f"{base}/{v['fn']}",
                 description=v["desc"],
                 verb_synonyms=v["synonyms"],
                 verb_anti_synonyms=v["anti_synonyms"],

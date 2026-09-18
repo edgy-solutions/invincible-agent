@@ -1269,7 +1269,7 @@ services:
           hazards, no tails. A caller learns the mesh can be asked about orphaned hazards, not
           that any exist.
       - method: POST
-        path: /analyze
+        path: /measure/{fn_name}
         identity: none
         gate: "transport auth (OBSERVE)"
         exposes: gated-content
@@ -1285,6 +1285,13 @@ services:
           rather than left to be noticed, because a releasable row that quietly begins serving
           a real fleet's open safety defects is precisely the failure this manifest exists to
           make impossible.
+
+          PATH CHANGED /analyze -> /measure/{fn_name} (2026-09-17), and the CLASSIFICATION IS
+          CARRIED, not re-derived: the same handler serves the same hazard content under a
+          per-verb address. The one thing the rename changes is that the verb is now IN THE
+          PATH rather than in the body, so the address distinguishes the verbs and a future
+          gate can differ per verb -- which is the point of the split and is what makes
+          re-classifying one verb without the others possible when the overlay lands.
       - method: POST
         path: /resolve_instance
         identity: none
