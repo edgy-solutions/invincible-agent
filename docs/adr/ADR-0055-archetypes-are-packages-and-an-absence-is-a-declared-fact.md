@@ -80,6 +80,16 @@ Every one of the four emits **named, machine-readable attributes for what it cou
 > **AN ABSENCE IS RENDERED AS A DECLARED FACT AND IS ASSERTABLE FROM OUTSIDE.** Each card names the
 > specific thing it could not do, **in its own vocabulary**, on a surface a test can read.
 
+**AND THE PRIMITIVE IS ALREADY MORE GENERAL THAN THE FOUR, WHICH IS BETTER EVIDENCE THAN THE FOUR
+WERE.** `InterpretationStrip` — **not an archetype card** — emits `data-slot-refused`,
+`data-refused-reason` and `data-slot-outcome`. So "every one of the four" *understates* the
+population: the primitive is present on a surface outside the set, which is what a thing **found**
+looks like rather than a thing **imposed**.
+
+It also forecloses a reading a later maintainer would otherwise reach: **the primitive does not
+originate with archetype cards.** §4 scopes where the LIBRARY applies; it does not scope where the
+primitive lives, and those are different claims.
+
 **That is an extraction with four instances, and it is a stronger contract than the list it
 replaces** — because it constrains what a contributor must **declare** rather than what they must
 **render**. A card that invents its own absence vocabulary still satisfies it; a card that draws a
@@ -117,13 +127,38 @@ One directory per archetype, both halves in it:
 |---|---|
 | `contract.ts` | the typed payload the card reads, and its validator — `ok` or `refused` |
 | `Card.tsx` | the component |
-| `fixtures/` | **at least one DISCRIMINATING fixture** — see §5 |
+| `fixtures/` | **at least one DISCRIMINATING fixture** — see §5, and **see the measurement below: these do not exist yet** |
 | a row in `policy/archetypes/<id>.yaml` | the backend half, declared rather than edited |
 
 **The library provides the declared-absence mechanism** — the way a card names what it could not
 say, and the way a test reads it. **It does not provide the vocabulary**: `data-spread-unreported`
 is `CompetingMeasures`' word for its own gap and no library could have guessed it. The mechanism is
 shared; the words are the package's.
+
+> ⛔ **"THE WORDS ARE THE PACKAGE'S" IS AN ASPIRATION UNTIL A COLLISION RULE MAKES IT TRUE.**
+> `data-refused` is emitted by **both** `CompetingMeasures.tsx` and `InterpretationStrip.tsx`
+> today. Nothing prevents two packages choosing one word, and **a seal asserting `data-refused`
+> matches either surface** — so the declared-absence seal would be satisfiable by somebody else's
+> absence, which is a green that means nothing.
+>
+> **The contract carries a collision rule: the assertion is SCOPED TO THE CARD's subtree**, not to
+> the document. Namespacing the attribute per archetype is the alternative and is worse — it makes
+> the vocabulary the library's after all, which is the thing §2 just said it is not.
+
+### `fixtures/` DOES NOT EXIST TODAY, and the sequence has to build it
+
+**Measured 2026-09-18: there is not one `fixtures/` directory anywhere in cortex-ui.** Payloads
+live as **inline literals inside test files**.
+
+**This is the same category as §3's row and it gets the same sentence, because the consequence here
+is larger.** §5's parity seal is written as though it *"runs the EXISTING fixtures through the new
+card"*, and §6 lists *"the fixture discriminates"* as a seal — **both read as pointing at an
+artifact, and the artifact has to be extracted from inline literals first.** A safety argument
+resting on something that does not exist is not a weaker argument; it is not yet an argument.
+
+**So the extraction of fixtures is a step in §8's sequence rather than an assumption of §5**, and
+until it lands `replaces` has no parity seal to run. Said here rather than left for whoever
+discovers it while writing the first replacement.
 
 **Registration is one call and the registry is DERIVED.** `defineArchetype({ id, contract, Card })`
 in the package; the registry is the list of packages, **never a hand-kept array**.
@@ -189,7 +224,11 @@ gains one row on each side.
 **REPLACE is the same package with `replaces: <id>`** — a second implementation of an existing
 contract. **The contract is what makes replacement safe**, and now that is a scoped claim: the
 contributed card satisfies the same typed payload and the same declared-absence mechanism, and
-**the parity seal runs the EXISTING fixtures through the new card.** Pass, and the registry resolves
+**the parity seal runs the archetype's fixtures through the new card.**
+
+> **AND `replaces` IS NOT AVAILABLE UNTIL THOSE FIXTURES EXIST** (§2). The mechanism is specified
+> here; the artifact it depends on is step 1 of §8. A replacement accepted before then would be
+> accepted on a reading rather than on a parity run. Pass, and the registry resolves
 the id to the replacement — every `rendersAs` row naming that archetype draws the new card and **no
 engine knows**. Fail, and the replacement is refused by name while the original keeps drawing.
 
@@ -223,8 +262,27 @@ A contribution that passes these does not need the maintainer to look at it; one
 | declared-absence assertable | a card that draws over a gap without naming it |
 | parity, for a `replaces` | a replacement that changes behaviour while claiming not to |
 
-**The first four packages are the proof, and the parity seal is what makes "no visual change" a
-measurement rather than a promise.**
+### TWO OF THESE SEALS SPAN TWO REPOSITORIES, and that is a different kind of seal
+
+**"Contract validates against the row" and the mirror both cross a repo boundary** — the contract
+is in cortex-ui, the row is in `policy/archetypes/` here. **A cross-repo seal specified without the
+following will be written, pass, and mean nothing**, and each item below was found by a failure
+rather than by design:
+
+* **It cannot run inside `docker build`.** A seal needing a second repository has to move to the
+  job, not the image build.
+* **The producer is checked out at a PINNED sha**, or a red is **unattributable** — nobody can tell
+  whether the consumer moved or the producer did.
+* **There is a no-skip floor**, or a missing checkout reports as a **PASS**. This is the
+  skipping-reads-as-passing shape at a repo boundary.
+* **The resolved sha is ASSERTED**, not merely available. A baseline that appears only in a failure
+  message means a green run says nothing about which producer it measured.
+
+**Where these run and what they pin is part of the sequence, not an implementation detail** — and
+the four are carried here because they were paid for, twice by the reviewer's own hand.
+
+**The first three packages are the proof, and the parity seal is what makes "no visual change" a
+measurement rather than a promise — once §8 step 1 has produced fixtures for it to run.**
 
 ## 7. Rejected alternative — OpenUI, cited with its reader
 
@@ -246,17 +304,25 @@ without taking their reasons.
 > citation acquires a confidence nobody earned."* They were right, and the citation carries the
 > reader and the date instead.
 
-## 8. Sequence
+## 8. Sequence — PROPOSED, not assigned
 
-1. **`cortex-ui-60` extracts the library** from `CONTRIBUTION_RANKING`, `ELICITATION` and
-   `COMPETING_MEASURES` as the first three packages. **Zero visual change; the parity seal is the
-   proof.**
-2. **`BRIEF` is built as the first NEW package through the extension point** — the first evidence
-   the extension point is usable by someone who did not build it.
-3. **The contributor runbook is written FROM that build**, the way `adding-an-engine.md` was written
+**This ADR proposes an order. It assigns nobody**, and the first draft did — it named its own
+reviewer as the owner of step 1. **A document cannot assign work to its own reviewer**, and who
+does each step is the architect's to say, the same way the reviewer role was.
+
+1. **Extract the fixtures** from the inline literals in the test files, per §2's measurement. This
+   is step one because §5's parity seal and §6's discrimination check both depend on it, and
+   neither is available until it lands.
+2. **Extract the library** from `CONTRIBUTION_RANKING`, `ELICITATION` and `COMPETING_MEASURES` —
+   **three packages, not four** (§4). **Zero visual change, with the parity seal as the proof.**
+3. **Stand up the cross-repo seals** with their pin, their floor and their asserted sha (§6),
+   because a contributed package's gate is a cross-repo gate from its first day.
+4. **Build `BRIEF` as the first NEW package through the extension point** — the first evidence the
+   extension point is usable by someone who did not build it.
+5. **Write the contributor runbook FROM that build**, the way `adding-an-engine.md` was written
    from engine-docs and then used to build the next one.
-4. **The first team outside this one ships the fourth.** That is the measurement that matters, and
-   until it happens the funnel has moved rather than opened.
+6. **The first team outside this one ships the next package.** That is the measurement that
+   matters, and until it happens the funnel has moved rather than opened.
 
 ## Non-goals
 
