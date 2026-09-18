@@ -343,45 +343,14 @@ def test_AN_EXEMPTION_RETIRES_ITSELF():
             )
 
 
-def test_THIS_FILE_DEFINES_ITS_TABLES_EXACTLY_ONCE():
-    """⛔ THE DEFECT THE 2026-09-18 MERGE SHIPPED FOR ONE COMMIT, and the reason it is sealed
-    here rather than remembered.
-
-    Master and `lane/91` each grew an `_EXEMPT` definition, 140 lines apart. **Git merged both
-    without a conflict** — they never touched, so there was nothing to mark — and **Python
-    resolved the collision by last-wins, in silence**. Master's seven exemptions vanished and
-    the lint reddened on six commits it had been explicitly ruled not to bind.
-
-    > **A TEXTUAL MERGE WITH NO CONFLICT IS NOT A SEMANTIC MERGE.** The markers show you the
-    > collisions the tool can see. A duplicate top-level binding is one it cannot, and the
-    > language's answer to it is not an error — it is a quiet winner.
-
-    The conflict I reasoned hardest about that day (prefix lookup versus exact match) I got
-    right; the one that actually shipped was in a region git called clean. **Read what merged
-    cleanly, not only what conflicted.**
-
-    Derived, not listed: any top-level name bound twice in this module fails, so the next table
-    to grow a second definition is covered by the commit that adds it.
-    """
-    import ast
-
-    src = Path(__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    seen: dict[str, int] = {}
-    dupes: list[str] = []
-    for node in tree.body:
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            targets = [node.target.id]
-        for name in targets:
-            if name in seen:
-                dupes.append(f"{name} (lines {seen[name]} and {node.lineno})")
-            seen[name] = node.lineno
-    assert not dupes, (
-        f"these module-level names are bound twice, and the SECOND one wins silently: {dupes}. "
-        f"A merge that brought both halves of a table produced exactly this once already — fold "
-        f"them into one definition rather than leaving the language to pick."
-    )
-    assert seen, "parsed no top-level assignments — the seal has gone vacuous"
+# ── THE PER-FILE DUPLICATE-BINDING SEAL MOVED, 2026-09-18 ────────────────────────────────────
+# `test_THIS_FILE_DEFINES_ITS_TABLES_EXACTLY_ONCE` lived here after two `_EXEMPT` tables shipped
+# in one merge. It could only ever see THIS module — and the very next instance of the class was
+# one file over, in `tests/finance/test_the_wire_carries_what_the_engine_declares.py`, where a
+# doubly-bound `_CORTEX` disabled a cross-repo scan that then skipped with a false reason and
+# reported green.
+#
+# A SEAL SCOPED TO THE FILE THAT TAUGHT IT CANNOT FIND THE NEXT ONE. Retired into
+# `tests/test_no_module_level_name_is_bound_twice.py`, which walks every module-level binding in
+# the tree and distinguishes a TRANSFORM (the rebinding reads the old value) from a COLLISION
+# (it does not). One assertion, one exclusion list.
