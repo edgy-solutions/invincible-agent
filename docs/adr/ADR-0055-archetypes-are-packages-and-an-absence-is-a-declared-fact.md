@@ -6,10 +6,13 @@ That sentence is the contract, and it was **found by measuring the four existing
 proposed** — see §1, which is also this ADR's most useful section, because the list it replaces was
 wrong.
 
-**Status:** Proposed — 2026-09-18, on `lane/5f`. **Reviewer: `cortex-ui-60`, assigned by the
-architect.** They supplied §1's measurement and refused one claim of the original packet; that
-refusal is §4's boundary. **Extraction and registration only — no card changes appearance, and the
-parity seal is what makes that checkable rather than promised.**
+**Status:** **ACCEPTED 2026-09-18**, after review against the code by `cortex-ui-60` — reviewer
+assigned by the architect, not by this document. They supplied §1's measurement, refused one claim
+of the original packet (which is §4's boundary), and their review produced four findings folded
+before ratification, **one of which made the ADR true rather than merely better**: §5's parity seal
+pointed at fixtures that do not exist. **Extraction and registration only — no card changes
+appearance, and the parity seal is what makes that checkable rather than promised, once step 1 has
+produced fixtures for it to run.**
 **Date:** 2026-09-18
 **Deciders:** Architect (the fork in §4, the reviewer assignment, the OpenUI reading), Platform team
 **Related — cited `repo:ADR-NNNN`, per the 2026-09-16 convention:**
@@ -304,11 +307,17 @@ without taking their reasons.
 > citation acquires a confidence nobody earned."* They were right, and the citation carries the
 > reader and the date instead.
 
-## 8. Sequence — PROPOSED, not assigned
+## 8. Sequence — proposed here, ASSIGNED ELSEWHERE
 
 **This ADR proposes an order. It assigns nobody**, and the first draft did — it named its own
 reviewer as the owner of step 1. **A document cannot assign work to its own reviewer**, and who
 does each step is the architect's to say, the same way the reviewer role was.
+
+> **ASSIGNED 2026-09-18 BY THE ARCHITECT, recorded here because the assignment is theirs and the
+> record is this document's:** `cortex-ui-60` owns **step 1**, the fixtures extraction, and the
+> sequence after it as proposed below. **That sentence is a record of a decision made elsewhere,
+> not the document making one** — and the distinction is the reason the first draft's version of
+> it was wrong.
 
 1. **Extract the fixtures** from the inline literals in the test files, per §2's measurement. This
    is step one because §5's parity seal and §6's discrimination check both depend on it, and
