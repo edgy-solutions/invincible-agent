@@ -7,7 +7,7 @@ dependencies = [
     # PINNED TO A TAG, matched to the fleet pin, same as every other engine: this package
     # governs fleet auth, so a floating ref would let one SDK commit change every engine's
     # security behaviour at rebuild. `tests/test_lock_coherence.py` polices drift.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.8.1",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.2",
     "fastapi",
     # THE SERVER, AND ONLY ONE, WHICH IS A DELIBERATE DEPARTURE FROM engine-cost'S LIST.
     # The agent image's CMD branches: hypercorn if `/app/.venv/bin/hypercorn` exists, else

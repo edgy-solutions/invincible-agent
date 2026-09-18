@@ -114,12 +114,55 @@ def test_the_gate_is_wired_into_resolve():
 
 
 def test_the_gate_runs_BEFORE_the_instance_fanout():
-    """Order matters. The fan-out at Step 1.6 fires only when class recall is EMPTY, so a
-    gate running after it could empty the pool without the fan-out ever getting its chance —
-    turning a filtered-out dead end into an UNKNOWN rather than into a resolved instance."""
+    """Order matters. A gate running AFTER the fan-out could empty the candidate pool without
+    the fan-out ever getting its chance — turning a filtered-out dead end into an UNKNOWN
+    rather than into a resolved instance.
+
+    ⛔ THE ANCHOR WAS THE FAN-OUT'S OLD CONDITION VERBATIM, `if not candidates and
+    request.entity_refs:`. When the guard loosened — it now also fires when the top class hit
+    carries no verb in the asked domains — the anchor raised ValueError rather than failing,
+    which reads as a broken test rather than as an ordering violation.
+
+    It anchors on the BRANCH now, not on the condition inside it, so the ordering property
+    survives a change to when the branch fires. The property was never about the condition.
+    """
     gate = _SRC.index("_served_class_uris(request.domains")
-    fanout = _SRC.index("if not candidates and request.entity_refs:")
+    fanout = _SRC.index("if _recall_is_non_evidence and request.entity_refs:")
     assert gate < fanout, "the productive-option gate must run before the instance fan-out"
+
+
+def test_THE_FANOUT_ALSO_FIRES_ON_AN_UNANSWERABLE_CLASS_HIT():
+    """RULED 2026-09-15. A class hit that cannot answer is not evidence the entity was
+    understood.
+
+    Measured: "tell me about the wiring loom" with `entity_refs=['wiring loom']` recalled
+    `pcn#SustainmentNotice` — wrong and NON-EMPTY — so the old `not candidates` condition kept
+    the phone book shut and engine-safety's provider, registered and able to resolve the
+    hazard, was never asked. That is the guard's own original defect one step over: its
+    comment records that the fan-out once "ran only AFTER class recall succeeded", and the fix
+    handled the case that failed while leaving its sibling inverted.
+
+    THE PRECEDENCE RULE IS THE CONTROL and it is asserted below: an ANSWERABLE class hit still
+    wins, and raw text with no `entity_refs` still never reaches the phone book.
+    """
+    assert "_recall_is_non_evidence" in _SRC, "the loosened guard is gone"
+    assert "if not candidates and request.entity_refs:" not in _SRC, (
+        "the fan-out is gated on an EMPTY recall again, so a wrong-but-present class hit "
+        "silences the instance providers"
+    )
+    assert "_preempted_subject_is_unanswerable(" in _SRC
+
+
+def test_THE_PRECEDENCE_RULE_SURVIVES_raw_text_never_fires_the_fanout():
+    """THE CONTROL THE GUARD'S COMMENT WAS WRITTEN TO KEEP. Loosening the recall condition
+    must not turn this into "try the phone book on any query": a query with no `entity_refs`
+    still goes to UNKNOWN and the generalist, whatever recall returned."""
+    m = re.search(r"if _recall_is_non_evidence and ([a-z_.]+):", _SRC)
+    assert m, "the fan-out branch no longer conjoins a second term"
+    assert m.group(1) == "request.entity_refs", (
+        "the fan-out no longer requires entity_refs, so raw query text reaches the instance "
+        "providers — the blanket behaviour the over-fire guard exists to prevent"
+    )
 
 
 def test_the_domains_passed_are_the_CALLERS():

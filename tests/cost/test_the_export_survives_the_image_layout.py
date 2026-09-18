@@ -62,12 +62,33 @@ def test_a_flattened_layout_gets_a_NAMED_REFUSAL_and_not_an_IndexError():
     )
 
 
-def test_the_root_is_found_by_a_MARKER_and_not_by_counting_levels():
+def test_the_root_is_found_by_a_MARKER_and_not_by_counting_levels(tmp_path):
     """Counting is what shipped the defect: `parents[2]` is correct in a checkout, an
     IndexError in `/app`, and the two are indistinguishable by reading the line."""
-    root = m._repo_root()
-    assert root is not None, "these tests run from a checkout; the marker search failed"
-    assert (root / "scripts").is_dir() and (root / "agent_fleet").is_dir()
+    # ⛔ THE MARKER MOVED, AND THE REASON IS THE SAME ONE THIS TEST WAS WRITTEN FOR. It asserted
+    # the search finds a tree with `scripts/` AND `agent_fleet/` — a fair description of a
+    # developer checkout, and the WRONG QUESTION once the runtime began shipping inside an
+    # image: a flattened /app carrying the builder and the runtime can build a package and has
+    # neither directory. The marker now tests what the caller needs (R-065).
+    #
+    # AND THIS ARM WAS ALSO A STATEMENT ABOUT A WORKING COPY. `root is not None` held only where
+    # the gitignored `.pyodide-cache/` happened to be present — it passed in the checkout that
+    # had fetched it and failed in a worktree that had not. Constructed now, so it is about the
+    # SEARCH rather than about whose machine runs it.
+    built = tmp_path / "somewhere" / "deep" / "nested"
+    built.mkdir(parents=True)
+    (tmp_path / "somewhere" / "scripts").mkdir()
+    (tmp_path / "somewhere" / "scripts" / "build_cost_package.py").write_text("#", encoding="utf-8")
+    (tmp_path / "somewhere" / ".pyodide-cache").mkdir()
+
+    found = None
+    for candidate in [built, *built.parents]:
+        if m._can_build_a_package_here(candidate):
+            found = candidate
+            break
+    assert found == tmp_path / "somewhere", (
+        "the upward search did not find the nearest tree that can actually build a package"
+    )
 
 
 def test_the_root_search_RETURNS_NONE_rather_than_raising_when_there_is_no_checkout():

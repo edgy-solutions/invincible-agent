@@ -8,6 +8,10 @@ _Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 
 ## in-flight
 
+- **adr-reading-notes-data-classes-and-adr-0042** — Source reading for the two dispatched ADRs — data classes (ours) and OpenDDIL ADR-0042. Citations verified against the documents that actually registered each claim, with two corrections to the dispatch packet and one to my own earlier correction.
+  status: in-flight · owner: invincible-agent-f3 — ia-5f / lane/5f · blocked-on: both drafts on lane/5f awaiting review
+  → [docs/plans/adr-reading-notes-data-classes-and-adr-0042.md](plans/adr-reading-notes-data-classes-and-adr-0042.md)
+
 - **canvas-templates-slice-1** — ADR-0050 slice 1, NON-GATEWAY HALF — landed 2026-09-06 (`a59a9c5`, per git; an earlier revision of this line said 08-23, taken from the session clock rather than the commit). Ratified `policy/canvases/portfolio.yaml` (five panels, verbs read off the seeder's own `measure` field, slots declared as the verbs' REAL signature defaults since §3's carry is blocked), Pydantic models + generated JSON Schema + drift test with positive control, and a merge-gating CI job. Seal 3 recorded FAILING against today's phrase seed — structurally, from source, so it cannot be a lucky pass. GATEWAY HALF IS NOT MINE and is not here: `seedCanvas(template_id)`, `_CALLER_IDENTITY_VERBS`, and the superseded Ruling (a) seal. THREE THINGS OWED, named below rather than implied: verb-EXISTENCE checking (seal 1's other half), the live seal-3 run (~50 min, needs a quiet substrate), and the cortex `TEMPLATES` row §7 requires before the backend advertises a second template.
   status: in-flight · owner: unassigned
   → [docs/plans/canvas-templates-slice-1.md](plans/canvas-templates-slice-1.md)
@@ -15,6 +19,10 @@ _Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **engine-o-substrate-read-inventory** — The engine-o half of the mesh-client census — every substrate touch engine-o makes, derived from its handles rather than listed, with what each one is TRYING TO DO. The candidate named-operation list MeshGraph / MeshOntology / MeshVectors must cover.
   status: in-flight · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo
   → [docs/plans/engine-o-substrate-read-inventory.md](plans/engine-o-substrate-read-inventory.md)
+
+- **fleet-write-census-store-classes** — ADR-0054 section 7's named input - the fleet-wide write census, counted as STORES rather than writes. 88 write sites (not the 67 first reported; three instrument defects are shown), 17 stores, 6 classified and 11 UNCLASSIFIED because section 2's text does not decide them. Also the thirteen structural edge types mapped to their write interfaces: five are written by doc-tools, a third writer outside the two doors.
+  status: in-flight · owner: invincible-agent-28 [5401d7] - ia-eo / lane/eo · blocked-on: a ruling on whether a PROJECTION is rebuildable, and whether one-shot scripts are stores under ADR-0054 section 4
+  → [docs/plans/fleet-write-census-store-classes.md](plans/fleet-write-census-store-classes.md)
 
 ## blocked-on-human
 
@@ -35,6 +43,14 @@ _Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/urn-reconciliation-guard.md](plans/urn-reconciliation-guard.md)
 
 ## open
+
+- **a-failed-ancestor-walk-narrows-verb-compatibility-in-silence** — A Neo4j failure in the subClassOf walk returns an empty chain, and /classify_predicate then judges verb compatibility against the raw subject alone — which is the inheritance gap ADR-0018's amendment was written to close, reappearing as a failure mode rather than a design gap.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshGraph contract — ancestors() is one of its named operations, and this decides what its failure means
+  → [docs/plans/a-failed-ancestor-walk-narrows-verb-compatibility-in-silence.md](plans/a-failed-ancestor-walk-narrows-verb-compatibility-in-silence.md)
+
+- **a-failed-provider-lookup-reports-no-provider-is-registered** — A Neo4j failure in provider discovery returns no providers, and /enumerate_instances renders that as outcome no_provider, detail "no mesh:enumerateInstances provider is registered" — a false statement about the registry, in the field a person reads. The same module argues against this one screen below.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshGraph contract — the fix changes what /enumerate_instances returns, and the outcome vocabulary is the interface's
+  → [docs/plans/a-failed-provider-lookup-reports-no-provider-is-registered.md](plans/a-failed-provider-lookup-reports-no-provider-is-registered.md)
 
 - **a-fallback-that-absorbs-every-failure-reports-none** — THE DISCRIMINATING INFORMATION ALREADY EXISTS AT ALL THREE LAYERS AND IS THROWN AWAY BEFORE THE CARD. `X-Presentation-Path` already told seams 8 and 9 apart while the card did not; `select_archetype` already returns a provenance naming which refusal fired; the supervisor already logs the timeout and the no_match. THIS IS A PLUMBING REQUEST, NOT A BUILD REQUEST — carry what exists to the surface that renders. The cost of not doing so, measured: three unrelated seams — a missing rendersAs binding, a fill_slots timeout that turned a specified question into an ask, and a subject-coverage gap that made four verbs non-candidates — ALL rendered as `Knowledge Document / No content available`. A fourth path reaches the same floor (subject_unknown → generalist fallback). Diagnosis took a night because the card carried no discriminating information, and fixing the first seam changed nothing observable, which ARGUED FOR THE WRONG CONCLUSION. The law: a fallback that absorbs every failure class reports none of them.
   status: open · owner: agent
@@ -63,6 +79,10 @@ _Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-resolved-relative-period-must-be-disclosed** — THE ANCHOR STEP IS NOT DONE WITHOUT THIS. "what does spend look like this quarter" now resolves to window=["FY26-Q4"] using a fiscal calendar the user never saw and cannot check. That is an assumption the system made on the user's behalf, and an undisclosed assumption is the silent-narrowing failure the carry work removed, reintroduced one layer up. The strip already renders resolved ROUTING (subject, verb, confidence); it must also render resolved PARAMETERS, at minimum any whose value the user did not literally say. Nothing in invincible-agent blocks this — the resolved value is in `params` on the dispatch payload today.
   status: open · owner: cortex · repo: cortex-ui (strip), invincible-agent (the resolved value is already on the wire)
   → [docs/plans/a-resolved-relative-period-must-be-disclosed.md](plans/a-resolved-relative-period-must-be-disclosed.md)
+
+- **a-sparql-failure-is-read-as-an-empty-graph** — engine-o's execute_sparql returns [] on any Jena failure, so five routes and two internal gates read "the substrate failed" as "the graph holds nothing". One of them is the cold-start fallback that exists to cover a Weaviate failure.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshOntology/MeshVectors contract — this changes what seven consumers see, and they change with it
+  → [docs/plans/a-sparql-failure-is-read-as-an-empty-graph.md](plans/a-sparql-failure-is-read-as-an-empty-graph.md)
 
 - **a-spoken-handle-can-forge-the-change-log** — MEASURED on real bytes. `run_measure` injects route-supplied arguments into the SAME `params` dict a caller's values land in, and for `plan_session_changes` it uses `params.setdefault(...)` — so a CALLER-SUPPLIED value WINS. A spoken `ops: []` makes the change log report ZERO changes for a scenario that has one; a spoken `scenario_name` relabels the artifact anything the speaker likes. This is the DECISION-ARTIFACT verb (INV-4, "why did we move this?"), so the failure mode is forged provenance rather than a wrong number. Reachable today: cortex-bff's /plan/measure forwards `body.params` verbatim. Its two sibling injection sites use ASSIGNMENT and are safe — nobody chose the difference, it fell out of `=` vs `setdefault`. FIX IS ONE WORD, not applied: engine-p is fenced. The new carry path is already guarded (iagent_pure/slot_acceptance.py).
   status: open · owner: unassigned · blocked-on: human approval to touch engine-p (fenced for the night of 2026-08-28)
@@ -415,6 +435,10 @@ _Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
+
+- **two-embed-constants-in-two-repos-drift-into-vectors** — DEFAULT_EMBED_MODEL and EXPECTED_EMBED_DIM are hand-duplicated across agent_fleet/utils/embed.py and doc_tools/utils/embed.py, enforced by "code review on either constant catches drift". A model divergence produces VECTORS rather than an error, and Weaviate's dimension lock — the only real net — cannot see it.
+  status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the writer half — doc-tools-7f records the model as collection metadata; the reader half is this lane's and waits on SDK v0.9.0
+  → [docs/plans/two-embed-constants-in-two-repos-drift-into-vectors.md](plans/two-embed-constants-in-two-repos-drift-into-vectors.md)
 
 - **unbound-output-types-triage** — PHASE C, 2026-08-24. Seven Engine P output types have no archetype binding. Each ruled by READING ITS PAYLOAD and applying the semantic-axis test — what does the colour or position MEAN to a reader — rather than by matching row shapes. THREE bind to existing archetypes (DependencyNeighborhoodSet and ConstraintViolationSet to INSTANCES_BY_PROPERTY, each needing a payload reshape to columns/rows/state-vocabulary), TWO need their own component (ContributionSequence and PlateauTimeline, both because they carry MILESTONE markers no existing contract expresses), and TWO are structured documents (FootprintSet, ChangeLog). CoverageGapSet is the honest list-not-grid. This is the morning's build list, pre-reasoned; nothing here is built.
   status: open · owner: unassigned · repo: cortex-ui

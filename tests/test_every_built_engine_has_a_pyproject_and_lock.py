@@ -152,13 +152,30 @@ _SECRET_VAR = {
     "engine-o": "ENGINE_O_CLIENT_SECRET",
     "engine-p": "ENGINE_P_CLIENT_SECRET",
     "engine-safety": "ENGINE_SAFETY_CLIENT_SECRET",
+    "engine-docs": "ENGINE_DOCS_CLIENT_SECRET",
     "engine-w": "ENGINE_W_CLIENT_SECRET",
     "data-analyst": "ENGINE_DA_CLIENT_SECRET",
 }
 
 #: Components whose engine needs no Keycloak client secret, each with its REASON.
 _NO_CLIENT_SECRET: dict[str, str] = {
-    "central-gateway": "not an engine; holds no mint and calls register_engine_to_mesh nowhere",
+    # THIS READ "holds no mint and calls register_engine_to_mesh nowhere" AND HALF OF IT WAS
+    # FALSE. cortex-bff DOES call the registrar — its own log says `mesh registration: OK
+    # [cortex_bff_orchestration]`, twice. The waiver was RIGHT and its reason was WRONG, which
+    # is the worse combination: an auditable-looking sentence the next reader takes as checked.
+    #
+    # IT SURVIVED BECAUSE NO POPULATION COULD SEE IT. This file derives its engines from the
+    # chart's $engines and the re-register seal derives its from agent_fleet/ directories;
+    # cortex-bff lives in src/iagent/, outside BOTH. A waiver about a service neither
+    # population can reach is a sentence nobody can check.
+    #
+    # The MINT half stands, and it is the half that matters here: the call passes no `mint=`,
+    # so there is no client-credentials exchange and no secret to guard — which is why the
+    # mint-failure alarm this seal exists for cannot fire for it.
+    "central-gateway": (
+        "not an agent_fleet engine. It DOES register (`cortex_bff_orchestration`) but passes "
+        "NO mint, so there is no client-credentials exchange and no secret to guard"
+    ),
     # ── UNRESOLVED, NAMED RATHER THAN SILENT. Each of these calls register_engine_to_mesh and
     # has no client-secret guard. NONE is a confirmed defect: data-analyst is deployed, has NO
     # ENGINE_DA_CLIENT_SECRET set, and logs ZERO mint failures — so it is reaching the mesh by
@@ -170,7 +187,16 @@ _NO_CLIENT_SECRET: dict[str, str] = {
     # dropped. Each needs one measurement — does it mint, and against what — and that is a
     # ruling, not a guess.
     "data-analyst": "UNRESOLVED: mints, no secret set, no mint failures — needs a measurement",
-    "engine-b": "UNRESOLVED: retirement status unconfirmed; see test_engine_b_removal_list",
+    # NOT UNRESOLVED, and it read that way for as long as nobody checked. Engine B was
+    # RETIRED 2026-09-06 (ADR-0046 8.4); what survives is its chart row, deliberately, until
+    # every reference on the removal list goes first. So the exclusion is real and its
+    # reason is a FACT rather than an open question — "status unconfirmed" invited no check
+    # precisely because it read as one already made.
+    "engine-b": (
+        "RETIRED 2026-09-06 (ADR-0046 8.4). The chart row and its references come out via "
+        "the removal list in src/iagent/defs/agent_routers.py, sealed by "
+        "tests/test_engine_b_removal_list_is_complete.py; it mints nothing in the meantime."
+    ),
     "engine-c": "UNRESOLVED: no secret declared; liveness and mint path unmeasured",
     "engine-f": "UNRESOLVED: the presentation agent; announces transport auth, mint path unmeasured",
 }
@@ -215,3 +241,84 @@ def test_every_chart_engine_has_a_rendered_client_secret_guard(component: str):
 def test_THE_SECRET_EXCLUSION_LIST_NAMES_A_REASON():
     for c, why in _NO_CLIENT_SECRET.items():
         assert why and why.strip(), f"{c} is excluded with no reason"
+
+
+# ── THE WAIVER'S CLAIM IS CHECKED AGAINST THE CODE ──────────────────────────────────────────
+#
+# `_NO_CLIENT_SECRET` waived `central-gateway` as "not an engine; a gateway with no verbs of its
+# own". Its log says otherwise — `mesh registration: OK [cortex_bff_orchestration]` — so the
+# waiver's REASON was false while the waiver itself may or may not be right.
+#
+# THE POPULATION WAS THE DEFECT. This file derives its engines from the chart's `$engines`, and
+# the neighbouring re-register seal derives its from `agent_fleet/` directories — so cortex-bff,
+# which lives in `src/iagent/`, is outside BOTH. A waiver about a service neither population can
+# see is a sentence nobody can check.
+#
+# So the registrants are derived from the one fact that does not depend on where a service lives:
+# WHO CALLS `register_engine_to_mesh`. Ruled 2026-09-15.
+
+_SRC_ROOTS = ("agent_fleet", "src")
+#: Services whose registration lives outside `agent_fleet/`, mapped to the file that registers.
+#: Hand-kept because no rule recovers "cortex-bff" from "src/iagent/gateway.py" — the same
+#: reason `_SECRET_VAR` is hand-kept, and the population it feeds is NOT hand-kept.
+_NON_FLEET_REGISTRARS = {
+    "central-gateway": "src/iagent/gateway.py",
+}
+
+
+def _calls_register(path: Path) -> bool:
+    import re as _re
+    try:
+        return bool(_re.search(r"^\s*(_register_verb|register_engine_to_mesh)\s*\(",
+                               path.read_text(encoding="utf-8", errors="replace"), _re.M))
+    except OSError:
+        return False
+
+
+def test_A_WAIVER_DOES_NOT_CLAIM_A_REGISTRAR_REGISTERS_NOTHING():
+    """THE ARM THE OLD POPULATION COULD NOT HAVE. A waiver may stand for many reasons — an
+    engine may genuinely need no client secret — but it must not assert something the code
+    contradicts. A false reason is worse than no reason: it is auditable-looking and wrong, and
+    the next reader takes it as checked.
+    """
+    offenders = []
+    for component, rel in _NON_FLEET_REGISTRARS.items():
+        why = _NO_CLIENT_SECRET.get(component)
+        if not why:
+            continue
+        if _calls_register(_ROOT / rel) and (
+            "no verbs" in why or "registers nothing" in why or "calls register" in why
+        ):
+            offenders.append(f"{component}: waived as {why!r} but {rel} calls the registrar")
+    assert not offenders, (
+        "a waiver's REASON is contradicted by the code it describes:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nThe waiver may still be correct — an engine can register and legitimately need no "
+          "client secret — but the sentence justifying it has to be true."
+    )
+
+
+def test_EVERY_REGISTRAR_IS_IN_A_POPULATION_SOMEWHERE():
+    """THE ENUMERATION, derived from the call rather than from a directory.
+
+    A service that registers verbs and appears in NO seal's population is unexamined rather than
+    passing — the shape this repo has now met at four mechanisms. Deriving from the call is what
+    makes `src/iagent/gateway.py` visible at all: it is in neither `agent_fleet/` nor the chart's
+    engine list, and both neighbouring seals scope to one of those.
+    """
+    registrars = sorted(
+        p.relative_to(_ROOT).as_posix()
+        for root in _SRC_ROOTS
+        for p in (_ROOT / root).rglob("*.py")
+        if ".venv" not in p.parts and p.name != "mesh_registration.py" and _calls_register(p)
+    )
+    assert len(registrars) >= 10, (
+        f"only {len(registrars)} registrar(s) detected — the call-site pattern moved and this "
+        f"seal is quantifying over almost nothing: {registrars}"
+    )
+    # Every non-fleet registrar this file knows about must actually be one.
+    for component, rel in _NON_FLEET_REGISTRARS.items():
+        assert rel in registrars, (
+            f"{component} is mapped to {rel}, which no longer calls the registrar — the map is "
+            f"describing a service that has changed"
+        )

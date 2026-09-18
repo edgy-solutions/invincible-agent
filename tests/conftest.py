@@ -159,6 +159,20 @@ def pytest_configure(config):  # noqa: D103
     _TREE_BASELINE = _tree_state()
 
 
+def _content_differs(path: str) -> bool:
+    """True only when the file's BYTES differ from HEAD — not merely its status flag."""
+    import subprocess  # noqa: PLC0415
+    try:
+        r = subprocess.run(
+            ["git", "diff", "HEAD", "--quiet", "--", path],
+            capture_output=True, timeout=30,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True          # cannot tell -> report it; a silent skip is the worse failure
+    return r.returncode != 0
+
+
 def pytest_sessionfinish(session, exitstatus):  # noqa: D103
     # NOT an error when git is unavailable — an environment fact, and refusing on it would be
     # the anesthesia failure in the other direction. It is reported, so a silent absence of the
@@ -175,7 +189,16 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: D103
     if after is None:
         return
 
-    changed = sorted(p for p, xy in after.items() if _TREE_BASELINE.get(p) != xy)
+    candidates = sorted(p for p, xy in after.items() if _TREE_BASELINE.get(p) != xy)
+    # CONFIRM BY CONTENT BEFORE FAILING A RUN. `git status --porcelain` reports FLAGS, and on
+    # Windows a tracked file goes transiently "modified" while CRLF normalisation is pending —
+    # git says so on every commit here ("CRLF will be replaced by LF the next time Git touches
+    # it"). That fired on 2026-09-18 against a file byte-identical to HEAD and turned a 4011-pass
+    # run into exit 1, which is precisely the crying-wolf failure this guard was written against.
+    #
+    # `git diff HEAD --` compares CONTENT, so a stat-dirty entry with identical bytes reports
+    # nothing. One subprocess per candidate, and candidates are normally zero.
+    changed = [p for p in candidates if _content_differs(p)]
     if not changed:
         return
 

@@ -80,13 +80,21 @@ A COMMIT SHA ONLY MEANS SOMETHING INSIDE THE REPOSITORY THAT MINTED IT. So an im
 only when its repository sits under `global.imagePrefix`; anything with its own `repository`
 elsewhere falls through to its own tag or the floor, exactly as before.
 
-THE FLOOR IS `global.defaultImageTag` (`latest`), NOT `Chart.AppVersion`: CI publishes
-`:<sha>` and `:latest` and nothing else, so falling through to AppVersion asks for
-`:2026.07.02`, which has never existed. Every values file was papering over that with an
-explicit `tag: "latest"` — which is also what made the pin unreachable, since a component tag
-beats a global one.
+THE FLOOR IS ALSO SCOPED, AND IT WAS NOT, WHICH COST THE SAME FOUR DEPLOYMENTS TWICE.
+For images this repo builds the floor is `Chart.Version`, which the release guarantees exists by
+retagging every image of the build matrix to it BY DIGEST. For anything else the floor stays
+`latest`.
 
-EMPTY IS TODAY'S BEHAVIOUR EXACTLY — every image resolves to `:latest` with the knob unset.
+`Chart.AppVersion` was the original floor and asks for `:2026.07.02`, which has never existed;
+every values file papered over that with an explicit `tag: "latest"`, which is also what made
+the pin unreachable, since a component tag beats a global one.
+
+THE SCOPING NOTE ABOVE WAS WRITTEN FOR THE PIN AND READ AS IF IT COVERED THE CHAIN. It did not.
+The pin was made `$ours`-only on 2026-09-09; the floor was left global, so changing the floor
+from `latest` to `Chart.Version` sent `cortex-ui/frontend`, `dag-tools/central-gateway`,
+`dag-tools/user-deployment` and `pub-tools` straight back to a tag they have never published —
+the identical break, the identical four repositories, reached through the fallback instead of
+the override. A guard on one term of an expression is not a guard on the expression.
 
 EVERY LINE INSIDE THE DEFINE IS DASH-TRIMMED. It renders inline as `image: {{ include ... }}`,
 so a single untrimmed newline produces `could not find expected ':'` in a file that has nothing
@@ -95,7 +103,13 @@ wrong with it. Comments belong out here, not in there.
 {{- define "invincible-agent.image" -}}
 {{- $repo := .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) -}}
 {{- $ours := hasPrefix (printf "%s/" .root.Values.global.imagePrefix) $repo -}}
-{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag -}}
+{{/* THE FLOOR IS SCOPED THE SAME WAY THE PIN IS, and for the same reason. `Chart.Version` is a
+     real tag ONLY for images this repo builds, because only those are retagged to it by the
+     release. A cross-repo image falling through to it asks for a tag that repository has never
+     published — which is the 2026-09-09 ImagePullBackOff again, in the same four repositories,
+     through the other end of this chain. */}}
+{{- $floor := ternary .root.Chart.Version "latest" $ours -}}
+{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag | default $floor -}}
 {{- if .registry -}}
 {{ .registry }}/{{ $repo }}:{{ $tag }}
 {{- else -}}

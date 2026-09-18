@@ -305,8 +305,39 @@ def test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query():
     # Scan agent_fleet/*.py (the original scope) PLUS scripts/seed_*.py
     # (the architect's widening — re-runnable seeds were the blind spot
     # the old allowlist created).
-    paths = list((REPO_ROOT / "agent_fleet").rglob("*.py"))
-    paths += list((REPO_ROOT / "scripts").glob("seed_*.py"))
+    # TRACKED FILES ONLY. The scan used to walk the filesystem, so it also read
+    # `agent_fleet/<engine>/.venv/.../site-packages` — INSTALLED THIRD-PARTY SOURCE — and the
+    # SDK legitimately spells `mesh:AgentTask` and `mro:Symptom` in its own shapes.
+    #
+    # THE VERDICT THEREFORE DEPENDED ON WHO HAD RUN `uv sync` IN WHICH DIRECTORY. Four engines
+    # have a .venv on this machine and one of them tripped it; a clean checkout has none and
+    # passes. That is an environment answering a question about the tree — the same class as a
+    # lane venv three minors behind the pin. A seal must measure the repository, and the
+    # repository is what git tracks.
+    tracked = subprocess.run(
+        ["git", "ls-files", "agent_fleet", "scripts"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    paths = [REPO_ROOT / rel for rel in tracked
+             if rel.endswith(".py")
+             and (rel.startswith("agent_fleet/")
+                  or rel.startswith("scripts/seed_"))]
+
+    # A FLOOR, because narrowing a scan is exactly the change that can make it find nothing and
+    # report clean. 134 tracked files today (130 engine, 4 seed); the floor is well under that
+    # so ordinary deletions do not trip it, and a derivation that collapses does.
+    assert len(paths) >= 80, (
+        f"the scan collected only {len(paths)} tracked files — a population this small means "
+        f"the derivation broke, and a scan that reads too little PASSES"
+    )
+    # `as_posix()`, NOT `str()`. On Windows a Path stringifies with backslashes, so the forward
+    # slash never matched and this floor failed on a population that was correct — the check
+    # answering about the separator instead of the population.
+    assert any("scripts/seed_" in x.as_posix() for x in paths), (
+        "no seed scripts in the population — the re-runnable seeds are the half with the worse "
+        "failure mode (duplicate OntologyClass nodes on every cluster init), and losing them "
+        "silently is how the old allowlist's blind spot returns"
+    )
 
     violations = []
     for fp in paths:

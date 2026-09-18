@@ -17,6 +17,9 @@ this asserted they agree.
 from __future__ import annotations
 
 import pytest
+
+import pathlib
+_REPO = pathlib.Path(__file__).resolve().parents[2]
 from fastapi.testclient import TestClient
 
 from agent_fleet.cost_agent import measures
@@ -249,6 +252,21 @@ def test_the_two_verbs_naming_the_SAME_factors_use_the_SAME_labels(client):
 
 @pytest.mark.parametrize("verb", sorted(measures.VERBS))
 def test_NO_verb_500s_on_a_param_it_does_not_declare(client, verb):
+    # ⛔ ENVIRONMENT-DEPENDENT FOR ONE VERB, and it took a worktree to show it. `package_export`
+    # refuses outright when the pinned Pyodide runtime is absent, and `.pyodide-cache/` is
+    # GITIGNORED — so it exists in whichever checkout last fetched it and in no other. This arm
+    # passed in the tree that had it and failed in one that did not, which makes it a statement
+    # about a working copy rather than about the verb.
+    #
+    # It SKIPS rather than being weakened: the property — an undeclared param is recorded in
+    # `ignored_params` instead of 500ing — is real and worth asserting wherever the verb can
+    # actually run. Naming the reason so the skip does not read as a pass. Third instance of
+    # this shape today (R-064), each in a different file.
+    if verb == "package_export" and not (_REPO / ".pyodide-cache").is_dir():
+        pytest.skip(
+            "package_export refuses without the pinned runtime, which is gitignored and absent "
+            "from this checkout — the refusal is correct and this arm cannot see past it"
+        )
     """⚠ AN UNDECLARED PARAM WAS A 500, ACROSS EVERY VERB.
 
     Found by probing `cost_labor_composition` with `rate_vintage`: the verb has no such slot,

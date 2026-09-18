@@ -25,6 +25,7 @@ at its last restart -- or none. The gap is permanent and invisible until someone
 from __future__ import annotations
 
 import pathlib
+import sys
 import re
 
 import pytest
@@ -34,6 +35,20 @@ yaml = pytest.importorskip("yaml")
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _VALUES = _ROOT / "helm" / "invincible-agent" / "values.yaml"
 _FLEET = _ROOT / "agent_fleet"
+
+sys.path.insert(0, str(_ROOT / "src"))
+from iagent_pure.registration_sites import scan, python_files  # noqa: E402
+
+_SITES_CACHE: "list" = []
+
+
+def _registration_sites():
+    """Scanned once. The scan is cheap but the population is read by several arms."""
+    if not _SITES_CACHE:
+        _SITES_CACHE.append(
+            scan(python_files(_ROOT / "agent_fleet", _ROOT / "src"), root=_ROOT)
+        )
+    return _SITES_CACHE[0]
 _ENGINES_TPL = _ROOT / "helm" / "invincible-agent" / "templates" / "engines.yaml"
 
 # Agent directory -> the `component` name engines.yaml deploys it under. Derived from the
@@ -61,6 +76,7 @@ _KEY_TO_AGENT_DIR = {
     # not "failing", it is UNEXAMINED — which is how engineFinance went five days without anyone
     # noticing it was unchecked.
     "engineSafety": "safety_agent",
+    "engineDocs": "docs_agent",
     # engine-lg, the graph host. Registers one verb per RATIFIED ROW at startup, so it is a
     # registering agent and belongs in the map rather than the waiver.
     "graphHost": "graph_host",
@@ -102,27 +118,62 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
     Matches the CALL, not the import: Engine O imports registration helpers as the registry
     CONSUMER and must not appear in the re-register list, which is exactly the distinction an
     import-based check would get wrong.
+
+    DERIVED BY THE SHARED SCANNER, NOT BY A REGEX HERE, and the regex it replaces was blind in
+    three ways measured on 2026-09-17: it matched the helper's NAME and not its ALIAS (the
+    gateway registers as `_register_verb`), it required the call at STATEMENT POSITION, and it
+    walked ONE directory level. `src/iagent/gateway.py` registers two verbs and was invisible to
+    it — which is why this file's own comment already recorded the bff as outside the
+    population.
+
+    ONE DERIVATION, TWO READERS: `scripts/version_census.py` attributes verbs with the same
+    scanner. Two implementations of "who registers" is two answers to one question, which is the
+    defect this seal exists to prevent one layer up.
     """
-    for path in agent_dir.glob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"^\s*register_engine_to_mesh\s*\(", text, re.MULTILINE):
-            return True
-    return False
+    sites = _registration_sites()
+    prefix = f"agent_fleet/{agent_dir.name}/"
+    return any(f.startswith(prefix) for f in sites.registering_files)
 
 
-# Engine O is EXCLUDED BY DESIGN and that exclusion is CORRECT — verified against the live
-# graph, not inferred from the comment claiming it. Engine O self-registers
-# `mesh:resolveInstance` in its own lifespan with the note "runs every boot, survives
-# re-prime", and the graph holds exactly 1 resolveInstance row (measured 2026-08-22). So its
-# registration lands without the re-register hook and adding it here would change the restart
-# behaviour of the ontology service to fix nothing.
+# Engine O is EXCLUDED BY DESIGN, and the exclusion rests on a measurement of the WRONG
+# PROPERTY. This is recorded rather than quietly fixed because the measurement was careful.
 #
-# Recorded rather than silently allowed, because the FIRST measurement said 0 rows and looked
-# like a real gap — that query named a Weaviate field (`verb`) that does not exist, errored,
-# and counted zero. The correct field is `verb_iri`. A waiver resting on a number is only as
-# good as the query behind it.
+# WHAT WAS MEASURED: Engine O self-registers `mesh:resolveInstance` in its own lifespan with
+# the note "runs every boot, survives re-prime", and the graph holds exactly 1
+# resolveInstance row (2026-08-22; independently confirmed 2026-09-15, still 1). The first
+# attempt read 0 rows because the query named a Weaviate field that does not exist — a
+# waiver resting on a number is only as good as the query behind it, and that catch is why
+# this comment reads as trustworthy.
+#
+# WHAT IT DOES NOT ESTABLISH: **measured under `wipe: false`; the post-wipe control has not
+# been run.** The sandbox overlay sets `wipe: false`, so the prime re-ingests without
+# clearing verb edges. The row being PRESENT therefore says nothing about whether it would
+# be RESTORED after a wipe — and a wipe is the only condition the re-register hook exists
+# for. Nothing was destroyed, so nothing was proven about recovery.
+#
+# THE CONTROL THAT WOULD SETTLE IT, ruled 2026-09-15: run a wipe-and-prime ONCE,
+# deliberately, in an ephemeral namespace or a scheduled sandbox window, and assert that
+# engine-o's provider row AND cortex_bff_orchestration's two rows return through the hook
+# chain. Until that runs, this waiver is provisional and this comment says so.
+#
+# THE BFF IS NOW IN THE POPULATION, AND ITS ABSENCE FROM THE LIST IS A DECISION RATHER THAN A
+# BLIND SPOT. This paragraph used to read "the population here does not reach the bff... it is
+# invisible to it", and that was true of the regex this file used to carry: it matched the
+# helper's NAME and not its ALIAS, and `src/iagent/gateway.py` registers via
+# `register_engine_to_mesh as _register_verb`. The shared scanner resolves aliases and walks
+# `src/` as well, so the gateway's 2 provider rows are visible here.
+#
+# WHAT HAS NOT CHANGED IS WHETHER IT BELONGS ON THE RE-REGISTER LIST. That is a behaviour
+# change to the roll — it would restart the bff on every prime — and it is the architect's,
+# not a correction to make while fixing an instrument. The distinction worth keeping: the bff
+# was previously OMITTED because nothing could see it, and is now OMITTED because nobody has
+# ruled it in. Those are the same list and completely different facts.
 WAIVED_BY_DESIGN = {
-    "engine-o": "registry consumer; self-registers resolveInstance every boot (1 row, verified)",
+    "engine-o": (
+        "registry consumer; self-registers resolveInstance every boot. 1 row measured "
+        "under wipe:false — the post-wipe control has NOT been run, so this waiver is "
+        "provisional"
+    ),
 }
 
 

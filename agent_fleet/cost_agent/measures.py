@@ -43,7 +43,7 @@ def _repo_root() -> Optional[pathlib.Path]:
     """
     here = pathlib.Path(__file__).resolve()
     for candidate in here.parents:
-        if (candidate / "scripts").is_dir() and (candidate / "agent_fleet").is_dir():
+        if _can_build_a_package_here(candidate):
             return candidate
     return None
 
@@ -66,6 +66,33 @@ def _artifact_uri(filename: str) -> str:
     """
     base = (os.getenv(_PUBLIC_BASE_ENV) or _DEFAULT_BASE).rstrip("/")
     return f"{base}/artifact/{filename}"
+#: What `package_export` actually needs on disk, and therefore what "a root" means here.
+#:
+#: ⛔ THIS USED TO TEST FOR `scripts/` AND `agent_fleet/` — a proxy for "a developer checkout".
+#: The proxy and the requirement came apart the moment the runtime was shipped INSIDE an image:
+#: a flattened `/app` carrying the builder and the pinned runtime can build a package perfectly
+#: well and had neither directory, so the function answered None and the engine refused work it
+#: was fully able to do.
+#:
+#: The alternative was to create a bare `agent_fleet/` in the image so the marker would pass.
+#: That is a marker built to lie — the vacuum on purpose — and it would have made this function
+#: answer "yes" on the strength of an empty directory somebody added to satisfy it.
+#:
+#: The docstring above always said this walks upward for "a tree that actually contains what the
+#: caller needs". It now does.
+_BUILDER_REL = pathlib.Path("scripts") / "build_cost_package.py"
+_RUNTIME_DIR = ".pyodide-cache"
+
+
+def _can_build_a_package_here(root: pathlib.Path) -> bool:
+    """Both halves, because either alone produces a refusal one layer later.
+
+    The runtime FILE LIST is not re-stated here: `package_export` reads it from the builder's own
+    `RUNTIME_FILES`, and a second copy would drift the day a Pyodide bump changes it. This checks
+    the directory exists; the builder's list decides what must be in it, and the named refusal
+    below reports exactly which files are missing.
+    """
+    return (root / _BUILDER_REL).is_file() and (root / _RUNTIME_DIR).is_dir()
 
 
 def _baked_algorithm_sha() -> Optional[str]:

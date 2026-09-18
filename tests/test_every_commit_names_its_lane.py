@@ -63,6 +63,67 @@ _REPO = Path(__file__).resolve().parents[1]
 #: self-closing, and no lane reaches master without that merge.
 _RULE_COMMIT = "b466612"
 
+#: Commits that DESCEND from the rule and still carry no trailer, each with its reason.
+#:
+#: NOT A CONVENIENCE. A commit in here could have complied and did not, and the entry exists
+#: only because published history is not rewritten (R-030) — the same reason the trailer wall
+#: could not be fixed by amending. An exemption that outlives its reason is a hole with a
+#: comment on it, so each entry says what happened rather than that it was allowed.
+#:
+#: THE ENTRIES RETIRE THEMSELVES: `test_AN_EXEMPTION_RETIRES_ITSELF` reds if an exempt commit
+#: ever carries a valid trailer, so a stale row is a failure rather than a silent allowance.
+#: (Mechanism from `lane/91`; adopted here before that branch merged.)
+_EXEMPT: dict[str, str] = {
+    "b15adbc": (
+        "engine-lg's compile fix, pushed direct to master. A genuine omission rather than a" + 
+        " boundary case: the rule WAS in its ancestry. It is the R-063 shape in reverse — the" + 
+        " lane merged master, which brought this seal, and pushed without running what the" + 
+        " merge carried in. Recorded, not rewritten."
+    ),
+    # ── SECOND BATCH, 2026-09-15, and the pattern is the point rather than the rows ──────
+    #
+    # Three more pushed without the trailer, from two lanes, all with the rule in ancestry.
+    # Caught by R-063.2 on the very next merge — the derived seal seeing new commits join its
+    # population — which is the law working and NOT evidence the rule is landing.
+    #
+    # A GROWING EXEMPTION LIST IS A SIGNAL ABOUT THE RULE, NOT ABOUT THE COMMITS. Four
+    # entries now, none of them boundary cases. The remedy is not more entries: it is that a
+    # lane learns the trailer exists at the moment it merges master, which is exactly when
+    # nobody re-reads the suite list. If a fifth batch appears, the rule needs a mechanism
+    # that fires BEFORE a push rather than a seal that reports after one.
+    "4ee0764": (
+        "engine-lg's saver-ordering seal. Pushed direct to master; the rule was in ancestry."
+    ),
+    "054fb4c": (
+        "engine-lg's durable checkpointing. Same push, same lane, same omission."
+    ),
+    "cada33b": (
+        "the m3.3 cutover WIP. Marked NOT MERGEABLE in its own subject, so it is work in "
+        "progress that reached master's ancestry — recorded rather than rewritten, and the "
+        "entry retires itself if it is ever amended before merge."
+    ),
+    # ── THIRD BATCH, and the last one that can be a boundary case ───────────────────────
+    #
+    # Both predate the hook LANDING ON MASTER — it existed only on `lane/01` until `cf8e0b9`,
+    # so `core.hooksPath .githooks` pointed at a directory these lanes did not have. That is a
+    # genuine cannot-comply, unlike the first two batches: the mechanism was not reachable.
+    #
+    # THE LIST SHOULD STOP GROWING NOW. Every worktree can install the hook from master, and a
+    # fourth batch would mean the install is not happening rather than that the rule is
+    # unreachable — a different problem with a different fix.
+    "e93fa0c": (
+        "the m3.3 audit fix, pushed before the hook was on master and therefore installable"
+    ),
+    "cef690e": (
+        "the runbook interval sites, same push window, same unreachable mechanism"
+    ),
+    "c9d66e6": (
+        "the m3.3 cutover head on lane/ca-m33-cutover, same lane and same omission as its "
+        "WIP parent above."
+    ),
+}
+
+
 _TRAILER = re.compile(r"^Lane:\s*(\S+?)/(\S+)\s*$", re.M)
 
 
@@ -170,18 +231,28 @@ _EXEMPT: dict[str, str] = {
 def test_A_COMMIT_MADE_AFTER_THE_RULING_NAMES_ITS_LANE(sha: str, subject: str, body: str):
     """THE SEAL. Binds forward only; published history is not rewritten to satisfy it."""
     if not sha:
-        pytest.skip("no commits after the cutoff yet — the rule binds forward")
+        pytest.skip("no bound commits yet — the rule binds forward")
 
-    if sha in _EXEMPT:
+    # ── MERGED 2026-09-18, AND EITHER SIDE ALONE DROPS A REAL IMPROVEMENT ──────────────────
+    # master made the lookup PREFIX-based; `lane/91` added the SELF-RETIRING assertion. They
+    # are two different fixes to one branch, not two versions of one fix.
+    #
+    # ⚠ THE PREFIX HALF IS LOAD-BEARING, NOT STYLE: every key in `_EXEMPT` is a SHORT sha, so
+    # `sha in _EXEMPT` matches nothing and all seven exemptions silently stop exempting —
+    # the lint then reds on commits it was ruled not to bind. Measured before merging.
+    _hit = next((k for k in _EXEMPT if sha.startswith(k)), None)
+    if _hit:
         # SELF-RETIRING. If an exempt commit ever DOES carry a valid trailer the entry is stale,
         # and a stale exemption is a standing permission nobody reviews — so this reds and says
         # to delete it, rather than quietly covering a commit that no longer needs covering.
+        # Checked at merge time: all seven still carry no trailer, so this fires on none of them
+        # today and is a guard against the list rotting rather than a claim about it now.
         assert not _TRAILER.search(body or ""), (
             f"{sha[:12]} is on the exemption list but now carries a valid trailer. Delete its "
             f"entry from `_EXEMPT`: an exemption that outlives its reason is a hole with a "
             f"comment on it."
         )
-        pytest.skip(f"exempt: {_EXEMPT[sha]}")
+        pytest.skip(f"exempt: {_EXEMPT[_hit]}")
 
     assert _TRAILER.search(body or ""), (
         f"{sha[:12]} ({subject[:60]!r}) carries no `Lane:` trailer.\n"
@@ -220,9 +291,58 @@ def test_THE_TRAILER_MATCHES_THE_WORKTREE_IT_WAS_MADE_IN():
         if not m:
             continue                      # the assertion above owns that case
         claimed = (m.group(1), m.group(2))
-        assert claimed in pairs, (
+        # ⛔ THE PAIR WAS ASSERTED AGAINST THE REGISTRY AS IT IS NOW, and a trailer records what
+        # was true WHEN THE COMMIT WAS MADE. `Lane: invincible-agent/lane/ca-m33-cutover` was
+        # exactly right — that lane works in the shared tree, which was checked out at their
+        # branch — and it became "unregistered" the moment the shared tree was parked back on
+        # master. A worktree's branch moves; the trailer does not. Comparing a past-tense claim
+        # to a present-tense registry makes correct history fail, which is the stale-claim shape
+        # running backwards.
+        #
+        # SO THE TWO HALVES ARE CHECKED AGAINST WHAT IS DURABLE ABOUT EACH. The worktree must be
+        # a registered one — that is what catches `ia-28`, a name no worktree has ever had. The
+        # branch must be a ref git knows, local or remote — that is what catches `lane/28`,
+        # which nobody has pushed. Together they still refuse an invented pair while accepting
+        # a historical one, and neither half depends on where a worktree happens to point today.
+        if claimed in pairs:
+            continue
+        assert claimed[0] in {w for w, _ in pairs}, (
             f"{sha[:12]} claims `Lane: {claimed[0]}/{claimed[1]}`, which is not a registered "
-            f"worktree/branch PAIR. Registered: {sorted(pairs)}. Read the trailer from the "
-            f"worktree that made the commit (`git rev-parse --show-toplevel`, "
+            f"registered WORKTREE. Registered: {sorted({w for w, _ in pairs})}. Read the "
+            f"trailer from the worktree that made the commit (`git rev-parse --show-toplevel`, "
             f"`git branch --show-current`) - NEVER derive it from a session address."
         )
+        _known_ref = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", claimed[1]],
+            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+        ).returncode == 0 or subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "origin/" + claimed[1]],
+            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+        ).returncode == 0
+        assert _known_ref, (
+            f"{sha[:12]} claims branch {claimed[1]!r}, which git does not know locally or on "
+            f"origin. A trailer naming a branch nobody has pushed points the next dispatch at "
+            f"nothing."
+        )
+
+
+def test_EVERY_EXEMPTION_NAMES_A_REASON():
+    """An exemption with an empty reason is a silenced failure wearing a decision's clothes."""
+    for sha, why in _EXEMPT.items():
+        assert why and why.strip(), f"{sha} is exempt with no reason"
+
+
+def test_AN_EXEMPTION_RETIRES_ITSELF():
+    """THE MECHANISM THAT KEEPS THE LIST FROM ROTTING, from `lane/91`.
+
+    If an exempt commit ever carries a valid trailer, the exemption is stale and the seal says
+    so rather than quietly allowing what no longer needs allowing. An exemption that outlives
+    its reason is a hole with a comment on it.
+    """
+    for sha, body in ((s_, b_) for s_, _sub, b_ in _bound_commits()):
+        key = next((k for k in _EXEMPT if sha.startswith(k)), None)
+        if key and _TRAILER.search(body or ""):
+            raise AssertionError(
+                f"{key} is in _EXEMPT but now carries a valid Lane: trailer. Delete the entry — "
+                f"it is allowing something that no longer needs allowing."
+            )

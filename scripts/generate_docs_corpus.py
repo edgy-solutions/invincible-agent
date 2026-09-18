@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import pathlib
+import subprocess
 import sys
 
 import yaml
@@ -155,6 +156,36 @@ def page_bytes(path: Path) -> bytes:
     return path.read_bytes().replace(CRLF, LF)
 
 
+def source_committed_at(path: pathlib.Path) -> str:
+    """The page's last commit time, ISO-8601 with offset, from git.
+
+    DERIVED FROM THE ACT, NOT TYPED. `git log` is the authority, so nobody can stamp a date the
+    history does not support — the same move as the roll script deriving its image tag rather
+    than accepting one.
+
+    IT REFUSES RATHER THAN SUBSTITUTING. A missing or untracked page has no honest answer here,
+    and the tempting fallbacks are both worse than stopping: the file's mtime is a property of
+    whoever last checked out the tree, and "now" is a fabricated fact that would then order the
+    corpus. A generator that invents a timestamp produces a corpus that sorts confidently and
+    wrongly, which is the failure the whole ordering rule exists to avoid.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cI", "--", str(path)],
+            cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit(
+            f"REFUSED: cannot read the commit time of {path.name} from git ({exc}). The stamp is "
+            f"derived from the act; a file mtime or a wall clock would be a fabricated fact that "
+            f"then orders the corpus.")
+    if not out:
+        raise SystemExit(
+            f"REFUSED: {path.name} has no commits — it is untracked or newly added. Commit the "
+            f"page first; a page with no history has no honest source_committed_at, and the "
+            f"generator must not invent one.")
+    return out
+
+
 def _prefix_bindings(used: set[str]) -> str:
     """`@prefix` lines for exactly the prefixes the corpus uses, sourced from the WRITE-SIDE table.
 
@@ -205,11 +236,13 @@ def render() -> str:
                 f"unregistered prefix is passed through verbatim and the row matches nothing.")
 
         body_sha, key = page_locator(p)
+        committed_at = source_committed_at(p)
         lines = [f"{iri} a mesh:DocPage ;",
                  f'  rdfs:label "{_escape(_title(p))}" ;',
                  f'  mesh:doc_kind "{_escape(str(fm["doc_kind"]))}" ;',
                  f'  mesh:audience_hint "{_escape(str(fm["audience_hint"]))}" ;',
                  f'  mesh:source "{key}" ;',
+                 f'  mesh:source_committed_at "{committed_at}" ;',
                  f'  mesh:body_sha "{body_sha}"']
 
         targets = fm["explains"]

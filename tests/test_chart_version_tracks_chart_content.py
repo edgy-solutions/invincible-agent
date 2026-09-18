@@ -109,3 +109,112 @@ def test_a_chart_change_bumped_the_chart_version():
             "plausible version for both. Bump `version:` in helm/invincible-agent/Chart.yaml —\n"
             "above the deployed label, per the runbook — in the same commit as the change."
         )
+
+
+def _porcelain_paths(text: str) -> set[str]:
+    """Paths out of `git status --porcelain`, parsed by SEPARATOR rather than by offset.
+
+    A fixed `line[3:]` slice is correct only while nobody has trimmed the line — and the `_git`
+    helper above `.strip()`s stdout, which eats the leading space of the two-column status on
+    the FIRST line only. That produced `elm/invincible-agent/Chart.yaml`: still path-SHAPED, so
+    the resulting failure read as a real finding rather than as a broken instrument.
+    """
+    paths = set()
+    for line in text.splitlines():
+        parts = line.strip().split(" ", 1)
+        path = parts[1] if len(parts) == 2 else ""
+        # A rename reports `old -> new`; the NEW path is the one that is in the tree.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip().strip('"')
+        if path:
+            paths.add(path)
+    return paths
+
+
+def _unbumped_chart_paths(text: str) -> list[str]:
+    """Chart content changed in the working tree with Chart.yaml left alone — the offending set,
+    empty when there is nothing to say."""
+    changed = _porcelain_paths(text)
+    if _CHART in changed:
+        return []
+    return sorted(p for p in changed if p != _CHART)
+
+
+@pytest.mark.parametrize(
+    "porcelain,expected",
+    [
+        # THE FAILING CASE, written exactly as git emits it — leading space and all. This is the
+        # shape of e36aa55's working tree at the moment its suite ran green.
+        (" M helm/invincible-agent/values.yaml", ["helm/invincible-agent/values.yaml"]),
+        # A LEADING SPACE ALREADY TRIMMED, which is what the stripping helper handed over. The
+        # offset parse turned this into `elm/...` and reported the tree as unbumped while it
+        # was correctly bumped.
+        ("M  helm/invincible-agent/Chart.yaml", []),
+        # The bump present alongside the content: nothing to say.
+        (
+            " M helm/invincible-agent/values.yaml" + chr(10) + " M helm/invincible-agent/Chart.yaml",
+            [],
+        ),
+        # Staged rename of a template, no bump: the NEW path is the one that is in the tree.
+        (
+            "R  helm/invincible-agent/templates/a.yaml -> helm/invincible-agent/templates/b.yaml",
+            ["helm/invincible-agent/templates/b.yaml"],
+        ),
+        # Untracked template, no bump — a new file is chart content too.
+        ("?? helm/invincible-agent/templates/new.yaml", ["helm/invincible-agent/templates/new.yaml"]),
+        ("", []),
+    ],
+)
+def test_THE_WORKING_TREE_RULE_DISCRIMINATES(porcelain: str, expected: list[str]):
+    """THE FIXTURE, because the arm below is silent in a tree that has nothing dirty — and a
+    green that means "nothing to look at" is indistinguishable from a green that means "the rule
+    fires correctly". Synthetic porcelain rather than a touched file: a run that MUTATES the tree
+    it is measuring cannot be trusted in either direction.
+    """
+    assert _unbumped_chart_paths(porcelain) == expected
+
+
+def test_an_UNCOMMITTED_chart_change_is_caught_before_it_is_committed():
+    """THE ARM THAT FIRES IN TIME, and the gap it closes cost a red release on 2026-09-15.
+
+    The seal above reads COMMITTED history, so it is blind to precisely the moment it is needed.
+    `e36aa55` added `GRAPH_HOST_POSTGRES_DSN` to values.yaml; the full suite ran GREEN against
+    that working tree — because at that instant the newest commit touching helm/ was still an
+    ancestor of the newest commit touching Chart.yaml — and the release workflow refused the
+    push minutes later.
+
+    > **The check ran, its premise was true, and it answered a question about a state that had
+    > already been published.** The person who can still fix it cheaply is the one who has not
+    > committed yet, and that is the only person the committed-history arm cannot speak to.
+
+    The remedy was therefore always a FOLLOW-UP commit — the same "a check that can only report
+    is a check whose remedy is always record-it-and-move-on" shape that put the Lane trailer in
+    a pre-push hook rather than leaving it to a post-hoc seal (R-058.1).
+
+    SKIPS WITH A CLEAN TREE, and that is not fail-open: CI always has a clean tree and is
+    covered by the committed arm plus the release workflow's published-index check. This arm
+    exists for the working copy those two cannot see.
+    """
+    # NOT `_git` HERE, and the reason is worth keeping. That helper `.strip()`s stdout, which
+    # eats the leading space of porcelain's two-column status on the FIRST LINE ONLY — so a
+    # fixed `line[3:]` slice reported `elm/invincible-agent/Chart.yaml` and this arm failed
+    # against a correctly-bumped tree. A path mangled by one character still LOOKS like a path
+    # in a failure message, which is why it read as a real finding rather than as an
+    # instrument defect.
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "--", _CHART_DIR],
+        capture_output=True, text=True, check=False,
+    )
+    if not proc.stdout.strip():
+        pytest.skip("no uncommitted chart changes in this working tree")
+
+    others = _unbumped_chart_paths(proc.stdout)
+    if others:
+        pytest.fail(
+            "Uncommitted chart content with no Chart.yaml bump — commit this and the version is\n"
+            "stale the moment it lands, and the release workflow refuses the push.\n"
+            "  changed: " + ", ".join(others) + "\n"
+            "Bump `version:` in " + _CHART + " IN THIS COMMIT. The deployed label is what to\n"
+            "clear: `helm list -n sandbox` shows what the cluster is running."
+        )

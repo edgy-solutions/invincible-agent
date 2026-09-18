@@ -26,11 +26,19 @@ vocabulary is closed and the declaration model will refuse an unknown one.
 **Order of work.** Everything here is authoring — no cluster, no seed window. That is the point:
 the expensive mistakes are cheap at this stage, and §0 is the one that is expensive later.
 
-> **⚠ THIS PAGE DESCRIBES AN INTERVAL, NOT AN ENDSTATE.** M3.3 is mid-flight. The declaration
-> layer is live and the two code tables it replaces are *still standing*, gated on cortex-ui's
-> parity seal. So today you write the row **and** the code table entries, and the seals force
-> them to agree. When the cutover lands, sites 2 and 4 disappear and this warning goes with
-> them. A page that hid the interval would read as finished and mislead on its first use.
+> **⚠ STILL AN INTERVAL, BUT A SHORTER ONE.** M3.3's gateway half has landed: the declaration is
+> now the only source of what a species accepts, and **site 2 is gone**. One table is still
+> standing — cortex-ui's render registry — and it is a deliberate fallback, not an oversight: the
+> `/task_kinds` read path is built but not rolled, so no row carries a served declaration yet.
+> Dropping the registry now would take the buttons off a species that works, for the length of a
+> deploy window, bought with no benefit.
+>
+> **So today you write the row AND the cortex-ui entry.** Site 4 and this warning go together
+> when the read path actually reaches the card — not when the gateway table went.
+>
+> *An earlier plan retired both sites in one act. That was checked against the tree and it does
+> not hold: the two tables were never going to retire on the same day, because one of them is
+> waiting on a deploy rather than on a merge.*
 
 ## §0 — The kind string, claimed before anything else
 
@@ -66,9 +74,8 @@ renamed.
 | # | site | what goes in | the seal that catches you |
 |---|---|---|---|
 | 1 | `policy/task_kinds/<kind>.yaml` (or your overlay) | `kind`, `renders_as{badge ≤12, title ≤80, archetype}`, `accepts`, optional `reason_required` | `test_declarations_validate_against_the_sdk_models` · `test_no_domain_name_entered_the_platform_seed` |
-| 2 | `src/iagent/human_tasks.py` → `_VERBS_BY_KIND` | **only if** your verbs differ from `approved`/`rejected` | `test_every_code_row_is_declared_and_agrees` — and the reverse, `test_every_declared_kind_not_in_the_code_table_restates_the_default` |
 | 3 | `src/iagent/human_tasks.py` → `_REASON_REQUIRED` | the verbs that are meaningless without a reason | `test_reason_required_agrees_with_the_code` · `test_reason_required_is_reachable_in_every_row` |
-| 4 | `cortex-ui/src/lib/taskKindRegistry.ts` → `REGISTRY` | badge, title, archetype — must match site 1 exactly | **NONE IN THIS REPO.** cortex-ui's parity seal is pending; until it lands nothing catches a skew between sites 1 and 4 |
+| 4 | `cortex-ui/src/lib/taskKindRegistry.ts` → `REGISTRY` | badge, title, archetype — must match site 1 exactly. **STILL REQUIRED**, until the `/task_kinds` read path rolls | cortex-ui's own parity seal. This site retires when a served declaration reaches the card, which is a DEPLOY, not a merge |
 | 5 | whatever mints the task | the `kind` string reaching `human_task_projection` | none — a kind nothing emits is invisible, not red |
 
 **`accepts` is required and has no default.** A row that could inherit its verbs is a row that
@@ -137,7 +144,7 @@ lane that owns a registry is the least likely to check it, precisely because it 
 deliberate refusal, because an open archetype lets a species name a rendering nobody implements,
 which renders blank rather than refusing.
 
-**Sites 1 and 2 land together.** The parity seal asserts them equal in *both directions*, so
+**~~Sites 1 and 2 land together.~~** *(Site 2 is gone — the gateway table retired at the cutover.)* The parity seal asserts them equal in *both directions*, so
 either alone is red. That is the intended friction: containment is not equality, and one
 direction would let a declaration add a species the code never had.
 

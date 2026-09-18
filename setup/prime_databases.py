@@ -463,6 +463,17 @@ CANONICAL_TTL_MANIFEST = [
     # GENERATED, NOT AUTHORED: scripts/generate_docs_corpus.py builds it from the frontmatter of
     # docs/runbooks/*.md, and tests/test_docs_corpus_drift.py fails if the committed file has
     # drifted from the pages. Editing this TTL by hand is a change that the next generate erases.
+    # The engine's OUTPUT end of Contract D. Filed under DOCS beside the corpus rather than in a
+    # domain of its own: they share `http://internal/DOCS`, both are manifest-class and fully
+    # reproducible, and the domain then holds one class-bearing file and one class-less one —
+    # the same shape SUSTAINMENT already has, which is the configuration the class-less path was
+    # written against.
+    {
+        "domain": "DOCS",
+        "name": "docs_extension",
+        "s3_key": "docs/docs_extension.ttl",
+        "path": "ontologies/docs_extension.ttl",
+    },
     {
         "domain": "DOCS",
         "name": "docs_corpus",
@@ -643,6 +654,33 @@ def record_prime_run(wiped: bool = False) -> None:
               "UNCHECKED (exit 3) until a prime records successfully.")
 
 
+def pages_not_named_by_the_corpus(gen, committed: str) -> "list[str]":
+    """Pages whose content-addressed key appears in no committed DocPage row.
+
+    THIS RUNS INSIDE THE PRIME CONTAINER, WHICH HAS NO GIT, and that is the whole reason it is
+    not `gen.render()`.
+
+    The prime used to re-render the corpus and compare. `render()` derives
+    `mesh:source_committed_at` by shelling out to `git log`, correctly refusing to substitute an
+    mtime or a wall clock — so in an image with no git it raised, and the 2026-09-18 03:51 roll
+    died at hook weight 10 with every later hook (ontology-seed 15, engine-reregister 20) never
+    CREATED. A build-time derivation was being invoked at run time.
+
+    THE CHECK SPLITS BY WHERE ITS EVIDENCE LIVES:
+
+      * CONTENT drift — page bytes versus the key the committed rows name — is decidable from the
+        files alone. That is the hazard the prime names (a body uploaded to a key nothing points
+        at, resolving to nothing the first time a reader asks), and it is decided HERE.
+      * METADATA drift — the commit timestamps that order the corpus — needs git, and is decided
+        in CI by `test_the_committed_corpus_matches_the_frontmatter`, which re-renders in full.
+
+    Neither check is weaker for the split; the prime simply stopped asserting something it has no
+    evidence for. A check that cannot run in its own environment is not a stricter check, it is
+    an outage.
+    """
+    return [p.name for p in gen.pages() if gen.page_locator(p)[1] not in committed]
+
+
 def upload_doc_pages() -> None:
     """Push each runbook's MARKDOWN to the corpus bucket at the key its DocPage row points at.
 
@@ -680,11 +718,13 @@ def upload_doc_pages() -> None:
     spec.loader.exec_module(gen)
 
     committed = gen.OUT.read_text(encoding="utf-8") if gen.OUT.is_file() else ""
-    if committed != gen.render():
+    drifted = pages_not_named_by_the_corpus(gen, committed)
+    if drifted:
         raise RuntimeError(
-            "REFUSED: docs_corpus.ttl has drifted from docs/runbooks/*.md. Uploading now would "
-            "put page bodies at keys no DocPage row names, and every doc answer would resolve to "
-            "nothing at answer time. Run `python scripts/generate_docs_corpus.py` and commit.")
+            "REFUSED: docs_corpus.ttl has drifted from docs/runbooks/*.md — no committed DocPage "
+            f"row names the key these pages hash to: {drifted}. Uploading now would put page "
+            "bodies at keys no DocPage row names, and every doc answer would resolve to nothing "
+            "at answer time. Run `python scripts/generate_docs_corpus.py` and commit.")
 
     endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
     access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")

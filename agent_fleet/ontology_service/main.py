@@ -335,7 +335,8 @@ def _require_capability(caller, capability: str, what: str) -> str:
 
 # Jena posture — endpoint, credential and the write endpoint — derived by a PURE module so the
 # rule is testable without booting this one (rdflib/weaviate/baml are imported at module scope,
-# which is why no test can import main.py). Flatten-aware import, same shape as registry_views.
+# so importing main.py in a test costs a stub harness — tests/test_predicate_hybrid_search.py
+# has the only one). Flatten-aware import, same shape as registry_views.
 # RULED 2026-09-13: FUSEKI_PASSWORD HAS NO DEFAULT. A configured endpoint without a credential
 # fails READINESS naming the variable, instead of authenticating with a literal out of source.
 try:
@@ -460,6 +461,31 @@ ORDER BY ?label
 """
 
 
+# THE OUTCOME DECISION IS A PURE MODULE, so the rule separating "nothing matched" from "could not
+# ask" is unit-testable where this file needs a stub harness. Placed beside its only consumer
+# rather than in the import block below, because a reader of `execute_sparql` needs it here.
+#
+# **PACKAGE PATH FIRST, AND THIS ONE DEVIATES FROM THE CONVENTION ON PURPOSE.** Every other
+# flatten-aware import in this file tries the flat name first. That is safe for FUNCTIONS and DATA:
+# two module objects holding two equal functions behave identically. It is NOT safe for an
+# EXCEPTION TYPE. Under the flat path this module is `read_outcome`; under the package path it is
+# `agent_fleet.ontology_service.read_outcome` — two module objects, and therefore TWO DISTINCT
+# CLASSES with the same name. A caller writing `except SubstrateUnavailable` against one of them
+# does not catch the other, so the refusal this module exists to raise sails straight past the
+# handler written to receive it, and the caller sees an unhandled error instead of the outage it
+# was told about. Measured 2026-09-17: three arms using `pytest.raises` failed exactly this way in
+# the full suite while passing standalone, because the suite put both paths on `sys.path`.
+#
+# Package-first costs nothing where the package is absent (it simply falls through to the flat
+# import), and where the package IS importable it guarantees one canonical class.
+try:
+    from agent_fleet.ontology_service.read_outcome import (
+        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    from read_outcome import (  # type: ignore[no-redef]
+        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+
+
 def _get_local_graph() -> rdflib.Graph:
     """Lazy-load the local rdflib fallback only when needed."""
     global _LOCAL_GRAPH
@@ -533,8 +559,12 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
             if last_brace_idx != -1:
                 scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]
 
+    attempts: list[StoreAttempt] = []
+
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
-    if _JENA_ENDPOINT:
+    if not _JENA_ENDPOINT:
+        attempts.append(StoreAttempt("jena", declared=False, error="JENA_QUERY_ENDPOINT unset"))
+    else:
         try:
             async with _jena_client() as client:
                 resp = await client.post(
@@ -542,33 +572,47 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
                     data={"query": scoped_query},
                     headers={"Accept": "application/sparql-results+json"}
                 )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    bindings = data.get("results", {}).get("bindings", [])
-                    results = []
-                    for b in bindings:
-                        row_dict = {k: v["value"] for k, v in b.items()}
-                        results.append(row_dict)
-                    return results
-        except Exception as e:
-            print(f"Jena cluster unreachable or failed ({e}), triggering fallback...")
+            if resp.status_code == 200:
+                bindings = resp.json().get("results", {}).get("bindings", [])
+                attempts.append(StoreAttempt(
+                    "jena", rows=[{k: v["value"] for k, v in b.items()} for b in bindings]
+                ))
+            else:
+                # A NON-200 WAS ALREADY NOT A RETURN, it just fell through to a fallback that
+                # cannot serve anyone. Now it is recorded as the failure it is.
+                attempts.append(StoreAttempt("jena", status=resp.status_code,
+                                             error=f"HTTP {resp.status_code}"))
+        except Exception as e:  # noqa: BLE001
+            attempts.append(StoreAttempt("jena", error=f"{type(e).__name__}: {e}"))
 
     # 🐢 PATH B: Local rdflib Fallback
-    try:
-        g = _get_local_graph()
-        rows = g.query(scoped_query)
-        results = []
-        for row in rows:
-            # Safely convert rdflib result row, preserving None types to avoid 'None' strings
-            row_dict = {
-                str(k): str(v) if v is not None else None 
-                for k, v in row.asdict().items()
-            }
-            results.append(row_dict)
-        return results
-    except Exception as e:
-        print(f"Local rdflib fallback failed: {e}")
-        return []
+    #
+    # **MEASURED DEAD FOR ALL EIGHT CALL SITES (2026-09-17), AND LEFT IN PLACE DELIBERATELY.**
+    # `_get_local_graph` returns a plain `rdflib.Graph`; the scoping wrap above injects
+    # `GRAPH ?__mesh_g`; rdflib RAISES on a named-graph pattern against a single graph. Seven
+    # callers pass a query the wrap scopes and the eighth already spells `GRAPH ?g` itself, so
+    # every one of them takes this path only to raise. The 44KB of real triples it parses is why
+    # this reads as healthy from outside — the data is there and unreachable through the only
+    # path that reads it.
+    #
+    # Removing a fallback another lane may depend on is not this lane's call, so the change here
+    # is that its failure STOPS BEING AN EMPTY SUCCESS. If it is ever repaired (a `Dataset` with
+    # the two named graphs), it starts answering and `mode` will say so without another edit.
+    if not attempts or not attempts[0].answered:
+        try:
+            rows = _get_local_graph().query(scoped_query)
+            attempts.append(StoreAttempt("rdflib", rows=[
+                # Safely convert rdflib result row, preserving None types to avoid 'None' strings
+                {str(k): str(v) if v is not None else None for k, v in row.asdict().items()}
+                for row in rows
+            ]))
+        except Exception as e:  # noqa: BLE001
+            attempts.append(StoreAttempt("rdflib", error=f"{type(e).__name__}: {e}"))
+
+    # A REFUSAL, NEVER A CONFIDENT ZERO. `empty` still returns `[]` — that is the case `[]` always
+    # meant correctly — but a store that could not be asked now raises instead of agreeing that
+    # nothing matched. See `read_outcome` and tests/test_an_outage_is_not_an_empty_answer.py.
+    return rows_or_refuse(outcome(attempts, what="execute_sparql"), what="execute_sparql")
 
 
 async def _get_active_ontology_classes(domain: str = "MAINTENANCE") -> str:
@@ -1103,8 +1147,26 @@ def _weaviate_hybrid_search_sync(
             for obj in response.objects
         ]
     except Exception as e:
-        print(f"Weaviate OntologyClass search failed: {e}")
-        return []
+        # RULED 2026-09-14: A MID-QUERY FAILURE IS A REFUSAL, NEVER AN EMPTY SUCCESS.
+        #
+        # This used to `return []`, and the caller that reads it is `/resolve`, whose very next
+        # step is the COLD START FALLBACK: it prints "WEAVIATE COLD START DETECTED", reads
+        # `_SPARQL_MAINTENANCE_CLASSES` out of the RDF graph, and answers from the MAINTENANCE
+        # ontology. So a transient Weaviate error did not produce a missing answer — it produced a
+        # confident WRONG-DOMAIN one, under a banner announcing a diagnosis that was false.
+        #
+        # An empty RESULT still means cold start and still takes that path. Only the FAILURE is
+        # separated out, which is the entire distinction: ADR-0009 makes Weaviate required routing
+        # infrastructure and requires a 503 "rather than silently degrading".
+        logging.error("Weaviate OntologyClass search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate OntologyClass search failed — routing cannot proceed. This is a "
+                "substrate failure, not an empty result; an empty result is a cold start and is "
+                f"served from the graph instead. Cause: {e}"
+            ),
+        ) from e
 
 
 async def weaviate_hybrid_search(
@@ -1326,9 +1388,24 @@ def _predicate_hybrid_search_sync(
         out.sort(key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True)
         return out
     except Exception as e:
-        # Routing accelerator — failures degrade the system, not crash it.
-        print(f"[ontology-service] Predicate hybrid search failed: {e}")
-        return []
+        # RULED 2026-09-14, same rule as the OntologyClass search above.
+        #
+        # The comment here used to read "Routing accelerator — failures degrade the system, not
+        # crash it." That stance predates ADR-0009, which makes Weaviate REQUIRED routing
+        # infrastructure and has `/search_predicates` return 503 when it is unavailable "rather
+        # than silently degrading to exact-match". The route already honours that for an absent
+        # client or collection; this handler was the hole underneath it — the same failure, one
+        # frame down, answered with an empty success.
+        #
+        # An empty list from here means NO PREDICATE MATCHED, and that is now its only meaning.
+        logging.error("[ontology-service] Predicate hybrid search failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate Predicate search failed — routing cannot proceed. This is a substrate "
+                f"failure, not an empty candidate set. Cause: {e}"
+            ),
+        ) from e
 
 
 async def predicate_hybrid_search(
@@ -1483,7 +1560,7 @@ class _ResolverOutcome:
         self.elapsed_s = elapsed_s
 
 
-def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
+def _discover_enumerate_providers(refresh: bool = False) -> MeshResult:
     """Registered `mesh:enumerateInstances` providers, cached on the resolver TTL.
 
     Deliberately the same shape and the same cache discipline as
@@ -1494,16 +1571,28 @@ def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
     now = time.time()
     if (not refresh and _ENUMERATE_PROVIDERS_CACHE is not None
             and (now - _ENUMERATE_PROVIDERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S):
-        return _ENUMERATE_PROVIDERS_CACHE
+        return (MeshResult.answered(_ENUMERATE_PROVIDERS_CACHE)
+                if _ENUMERATE_PROVIDERS_CACHE else MeshResult.empty())
     if not _NEO4J_DRIVER:
-        return []
+        # THE REGISTRY WAS NEVER CONFIGURED. Distinct from "the registry is empty", which is a
+        # claim about the data, and from "the registry could not be read", which is an outage.
+        return MeshResult.unreachable(
+            "enumerate-provider discovery: no Neo4j driver is configured"
+        )
     try:
         with _NEO4J_DRIVER.session() as session:
             rows = session.run(_ENUMERATE_PROVIDERS_CYPHER).data()
     except Exception as exc:  # noqa: BLE001
+        # **THE LOG ALREADY KNEW AND THE RETURN VALUE COULD NOT SAY.** This printed "no providers
+        # this call" and returned `[]`, which the caller rendered as "no provider is registered" —
+        # a confident claim about the REGISTRY made from an OUTAGE. The caller is careful about
+        # exactly this distinction one level down (it counts an unreachable provider apart from a
+        # provider that answered empty); it was handed a `[]` that could not carry it.
         print(f"[Engine O] enumerate-provider discovery failed ({type(exc).__name__}) — "
-              f"no providers this call")
-        return []
+              f"the registry could not be READ; this is not an empty registry")
+        return MeshResult.failed(
+            f"enumerate-provider discovery: {type(exc).__name__}: {exc}"
+        )
     discovered = []
     for r in rows:
         if not r.get("endpoint_url"):
@@ -1523,10 +1612,10 @@ def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
     _ENUMERATE_PROVIDERS_CACHE_TS = now
     print(f"Discovered {len(discovered)} mesh:enumerateInstances provider(s): "
           f"{[(d['provider'], d['timeout_s']) for d in discovered]}")
-    return discovered
+    return MeshResult.answered(discovered) if discovered else MeshResult.empty()
 
 
-def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
+def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
     """Read the registry for engines registered as mesh:resolveInstance.
 
     Returns a list of ``{endpoint_url, provider, timeout_s, domains}``
@@ -1550,9 +1639,18 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         and not refresh
         and (now - _INSTANCE_RESOLVERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S
     ):
-        return _INSTANCE_RESOLVERS_CACHE
+        return (MeshResult.answered(_INSTANCE_RESOLVERS_CACHE)
+                if _INSTANCE_RESOLVERS_CACHE else MeshResult.empty())
     if not _NEO4J_DRIVER:
-        return []
+        return MeshResult.unreachable(
+            "instance-resolver discovery: no Neo4j driver is configured"
+        )
+    # **NO `try` HERE, AND THAT IS A REAL ASYMMETRY WITH THE TWIN**, whose docstring says "a reader
+    # who learns one of these knows the other". `_discover_enumerate_providers` SWALLOWS a query
+    # failure; this one lets it propagate. Both are defensible and they are not the same, so the
+    # shared sentence was doing work it had not earned. Left propagating — an exception a caller
+    # can see beats a swallowed one — and NAMED rather than quietly aligned, because making them
+    # identical is a behaviour change for whoever depends on this raising.
     with _NEO4J_DRIVER.session() as session:
         rows = session.run(_INSTANCE_RESOLVERS_CYPHER).data()
     discovered = []
@@ -1598,7 +1696,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         f"providers (TTL={_INSTANCE_RESOLVERS_TTL_S}s): "
         f"{[(r['provider'], r['endpoint_url'], r['timeout_s']) for r in _INSTANCE_RESOLVERS_CACHE]}"
     )
-    return _INSTANCE_RESOLVERS_CACHE
+    return (MeshResult.answered(_INSTANCE_RESOLVERS_CACHE)
+            if _INSTANCE_RESOLVERS_CACHE else MeshResult.empty())
 
 
 async def _call_resolver(
@@ -1683,7 +1782,18 @@ async def _resolve_instance(
     (one or more providers ran out of budget — the failure mode that
     used to hide as ``empty`` until the 2s strangle bug was caught).
     """
-    resolvers = _discover_instance_resolvers()
+    discovery = _discover_instance_resolvers()
+    if discovery.outcome in ("failed", "unreachable"):
+        # THE REGISTRY COULD NOT BE READ. This function's docstring is proud of separating `empty`
+        # from `timeout` one level down — "the failure mode that used to hide as empty". Discovery
+        # had no way to make that same distinction until now, and reported `no_providers`.
+        return None, {
+            "instance_resolved": False,
+            "instance_match": "registry_unavailable",
+            "instance_n": 0,
+            "instance_detail": discovery.detail or "the resolver registry could not be read",
+        }
+    resolvers = list(discovery.rows)
     if not resolvers:
         return None, {
             "instance_resolved": False,
@@ -1855,6 +1965,19 @@ try:
     from sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY
+
+try:
+    from doc_pages import (  # type: ignore[no-redef]
+        build_page_for_subject_query as _build_page_query,
+        order_pages as _order_doc_pages,
+        rows_to_pages as _doc_rows_to_pages,
+    )
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.doc_pages import (
+        build_page_for_subject_query as _build_page_query,
+        order_pages as _order_doc_pages,
+        rows_to_pages as _doc_rows_to_pages,
+    )
 
 try:
     from state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query  # type: ignore[no-redef]
@@ -2058,7 +2181,14 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
-    providers = _discover_enumerate_providers()
+    discovery = _discover_enumerate_providers()
+    if discovery.outcome in ("failed", "unreachable"):
+        # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
+        # it counts a provider that answered empty apart from one that was unreachable. The same
+        # care now reaches the DISCOVERY step, which previously collapsed into `no_provider`.
+        return {"outcome": "registry_unavailable", "members": [], "count": 0,
+                "detail": discovery.detail or "the provider registry could not be read"}
+    providers = list(discovery.rows)
     if not providers:
         return {"outcome": "no_provider", "members": [], "count": 0,
                 "detail": "no mesh:enumerateInstances provider is registered"}
@@ -2260,7 +2390,48 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # entity_refs (or with entity_refs that all return 0) still
     # abstains to UNKNOWN. The probe is the property guard against
     # this branch over-firing or being silently removed.
-    if not candidates and request.entity_refs:
+    # ── A CLASS HIT THAT CANNOT ANSWER IS NOT EVIDENCE THE ENTITY WAS UNDERSTOOD ────────
+    #
+    # RULED 2026-09-15, and it loosens the guard above by exactly one term. The original
+    # condition was `not candidates` — the phone book fires only when class recall returned
+    # NOTHING. Measured: "tell me about the wiring loom" with `entity_refs=['wiring loom']`
+    # recalls `pcn#SustainmentNotice`, which is WRONG and non-empty, so the fan-out never
+    # fired and engine-safety's provider — registered, discoverable, and able to resolve the
+    # hazard — was never asked.
+    #
+    # That is the guard's OWN original defect one step over. Its comment records the first
+    # one: the fan-out "ran only AFTER class recall succeeded — meaning when class recall
+    # failed, it never fired." The fix handled the case that failed and left its sibling
+    # inverted, which is a fix measured on one input.
+    #
+    # THE SIGNAL IS THE ONE THAT EXISTS TODAY. The ruled form was "no candidate cleared the
+    # confidence floor" — and there is no floor to clear: every class candidate comes back
+    # with `score: None` because hybrid search is running lexical-only, so the same three
+    # classes answer three unrelated queries. A floor comparison would either never fire or
+    # always fire. `_preempted_subject_is_unanswerable` is already computed two branches
+    # down and needs no score: a class carrying NO VERB in the asked domains cannot answer
+    # the question, whatever recall thought of it.
+    #
+    # THE PRECEDENCE RULE SURVIVES UNCHANGED, which is what makes this narrow rather than
+    # blanket: an ANSWERABLE class hit still wins, and raw text with no `entity_refs` still
+    # never reaches the phone book. When real scores exist the floor becomes a SECOND
+    # condition beside this one, not a replacement.
+    _recall_is_non_evidence = not candidates
+    if candidates and request.entity_refs:
+        _top_uri = str((candidates[0] or {}).get("uri") or "")
+        _guard_domains = request.domains or (
+            [request.domain] if request.domain else [])
+        if _top_uri and await _preempted_subject_is_unanswerable(
+            _top_uri, _guard_domains
+        ):
+            _recall_is_non_evidence = True
+            print(
+                f"[Engine O] class recall returned {_top_uri} which carries no verb in "
+                f"domains={_guard_domains!r} — treating it as non-evidence and asking the "
+                f"instance providers about {request.entity_refs!r}"
+            )
+
+    if _recall_is_non_evidence and request.entity_refs:
         for entity_ref in request.entity_refs:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
@@ -2268,7 +2439,16 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
-            instance_provenance["preemption_path"] = "class_recall_empty_fallback"
+            # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
+            # `class_recall_empty_fallback`, which was true while the only condition was an
+            # EMPTY recall. This branch now also fires on a non-empty recall whose top class
+            # cannot answer, and a reader of that provenance would have been told the recall
+            # was empty when it was not — a precise, confident, wrong account of why the
+            # phone book was asked.
+            instance_provenance["preemption_path"] = (
+                "class_recall_empty_fallback" if not candidates
+                else "class_recall_unanswerable_fallback"
+            )
             if instance_subject is not None:
                 # POST-PREEMPTION PRODUCTIVITY CHECK — site 1 of 2. BOTH preemption
                 # returns need it: a check on one is silent by construction on the other,
@@ -3331,6 +3511,57 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # upstream looks healthy.
         resolved_id = prov.get("instance_id") if prov.get("instance_resolved") else None
         resolved_class = prov.get("instance_class_uri") or _subject
+
+        # ── THE REFERENT IS THE DISCRIMINATOR WHEN BINDING ──────────────────────────────
+        #
+        # MEASURED 2026-09-15. "the chafed wiring loom hazard" extracts to `wiring loom`,
+        # and at that width the fan-out returns CSI-5001 at 0.70 and HAZ-1001 at 0.70 — a
+        # TIE ACROSS TWO CLASSES, with nothing in either engine's scoring able to separate
+        # them. Whichever the fan-out picked, the type check below rejected half the time as
+        # `wrong_class`, and the slot went unfilled WITH THE RIGHT ANSWER IN THE CANDIDATE
+        # LIST. The `banana 4` shape one layer over: a token generic enough to be a word in
+        # two vocabularies.
+        #
+        # **IT IS NOT A TIE FOR THIS SLOT.** `draftRiskAssessment.hazard_id` declares
+        # `safety:Hazard`; the slot already said which class it wants, and the declaration is
+        # exactly the discriminator the scorers lack. So the bind is chosen from the
+        # referent's own class rather than taken blind and then refused.
+        #
+        # THE MENU STAYS UNSCOPED, which is the distinction that makes this safe. `cands`
+        # above is untouched — every class, every name-match, so a person disambiguating
+        # still sees the collision. The comment above rules that filtering the MENU would
+        # empty it for the case that most needs one; this filters only the ANSWER. Show
+        # everything by that name; bind the kind that was asked for.
+        _referent_bound = False
+        if referent and cands:
+            _same_class = [
+                c for c in cands
+                if str(c.get("class_uri") or "") == referent and c.get("instance_id")
+            ]
+            if _same_class and (not resolved_id or resolved_class != referent):
+                _pick = max(_same_class, key=lambda c: float(c.get("score") or 0.0))
+                _slots_logger.info(
+                    "fill_slots: %s.%s bound %s from the slot's referent %s "
+                    "(the fan-out's winner was %s) - the declaration disambiguated a "
+                    "cross-class tie the scorers could not",
+                    request.verb_iri, name, _pick.get("instance_id"), referent,
+                    resolved_id or "none",
+                )
+                resolved_id = _pick.get("instance_id")
+                resolved_class = referent
+                prov = {**prov, "instance_label": _pick.get("label", "")}
+                _referent_bound = True
+                # `outcome` IS DELIBERATELY UNCHANGED. It is a shared vocabulary —
+                # `slot_disposition` partitions it into ASK_WITH_CANDIDATES and
+                # ABSTAIN_OUTCOMES — and a fifth value would pass BOTH sets unrecognised and
+                # fall through to "bound" by accident rather than by decision. That is the
+                # prefix-registry shape: an unknown value is accepted, routes nowhere, and
+                # reports success. The file's own rule above says an addition is flagged to
+                # the elicitation lane, not smuggled in.
+                #
+                # The fact still travels, as its own field, where a reader can act on it
+                # without any partition having to recognise it.
+
         if resolved_id and referent and resolved_class and resolved_class != referent:
             _slots_logger.warning(
                 "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
@@ -3350,6 +3581,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
                                 "instance_id": resolved_id,
                                 "instance_label": prov.get("instance_label", ""),
+                                "referent_disambiguated": _referent_bound,
                                 "candidates": cands}
         else:
             # REMOVED, not left as the raw string. See FillSlotsResponse.resolution.
@@ -3933,6 +4165,46 @@ class PolicyRulesRequest(BaseModel):
     ruleset_label: str = ""          # advisory (v1: one ruleset per graph); echoed for traceability
 
 
+# ---------------------------------------------------------------------------
+# POST /page_for_subject — engine-docs' one mesh read (ADR-0037's corpus).
+#
+# THE STORE IS JENA, NOT NEO4J, AND THAT IS THE FINDING THIS ROUTE ENCODES. `DocPage`
+# individuals declare zero `owl:Class`, so doc-tools' `sync_jena_ontologies_to_neo4j` takes its
+# class-less third case and SKIPS the Neo4j write — `prime_databases.py:456`: *"the Jena
+# named-graph load, which is where the doc route reads, still succeeds."* There are no DocPage
+# rows in Neo4j by design, so this is a MeshOntology operation and lives on engine-o's SPARQL
+# executor rather than its driver.
+#
+# WHY A ROUTE AND NOT AN IMPORT. `doc_pages` holds no driver and engine-docs could import it —
+# but it would then need an executor, which means a Jena client, which is the driver that engine
+# being "born without one" exists to demonstrate. Calling a named operation on a peer is the
+# permitted pattern; holding a store address is not.
+#
+# EMPTY IS AN ANSWER AND NEVER A FAILURE. engine-docs turns `[]` into an abstain naming the
+# subject; a 500 here would make "nothing explains this yet" — the normal state of a young
+# corpus — indistinguishable from a broken read.
+# ---------------------------------------------------------------------------
+class PageForSubjectRequest(BaseModel):
+    subject: str
+    # `str | None`, NOT `Optional[str]`, AND THE COMMENT ABOVE IS WHY IT MATTERS. This file carries
+    # `from __future__ import annotations`, `Optional` is never imported here, and Pydantic v2
+    # resolves field annotations at runtime — so the original spelling made this route return 500
+    # on EVERY call, including the empty-is-an-answer case the comment above exists to protect.
+    audience: str | None = None
+
+
+@app.post("/page_for_subject")
+async def page_for_subject_route(request: PageForSubjectRequest) -> dict:
+    """Pages whose `mesh:explains` includes `subject`, in the ruled order.
+
+    `subject` is the RAW SLOT VALUE — a CURIE in the happy case and sometimes a NAME, because the
+    verb is polymorphic over every class and the slot declares no referent.
+    """
+    rows = await execute_sparql(_build_page_query(request.subject), domain="DOCS")
+    pages = _order_doc_pages(_doc_rows_to_pages(rows), request.audience)
+    return {"subject": request.subject, "pages": pages, "count": len(pages)}
+
+
 @app.post("/policy_rules")
 async def policy_rules(request: PolicyRulesRequest) -> dict:
     """Return the rule subgraph of a named graph as Turtle, plus whether the graph holds any triples.
@@ -3976,6 +4248,16 @@ class CompatibleVerb(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     hops: int = 0
+    #: WHICH RULE ADMITTED THIS VERB, and it decides how the classifier must be told
+    #: about it. `subject` = the verb operates ON this class. `referent` = the verb is
+    #: PARAMETERISED BY it and answers about its own class.
+    #:
+    #: NOT COSMETIC. Measured 2026-09-16: the classifier was handed a referent-admitted
+    #: verb under the enum's uniform "operates on X" framing, scored it SECOND of seven
+    #: on semantics, and refused it on SUBSTRATE grounds — "none of the predicates that
+    #: operate on ProductionLot provide supplier-concentration information". It was
+    #: right about the framing and the framing was wrong.
+    compatibility: str = "subject"
     # WHAT THE VERB TAKES — the same family as `arity` and `required_args` below: a
     # DECLARED fact asserted at registration and never inferred. Carried as the JSON
     # STRING the graph holds, because a Neo4j property cannot hold a list of maps;
@@ -4018,6 +4300,8 @@ class FindCompatibleVerbsResponse(BaseModel):
 # rejects it on implicit-grouping grounds. The form below is the one
 # that passes cypher-shell validation against the live graph.
 _FIND_COMPAT_VERBS_CYPHER = """
+// LEG 1 - COVERAGE. Verbs whose registered `input_uri` covers the subject's class chain.
+// This is ADR-0018's original rule and it is unchanged.
 MATCH (start:OntologyClass {uri: $subject_uri})
 MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(scope:OntologyClass)
 WITH start, collect(DISTINCT scope) AS scopes
@@ -4041,7 +4325,7 @@ RETURN DISTINCT
     //
     // COMMENT SYNTAX IS `//`, NOT `--`. The first version of this block used SQL-style
     // `--`; Neo4j rejected the ENTIRE query with a SyntaxError and /find_compatible_verbs
-    // returned 500 — routing down, from a comment. Verified on the live graph:
+    // returned 500 - routing down, from a comment. Verified on the live graph:
     // `RETURN 1 -- c` raises CypherSyntaxError, `RETURN 1 // c` returns normally.
     //
     // THE FIFTH ENUMERATION IN THIS CHAIN, and every earlier one dropped a key in
@@ -4050,8 +4334,61 @@ RETURN DISTINCT
     // property that exists on the relationship still reaches nobody unless it is named
     // HERE, and the failure looks exactly like "the verb declared nothing".
     coalesce(r.slots, '[]')       AS slots,
-    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
-ORDER BY hops ASC, verb_iri ASC
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops,
+    'subject'                     AS compatibility
+
+UNION ALL
+
+// LEG 2 - PARAMETERISATION. Verbs that declare a REQUIRED slot whose referent covers the
+// subject. Such a verb is still compatible with the subject under ADR-0018 - it is
+// PARAMETERISED BY it rather than ABOUT it - so the guarantee is preserved: a verb with
+// neither coverage nor a referent match still never enters the classifier's enum.
+//
+// WHY THIS LEG EXISTS, measured 2026-09-15. `how concentrated is purchasing on lot 4`
+// resolved its subject to cost#ProductionLot (0.90) over cost#Supplier (0.29), because the
+// only resolvable instance in the sentence is the lot. `costSupplierConcentration` hangs off
+// cost#Supplier and declares `lot` as a REQUIRED slot with referent cost#ProductionLot - so
+// the verb that answers the question could not enter the enum, and the classifier picked
+// correctly from the five ProductionLot verbs it was given. The synonym
+// "how concentrated is purchasing" sits on the right verb and never got to compete.
+//
+// EDGES, NOT A PARSE. `r.slots` is a JSON string, so reading referents in Cypher would mean
+// parsing the declaration at query time - a SECOND implementation of it, which is how two
+// readers of one declaration come to disagree. The registrar derives this edge from the row
+// it already holds, and the pool reads edges through the same door coverage uses.
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(ref:OntologyClass)
+MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
+WHERE coalesce(p.required, false) = true
+  AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
+MATCH (vsubj)-[r]->(o:OntologyClass)
+// IDENTITY IS (verb_iri, _tool_urn), THE SAME PAIR THE PREDICATE EDGE USES. Joining on
+// verb_iri alone would let ONE provider's parameterisation admit ANOTHER provider's verb:
+// measured 2026-09-15, 13 verbs are registered by more than one provider and 4 of those
+// carry referent slots - `mesh:finVarianceDrivers` is offered by engine_fin_finance FROM
+// Program and by engine_fin_finance_by_subject FROM ControlAccount, both declaring
+// program_id. The registrar file already records this lesson for the predicate edge:
+// "without _tool_urn in the match-key, N providers offering the same predicate collapse
+// into one edge with last-write-wins".
+WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    // THE VERB'S OWN SUBJECT, not the resolved one. This is the half that makes the binding
+    // correct downstream: the answer is about SUPPLIERS, and the resolved lot goes into the
+    // slot. Returning the resolved subject here would say the verb is about the lot.
+    vsubj.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
+    r.required_args               AS required_args,
+    coalesce(r.slots, '[]')       AS slots,
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(ref))) AS hops,
+    'referent'                    AS compatibility
 """
 
 
@@ -4100,6 +4437,34 @@ async def find_compatible_verbs(
             detail=f"Neo4j compatibility query failed: {exc}",
         ) from exc
 
+    # ── DEDUPE THE TWO LEGS, SUBJECT WINNING ────────────────────────────────────────────
+    #
+    # A verb that declares a required slot whose referent IS its own subject class is admitted
+    # by BOTH legs — `costLotBreakdown` operates on ProductionLot and takes a `lot`. Measured
+    # 2026-09-15 on the live graph: twelve rows for cost#ProductionLot, SEVEN DISTINCT VERBS,
+    # five of them returned twice.
+    #
+    # It is not a correctness bug — the classifier picks one verb and a duplicate candidate
+    # cannot produce a wrong answer — but it is a WRONG COUNT everywhere a count is shown, and
+    # padding in the enum the LLM reads. `candidate_count: 12` on a card is a statement about
+    # seven things.
+    #
+    # SUBJECT WINS, and the direction matters rather than being arbitrary: a verb reachable
+    # BOTH ways is one that operates on the subject, and that is the stronger claim. Reporting
+    # it as `referent` would say the answer is about some other class when it is about this one,
+    # which is the binding that decides whether an instance is bound or goes in a slot.
+    _seen: dict = {}
+    _deduped: list[dict] = []
+    for _r in rows:
+        _key = (_r.get("verb_iri"), _r.get("endpoint_url"))
+        _prev = _seen.get(_key)
+        if _prev is None:
+            _seen[_key] = len(_deduped)
+            _deduped.append(_r)
+        elif _r.get("compatibility") == "subject" and _deduped[_prev].get("compatibility") != "subject":
+            _deduped[_prev] = _r
+    rows = _deduped
+
     entitled = {d.upper() for d in (request.entitled_domains or [])}
     verbs: list[CompatibleVerb] = []
     for row in rows:
@@ -4134,6 +4499,7 @@ async def find_compatible_verbs(
             # miss any one and the verb reports declaring nothing, with no error anywhere.
             slots=str(row.get("slots") or "[]"),
             hops=int(row.get("hops") or 0),
+            compatibility=str(row.get("compatibility") or "subject"),
         ))
 
     return FindCompatibleVerbsResponse(
@@ -4180,6 +4546,10 @@ class ClassifyPredicateRequest(BaseModel):
     # endpoint falls back to the prior behavior of using Weaviate hybrid
     # as the recall step (subject is reasoning context only).
     compatible_verb_iris: list[str] = Field(default_factory=list)
+    #: verb_iri -> "subject" | "referent": WHICH RULE ADMITTED EACH CANDIDATE.
+    #: Absent or unknown reads as "subject", which is the pre-widening behaviour, so a
+    #: supervisor that has not learned the field gets exactly the old enum text.
+    verb_compatibility: dict[str, str] = Field(default_factory=dict)
 
 
 class ClassifyPredicateResponse(BaseModel):
@@ -4223,7 +4593,7 @@ RETURN scope.uri AS uri, scope.label AS label, hops
 """
 
 
-async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> list[dict]:
+async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> MeshResult:
     """Walk the subClassOf chain from ``subject_uri`` up to ``max_hops``.
 
     Returns ordered list of ``{uri, label, hops}`` dicts, where hops=0 is
@@ -4232,11 +4602,28 @@ async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> li
     inheritance rather than against the raw input_uri string —
     addresses the subClassOf-LLM-gap ADR-0018 amendment from 2026-06-11.
 
-    Empty list when subject doesn't exist as :OntologyClass (or Neo4j
-    is unreachable; we degrade silently rather than fail the route).
+    Empty list when subject doesn't exist as :OntologyClass.
+
+    **"WE DEGRADE SILENTLY RATHER THAN FAIL THE ROUTE" WAS THE OLD SENTENCE, AND WHAT IT COST IS
+    WORTH STATING.** The consumer builds `ancestor_hops` from this chain and `_inheritance_phrase`
+    returns `None` for every candidate when it is empty — so a Neo4j outage sends the LLM back to
+    validating a verb against the raw `input_uri` string, which is the EXACT regression ADR-0018's
+    2026-06-11 amendment exists to fix. The ADR still reads as satisfied, because all the code is
+    there. An absent chain and an unreadable one produced the same `[]`.
+
+    The route still does not fail — that part of the old choice stands — but the two are now
+    DISTINGUISHABLE, and the caller logs the difference instead of proceeding as if inheritance
+    had been checked and found nothing.
+
+    **STILL UNRULED AND FLAGGED RATHER THAN DECIDED HERE:** whether `/classify_predicate` should
+    tell its own caller that inheritance validation was unavailable. That needs a response-contract
+    field, `reasoning` is parsed by consumers and is not the place to smuggle it, and a contract
+    change is the architect's call, not this lane's.
     """
-    if not _NEO4J_DRIVER or not subject_uri or subject_uri == "UNKNOWN":
-        return []
+    if not subject_uri or subject_uri == "UNKNOWN":
+        return MeshResult.empty()
+    if not _NEO4J_DRIVER:
+        return MeshResult.unreachable("ancestor chain: no Neo4j driver is configured")
     cypher = _SUBJECT_ANCESTOR_CHAIN_CYPHER.replace("$MAXHOPS$", str(max_hops))
 
     def _run() -> list[dict]:
@@ -4244,9 +4631,10 @@ async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> li
             return [dict(r) for r in session.run(cypher, subject_uri=subject_uri)]
 
     try:
-        return await asyncio.to_thread(_run)
-    except Exception:
-        return []
+        rows = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return MeshResult.failed(f"ancestor chain: {type(exc).__name__}: {exc}")
+    return MeshResult.answered(rows) if rows else MeshResult.empty()
 
 
 @app.post("/classify_predicate", response_model=ClassifyPredicateResponse)
@@ -4402,7 +4790,16 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     # found the match, but its reasoning never reached the prompt.
     # See STATE_2026_06_11.md "subClassOf doesn't reach the LLM" and
     # the ADR-0018 amendment it cites.
-    ancestor_chain = await _get_subject_ancestor_chain(request.subject_uri or "")
+    _chain = await _get_subject_ancestor_chain(request.subject_uri or "")
+    if _chain.outcome in ("failed", "unreachable"):
+        # **THE INHERITANCE CHECK DID NOT HAPPEN, AND THAT IS NOT THE SAME AS FINDING NO ANCESTORS.**
+        # Proceeding is still the ruled behaviour (a 500 here would be worse), but it proceeds
+        # WITHOUT the subClassOf evidence ADR-0018's amendment added — so it says so, once, loudly,
+        # instead of looking identical to a subject that genuinely has no parents.
+        print(f"[Engine O] classify_predicate: subClassOf chain UNAVAILABLE for "
+              f"{request.subject_uri!r} ({_chain.detail}) — the LLM is validating against the raw "
+              f"input_uri string, which is the ADR-0018 gap, not a subject with no ancestors")
+    ancestor_chain = list(_chain.rows)
     # Quick-lookup map: ancestor_uri -> hops (0 = subject itself).
     ancestor_hops: dict[str, int] = {a["uri"]: a["hops"] for a in ancestor_chain}
     # Pretty-printed chain like "idp:Table ⊆ idp:Dataset", used when
@@ -4485,7 +4882,31 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         if cand.get("verb_type") and cand["verb_type"] not in desc_bits:
             desc_bits.append(f"verb_type={cand['verb_type']}")
         input_uri = cand.get("input_uri") or ""
-        if input_uri:
+        # HOW THIS VERB RELATES TO THE SUBJECT, and there are now TWO ANSWERS.
+        #
+        # `/find_compatible_verbs` admits a verb either because its `input_uri` covers the
+        # subject (`subject`) or because it declares a REQUIRED SLOT whose referent covers it
+        # (`referent`). Describing both with "operates on X" is true of the first and FALSE of
+        # the second, and the LLM reasons on this text.
+        #
+        # MEASURED 2026-09-16: "how concentrated is purchasing on lot 4" returned
+        # NO_VERB_CLASSIFIED with the reasoning "none of the predicates that operate on
+        # ProductionLot provide supplier-concentration information".
+        # `costSupplierConcentration` scored 0.269 — SECOND of seven — and was refused on
+        # SUBSTRATE grounds. The model was right about the framing; the framing was wrong.
+        # This is the same refusal the `_pick_best_per_verb` comment above already records,
+        # reached by a new road.
+        _compat = (request.verb_compatibility or {}).get(verb_iri) or "subject"
+        if _compat == "referent" and input_uri:
+            # The verb answers about ITS OWN class and takes the resolved subject as a
+            # PARAMETER. Said in the terms the answer path already uses, because the binding
+            # is the same fact: the instance goes in the slot, not in the subject.
+            desc_bits.append(
+                f"answers about {input_uri}, PARAMETERISED BY the subject — the subject is an "
+                f"argument to this verb rather than the thing it operates on, so a question "
+                f"naming the subject is served by this verb when it asks about {input_uri}"
+            )
+        elif input_uri:
             inh = _inheritance_phrase(input_uri)
             if inh:
                 # The graph walked subClassOf* and confirmed the subject

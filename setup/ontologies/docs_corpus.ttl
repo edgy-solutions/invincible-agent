@@ -23,6 +23,7 @@ docs:runbook-adding-a-canvas-template a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "DATA_ENGINEER" ;
   mesh:source "docs/pages/ef2a2cc140a0495af1daacc7655ff21c3f139e85af815568d57ad4285968097c/adding-a-canvas-template.md" ;
+  mesh:source_committed_at "2026-09-12T22:04:37-05:00" ;
   mesh:body_sha "ef2a2cc140a0495af1daacc7655ff21c3f139e85af815568d57ad4285968097c" ;
   mesh:explains mesh:seedCanvas ,
     mesh:seedPortfolioCanvas .
@@ -32,6 +33,7 @@ docs:runbook-adding-a-graph a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d/adding-a-graph.md" ;
+  mesh:source_committed_at "2026-09-12T22:50:06-05:00" ;
   mesh:body_sha "edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d" ;
   mesh:explains mesh:finProgramBrief ,
     mesh:costLotCostingReview ,
@@ -44,8 +46,9 @@ docs:runbook-adding-a-task-kind a mesh:DocPage ;
   rdfs:label "Adding a task kind" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a/adding-a-task-kind.md" ;
-  mesh:body_sha "d40368ddc27b474bce3078c402e18f63e2a2793650b90524f72f9b290cd7052a" ;
+  mesh:source "docs/pages/d3b771d7aca79b9f8c29592d24794b232a344d496835caeaef25136d1d0a676c/adding-a-task-kind.md" ;
+  mesh:source_committed_at "2026-09-15T08:32:52-05:00" ;
+  mesh:body_sha "d3b771d7aca79b9f8c29592d24794b232a344d496835caeaef25136d1d0a676c" ;
   mesh:explains mesh:DispositionReview .
 
 docs:runbook-adding-an-archetype a mesh:DocPage ;
@@ -53,6 +56,7 @@ docs:runbook-adding-an-archetype a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/54f3569338ff684041402b28eaaf50674f22e38a1d11ca9ad8529b239f056ede/adding-an-archetype.md" ;
+  mesh:source_committed_at "2026-09-11T21:09:39-05:00" ;
   mesh:body_sha "54f3569338ff684041402b28eaaf50674f22e38a1d11ca9ad8529b239f056ede" ;
   mesh:explains mesh:Archetype .
 
@@ -61,17 +65,28 @@ docs:runbook-adding-an-engine a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/c253593995ca32784a1c2c4a321edb1bed49696fe9600fd7cbda5fc38c8cc112/adding-an-engine.md" ;
+  mesh:source_committed_at "2026-09-12T14:46:20-05:00" ;
   mesh:body_sha "c253593995ca32784a1c2c4a321edb1bed49696fe9600fd7cbda5fc38c8cc112" ;
   mesh:explains mesh:resolveInstance ,
     mesh:enumerateInstances ,
     mesh:InstanceResolution ,
     mesh:InstanceEnumeration .
 
+docs:runbook-pinning-the-fleet-sdk a mesh:DocPage ;
+  rdfs:label "Runbook — pinning the fleet to an SDK release" ;
+  mesh:doc_kind "how-to" ;
+  mesh:audience_hint "ARCHITECT" ;
+  mesh:source "docs/pages/1ac690edcdd442c442285f843b4aa6512e6bedc3ac5ee0c715d7e9a66fe057b7/pinning-the-fleet-sdk.md" ;
+  mesh:source_committed_at "2026-09-15T22:02:45-05:00" ;
+  mesh:body_sha "1ac690edcdd442c442285f843b4aa6512e6bedc3ac5ee0c715d7e9a66fe057b7" .
+# pinning-the-fleet-sdk.md: explains none — an honest row, not an omission.
+
 docs:runbook-rolling-a-service a mesh:DocPage ;
   rdfs:label "Rolling a service" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e/rolling-a-service.md" ;
+  mesh:source_committed_at "2026-09-14T11:38:19-05:00" ;
   mesh:body_sha "1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e" .
 # rolling-a-service.md: explains none — an honest row, not an omission.
 
@@ -80,5 +95,6 @@ docs:runbook-writing-a-walk-sheet a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2/writing-a-walk-sheet.md" ;
+  mesh:source_committed_at "2026-09-11T22:23:37-05:00" ;
   mesh:body_sha "c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2" .
 # writing-a-walk-sheet.md: explains none — an honest row, not an omission.

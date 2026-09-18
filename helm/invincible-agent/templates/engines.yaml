@@ -24,6 +24,7 @@
   (dict "key" "engineFinance" "component" "engine-fin" "values" .Values.engineFinance)
   (dict "key" "engineCost" "component" "engine-cost" "values" .Values.engineCost)
   (dict "key" "engineSafety" "component" "engine-safety" "values" .Values.engineSafety)
+  (dict "key" "engineDocs" "component" "engine-docs" "values" .Values.engineDocs)
   (dict "key" "graphHost" "component" "engine-lg" "values" .Values.graphHost)
   (dict "key" "engineE" "component" "engine-e" "values" .Values.engineE)
   (dict "key" "engineF" "component" "engine-f" "values" .Values.engineF)

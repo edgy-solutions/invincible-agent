@@ -187,7 +187,20 @@ def test_the_uploader_refuses_to_upload_past_drift():
 
     original = TTL.read_bytes()
     try:
-        TTL.write_bytes(original + b"\n# drift\n")
+        # BREAK A KEY, NOT MERELY THE BYTES. The prime's check is content-addressed: it asks
+        # whether a committed row NAMES the key each page hashes to. This test used to append a
+        # comment, which leaves every key intact and is correctly not drift -- and with the
+        # check corrected, that fixture sailed past the refusal and ran the REAL uploader,
+        # reaching the network. It failed here only because nothing was listening.
+        #
+        # THE DOCSTRING'S "must fail BEFORE touching the network" IS A PROPERTY OF THE FIXTURE,
+        # not of the code under test, and it stopped holding the moment the check changed.
+        text = original.decode("utf-8")
+        i = text.index("docs/pages/")
+        j = text.index("/", i + len("docs/pages/"))
+        broken = text[:i] + "docs/pages/" + ("0" * (j - i - len("docs/pages/"))) + text[j:]
+        assert broken != text, "the fixture did not actually break a key"
+        TTL.write_bytes(broken.encode("utf-8"))
         with pytest.raises(RuntimeError) as caught:
             upload_doc_pages()
         assert "drift" in str(caught.value).lower(), (
@@ -197,14 +210,66 @@ def test_the_uploader_refuses_to_upload_past_drift():
     assert TTL.read_bytes() == original, "the tree was left mutated by a test"
 
 
-def test_the_vocabulary_declares_the_two_pointer_terms():
+def test_THE_UPLOADER_DOES_NOT_NEED_GIT():
+    """THE REGRESSION GUARD FOR A LIVE OUTAGE, and nothing else in this file could have caught it.
+
+    The prime detected drift by calling `generate_docs_corpus.render()`. `render()` derives
+    `source_committed_at` from `git log` and refuses -- rightly -- to substitute an mtime or a
+    wall clock. THE PRIME CONTAINER HAS NO GIT, so the 2026-09-18 03:48 roll died at hook weight
+    10, and every hook after it (ontology-seed 15, engine-reregister 20) was never CREATED.
+
+    Every seal in this file passed throughout, because every one of them runs where git exists.
+    The check and the environment it had to run in were never tested together -- a build-time
+    derivation invoked at run time, which no assertion about the derivation can find.
+
+    So the prime now decides drift from the PAGE-NAMING FACTS ALONE, which is what it can see;
+    the full re-render, timestamps included, stays in
+    `test_the_committed_corpus_matches_the_frontmatter`, which runs where git is.
+
+    Called directly rather than through `upload_doc_pages`, so this stays off the network.
+    """
+    import importlib.util
+    import sys as _sys
+    if str(ROOT) not in _sys.path:
+        _sys.path.insert(0, str(ROOT))
+    from setup.prime_databases import pages_not_named_by_the_corpus
+
+    spec = importlib.util.spec_from_file_location(
+        "generate_docs_corpus", ROOT / "scripts" / "generate_docs_corpus.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    assert gen.pages(), "no pages found — this arm would pass while measuring nothing"
+    committed = TTL.read_text(encoding="utf-8")
+    assert pages_not_named_by_the_corpus(gen, committed) == [], (
+        "the committed corpus does not name the content key of every page")
+    # AND IT MUST STILL SAY NO. A check that can only return [] is not a check.
+    assert pages_not_named_by_the_corpus(gen, "") == [x.name for x in gen.pages()], (
+        "an empty corpus names no page, so every page must be reported")
+
+    # THE PROPERTY THIS ARM IS NAMED FOR, asserted rather than implied. The two assertions above
+    # would pass on a machine WITH git even if the prime went back to calling `render()`; they
+    # check the function's shape, which is a neighbour of the claim, not the claim. Emptying PATH
+    # is what actually reproduces the container.
+    import os
+    saved = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = ""
+        assert pages_not_named_by_the_corpus(gen, committed) == [], (
+            "the prime's drift check cannot run without git on PATH — which is the container it "
+            "runs in, and the reason the 2026-09-18 roll lost the tail of its hook chain")
+    finally:
+        os.environ["PATH"] = saved
+
+
+def test_the_vocabulary_declares_the_pointer_terms():
     """A row asserting mesh:source against a term that was never declared is the fail-by-passing
     case: ingest accepts it, and nothing ever matches."""
     import rdflib
     g = rdflib.Graph()
     g.parse(ROOT / "setup" / "ontologies" / "mesh_system.ttl", format="turtle")
     mesh = rdflib.Namespace("http://invincible-agent/mesh#")
-    for term in ("source", "body_sha"):
+    for term in ("source", "body_sha", "source_committed_at"):
         assert (mesh[term], None, None) in g, f"mesh:{term} is not declared in mesh_system.ttl"
 
 
@@ -321,3 +386,88 @@ def test_THE_SHA_IS_A_PROPERTY_OF_THE_CONTENT_not_of_the_checkout():
         f"only {checked} page(s) could be compared against git — this seal is quantifying over "
         f"almost nothing and would pass on a tree where every page had drifted"
     )
+
+
+# ── THE ORDERING RULE'S SECOND INPUT ──────────────────────────────────────────────────────────
+
+def test_every_page_carries_a_commit_time_DERIVED_FROM_GIT():
+    """Derived from the act, not typed — so the check recomputes it rather than trusting it.
+
+    A stamp a human could set is a stamp that can claim a date the history does not support, and
+    this one ORDERS THE CORPUS: a wrong value does not fail, it silently promotes a page.
+    """
+    import subprocess
+
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(TTL, format="turtle")
+    mesh = rdflib.Namespace("http://invincible-agent/mesh#")
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gen_docs_corpus", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    stamped = {}
+    for page in g.subjects(rdflib.RDF.type, mesh.DocPage):
+        v = g.value(page, mesh.source_committed_at)
+        assert v is not None, f"{page} has no mesh:source_committed_at — the ordering rule's key"
+        stamped[str(page).rsplit("#", 1)[-1]] = str(v)
+    assert stamped, "no page carries a commit time; this test asserts nothing"
+
+    for path in gen.pages():
+        want = subprocess.run(
+            ["git", "log", "-1", "--format=%cI", "--", str(path)],
+            cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        key = f"runbook-{path.stem}"
+        assert stamped.get(key) == want, (
+            f"{path.name}: the corpus says {stamped.get(key)!r} and git says {want!r}. The stamp "
+            f"is derived from the commit, so a disagreement means the corpus was not regenerated "
+            f"after the page changed — and this field ORDERS the answer.")
+
+
+def test_the_commit_times_actually_DISCRIMINATE():
+    """THE CONTROL THAT KEEPS THIS KEY FROM BEING DECORATIVE.
+
+    A time field identical on every page passes every other assertion here and orders nothing —
+    which is exactly the state the corpus was in before this field existed, since one prime lands
+    the whole corpus and every page shares an ingest time to the second. The key earns its place
+    only if it separates pages.
+    """
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(TTL, format="turtle")
+    mesh = rdflib.Namespace("http://invincible-agent/mesh#")
+    times = [str(v) for v in g.objects(None, mesh.source_committed_at)]
+    assert len(times) >= 5, f"only {len(times)} stamps — too few to say anything about ordering"
+    assert len(set(times)) > 1, (
+        "every page carries the SAME commit time, so this key orders nothing and the ordering "
+        "rule is back to stable-identity. That is the pre-existing state, not a passing test")
+    # Not asserting all-distinct: two pages committed together is legitimate and is precisely the
+    # tie the rule hands to the engine to render as a list.
+
+
+def test_the_generator_REFUSES_a_page_git_does_not_know():
+    """A fabricated timestamp would order the corpus confidently and wrongly.
+
+    The tempting fallbacks are both worse than stopping: a file's mtime is a property of whoever
+    last checked out the tree, and `now` is invented. Asserted at the function rather than by
+    creating an untracked page, so the test leaves no file behind.
+    """
+    import importlib.util
+    import pathlib as _p
+    spec = importlib.util.spec_from_file_location("gen_docs_corpus", GEN)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    with pytest.raises(SystemExit) as caught:
+        # ASSEMBLED, NOT WRITTEN. `test_citation_paths` scans tracked files for `docs/…` paths
+        # and reads a literal one here as a citation of a file that does not exist. The scan is
+        # right and this is not a citation — SEVENTH instance of an instrument and its subject
+        # sharing a surface, and the second time in THIS file, which is why the remedy is a
+        # convention rather than care.
+        never = "docs" + "/runbooks/a-page-that-was-never-committed.md"
+        gen.source_committed_at(_p.Path(never))
+    msg = str(caught.value)
+    assert "REFUSED" in msg and "invent" in msg, (
+        f"the refusal does not say what it refused to do: {msg}")

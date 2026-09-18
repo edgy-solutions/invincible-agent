@@ -81,6 +81,10 @@ jobs:
           - service: cost-agent
             path: agent_fleet/cost_agent
             port: "8097"
+            # THE ONLY SERVICE THAT CARRIES THE PYODIDE RUNTIME. Named here rather than
+            # inferred from the service name, so adding a second exporting engine is a
+            # decision somebody makes in this table.
+            package_runtime: ".pyodide-cache"
           # engine-safety, sustainment safety assessment (ADR-0051). Image name is safety-agent;
           # the SERVICE it runs as is engine-safety; the values key is engineSafety. Port must
           # match the chart's engineSafety.port, or the readiness probe hits a closed port.
@@ -90,6 +94,15 @@ jobs:
           - service: safety-agent
             path: agent_fleet/safety_agent
             port: "8099"
+          # engine-docs, the corpus answering for itself (ADR-0037). Image name is
+          # docs-agent; the SERVICE it runs as is engine-docs; the values key is engineDocs.
+          # Port must match the chart's engineDocs.port or the readiness probe hits a closed
+          # port. WITHOUT THIS ENTRY NO IMAGE IS EVER BUILT at any pinned sha — the omission
+          # with no error message, because nothing fails until a deploy asks for a tag that
+          # was never produced.
+          - service: docs-agent
+            path: agent_fleet/docs_agent
+            port: "8100"
           # engine-lg, the graph host. RIDES Dockerfile.agent, which already carries
           # ARG GIT_SHA / ENV IAGENT_GIT_SHA and is built with --build-arg
           # GIT_SHA=${{ github.sha }} — so no new stage and no new build-arg are needed, and
@@ -386,6 +399,26 @@ jobs:
           # were the half that slipped, the finance engine would not boot at all -- so the data
           # rides in first and the runtime starts depending on it next.
           COPY policy/measures/ /app/policy/measures/
+          # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
+          #
+          # `cost_agent.measures.package_export` builds a self-contained artifact from the
+          # package builder plus the pinned Pyodide runtime. Both lived ONLY in a developer
+          # checkout, so a deployed engine refused the work by name — correctly, and
+          # permanently. This is what makes the refusal stop being the only answer.
+          #
+          # THE BUILDER IS UNCONDITIONAL (one small module). THE RUNTIME IS NOT: it is 14 MB,
+          # and multiplying that across eleven images buys nothing for the ten that never call
+          # the export. A COPY needs a source that EXISTS, so the optional payload is a
+          # build-arg pointing at `.docker-empty/` by default and at the fetched runtime for
+          # cost-agent alone.
+          #
+          # THE RUNTIME IS FETCHED IN CI, NOT COMMITTED. `.pyodide-cache/` is gitignored, so
+          # nothing in the repo could be copied — the "on disk and undeclared" shape, one layer
+          # over from a TTL absent from the prime manifest. The builder already knows how:
+          # `--fetch-runtime` pulls the version pinned in `PYODIDE_VERSION`.
+          COPY scripts/build_cost_package.py /app/scripts/build_cost_package.py
+          ARG PACKAGE_RUNTIME_SRC=.docker-empty
+          COPY ${PACKAGE_RUNTIME_SRC}/ /app/.pyodide-cache/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/
@@ -473,12 +506,30 @@ jobs:
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
 
+            # ── FETCH THE PINNED RUNTIME, FOR THE ONE SERVICE THAT DECLARES IT ─────────
+            #
+            # `.pyodide-cache/` is gitignored, so the matrix row above names a directory that
+            # does not exist in a fresh checkout. Without this step the COPY fails the build —
+            # loudly, which is the right failure — but the point is to make it present.
+            #
+            # REFUSES RATHER THAN BUILDING A CRIPPLED IMAGE. If the fetch fails the step exits
+            # non-zero: an image carrying the builder and half a runtime would pass every test
+            # and refuse at ANSWER time with a missing-files list, which is the slow way to
+            # learn that CI had no network.
+            if [ -n "${{ matrix.package_runtime }}" ]; then
+              echo "Fetching the pinned Pyodide runtime..."
+              python3 scripts/build_cost_package.py --fetch-runtime \
+                --runtime-dir "${{ matrix.package_runtime }}"
+              ls -la "${{ matrix.package_runtime }}"
+            fi
+
             docker buildx build \
               --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f Dockerfile.agent \
               --build-arg AGENT_DIR=${{ matrix.path }} \
               --build-arg PORT=${{ matrix.port }} \
               --build-arg MAIN_MODULE=${{ matrix.main_module || 'main' }} \
+              --build-arg PACKAGE_RUNTIME_SRC=${{ matrix.package_runtime || '.docker-empty' }} \
               $TAGS \
               --push .
           fi

@@ -20,11 +20,24 @@ global:
   imageTag: ""
   # -- The floor when neither a component tag nor `imageTag` is set.
   #
-  # `latest` and NOT `Chart.AppVersion`: CI publishes `:<git-sha>` and `:latest` and nothing
-  # else, so AppVersion names an image that has never existed. Every values file was already
-  # working around it with per-component `tag: ""`, which is exactly what made a global
-  # pin unreachable.
-  defaultImageTag: "latest"
+  # EMPTY, SO THE FLOOR IS `Chart.Version` — set this to override it.
+  #
+  # IT USED TO BE `latest`, FOR A REASON THAT IS NO LONGER TRUE. The note here read: "`latest`
+  # and NOT `Chart.AppVersion`: CI publishes `:<git-sha>` and `:latest` and nothing else, so
+  # AppVersion names an image that has never existed." Correct when written. As of 2026-09-17
+  # the release workflow retags every image BY DIGEST to the chart version on each chart
+  # release, so `:0.3.77` names the exact bytes `:<sha>` named — and a chart that resolves to
+  # its OWN images is the point.
+  #
+  # `latest` IS THE DRIFT. An unpinned deploy got whatever `latest` happened to be at PULL
+  # time: a different artifact on Tuesday than on Monday, from the same chart, with nothing
+  # recording that they differed. A chart version makes "install 0.3.77" mean one thing
+  # forever.
+  #
+  # NOT `Chart.AppVersion`, which is the application's calendar version and moves on a
+  # different clock from the chart's contents — the images are built from the commit the CHART
+  # was released at.
+  defaultImageTag: ""
   imagePullPolicy: IfNotPresent
   # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
   clusterDomain: ""
@@ -495,7 +508,28 @@ graphHost:
     name: graph-host
     tag: ""
   port: 8098
-  env: {}
+  env:
+    # ── DURABLE CHECKPOINTING (R-012 shape) ───────────────────────────────────────────
+    #
+    # engine-lg compiles every graph whose manifest row declares `checkpointer: true`
+    # against an AsyncPostgresSaver opened from this DSN. WITHOUT IT the host serves those
+    # rows from PROCESS MEMORY and /ready returns 503 checkpointer-not-ready — the posture
+    # working, not a regression: a row declaring durable per-thread state is being answered
+    # by something that loses it on restart.
+    #
+    # NO DEFAULT IN THE ENGINE, per R-012. A plausible default would aim at SOME Postgres and
+    # silently checkpoint a programme brief into whatever it reached. The chart is the only
+    # layer that knows which database this deployment means, so the chart declares it.
+    #
+    # COMPOSED FROM THE SHARED PARTS, exactly as the frontend composes PROJECTOR_POSTGRES_DSN:
+    # the four BPMN_POSTGRES_* values and the password already reach every engine pod through
+    # envFrom, so one secret stays one place and a per-cluster Postgres override moves this
+    # with it instead of leaving a second literal pointing at the old host.
+    #
+    # THE SAME DATABASE THE GATEWAY HUMAN TASKS USE — ruled, rather than a new one: a graph
+    # that interrupts for a human and the task representing that interrupt belong in one
+    # store, and two would make "did this resume" answerable only by joining across them.
+    GRAPH_HOST_POSTGRES_DSN: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
   resources:
     requests:
       cpu: 100m
@@ -546,6 +580,35 @@ engineSafety:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# engine-docs — the corpus answers for itself (ADR-0037). THE FOUR NAMES DIFFER AND THAT IS
+# NORMAL: values key `engineDocs`, component/service `engine-docs`, image `docs-agent`, Keycloak
+# client `iagent-docs-agent`. All four were verified free before a line was written (runbook §0),
+# and grepping any one of them finds only part of the wiring.
+#
+# ENABLED BY DEFAULT, unlike engine-cost / engine-fin / engine-safety, and the reason is what it
+# serves: every deployment has the runbook corpus, because the corpus ships with the platform.
+# An engine that answers "how do I add an engine" from pages in this repo has nothing per-customer
+# to wait for.
+#
+# `env: {}` DELIBERATELY EMPTY. A container's `env:` OVERRIDES `envFrom`, so a value placed here
+# shadows the ConfigMap the whole fleet is configured through (runbook §7) — and the failure looks
+# like a setting that will not take effect no matter how many times the chart is corrected.
+engineDocs:
+  enabled: true
+  replicas: 1
+  image:
+    name: docs-agent
+    tag: ""
+  port: 8100
+  env: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 engineD:
   enabled: true
@@ -690,7 +753,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.8.1"
+  meshSdkVersion: "v0.9.2"
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
@@ -1218,6 +1281,10 @@ primeSubstrate:
       # missing exactly those three while every other verb returned — the failure mode this list
       # exists for, and the one data-analyst paid for once already.
       - engine-safety
+      # engine-docs self-registers mesh:explain on startup. Omitted here it would keep whatever
+      # endpoint_url was baked in at its LAST registration, which survives a redeploy and is the
+      # shape that makes a moved service look registered and answer nothing.
+      - engine-docs
       # Data Analyst self-registers mesh:analyzeDataset on startup — it was
       # omitted here, so wipe+reprime left analyzeDataset unregistered while
       # every other catalog verb came back (the graph showed 8 of 9 verbs on
@@ -1842,6 +1909,13 @@ keycloak:
     - clientId: "iagent-safety-agent"
       authzId: "svc:safety-agent"
       secretRef: "safetyAgentClientSecret"
+    # engine-docs' registration identity. IDENTITY IS AN ARGUMENT, never derived from the
+    # component name (runbook §6): the client id follows the IMAGE (`docs-agent`) while the env
+    # var holding its secret follows the SERVICE (`ENGINE_DOCS_CLIENT_SECRET`), so grepping either
+    # name finds only half the wiring.
+    - clientId: "iagent-docs-agent"
+      authzId: "svc:docs-agent"
+      secretRef: "docsAgentClientSecret"
 
     # engine-cost's registration identity. Same contract as every engine above, and given
     # one even though the engine is DEFAULT-OFF for the reason stated there: a service that
@@ -1882,6 +1956,10 @@ keycloak:
   # `secret` and ENGINE_SAFETY_CLIENT_SECRET in the Secret, so the two cannot drift — which is
   # the failure that costs a silent 401 on registration while every probe stays green.
   safetyAgentClientSecret: "sandbox-safety-agent-secret"
+
+  # engine-docs' service-account client secret (iagent-docs-agent). PLACEHOLDER in the chart and
+  # overridden per deployment — a secret with a real value in a values file is a secret in git.
+  docsAgentClientSecret: "sandbox-docs-agent-secret"
   # engine-cost's service-account client secret (iagent-cost-agent). PLACEHOLDER in the
   # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
   # `secret` and ENGINE_COST_CLIENT_SECRET in the Secret, so the two cannot drift.

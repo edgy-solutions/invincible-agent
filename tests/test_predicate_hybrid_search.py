@@ -256,16 +256,44 @@ def test_collection_missing_returns_empty(ontology_main, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Exceptions are swallowed (routing accelerator, not crash-critical)
+# Exceptions REFUSE — reversed 2026-09-14; they used to be swallowed
 # ---------------------------------------------------------------------------
-def test_hybrid_exception_returns_empty(ontology_main, monkeypatch):
+def test_hybrid_exception_REFUSES_rather_than_returning_empty(ontology_main, monkeypatch):
+    """REVERSED 2026-09-14. This asserted `hits == []`, under the heading "Exceptions are
+    swallowed (routing accelerator, not crash-critical)".
+
+    That stance predates ADR-0009, which makes Weaviate REQUIRED routing infrastructure and has
+    the endpoint return 503 *"rather than silently degrading to exact-match"*. The cost was
+    measurable downstream: `/resolve` reads an empty candidate list as a COLD START, falls back to
+    `_SPARQL_MAINTENANCE_CLASSES` and answers from the maintenance ontology — so a swallowed
+    exception produced a confident WRONG-DOMAIN answer, not a missing one.
+
+    REVERSED rather than deleted: the behaviour it pinned was deliberate, and the next reader
+    needs to see that it was changed on purpose and against what.
+    """
     class _Boom:
         @property
         def collections(self):
             raise RuntimeError("weaviate down")
     monkeypatch.setattr(ontology_main, "_WEAVIATE_CLIENT", _Boom())
-    hits = ontology_main._predicate_hybrid_search_sync("q", [], 5)
-    assert hits == []
+    with pytest.raises(ontology_main.HTTPException) as exc:
+        ontology_main._predicate_hybrid_search_sync("q", [], 5)
+    assert exc.value.status_code == 503
+    assert "weaviate down" in str(exc.value.detail), (
+        "the refusal must carry the underlying cause — a 503 that does not say why sends the "
+        "reader to the code instead of to the substrate"
+    )
+
+
+def test_an_EMPTY_result_is_still_an_empty_result(ontology_main, monkeypatch):
+    """THE CONTROL for that reversal, and the line the whole change is drawn on.
+
+    A working Weaviate that matches nothing must still return `[]`. Without this, the fix would
+    be satisfied by collapsing "no predicate matched" into "the substrate is down", and every
+    unanswerable question would become a 503.
+    """
+    monkeypatch.setattr(ontology_main, "_WEAVIATE_CLIENT", _FakeClient([]))
+    assert ontology_main._predicate_hybrid_search_sync("q", [], 5) == []
 
 
 # ---------------------------------------------------------------------------
