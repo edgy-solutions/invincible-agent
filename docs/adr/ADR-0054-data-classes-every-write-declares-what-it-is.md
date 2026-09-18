@@ -509,14 +509,46 @@ rigour.**
 
 The census's `fold, do not hand-run` derivation refused two stores on its first run:
 `neo4j:OntologyClass` and `weaviate:OntologyClass`, for having no bootstrap that reproduces them.
-**Both refusals were wrong**, and the measurement is the argument:
+**Both refusals were wrong**, and the measurement is the argument — **stated with its scope,
+because the first version of this paragraph was not.**
 
-    MERGE / CREATE (:OntologyClass …)   0 sites in this repo
-    MATCH          (:OntologyClass …)   29 sites across 5 files
+    MERGE / CREATE of an :OntologyClass NODE      files   sites
+      FOLDED   agent_fleet/ + src/ + setup/           0       0
+      scripts/ (hand-run)                             4       5
+      tests/                                          3       3
 
-**Nothing here creates those nodes; five files match them.** Their producer is doc-tools'
-`assets/ontology_assets.py`, folded into the prime and invisible from this tree — and the prime's
-own comment says so outright. The registrar writes the edges **between nodes it never created**.
+**No folded writer in this repo creates those nodes.** Their producer is doc-tools'
+`assets/ontology_assets.py`, folded into the prime and invisible from this tree — the prime's own
+comment says so — and the registrar writes the edges **between nodes it never created**.
+
+> **AN EARLIER DRAFT SAID "0 SITES IN THIS REPO", AND THE COMMAND BEHIND IT WAS SCOPED TO
+> `agent_fleet/` AND `src/`.** Repo-wide the same pattern returns eleven files. **The command was
+> scoped and the sentence claimed the population** — the same defect this lane filed a law about
+> three days ago, in an Accepted ADR this time, caught by the census owner re-deriving a number
+> because it had become load-bearing. The scoped claim is also the *stronger* one: *no folded
+> producer* is precisely the premise the three-state derivation needs, while a bare *zero* invites
+> a contradiction on a reviewer's first grep.
+>
+> **A read count is deliberately not quoted here.** Two patterns for `MATCH (…:OntologyClass)`
+> returned two different totals across the two lanes, the argument does not turn on it, and a
+> figure whose command is not agreed is a figure that will be re-derived into a contradiction.
+
+**THE TEMPTING FALSE POSITIVE, NAMED BECAUSE COUNTING IT INVERTS THE CONCLUSION.**
+`setup/prime_databases.py:535` reads
+`CREATE CONSTRAINT ontology_class_uri_unique … FOR (c:OntologyClass)`. It matches a loose
+`CREATE … :OntologyClass` and it is **schema, not a node write**. Counted, the prime becomes a
+folded producer and the entire external-door conclusion reverses.
+
+### And the two clauses are load-bearing TOGETHER
+
+**The script writes mean `neo4j:OntologyClass` IS produced here** — by four hand-run scripts,
+five sites. Under the three-state derivation alone it would therefore sit in state **one**,
+*produced here*, and never reach the external door at all.
+
+**It is `fold, do not hand-run` that says a hand-run producer is not a bootstrap**, which is what
+moves it to state two. Neither clause gives the right answer for this store on its own: §5's
+refusal without the three states refuses it wrongly, and the three states without §5 classify it
+wrongly. **They interlock, and this store is the case that shows it.**
 
 **So the refusal derivation has THREE states, not two:**
 
