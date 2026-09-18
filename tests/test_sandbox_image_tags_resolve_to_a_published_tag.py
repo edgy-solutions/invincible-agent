@@ -136,6 +136,21 @@ def _retag_code() -> str:
     )
 
 
+def _rendered_tags_any(*extra: str) -> dict:
+    """`repository -> tag` for EVERY edgy-solutions image in the render, this repo's or not."""
+    helm = shutil.which("helm")
+    if not helm:
+        pytest.skip("helm not on PATH")
+    proc = subprocess.run(
+        [helm, "template", "t", str(CHART), "-f", str(CHART / "values-sandbox.yaml"), *extra],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    found = dict(_ANY_EDGY.findall(proc.stdout))
+    assert len(found) >= 14, f"the render scrape found only {len(found)}: {sorted(found)}"
+    return found
+
+
 def test_every_sandbox_enabled_built_image_resolves_to_the_chart_version() -> None:
     """An UNPINNED render must put every image of ours on the chart's own version.
 
@@ -209,6 +224,58 @@ def test_THE_THREE_STATE_EXIT_CAN_ACTUALLY_FIRE() -> None:
     assert "|| rc=$?" in _retag_code(), (
         "the retag's exit code is captured on a separate line under `bash -e`, so a non-zero "
         "exit aborts the step and the three-state handling below it cannot fire"
+    )
+
+
+#: EVERY image of ours in the render, not only this repo's. `_OURS` above matches
+#: `invincible-agent/` alone, which is right for the arms that ask about THIS repo's floor and
+#: wrong as a population — it is what let the floor change reach four other repositories unseen.
+#: The FULL repository path after the registry, because `global.imagePrefix` is
+#: `edgy-solutions/invincible-agent` — a pattern that strips the org captures a repo the
+#: prefix test can never match, and every image reads as cross-repo.
+_ANY_EDGY = re.compile(r"ghcr\.io/(\S+?):(\S+)")
+
+
+def test_a_CROSS_REPO_image_NEVER_resolves_to_the_chart_version() -> None:
+    """THE ARM THAT WAS MISSING, and its absence cost the same four deployments twice.
+
+    `global.imageTag` was scoped to this repo's images on 2026-09-09, after a commit sha reached
+    `cortex-ui/frontend`, `dag-tools/central-gateway`, `dag-tools/user-deployment` and
+    `pub-tools` and put four deployments into ImagePullBackOff on a live cluster. The scoping
+    note was written on the PIN. The FLOOR was left global.
+
+    So when the floor moved from `latest` to `Chart.Version`, those same four repositories were
+    sent to a tag none of them has ever published — the identical break through the fallback
+    instead of the override. **A guard on one term of an expression is not a guard on the
+    expression.**
+
+    A COMMIT SHA, AND NOW A CHART VERSION, MEAN SOMETHING ONLY INSIDE THE REPOSITORY THAT MINTED
+    THEM. This repo's release retags its own build matrix and nothing else.
+    """
+    version = _chart_version()
+    prefix = _load("values.yaml")["global"]["imagePrefix"] + "/"
+    rendered = _rendered_tags_any()
+    foreign = {r: t for r, t in rendered.items() if not r.startswith(prefix)}
+    assert foreign, (
+        "no cross-repo images in the render at all — this arm is vacuous, and a scrape that "
+        "finds nothing passes every assertion below it"
+    )
+    offenders = sorted(f"{r} -> {t!r}" for r, t in foreign.items() if t == version)
+    assert not offenders, (
+        "images from OTHER repositories resolved to this chart's version, which only this "
+        "repo's release publishes:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_pin_ALSO_leaves_cross_repo_images_alone() -> None:
+    """The 2026-09-09 property, kept where it can be seen beside the floor's. Asserted with the
+    pin SET, because that is the state in which it broke."""
+    prefix = _load("values.yaml")["global"]["imagePrefix"] + "/"
+    rendered = _rendered_tags_any("--set", "global.imageTag=deadbeefcafe")
+    struck = sorted(r for r, t in rendered.items()
+                    if not r.startswith(prefix) and t == "deadbeefcafe")
+    assert not struck, (
+        f"the fleet commit pin reached repositories that never built it: {struck}"
     )
 
 
