@@ -568,6 +568,35 @@ engineSafety:
       cpu: 500m
       memory: 512Mi
 
+# engine-docs — the corpus answers for itself (ADR-0037). THE FOUR NAMES DIFFER AND THAT IS
+# NORMAL: values key `engineDocs`, component/service `engine-docs`, image `docs-agent`, Keycloak
+# client `iagent-docs-agent`. All four were verified free before a line was written (runbook §0),
+# and grepping any one of them finds only part of the wiring.
+#
+# ENABLED BY DEFAULT, unlike engine-cost / engine-fin / engine-safety, and the reason is what it
+# serves: every deployment has the runbook corpus, because the corpus ships with the platform.
+# An engine that answers "how do I add an engine" from pages in this repo has nothing per-customer
+# to wait for.
+#
+# `env: {}` DELIBERATELY EMPTY. A container's `env:` OVERRIDES `envFrom`, so a value placed here
+# shadows the ConfigMap the whole fleet is configured through (runbook §7) — and the failure looks
+# like a setting that will not take effect no matter how many times the chart is corrected.
+engineDocs:
+  enabled: true
+  replicas: 1
+  image:
+    name: docs-agent
+    tag: ""
+  port: 8100
+  env: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
 engineD:
   enabled: true
   replicas: 1
@@ -1239,6 +1268,10 @@ primeSubstrate:
       # missing exactly those three while every other verb returned — the failure mode this list
       # exists for, and the one data-analyst paid for once already.
       - engine-safety
+      # engine-docs self-registers mesh:explain on startup. Omitted here it would keep whatever
+      # endpoint_url was baked in at its LAST registration, which survives a redeploy and is the
+      # shape that makes a moved service look registered and answer nothing.
+      - engine-docs
       # Data Analyst self-registers mesh:analyzeDataset on startup — it was
       # omitted here, so wipe+reprime left analyzeDataset unregistered while
       # every other catalog verb came back (the graph showed 8 of 9 verbs on
@@ -1863,6 +1896,13 @@ keycloak:
     - clientId: "iagent-safety-agent"
       authzId: "svc:safety-agent"
       secretRef: "safetyAgentClientSecret"
+    # engine-docs' registration identity. IDENTITY IS AN ARGUMENT, never derived from the
+    # component name (runbook §6): the client id follows the IMAGE (`docs-agent`) while the env
+    # var holding its secret follows the SERVICE (`ENGINE_DOCS_CLIENT_SECRET`), so grepping either
+    # name finds only half the wiring.
+    - clientId: "iagent-docs-agent"
+      authzId: "svc:docs-agent"
+      secretRef: "docsAgentClientSecret"
 
     # engine-cost's registration identity. Same contract as every engine above, and given
     # one even though the engine is DEFAULT-OFF for the reason stated there: a service that
@@ -1903,6 +1943,10 @@ keycloak:
   # `secret` and ENGINE_SAFETY_CLIENT_SECRET in the Secret, so the two cannot drift — which is
   # the failure that costs a silent 401 on registration while every probe stays green.
   safetyAgentClientSecret: "sandbox-safety-agent-secret"
+
+  # engine-docs' service-account client secret (iagent-docs-agent). PLACEHOLDER in the chart and
+  # overridden per deployment — a secret with a real value in a values file is a secret in git.
+  docsAgentClientSecret: "sandbox-docs-agent-secret"
   # engine-cost's service-account client secret (iagent-cost-agent). PLACEHOLDER in the
   # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
   # `secret` and ENGINE_COST_CLIENT_SECRET in the Secret, so the two cannot drift.

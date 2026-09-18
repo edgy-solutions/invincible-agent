@@ -199,6 +199,16 @@ data:
   # is listening on. FQDN through the svcDomain helper, never a bare service name, because a
   # bare name resolves differently depending on where the reader stands.
   ENGINE_SAFETY_PUBLIC_URL: "http://{{ .Release.Name }}-engine-safety{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineSafety.port }}"
+
+  # engine-docs, the corpus answering for itself (ADR-0037). THE ENDPOINT URL IS BAKED AT
+  # REGISTRATION TIME, so this value is what the mesh will hold until the next reregister —
+  # a service that moves without one stays registered at an address nothing answers on, and
+  # the symptom is a verb that routes and times out rather than a verb that is missing.
+  ENGINE_DOCS_PUBLIC_URL: "http://{{ .Release.Name }}-engine-docs{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineDocs.port }}"
+  # The bucket the page bodies live in. NOT the ontology bucket: the prime refuses to upload
+  # if the two names are ever pointed at one place, because the ontology sensor watches its
+  # bucket with no prefix and no filter and would hand a markdown page to a TTL parser.
+  DOCS_BUCKET: "{{ .Values.docsBucket | default "doc-pages" }}"
   # engine-lg, the graph host — THE EIGHTH REGISTRY SITE, and the one that fails silently.
   #
   # `gateway._fleet_version_targets()` does not hold a fleet list; it DERIVES one by scanning

@@ -463,6 +463,17 @@ CANONICAL_TTL_MANIFEST = [
     # GENERATED, NOT AUTHORED: scripts/generate_docs_corpus.py builds it from the frontmatter of
     # docs/runbooks/*.md, and tests/test_docs_corpus_drift.py fails if the committed file has
     # drifted from the pages. Editing this TTL by hand is a change that the next generate erases.
+    # The engine's OUTPUT end of Contract D. Filed under DOCS beside the corpus rather than in a
+    # domain of its own: they share `http://internal/DOCS`, both are manifest-class and fully
+    # reproducible, and the domain then holds one class-bearing file and one class-less one —
+    # the same shape SUSTAINMENT already has, which is the configuration the class-less path was
+    # written against.
+    {
+        "domain": "DOCS",
+        "name": "docs_extension",
+        "s3_key": "docs/docs_extension.ttl",
+        "path": "ontologies/docs_extension.ttl",
+    },
     {
         "domain": "DOCS",
         "name": "docs_corpus",

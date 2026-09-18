@@ -1,0 +1,34 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix mesh: <http://invincible-agent/mesh#> .
+@prefix docs: <http://invincible-agent/docs#> .
+
+# =============================================================================
+# engine-docs — the OUTPUT end of Contract D. ADR-0037, slice 1.
+# =============================================================================
+#
+# ONE CLASS, AND THE INPUT END IS DELIBERATELY NOT HERE. Contract D requires `input_uri` AND
+# `output_uri` to resolve to real `:OntologyClass` nodes before the registrar accepts a verb, and
+# the measured failure it prevents is authoring only one end: the planning extension wrote the
+# input end while the output end lived elsewhere, and twelve registrations earned twelve 422s
+# naming five URIs — while the engine served /health normally throughout.
+#
+# For `mesh:explain` the input end is `mesh:DocPage`, which is PLATFORM vocabulary and already
+# declared in `mesh_system.ttl` (verified in the deployed graph 2026-09-12: one node, labelled
+# OntologyClass). It is not restated here. That is the one case where both-ends-in-one-file does
+# not apply — the subject is a platform concept the doc model introduced, not a noun this engine
+# owns, and copying it into a domain file would be a domain file claiming a platform term.
+#
+# THE RESPONSE SHAPE IS IN THE ENGINE'S OWN NAMESPACE AND ITS OWN FILE, which is the rule Engine P
+# broke by authoring its outputs as `mesh:*`. Practically it is also an edit to a shared file that
+# other lanes are queued on.
+#
+# `rdfs:comment` ONLY — never `skos:definition`. The Jena-to-Weaviate sync UNIONs the two and the
+# last row wins, so a `skos:definition` silently clobbers the comment, and `rdfs:comment` is what
+# lands in `Weaviate.OntologyClass.definition`.
+
+docs:DocExplanation a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Doc Explanation" ;
+  rdfs:comment "The answer returned when someone asks HOW TO DO something or WHAT SOMETHING MEANS and the system has a reviewed write-up covering it: the prose itself, carried whole, with the persona it was written for and the checks it names. IT IS THE WRITING, NOT A RETELLING OF IT — a generated precis would be a second artifact that nothing reviewed and that drifts from the original silently, so what a reader receives is what an author wrote and a reviewer approved. CARRIED WITH THE FINGERPRINT OF THE TEXT AS INDEXED, and refused outright when the two disagree: showing prose that is not what was catalogued is wrong in the one way a reader cannot detect, since the wrong write-up is fluent, well-formed and roughly on topic. AN EMPTY ONE IS A REAL ANSWER — when nothing covers what was asked, that is a gap in the writing rather than a failure of the question, and saying so plainly beats improvising, because nobody writes up a task nobody has performed yet." .

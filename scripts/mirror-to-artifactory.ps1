@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (15) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (16) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -211,6 +211,12 @@ $IagentImages = @(
     # side: a lesson written beside a list does not maintain the list, and this time the lesson
     # was being read by the person who skipped the entry.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/safety-agent:latest';          dst='edgy-solutions/invincible-agent/safety-agent:latest' },
+    # engine-docs (ADR-0037). Added in the SAME commit as the build-containers entry, on
+    # purpose: the seal that catches this one is
+    # test_every_image_ci_builds_can_be_mirrored_to_artifactory, which can only go red AFTER
+    # the build entry exists — so doing the build half alone creates the window the five
+    # omissions above all happened in.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/docs-agent:latest';            dst='edgy-solutions/invincible-agent/docs-agent:latest' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
     # LIST.

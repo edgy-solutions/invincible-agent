@@ -152,6 +152,7 @@ _SECRET_VAR = {
     "engine-o": "ENGINE_O_CLIENT_SECRET",
     "engine-p": "ENGINE_P_CLIENT_SECRET",
     "engine-safety": "ENGINE_SAFETY_CLIENT_SECRET",
+    "engine-docs": "ENGINE_DOCS_CLIENT_SECRET",
     "engine-w": "ENGINE_W_CLIENT_SECRET",
     "data-analyst": "ENGINE_DA_CLIENT_SECRET",
 }

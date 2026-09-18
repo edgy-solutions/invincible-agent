@@ -20,7 +20,17 @@ from __future__ import annotations
 import hashlib
 import re
 
-from .reads import PageRow
+try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
+    from reads import PageRow
+except ImportError:  # pragma: no cover — exercised by the flat-layout check
+    from agent_fleet.docs_agent.reads import PageRow
+
+# A RELATIVE IMPORT (`from .reads import …`) WAS THE FIRST VERSION AND IT CANNOT WORK IN THE
+# IMAGE, where `/app` IS the engine directory and there is no package for the dot to refer to.
+# It imports perfectly in the repo, so nothing local fails; the flat check caught it with
+# `attempted relative import with no known parent package`. The runbook's §5 warning is about
+# import ORDER, and this is the same hazard one step earlier — a relative import has no flat
+# spelling at all.
 
 ARCHETYPE = "KNOWLEDGE_DOCUMENT"
 

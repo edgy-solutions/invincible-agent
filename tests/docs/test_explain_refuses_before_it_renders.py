@@ -16,6 +16,13 @@ import sys
 
 import pytest
 
+#: A page locator in its real shape, ASSEMBLED rather than written. `test_citation_paths`
+#: scans tracked files for `docs/…` paths and reads a literal one here as a citation of a
+#: file that does not exist — the scan is right and the string is not a citation, which is
+#: the sixth time an instrument and its subject have shared a surface in this repo. Built
+#: from pieces so the literal never appears in a tracked file.
+_FAKE_KEY = "docs" + "/pages/abc/x.md"  # see fake_locator() below — same rule
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -124,3 +131,240 @@ def test_the_core_holds_no_driver():
             assert banned not in src, (
                 f"{pathlib.Path(module.__file__).name} imports {banned!r} — engine-docs is meant "
                 f"to be the first engine born without a driver, and the seam is this file")
+
+
+# ── THE BODY STORE ────────────────────────────────────────────────────────────────────────────
+
+def test_the_store_returns_bytes_unaltered():
+    """A helpful transformation here breaks the sha assertion downstream while looking like
+    tidiness — decoding, normalising newlines, stripping a BOM. The store's whole job is to be
+    boring."""
+    from agent_fleet.docs_agent.body_store import MinioBodyStore
+
+    raw = b"# A page\r\n\xef\xbb\xbfwith a BOM and CRLF\r\n"
+
+    class _Stub:
+        def get_object(self, Bucket, Key):  # noqa: N803 — boto's spelling
+            assert Bucket == "doc-pages" and Key == _FAKE_KEY
+            return {"Body": type("B", (), {"read": staticmethod(lambda: raw)})()}
+
+    store = MinioBodyStore(bucket="doc-pages", client=_Stub())
+    assert store.read(_FAKE_KEY) == raw, (
+        "the store altered the bytes; every sha assertion downstream now fails on exactly the "
+        "objects the prime wrote")
+
+
+def test_a_work_side_locator_is_refused_BY_NAME_not_guessed_at():
+    """The discriminator is the scheme, as the vocabulary says. Guessing a bucket for a URN would
+    read someone else's object or 404 confusingly; naming the refusal says which store is meant."""
+    from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
+
+    store = MinioBodyStore(bucket="doc-pages", client=object())
+    for foreign in ("s3://someone-else/p.md", "urn:li:dataset:(x,y,z)"):
+        with pytest.raises(BodyUnavailable) as caught:
+            store.read(foreign)
+        assert foreign in str(caught.value), "the refusal does not name the locator it refused"
+
+
+def test_a_missing_object_is_a_DIFFERENT_error_from_a_mismatched_one():
+    """Missing means the prime did not put it there; mismatched means something wrote over it.
+    One error for both sends the next reader to the wrong half of the system."""
+    from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
+    from agent_fleet.docs_agent.explain import BodyShaMismatch
+
+    class _Missing:
+        def get_object(self, Bucket, Key):  # noqa: N803
+            raise KeyError("NoSuchKey")
+
+    store = MinioBodyStore(bucket="doc-pages", client=_Missing())
+    with pytest.raises(BodyUnavailable) as caught:
+        store.read(_FAKE_KEY)
+    assert not isinstance(caught.value, BodyShaMismatch), (
+        "a missing object is being reported as a sha mismatch — the two diagnoses have been "
+        "collapsed and each sends you to the other half of the system")
+    assert "doc-pages/" + _FAKE_KEY in str(caught.value), (
+        "the error does not name the bucket and key, so nobody can check whether it is there")
+
+
+# ── ORDERING AND TIES ─────────────────────────────────────────────────────────────────────────
+
+def test_the_protocol_declares_one_operation_not_two():
+    """RULED: declared-but-uncalled comes out. An operation with zero callers is a name with no
+    working consumer, and implementing it would be implementing against a docstring."""
+    from agent_fleet.docs_agent.reads import DocPageReader
+
+    ops = [n for n in dir(DocPageReader) if not n.startswith("_")]
+    assert ops == ["page_for_subject"], (
+        f"the reader Protocol declares {ops}. Anything beyond page_for_subject must have a real "
+        f"caller in this engine — grep for it before adding it back.")
+
+    # THE CONTROL, and it is the one that matters: the surviving operation IS called. A Protocol
+    # trimmed to one uncalled operation would satisfy the assertion above.
+    import pathlib
+    src = pathlib.Path(
+        __file__).resolve().parents[2].joinpath("agent_fleet/docs_agent/main.py").read_text(
+        encoding="utf-8")
+    assert "page_for_subject(" in src, (
+        "the engine no longer calls page_for_subject — then it too is declared-but-uncalled and "
+        "the same ruling applies to it")
+
+
+def test_the_response_is_always_a_LIST_even_for_one_page():
+    """ONE SHAPE. A response that is a card sometimes and a list other times makes every consumer
+    branch, and the branch nobody writes is the plural one."""
+    import agent_fleet.docs_agent.main as m
+
+    body = PAGE.read_bytes()
+    row = _row(body)
+
+    class _Reader:
+        def page_for_subject(self, subject_iri):
+            return [row]
+
+    class _Store:
+        def read(self, locator):
+            return body
+
+    prev_r, prev_s = m.READER, m.STORE
+    try:
+        m.READER, m.STORE = _Reader(), _Store()
+        out = m.explain_endpoint(m.ExplainRequest(params={"subject": "mesh:resolveInstance"}))
+    finally:
+        m.READER, m.STORE = prev_r, prev_s
+
+    assert isinstance(out["pages"], list) and out["page_count"] == 1
+    assert out["pages"][0]["body"] == body.decode("utf-8")
+
+
+def test_a_TIE_RENDERS_BOTH_rather_than_picking_the_first():
+    """The `banana 4` failure applied to documents: a plausible winner chosen on no evidence is
+    indistinguishable from a confident answer. The reader orders; anything still tied is shown."""
+    import agent_fleet.docs_agent.main as m
+
+    body = PAGE.read_bytes()
+    a = _row(body, iri="http://invincible-agent/docs#runbook-a", title="A")
+    b = _row(body, iri="http://invincible-agent/docs#runbook-b", title="B")
+
+    class _Reader:
+        def page_for_subject(self, subject_iri):
+            return [a, b]
+
+    class _Store:
+        def read(self, locator):
+            return body
+
+    prev_r, prev_s = m.READER, m.STORE
+    try:
+        m.READER, m.STORE = _Reader(), _Store()
+        out = m.explain_endpoint(m.ExplainRequest(params={"subject": "mesh:resolveInstance"}))
+    finally:
+        m.READER, m.STORE = prev_r, prev_s
+
+    assert out["page_count"] == 2, "a tie was broken silently — one page was dropped"
+    assert [p["title"] for p in out["pages"]] == ["A", "B"], (
+        "the reader's order was not preserved; ordering is the reader's job and reordering here "
+        "would break the precedence it applied")
+
+
+# ── THE READER BINDING ────────────────────────────────────────────────────────────────────────
+
+def _payload(pages):
+    return {"subject": "mesh:x", "pages": pages, "count": len(pages)}
+
+
+def _reader(payload):
+    from agent_fleet.docs_agent.ontology_reader import OntologyDocPageReader
+
+    class _Stub:
+        def post(self, path, body):
+            assert path == "/page_for_subject", path
+            assert body["subject"] == "mesh:x"
+            assert body["audience"] is None, (
+                "audience is sent as null on purpose — no persona reaches this engine on the "
+                "direct route, and a guess would make the operation order by an audience nobody "
+                "asserted")
+            return payload
+
+    return OntologyDocPageReader(client=_Stub())
+
+
+def fake_locator(sha: str, name: str) -> str:
+    """A page locator in its real shape, ASSEMBLED — the ONE place this file builds one.
+
+    `test_citation_paths` scans tracked files for `docs/…` paths and reads a literal one as a
+    citation of a file that does not exist. It is right; these are not citations. That has now
+    caught three fixtures in this file and is the eighth instance repo-wide of an instrument and
+    its subject sharing a surface — so the remedy is a constructor every fixture goes through,
+    not a rule each new literal has to remember.
+    """
+    return "docs" + f"/pages/{sha}/{name}"
+
+
+_ROW = {"iri": "http://invincible-agent/docs#runbook-a", "title": "A", "doc_kind": "how-to",
+        "audience_hint": "ARCHITECT", "source": fake_locator("aa", "a.md"), "body_sha": "aa",
+        "explains": ["mesh:one", "mesh:two"]}
+
+
+def test_the_binding_satisfies_the_engine_s_own_protocol():
+    from agent_fleet.docs_agent.reads import DocPageReader
+    assert isinstance(_reader(_payload([])), DocPageReader), (
+        "the binding no longer satisfies reads.DocPageReader — the Protocol was written as the "
+        "first consumer's contract and this class is the only thing that has to meet it")
+
+
+def test_an_empty_corpus_is_an_ANSWER_and_an_outage_is_NOT():
+    """The two must not render alike: one is a gap in the writing, the other is a reader who
+    should come back. Collapsing them is how an outage reads as an empty corpus."""
+    from agent_fleet.docs_agent.ontology_reader import ReaderUnavailable
+
+    assert _reader(_payload([])).page_for_subject("mesh:x") == [], (
+        "count: 0 must return an empty list, not raise — the verb abstains naming the subject")
+
+    with pytest.raises(ReaderUnavailable):
+        _reader({"subject": "mesh:x"}).page_for_subject("mesh:x")
+
+
+def test_a_row_missing_a_field_is_REFUSED_not_dropped():
+    """The engine asserts a sha before it renders, so a row without one cannot be served — and
+    silently dropping it produces a list quietly one page shorter, which looks complete."""
+    from agent_fleet.docs_agent.ontology_reader import ReaderUnavailable
+
+    short = {k: v for k, v in _ROW.items() if k != "body_sha"}
+    with pytest.raises(ReaderUnavailable) as caught:
+        _reader(_payload([short])).page_for_subject("mesh:x")
+    assert "body_sha" in str(caught.value), "the refusal does not name the missing field"
+
+
+def test_explains_becomes_a_TUPLE_and_nothing_else_is_transformed():
+    rows = _reader(_payload([dict(_ROW)])).page_for_subject("mesh:x")
+    assert len(rows) == 1
+    assert rows[0].explains == ("mesh:one", "mesh:two"), (
+        "the wire's list must become a tuple — a row a caller can mutate is a row two callers can "
+        "disagree about")
+    for field in ("iri", "title", "doc_kind", "audience_hint", "source", "body_sha"):
+        assert getattr(rows[0], field) == _ROW[field], (
+            f"{field} was transformed in transit; this binding changes SHAPE, never content")
+
+
+def test_the_binding_does_not_re_sort():
+    """Ordering is the operation's job and its precedence is ruled. A client that re-sorted would
+    silently override a rule it cannot see the inputs to."""
+    b = dict(_ROW, iri="http://invincible-agent/docs#runbook-b", title="B")
+    a = dict(_ROW, iri="http://invincible-agent/docs#runbook-a", title="A")
+    rows = _reader(_payload([b, a])).page_for_subject("mesh:x")
+    assert [r.title for r in rows] == ["B", "A"], (
+        "the binding reordered the operation's answer — today every page ties, so any order this "
+        "client imposed would be a manufactured winner")
+
+
+def test_the_binding_holds_no_DRIVER():
+    """It holds an httpx call to a named operation. That is the distinction the one-client rule
+    turns on, and it is asserted rather than intended."""
+    import agent_fleet.docs_agent.ontology_reader as mod
+
+    src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    for banned in ("import neo4j", "from neo4j", "import weaviate", "SPARQLWrapper",
+                   "import rdflib", "import boto3"):
+        assert banned not in src, (
+            f"ontology_reader imports {banned!r} — the binding is supposed to be one HTTP call to "
+            f"someone else's named operation, not a second reader of the substrate")

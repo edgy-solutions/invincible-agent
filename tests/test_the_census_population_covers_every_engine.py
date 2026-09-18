@@ -68,6 +68,9 @@ _COMPONENT_TO_URL_VAR = {
     # engine missing from it — which is how engine-lg went unaccounted for, and is the reason this
     # map demands either a URL var or an explicit waiver rather than tolerating silence.
     "engine-safety": "ENGINE_SAFETY",
+    # engine-docs (ADR-0037). ENGINE_DOCS_PUBLIC_URL is in configmap.yaml; without the
+    # mapping here the census prints a complete-looking table with this engine missing.
+    "engine-docs": "ENGINE_DOCS",
     "engine-lg": "ENGINE_LG",
     "data-analyst": "ENGINE_DA",
 }

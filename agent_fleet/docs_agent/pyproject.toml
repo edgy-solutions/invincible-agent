@@ -1,0 +1,67 @@
+[project]
+name = "docs-agent"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Mesh membership package — transport auth (the app dependency) + the ONE general mint.
+    # PINNED TO A TAG, matched to the fleet pin: this package governs fleet auth, so a floating
+    # ref would let one SDK commit change every engine's security behaviour at rebuild.
+    # `tests/test_lock_coherence.py` polices drift. v0.9.1 is also the release whose Protocol
+    # declares `page_for_subject` — this engine is its first consumer, and the ONE operation
+    # is one because the second was removed for having no caller rather than implemented.
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.1",
+    "fastapi",
+    # THE SERVER, AND ONLY ONE. The agent image's CMD branches: hypercorn if
+    # `/app/.venv/bin/hypercorn` exists, else uvicorn. Declaring hypercorn makes the first branch
+    # win deterministically, so uvicorn would be a dependency no path can reach. This engine has
+    # no Procfile, so the CMD is the whole launch story.
+    "hypercorn",
+    "pydantic",
+    # `agent_fleet/utils/mesh_registration.py` is copied into /app/utils and reaches the registrar
+    # over HTTP. Declared because the engine imports it at startup, not because the base image
+    # happens to carry it.
+    "httpx",
+    # ── THE ONE DEPENDENCY THAT LOOKS LIKE A DRIVER, AND IS RULED NOT TO BE ─────────────────
+    #
+    # RULED 2026-09-15. `body_store.py` fetches one object by the key a DocPage row handed it.
+    # There is no query, no query language, and no choice of what to read — the row names a key
+    # and the store returns those bytes. That is outside the one-client rule rather than an
+    # exception to it, and the distinction matters: an exclusion list whose entries read
+    # "actually this one is not a driver" stops being auditable, which is the property that
+    # makes the ban enforceable at all.
+    #
+    # WHAT WOULD MAKE THIS A REAL VIOLATION, so a later reader can tell: boto3 reaching anything
+    # the graph did not name, or a second store, or any call other than get_object. The seam is
+    # `reads.BodyStore` — one method, `read(locator) -> bytes` — and everything above it is
+    # driverless by assertion in `tests/docs/`.
+    "boto3",
+]
+
+# DELIBERATELY THIN, and the omissions are the argument.
+#
+# NO neo4j, NO weaviate, NO SPARQLWrapper, NO langfuse. engine-docs is meant to be the FIRST
+# ENGINE BORN WITHOUT A DRIVER: it reads the corpus through engine-o's named operation
+# `POST /page_for_subject` over httpx — one call, no query, no store connection — rather than by
+# reaching Jena itself. A store driver appearing in this list would mean that decision had been
+# quietly reversed, which is a design change and not a packaging one, so it should be hard to add
+# here and visible when it is.
+#
+# CORRECTED 2026-09-17: this said `MeshGraph`, said "two operations", and said the SDK declared
+# them. All three were wrong — it is `MeshOntology`, the store is JENA not Neo4j, and
+# `page_for_subject` is declared in this engine's own `reads.py` and not at v0.9.1. Left as a
+# correction rather than a clean rewrite, because the wrong version is what makes the tag pin
+# above readable: the pin is for transport auth and the mint, not for an operation it never had.
+#
+# NO pyyaml. The frontmatter is read by `scripts/generate_docs_corpus.py` at BUILD time, never by
+# the engine: what the engine receives is triples the prime landed and bytes the prime uploaded.
+# Copying a sibling's list is how an unused dependency becomes a permanent one.
+#
+# NO rdflib. The engine never parses a TTL — that is the prime's job and doc-tools' ingest's.
+#
+# THIS FILE EXISTS FROM THE ENGINE'S FIRST COMMIT, and the reason is a measured failure rather
+# than tidiness. `Dockerfile.agent` COPYs `${AGENT_DIR}/pyproject.toml*` — a GLOB, which matches
+# zero files without erroring — and then runs `uv sync` only `if [ -f "pyproject.toml" ]`. With
+# neither file present the build does nothing, REPORTS SUCCESS, and produces an image with no
+# `/app/.venv`; the CMD then fails with `/app/.venv/bin/python: not found` and the engine
+# crash-loops. A conditional written to tolerate an absent file cannot distinguish "this service
+# needs no venv" from "this service's inputs are missing".
