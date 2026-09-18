@@ -130,7 +130,7 @@ One directory per archetype, both halves in it:
 |---|---|
 | `contract.ts` | the typed payload the card reads, and its validator — `ok` or `refused` |
 | `Card.tsx` | the component |
-| `fixtures/` | **at least one DISCRIMINATING fixture** — see §5, and **see the measurement below: these do not exist yet** |
+| `fixtures/` | fixtures **DISCRIMINATING AGAINST THE CARD'S DECLARED ABSENCES — each flips at least one.** And **a card with a claim no attribute names may not be packaged until it declares one** (amended 2026-09-18; see the worked case). **They do not exist yet** — see the measurement below |
 | a row in `policy/archetypes/<id>.yaml` | the backend half, declared rather than edited |
 
 **The library provides the declared-absence mechanism** — the way a card names what it could not
@@ -260,6 +260,7 @@ A contribution that passes these does not need the maintainer to look at it; one
 |---|---|
 | contract validates against the row | a card reading a field the row does not declare |
 | **no passthrough tuple survives** | an archetype added the old way — the row is the only door, asserted rather than assumed |
+| **branches vs. attributes, per card** | a card with decisions the mechanism cannot see — the cheap check, before anyone reads the code |
 | **the fixture discriminates** | a fixture that cannot fail — the decorative-seal problem, and the reason "at least one" is not enough on its own |
 | the mirror holds both directions | R-076: a producer doing the right thing with no consumer written |
 | declared-absence assertable | a card that draws over a gap without naming it |
@@ -332,6 +333,67 @@ does each step is the architect's to say, the same way the reviewer role was.
    from engine-docs and then used to build the next one.
 6. **The first team outside this one ships the next package.** That is the measurement that
    matters, and until it happens the funnel has moved rather than opened.
+
+## AMENDMENT 2026-09-18 — discriminating AGAINST WHAT, and a card that cannot say what it decided
+
+**The ADR left "at least one discriminating fixture" undefined, and the reviewer's first act under
+step 1 found that it is not one answer for the three cards.** It is two, and the second is a hole
+in §5's safety argument.
+
+### The measurement, and the ratio is the diagnostic
+
+| card | conditional branches | machine-readable attributes |
+|---|---|---|
+| `CompetingMeasures` | 8 | **8** |
+| `AskCard` | 13 | **14** |
+| **`ContributionRanking`** | **16** | **4** |
+
+For the first two, nearly every decision is externally assertable, so a fixture discriminates
+**through the declared-absence mechanism itself** — which is what §6 assumed of all three.
+
+> **A CARD WHOSE BRANCHES FAR EXCEED ITS ATTRIBUTES HAS DECISIONS THE MECHANISM CANNOT SEE.** The
+> ratio is now a seal in §6, because it is cheap, it needs nobody to read the code, and **it is the
+> number that found this.**
+
+### The hole, concretely
+
+`ContributionRanking`'s sharpest decision is **one character with no attribute.** `signedSet` —
+whether a `+` renders — is computed at line 196 and rendered at 244. The card's own comment says
+why it matters: on an unsigned set a `+` is a distinction the data cannot support, *"decoration
+with a false reading attached."*
+
+**So a replacement that dropped the `signedSet` gating would pass an attribute-level parity seal.**
+Every declared absence still declared, the card printing `+` on a set that cannot carry the sign,
+and the seal green. **That is the contract being incomplete, not the fixture being hard** — a card
+drawing a confident thing over an input that cannot support it is precisely what the mandatory
+mechanism exists to catch, and here it does not.
+
+### RULED: the card declares the absences, over the POPULATION and not the instance
+
+The alternative was to make the parity seal compare rendered **text** rather than attributes.
+Honest, and every package would pay for it. **Rejected in favour of completing the contract**,
+which is smaller and has the better property: the mechanism covers the decision rather than the
+seal working around it.
+
+> ⛔ **AND THE RULING IS OVER THE TWELVE, NOT THE ONE.** Declaring `data-unsigned-set` and stopping
+> would fix **the branch the review looked at hardest** — a sample, not the population. The gap is
+> **twelve** unattributed branches; `signedSet` is the first instance.
+
+So: **derive which of the twelve carry a SEMANTIC CLAIM** — a decision a reader would act on — and
+declare an absence for each. **The presentational ones are listed as EXCLUDED, with the reason**,
+because an exclusion nobody wrote down is indistinguishable from a branch nobody looked at. Then
+the card can be packaged, and its fixtures discriminate against a mechanism that sees every claim.
+
+**This is the third time in one week that fixing the named instance would have been fixing a
+sample**, and the third time it was caught by the person about to commit it. The pattern is now
+frequent enough to be a habit rather than a save: *the error names an instance; the fix is owed to
+the population.*
+
+### And the sequence's first act is the derivation, not the fixtures
+
+**Step 1 cannot honestly begin with fixtures**, because a fixture flips a declared absence and
+`ContributionRanking` cannot yet say what one of its sharpest decisions was. The derivation above
+comes first, then the declarations, then the fixtures that flip them.
 
 ## Non-goals
 
