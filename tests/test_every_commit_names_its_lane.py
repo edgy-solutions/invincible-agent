@@ -74,6 +74,23 @@ _RULE_COMMIT = "b466612"
 #: ever carries a valid trailer, so a stale row is a failure rather than a silent allowance.
 #: (Mechanism from `lane/91`; adopted here before that branch merged.)
 _EXEMPT: dict[str, str] = {
+    # ── FOLDED IN FROM lane/91 BY THE 2026-09-18 MERGE ───────────────────────────────────
+    # ⛔ THESE LIVED IN A SECOND `_EXEMPT` DEFINITION 140 LINES BELOW, and git merged both
+    # without a conflict because they never touched. **Python then took the last one**, so
+    # master's seven exemptions above were silently discarded and the lint reddened on commits
+    # it was ruled not to bind. A TEXTUAL MERGE WITH NO CONFLICT IS NOT A SEMANTIC MERGE — the
+    # markers showed me the one collision git could see, and the language resolved the one it
+    # could not by last-wins, in silence.
+    #
+    # The reason these two exist: the rule WAS in this lane's ancestry, carried in by a master
+    # merge, and the lane kept using the spelling the architect had ratified an hour before
+    # 11b4070 landed the pair rule. THE LESSON IS THE REASON, NOT THE EXEMPTION — a merge can
+    # bring a NEW SEAL, and running only the directories you edited will not find it.
+    "57e3aa3bd6570b725d91088609333dd05d903f94":
+        "ratified spelling superseded by 11b4070 after this was written; the architect ratified "
+        "`Lane: lane/91 (invincible-agent-81)` an hour before the pair rule landed",
+    "6186339d9aa940df82f055a2e9a835d6f4d6f48b":
+        "ratified spelling superseded by 11b4070 after this was written; same lane, same hour",
     "b15adbc": (
         "engine-lg's compile fix, pushed direct to master. A genuine omission rather than a" + 
         " boundary case: the rule WAS in its ancestry. It is the R-063 shape in reverse — the" + 
@@ -201,28 +218,6 @@ def test_THE_TRAILER_FORM_IS_PARSEABLE():
     assert not _TRAILER.search("Lane:"), "an empty trailer must not parse"
 
 
-#: COMMITS EXEMPT BY NAME, EACH WITH ITS REASON. Ruled 2026-09-14: published history is not
-#: rewritten to satisfy a lint (R-030, and this file's own docstring), and an exclusion WITH A
-#: REASON fails loudly where a rewrite fails silently.
-#:
-#: Four of `lane/91`'s non-compliant commits are exempt BY ANCESTRY — `11b4070` is not among
-#: their forebears, so they were written under the spelling that preceded the pair rule and no
-#: list is needed for them. The two below DO descend from it, and they are the honest case: the
-#: rule was already in this lane's tree, carried in by a master merge, and the lane kept using
-#: the superseded spelling for two more commits.
-#:
-#: **THE LESSON IS THE REASON, NOT THE EXEMPTION.** A merge can bring a NEW SEAL, and running
-#: only the directories you edited will not find it. Both commits ran `tests/finance/` and
-#: `tests/cost/` green and never ran this file.
-_EXEMPT: dict[str, str] = {
-    "57e3aa3bd6570b725d91088609333dd05d903f94":
-        "ratified spelling superseded by 11b4070 after this was written; the architect ratified "
-        "`Lane: lane/91 (invincible-agent-81)` an hour before the pair rule landed",
-    "6186339d9aa940df82f055a2e9a835d6f4d6f48b":
-        "ratified spelling superseded by 11b4070 after this was written; same lane, same hour",
-}
-
-
 @pytest.mark.parametrize(
     "sha,subject,body",
     _bound_commits() or [("", "", "")],
@@ -346,3 +341,47 @@ def test_AN_EXEMPTION_RETIRES_ITSELF():
                 f"{key} is in _EXEMPT but now carries a valid Lane: trailer. Delete the entry — "
                 f"it is allowing something that no longer needs allowing."
             )
+
+
+def test_THIS_FILE_DEFINES_ITS_TABLES_EXACTLY_ONCE():
+    """⛔ THE DEFECT THE 2026-09-18 MERGE SHIPPED FOR ONE COMMIT, and the reason it is sealed
+    here rather than remembered.
+
+    Master and `lane/91` each grew an `_EXEMPT` definition, 140 lines apart. **Git merged both
+    without a conflict** — they never touched, so there was nothing to mark — and **Python
+    resolved the collision by last-wins, in silence**. Master's seven exemptions vanished and
+    the lint reddened on six commits it had been explicitly ruled not to bind.
+
+    > **A TEXTUAL MERGE WITH NO CONFLICT IS NOT A SEMANTIC MERGE.** The markers show you the
+    > collisions the tool can see. A duplicate top-level binding is one it cannot, and the
+    > language's answer to it is not an error — it is a quiet winner.
+
+    The conflict I reasoned hardest about that day (prefix lookup versus exact match) I got
+    right; the one that actually shipped was in a region git called clean. **Read what merged
+    cleanly, not only what conflicted.**
+
+    Derived, not listed: any top-level name bound twice in this module fails, so the next table
+    to grow a second definition is covered by the commit that adds it.
+    """
+    import ast
+
+    src = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    seen: dict[str, int] = {}
+    dupes: list[str] = []
+    for node in tree.body:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+        for name in targets:
+            if name in seen:
+                dupes.append(f"{name} (lines {seen[name]} and {node.lineno})")
+            seen[name] = node.lineno
+    assert not dupes, (
+        f"these module-level names are bound twice, and the SECOND one wins silently: {dupes}. "
+        f"A merge that brought both halves of a table produced exactly this once already — fold "
+        f"them into one definition rather than leaving the language to pick."
+    )
+    assert seen, "parsed no top-level assignments — the seal has gone vacuous"
