@@ -23,6 +23,7 @@ program, supplier or rate agreement.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 from decimal import Decimal
@@ -47,6 +48,24 @@ def _repo_root() -> Optional[pathlib.Path]:
     return None
 
 
+#: Where the engine is reachable from, for building artifact URIs. SAME ENV VAR THE
+#: REGISTRATION USES (`main.py` passes it as `endpoint_url`'s base), so a caller that can reach
+#: a verb can reach the artifact that verb produced. Naming a second variable here would let
+#: the two drift into a state where the mesh routes to one host and the download link to
+#: another — and the link is the half nobody tests.
+_PUBLIC_BASE_ENV = "ENGINE_COST_PUBLIC_URL"
+_DEFAULT_BASE = "http://iagent-engine-cost:8097"
+
+
+def _artifact_uri(filename: str) -> str:
+    """The fetchable URI for a produced artifact.
+
+    A PATH IS NOT A URI. The caller is a card in a browser and a recipient outside this
+    cluster; neither can open `/repo/dist/...`, and handing one over leaks the deployment's
+    filesystem layout to someone with no use for it.
+    """
+    base = (os.getenv(_PUBLIC_BASE_ENV) or _DEFAULT_BASE).rstrip("/")
+    return f"{base}/artifact/{filename}"
 #: What `package_export` actually needs on disk, and therefore what "a root" means here.
 #:
 #: ⛔ THIS USED TO TEST FOR `scripts/` AND `agent_fleet/` — a proxy for "a developer checkout".
@@ -100,7 +119,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     )
     from export import audit_line, build_dataset_package, build_package
     from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
-    from seed import RECIPIENT_SCOPES, lots_for_recipient
+    from seed import RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient
 except ImportError:
     from agent_fleet.cost_agent.entities import (
         COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
@@ -111,7 +130,9 @@ except ImportError:
     from agent_fleet.cost_agent.pricing import (
         DEFAULT_COMPOSITION, compose_price, rates_for, unit_price,
     )
-    from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES, lots_for_recipient
+    from agent_fleet.cost_agent.seed import (
+        RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient,
+    )
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the
 #: response, and by the registration, to fill Contract D's output end — so the two cannot
@@ -907,7 +928,45 @@ def package_export(
 
     dest = root / "dist" / f"cost-validation-{scope}.html"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(html, encoding="utf-8")
+
+    # ⚠ WRITE_BYTES, NOT WRITE_TEXT, AND THE ROUND-TRIP BELOW IS WHAT FOUND IT.
+    #
+    # `write_text` opens in TEXT MODE, which translates "\n" to the platform line ending. On
+    # Windows the file on disk was therefore NEVER the bytes that were produced — measured,
+    # 12 produced bytes became 14 on disk with a different sha256.
+    #
+    # THIS IS A REPRODUCIBILITY DEFECT IN A GOVERNED EMIT, not a cosmetic one. ADR-0047's
+    # whole premise is that a recipient can verify the artifact against the manifest that
+    # describes it; a hash taken over the produced string would not match the file they
+    # downloaded. And the artifact became PLATFORM-DEPENDENT: the same commit, the same seed
+    # and the same algorithm produce different bytes and a different hash on Linux and on
+    # Windows, so "byte-identical export" was false across the only axis it needed to hold on.
+    dest.write_bytes(html.encode("utf-8"))
+
+    # ── THE ROUND TRIP. RE-READ FROM DISK AND HASH WHAT IS ACTUALLY THERE. ──────────────
+    #
+    # ⚠ UNTIL THIS LANDED, NO HASH OF THE ARTIFACT EXISTED AT ALL. `locator` is
+    # `content_hash(body)` — a hash of the package BODY DICT, computed from state — and the
+    # HTML was written separately and never hashed. Every figure in the response therefore
+    # described what the engine INTENDED to write. A truncated write, a short flush, a full
+    # disk: each reports success, and nothing anywhere notices.
+    #
+    # HASHING `html` IN MEMORY WOULD NOT BE A ROUND TRIP. It would re-state the intent in a
+    # second place, and agree with itself for exactly the reason that makes it worthless. The
+    # bytes have to come back off the disk, which is the only step that can disagree.
+    written = dest.read_bytes()
+    artifact_sha256 = "sha256:" + hashlib.sha256(written).hexdigest()
+    intended_sha256 = "sha256:" + hashlib.sha256(html.encode("utf-8")).hexdigest()
+    if artifact_sha256 != intended_sha256:
+        # A DISTINCT REFUSAL, not a warning. The package is the artifact; if the file on disk
+        # is not the one the manifest describes then the manifest is a false record, and
+        # shipping it is worse than shipping nothing because it carries a hash that will
+        # verify against the wrong bytes.
+        raise SourceUnavailable(
+            f"the written artifact does not match what was produced: wrote {len(written)} "
+            f"bytes hashing {artifact_sha256}, produced content hashing {intended_sha256}. "
+            f"The package has NOT been emitted."
+        )
 
     audit = audit_line(package, disclosed_by="package_export")
     return {
@@ -917,6 +976,15 @@ def package_export(
         "lot_count": len(lots),
         "artifact_filename": dest.name,
         "artifact_bytes": dest.stat().st_size,
+        # THE URI IS WHERE THE ARTIFACT CAN BE FETCHED, not where it happens to sit on this
+        # filesystem. A card cannot open a path, and a path leaks the deployment's layout to a
+        # recipient who has no use for it. Built from the engine's own public base so it is
+        # correct wherever the engine is reached from.
+        "artifact_uri": _artifact_uri(dest.name),
+        # HASHED FROM THE FILE AS WRITTEN, re-read from disk. Distinct from `locator`, which
+        # hashes the package BODY: this one answers "is the file you are about to download the
+        # file this manifest describes", and nothing answered that before.
+        "artifact_sha256": artifact_sha256,
         "dataset_filename": dataset_path.name if dataset_path else None,
         # BOTH HASHES AND THE COMMIT, in the answer itself. A caller that has the response has
         # everything needed to say which package this was, without opening it.

@@ -121,24 +121,65 @@ def test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY(state, program_id, monkeypatch):
     assert s["spread"] == 0, "one answer has no spread, and that is not a disagreement"
 
 
-def test_IT_IS_NOT_BOUND_TO_FORECAST_MEASURE():
-    """UNBOUND ON PURPOSE, and the refusal is written down rather than left as an absence.
+def test_IT_IS_BOUND_TO_COMPETING_MEASURES_AND_STILL_NOT_TO_FORECAST_MEASURE(state, program_id):
+    """THE CONFORMANCE CASE THE PREVIOUS SEAL ASKED FOR WHEN IT WAS RETIRED.
 
-    FORECAST_MEASURE declares `exactlyOneRow: true` — "One forecast. A list of them is a series,
-    which is a different archetype." A three-row payload would be REFUSED by the component, so
-    binding there would produce a card that never draws. No existing archetype fits: the three
-    values do not sum to a total (CONTRIBUTION_RANKING), are not a before-and-after (DELTA_SET),
-    and are not indexed by period (MULTI_SERIES). They are COMPETING MEASUREMENTS OF ONE
-    QUANTITY, which is a distinct axis and wants its own archetype.
+    What stood here was `test_IT_IS_NOT_BOUND_TO_FORECAST_MEASURE`: unbound on purpose, because
+    FORECAST_MEASURE declares `exactlyOneRow` and no other archetype fitted. It named its own
+    exit condition — *"if this is now bound, delete this seal and add a conformance case, but
+    check the archetype accepts more than one row first"* — and both halves are honoured here.
 
-    Unbound beats mis-bound: a mis-binding renders something plausible and wrong.
+    ── WHAT CHANGED, AND IT WAS NOT THE ARGUMENT ────────────────────────────────────────────
+    Nothing about FORECAST_MEASURE moved. `COMPETING_MEASURES` existed at every layer from
+    2026-09-11 — projector passthrough, component, contract, glyph — with its contract header
+    naming estimate-at-completion by all three earned-value formulas as **its first consumer**.
+    **No capability row ever claimed it.** The archetype was never missing; the row was, and
+    this seal's premise ("no existing archetype fits") had quietly stopped being true.
+
+    THE ROW-COUNT CHECK IT DEMANDED: the contract declares `minRows: 2` — *"Fewer than this is
+    not a comparison. One method is a FORECAST_MEASURE."* So the archetype does not merely
+    tolerate three rows, it REFUSES fewer than two, which is the opposite constraint from the
+    one that ruled FORECAST_MEASURE out. Checked against the contract file where cortex-ui is a
+    sibling, and against this verb's real row count always.
+
+    THE NEGATIVE HALF SURVIVES INTACT, because it was never conditional on the positive: a
+    three-row payload handed to FORECAST_MEASURE is still refused by the component, and a
+    binding there would still draw nothing.
     """
+    import pathlib
+    import re
+
     from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
 
-    bound = {b["subject_uri"] for b in PRESENTATION_CAPABILITIES}
-    assert "fin:EstimateAtCompletionComparison" not in bound, (
-        "if this is now bound, delete this seal and add a conformance case - but check the "
-        "archetype accepts more than one row first")
+    by_subject = {b["subject_uri"]: b for b in PRESENTATION_CAPABILITIES}
+    row = by_subject.get("fin:EstimateAtCompletionComparison")
+    assert row, "the comparison is bound to nothing, so no card will ever be chosen for it"
+    assert row["archetype"] == "COMPETING_MEASURES", (
+        f"bound to {row['archetype']!r}; the spread is the finding and only this archetype "
+        f"draws the disagreement rather than choosing one of three defensible numbers"
+    )
+    assert row["archetype"] != "FORECAST_MEASURE", (
+        "FORECAST_MEASURE declares exactlyOneRow — a three-row payload is refused by the "
+        "component, so this binding would produce a card that never draws"
+    )
+
+    # THE VERB REALLY PRODUCES MORE THAN ONE ROW. Asserting the archetype's minimum without
+    # asserting the payload clears it would check the contract and not the pairing.
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    assert len(rows) >= 2, (
+        f"{len(rows)} row(s) — below COMPETING_MEASURES' declared minimum of 2, which would "
+        f"make this binding refuse at render time"
+    )
+
+    contract = (pathlib.Path(__file__).resolve().parents[2].parent / "cortex-ui" / "src"
+                / "components" / "planning" / "CompetingMeasures.contract.ts")
+    if not contract.is_file():
+        pytest.skip("cortex-ui is not a sibling on disk; the contract half cannot run here")
+    m = re.search(r"minRows:\s*(\d+)", contract.read_text(encoding="utf-8"))
+    assert m, "the contract no longer declares minRows — the row-count claim is unchecked"
+    assert int(m.group(1)) <= len(rows), (
+        f"the contract now requires {m.group(1)} rows and this verb produces {len(rows)}"
+    )
 
 
 def test_STRUCTURAL_NAMES_RIDE_BESIDE_THE_DOMAIN_ONES(state, program_id):

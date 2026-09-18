@@ -30,13 +30,19 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from measure_modules import variance_driver_ranking
+    from measure_modules import (
+        burn_series, decomposition_policy, eac_formulas, funding_grid,
+        index_series, variance_driver_ranking,
+    )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
         PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
         periods_in,
     )
-    from agent_fleet.finance_agent.measure_modules import variance_driver_ranking
+    from agent_fleet.finance_agent.measure_modules import (
+        burn_series, decomposition_policy, eac_formulas, funding_grid,
+        index_series, variance_driver_ranking,
+    )
 
 FIN = "http://invincible-agent/fin#"
 
@@ -96,6 +102,16 @@ def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, An
         # stay, and the structural name is the one that should be preferred.
         "lowest_value": float(low),
         "highest_value": float(high),
+        # THE THING THE PERCENTAGE IS A PERCENTAGE OF. `spread_percent_of_bac` travelled for
+        # four days with its denominator left on the ROWS, so a card drawing "the spread against
+        # the reference" had the ratio and not the quantity — and the archetype's contract has
+        # declared `reference_value` the whole time with nobody emitting it.
+        #
+        # STRUCTURALLY NAMED, like `lowest_value` beside it: the card knows it compares several
+        # methods against one reference and does not need to know the reference is a budget at
+        # completion. None where the rows carry no BAC, by the absent-means-silent rule — a
+        # zero reference would make every spread infinite-looking rather than unmeasured.
+        "reference_value": float(bac) if bac else None,
     }
 
 
@@ -196,9 +212,127 @@ def _verdict_burn(rows: list[dict[str, Any]]) -> Optional[str]:
 #: reader could redo from the chart. They say nothing about whether that is ACCEPTABLE, which
 #: is a programmatic judgement this engine has no standing to make and does not have the
 #: inputs for. If a phrasing ever implies one, it belongs to the finance group, not here.
+def _verdict_variance_tree(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The LARGEST contributor and its share of the root. A restatement, not a judgement.
+
+    The tree already publishes `share_of_root` on every node; this names the biggest one. A
+    reader could redo it from the chart, which is the test for whether a line belongs here.
+
+    ABSENT WHEN THE ROOT VARIANCE IS ZERO — a decomposition of nothing has no largest
+    contributor, and "0% of nothing" is a sentence that reads as information.
+
+    THE SIGN IS NOT INTERPRETED. A favourable contributor inside an unfavourable root has a
+    NEGATIVE share, and reporting it as "accounts for -11%" is the arithmetic rather than a
+    claim about whether that is good — which is the finance group's call and not this engine's.
+    """
+    if not rows:
+        return None
+    root = rows[0]
+    contributors = root.get("contributors") or []
+    if not contributors or not root.get("variance"):
+        return None
+    biggest = max(contributors, key=lambda c: abs(c.get("variance") or 0))
+    share = biggest.get("share_of_root")
+    if share is None:
+        return None
+    return (f"{biggest.get('entity_name', biggest.get('entity_id'))} accounts for "
+            f"{share:.0%} of the variance")
+
+
+def _verdict_funding(rows: list[dict[str, Any]]) -> Optional[str]:
+    """How many lines are SHORT and by how much, counted from the rows' own verdicts.
+
+    COUNTED FROM `state`, NOT RE-DERIVED. The producer already decided each cell's funding
+    state; recomputing the condition here would be a second implementation that can disagree
+    with the column beside it.
+
+    ABSENT WHEN NOTHING IS SHORT, which is the honest silence — a brief that says "0 lines
+    short" has spent a line to say nothing, and a card with no caption reads correctly.
+    """
+    short = [r for r in rows if r.get("state") == "short"]
+    if not short:
+        return None
+    total = sum(r.get("shortfall") or 0 for r in short)
+    unit = short[0].get("value_unit") or ""
+    return (f"{len(short)} of {len(rows)} funding lines short, "
+            f"totalling {total:,.0f} {unit}".rstrip())
+
+
+def _verdict_eac(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The forecast against the budget, by the declared VAC convention.
+
+    ABOVE/BELOW IS A DIRECTION, NOT A JUDGEMENT. `vac` is BAC - EAC and its sign convention is
+    declared, so naming which side of the budget the forecast lands on is arithmetic a reader
+    could redo. Whether an overrun of this size is ACCEPTABLE is the finance group's call.
+
+    ABSENT WHEN THE FORECAST LANDS ON THE BUDGET — a line saying "0 above budget" spends a
+    sentence to say nothing.
+    """
+    if not rows:
+        return None
+    row = rows[0]
+    vac, unit = row.get("vac"), row.get("value_unit") or ""
+    if not vac:
+        return None
+    side = "below" if vac > 0 else "above"
+    return (f"{row.get('method', 'forecast')}: {abs(vac):,.0f} {unit} {side} budget".replace(
+        "  ", " "))
+
+
+def _verdict_eac_spread(rows: list[dict[str, Any]]) -> Optional[str]:
+    """How far apart the methods land. THE SPREAD IS THE FINDING (R-001).
+
+    Computed from the rows' own exact column, not from the float edge — this is the
+    subtraction the money ruling names, and reading `eac` here would make the exact column
+    decorative.
+
+    ABSENT WHEN FEWER THAN TWO METHODS ANSWERED, because a spread over one figure is zero by
+    construction and reads as agreement rather than as absence.
+    """
+    exact = [Decimal(r["eac_exact"]) for r in rows if r.get("eac_exact") is not None]
+    if len(exact) < 2:
+        return None
+    unit = rows[0].get("value_unit") or ""
+    return (f"{len(exact)} methods span {float(max(exact) - min(exact)):,.0f} {unit}".rstrip())
+
+
+def _verdict_drivers(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The top-ranked driver and its share. Same restatement as the tree's, one level down.
+
+    THE ROWS ARRIVE RANKED, so this reads the first rather than re-sorting — a second ordering
+    here could disagree with the one the card draws.
+    """
+    if not rows:
+        return None
+    top = rows[0]
+    share = top.get("share_of_total")
+    if share is None:
+        return None
+    return (f"{top.get('entity_name', top.get('entity_id'))} accounts for "
+            f"{share:.0%} of the variance")
+
+
 VERDICT: dict[str, Any] = {
     "fin_performance_indices": _verdict_indices,
     "fin_burn_rate": _verdict_burn,
+    # ADDED 2026-09-15 to retire `unsummarised`: without these the brief falls back to
+    # "reported (see artifact)", which tells a reader the figure exists and not what it is.
+    "fin_variance_analysis": _verdict_variance_tree,
+    "fin_funding_status": _verdict_funding,
+    # THE CENSUS, not the two that were reported. Five verbs fell back to
+    # "reported (see artifact)", not two — the brief renders every one of them.
+    "fin_eac_calculation": _verdict_eac,
+    "fin_variance_drivers": _verdict_drivers,
+    # BOUND 2026-09-15, AND THE REASON IT WAS ABSENT WAS NEVER A MISSING VERDICT. The verb was
+    # bound to NO ARCHETYPE, so an envelope field it declared survived no passthrough and a
+    # standing seal refused it — correctly, and it stayed refused rather than being worked
+    # around.
+    #
+    # `COMPETING_MEASURES` turned out to exist at EVERY layer since 2026-09-11 — projector
+    # passthrough, component, contract, glyph — with this verb named in its contract header as
+    # its FIRST CONSUMER, and nothing had ever joined the two. The archetype was not missing.
+    # The capability row was.
+    "fin_eac_comparison":      _verdict_eac_spread,
 }
 
 VALUE_LABEL: dict[str, str] = {
@@ -221,8 +355,60 @@ VALUE_LABEL: dict[str, str] = {
 #: money ruling scopes to producers and to consumers that subtract or compare.
 _DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contribution")
 
+#: The money fields `fin_performance_indices` computes. The two VARIANCES are why this verb is
+#: in scope at all -- they are subtractions -- and the six quantities are the operands they and
+#: the four indices were taken over, carried so a consumer can check the response against
+#: itself without a second implementation of the verb.
+_INDEX_MONEY_FIELDS = ("bcws", "bcwp", "acwp", "cum_bcws", "cum_bcwp", "cum_acwp",
+                       "cost_variance", "schedule_variance")
 
-def _emit_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+#: The money fields `fin_burn_rate` computes. `trailing_rate` IS money -- an amount per period,
+#: not a ratio -- so it quantizes with the rest; `runway_periods` is a count of periods and is
+#: handled as a ratio. The two sit beside each other and are different kinds, which is the
+#: distinction this table exists to record rather than leave to a reader's inference.
+_BURN_MONEY_FIELDS = ("burn", "planned", "variance_to_plan", "cum_burn", "cum_planned",
+                      "budget_remaining", "trailing_rate")
+
+#: The money fields `fin_eac_calculation` computes. `vac` and `etc` are the two SUBTRACTIONS
+#: that put this verb in the money ruling's scope; `eac` is the forecast they are taken from,
+#: and the four quantities are the operands all three were computed over -- carried so a
+#: consumer can check the response against itself.
+_EAC_MONEY_FIELDS = ("eac", "vac", "etc", "bac", "bcws", "bcwp", "acwp")
+
+#: The money fields `fin_funding_status` computes. FIVE of them are subtractions -- shortfall,
+#: gap, at_risk and the two balances -- and the rest are the operands they were taken over,
+#: carried under BOTH vocabularies because the grid publishes each cell twice.
+_FUNDING_MONEY_FIELDS = ("required", "committed", "secured", "shortfall", "gap", "at_risk",
+                         "authorized", "obligated", "expended",
+                         "unobligated_balance", "unexpended_balance")
+
+#: The money fields `fin_variance_analysis` computes on EVERY node. `variance` and `residual`
+#: are the two subtractions; the three quantities are the operands they were taken over.
+_TREE_MONEY_FIELDS = ("variance", "residual", "bcws", "bcwp", "acwp")
+
+
+def _emit_money_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`_emit_money` over a NESTED result.
+
+    THE FLAT HELPER REACHES ONLY THE ROOT, and a tree whose root carries floats while its
+    contributors carry Decimals is the worst of both: it type-checks at the top, and a consumer
+    summing the children against the parent gets a TypeError three levels down. The standing
+    seal found exactly that when this pass first converted the quantities without an edge.
+    """
+    for node in nodes:
+        _emit_money([node], money_fields=_TREE_MONEY_FIELDS,
+                    ratio_fields=("share_of_root",))
+        if node.get("contributors"):
+            _emit_money_tree(node["contributors"])
+    return nodes
+
+
+def _emit_money(
+    rows: list[dict[str, Any]],
+    *,
+    money_fields: tuple[str, ...],
+    ratio_fields: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     """Convert the exact figures to the edge representation the cards read.
 
     EVERY MONEY FIELD CARRIES AN EXACT STRING BESIDE THE FLOAT, which is engine-cost's pattern
@@ -241,16 +427,19 @@ def _emit_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unused by the one calculation that needed it.
     """
     for row in rows:
-        for key in _DRIVER_MONEY_FIELDS:
+        for key in money_fields:
             value = row.get(key)
             if isinstance(value, Decimal):
                 exact = _money(value)
                 row[f"{key}_exact"] = str(exact)
                 row[key] = float(exact)
-        share = row.get("share_of_total")
-        if isinstance(share, Decimal):
-            row["share_of_total_exact"] = str(share)
-            row["share_of_total"] = float(share)
+        # RATIOS ARE NOT QUANTIZED, and they are carried exact for the same reason money is:
+        # a consumer that compares two indices should read the authority, not the float edge.
+        for key in ratio_fields:
+            value = row.get(key)
+            if isinstance(value, Decimal):
+                row[f"{key}_exact"] = str(value)
+                row[key] = float(value)
     return rows
 
 
@@ -426,15 +615,23 @@ def fin_variance_analysis(
 
     all_wps = {w.wp_id for w in state.work_packages
                if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
-    root_bcws, root_bcwp, root_acwp = _totals(state, all_wps, periods)
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb produces
+    # `variance` and `residual`, both subtractions. The ROOT is converted here and
+    # every node below inherits it, so one boundary serves the whole tree.
+    root_bcws, root_bcwp, root_acwp = _totals_exact(state, all_wps, periods)
     root_variance = _variance(variance_kind, root_bcws, root_bcwp, root_acwp)
-    floor = abs(root_variance) * materiality
+    # THE FRACTION IS CONVERTED AT THE SAME BOUNDARY AS THE MONEY. `Decimal * float` raises,
+    # so a Decimal root variance and a float materiality cannot meet -- found by this step-2
+    # pass, not by reading the module, whose "type-agnostic" claim held for +, - and / between
+    # LIKE types and not for a magnitude multiplied by a fraction.
+    floor = decomposition_policy.materiality_floor(
+        root_variance, Decimal(str(materiality)))
 
     def node(
         level: str, entity_id: str, entity_name: str, wp_ids: set[str],
         depth: int, extra: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        bcws, bcwp, acwp = _totals(state, wp_ids, periods)
+        bcws, bcwp, acwp = _totals_exact(state, wp_ids, periods)
         variance = _variance(variance_kind, bcws, bcwp, acwp)
         rec: dict[str, Any] = {
             "level": level,
@@ -449,7 +646,8 @@ def fin_variance_analysis(
             # choosing either would be right about half the tree. Measured on the seed:
             # Systems Engineering is +120,000 inside a -1,130,000 root.
             "favourable": _is_favourable(variance_kind, variance),
-            "share_of_root": (variance / root_variance) if root_variance else None,
+            "share_of_root": decomposition_policy.share_of_root(
+                variance, root_variance),
             "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
             "value_unit": program.value_unit,
             "period_count": len(periods),
@@ -458,14 +656,15 @@ def fin_variance_analysis(
             rec.update(extra)
 
         children = _children_of(level, entity_id)
-        if not children:
-            rec["stop_reason"] = "leaf"
-        elif abs(variance) < floor:
-            rec["stop_reason"] = "explained"
-        elif depth >= max_depth:
-            # SAY SO. A tree truncated by a depth limit and a tree that genuinely ended
-            # look identical from the outside, and only one of them is a complete answer.
-            rec["stop_reason"] = "depth"
+        # THE POLICY IS THE MODULE'S; the traversal stays here because it needs state.
+        # SAY SO when a tree is truncated: a depth-limited tree and one that genuinely ended
+        # look identical from the outside, and only one of them is a complete answer.
+        reason = decomposition_policy.stop_reason(
+            has_children=bool(children), variance=variance, floor=floor,
+            depth=depth, max_depth=max_depth,
+        )
+        if reason != "decomposed":
+            rec["stop_reason"] = reason
         else:
             kids = [
                 node(child_level, cid, cname, cwps, depth + 1, cextra)
@@ -474,13 +673,14 @@ def fin_variance_analysis(
             # MATERIAL CHILDREN ONLY, and the immaterial remainder is REPORTED rather than
             # dropped. Contributors that do not sum to their parent's variance is the
             # arithmetic lie this engine is most likely to tell, so the residual is a row.
-            material = [k for k in kids if abs(k["variance"]) >= floor]
-            residual = variance - sum(k["variance"] for k in material)
+            material, residual = decomposition_policy.partition(
+                kids, variance=variance, floor=floor)
             rec["contributors"] = material
             if abs(residual) > 0:
                 rec["residual"] = residual
+                dropped = decomposition_policy.immaterial_count(kids, material)
                 rec["residual_note"] = (
-                    f"{len(kids) - len(material)} contributor(s) below the "
+                    f"{dropped} contributor(s) below the "
                     f"{materiality:.0%} materiality floor, netting "
                     f"{residual:,.0f} {program.value_unit}"
                 )
@@ -507,8 +707,8 @@ def fin_variance_analysis(
             ]
         return []
 
-    return [node("program", program.program_id, program.name, all_wps, depth=0,
-                 extra={"bac": program.bac})]
+    return _emit_money_tree([node("program", program.program_id, program.name, all_wps, depth=0,
+                                  extra={"bac": program.bac})])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -569,18 +769,23 @@ def fin_eac_calculation(
     periods = periods_in(window)
     wp_ids = {w.wp_id for w in state.work_packages
               if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
-    bcws, bcwp, acwp = _totals(state, wp_ids, periods)
-    bac = program.bac
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES `vac`
+    # (BAC - EAC) and `etc` (EAC - ACWP) -- two subtractions, so the money ruling scopes
+    # it by its own test. `_ratio` divides Decimals and returns one, so cpi, spi and
+    # percent_complete come back exact too, and the module is type-agnostic so it needed
+    # no change at all.
+    bcws, bcwp, acwp = _totals_exact(state, wp_ids, periods)
+    bac = Decimal(str(program.bac))
 
     cpi = _ratio(bcwp, acwp)
     spi = _ratio(bcwp, bcws)
 
-    if method == "REMAINING_AT_BUDGET":
-        eac: Optional[float] = acwp + (bac - bcwp)
-    elif method == "CPI":
-        eac = (bac / cpi) if cpi else None
-    else:  # CPI_SPI
-        eac = (acwp + (bac - bcwp) / (cpi * spi)) if (cpi and spi) else None
+    # THIS VERB GATHERS AND REFUSES; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-15
+    # behaviour-preserving). The three formulas are the unit a §2 registry row points at, and
+    # §2a's transcription seal compares that row's clause against `eac_formulas.FORMULA`.
+    eac: Optional[float] = eac_formulas.estimate_at_completion(
+        method, bac=bac, bcwp=bcwp, acwp=acwp, cpi=cpi, spi=spi,
+    )
 
     if eac is None:
         # UNDEFINED IS NOT ZERO. With no cost or schedule performance reported there is no
@@ -591,7 +796,7 @@ def fin_eac_calculation(
             f"to project. A different method or a wider window may be answerable."
         )
 
-    return [{
+    return _emit_money([{
         "program_id": program.program_id,
         "program_name": program.name,
         # THE METHOD AND ITS FORMULA RIDE ON THE ROW. Not metadata: they are the half of
@@ -600,18 +805,22 @@ def fin_eac_calculation(
         "method": method,
         "formula": EAC_FORMULA[method],
         "eac": eac,
-        # Variance at completion — how far the forecast lands from the budget.
-        "vac": bac - eac,
-        # Estimate to complete — what the remaining work is forecast to cost from here.
-        "etc": eac - acwp,
+        # vac, etc and percent_complete follow from the forecast and are derived together, so
+        # a change to one cannot silently disagree with its neighbours.
+        **eac_formulas.derived(eac, bac=bac, acwp=acwp, bcwp=bcwp, ratio=_ratio),
         "bac": bac, "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
         "cpi": cpi, "spi": spi,
-        "percent_complete": _ratio(bcwp, bac),
         "as_of_period": periods[-1] if periods else None,
         "reported_periods": len({f.period for f in state.facts_for(wp_ids, periods)}),
         "value_unit": program.value_unit,
         "scope_label": program.name,
-    }]
+    }],
+        money_fields=_EAC_MONEY_FIELDS,
+        # THE INDICES AND THE PROGRESS FRACTION ARE RATIOS -- factors, not amounts -- so they
+        # are carried exact but NOT quantized. Rounding percent_complete to the cent would be
+        # putting a currency on a proportion.
+        ratio_fields=("cpi", "spi", "percent_complete"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -676,16 +885,27 @@ def fin_eac_comparison(
     d_spi = (d_bcwp / d_bcws) if d_bcws else Decimal("0")
 
     def compute(method: str) -> tuple[Optional[Decimal], Optional[str]]:
-        if method == "REMAINING_AT_BUDGET":
-            return d_acwp + (d_bac - d_bcwp), None
+        """ONE IMPLEMENTATION OF THE FORMULAS, in `eac_formulas` (ADR-0053 §2, 2026-09-15).
+
+        THIS VERB CARRIED ITS OWN COPY until now — three formulas reimplemented in Decimal,
+        agreeing with `fin_eac_calculation`'s by luck rather than by construction, and NOT
+        covered by §2a's transcription seal even though these are the three figures a customer
+        sees side by side. A registry row would have made the module authoritative while this
+        verb went on computing from something nobody transcribed.
+
+        THE REASON STAYS HERE, AND THAT IS THE POINT OF THE SPLIT. This verb keeps an undefined
+        method's ROW with a reason; `fin_eac_calculation` raises. The difference is deliberate —
+        a comparison that dropped a method would show two forecasts where three were asked for —
+        so the module reports WHICH INDEX is missing and this verb writes the sentence.
+        """
+        eac = eac_formulas.estimate_at_completion(
+            method, bac=d_bac, bcwp=d_bcwp, acwp=d_acwp, cpi=d_cpi, spi=d_spi)
+        if eac is not None:
+            return eac, None
+        missing = eac_formulas.missing_index(method, cpi=d_cpi, spi=d_spi)
         if method == "CPI":
-            if not d_cpi:
-                return None, "no cost performance reported, so there is no CPI to project"
-            return d_bac / d_cpi, None
-        if not (d_cpi and d_spi):
-            missing = "CPI" if not d_cpi else "SPI"
-            return None, f"no {missing} could be derived from the reported periods"
-        return d_acwp + (d_bac - d_bcwp) / (d_cpi * d_spi), None
+            return None, "no cost performance reported, so there is no CPI to project"
+        return None, f"no {missing} could be derived from the reported periods"
 
     rows: list[dict[str, Any]] = []
     for method in EAC_METHODS:
@@ -785,36 +1005,34 @@ def fin_performance_indices(
                   if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
         scope_label = program.name
 
-    periods = periods_in(window)
-    rows: list[dict[str, Any]] = []
-    cum_bcws = cum_bcwp = cum_acwp = 0.0
-    for period in periods:
-        bcws, bcwp, acwp = _totals(state, wp_ids, [period])
-        if bcws == 0 and bcwp == 0 and acwp == 0:
-            # DELIBERATE-ABSENT. A period with nothing reported is not a period of zero
-            # performance; emitting a row would draw a point on the trend line asserting
-            # the program stopped, which is a claim the data does not make.
-            continue
-        cum_bcws += bcws
-        cum_bcwp += bcwp
-        cum_acwp += acwp
-        rows.append({
-            "period": period,
-            "scope_label": scope_label,
-            "cpi": _ratio(bcwp, acwp),
-            "spi": _ratio(bcwp, bcws),
-            "cum_cpi": _ratio(cum_bcwp, cum_acwp),
-            "cum_spi": _ratio(cum_bcwp, cum_bcws),
-            "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
-            "cum_bcws": cum_bcws, "cum_bcwp": cum_bcwp, "cum_acwp": cum_acwp,
-            "cost_variance": bcwp - acwp,
-            "schedule_variance": bcwp - bcws,
-            # THE RATIOS ARE DIMENSIONLESS; the amounts beside them are not. Stating the
-            # unit of the amounts on the row keeps the response honest without putting a
-            # currency on a ratio — the reason this verb is absent from VALUE_UNIT.
-            "amount_unit": program.value_unit,
-        })
-    return rows
+    # THIS VERB GATHERS; THE MODULE COMPUTES. ADR-0053 §1, extracted 2026-09-14
+    # behaviour-preserving — the seam that makes the module's "no I/O" true rather than
+    # aspirational, and the same one `variance_driver_ranking` uses.
+    #
+    # `_ratio` IS PASSED IN RATHER THAN IMPORTED THERE. It has eleven call sites here and is
+    # this engine's vocabulary for "an index, or None where the denominator is zero". A copy
+    # inside the module would duplicate a NAMED RULE and let the two drift; an import would
+    # give a measure module a dependency on the engine it is meant to be liftable out of.
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES `cost_variance`
+    # and `schedule_variance` -- two subtractions -- so the money ruling scopes it by its own
+    # test rather than by analogy, and the FINDING is the difference rather than either
+    # operand. `_ratio` divides Decimals and returns a Decimal, so the four indices come back
+    # exact as well.
+    quantities = ((period, *_totals_exact(state, wp_ids, [period]))
+                  for period in periods_in(window))
+    return _emit_money(
+        index_series.build(
+            quantities,
+            ratio=_ratio,
+            scope_label=scope_label,
+            amount_unit=program.value_unit,
+        ),
+        money_fields=_INDEX_MONEY_FIELDS,
+        # THE INDICES ARE RATIOS AND ARE NOT QUANTIZED -- a factor, not an amount. Carried
+        # exact beside the float so a consumer COMPARING two indices reads the authority,
+        # while the card takes the float at the edge.
+        ratio_fields=("cpi", "spi", "cum_cpi", "cum_spi"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -843,40 +1061,42 @@ def fin_burn_rate(
     wp_ids = {w.wp_id for w in state.work_packages
               if w.ca_id in {c.ca_id for c in state.accounts_of(program_id)}}
 
-    rows: list[dict[str, Any]] = []
-    cum_acwp = cum_bcws = 0.0
-    burns: list[float] = []
-    for period in periods:
-        bcws, _bcwp, acwp = _totals(state, wp_ids, [period])
-        if bcws == 0 and acwp == 0:
-            continue
-        cum_acwp += acwp
-        cum_bcws += bcws
-        burns.append(acwp)
-        # A THREE-PERIOD TRAILING MEAN, and three is declared rather than tuned: it is short
-        # enough to follow a turn and long enough not to chase one month. The window length
-        # rides on the row so the figure can be argued with.
-        trailing = burns[-3:]
-        rate = sum(trailing) / len(trailing)
-        remaining = program.bac - cum_acwp
-        rows.append({
-            "period": period,
-            "scope_label": program.name,
-            "burn": acwp,
-            "planned": bcws,
-            "variance_to_plan": bcws - acwp,
-            "cum_burn": cum_acwp,
-            "cum_planned": cum_bcws,
-            "budget_remaining": remaining,
-            "trailing_rate": rate,
-            "trailing_periods": len(trailing),
-            # PERIODS, NOT A DATE. Converting to a calendar date would require a period-to-
-            # date map this model does not hold, and inventing one is how a forecast
-            # acquires a precision its inputs never had.
-            "runway_periods": (remaining / rate) if rate > 0 else None,
-            "value_unit": program.value_unit,
-        })
-    return rows
+    # THIS VERB GATHERS; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-14
+    # behaviour-preserving). The smoothing window and the runway's denominator are the unit —
+    # three of R-029's six survivors lived in exactly those two decisions.
+    #
+    # `_bcwp` IS DROPPED HERE RATHER THAN CARRIED. The module takes (period, planned, burn);
+    # earned value plays no part in a burn series, and handing a measure a quantity it must
+    # ignore is how an unused field later acquires a use nobody intended.
+    # DECIMAL FROM HERE DOWN (ADR-0053 section 7 step 2). This verb PRODUCES variance_to_plan
+    # (planned - burn) and budget_remaining (BAC - cumulative burn) -- two subtractions, so the
+    # money ruling scopes it by its own test rather than by analogy.
+    #
+    # THE BAC IS CONVERTED TOO, and the reason is narrower than it first looks.
+    #
+    # ⚠ I FIRST WROTE THAT THIS REMOVES A MIXED-TYPE SUBTRACTION. It does not: `int - Decimal`
+    # is exact and lossless, so with today's integer BAC the conversion is a NO-OP -- a
+    # mutation removing it survives the whole suite, and that survivor is honest.
+    #
+    # WHAT IT ACTUALLY GUARDS is a FLOAT bac, which raises `TypeError: unsupported operand
+    # type(s) for -: 'float' and 'decimal.Decimal'` the moment the seed carries one. That is a
+    # real and cheap protection; it is simply not the one I claimed. The seal exercises the
+    # float case, because a guard whose only evidence is an integer fixture is untested.
+    quantities = ((period, bcws, acwp)
+                  for period, (bcws, _bcwp, acwp)
+                  in ((p, _totals_exact(state, wp_ids, [p])) for p in periods))
+    return _emit_money(
+        burn_series.build(
+            quantities,
+            budget_at_completion=Decimal(str(program.bac)),
+            scope_label=program.name,
+            value_unit=program.value_unit,
+        ),
+        money_fields=_BURN_MONEY_FIELDS,
+        # RUNWAY IS A COUNT OF PERIODS, not an amount -- dimensionless, so it is NOT quantized.
+        # Rounding a forecast horizon to the cent would be putting a currency on a duration.
+        ratio_fields=("runway_periods",),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -992,7 +1212,11 @@ def fin_variance_drivers(
     # change; the figures moved here because the INPUTS changed type, which is this verb's
     # doing and not the module's. That the seam absorbed a money-representation change without
     # editing is the strongest evidence available that it was cut in the right place.
-    return _emit_money(variance_driver_ranking.rank_drivers(scored, top_n=top_n))
+    return _emit_money(
+        variance_driver_ranking.rank_drivers(scored, top_n=top_n),
+        money_fields=_DRIVER_MONEY_FIELDS,
+        ratio_fields=("share_of_total",),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1046,41 +1270,28 @@ def fin_funding_status(
     _require_program(state, program_id)
     periods = set(periods_in(window))
 
-    rows: list[dict[str, Any]] = []
-    for line in state.funding:
-        if line.program_id != program_id or line.period not in periods:
-            continue
-        verdict = _funding_state(line.authorized, line.obligated, line.expended)
-        rows.append({
-            # ── the grid's contract: subject x period, three quantities, a verdict ──
-            # `subject_id` is the cell's POSITION and `line_id` is what it is ABOUT — the
-            # same split the planning grid draws, and the reason the archetype cannot name
-            # the subject itself.
-            "subject_id": line.line_id,
-            "subject_name": line.name,
-            "period": line.period,
-            "required": line.authorized,
-            "committed": line.obligated,
-            "secured": line.expended,
-            "shortfall": max(0.0, line.authorized - line.obligated),
-            "gap": line.authorized - line.obligated,
-            "at_risk": max(0.0, line.authorized - line.expended),
-            "state": verdict,
-            # ── the same cell in IPMDAR's words ──
-            "line_id": line.line_id,
-            "authorized": line.authorized,
-            "obligated": line.obligated,
-            "expended": line.expended,
-            "unobligated_balance": line.authorized - line.obligated,
-            "unexpended_balance": line.obligated - line.expended,
-            "funding_state": {
-                "short": "unobligated-balance",
-                "pledged-not-firm": "obligated-not-expended",
-                "met": "expended",
-            }[verdict],
-            "value_unit": "USD",
-            "value_label": "Unobligated balance",
-            "scope_label": line.name,
-        })
-    rows.sort(key=lambda r: (r["subject_id"], PERIOD_ORDER[r["period"]]))
-    return rows
+    # THIS VERB GATHERS AND FILTERS; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-15
+    # behaviour-preserving). The window filter stays HERE — which rows exist is a question
+    # about state, and R-029 found a dropped filter answering a one-quarter question with the
+    # programme's whole history.
+    # DECIMAL AT THE BOUNDARY (ADR-0053 §7 step 2). This verb produces FIVE subtractions --
+    # shortfall, gap, at_risk and the two balances -- so the money ruling scopes it several
+    # times over. The module is type-agnostic and needed no change.
+    #
+    # THE VERDICT IS COMPUTED ON THE SAME EXACT VALUES the arithmetic uses, not on the floats
+    # they came from: a funding state decided from one representation beside figures derived
+    # from another is two answers to one question, and the disagreement would appear only at a
+    # boundary.
+    cells = ((line.line_id, line.name, line.period,
+              Decimal(str(line.authorized)), Decimal(str(line.obligated)),
+              Decimal(str(line.expended)))
+             for line in state.funding
+             if line.program_id == program_id and line.period in periods)
+    return _emit_money(
+        funding_grid.build(
+            cells,
+            verdict=_funding_state,
+            order=lambda period: PERIOD_ORDER[period],
+        ),
+        money_fields=_FUNDING_MONEY_FIELDS,
+    )

@@ -146,6 +146,53 @@ repo, passing the same validation as a seed row.
 Slot vocabularies attach **from the registry at registration** — so `EACMethod`'s three values stop
 being a `Literal` in a signature and become the rows that exist.
 
+**LANDED 2026-09-15 — `lane/91`.** `policy/measures/` holds the three EAC method rows;
+`agent_fleet/finance_agent/method_registry.py` composes them through
+`iagent_mesh.declarations.compose_rows`; `tests/finance/test_the_method_registry_rows.py` seals
+them. **The runtime still reads the `Literal`, and that is sequencing rather than an unfinished
+edit** — the directory reaches a container through a per-file `COPY` that has to ride into a built
+image first, so the data ships one release ahead of the code that depends on it. The switch, and
+the reason for the gap, are in
+[`the-method-rows-are-not-yet-the-runtime-source`](../plans/the-method-rows-are-not-yet-the-runtime-source.md).
+
+**AND `EACMethod` DOES NOT GO AWAY.** It becomes the value set declared **outside** the rows, and
+the seal that the two agree is only meaningful while neither is derived from the other: a
+vocabulary enumerated from the rows it checks is complete by construction, and a row with no type
+value — or a type value with no row — would both pass.
+
+#### 2a. EVERY METHOD ROW CARRIES AN ABSOLUTE TRANSCRIPTION SEAL AGAINST THE STANDARD IT CITES
+
+*Added 2026-09-14 from `fin_eac_calculation`'s R-029 check — `lane/91 (invincible-agent-81)`.*
+
+A row's `prov:wasDerivedFrom` points at **the clause it implements**, and the module is sealed by
+**transcribing that clause's formula** and asserting the module computes it — the same discipline
+the risk matrix was transcribed under, cell by cell from its source table.
+
+**THE EVIDENCE THAT THIS IS NOT CEREMONY.** Before any customer row existed, five of six
+mutations against the three *built-in* EAC methods survived the whole suite. The worst was
+`EAC = BAC * CPI` in place of `BAC / CPI`: with CPI below 1 that **reverses the sign of the
+forecast** — *"we will overrun by 2.15M"* becomes *"we will land 1.8M under"* — and 151 green
+tests could not tell. Recorded in
+[`the-eac-forecast-could-be-inverted-unsealed`](../plans/the-eac-forecast-could-be-inverted-unsealed.md).
+
+> **A row whose formula cannot be checked against a stated standard is a row that ships a sign
+> flip with a name on it.** The name is the danger: `method: "CPI"` on the artifact and a version
+> beside it reads as provenance, and §5 makes that string travel with every figure.
+
+**AND A COMPARISON SEAL DOES NOT SUBSTITUTE, which is why this is stated separately.**
+`fin_eac_comparison` compares the three methods' spread and it **did not catch the inversion** —
+`BAC * CPI` keeps CPI below CPI_SPI, so the ordering held and the spread check stayed green.
+
+> **A relative check is not an absolute one.** It notices one method moving *against the others*;
+> it cannot notice all of them wrong in the same direction, nor one wrong in a way that preserves
+> the ordering. **A check between derived things is blind to what they share** — the same shape as
+> two fields agreeing because they come from one upstream.
+
+So the registry needs **both**: the spread, which catches a method drifting from its neighbours,
+and the transcription, which catches every method being wrong together. Neither implies the other,
+and the spread is the more sophisticated-looking of the two, which is how it comes to be mistaken
+for coverage.
+
 ### 3. "User-configurable" means SELECTING among ratified methods and SETTING ratified parameters
 
 Adding an algorithm is **adding a declared module with a manifest and a seal**. It is a reviewed
@@ -227,9 +274,62 @@ number, on this seed.
 here, and it must not be cited as a correctness result it has not earned. I took that sentence
 from a docstring and was one review from publishing it.
 
+#### 6a. QUANTIZE AFTER, NEVER BEFORE, A DERIVATION
+
+*Added 2026-09-14 from `fin_burn_rate`'s step-2 pass — `lane/91 (invincible-agent-81)`.*
+
+**A figure derived from a money quantity is computed from the UNQUANTIZED value and rounded at
+the end.** Rounding first folds a presentation decision into the result.
+
+`fin_burn_rate` divides the remaining budget by a trailing mean of three burns. That mean lands
+on a repeating decimal — `1,338,333.3333…` presented as `1,338,333.33` — and dividing by the
+**presented** figure instead of the computed one shifts the runway by `0.0033`. **Small,
+plausible, and untraceable**: nothing in the response would say the forecast had been rounded
+before it was divided, and no reader could audit it.
+
+> **This is what makes "money in Decimal" mean something for ratios and forecasts rather than
+> only for totals.** A total rounded to the cent is correct. A *divisor* rounded to the cent is
+> a different calculation wearing the same name.
+
+**Seal:** recompute the derived figure from the row's own exact column and the unrounded
+operand. Mutation — divide by the quantized rate — **red**.
+
+#### 6b. A HARNESS THAT CANNOT RETURN CLEAN AFTER AN EXPECTED CHANGE WILL BE IGNORED
+
+*Added 2026-09-14 — `lane/91 (invincible-agent-81)`.*
+
+The equivalence harness §7 requires compares the pre-change function against the new one. Written
+as a **whole-object** comparison it reports a diff for every **added** field — so the moment a
+verb takes its step-2 pass and gains its `_exact` columns, that harness reports diffs **forever**,
+for a change that was expected and correct. Measured: 10 of 10 cases "differing" with **zero**
+shared-key values moved.
+
+**That is the red-that-teaches-people-to-skip shape.** An instrument whose alarm cannot be
+cleared by doing the right thing stops being read, and the next real regression arrives inside
+noise somebody has learned to wave through.
+
+**So an equivalence harness reports two numbers, separately:**
+
+    shared-key values moved   ->  must be 0, or each one named
+    fields added / removed    ->  expected on a step-2 pass; a REMOVAL is a finding
+
+A harness that cannot say which of the two it is measuring should say so in its output or be
+retired. **Same rule as a seal: an instrument that cannot distinguish the cases it is trusted to
+distinguish is not weak, it is misleading.**
+
 ### 7. Migration order for finance
 
-`fin_eac_comparison` **done**. **`fin_variance_drivers` next**, and the reason is the money
+**ALL SIX EXTRACTIONS LANDED 2026-09-15 — `lane/91`.** `variance_driver_ranking`,
+`index_series`, `burn_series`, `eac_formulas`, `funding_grid`, `decomposition_policy`, each as the
+two moves this section requires, each with R-029's two checks. The order below is kept as written
+rather than rewritten in hindsight: **the argument is the reusable part**, and a migration order
+edited to match what happened stops being evidence that the order was right.
+
+The status line that stood here — *"`fin_eac_comparison` done, `fin_variance_drivers` next"* — was
+true when written and read as current for four days. Replaced rather than appended to, because a
+stale status line is the one kind of prose that gets MORE trusted for being specific.
+
+`fin_variance_drivers` was chosen as the first, and the reason was the money
 ruling's own test rather than convenience: it **ranks by `abs(contribution)`** — *"Ordering is by
 absolute contribution; the sign is on the row"* — so the ruling's *producers and any consumer that
 subtracts or compares* clause catches it.

@@ -74,6 +74,23 @@ _RULE_COMMIT = "b466612"
 #: ever carries a valid trailer, so a stale row is a failure rather than a silent allowance.
 #: (Mechanism from `lane/91`; adopted here before that branch merged.)
 _EXEMPT: dict[str, str] = {
+    # ── FOLDED IN FROM lane/91 BY THE 2026-09-18 MERGE ───────────────────────────────────
+    # ⛔ THESE LIVED IN A SECOND `_EXEMPT` DEFINITION 140 LINES BELOW, and git merged both
+    # without a conflict because they never touched. **Python then took the last one**, so
+    # master's seven exemptions above were silently discarded and the lint reddened on commits
+    # it was ruled not to bind. A TEXTUAL MERGE WITH NO CONFLICT IS NOT A SEMANTIC MERGE — the
+    # markers showed me the one collision git could see, and the language resolved the one it
+    # could not by last-wins, in silence.
+    #
+    # The reason these two exist: the rule WAS in this lane's ancestry, carried in by a master
+    # merge, and the lane kept using the spelling the architect had ratified an hour before
+    # 11b4070 landed the pair rule. THE LESSON IS THE REASON, NOT THE EXEMPTION — a merge can
+    # bring a NEW SEAL, and running only the directories you edited will not find it.
+    "57e3aa3bd6570b725d91088609333dd05d903f94":
+        "ratified spelling superseded by 11b4070 after this was written; the architect ratified "
+        "`Lane: lane/91 (invincible-agent-81)` an hour before the pair rule landed",
+    "6186339d9aa940df82f055a2e9a835d6f4d6f48b":
+        "ratified spelling superseded by 11b4070 after this was written; same lane, same hour",
     "b15adbc": (
         "engine-lg's compile fix, pushed direct to master. A genuine omission rather than a" + 
         " boundary case: the rule WAS in its ancestry. It is the R-063 shape in reverse — the" + 
@@ -210,8 +227,28 @@ def test_A_COMMIT_MADE_AFTER_THE_RULING_NAMES_ITS_LANE(sha: str, subject: str, b
     """THE SEAL. Binds forward only; published history is not rewritten to satisfy it."""
     if not sha:
         pytest.skip("no bound commits yet — the rule binds forward")
-    if any(sha.startswith(k) for k in _EXEMPT):
-        pytest.skip(f"exempt: {_EXEMPT[next(k for k in _EXEMPT if sha.startswith(k))]}")
+
+    # ── MERGED 2026-09-18, AND EITHER SIDE ALONE DROPS A REAL IMPROVEMENT ──────────────────
+    # master made the lookup PREFIX-based; `lane/91` added the SELF-RETIRING assertion. They
+    # are two different fixes to one branch, not two versions of one fix.
+    #
+    # ⚠ THE PREFIX HALF IS LOAD-BEARING, NOT STYLE: every key in `_EXEMPT` is a SHORT sha, so
+    # `sha in _EXEMPT` matches nothing and all seven exemptions silently stop exempting —
+    # the lint then reds on commits it was ruled not to bind. Measured before merging.
+    _hit = next((k for k in _EXEMPT if sha.startswith(k)), None)
+    if _hit:
+        # SELF-RETIRING. If an exempt commit ever DOES carry a valid trailer the entry is stale,
+        # and a stale exemption is a standing permission nobody reviews — so this reds and says
+        # to delete it, rather than quietly covering a commit that no longer needs covering.
+        # Checked at merge time: all seven still carry no trailer, so this fires on none of them
+        # today and is a guard against the list rotting rather than a claim about it now.
+        assert not _TRAILER.search(body or ""), (
+            f"{sha[:12]} is on the exemption list but now carries a valid trailer. Delete its "
+            f"entry from `_EXEMPT`: an exemption that outlives its reason is a hole with a "
+            f"comment on it."
+        )
+        pytest.skip(f"exempt: {_EXEMPT[_hit]}")
+
     assert _TRAILER.search(body or ""), (
         f"{sha[:12]} ({subject[:60]!r}) carries no `Lane:` trailer.\n"
         f"Add `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01` — as a trailer. Git's "
@@ -304,3 +341,47 @@ def test_AN_EXEMPTION_RETIRES_ITSELF():
                 f"{key} is in _EXEMPT but now carries a valid Lane: trailer. Delete the entry — "
                 f"it is allowing something that no longer needs allowing."
             )
+
+
+def test_THIS_FILE_DEFINES_ITS_TABLES_EXACTLY_ONCE():
+    """⛔ THE DEFECT THE 2026-09-18 MERGE SHIPPED FOR ONE COMMIT, and the reason it is sealed
+    here rather than remembered.
+
+    Master and `lane/91` each grew an `_EXEMPT` definition, 140 lines apart. **Git merged both
+    without a conflict** — they never touched, so there was nothing to mark — and **Python
+    resolved the collision by last-wins, in silence**. Master's seven exemptions vanished and
+    the lint reddened on six commits it had been explicitly ruled not to bind.
+
+    > **A TEXTUAL MERGE WITH NO CONFLICT IS NOT A SEMANTIC MERGE.** The markers show you the
+    > collisions the tool can see. A duplicate top-level binding is one it cannot, and the
+    > language's answer to it is not an error — it is a quiet winner.
+
+    The conflict I reasoned hardest about that day (prefix lookup versus exact match) I got
+    right; the one that actually shipped was in a region git called clean. **Read what merged
+    cleanly, not only what conflicted.**
+
+    Derived, not listed: any top-level name bound twice in this module fails, so the next table
+    to grow a second definition is covered by the commit that adds it.
+    """
+    import ast
+
+    src = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    seen: dict[str, int] = {}
+    dupes: list[str] = []
+    for node in tree.body:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+        for name in targets:
+            if name in seen:
+                dupes.append(f"{name} (lines {seen[name]} and {node.lineno})")
+            seen[name] = node.lineno
+    assert not dupes, (
+        f"these module-level names are bound twice, and the SECOND one wins silently: {dupes}. "
+        f"A merge that brought both halves of a table produced exactly this once already — fold "
+        f"them into one definition rather than leaving the language to pick."
+    )
+    assert seen, "parsed no top-level assignments — the seal has gone vacuous"

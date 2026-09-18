@@ -30,6 +30,7 @@ from typing import Any, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
@@ -59,6 +60,7 @@ except ImportError:
 # phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
 # the announcement has a real posture the gauge cannot read.
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import current_caller as _current_caller
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 
@@ -608,6 +610,113 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         # VintageRequired above, so a consumer reads one field for "what may I say instead".
         available = measures.options_for(STATE, fn_name, "rate_vintage", req.params) or []
         return _refusal("not_in_model", str(e), slot="rate_vintage", available=available)
+
+
+def _scope_of_artifact(filename: str) -> Optional[str]:
+    """Which recipient's package this filename is. DERIVED FROM THE SAME MAP THAT NAMES IT.
+
+    Parsing the scope back out of the string would be a second implementation of the naming
+    rule, and the two would drift the first time a filename changed — with the authorization
+    check reading the stale one, which is the direction that fails open.
+    """
+    for scope in measures.RECIPIENT_SCOPES:
+        if filename in (f"cost-validation-{scope}.html", f"cost-{scope}.duckdb"):
+            return scope
+    return None
+
+
+def _producible_artifact_names() -> set[str]:
+    """Every filename `package_export` can itself produce. DERIVED, never sanitized.
+
+    THIS IS THE TRAVERSAL DEFENCE AND IT IS STRUCTURAL. A route that takes a filename and
+    cleans it is one missed encoding away from serving `/etc/passwd`; a route that will only
+    serve names it computed itself cannot be talked into anything, because the attacker's
+    input is compared against a closed set rather than transformed into a path.
+
+    Derived from `RECIPIENT_SCOPES`, so a tenth recipient is servable by the commit that adds
+    it and a name this engine cannot produce is not servable at all.
+    """
+    names = set()
+    for scope in measures.RECIPIENT_SCOPES:
+        names.add(f"cost-validation-{scope}.html")
+        names.add(f"cost-{scope}.duckdb")
+    return names
+
+
+@app.get("/artifact/{filename}")
+async def artifact(filename: str) -> Any:
+    """Serve a produced export artifact. THE DOWNLOAD HALF OF A GOVERNED EMIT.
+
+    ⚠ WHAT THIS ROUTE IS NOT: an entitlement check. `package_export` decides what a recipient
+    may be shown and filters at production; by the time bytes are on disk the disclosure
+    decision has already been made and recorded in an audit line. This route serves a file
+    that decision produced. **It is therefore only as bounded as the artifacts on the disk**,
+    which is why it will serve nothing it did not itself produce, and why the gating manifest
+    classifies it as the most sensitive route in this engine.
+
+    404 WHERE THE ARTIFACT DOES NOT EXIST, including in every deployed pod today: the builder
+    and the pinned Pyodide runtime are not in the image, so nothing is ever written there.
+    That is the honest answer and it is the same one a card should render as "not available
+    from this deployment" rather than as a broken link.
+    """
+    if filename not in _producible_artifact_names():
+        raise HTTPException(
+            status_code=404,
+            detail=(f"{filename!r} is not an artifact this engine produces; producible names "
+                    f"are derived from the recipient scopes it packages for"),
+        )
+
+    # ── AUTHORIZATION, ON THE CALLER, BEFORE ANY BYTES ──────────────────────────────────
+    #
+    # RULED 2026-09-14 and moved from "when the data stops being notional" to now: the route's
+    # SHAPE is what ships to the first customer, and it ships with whatever check it has on
+    # the day. Filtering once at production is correct for the BUILD and insufficient for the
+    # DOWNLOAD — two recipients' packages sit in one directory.
+    #
+    # THIS ROUTE DOES NOT INHERIT THE OBSERVE POSTURE, and the distinction is deliberate.
+    # Transport auth in OBSERVE decides whether an unverified TRANSPORT is refused; this is an
+    # AUTHORIZATION decision about a disclosure. It fails closed while the fleet posture is
+    # permissive, because "we are not enforcing transport yet" is not a reason to hand one
+    # customer's package to another.
+    #
+    # KEYED ON `authz_id` ONLY — `CallerIdentity` says it is the sole field an authorization
+    # decision may read, and `raw` exists for logging and nothing else.
+    caller = _current_caller()
+    authz_id = getattr(caller, "authz_id", None) if caller else None
+    scope = _scope_of_artifact(filename)
+    permitted = measures.readers_for_recipient(scope) if scope else ()
+    if not authz_id or authz_id not in permitted:
+        # 403 NAMING THE PACKAGE, not a bare refusal: the caller is entitled to know WHICH
+        # disclosure they were refused, and a 404 here would hide the package's existence from
+        # someone who may legitimately hold another one. It does NOT name who may read it —
+        # that is the recipient list, and leaking it is a disclosure of its own.
+        raise HTTPException(
+            status_code=403,
+            detail=(f"caller {authz_id or 'unidentified'!r} is not entitled to the package "
+                    f"for {scope!r}. This artifact is a customer disclosure and is served "
+                    f"only to the recipient it was produced for."),
+        )
+
+    root = measures._repo_root()
+    if root is None:
+        raise HTTPException(
+            status_code=404,
+            detail=("this deployment holds no artifacts: the package builder and the pinned "
+                    "runtime live in the repository checkout and are not in this image"),
+        )
+    path = root / "dist" / filename
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{filename!r} has not been produced on this deployment",
+        )
+    # NO starlette FALLBACK. The first draft had one, and the dependency seal refused it:
+    # `starlette` is not in this engine's pyproject, "the image is built from that declaration,
+    # so an import it omits fails only in the deployment." A DEFENSIVE FALLBACK THAT
+    # INTRODUCES AN UNDECLARED IMPORT IS THE DEFECT IT IS DEFENDING AGAINST — and it bought
+    # nothing: fastapi re-exports FileResponse and fastapi is declared.
+    media = "text/html" if filename.endswith(".html") else "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=filename)
 
 
 @app.get("/verbs")

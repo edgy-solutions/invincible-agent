@@ -1,0 +1,26 @@
+# RATIFIED METHOD ROW — ADR-0053 §2. One file, one method, reviewed like a grant.
+method_id: CPI_SPI
+name: Composite-index estimate at completion
+description: >-
+  Prices the REMAINING work at both cost and schedule efficiency. The most pessimistic of the
+  three where a program is behind as well as over, because the two indices multiply.
+
+module: agent_fleet.finance_agent.measure_modules.eac_formulas
+function: estimate_at_completion
+version: "1.0.0"
+
+slot: method
+slot_of: fin_eac_calculation
+
+# Needs BOTH indices. The refusal names CPI first when both are absent: a program with no cost
+# performance has a larger problem than a missing schedule index, and that is the one to report.
+requires_index: true
+
+derived_from:
+  authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+  clause: EAC (composite index, CPI x SPI)
+  citation: name-only
+  # Only the REMAINING work is repriced — `ACWP +` is actual cost already incurred and is not
+  # divided by anything. Dividing the whole budget instead is a different method wearing this
+  # one's name.
+  transcription: EAC = ACWP + (BAC - BCWP) / (CPI * SPI)
