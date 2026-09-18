@@ -414,6 +414,60 @@ def test_EVERY_pytest_SKIP_IN_THIS_FILE_HAS_ITS_IMPORT():
 # The registrar's unrenderable-output refusal, from the other end: an archetype nothing binds
 # is registered and drawable by nobody.
 
+# ── R-080: THE RULES BELOW ARE LIFTED SO THEY CAN BE EXERCISED WITH THEIR LISTS EMPTY ────────
+#
+# Three registers in this file decide staleness by WALKING THEIR OWN LIST, and a loop over an
+# empty collection cannot fail. Each therefore stops being a test at the exact moment its list
+# reaches zero — which is the state every one of them is aimed at.
+#
+# **A fixture that cannot fail is an accident; a ratchet that cannot fail is a success
+# condition.** Measured on the sibling seal the day its list emptied: the whole computation
+# replaced by `[]`, suite still green.
+#
+# So the rule lives in a function, and every test that uses it also calls it with data it owns,
+# BOTH DIRECTIONS. The second direction is the one that is easy to skip: a rule that flagged
+# everything would satisfy the real assertion too, for the wrong reason.
+
+
+def _no_longer(entries, live):
+    """Excused entries that are not in `live` any more — the rule under both set-shaped
+    registers here: the mirror gap register and the archetype excuse list."""
+    return sorted(set(entries) - set(live))
+
+
+def _residue_faults(residue: dict, declared, arriving) -> list[str]:
+    """Every way an entry in a per-row residue list can have gone stale: the contract stopped
+    declaring the field, the field started arriving on the envelope, or the reason is too thin
+    to be one."""
+    out: list[str] = []
+    for name, why in residue.items():
+        if name not in declared:
+            out.append(f"{name}: excused but the contract no longer declares it")
+        if name in arriving:
+            out.append(f"{name}: now arrives on the envelope; delete its entry rather than "
+                       f"leave a resolved divergence reading as an open one")
+        if not why or len(why) <= 40:
+            out.append(f"{name}: excused without a usable reason")
+    return out
+
+
+def _both_directions_or_the_rule_is_untested():
+    """THE FIXTURE ARM every register below calls. Proves the two rules can FLAG and can
+    ABSTAIN, using data this file owns, whatever the real lists happen to hold today."""
+    assert _no_longer({("gone", "x")}, {("live", "y")}) == [("gone", "x")], (
+        "the staleness rule does not flag an entry that has stopped being live; with a register "
+        "empty, nothing in its real assertion can fail"
+    )
+    assert _no_longer({("live", "y")}, {("live", "y")}) == [], (
+        "the staleness rule flags an entry that is STILL live, which would demand deleting an "
+        "exemption that is still doing work"
+    )
+    assert _residue_faults({"f": "r" * 50}, declared={"f"}, arriving=set()) == []
+    assert _residue_faults({"f": "r" * 50}, declared=set(), arriving=set())
+    assert _residue_faults({"f": "r" * 50}, declared={"f"}, arriving={"f"})
+    assert _residue_faults({"f": "too thin"}, declared={"f"}, arriving=set())
+
+
 #: Archetypes in the projector with no BACKEND capability row, each with the reason it needs
 #: none. NOT a convenience list — every entry is a claim, and every claim was checked.
 #:
@@ -461,8 +515,9 @@ def test_every_archetype_in_the_projector_is_CLAIMED_or_EXCUSED_BY_NAME():
     # AND THE EXCLUSION LIST IS NOT A DRAWER. An entry for an archetype the projector no longer
     # carries is a stale excuse that keeps excusing nothing — the same shape as a tombstone for
     # a row the seed does not ship, which keeps deleting nothing.
-    stale = sorted(excused - projected)
+    stale = _no_longer(excused, projected)
     assert not stale, f"excused archetypes no longer in the projector: {stale}"
+    _both_directions_or_the_rule_is_untested()
 
     # A REASON IS REQUIRED TO BE ONE. An empty string satisfies the partition and says nothing,
     # which is how every exclusion list rots.
@@ -620,7 +675,7 @@ def test_the_mirror_register_ONLY_SHRINKS():
     """
     back, front = _mirrors()
     gaps = (front - back) | (back - front)
-    fixed = sorted(_MIRROR_GAPS_AT_RATIFICATION - gaps)
+    fixed = _no_longer(_MIRROR_GAPS_AT_RATIFICATION, gaps)
     assert not fixed, (
         "these are registered as known mirror gaps and are no longer gaps:\n  "
         + "\n  ".join(f"{s} -> {o}" for s, o in fixed)
@@ -628,6 +683,7 @@ def test_the_mirror_register_ONLY_SHRINKS():
         "The register only shrinks; an entry left behind reads as an open defect to everyone "
         "who checks the list instead of the mirrors."
     )
+    _both_directions_or_the_rule_is_untested()
 
 
 def test_the_mirror_check_can_actually_FAIL():
@@ -720,13 +776,15 @@ def test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES():
     # THE RESIDUE IS NOT A DRAWER EITHER. An entry for a field the contract stopped declaring
     # is a standing excuse for nothing, and one that starts arriving on the envelope should be
     # deleted from here rather than left reading as a known gap.
-    for name, why in _CONTRACT_FIELDS_SUPPLIED_PER_ROW.items():
-        assert name in declared, f"{name} is excused but the contract no longer declares it"
-        assert name not in payload, (
-            f"{name} now arrives on the envelope — delete its entry rather than leave a "
-            f"resolved divergence reading as an open one"
-        )
-        assert len(why) > 40, f"{name} is excused without a usable reason"
+    faults = _residue_faults(_CONTRACT_FIELDS_SUPPLIED_PER_ROW, declared, set(payload))
+    # NAMED VIA chr(10), NEVER WRITTEN AS AN ESCAPE. A backslash-n in a patch script run
+    # through a heredoc collapses into a real newline and splits the literal — which is
+    # exactly what happened writing this line, and it is the eighth time in this repo.
+    _NL = chr(10)
+    assert not faults, (_NL + "  ").join(
+        ["the per-row residue list has gone stale:"] + faults
+    )
+    _both_directions_or_the_rule_is_untested()
 
 
 def test_every_prefix_EITHER_mirror_USES_can_actually_be_EXPANDED():
