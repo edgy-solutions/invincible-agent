@@ -54,12 +54,6 @@ _ROOTS = ("src", "agent_fleet", "tests", "scripts", "setup", "policy")
 #: Collisions that are known and harmless, each with the reason. NOT a drawer: an entry that
 #: stops being a collision FAILS below, so it can only shrink.
 _KNOWN: dict[tuple[str, str], str] = {
-    ("tests/test_prime_timeout_bounds_agree.py", "_DURATION"): (
-        "bound twice to the IDENTICAL regex, verified character-for-character — redundant, not "
-        "harmful, and no behaviour depends on which one wins. Found by Lane 1's repo-wide walk "
-        "and left alone deliberately: deleting a duplicate in another lane's seal to quiet a "
-        "new check is the check editing its own subject."
-    ),
 }
 
 

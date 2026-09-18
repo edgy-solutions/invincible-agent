@@ -58,7 +58,10 @@ def _inner_seconds() -> int:
     return prime_databases.derived_ingest_timeout()
 
 
-_DURATION = re.compile(r'HELM_TIMEOUT="\$\{HELM_TIMEOUT:-(?P<v>\d+)(?P<unit>[smh])\}"')
+# (`_DURATION` is defined once, above. It was bound a second time HERE, to a
+# character-identical regex — harmless, and exactly the shape that is not harmless when
+# the two differ: Python picks the later silently. Removed 2026-09-18 so
+# tests/test_no_module_level_name_is_bound_twice.py needs no exclusion for it.)
 
 
 def _outer_seconds() -> int:
