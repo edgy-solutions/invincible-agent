@@ -1,0 +1,106 @@
+"""A route decorator binds to THE NEXT DEFINITION. Insert a helper under one and the route moves.
+
+MEASURED ON THE LIVE SANDBOX 2026-09-18, and it is the defect behind the NP-MERIDIAN 422.
+
+`agent_fleet/presentation_agent/main.py` read:
+
+    @app.post("/render_ui")
+    def _as_options(values: "list") -> "list[Dict[str, Any]]":      # <- a HELPER
+        ...
+    async def render_ui(request: RenderRequest, ...)                 # <- the real handler,
+                                                                     #    now undecorated
+
+Two helpers had been inserted BETWEEN the decorator and the handler it was written for. Python
+binds a decorator to the next definition, so FastAPI registered `_as_options(values: list)` as
+POST /render_ui. Every real payload then failed request validation:
+
+    requests.exceptions.HTTPError: 422 Client Error: Unprocessable Entity for url:
+    http://iagent-engine-f...:8087/render_ui
+      at src/iagent/defs/dynamic_supervisor.py:3365 -> response.raise_for_status()
+
+...which failed `generate_ui_payload`, which failed the Dagster run, which failed the turn. The
+engine was healthy, the handler was intact, and it was simply never reached.
+
+WHY NOTHING CAUGHT IT. Nothing errors: the module imports, the app starts, the route exists and
+answers. Every unit test that calls `render_ui()` as a FUNCTION passes, because the function is
+fine — only its BINDING moved. And the symptom points away from the cause: a 422 reads as a
+PRODUCER sending the wrong shape, so the search starts at the caller.
+
+THE INVARIANT. Handlers are public names; helpers are underscore-private. A route bound to a
+private name means a decorator has drifted off the function it was written for.
+
+Run: uv run --frozen pytest tests/test_a_route_binds_to_its_handler.py -v
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+_FLEET = _REPO / "agent_fleet"
+
+_METHODS = {"get", "post", "put", "patch", "delete"}
+
+#: Routes whose handler name is pinned, because these are the ones a drift would cost most and
+#: because naming them makes the expectation readable rather than implied.
+_PINNED = {
+    ("presentation_agent", "/render_ui"): "render_ui",
+}
+
+
+def _routes() -> list[tuple[str, str, str, str]]:
+    """(engine, method, path, handler_name) for every routed function in the fleet."""
+    out = []
+    for path in sorted(_FLEET.glob("*/main.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                func = dec.func if isinstance(dec, ast.Call) else dec
+                if not (isinstance(func, ast.Attribute) and func.attr in _METHODS):
+                    continue
+                route = ""
+                if isinstance(dec, ast.Call) and dec.args and isinstance(dec.args[0], ast.Constant):
+                    route = str(dec.args[0].value)
+                out.append((path.parent.name, func.attr.upper(), route, node.name))
+    return out
+
+
+def test_the_scan_finds_routes():
+    """THE FLOOR. A scan that found nothing would pass every assertion below forever."""
+    routes = _routes()
+    assert len(routes) >= 50, f"only {len(routes)} routes found — the derivation is broken"
+    engines = {e for e, _, _, _ in routes}
+    assert len(engines) >= 6, f"routes found in only {len(engines)} engine(s): {sorted(engines)}"
+
+
+def test_NO_ROUTE_BINDS_TO_A_PRIVATE_HELPER():
+    """THE SEAL. A decorator binds to the next definition; inserting a function under one
+    silently re-points the route, and nothing errors at import, start, or call."""
+    offenders = [
+        f"{engine}: {method} {route} -> {handler}()"
+        for engine, method, route, handler in _routes()
+        if handler.startswith("_")
+    ]
+    assert not offenders, (
+        "route(s) bound to a private helper — a decorator has drifted off the handler it was "
+        "written for, and the route now validates against the helper's signature:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nThe symptom is a 422 at the CALLER, which reads as the producer sending a bad "
+        "shape rather than the route pointing at the wrong function."
+    )
+
+
+def test_the_pinned_routes_still_point_where_they_should():
+    """The named half. `/render_ui` is the one that cost a morning of walks, so it is asserted by
+    name rather than left to the general rule — the general rule would also be satisfied by a
+    decorator that drifted onto a DIFFERENT public function."""
+    found = {(e, r): h for e, _m, r, h in _routes()}
+    for (engine, route), expected in _PINNED.items():
+        got = found.get((engine, route))
+        assert got is not None, f"{engine} no longer serves {route} at all"
+        assert got == expected, (
+            f"{engine} {route} is handled by {got}(), expected {expected}() — a decorator moved"
+        )

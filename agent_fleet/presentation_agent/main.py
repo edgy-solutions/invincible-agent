@@ -1042,7 +1042,6 @@ async def _render_archetype_hardened(
     return {"components": [component]}, True
 
 
-@app.post("/render_ui")
 def _as_options(values: "list") -> "list[Dict[str, Any]]":
     """`[v]` or `[{value,label}]` -> the card's option shape. A producer may send either."""
     return [
@@ -1090,6 +1089,15 @@ def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
     }]}
 
 
+# THE DECORATOR BELONGS TO `render_ui` BELOW, and for a while it was not on it.
+# Two helpers were inserted BETWEEN this line and the handler it decorates, so FastAPI
+# registered `_as_options(values: list)` as POST /render_ui. Every real payload then failed
+# request validation with 422 Unprocessable Entity -- the supervisor's `generate_ui_payload`
+# raised on it and the whole turn failed, with the engine healthy and the handler intact and
+# simply never reached. A decorator binds to THE NEXT DEFINITION, so inserting a function
+# under one silently re-points a route; nothing errors, and the symptom is a 422 that reads
+# like a producer sending the wrong shape.
+@app.post("/render_ui")
 async def render_ui(request: RenderRequest, response: Response) -> Any:
     """Render the agent's response into a UI shape.
 
