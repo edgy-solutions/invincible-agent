@@ -3193,6 +3193,99 @@ arrive.
 
 ---
 
+## R-077 — OWNERSHIP IS NOT EXPANDABILITY
+
+A prefix registry needs an entry for every namespace **code names in compact form**, regardless of
+who owns the namespace. The graph holds the full IRI either way.
+
+Partitioning a namespace population by authority feels like the careful move and asks the wrong
+question. `iof:`, `mro:` and `s3kl:` are industry and vendor vocabularies — external by every
+sensible reading — and an external-vs-ours split would have exempted all three on ownership
+grounds. But `mro:Part` is named in compact form by `_LABEL_TO_CLASS_URI`, and a compact form that
+cannot expand never matches the full-IRI node the graph stores. **Whose namespace it is has no
+bearing on whether the expansion is needed.**
+
+The same axis error in the other direction cost more. `_OURS` matched `http://invincible-agent/`
+alone, so the four namespaces on `internal/sustainment/` and the two on `edgy-solutions.com`
+dropped out of the checked population without a word — nine of fifteen declared namespaces
+outside the check. **`pcn:` was in no prefix table at all** while `pcn:Component` was already
+being named on the parts-by-state dashboard, and sustainment classes load through n10s as full
+IRIs, so it could never have matched.
+
+**How to apply.** Derive the population from **use**, not from ownership: every prefix any code
+path names compact, plus every prefix the loaded ontologies declare. Then partition — each member
+in the basis, or in an exclusion list **with a reason that says why THAT prefix needs no
+expansion**, never merely who owns it.
+
+**And an exclusion must be able to say "on purpose".** `mro:` is exempt *deliberately*: `mro:Part`
+has no canonical TBox declaration and the sandbox substrate holds no full-IRI form, so it stays
+compact and the widened substrate guard correctly flags it for resolution. Its three siblings in
+that same dict are spelled as full IRIs, which is exactly what makes the row look like an
+oversight. Recording the reasoning is what stops the next reader from "fixing" it into an IRI
+nothing carries. See R-041's vacuum discipline and the partition rule: failing while undecided,
+never skipping.
+
+---
+
+## R-078 — A CHECK THAT MATCHES A STRING ANYWHERE IN A FILE ANSWERS ABOUT THE FILE
+
+Not about the step, the branch, or the mechanism it names. Four instances in one day, which is
+what makes it a class rather than an anecdote.
+
+    seal      `"|| rc=$?" in block`     matched THE COMMENT EXPLAINING THE GUARD, and passed
+                                        against a step whose guard had been deleted
+    join arm  `"helm show chart ..."`    matched the version-GUARD step upstream, not the retag
+                                        step it named; survived a mutation that broke the retag
+    grep      `mil:`/`mro:`              4 apparent uses: a prompt string, a docstring example,
+                                        a query-param description, and one real value
+    fixture   `pcn:SustainmentNotice`    a REAL namespace standing in for an unknown one
+
+**The instrument and its subject share a surface.** Documentation of a mechanism contains the
+mechanism's own characters, so a check written to find the mechanism finds the prose about it —
+and prose is the thing most likely to survive when the mechanism is removed.
+
+**The sharpest form is that better scoping can BREAK such a check.** The retag seal's first bound
+began after the comment and therefore read only code, so it caught correctly. Fixing the bound to
+start at the step header pulled the comment into range, and the arm silently stopped working. The
+mutation flipping CAUGHT to SURVIVED is what exposed both — **no assertion about the branch could
+have.**
+
+**How to apply.** Scope to the construct, then strip the commentary before asserting on
+behaviour: a comment-free view of the step, the block, the function. Search for the *form the code
+must take* — the quoted literal, the call shape — not the bare token. And mutate only
+non-comment occurrences, or the mutation proves nothing either.
+
+See [[the-instrument-and-the-subject-share-a-surface]] and R-070's working-tree arm, whose first
+draft was the bug it catches.
+
+---
+
+## R-079 — A FIXTURE INDISTINGUISHABLE FROM ITS SUBJECT IS NOT A FIXTURE
+
+**And its tell is that it goes RED when the bug is fixed.**
+
+`test_an_UNKNOWN_prefix_is_left_alone_not_guessed` used `pcn:SustainmentNotice` as its example of
+an unknown prefix. `pcn:` is a declared namespace. It stood in for "unknown" only because no
+prefix table contained it — **and that absence was the defect, not a property.** The test passed
+for exactly as long as the bug existed, and failed the moment it was corrected.
+
+The property under test was right and worth keeping: an unknown prefix must pass through rather
+than be guessed into a phantom class. What was wrong was the stand-in. A fixture chosen from the
+subject's own population does not test the boundary; it tests the population's current state, and
+it encodes that state as the specification.
+
+**How to apply.** A fixture standing for "absent", "unknown", "invalid" or "not ours" must be
+**derived to be so**, with a control asserting it: check it against the real registry AND against
+what the declarations contain. The second half matters — a prefix can be *declared but exempt*,
+which is real-but-absent-from-tables, and that is precisely how `pcn:` looked. Both mutations
+were caught only because the control read both sources.
+
+**The reverse reading is the useful diagnostic.** A seal that turns red when a defect is repaired
+was asserting the defect. Treat green-where-red-was-expected as a signal on healthy code
+([[a-mutation-that-wont-die]]), and red-on-a-fix as a signal on the seal.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
