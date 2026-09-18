@@ -38,6 +38,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests._ratchet import stale_entries, ABSENT_FROM_LIVE
+
 _REPO = Path(__file__).resolve().parents[1]
 _FLEET = _REPO / "agent_fleet"
 
@@ -160,22 +162,9 @@ def test_an_exemption_is_a_claim():
     for key, reason in _UNRELATED_BY_DESIGN.items():
         assert reason and len(reason) > 40, f"{key} is exempt without a reason"
     live = {(e, r) for e, _m, r, _h in _routes()}
-    stale = _stale_exemptions(_UNRELATED_BY_DESIGN, live)
+    stale = stale_entries(_UNRELATED_BY_DESIGN, live, stale_when=ABSENT_FROM_LIVE)
     assert not stale, f"exemption(s) for routes that no longer exist: {stale}"
 
-
-def test_THE_RATCHET_CAN_FAIL_WITH_THE_LIST_EMPTY():
-    """The arm above walks `_UNRELATED_BY_DESIGN`; at zero entries it cannot fail whatever the
-    tree does. This exercises the rule against a fixture, so its reach never depends on the size
-    of the list it guards."""
-    live = {("eng", "/alive")}
-    assert _stale_exemptions({("eng", "/gone"): "r"}, live) == [("eng", "/gone")], (
-        "an exemption naming a route that no longer exists was NOT flagged"
-    )
-    assert _stale_exemptions({("eng", "/alive"): "r"}, live) == [], (
-        "an exemption naming a LIVE route was flagged — a ratchet that flags everything "
-        "satisfies the live assertion for the wrong reason"
-    )
 
 
 def test_the_pinned_routes_still_point_where_they_should():

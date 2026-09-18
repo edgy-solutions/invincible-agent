@@ -25,6 +25,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests._ratchet import stale_entries, PRESENT_IN_LIVE
+
 from agent_fleet.presentation_agent.capabilities import (
     _IRI_PREFIXES_FOR_LOOKUP,
     PRESENTATION_CAPABILITIES,
@@ -205,22 +207,12 @@ def _stale_exempt(exempt, handled) -> list:
     return sorted(set(exempt) & set(handled))
 
 
-def test_THE_RATCHET_CAN_FAIL_WITH_THE_LIST_EMPTY():
-    """`_EXEMPT` shrinks as namespaces gain table entries; at zero the arm below cannot fail."""
-    assert _stale_exempt({"x:": "r"}, {"x:"}) == ["x:"], (
-        "a prefix that IS in a table was not flagged as a stale exemption"
-    )
-    assert _stale_exempt({"x:": "r"}, {"y:"}) == [], (
-        "a genuinely absent prefix was flagged — a ratchet that flags everything satisfies the "
-        "live assertion for the wrong reason"
-    )
-
 
 def test_no_exemption_is_stale():
     """An exemption for a namespace that IS in the tables is a claim nobody re-read. It costs
     nothing today and misleads the next person deciding whether a prefix was considered."""
     handled = {p for t in _TABLES.values() for p in t}
-    stale = _stale_exempt(_EXEMPT, handled)
+    stale = stale_entries(_EXEMPT, handled, stale_when=PRESENT_IN_LIVE)
     assert not stale, (
         f"exempt AND present in a table: {stale}. The exemption says the namespace needs no "
         f"expansion; the table says it has one. Delete the exemption."

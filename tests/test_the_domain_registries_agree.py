@@ -42,6 +42,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests._ratchet import stale_entries, PRESENT_IN_LIVE
+
 import pytest
 
 yaml = pytest.importorskip("yaml")
@@ -165,17 +167,6 @@ def _stale_one_sided(one_sided, on_both_sides) -> list:
     return sorted(set(one_sided) & set(on_both_sides))
 
 
-def test_THE_RATCHET_CAN_FAIL_WITH_THE_LIST_EMPTY():
-    """`_ONE_SIDED` will reach zero as domains get seeded, and on that day the arm below stops
-    being able to fail. The rule is exercised here against data this test owns."""
-    assert _stale_one_sided({"X": "r"}, {"X"}) == ["X"], (
-        "a domain that is now on BOTH sides was not flagged as a stale exemption"
-    )
-    assert _stale_one_sided({"X": "r"}, {"Y"}) == [], (
-        "a genuinely one-sided domain was flagged — a ratchet that flags everything satisfies "
-        "the live assertion for the wrong reason"
-    )
-
 
 def test_AN_EXEMPTION_IS_A_CLAIM_AND_RETIRES_ITSELF():
     """An entry that is no longer one-sided is a claim nobody re-read — and it would hide a real
@@ -183,7 +174,7 @@ def test_AN_EXEMPTION_IS_A_CLAIM_AND_RETIRES_ITSELF():
     for name, reason in _ONE_SIDED.items():
         assert reason and len(reason) > 40, f"{name} is exempt without a reason"
     both = _seeded_domains() & _policy_domains()
-    stale = _stale_one_sided(_ONE_SIDED, both)
+    stale = stale_entries(_ONE_SIDED, both, stale_when=PRESENT_IN_LIVE)
     assert not stale, (
         f"{stale} are now on BOTH sides, so the exemption describes nothing. Delete the entry."
     )
