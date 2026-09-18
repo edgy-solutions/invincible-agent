@@ -47,7 +47,6 @@ _NO_SCOPE_YET: dict[str, str] = {
     "data_analyst": "Engine DA serves every caller; its scope is the per-asset dataset gate, not a domain.",
     "datahub_wrapper": "catalog wrapper — DATA_ENGINEERING gating is the 2026-07-02 stopgap on query_metadata, not a verb domain.",
     "graph_host": "registers from policy/graphs/*.yaml ROWS, which carry their own owner_persona and domains per graph.",
-    "docs_agent": "the corpus answers ABOUT the system (ADR-0037) — runbooks, ADRs and how-do-I prose — not about a domain's subjects, so it is domain-agnostic for the same reason neo4j_expert and weaviate_expert are. FLAGGED AT MERGE 2026-09-17: the engine declared no domains by OMISSION rather than by decision, and this entry is the decision being made explicitly. If the corpus ever carries a page whose CONTENT is domain-sensitive, this stops being true and the row becomes a per-page gate, not a verb domain.",
     "neo4j_expert": "substrate expert, domain-agnostic by design — it answers about the graph, not about a domain's subjects.",
     "ontology_service": "Engine O is the resolver; its registrations are per-domain providers named at each call site.",
     "restate_analyst": "the workflow substrate registers infrastructural verbs, not domain ones.",
@@ -115,10 +114,17 @@ def _module_scope(path: Path) -> dict:
 
     domains: set = set()
     personas: set = set()
+    # ABSENT IS NOT EMPTY, and here the difference IS the grant. `domains=[]` is a person saying
+    # this verb is domain-agnostic; NO `domains=` argument is nobody having been asked. Both end
+    # up visible to every caller, so a check reading only the resulting list cannot tell a
+    # decision from an omission — and the omission is the one that must fail.
+    declared_agnostic = False
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "register_engine_to_mesh"):
             continue
         kw = {k.arg: k.value for k in node.keywords if k.arg}
+        if "domains" in kw and isinstance(kw["domains"], ast.List) and not kw["domains"].elts:
+            declared_agnostic = True
         d = value_of(kw.get("domains"))
         if d:
             domains.update(d)
@@ -128,6 +134,7 @@ def _module_scope(path: Path) -> dict:
 
     return {
         "DOMAINS": sorted(domains) or None,
+        "DECLARED_AGNOSTIC": declared_agnostic,
         "OWNER_PERSONA": sorted(personas)[0] if len(personas) == 1 else (sorted(personas) or None),
     }
 
@@ -152,15 +159,51 @@ def test_every_registering_engine_is_either_scoped_or_excluded_WITH_A_REASON():
     the whole difference between an exclusion list and an inclusion list.
     """
     engines = _registering_engines()
-    undecided = [
-        name for name, path in engines.items()
-        if name not in _NO_SCOPE_YET and not _module_scope(path)["DOMAINS"]
-    ]
+    undecided = []
+    for name, path in engines.items():
+        if name in _NO_SCOPE_YET:
+            continue
+        scope = _module_scope(path)
+        # THREE STATES, NOT TWO. Scoped; DECLARED agnostic with `domains=[]`; or undecided.
+        # Only the third fails — and before the registration amendment it was indistinguishable
+        # from the second, so an engine reached the widest grant in the fleet by writing less.
+        if scope["DOMAINS"] or scope["DECLARED_AGNOSTIC"]:
+            continue
+        undecided.append(name)
     assert not undecided, (
-        f"{undecided} register verbs, declare no DOMAINS, and are not excluded with a reason. A "
-        "verb with no domains is DOMAIN-AGNOSTIC — visible to every caller regardless of "
-        "entitlement — so this is a grant decision made by an omitted argument"
+        f"{undecided} register verbs, pass NO `domains` argument at all, and are not excluded "
+        "with a reason. A verb with no domains is DOMAIN-AGNOSTIC — visible to every caller "
+        "regardless of entitlement — so this is a grant decision made by an omitted argument. "
+        "Declare it: `domains=[...]` to scope, or `domains=[]` with the reason beside it to say "
+        "agnostic deliberately."
     )
+
+
+def test_AN_EXPLICIT_AGNOSTIC_DECLARATION_CARRIES_ITS_REASON():
+    """`domains=[]` is the widest grant the fleet can make, so it may not be a bare line.
+
+    The amendment moved agnostic from an omission to a declaration; a declaration nobody
+    justified is the omission again with better spelling.
+    """
+    for name, path in _registering_engines().items():
+        if not _module_scope(path)["DECLARED_AGNOSTIC"]:
+            continue
+        src = path.read_text(encoding="utf-8")
+        lines = src.splitlines()
+        n = next(k for k, ln in enumerate(lines) if "domains=[]" in ln)
+        # CONTIGUOUS, walking back from the line itself. The first draft counted comment lines
+        # anywhere in the preceding 1400 characters and SURVIVED the mutation that deleted the
+        # justification — an unrelated comment block above it answered for the missing one.
+        # A check must read the thing it names, not its neighbourhood (R-078).
+        comment = []
+        k = n - 1
+        while k >= 0 and lines[k].strip().startswith("#"):
+            comment.append(lines[k])
+            k -= 1
+        assert len(comment) >= 3, (
+            f"{name} declares `domains=[]` with no reason beside it. Agnostic is the widest "
+            f"grant available; say why it is right and what would retire it."
+        )
 
 
 def test_the_exclusions_still_name_registering_engines():
@@ -176,7 +219,15 @@ def test_the_exclusions_still_name_registering_engines():
 @pytest.mark.parametrize("engine", sorted(set(_registering_engines()) - set(_NO_SCOPE_YET)))
 def test_the_declared_domain_exists_in_the_vocabulary(engine):
     """THE SEAL. A domain the policy files do not know is a scope that entitles nobody."""
-    declared = _module_scope(_registering_engines()[engine])["DOMAINS"]
+    scope = _module_scope(_registering_engines()[engine])
+    declared = scope["DOMAINS"]
+    if scope["DECLARED_AGNOSTIC"] and not declared:
+        # NOT A GAP. An engine that declared `domains=[]` has no domain to look up, and demanding
+        # one would make the vocabulary check fail the honest declaration while passing the
+        # omission it replaced — over-constrained in the direction that punishes saying so.
+        # That it is DECLARED rather than absent is asserted by the partition test above, and its
+        # reason by test_AN_EXPLICIT_AGNOSTIC_DECLARATION_CARRIES_ITS_REASON.
+        pytest.skip(f"{engine} is declared domain-agnostic (`domains=[]`)")
     assert declared, f"{engine} declares no DOMAINS but is not excluded"
     known = _vocab("domains.yaml", "domains")
     unknown = sorted(set(declared) - known)

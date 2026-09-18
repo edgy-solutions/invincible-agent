@@ -211,6 +211,22 @@ async def lifespan(app: FastAPI):
                 description=v["desc"],
                 verb_synonyms=v["synonyms"],
                 verb_anti_synonyms=v["anti_synonyms"],
+                # DECLARED AGNOSTIC, never reached by leaving the argument off. An engine
+                # that passes no `domains` is visible to every caller regardless of
+                # entitlement — so the SHORTER CALL IS THE WIDER GRANT, and the gate is
+                # inverted by an omission. `[]` says a person decided; absent says nobody
+                # was asked, and the two must not look the same in the census.
+                #
+                # WHY AGNOSTIC IS RIGHT HERE: the corpus answers ABOUT the system
+                # (ADR-0037) — runbooks, ADRs, how-do-I prose — not about a domain's
+                # subjects. Same category as neo4j_expert and weaviate_expert.
+                #
+                # AND THE CONDITION THAT RETIRES THIS: if the corpus ever carries a page
+                # whose CONTENT is domain-sensitive, this stops being true and the answer
+                # is a per-page gate, not a verb domain. Written here rather than left to
+                # be noticed, because an agnostic verb serving a sensitive page is the
+                # failure this declaration exists to make visible.
+                domains=[],
                 slots=slots_mod.slots_for(v["fn"]),
                 mint=_mint,
             )
