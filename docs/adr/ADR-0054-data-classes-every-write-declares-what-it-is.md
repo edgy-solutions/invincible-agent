@@ -15,8 +15,10 @@ enforcement points only; no store is reclassified by this ADR**, and the populat
 **provisional** (see §7). The eo lane's fleet-wide write census is the first thing that runs against
 it. **Amended twice** — 2026-09-16, four answers to its first consumer's review, and the class
 does NOT transition; **2026-09-17, five from the fleet-wide write census**, which widens
-`rebuildable` to reach a durable log, classifies scripts by their targets, and gives §4 a **third
-door that lives in another repo**. The census has landed, so §7's "provisional" is history rather
+`rebuildable` to reach a durable log, classifies scripts by their targets, gives §4 a **third door
+that lives in another repo**, and adds that door's **symmetric half** — a repo that cannot see the
+writes must not claim they are ABSENT either, so the refusal derivation has three states and only
+*no producer anywhere* is refused. The census has landed, so §7's "provisional" is history rather
 than state.
 **Date:** 2026-09-16
 **Deciders:** Architect (the four fields and the three enforcement points), Platform team
@@ -498,6 +500,82 @@ form-checked-but-existence-unchecked rule applied to a seal rather than to a lin
 lane's conformance seal already got the matching half right unprompted: it deliberately does **not**
 read the graph for its declared-but-never-written direction, **because the live edges have another
 repo as their author and a graph-reading seal would go red on someone else's correct behaviour.**
+
+### 6. The symmetric half — a repo that cannot see the writes must not claim they are ABSENT either
+
+§5 above rules that a repo which cannot see the writes must not claim they conform. **The same
+blindness runs the other way and is easier to miss, because it produces a REFUSAL — which reads as
+rigour.**
+
+The census's `fold, do not hand-run` derivation refused two stores on its first run:
+`neo4j:OntologyClass` and `weaviate:OntologyClass`, for having no bootstrap that reproduces them.
+**Both refusals were wrong**, and the measurement is the argument:
+
+    MERGE / CREATE (:OntologyClass …)   0 sites in this repo
+    MATCH          (:OntologyClass …)   29 sites across 5 files
+
+**Nothing here creates those nodes; five files match them.** Their producer is doc-tools'
+`assets/ontology_assets.py`, folded into the prime and invisible from this tree — and the prime's
+own comment says so outright. The registrar writes the edges **between nodes it never created**.
+
+**So the refusal derivation has THREE states, not two:**
+
+| state | meaning | outcome |
+|---|---|---|
+| **produced here** | a producer in this repo | classified, witness named |
+| **produced by a declared external door** | a producer in another repo's declared store list | **classified, NOT refused** |
+| **no producer anywhere** | nothing claims to reproduce it | **refused** — §5's hand-seeded debt |
+
+**Only the third is refused**, and the census reads the ingest door's declared store list as a
+producer source *before* it refuses anything. Refusing the first two was the conformance-split
+blindness pointed the other way: a single-repo census asserting an ABSENCE it has no standing to
+assert.
+
+### 7. The ingest door declares STORES, not only edge types
+
+§3 above names doc-tools as the third write door and enumerates the eight edge types it MERGEs.
+**That enumeration is incomplete in a way that leaves §6's second state unusable.**
+
+`assets/ontology_assets.py` also writes the **`OntologyClass` nodes in Neo4j** and the
+**`OntologyClass` collection in Weaviate** — both of which §2 classes `rebuildable`. If the ingest
+door's declaration lists only edge types, **the node writes have nothing to check against**: the
+conformance assertion passes over a surface it cannot see, and the census has no producer source to
+read for those two stores.
+
+> **The ingest door declares the STORES it writes, each with its class and doc-tools as producer**,
+> the way the registrar's declaration covers `PARAMETERISED_BY`. Edge types alone describe half of
+> what comes through the door.
+
+### Three corrections from the census owner, and they are one family
+
+All three arrived while these amendments were being written, all three are theirs, and each is a
+way an instrument returns something other than the world:
+
+* **AN INSTRUMENT'S REACH NARROWS THE EVIDENCE FOR ITS OWN WARNING.** The false-zero caution in §5
+  was raised using a figure the census's own scan had produced by omitting `.txt` from its suffix
+  list and `tests/` from its scopes. Right in substance; artefact for evidence.
+* **THE LIST IS WHAT YOU WROTE DOWN, so checking against it returns your own earlier decision as a
+  measurement.** That is the mechanism that makes *a search by list finds the list* survive care —
+  the eight-versus-five count had exactly that shape, a grep for the five already suspected
+  returning confirmation of its own hypothesis.
+* **A CHECK THAT REPORTS ONE INSTANCE PER RUN UNDER-REPORTS BY CONSTRUCTION, and a clean second run
+  reads as a fix.** Worse than flaky, because it is consistent. `test_citation_paths` named one
+  dead path of two in this ADR, and the second was found by deriving the remaining occurrences
+  rather than by trusting the error to have listed them.
+* **A CONSTANT IS NOT A DERIVATION**, and it invents a store. The census's extractor had no
+  derivation rule for DataHub, so it returned a hardcoded `datahub:catalog` for all fourteen sites
+  — **merging two disjoint populations into a store that does not exist.** The registrar emits
+  `urn:li:mlModel` on the `mesh` platform; a seed script emits `DatasetProperties` on `postgres`
+  and `snowflake`. Different entity types, different platforms, zero overlap.
+* **A MIGRATION IS NOT A SECOND BOOTSTRAP.** A category of three stores with *"both a folded writer
+  and a script writer"* dissolved on reading the scripts: four are one-shot repairs that converge
+  and are done, and one is a seeder for a store nothing else touches. **The class-6 collapse risk —
+  two producers disagreeing about one store's shape — has ZERO instances**, and that is a stronger
+  answer than three risks precisely because the label had been too coarse twice in the same
+  direction.
+
+**Their common shape is the one this ADR is built on**: a population that is asserted rather than
+derived, whether the assertion is a list, a scope, or a report's own output.
 
 ## Consequences
 
