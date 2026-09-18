@@ -42,7 +42,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests._ratchet import stale_entries, PRESENT_IN_LIVE
+from tests._ratchet import stale_entries, ABSENT_FROM_LIVE, PRESENT_IN_LIVE
 
 import pytest
 
@@ -178,7 +178,12 @@ def test_AN_EXEMPTION_IS_A_CLAIM_AND_RETIRES_ITSELF():
     assert not stale, (
         f"{stale} are now on BOTH sides, so the exemption describes nothing. Delete the entry."
     )
-    unknown = sorted(set(_ONE_SIDED) - (_seeded_domains() | _policy_domains()))
+    # THE SECOND RATCHET IN THIS ARM, and I converted only the first. One register, two staleness
+    # computations — the same miss 81 reported in their own file, where one register was recorded
+    # and three were there. A register is not the unit; a COMPUTATION is.
+    unknown = stale_entries(
+        _ONE_SIDED, _seeded_domains() | _policy_domains(), stale_when=ABSENT_FROM_LIVE
+    )
     assert not unknown, f"exemption(s) for domains in neither registry: {unknown}"
 
 
