@@ -110,6 +110,57 @@ def test_IT_CARRIES_WHAT_IS_KNOWN_SO_A_REPLAY_HAS_SOMEWHERE_TO_START():
         )
 
 
+def test_THE_WRITER_READS_THE_SAME_ROUTING_THE_ARTIFACT_PERSISTS():
+    """THE JOIN, and its absence is why every field above was present and EMPTY in production.
+
+    `test_IT_CARRIES_WHAT_IS_KNOWN...` asserts the field NAMES appear in the block. They did. The
+    writer read `bundle["routing_inline"]` — a column read back in a different query — while the
+    artifact persists `bundle["routing"]`, the live decision, a few lines further down. So every
+    row carried a complete route beside a cause that said `route_status: ""`, under a comment
+    claiming the emptiness was itself the finding.
+
+    Measured 2026-09-18 on the sandbox: `routing` held
+    `handled_by.engine_name`, `handled_by.endpoint_url`, `route_status`, `action.candidate_count`
+    and `action.classify_called`; the `failure_cause` beside it held empty strings.
+
+    Two ends correct, the relation between them asserted nowhere. So it is asserted here: the key
+    the cause writer reads IS the key the artifact is given.
+    """
+    src = _src()
+
+    # What the artifact is handed, from the `routing=` keyword at the write call.
+    m = re.search(r"routing=bundle\[(['\"])([a-z_]+)\1\]", src)
+    assert m, "could not find the artifact's `routing=` argument — this arm cannot bind"
+    persisted_key = m.group(2)
+
+    # What the cause writer reads.
+    block = _exit_block()
+    # ANCHORED ON THE ASSIGNMENT, not on any `bundle.get(...)` in the block. The first
+    # draft matched the earliest one and read `resolved_intent` — the neighbour, not the
+    # claim.
+    r = re.search(r"_inline = bundle\.get\((['\"])([a-z_]+)\1\)", block)
+    assert r, "the cause writer no longer reads a routing dict off the bundle"
+    read_key = r.group(2)
+
+    assert read_key == persisted_key, (
+        f"the cause writer reads bundle[{read_key!r}] while the artifact persists "
+        f"bundle[{persisted_key!r}] — the cause and the route it should name come from two "
+        f"different objects, so a fully-routed turn records a cause with empty fields"
+    )
+
+
+def test_THE_CAUSE_SAYS_WHY_THERE_WAS_NO_ANSWER_not_only_where():
+    """An empty candidate pool with `classify_called: false` is a turn that never reached the
+    classifier. That is a different failure from a classifier that ran and refused, and the two
+    are indistinguishable unless the record says which."""
+    block = _exit_block()
+    for field in ("candidate_count", "classify_called", "subject_uri"):
+        assert field in block, (
+            f"{field!r} is not carried, so 'nothing matched' cannot be told from 'nothing was "
+            f"asked'"
+        )
+
+
 def test_THE_PENDING_BRANCH_SURVIVES():
     """The two are different states with different messages and neither replaces the other:
     `pending` is a route that recorded NO outcome; `failed` with no cause is a route that
