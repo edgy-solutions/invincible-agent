@@ -539,16 +539,43 @@ comment says so — and the registrar writes the edges **between nodes it never 
 `CREATE … :OntologyClass` and it is **schema, not a node write**. Counted, the prime becomes a
 folded producer and the entire external-door conclusion reverses.
 
-### And the two clauses are load-bearing TOGETHER
+### THE WORKED CASE — `neo4j:OntologyClass`, where two rules need each other
 
-**The script writes mean `neo4j:OntologyClass` IS produced here** — by four hand-run scripts,
-five sites. Under the three-state derivation alone it would therefore sit in state **one**,
-*produced here*, and never reach the external door at all.
+**§2 has a worked case for the class-6 rule; this is the worked case for the interlock**, and it
+earns the same treatment for the same reason: a rule with no instance is a rule nobody applies.
 
-**It is `fold, do not hand-run` that says a hand-run producer is not a bootstrap**, which is what
-moves it to state two. Neither clause gives the right answer for this store on its own: §5's
-refusal without the three states refuses it wrongly, and the three states without §5 classify it
-wrongly. **They interlock, and this store is the case that shows it.**
+The store, declared:
+
+| field | value | |
+|---|---|---|
+| reproducibility | `rebuildable` | reproduced by the prime, every run |
+| authority | `here` | it is this platform's vocabulary |
+| sync obligation | `none` | nothing crosses a location boundary |
+| producer | **doc-tools' `assets/ontology_assets.py`** | via the ingest door's declared store list (§7) |
+
+**What each rule says about it ALONE, and both are wrong:**
+
+| reading | verdict | why it is wrong |
+|---|---|---|
+| the three states, alone | **state one, *produced here*** | four hand-run scripts write these nodes — five sites — so a producer IS present in this repo. It never reaches the external door, and the ingest door's declaration is never consulted. |
+| `fold, do not hand-run`, alone | **REFUSED** | every producer it can see is a hand-run script, so the store has no bootstrap and is §5's debt. This is the refusal the census actually produced. |
+| **the two together** | **state two, *produced by a declared external door*** | a hand-run producer is not a bootstrap, so state one does not apply; and a bootstrap exists behind the ingest door, so the refusal does not either. |
+
+**Neither rule is redundant and neither is sufficient.** Remove the three states and §5 refuses a
+store the prime rebuilds on every run. Remove §5 and the three states classify a hand-run script as
+the producer of record, which is the debt legitimised under a different name — the outcome §5
+exists to prevent, reached by the rules that were supposed to prevent it.
+
+> **This is the second time a store that fits no simple reading has shown that two rules need each
+> other.** The first was edge-authored intent, which fit none of the three lifecycle shapes and
+> proved the shapes are not the schema. This one fits neither of two derivations and proves they
+> interlock. **Both were found by a case, not by reading the rules** — which is the argument for
+> worked cases in an ADR rather than a cleaner statement of the rule.
+
+**AND IT WAS INVISIBLE UNTIL A NUMBER WAS SCOPED HONESTLY.** While the paragraph above said *zero
+writes in this repo*, this store looked like a plain state-two case and the interlock did not
+exist: there was no state-one reading to rule out. **The four script writes are what make the two
+rules collide**, and they were outside the scope of the command that produced the zero.
 
 **So the refusal derivation has THREE states, not two:**
 
