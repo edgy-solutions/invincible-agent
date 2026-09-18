@@ -39,7 +39,11 @@ except ImportError:
     from agent_fleet.utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 
 _SAFETY = "http://internal/sustainment/safety#"
-_MAINT = "http://internal/maintenance#"
+# THE STANDARD'S CLASS, NOT A HOUSE SYNONYM. `_MAINT + "WorkOrder"` was refused 422 by
+# Contract D because no TTL declares it; `mro:MaintenanceWorkOrder` is the IOF Maintenance
+# Reference Ontology class that already exists (agent_fleet/ontology_service/iof_mro.ttl:32).
+# ADR-0007 survey-before-mint: a cited-but-invented IRI is worse than an empty slot.
+_MRO = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
 
 #: Injected by the route, never spoken. EMPTY FOR THIS ENGINE — see the docstring.
 HANDLE_SLOTS: Dict[str, set] = {}
@@ -59,7 +63,7 @@ _REFERENT_KIND = {
     "hazard_id":     _SAFETY + "Hazard",
     "write_up_id":   _SAFETY + "WriteUp",
     # POINTS OUT OF THIS ENGINE, on purpose — see the module docstring.
-    "work_order_id": _MAINT + "WorkOrder",
+    "work_order_id": _MRO + "MaintenanceWorkOrder",
 }
 
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing

@@ -43,7 +43,21 @@ def client():
 
 
 def _post(client, fn: str, params: dict):
-    return client.post("/analyze", json={"fn": fn, "params": params})
+    """POST the way the FLEET'S DISPATCHER does: verb in the PATH, `{query, params}` in the body.
+
+    ⛔ THIS SEAL WAS GREEN ON A CONTRACT NOTHING COULD CALL. It posted to `/analyze` with
+    `{"fn": ..., "params": ...}` — the engine's own invented shape — and every assertion here
+    passed while EVERY REAL DISPATCH 422'd on arrival: `{"type":"missing","loc":["body","fn"]}`.
+    The dispatcher puts the verb in the URL path and sends no `fn`, because cost and finance
+    register `{base}/measure/{fn}`.
+
+    **A seal that speaks the subject's own dialect cannot detect that the dialect is wrong.**
+    It is the instrument-and-subject-share-a-surface shape at the level of a CONTRACT: the test
+    agreed with the engine, both disagreed with the fleet, and the agreement is what made it
+    look verified. Nothing in this file could have caught it, which is why it was caught by a
+    replay against the pod instead.
+    """
+    return client.post(f"/measure/{fn}", json={"query": "", "params": params})
 
 
 def test_the_happy_path_still_answers_so_the_guard_is_not_refusing_everything():

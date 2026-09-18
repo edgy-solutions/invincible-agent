@@ -62,8 +62,30 @@ except ImportError:
     from agent_fleet.safety_agent import slots as slots_mod  # type: ignore[no-redef]
 
 SAFETY = "http://internal/sustainment/safety#"
-MAINT = "http://internal/maintenance#"
 MESH = "http://invincible-agent/mesh#"
+
+# ── THE WORK-ORDER SUBJECT IS THE STANDARD'S CLASS, NOT A HOUSE SYNONYM ──────
+#
+# `assessDeferralRisk` declared `maint:WorkOrder` — `http://internal/maintenance#WorkOrder` —
+# and Contract D refused the registration 422, `missing: [that IRI]`, because NO TTL
+# ANYWHERE DECLARES IT. The fix is not to author it: `mro:MaintenanceWorkOrder` already
+# exists (`agent_fleet/ontology_service/iof_mro.ttl:32`) under the IOF Maintenance Reference
+# Ontology, and ADR-0007's survey-before-mint answers the rest — minting a house synonym for
+# a class the standard already names forfeits the citation and creates a second truth about
+# one thing.
+#
+# SAME RULING `product_structure_extension.ttl` MADE FOR S3000L: the standard's own names
+# where the standard covers the need, house convention only where it does not and labelled
+# as such. A cited-but-invented IRI is worse than an empty slot.
+#
+# ⚠️ THIS IRI IS DECLARED ON DISK AND IS NOT IN THE PRIME MANIFEST (verified: zero matches
+# for `iof_mro` in `setup/prime_databases.py`). A TTL on disk and absent from the manifest is
+# UNDECLARED AT A FRESH CLUSTER — seal 1's whole lesson, and the `mesh:proposeDisposition`
+# failure exactly: sandbox had the node, every fresh cluster did not, and the registrar
+# refused the edge forever. So this registration still 422s until the eo lane lands
+# `iof_mro.ttl` in the manifest. Changing the IRI here is necessary and NOT sufficient, and
+# saying so is the difference between a fix and a fix that looks finished.
+MRO = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # THE ENGINE'S SCOPE — and these two names must EXIST IN THE POLICY VOCABULARIES,
@@ -122,7 +144,7 @@ VERBS: List[Dict[str, Any]] = [
     {
         "fn": "assess_deferral_risk",
         "verb": "mesh:assessDeferralRisk",
-        "input_uri": MAINT + "WorkOrder",
+        "input_uri": MRO + "MaintenanceWorkOrder",
         "output_uri": SAFETY + "DeferralRiskCard",
         "desc": (
             "For one deferred work order: whether its item is on the safety-critical items "
@@ -182,7 +204,7 @@ BY_FN = {v["fn"]: v for v in VERBS}
 #: is an elicitation offering free text where it should offer a menu, and the provider
 #: answering `unsupported`, which reads to the ask as a CONSIDERED refusal rather than a gap.
 _NOT_ENUMERABLE = {
-    MAINT + "WorkOrder": (
+    MRO + "MaintenanceWorkOrder": (
         "owned by the maintenance plane; Engine S reads work orders and does not own them. "
         "Minting a safety-namespaced work-order class to make this self-consistent would be "
         "the parallel-vocabulary mistake the ADR-0007 survey avoided one level up."
@@ -270,7 +292,13 @@ async def lifespan(app: FastAPI):
                 # `registration_incomplete`, which is that loop doing exactly its job. Nothing
                 # was silently wrong; nothing was registered either, which is why the safety
                 # verbs are absent from the verb census.
-                endpoint_url=f"{base}/analyze",
+                # ONE ENDPOINT PER VERB, matching cost and finance. This read `{base}/analyze`
+                # — a single body-dispatched route — and the registrar BAKES `endpoint_url`
+                # into the mesh PER VERB, so all three safety verbs carried the same URL and
+                # the mesh had no way to reach one rather than another. The dispatcher puts the
+                # verb in the PATH and sends no `fn`, so every dispatch arrived as a 422 on a
+                # field the caller had no reason to send.
+                endpoint_url=f"{base}/measure/{v['fn']}",
                 description=v["desc"],
                 verb_synonyms=v["synonyms"],
                 verb_anti_synonyms=v["anti_synonyms"],
@@ -431,10 +459,33 @@ _mount_version(app, "engine-safety")
 
 
 class MeasureRequest(BaseModel):
-    """The envelope. `params` carries the slots; there is no state ref — Engine S reads."""
+    """A dispatched verb call. `params` carries the declared slots, nothing else.
 
-    fn: str
+    ⛔ `fn` WAS A REQUIRED FIELD HERE AND IT MADE EVERY SAFETY VERB UNCALLABLE. This engine
+    registered ONE endpoint (`/analyze`) and expected the verb in the envelope; the fleet's
+    dispatcher puts the verb in the URL PATH and sends `{"query", "params"}` with no `fn`. So
+    every dispatch arrived as a 422 — `{"type":"missing","loc":["body","fn"]}` — replayed
+    against the pod on 2026-09-14.
+
+    THE DIVERGENCE WAS THE ENDPOINT SHAPE, NOT A MISSING FIELD IN THE SUPERVISOR:
+
+        cost_agent      endpoint_url = f"{base}/measure/{fn_name}"   verb in the PATH
+        finance_agent   endpoint_url = f"{base}/measure/{v['fn']}"   verb in the PATH
+        safety_agent    endpoint_url = f"{base}/analyze"             verb in the BODY  <- mine
+
+    engine-cost's own comment gives the affirmative argument I should have read at birth: ONE
+    ENDPOINT PER VERB, because the registrar BAKES `endpoint_url` into the mesh per verb, so a
+    single body-dispatched route gives every verb the same URL and the mesh has no way to reach
+    one rather than another. `/analyze` was not load-bearing for anything — `BY_FN` dispatched
+    inside it — so this moves to the fleet shape rather than asking the fleet to learn a second
+    one. Copied field-for-field from cost rather than re-derived: the contract's whole value is
+    that the engines agree.
+    """
+
     params: Dict[str, Any] = {}
+    #: Sent by the dispatcher and unused here — accepted so the envelope round-trips rather than
+    #: 422ing on a field the caller legitimately supplies. Engine S measures from slots only.
+    query: str = ""
 
 
 class ResolveRequest(BaseModel):
@@ -521,20 +572,20 @@ async def enumerate_instances(req: EnumerateRequest) -> Dict[str, Any]:
     return instances_mod.enumerate_class(req.class_uri, req.limit)
 
 
-@app.post("/analyze", tags=["safety"])
-async def analyze(req: MeasureRequest) -> Dict[str, Any]:
+@app.post("/measure/{fn_name}", tags=["safety"])
+async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
     """Run one verb.
 
     THE REFUSAL IS BUILT FROM THE DECLARATION, which is the point: a missing mandatory slot is
     named from `slots_for`, so a signature change moves the refusal with it and a message and
     a signature that cannot disagree is the only kind that stays true.
     """
-    spec = BY_FN.get(req.fn)
+    spec = BY_FN.get(fn_name)
     if spec is None:
-        return {"refused": True, "reason": f"unknown verb '{req.fn}'",
+        return {"refused": True, "reason": f"unknown verb '{fn_name}'",
                 "known": sorted(BY_FN)}
 
-    fn = getattr(measures, req.fn)
+    fn = getattr(measures, fn_name)
 
     # ── AN UNEXPECTED KEY IS A 422 NAMING THE ARGUMENT, NEVER A 500 ─────────────────────────
     #
@@ -572,12 +623,12 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
             status_code=422,
             content={
                 "refused": True,
-                "reason": f"{req.fn} does not accept {', '.join(unexpected)}",
+                "reason": f"{fn_name} does not accept {', '.join(unexpected)}",
                 "unexpected": unexpected,
                 # WHAT IT *DOES* ACCEPT, from the declaration — a refusal that names only what
                 # was wrong makes the caller guess at what would be right.
                 "accepts": sorted(accepted - {"state"}),
-                "slots": slots_mod.slots_for(req.fn),
+                "slots": slots_mod.slots_for(fn_name),
             },
         )
 
@@ -591,13 +642,13 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
     # An unexpected key means the caller's model of this verb is wrong, which usually EXPLAINS
     # the missing slot rather than being a second independent fault. Naming the wrong key first
     # answers both; naming the missing slot first answers neither.
-    missing = slots_mod.missing_mandatory(req.fn, req.params)
+    missing = slots_mod.missing_mandatory(fn_name, req.params)
     if missing:
         return {
             "refused": True,
             "reason": "missing required slot(s)",
             "missing": [m["name"] for m in missing],
-            "slots": slots_mod.slots_for(req.fn),
+            "slots": slots_mod.slots_for(fn_name),
         }
 
     # ── AND NO MEASURE MAY DIE WITHOUT WRITING A RESPONSE ───────────────────────────────────
@@ -618,8 +669,8 @@ async def analyze(req: MeasureRequest) -> Dict[str, Any]:
             status_code=500,
             content={
                 "refused": True,
-                "reason": f"{req.fn} raised {type(exc).__name__}: {exc}",
-                "fn": req.fn,
+                "reason": f"{fn_name} raised {type(exc).__name__}: {exc}",
+                "fn": fn_name,
                 # THE PARAMS AS RECEIVED, because the first question about a failed dispatch is
                 # always "what did it actually get sent" and the answer has been unavailable
                 # every time it has been asked.
