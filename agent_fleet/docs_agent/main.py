@@ -89,7 +89,19 @@ DOCS = "http://invincible-agent/docs#"
 VERBS: List[Dict[str, Any]] = [
     {
         "fn": "explain",
-        "verb": f"{MESH}explain",
+        # COMPACT, like every other verb in the fleet. `f"{MESH}explain"` is a FULL IRI, and
+        # subject/object URIs are full while VERBS are compact — the convention the
+        # registration helpers state and the graph enforces in two places at once:
+        #
+        #   * the relationship type landed as `//invincible-agent/mesh#explain` (the
+        #     registrar strips through the first colon, which for `http://…` removes only
+        #     `http:`) — the ONLY IRI-shaped type among 60-odd bare camelCase ones, so it
+        #     matched nothing and this verb was unreachable while registering cleanly.
+        #   * `namespace_authority = "platform" if verb.startswith("mesh:") else "domain"`
+        #     (ADR-0005) quietly classified the platform docs verb as a DOMAIN verb.
+        #
+        # One wrong form, two wrong outcomes, no error anywhere.
+        "verb": "mesh:explain",
         "input_uri": f"{MESH}DocPage",
         "output_uri": f"{DOCS}DocExplanation",
         "desc": (
