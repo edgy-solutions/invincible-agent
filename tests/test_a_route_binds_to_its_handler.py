@@ -35,6 +35,7 @@ Run: uv run --frozen pytest tests/test_a_route_binds_to_its_handler.py -v
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -91,6 +92,63 @@ def test_NO_ROUTE_BINDS_TO_A_PRIVATE_HELPER():
         + "\n\nThe symptom is a 422 at the CALLER, which reads as the producer sending a bad "
         "shape rather than the route pointing at the wrong function."
     )
+
+
+#: A route whose handler name is deliberately unrelated to its path. AN EXEMPTION IS A CLAIM:
+#: one entry, with the reason, rather than a rule loose enough to admit it silently.
+_UNRELATED_BY_DESIGN = {
+    ("planning_agent", "/scenario"): (
+        "POST /scenario FORKS a scenario (`fork(req: ForkRequest)`) — the path names the resource "
+        "and the handler names the operation, which is REST rather than drift. Verified at the "
+        "source 2026-09-18."
+    ),
+}
+
+
+def _tokens(text: str) -> set:
+    """Lowercase word stems, crudely singularised, minus version noise.
+
+    Crude ON PURPOSE. This decides RELATEDNESS, not correctness: `get_tables` for `/tables` and
+    `run_measure` for `/measure/{fn}` must pass, or the seal fails honest code — the
+    over-constrained shape that gets a check deleted rather than fixed.
+    """
+    out = {re.sub(r"s$", "", t) for t in re.split(r"[^a-z0-9]+", text.lower()) if t}
+    return {t for t in out if t and t not in {"v1", "api"}}
+
+
+def test_EVERY_ROUTE_BINDS_TO_A_HANDLER_THAT_NAMES_IT():
+    """THE GENERAL FORM, and the one that catches a drift onto another PUBLIC function.
+
+    The private-helper arm above catches today's case because `_as_options` is underscored. It
+    would NOT catch a decorator that slid onto a public neighbour — and that is the same accident
+    with a different next definition.
+
+    So: the handler name must share a stem with the route it serves. Measured over the fleet:
+    85 of 86 routes relate, and the one that does not is exempted by name with its reason.
+    """
+    offenders = []
+    for engine, method, route, handler in _routes():
+        if (engine, route) in _UNRELATED_BY_DESIGN:
+            continue
+        core = re.sub(r"\{[^}]*\}", "", route)
+        if not (_tokens(core) & _tokens(handler)):
+            offenders.append(f"{engine}: {method} {route} -> {handler}()")
+    assert not offenders, (
+        "route(s) whose handler name shares nothing with the path it serves — a decorator "
+        "binds to THE NEXT DEFINITION, so this is what a drift looks like:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nIf the divergence is deliberate, add it to _UNRELATED_BY_DESIGN "
+          "with the reason."
+    )
+
+
+def test_an_exemption_is_a_claim():
+    """An exemption without a reason is the omission again, spelled longer."""
+    for key, reason in _UNRELATED_BY_DESIGN.items():
+        assert reason and len(reason) > 40, f"{key} is exempt without a reason"
+    live = {(e, r) for e, _m, r, _h in _routes()}
+    stale = sorted(set(_UNRELATED_BY_DESIGN) - live)
+    assert not stale, f"exemption(s) for routes that no longer exist: {stale}"
 
 
 def test_the_pinned_routes_still_point_where_they_should():

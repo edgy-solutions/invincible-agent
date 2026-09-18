@@ -6133,13 +6133,26 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
         if bundle.get("status") == "failed":
             _ri = dict(bundle.get("resolved_intent") or {})
             if not _ri.get("failure_cause"):
-                _inline = bundle.get("routing_inline") or {}
+                # `routing`, NOT `routing_inline`. THE FIRST VERSION READ THE WRONG KEY and so
+                # wrote a cause with every diagnostic field empty — `route_status: ""`,
+                # `engine_name: ""` — under a comment claiming empty meant the bundle carried no
+                # routing, "which is itself the finding." It was not the finding. `routing_inline`
+                # is a column read back in a DIFFERENT query (see the artifact SELECT above);
+                # `bundle["routing"]` is the live decision this same function writes to the
+                # artifact's `routing` column a few lines down. So the row persisted a full
+                # route beside a cause that said nothing about it.
+                #
+                # A CAUSE WITHOUT ITS ROUTE IS UNATTRIBUTABLE, which is the exact defect this
+                # writer exists to end — committed one level up, in the writer itself.
+                _inline = bundle.get("routing") or {}
                 if isinstance(_inline, str):
                     try:
                         _inline = json.loads(_inline)
                     except Exception:  # noqa: BLE001 — diagnostics must not raise here
                         _inline = {}
                 _handled = (_inline.get("handled_by") or {}) if isinstance(_inline, dict) else {}
+                _action = (_inline.get("action") or {}) if isinstance(_inline, dict) else {}
+                _about = (_inline.get("about") or {}) if isinstance(_inline, dict) else {}
                 logger.error(
                     "AnswerArtifact %s is FAILED with no failure_cause — the route that failed "
                     "it recorded no reason. Writing a typed cause naming that, rather than "
@@ -6161,6 +6174,15 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
                     "engine_name": _handled.get("engine_name") or "",
                     "endpoint_url": _handled.get("endpoint_url") or "",
                     "duration_ms": bundle.get("duration_ms"),
+                    # WHY THERE WAS NO ANSWER, not only where it would have come from. These
+                    # four separate "nothing matched" from "nothing was asked": an empty pool
+                    # with `classify_called: false` is a turn that never reached the classifier,
+                    # and it is indistinguishable from a classifier that ran and refused unless
+                    # the record says which.
+                    "subject_uri": _about.get("uri") or "",
+                    "candidate_count": _action.get("candidate_count"),
+                    "classify_called": _action.get("classify_called"),
+                    "fallback_reason": _inline.get("fallback_reason") or "",
                 }
                 bundle["resolved_intent"] = _ri
 
