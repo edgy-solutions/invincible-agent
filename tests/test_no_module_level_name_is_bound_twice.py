@@ -123,14 +123,44 @@ def test_NO_module_level_name_is_SILENTLY_rebound():
     )
 
 
+def _stale(known, live) -> list:
+    """Entries excused that are not collisions any more. Lifted out of the test so the RULE can
+    be exercised when the list is empty and the real check has nothing to walk."""
+    return sorted(k for k in known if k not in live)
+
+
 def test_the_KNOWN_list_ONLY_SHRINKS():
     """THE RATCHET. An entry that is no longer a collision must be deleted, not left standing —
-    a list that keeps excusing what nobody needs excused stops being read."""
+    a list that keeps excusing what nobody needs excused stops being read.
+
+    ⚠ AND IT WENT VACUOUS THE DAY THE LIST REACHED ZERO, which is worth stating because nobody
+    did anything wrong. Lane 1 removed the one duplicate this list excused and deleted the entry
+    in the same commit — correct, and an exclusion list at zero is a stronger assertion than one
+    at one. **But a loop over an empty dict cannot fail**, so this test stopped being a test as
+    a SIDE EFFECT OF A GOOD CHANGE, and nothing would have said so.
+
+    So the rule is exercised against a fixture below, unconditionally. **A guard whose reach
+    depends on the data it guards has no reach on the day that data is empty** — and empty is
+    exactly the state everyone is working toward.
+    """
     live = {(f, n) for f, n, _, _ in _collisions()}
-    stale = sorted(k for k in _KNOWN if k not in live)
+    stale = _stale(_KNOWN, live)
     assert not stale, (
         f"these are listed as known collisions and are not collisions any more: {stale}. "
         f"Delete them in the commit that fixed them."
+    )
+
+    # THE RULE, EXERCISED WHATEVER THE LIST HOLDS. An excused pair that is not live must be
+    # reported as stale; a live one must not. Both directions, because a ratchet that flagged
+    # everything would also pass the first assertion above for the wrong reason.
+    fake_live = {("real.py", "LIVE")}
+    assert _stale({("gone.py", "FIXED"): "reason"}, fake_live) == [("gone.py", "FIXED")], (
+        "the ratchet does not flag an excused pair that has stopped colliding; with _KNOWN "
+        "empty, nothing else in this test can fail"
+    )
+    assert _stale({("real.py", "LIVE"): "reason"}, fake_live) == [], (
+        "the ratchet flags a pair that IS still colliding, which would demand the deletion of "
+        "an exemption that is still doing work"
     )
 
 
