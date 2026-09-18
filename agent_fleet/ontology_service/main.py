@@ -1888,6 +1888,23 @@ async def _resolve_instance(
     _claimants = {c.provider for c in candidates}
     _subjects = {c.class_uri for c in candidates if c.class_uri}
     _above = candidates
+    # SAY WHAT THE AMBIGUITY IS MADE OF, at the moment it is decided.
+    #
+    # This branch refuses and hands the competing readings to the CALLER, which the comment
+    # above rightly calls the point — and it logged nothing, so an operator seeing
+    # `ambiguous_in_domain` on the wire could not tell WHO claimed the name. Diagnosing one
+    # such refusal on 2026-09-18 cost a day: every provider polled by hand returned a single
+    # claimant, the branch fired anyway, and there was no way to see the set the branch saw.
+    #
+    # A refusal that names its competing readings to the caller and not to its own log is
+    # still opaque to the person who has to fix it.
+    print(
+        f"mesh:resolveInstance fan-out for {identifier!r}: terms={_lookup_terms} "
+        f"candidates={len(candidates)} claimants={sorted(_claimants)} "
+        f"subjects={sorted(_subjects)} asked_domains={sorted(_asked)} "
+        f"demoted={[d.get('provider') for d in demoted]}",
+        flush=True,
+    )
     if len(_claimants) > 1 and len(_subjects) > 1:
         return None, {
             "instance_resolved": False,

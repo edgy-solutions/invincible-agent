@@ -66,6 +66,13 @@ groups:
   maintenance-mechanics:
     grants:
       - {persona: MECHANIC, domain: MAINTENANCE}
+      # MANUFACTURING (2026-09-18). neo4j_expert's three registrations declare
+      # `domains=["MAINTENANCE", "MANUFACTURING"]` TOGETHER, so a cell holding one and not the
+      # other reaches half of each verb's declared scope — and the half it misses is silent,
+      # because a domain-scoped pool simply omits the classes rather than refusing.
+      # MANUFACTURING was seeded and registered against for weeks while absent from
+      # domains.yaml, so no group COULD grant it.
+      - {persona: MECHANIC, domain: MANUFACTURING}
 
   enterprise-architects:
     grants:
