@@ -45,11 +45,46 @@ def test_expansion_is_IDEMPOTENT():
     assert _expand_mesh_iri(full) == full
 
 
+#: A prefix that belongs to NOBODY. The fixture below has to be a namespace the fleet does not
+#: declare, and `test_THE_FIXTURE_IS_ACTUALLY_UNKNOWN` is what keeps it that way.
+_NOT_A_NAMESPACE = "zzznotanamespace:"
+
+
 def test_an_UNKNOWN_prefix_is_left_alone_not_guessed():
     """Inventing a namespace would fabricate the same phantom class Contract D exists to
-    refuse. Passing it through unchanged lets the MATCH fail loudly instead."""
-    assert _expand_mesh_iri("pcn:SustainmentNotice") == "pcn:SustainmentNotice"
+    refuse. Passing it through unchanged lets the MATCH fail loudly instead.
+
+    THE FIXTURE USED TO BE `pcn:`, WHICH IS A REAL NAMESPACE. It stood in for "unknown" only
+    because no prefix table had `pcn:` in it — and that absence was a DEFECT, not a property:
+    `pcn:Component` was already being named on a live dashboard path, and the sustainment
+    classes load through n10s as full IRIs, so the compact form could never match. The day that
+    was fixed this test went red, having spent its life asserting the bug as the specification.
+
+    A fixture indistinguishable from its subject is not a fixture.
+    """
+    unknown = _NOT_A_NAMESPACE + "SustainmentNotice"
+    assert _expand_mesh_iri(unknown) == unknown
     assert _expand_mesh_iri("") == ""
+
+
+def test_THE_FIXTURE_IS_ACTUALLY_UNKNOWN():
+    """THE CONTROL that the previous version of this file could not have had, because it had no
+    reason to doubt its own example. Derived from the tables rather than asserted, so a fixture
+    prefix can never quietly become real again."""
+    from agent_fleet.utils.mesh_registration import _IRI_PREFIXES
+
+    assert _NOT_A_NAMESPACE not in _IRI_PREFIXES, (
+        f"{_NOT_A_NAMESPACE} is a registered namespace, so the test above is asserting that a "
+        f"KNOWN prefix is left alone — the opposite of its name"
+    )
+    ours = (_ROOT / "setup" / "ontologies")
+    declared = "".join(
+        f.read_text(encoding="utf-8") for f in ours.glob("*.ttl")
+    ) if ours.exists() else ""
+    assert f"@prefix {_NOT_A_NAMESPACE[:-1]}:" not in declared, (
+        f"{_NOT_A_NAMESPACE} is declared by an ontology, so it is a namespace awaiting a table "
+        f"entry rather than a stand-in for one that does not exist"
+    )
 
 
 def test_EVERY_capability_endpoint_expands_to_a_full_iri():

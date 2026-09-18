@@ -95,7 +95,10 @@ wrong with it. Comments belong out here, not in there.
 {{- define "invincible-agent.image" -}}
 {{- $repo := .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) -}}
 {{- $ours := hasPrefix (printf "%s/" .root.Values.global.imagePrefix) $repo -}}
-{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag -}}
+{{/* TAG FLOOR IS THE CHART VERSION. `defaultImageTag` is kept as an override and is empty
+     by default; the final fallback is `Chart.Version`, which the release workflow
+     guarantees exists as a real tag by retagging every image to it BY DIGEST. */}}
+{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag | default .root.Chart.Version -}}
 {{- if .registry -}}
 {{ .registry }}/{{ $repo }}:{{ $tag }}
 {{- else -}}
