@@ -1813,7 +1813,31 @@ async def _resolve_instance(
     _name, _quals = _ir_split_identifier(identifier)
     _lookup_terms = [identifier]
     if _name and _name != identifier.strip().lower():
-        _lookup_terms.append(_name)
+        # R-004 AT THE PLACE THE TERM IS MADE: a bare digit is not an identifier, and this is
+        # the line that MANUFACTURES one. `_ir_split_identifier("lot 4")` returns name `4`,
+        # quals `[lot]`, so the fan-out asked every provider about `'4'` — a term the user
+        # never said.
+        #
+        # MEASURED 2026-09-18, and it is the first of the three defects behind the lot 4
+        # regression. Engine-o's sustainment resolver answered `'4'` with TWENTY
+        # `pcn#Component` part numbers at 0.9 — FK1220014, FNA000074, FNC500134 — every one of
+        # them merely CONTAINING a 4. That made a second claimant naming a second class, and
+        # `ambiguous_in_domain` fired correctly on a question with one exact match. The lot
+        # slot never bound, and the ask offered Lot 1-9 while rejecting the lot it offered.
+        #
+        # The qualified form still goes: `'lot 4'` resolves `cost#ProductionLot` exactly. What
+        # is withheld is the unqualified numeric, which cannot be a name in any vocabulary and
+        # can only ever match by accident. This does not fix the provider that scores a digit
+        # at 0.9 (eo's) nor the missing domain scope (below) — all three were ruled, because
+        # fixing one leaves the shape for the next provider that scores a digit.
+        if _name.isdigit():
+            print(
+                f"mesh:resolveInstance: withholding bare numeric sub-term {_name!r} from "
+                f"{identifier!r} (R-004) — the qualified form is still asked",
+                flush=True,
+            )
+        else:
+            _lookup_terms.append(_name)
 
     tasks = [_call_resolver(r, term, query)
              for r in resolvers for term in _lookup_terms]
@@ -3282,6 +3306,21 @@ class FillSlotsRequest(BaseModel):
     #: PydanticUserError at model-build time. Builtin generics (`list[str]`, `dict`) are
     #: fine; names imported from `typing` are not.
     declarations: object = None
+    #: THE CALLER'S ACTING DOMAINS, forwarded so the resolver fan-out can demote providers
+    #: outside them. `_resolve_instance` has taken `asked_domains` all along and `fill_slots`
+    #: never passed it, so `asked_domains=[]` reached the fan-out on every request and the
+    #: demotion never ran — a correct mechanism with a wire nobody connected (R-076).
+    #:
+    #: MEASURED 2026-09-18. A COST_ANALYST asking "how concentrated is purchasing on lot 4"
+    #: had engine-o's SUSTAINMENT resolver answer alongside engine-cost, because nothing told
+    #: the fan-out the caller was in PRODUCTION_COST. Two claimants, two classes,
+    #: `ambiguous_in_domain` on a question with one exact match, and the lot slot never bound.
+    #:
+    #: DEFAULTS TO EMPTY, which is today's behaviour exactly: a caller that sends nothing gets
+    #: an unscoped fan-out, as before. This restores an intended behaviour rather than
+    #: inventing one — the demote logic, its `demoted` reporting and its comment all predate
+    #: this line.
+    acting_domains: list = []
 
 
 class FillSlotsResponse(BaseModel):
@@ -3496,7 +3535,9 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # name, and the comment below already rules that candidates are not filtered by the
         # slot's referent class for the same reason. Scoping here would hide the very
         # cross-domain match a person needs to see when disambiguating.
-        _subject, prov = await _resolve_instance(spoken_value, request.query)
+        _subject, prov = await _resolve_instance(
+            spoken_value, request.query, asked_domains=list(request.acting_domains or [])
+        )
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
         # by the slot's referent class — which would have emptied the list for exactly the
