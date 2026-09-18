@@ -67,6 +67,7 @@ _DOCUMENTED: dict[str, str] = {
     "tests/test_chart_renders_on_bare_defaults.py": "the workload assertion and the residue control",
     "tests/test_the_census_population_covers_every_engine.py": "the engine-b entry in _NOT_CENSUSED, waiving it from the census; delete WITH the engineB row in engines.yaml, since that seal derives its population from that list and the waiver goes stale the moment the row does",
     "tests/test_endpoint_gating_manifest.py": "drop the langgraph_support SERVICE_FILES row",
+    "tests/test_every_built_engine_has_a_pyproject_and_lock.py": "drop the engine-b mint exclusion; it waives a RETIRED engine from the client-secret seal, and the waiver goes stale the moment the engineB row leaves engines.yaml, since that seal derives its population from the chart",
     "tests/test_reregister_covers_every_registering_engine.py": "drop engineB from _KEY_TO_AGENT_DIR and the _NOT_A_REGISTERING_AGENT waiver",
     "tests/test_service_urls_are_real.py": "drop the langgraph-support row",
     "tests/test_user_id_plumbing.py": "imports SupportRequest from the retired service; rewrite or drop",

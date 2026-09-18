@@ -695,6 +695,12 @@ _IRI_PREFIXES = {
     # ENTERED WHILE ENGINE S'S VERBS ALREADY REGISTER WITH FULL IRIs, so nothing is retroactively
     # broken — this covers the compact forms the BINDING ROWS use.
     "safety:": "http://internal/sustainment/safety#",
+    # pcn: (SUSTAINMENT parts/change). Same authority and shape as `safety:` above, and missing
+    # from every table in the repo until 2026-09-17 while `pcn:Component` was already being
+    # named on a live dashboard path. The classes load through n10s as FULL IRIs, so the compact
+    # form has never matched anything; expanding it here is what puts the row on the wire in the
+    # form the graph stores.
+    "pcn:": "http://internal/sustainment/pcn#",
 }
 
 

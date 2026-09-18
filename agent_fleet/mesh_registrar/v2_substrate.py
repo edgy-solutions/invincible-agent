@@ -708,13 +708,30 @@ def compensate_weaviate_predicate_row(
 #     substrate in a coherent (though duplicated) state. Logged at
 #     WARNING, the dedup guard catches the residual.
 
-# Compact-prefix → full-IRI base. Mirrors the seed script's _MESH /
-# _IDP discipline (canonical full-IRI for subject/object URIs,
-# compact-form for verbs). Adding a new namespace prefix: add an
-# entry here and the sweep handles compact-vs-full equivalence.
+# Compact-prefix → full-IRI base, feeding `_canonical_iri` below, which folds BOTH SIDES of the
+# dedup sweep's comparison. A namespace missing here is not inert: the sweep compares a compact
+# row against a full one, they never match, and the duplicate this module exists to catch is not
+# caught.
+#
+# THE INSTRUCTION UNDER THIS COMMENT WAS IGNORED FOUR TIMES, and could be, because nothing read
+# it. `fin:`, `cost:`, `safety:` and `docs:` were each added to the registration and lookup
+# tables and not to this one. The seal that exists to catch exactly that
+# (tests/planning/test_lookup_prefixes_are_derived) named TWO tables in a hand-written constant
+# and this is the third, so its green meant less than it read. The table set is now derived by
+# AST, which is why this block is no longer somewhere a namespace can quietly not be.
+#
+# `pcn:` was in NO table at all while already being used on a live path.
 _IRI_PREFIXES: dict[str, str] = {
     "mesh:": "http://invincible-agent/mesh#",
     "idp:": "http://invincible-agent/idp#",
+    "fin:": "http://invincible-agent/fin#",
+    "cost:": "http://invincible-agent/cost#",
+    "docs:": "http://invincible-agent/docs#",
+    # The two SUSTAINMENT namespaces: a different authority and path from their four neighbours
+    # above (`internal/sustainment/...`, not `invincible-agent/...`), which is what makes adding
+    # one by copying a neighbour the likely error rather than the safe move.
+    "safety:": "http://internal/sustainment/safety#",
+    "pcn:": "http://internal/sustainment/pcn#",
 }
 
 

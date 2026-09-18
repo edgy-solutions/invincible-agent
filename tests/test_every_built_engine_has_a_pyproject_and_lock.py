@@ -186,7 +186,16 @@ _NO_CLIENT_SECRET: dict[str, str] = {
     # dropped. Each needs one measurement — does it mint, and against what — and that is a
     # ruling, not a guess.
     "data-analyst": "UNRESOLVED: mints, no secret set, no mint failures — needs a measurement",
-    "engine-b": "UNRESOLVED: retirement status unconfirmed; see test_engine_b_removal_list",
+    # NOT UNRESOLVED, and it read that way for as long as nobody checked. Engine B was
+    # RETIRED 2026-09-06 (ADR-0046 8.4); what survives is its chart row, deliberately, until
+    # every reference on the removal list goes first. So the exclusion is real and its
+    # reason is a FACT rather than an open question — "status unconfirmed" invited no check
+    # precisely because it read as one already made.
+    "engine-b": (
+        "RETIRED 2026-09-06 (ADR-0046 8.4). The chart row and its references come out via "
+        "the removal list in src/iagent/defs/agent_routers.py, sealed by "
+        "tests/test_engine_b_removal_list_is_complete.py; it mints nothing in the meantime."
+    ),
     "engine-c": "UNRESOLVED: no secret declared; liveness and mint path unmeasured",
     "engine-f": "UNRESOLVED: the presentation agent; announces transport auth, mint path unmeasured",
 }

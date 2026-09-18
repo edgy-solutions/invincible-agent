@@ -114,8 +114,11 @@ def trigger_restate_analyst() -> dict:
 # design, so it degrades honestly. That difference is the whole reason these are two changes and
 # this one goes first.
 #
-# STILL REFERENCING ENGINE B — SIXTEEN FILES, AND THE LIST IS NOW SEALED RATHER THAN
-# REMEMBERED (tests/test_engine_b_removal_list_is_complete.py). The chart block in values.yaml
+# STILL REFERENCING ENGINE B, AND THE LIST IS NOW SEALED RATHER THAN REMEMBERED
+# (tests/test_engine_b_removal_list_is_complete.py). NO COUNT IS WRITTEN HERE: this line read
+# "SIXTEEN FILES" and was seventeen within the fortnight, because a number restated beside a
+# derived list is a second declaration that nothing updates. The seal holds the population; ask
+# it. The chart block in values.yaml
 # is the LAST thing to go and only after everything else; the seal carries the per-file
 # instruction, because "still references it" is not the same instruction as "delete it".
 #
