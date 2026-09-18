@@ -25,6 +25,7 @@ at its last restart -- or none. The gap is permanent and invisible until someone
 from __future__ import annotations
 
 import pathlib
+import sys
 import re
 
 import pytest
@@ -34,6 +35,20 @@ yaml = pytest.importorskip("yaml")
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _VALUES = _ROOT / "helm" / "invincible-agent" / "values.yaml"
 _FLEET = _ROOT / "agent_fleet"
+
+sys.path.insert(0, str(_ROOT / "src"))
+from iagent_pure.registration_sites import scan, python_files  # noqa: E402
+
+_SITES_CACHE: "list" = []
+
+
+def _registration_sites():
+    """Scanned once. The scan is cheap but the population is read by several arms."""
+    if not _SITES_CACHE:
+        _SITES_CACHE.append(
+            scan(python_files(_ROOT / "agent_fleet", _ROOT / "src"), root=_ROOT)
+        )
+    return _SITES_CACHE[0]
 _ENGINES_TPL = _ROOT / "helm" / "invincible-agent" / "templates" / "engines.yaml"
 
 # Agent directory -> the `component` name engines.yaml deploys it under. Derived from the
@@ -103,12 +118,21 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
     Matches the CALL, not the import: Engine O imports registration helpers as the registry
     CONSUMER and must not appear in the re-register list, which is exactly the distinction an
     import-based check would get wrong.
+
+    DERIVED BY THE SHARED SCANNER, NOT BY A REGEX HERE, and the regex it replaces was blind in
+    three ways measured on 2026-09-17: it matched the helper's NAME and not its ALIAS (the
+    gateway registers as `_register_verb`), it required the call at STATEMENT POSITION, and it
+    walked ONE directory level. `src/iagent/gateway.py` registers two verbs and was invisible to
+    it — which is why this file's own comment already recorded the bff as outside the
+    population.
+
+    ONE DERIVATION, TWO READERS: `scripts/version_census.py` attributes verbs with the same
+    scanner. Two implementations of "who registers" is two answers to one question, which is the
+    defect this seal exists to prevent one layer up.
     """
-    for path in agent_dir.glob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"^\s*register_engine_to_mesh\s*\(", text, re.MULTILINE):
-            return True
-    return False
+    sites = _registration_sites()
+    prefix = f"agent_fleet/{agent_dir.name}/"
+    return any(f.startswith(prefix) for f in sites.registering_files)
 
 
 # Engine O is EXCLUDED BY DESIGN, and the exclusion rests on a measurement of the WRONG
@@ -132,11 +156,18 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
 # engine-o's provider row AND cortex_bff_orchestration's two rows return through the hook
 # chain. Until that runs, this waiver is provisional and this comment says so.
 #
-# AND THE POPULATION HERE DOES NOT REACH THE BFF. This seal derives its registering set from
-# `agent_fleet/` module directories, so `src/iagent/gateway.py` — which registers via
-# `register_engine_to_mesh as _register_verb` and holds 2 live provider rows — is invisible
-# to it: neither on the re-register list nor waived, because it is not in the population at
-# all. A hand-drawn population is a sample; this one is a sample of one directory.
+# THE BFF IS NOW IN THE POPULATION, AND ITS ABSENCE FROM THE LIST IS A DECISION RATHER THAN A
+# BLIND SPOT. This paragraph used to read "the population here does not reach the bff... it is
+# invisible to it", and that was true of the regex this file used to carry: it matched the
+# helper's NAME and not its ALIAS, and `src/iagent/gateway.py` registers via
+# `register_engine_to_mesh as _register_verb`. The shared scanner resolves aliases and walks
+# `src/` as well, so the gateway's 2 provider rows are visible here.
+#
+# WHAT HAS NOT CHANGED IS WHETHER IT BELONGS ON THE RE-REGISTER LIST. That is a behaviour
+# change to the roll — it would restart the bff on every prime — and it is the architect's,
+# not a correction to make while fixing an instrument. The distinction worth keeping: the bff
+# was previously OMITTED because nothing could see it, and is now OMITTED because nobody has
+# ruled it in. Those are the same list and completely different facts.
 WAIVED_BY_DESIGN = {
     "engine-o": (
         "registry consumer; self-registers resolveInstance every boot. 1 row measured "

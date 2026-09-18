@@ -2,9 +2,9 @@
 id:         adr-reading-notes-data-classes-and-adr-0042
 status:     in-flight
 owner:      invincible-agent-f3 — ia-5f / lane/5f
-blocked-on:
+blocked-on: both drafts on lane/5f awaiting review
 trigger:
-closed-by:  both drafts on lane/5f for review
+closed-by:
 repo:       invincible-agent
 summary:    Source reading for the two dispatched ADRs — data classes (ours) and OpenDDIL ADR-0042. Citations verified against the documents that actually registered each claim, with two corrections to the dispatch packet and one to my own earlier correction.
 ---

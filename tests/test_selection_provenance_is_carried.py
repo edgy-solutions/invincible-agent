@@ -89,6 +89,14 @@ def _render_ui_returns() -> list[str]:
 _PRE_SELECTION_RETURNS = {
     "_render_declared_ungrounded": "the producer declared it could not ground; no selection ran",
     "baml_response.model_dump()": "the fallback-no-output-uri path; there is nothing to select on",
+    "_render_refusal_menu": (
+        "a refusal that names its own legal values is projected deterministically, before any "
+        "capability selection runs — there is no menu to record having chosen from"
+    ),
+    "_render_abstain_menu": (
+        "an abstain is projected deterministically for the same reason: the router declined to "
+        "pick a verb, so no capability selection happened to have provenance about"
+    ),
 }
 
 

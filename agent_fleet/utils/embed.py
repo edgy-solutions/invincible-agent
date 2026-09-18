@@ -191,6 +191,14 @@ class EmbeddingObservation:
     dimension: int
     """The length of the vector we actually got, never `EXPECTED_EMBED_DIM`."""
 
+    vector: tuple[float, ...] = ()
+    """THE VECTOR ITSELF, carried with the identity that produced it.
+
+    Returning these separately would let a caller pair a vector from one call with a model name
+    from another — the two-moments problem the served-identity field exists to close. One call,
+    one response, one object.
+    """
+
     @property
     def diverged(self) -> bool:
         """The endpoint served something other than what was requested."""
@@ -204,7 +212,9 @@ def observe_query_embedding(text: str, timeout: float = 30.0) -> EmbeddingObserv
     """
     vector = embed_query(text, timeout=timeout)
     served, requested = _LAST_SERVED if _LAST_SERVED else (None, _resolve_endpoint()[2])
-    return EmbeddingObservation(served=served, requested=requested, dimension=len(vector))
+    return EmbeddingObservation(
+        served=served, requested=requested, dimension=len(vector), vector=tuple(vector)
+    )
 
 
 def embed_document(text: str, timeout: float = 30.0) -> list[float]:

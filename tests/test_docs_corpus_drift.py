@@ -187,7 +187,20 @@ def test_the_uploader_refuses_to_upload_past_drift():
 
     original = TTL.read_bytes()
     try:
-        TTL.write_bytes(original + b"\n# drift\n")
+        # BREAK A KEY, NOT MERELY THE BYTES. The prime's check is content-addressed: it asks
+        # whether a committed row NAMES the key each page hashes to. This test used to append a
+        # comment, which leaves every key intact and is correctly not drift -- and with the
+        # check corrected, that fixture sailed past the refusal and ran the REAL uploader,
+        # reaching the network. It failed here only because nothing was listening.
+        #
+        # THE DOCSTRING'S "must fail BEFORE touching the network" IS A PROPERTY OF THE FIXTURE,
+        # not of the code under test, and it stopped holding the moment the check changed.
+        text = original.decode("utf-8")
+        i = text.index("docs/pages/")
+        j = text.index("/", i + len("docs/pages/"))
+        broken = text[:i] + "docs/pages/" + ("0" * (j - i - len("docs/pages/"))) + text[j:]
+        assert broken != text, "the fixture did not actually break a key"
+        TTL.write_bytes(broken.encode("utf-8"))
         with pytest.raises(RuntimeError) as caught:
             upload_doc_pages()
         assert "drift" in str(caught.value).lower(), (
@@ -195,6 +208,58 @@ def test_the_uploader_refuses_to_upload_past_drift():
     finally:
         TTL.write_bytes(original)
     assert TTL.read_bytes() == original, "the tree was left mutated by a test"
+
+
+def test_THE_UPLOADER_DOES_NOT_NEED_GIT():
+    """THE REGRESSION GUARD FOR A LIVE OUTAGE, and nothing else in this file could have caught it.
+
+    The prime detected drift by calling `generate_docs_corpus.render()`. `render()` derives
+    `source_committed_at` from `git log` and refuses -- rightly -- to substitute an mtime or a
+    wall clock. THE PRIME CONTAINER HAS NO GIT, so the 2026-09-18 03:48 roll died at hook weight
+    10, and every hook after it (ontology-seed 15, engine-reregister 20) was never CREATED.
+
+    Every seal in this file passed throughout, because every one of them runs where git exists.
+    The check and the environment it had to run in were never tested together -- a build-time
+    derivation invoked at run time, which no assertion about the derivation can find.
+
+    So the prime now decides drift from the PAGE-NAMING FACTS ALONE, which is what it can see;
+    the full re-render, timestamps included, stays in
+    `test_the_committed_corpus_matches_the_frontmatter`, which runs where git is.
+
+    Called directly rather than through `upload_doc_pages`, so this stays off the network.
+    """
+    import importlib.util
+    import sys as _sys
+    if str(ROOT) not in _sys.path:
+        _sys.path.insert(0, str(ROOT))
+    from setup.prime_databases import pages_not_named_by_the_corpus
+
+    spec = importlib.util.spec_from_file_location(
+        "generate_docs_corpus", ROOT / "scripts" / "generate_docs_corpus.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    assert gen.pages(), "no pages found — this arm would pass while measuring nothing"
+    committed = TTL.read_text(encoding="utf-8")
+    assert pages_not_named_by_the_corpus(gen, committed) == [], (
+        "the committed corpus does not name the content key of every page")
+    # AND IT MUST STILL SAY NO. A check that can only return [] is not a check.
+    assert pages_not_named_by_the_corpus(gen, "") == [x.name for x in gen.pages()], (
+        "an empty corpus names no page, so every page must be reported")
+
+    # THE PROPERTY THIS ARM IS NAMED FOR, asserted rather than implied. The two assertions above
+    # would pass on a machine WITH git even if the prime went back to calling `render()`; they
+    # check the function's shape, which is a neighbour of the claim, not the claim. Emptying PATH
+    # is what actually reproduces the container.
+    import os
+    saved = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = ""
+        assert pages_not_named_by_the_corpus(gen, committed) == [], (
+            "the prime's drift check cannot run without git on PATH — which is the container it "
+            "runs in, and the reason the 2026-09-18 roll lost the tail of its hook chain")
+    finally:
+        os.environ["PATH"] = saved
 
 
 def test_the_vocabulary_declares_the_pointer_terms():

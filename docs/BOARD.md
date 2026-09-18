@@ -4,9 +4,13 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **142 of 154 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
+
+- **adr-reading-notes-data-classes-and-adr-0042** — Source reading for the two dispatched ADRs — data classes (ours) and OpenDDIL ADR-0042. Citations verified against the documents that actually registered each claim, with two corrections to the dispatch packet and one to my own earlier correction.
+  status: in-flight · owner: invincible-agent-f3 — ia-5f / lane/5f · blocked-on: both drafts on lane/5f awaiting review
+  → [docs/plans/adr-reading-notes-data-classes-and-adr-0042.md](plans/adr-reading-notes-data-classes-and-adr-0042.md)
 
 - **canvas-templates-slice-1** — ADR-0050 slice 1, NON-GATEWAY HALF — landed 2026-09-06 (`a59a9c5`, per git; an earlier revision of this line said 08-23, taken from the session clock rather than the commit). Ratified `policy/canvases/portfolio.yaml` (five panels, verbs read off the seeder's own `measure` field, slots declared as the verbs' REAL signature defaults since §3's carry is blocked), Pydantic models + generated JSON Schema + drift test with positive control, and a merge-gating CI job. Seal 3 recorded FAILING against today's phrase seed — structurally, from source, so it cannot be a lucky pass. GATEWAY HALF IS NOT MINE and is not here: `seedCanvas(template_id)`, `_CALLER_IDENTITY_VERBS`, and the superseded Ruling (a) seal. THREE THINGS OWED, named below rather than implied: verb-EXISTENCE checking (seal 1's other half), the live seal-3 run (~50 min, needs a quiet substrate), and the cortex `TEMPLATES` row §7 requires before the backend advertises a second template.
   status: in-flight · owner: unassigned
@@ -15,6 +19,10 @@ _Coverage: **140 of 152 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **engine-o-substrate-read-inventory** — The engine-o half of the mesh-client census — every substrate touch engine-o makes, derived from its handles rather than listed, with what each one is TRYING TO DO. The candidate named-operation list MeshGraph / MeshOntology / MeshVectors must cover.
   status: in-flight · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo
   → [docs/plans/engine-o-substrate-read-inventory.md](plans/engine-o-substrate-read-inventory.md)
+
+- **fleet-write-census-store-classes** — ADR-0054 section 7's named input - the fleet-wide write census, counted as STORES rather than writes. 88 write sites (not the 67 first reported; three instrument defects are shown), 17 stores, 6 classified and 11 UNCLASSIFIED because section 2's text does not decide them. Also the thirteen structural edge types mapped to their write interfaces: five are written by doc-tools, a third writer outside the two doors.
+  status: in-flight · owner: invincible-agent-28 [5401d7] - ia-eo / lane/eo · blocked-on: a ruling on whether a PROJECTION is rebuildable, and whether one-shot scripts are stores under ADR-0054 section 4
+  → [docs/plans/fleet-write-census-store-classes.md](plans/fleet-write-census-store-classes.md)
 
 ## blocked-on-human
 

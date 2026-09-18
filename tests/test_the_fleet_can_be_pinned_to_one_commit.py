@@ -11,10 +11,16 @@ WHAT THIS SEALS, and all three were broken when it was written:
     of twelve, because a component's own `tag` beats a global one and fourteen values
     entries said `tag: "latest"` outright.
   * the floor is a tag that EXISTS. The chain fell through to `Chart.AppVersion`
-    (`2026.07.02`), and CI publishes `:<git-sha>` and `:latest` and nothing else — so every
-    values file was papering over a broken default with the same literal that made the pin
-    unreachable.
-  * unset changes NOTHING. A migration that alters today's deploy is not a migration.
+    (`2026.07.02`), which nothing had ever published — so every values file was papering over a
+    broken default with the same literal that made the pin unreachable.
+  * unset is UNIFORM. A fleet that scatters when nobody sets the knob cannot be reasoned about.
+
+UPDATED 2026-09-17. Two premises above were true when written and are not now, and the change
+that falsified them is the one in the same commit as this note. The floor became Chart.Version,
+and the release retags every built image to it BY DIGEST; the unset arm no longer demands
+`latest`, because `latest` was itself the drift — an unpinned deploy got whatever it meant at
+pull time. What did not change is why any of this exists: pod age is not evidence, and a tag that
+moves is not an identity.
 
 Run: uv run --frozen pytest tests/test_the_fleet_can_be_pinned_to_one_commit.py -v
 """
@@ -71,17 +77,39 @@ def test_the_pin_reaches_EVERY_image_we_build():
     )
 
 
-def test_UNSET_is_exactly_today():
-    """A migration that changes the current deploy is not a migration. Every service runs
-    `:latest` right now and must keep doing so until someone sets the knob."""
+def test_UNSET_IS_UNIFORM_AND_IS_THE_CHART_VERSION():
+    """THE OLD ARM HERE ASSERTED `latest`, AND IT WAS RETIRED DELIBERATELY — said plainly so a
+    later reader does not take a weakened assertion for an accidental one.
+
+    It read: "a migration that changes the current deploy is not a migration. Every service runs
+    `:latest` right now and must keep doing so until someone sets the knob." That was the correct
+    guard for the 2026-09-08 pin migration, whose whole point was to add a knob without moving
+    anyone. The migration completed; the floor was then changed ON PURPOSE (2026-09-17, ruled) to
+    Chart.Version, because `latest` was itself the drift this file exists to end — an unpinned
+    deploy got Tuesday's artifact under Monday's chart with nothing recording they differed.
+
+    WHAT SURVIVES IS THE PROPERTY, NOT THE VALUE. Unset must still be UNIFORM — one tag across
+    the whole fleet, not a per-component scatter — and that one tag must be the chart's own
+    version rather than a literal anybody typed. Both are asserted; neither is `latest`.
+    """
+    version = next(
+        ln.split(":", 1)[1].strip().strip('"')
+        for ln in (_CHART / "Chart.yaml").read_text(encoding="utf-8").splitlines()
+        if ln.startswith("version:")
+    )
     tags = _render()
-    wrong = sorted(f"{n}:{t}" for n, t in tags.items() if t != "latest")
-    assert not wrong, f"the default changed for: {wrong}"
+    assert len(set(tags.values())) == 1, (
+        f"an unset fleet runs more than one tag, which is the scatter the pin exists to end: "
+        f"{sorted(set(tags.values()))}"
+    )
+    wrong = sorted(f"{n}:{t}" for n, t in tags.items() if t != version)
+    assert not wrong, f"unset does not resolve to the chart version {version!r}: {wrong}"
 
 
 def test_the_floor_is_a_tag_that_EXISTS():
-    """`Chart.AppVersion` names an image that has never been published — CI pushes
-    `:<git-sha>` and `:latest` and nothing else. Falling through to it is a latent break
+    """`Chart.AppVersion` names an image that has never been published — the build matrix
+    pushes `:<git-sha>`, and the release retags to `:<chart-version>`; appVersion is neither of
+    them and never was. Falling through to it is a latent break
     that every environment was hiding with a per-component literal, and that literal is
     what made the pin unreachable. Asserted on the RENDER rather than on the helper's
     source, so rewriting the helper cannot quietly restore the old floor."""

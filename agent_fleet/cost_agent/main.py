@@ -566,9 +566,28 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         out = fn(STATE, **accepted)
         return {"refused": False, **out, **({"ignored_params": ignored} if ignored else {})}
     except VintageRequired as e:
-        return _refusal("vintage_required", str(e), available=e.available)
+        # THE SLOT TRAVELS WITH ITS MENU. `available` is a list of values for SOMETHING,
+        # and a consumer that has to infer which slot from the verb name is re-deriving a
+        # fact the producer holds. ELICITATION requires `slot` and this is it.
+        return _refusal("vintage_required", str(e), slot="rate_vintage",
+                        available=e.available)
     except NotInModel as e:
-        return _refusal("not_in_model", str(e))
+        # ONE REFUSAL KIND MUST NOT ARRIVE BOTH WITH AND WITHOUT ITS FIELD, and until now
+        # `not_in_model` did: this branch carried no `available` while the CompositionError
+        # branch below recomputed them. A consumer written against either one is wrong about
+        # the other, and the honest reading of an absent list — "no menu could be computed" —
+        # is indistinguishable from the careless one, "nobody bothered".
+        #
+        # `cortex-ui-60` found it by reading BOTH branches rather than the one the dispatch
+        # named, and was right that ABSENT MUST NOT RENDER AS AN EMPTY MENU. Same
+        # absent-versus-empty rule as `disposal`: [] means "this lot accepts nothing",
+        # omitted means "not computable from what you supplied". `options_for` already keeps
+        # those apart and returns None for the second.
+        _avail = measures.options_for(STATE, fn_name, "rate_vintage", req.params)
+        return _refusal(
+            "not_in_model", str(e), slot="rate_vintage",
+            **({"available": _avail} if _avail is not None else {}),
+        )
     except Unentitled as e:
         return _refusal("unentitled", str(e))
     except SourceUnavailable as e:
@@ -588,7 +607,7 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         # what this lot actually accepts, which for lot 4 is a single vintage. Same key as
         # VintageRequired above, so a consumer reads one field for "what may I say instead".
         available = measures.options_for(STATE, fn_name, "rate_vintage", req.params) or []
-        return _refusal("not_in_model", str(e), available=available)
+        return _refusal("not_in_model", str(e), slot="rate_vintage", available=available)
 
 
 @app.get("/verbs")

@@ -1042,6 +1042,61 @@ async def _render_archetype_hardened(
     return {"components": [component]}, True
 
 
+def _as_options(values: "list") -> "list[Dict[str, Any]]":
+    """`[v]` or `[{value,label}]` -> the card's option shape. A producer may send either."""
+    return [
+        v if isinstance(v, dict) else {"value": str(v), "label": str(v)}
+        for v in values
+    ]
+
+
+def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
+                         persona: str) -> Dict[str, Any]:
+    """A refusal that names what you may say instead, drawn as the ask it is.
+
+    NAMED RATHER THAN INLINE so the provenance seal can see it: that seal enumerates
+    `render_ui`'s returns and requires each to stamp selection provenance or be declared
+    pre-selection WITH A REASON. Two anonymous `return {"components": ...}` are
+    indistinguishable to it — and an allowlist keyed on a shapeless string would have to be
+    loosened to admit them, which is how an allowlist of FACTS becomes one of preferences.
+    """
+    return {"components": [{
+        "archetype": "ELICITATION",
+        "source_persona": persona,
+        "slot": slot,
+        "options": _as_options(opts),
+        # NAMES THE MECHANISM HONESTLY. Not `enumeration` — no enumerate provider was asked;
+        # the engine recomputed the legal values while refusing. A consumer that needs to tell
+        # "the class was listed" from "the engine said what it accepts" can, and one that does
+        # not care reads `options` either way.
+        "option_source": "refusal",
+        "reason": str(ref.get("outcome") or "refused"),
+        "message": str(ref.get("reason") or ""),
+    }]}
+
+
+def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
+                         persona: str) -> Dict[str, Any]:
+    """An abstain drawn as an ask whose options are VERBS. See the ruling at the call site."""
+    return {"components": [{
+        "archetype": "ELICITATION",
+        "source_persona": persona,
+        "slot": "verb",
+        "options": _as_options(cands),
+        "option_source": "candidates",
+        "reason": "no_verb_classified",
+        "message": str(abst.get("message") or ""),
+    }]}
+
+
+# THE DECORATOR BELONGS TO `render_ui` BELOW, and for a while it was not on it.
+# Two helpers were inserted BETWEEN this line and the handler it decorates, so FastAPI
+# registered `_as_options(values: list)` as POST /render_ui. Every real payload then failed
+# request validation with 422 Unprocessable Entity -- the supervisor's `generate_ui_payload`
+# raised on it and the whole turn failed, with the engine healthy and the handler intact and
+# simply never reached. A decorator binds to THE NEXT DEFINITION, so inserting a function
+# under one silently re-points a route; nothing errors, and the symptom is a 422 that reads
+# like a producer sending the wrong shape.
 @app.post("/render_ui")
 async def render_ui(request: RenderRequest, response: Response) -> Any:
     """Render the agent's response into a UI shape.
@@ -1087,6 +1142,75 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
     # Now the producer says so and this reads it. The inference path below is retained as a
     # safety net for producers that have not adopted the vocabulary, but it is no longer the
     # mechanism.
+    # ── AN ABSTAIN IS AN ASK WHOSE OPTIONS ARE VERBS ───────────────────────────────────
+    #
+    # RULED 2026-09-17: ELICITATION, not a new archetype. "No verb fit - which did you mean?"
+    # is an ask whose options happen to be VERBS instead of instance values, and a second
+    # archetype for a menu of a different noun is another contract to keep in parity for no
+    # gain.
+    #
+    # THE OBJECTION THAT WAS CONSIDERED AND OVERRULED, recorded because it is a good one and a
+    # later reader will raise it again: `cortex-ui-60` argued that ELICITATION's `slot` is
+    # required and means WHICH DECLARATION IS MISSING, so filling it with a verb puts a
+    # non-slot in a field whose name says slot. The ruling is that an abstain DOES have a
+    # missing declaration and it is the verb itself - `slot: "verb"` names what is absent
+    # rather than borrowing a name for something else.
+    #
+    # `option_source: "candidates"` is what keeps the two asks distinguishable on the wire, so
+    # a card that wants to draw verbs differently from values can, and one that does not care
+    # reads `options` either way.
+    _abst = _extract_agent_response(request.raw_data)
+    if isinstance(_abst, dict) and _abst.get("status") == "no_verb_classified":
+        _cands = _abst.get("candidates")
+        if isinstance(_cands, list) and _cands:
+            response.headers["X-Presentation-Path"] = "abstain-with-candidates"
+            logger.info(
+                "render_ui: abstain carries %d candidate verb(s) -> ELICITATION", len(_cands),
+            )
+            return _render_abstain_menu(_abst, _cands, effective_persona)
+        # NO CANDIDATES IS A DIFFERENT ANSWER and must not draw an empty menu: it means the
+        # registry held nothing comparable for this subject, which the ordinary refusal path
+        # says in words. Same absent-versus-empty rule as the refusal below.
+
+    # ── A REFUSAL THAT NAMES WHAT YOU MAY SAY INSTEAD IS AN ASK ────────────────────────
+    #
+    # THE FIELD WAS CORRECT AND HAD NO READER. `cost_agent` has emitted
+    # `{"refused": true, "outcome": ..., "reason": ..., "available": [...]}` since the day the
+    # vintage refusal was written, with a comment saying "a consumer reads one field for what
+    # may I say instead". Measured 2026-09-17 by `cortex-ui-60`: `"available"` had ZERO readers
+    # in `src/iagent`, none here, and therefore nothing in cortex. It was never flattened into
+    # prose downstream — THE CONSUMER WAS NEVER WRITTEN. Both ends correct, the wire empty.
+    #
+    # So a refusal carrying a slot and a menu projects as an ELICITATION: "no rate set for
+    # FY2022 at vintage 2021-02-01" plus the two dates that ARE accepted, drawn as choices
+    # rather than read out of a paragraph. The reader who guessed wrong is the one person
+    # certain to want the list.
+    #
+    # ⛔ ABSENT IS NOT EMPTY, AND THE ENGINE KEEPS THEM APART. `not_in_model` arrives BOTH WITH
+    # and WITHOUT `available`: computable for this lot, or not computable from what was
+    # supplied. An omitted list must NOT render as an empty menu — that says "this lot accepts
+    # nothing", which is a different and false answer. No list means no ELICITATION from here;
+    # the refusal renders by its ordinary path with its reason intact.
+    _ref = _extract_agent_response(request.raw_data)
+    if isinstance(_ref, dict) and _ref.get("refused") is True:
+        _opts = _ref.get("available")
+        _slot = _ref.get("slot")
+        if _slot and isinstance(_opts, list) and _opts:
+            response.headers["X-Presentation-Path"] = "refusal-with-menu"
+            logger.info(
+                "render_ui: refusal outcome=%s carries %d option(s) for slot %r -> ELICITATION",
+                _ref.get("outcome"), len(_opts), _slot,
+            )
+            return _render_refusal_menu(_ref, _opts, _slot, effective_persona)
+        if _slot and _opts == []:
+            # THE OTHER TRUE STATE: the engine computed the list and it is genuinely empty.
+            # Rendered as an ask with NO menu and the reason said, never as a menu of nothing.
+            logger.info(
+                "render_ui: refusal outcome=%s computed an EMPTY option set for slot %r — "
+                "rendering the reason, not an empty menu",
+                _ref.get("outcome"), _slot,
+            )
+
     _declared = _extract_agent_response(request.raw_data)
     if isinstance(_declared, dict) and _declared.get("status") in DECLARED_NON_ANSWER_STATUSES:
         response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DECLARED_UNGROUNDED

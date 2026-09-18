@@ -59,6 +59,21 @@ _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     # KNOWLEDGE_DOCUMENT with "No content available" — indistinguishable from having no binding
     # at all, which is the state the safety walk spent an afternoon inside.
     "safety:": "http://internal/sustainment/safety#",
+    # docs: (ADR-0037 docs corpus). THE WRITE TABLE HAS HAD THIS AND THIS TABLE HAS NOT, which
+    # is the exact divergence the pair of seals in tests/planning/test_lookup_prefixes_are_derived
+    # exists to catch — and it caught it. A producer expands `docs:X` to a full IRI on the way
+    # out; a lookup arriving compact never expands here, so it cannot match what was stored.
+    "docs:": "http://invincible-agent/docs#",
+    # pcn: (SUSTAINMENT parts/change). ABSENT FROM ALL THREE TABLES until 2026-09-17, and used
+    # on a live path the whole time: `pcn:Component` / `pcn:dispositionState` in the
+    # parts-by-state dashboard (src/iagent/gateway.py). The sustainment ontologies load through
+    # n10s, which stores FULL IRIs, so a compact `pcn:` reference could never have matched.
+    #
+    # It was invisible to the seal for a second reason: that file derived its population with a
+    # regex matching `http://invincible-agent/` only, so every `internal/sustainment/` namespace
+    # was dropped from the check without a word. `safety:` is in these tables because a person
+    # put it here, never because anything verified it.
+    "pcn:": "http://internal/sustainment/pcn#",
 }
 
 

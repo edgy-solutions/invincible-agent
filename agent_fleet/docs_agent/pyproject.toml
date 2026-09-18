@@ -6,10 +6,17 @@ dependencies = [
     # Mesh membership package — transport auth (the app dependency) + the ONE general mint.
     # PINNED TO A TAG, matched to the fleet pin: this package governs fleet auth, so a floating
     # ref would let one SDK commit change every engine's security behaviour at rebuild.
-    # `tests/test_lock_coherence.py` polices drift. v0.9.1 is also the release whose Protocol
-    # declares `page_for_subject` — this engine is its first consumer, and the ONE operation
-    # is one because the second was removed for having no caller rather than implemented.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.1",
+    # `tests/test_lock_coherence.py` polices drift, and it is what caught this engine sitting at
+    # v0.9.1 while the other sixteen pyprojects had moved to v0.9.2 — a lane's new engine pinned
+    # to the fleet's pin OF THAT DAY, merged after the fleet moved.
+    #
+    # THE REASON THIS ONCE GAVE FOR v0.9.1 WAS NOT TRUE. It said v0.9.1 was "the release whose
+    # Protocol declares `page_for_subject`"; the correction further down this file records that
+    # `page_for_subject` is declared in this engine's own `reads.py` and at no SDK version. So
+    # nothing tied this engine to v0.9.1: the pin is for transport auth and the ONE mint, which
+    # v0.9.2 carries unchanged (`_FASTAPI_MISSING` still at 4 occurrences in transport_auth.py,
+    # the same check the pin runbook records for the 0.9.1 -> 0.9.2 move).
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.2",
     "fastapi",
     # THE SERVER, AND ONLY ONE. The agent image's CMD branches: hypercorn if
     # `/app/.venv/bin/hypercorn` exists, else uvicorn. Declaring hypercorn makes the first branch

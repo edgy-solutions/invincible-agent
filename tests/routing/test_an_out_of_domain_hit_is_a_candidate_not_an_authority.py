@@ -89,7 +89,15 @@ _COST = "http://invincible-agent/cost#ProductionProgram"
 
 def _run(monkeypatch, *, resolvers, outcomes, asked, identifier="Notional Program Meridian"):
     """Drive `_resolve_instance` with a stubbed fan-out."""
-    monkeypatch.setattr(main, "_discover_instance_resolvers", lambda *a, **k: resolvers)
+    # THE DOUBLE FOLLOWS THE CONTRACT, which moved: discovery returns a MeshResult so that a
+    # registry that could not be READ is distinguishable from a registry that is EMPTY. Only the
+    # double changes here — every assertion in this file is untouched, because the behaviour this
+    # file seals (out-of-domain providers are candidates, not authorities) is unaffected.
+    monkeypatch.setattr(
+        main, "_discover_instance_resolvers",
+        lambda *a, **k: (main.MeshResult.answered(resolvers) if resolvers
+                         else main.MeshResult.empty()),
+    )
 
     async def _fake_call(resolver, term, query):
         for o in outcomes:
