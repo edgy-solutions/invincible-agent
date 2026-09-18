@@ -51,7 +51,7 @@ so its writes are outside this tree and outside this count.
 
 | store | sites | ADR-0054 class | basis |
 |---|---|---|---|
-| `datahub:catalog` | 14 | **UNCLASSIFIED** | §2 names no catalog kind; authority is the open question |
+| ~~`datahub:catalog`~~ **two stores, not one** | 14 | **UNCLASSIFIED** | see §3d — this label was a hardcoded constant, never a derivation |
 | `neo4j:OntologyClass` | 8 | `rebuildable` | §2: *"ontology, vectors, registrations…"* |
 | `weaviate:Predicate` | 8 | `rebuildable` | §2: *"vectors, registrations"* |
 | `weaviate:OntologyClass` | 3 | `rebuildable` | §2, same clause |
@@ -162,6 +162,37 @@ first version at least had no evidence behind it.
   directory, not by the name search.
 - **A false FOLDED hides debt**, which is the direction this check is weakest in, and the direction
   a zero makes hardest to question.
+
+---
+
+## 3d. Two corrections to this document's own store table
+
+**`datahub:catalog` IS NOT A STORE. IT IS TWO STORES UNDER ONE LABEL.** The registrar emits
+`urn:li:mlModel:(urn:li:dataPlatform:mesh,…)` — the verbs. `scripts/seed_datahub_catalog.py` emits
+`DatasetProperties` on platforms `postgres` and `snowflake` — a canned demo catalog. **Different
+entity types, different platforms, zero overlap.**
+
+The cause is the weakest line in the extractor: it had **no derivation rule for DataHub at all**,
+returning a hardcoded `("datahub:catalog", "emitter (external catalog)")` for every one of the 14
+sites. **A constant is not a derivation.** Every other substrate's store was read out of the code;
+this one was asserted by me, and it merged two populations into a store that does not exist. It is
+the largest row in the table, which is exactly how it escaped notice — the number looked like the
+finding.
+
+**A MIGRATION IS NOT A SECOND BOOTSTRAP**, and the `mixed` category conflated them. Reading the five
+scripts behind it: `migrate_pcn_grouped_review_rows` (*"re-key the last rows"*),
+`migrate_compact_to_full_iri`, `phase5_catalog_verb_migration` and `sync_predicate_to_typed_inputs`
+(*"Step 2 finisher"*) are **one-shot repairs** — they converge and are done. Only
+`seed_datahub_catalog` is a seeder, and by the correction above it writes a store the registrar
+never touches.
+
+> **So the class-6 collapse that `mixed` was flagged for — a store with TWO BOOTSTRAPS, two
+> producers disagreeing about its shape — has ZERO instances.** That is a better answer than three
+> risks, and it is only true because the label was wrong twice in the same direction: too coarse on
+> the store, and too coarse on what counts as a bootstrap.
+
+Neither correction touches the edge-type partition (13/13) or the refusal result (0 refused). Both
+change the store table.
 
 ---
 
