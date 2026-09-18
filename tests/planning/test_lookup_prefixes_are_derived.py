@@ -192,11 +192,35 @@ def test_the_TABLE_SCAN_actually_finds_the_tables():
         )
 
 
+# LIFTED OUT AND EXERCISED AGAINST A FIXTURE, because a ratchet that walks its own list has no
+# reach on the day that list is empty -- and empty is the state the work is aimed at. Shown on
+# 2026-09-18 by lane/91: with their `_KNOWN` emptied (by me), replacing their entire ratchet
+# computation with `stale = []` left the suite GREEN. The guard gutted, nothing said.
+#
+# So the RULE is a function, and the test calls it with data it controls, BOTH DIRECTIONS: an
+# entry that stopped being excused must be flagged, and one still excused must not. A ratchet
+# that flagged everything would satisfy the live assertion too, for the wrong reason.
+def _stale_exempt(exempt, handled) -> list:
+    """Exempt prefixes a table now expands. THE RULE, callable with any data."""
+    return sorted(set(exempt) & set(handled))
+
+
+def test_THE_RATCHET_CAN_FAIL_WITH_THE_LIST_EMPTY():
+    """`_EXEMPT` shrinks as namespaces gain table entries; at zero the arm below cannot fail."""
+    assert _stale_exempt({"x:": "r"}, {"x:"}) == ["x:"], (
+        "a prefix that IS in a table was not flagged as a stale exemption"
+    )
+    assert _stale_exempt({"x:": "r"}, {"y:"}) == [], (
+        "a genuinely absent prefix was flagged — a ratchet that flags everything satisfies the "
+        "live assertion for the wrong reason"
+    )
+
+
 def test_no_exemption_is_stale():
     """An exemption for a namespace that IS in the tables is a claim nobody re-read. It costs
     nothing today and misleads the next person deciding whether a prefix was considered."""
     handled = {p for t in _TABLES.values() for p in t}
-    stale = sorted(set(_EXEMPT) & handled)
+    stale = _stale_exempt(_EXEMPT, handled)
     assert not stale, (
         f"exempt AND present in a table: {stale}. The exemption says the namespace needs no "
         f"expansion; the table says it has one. Delete the exemption."

@@ -152,13 +152,38 @@ def test_EVERY_POLICY_DOMAIN_IS_SEEDED_OR_EXCUSED():
     )
 
 
+# LIFTED OUT AND EXERCISED AGAINST A FIXTURE, because a ratchet that walks its own list has no
+# reach on the day that list is empty -- and empty is the state the work is aimed at. Shown on
+# 2026-09-18 by lane/91: with their `_KNOWN` emptied (by me), replacing their entire ratchet
+# computation with `stale = []` left the suite GREEN. The guard gutted, nothing said.
+#
+# So the RULE is a function, and the test calls it with data it controls, BOTH DIRECTIONS: an
+# entry that stopped being excused must be flagged, and one still excused must not. A ratchet
+# that flagged everything would satisfy the live assertion too, for the wrong reason.
+def _stale_one_sided(one_sided, on_both_sides) -> list:
+    """Exempt names that are no longer one-sided. THE RULE, callable with any data."""
+    return sorted(set(one_sided) & set(on_both_sides))
+
+
+def test_THE_RATCHET_CAN_FAIL_WITH_THE_LIST_EMPTY():
+    """`_ONE_SIDED` will reach zero as domains get seeded, and on that day the arm below stops
+    being able to fail. The rule is exercised here against data this test owns."""
+    assert _stale_one_sided({"X": "r"}, {"X"}) == ["X"], (
+        "a domain that is now on BOTH sides was not flagged as a stale exemption"
+    )
+    assert _stale_one_sided({"X": "r"}, {"Y"}) == [], (
+        "a genuinely one-sided domain was flagged — a ratchet that flags everything satisfies "
+        "the live assertion for the wrong reason"
+    )
+
+
 def test_AN_EXEMPTION_IS_A_CLAIM_AND_RETIRES_ITSELF():
     """An entry that is no longer one-sided is a claim nobody re-read — and it would hide a real
     gap if that name were ever reused."""
     for name, reason in _ONE_SIDED.items():
         assert reason and len(reason) > 40, f"{name} is exempt without a reason"
     both = _seeded_domains() & _policy_domains()
-    stale = sorted(set(_ONE_SIDED) & both)
+    stale = _stale_one_sided(_ONE_SIDED, both)
     assert not stale, (
         f"{stale} are now on BOTH sides, so the exemption describes nothing. Delete the entry."
     )
