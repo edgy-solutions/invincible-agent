@@ -195,15 +195,24 @@ def test_row_level_fields_need_NO_declaration_and_that_is_why_favourable_survive
 # can draw — rather than from what this engine happens to emit. That is the population the
 # projector actually has to cover.
 
-_CORTEX = _ROOT.parent / "cortex-ui"
+# `_CORTEX_DIR`, NOT `_CORTEX`. THIS NAME WAS BOUND TWICE AT MODULE LEVEL -- here to the repo
+# DIRECTORY and again ~280 lines below to a single .ts FILE. Python resolved it last-wins, so
+# `_CORTEX` was the FILE everywhere, `_CORTEX.is_dir()` was permanently False, and the
+# contract-file scan below it NEVER RAN -- a test that stopped testing without failing.
+#
+# Found on merge 2026-09-18 by generalising lane/91's own
+# `test_THIS_FILE_DEFINES_ITS_TABLES_EXACTLY_ONCE` across the whole tree: a textual merge with
+# no conflict is not a semantic merge, and a duplicate top-level binding is a collision git
+# cannot see.
+_CORTEX_DIR = _ROOT.parent / "cortex-ui"
 
 
 def _cortex_declared_archetypes() -> dict:
     """archetype -> set(required field names), parsed from cortex's *.contract.ts."""
     out = {}
-    if not _CORTEX.is_dir():
+    if not _CORTEX_DIR.is_dir():
         return out
-    for p in _CORTEX.rglob("*.contract.ts"):
+    for p in _CORTEX_DIR.rglob("*.contract.ts"):
         src = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r'archetype:\s*"([A-Z_]+)"', src)
         if not m:
