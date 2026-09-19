@@ -62,28 +62,16 @@ def _merge(a: list, b: list) -> list:
     return (a or []) + (b or [])
 
 
-# The ledger vocabulary, shared with the finance brief. Extracted when this graph became the
-# second consumer — a second copy of a vocabulary is a second vocabulary the moment either is
-# edited.
+# ── the ledger vocabulary, FROM THE SDK (iagent-mesh v0.9.3) ────────────────────────────────
+# NO FLAT/PACKAGED FORK ANY MORE, and the condition is DELETED rather than handled — see the
+# sibling graph for the argument. `iagent_mesh` is an installed dependency, so it resolves from
+# site-packages whatever the image's layout is.
 #
-# FLAT FIRST, which is what `_load_builder` already requires of "every other import here" (§5).
-# The packaged-only spelling crash-looped engine-lg on the 2026-09-19 roll:
-#
-#     RuntimeError: cost_lot_costing_review: cannot import 'build' from
-#     'graphs.cost_lot_costing_review' (flat or packaged): No module named 'agent_fleet'
-#
-# The image does `COPY agent_fleet/graph_host/ /app/`, so this module is `/app/graphs/...` and
-# the vocabulary is `/app/rows.py` — present, and reachable only as `rows`. The module RESOLVED
-# fine; this line in its body is what raised, which is why the host's error names the builder and
-# sends a reader to the loader rather than to the import that actually failed.
-#
-# THIRD INSTANCE OF ONE CLASS: a module importing something absent from its own image, green in
-# every test and broken only in the deployment. `method_registry.py` warns about it in prose, and
-# `tests/safety/test_the_engine_imports_under_the_flat_layout.py` seals it — FOR ENGINE S ONLY.
-# Every engine ships flattened; exactly one has the seal. Filed for the morning, not fixed here.
-# NO FLAT/PACKAGED FORK ANY MORE — see the sibling graph. `iagent_mesh` is an installed
-# dependency, so it resolves from site-packages whatever the image's layout is. The fork existed
-# only because the vocabulary was a repo-relative module.
+# WHAT THE FORK WAS FOR, kept as a record because the reason outlived the code: the image is
+# `COPY agent_fleet/graph_host/ /app/`, so `agent_fleet` does not exist in it, and a packaged-only
+# spelling crash-looped every engine-lg pod on the 2026-09-19 roll — green in 4000+ tests, because
+# the suite imports the packaged layout by construction. A try/except HANDLED that fork for a few
+# hours; moving the module to the SDK removed the fork.
 from iagent_mesh import fetch_row as _fetch_row  # noqa: E402
 
 
