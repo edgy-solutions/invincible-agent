@@ -269,6 +269,11 @@ mesh:ProcessTopology a owl:Class ;
   rdfs:label "Process Topology" ;
   rdfs:comment "A directed graph of steps and connectors — nodes carrying identity and edges carrying source and target." .
 
+mesh:SourceLedger a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Source Ledger" ;
+  rdfs:comment "N DECLARED SOURCES, EVERY ONE ACCOUNTED FOR: each row is a finding or a named absence carrying its disposition, and each links the evidence it stands on. A ledger is the noun that carries `every entry accounted for`, which is what distinguishes this from a list of findings — THE ABSENCES ARE ENTRIES, NOT OMISSIONS, so a reader can see that an answer was built from two of three sources without going to look. Named structurally rather than for its first consumer: `brief` is a domain word for a shape that is general, and nothing here knows about programs or finance. First bound to mesh:StatefulSupportResponse (engine-lg's finance brief); the cost lot review is the intended second." .
+
 mesh:AssetStateMetric a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Asset State Metric" ;

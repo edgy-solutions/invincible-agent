@@ -167,6 +167,32 @@ def capability_slug(subject_uri: str) -> str:
 # DATA_STEWARD vs → some-contact-card for OPS_OPERATOR) can be added
 # as additional registrations without code changes here.
 PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
+    # ── engine-lg's graph host (ADR-0046 slice 1) ──────────────────────────────────────────
+    # THE SITE-4 ROW. Measured 2026-09-16: mesh#StatefulSupportResponse carried ZERO rendersAs
+    # bindings against 3-5 on every fin sibling, so the NP-MERIDIAN brief fell through to the
+    # payload-only Knowledge Document — the universal fallback, which is indistinguishable from
+    # having no binding at all.
+    #
+    # THE ARCHETYPE IS NAMED STRUCTURALLY AND THAT WAS A RULING, not a preference. Everyone
+    # called this BRIEF, including the ADR — but that named the WORK ITEM. The structure is N
+    # declared sources, every one accounted for, each row a finding or a named absence with its
+    # disposition, each linking its own evidence; none of that is specific to finance, and the
+    # second consumer is the cost lot review. Per ContributionRanking's own rule: NOTHING HERE
+    # KNOWS THE WORD.
+    #
+    # `expected_fields` is rows + summary and deliberately NOT `holes`: holes is a PROJECTION of
+    # rows (filter on the hole dispositions), and a card reading both would hold one fact in two
+    # places — the derived copy being the one that goes on passing after someone edits the
+    # source. `summary` is in because this archetype REPLACES the Knowledge Document that
+    # renders today, and a card reading only rows would silently lose the prose that already
+    # works — a regression bought with a new archetype.
+    {
+        "subject_uri": "mesh:StatefulSupportResponse",
+        "object_uri": "mesh:SourceLedger",
+        "archetype": "SOURCE_LEDGER",
+        "expected_fields": ["rows", "summary"],
+        "description": "Renders mesh:StatefulSupportResponse as a SOURCE_LEDGER panel",
+    },
     # Engine A's six specific verbs (ADR-0017 §1).
     {
         "subject_uri": "mesh:OwnershipFact",
