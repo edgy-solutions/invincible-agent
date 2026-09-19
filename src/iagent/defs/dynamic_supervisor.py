@@ -2937,6 +2937,26 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # (`func(state, **params)`); engines that do not read it ignore it, which is why
         # this is additive rather than a version bump on the dispatch contract.
         "params": accepted.params,
+        # `thread_id = run id`, THE ROW'S CONTRACT, on the second dispatch site.
+        #
+        # `direct_dispatch` has sent this since Thursday. THIS is the supervisor's classified
+        # path — the other site — and the "pre-resolved site is two sites" finding arriving at
+        # the graph host. Measured 2026-09-18: the finance board walk bound `program_id`
+        # exactly, routed correctly, and the host refused:
+        #
+        #   422 "fin_program_brief declares `checkpointer: true`, so it needs a thread_id to
+        #        checkpoint under — the row's contract is `thread_id = run id`. Refused rather
+        #        than defaulted: the old default was the graph's own name."
+        #
+        # ON EVERY DISPATCH, not only the ones known to be stateful — the same reasoning the
+        # direct path records. Scoping it to endpoints matching "/graphs/" would be a URL-SHAPE
+        # PROXY for "does this row checkpoint"; the ROW declares that and the host enforces it.
+        # This side supplies the identity and lets the declaration decide.
+        #
+        # Safe for engines that do not want it: no engine request model in this repo sets
+        # `extra="forbid"`, so an unrecognised key is ignored rather than answered with the 422
+        # this line exists to prevent.
+        "thread_id": getattr(context, "run_id", "") or "",
         # Tier-3 fix (2026-06-16): the resolved instance URN from
         # /resolve.provenance.instance_id. Threaded through so
         # execution-layer engines (specifically Engine DA's data
@@ -3144,7 +3164,25 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     except (requests.exceptions.RequestException, ValueError) as exc:
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.
-        _detail = f"{type(exc).__name__}: {exc}"
+        # THE REFUSAL'S OWN BODY, because it names the fix and this route discarded it.
+        #
+        # `HTTPError: 422 Client Error` is a status, not a cause. The graph host's body said
+        # exactly what was wrong — *"declares `checkpointer: true`, so it needs a thread_id to
+        # checkpoint under"* — and nothing on this path read it: the artifact recorded
+        # `NoCauseRecorded`, the log carried the status line, and diagnosing it needed the call
+        # reproduced by hand under identity. Safety's 500 body is discarded the same way.
+        #
+        # The cause writer moved to "the one exit every route passes through" on Thursday. This
+        # is a route that exits ELSEWHERE, and the fix is the same one: record what the far side
+        # said, at the place it was said, rather than a reconstruction of it later.
+        _body = ""
+        _resp = getattr(exc, "response", None)
+        if _resp is not None:
+            try:
+                _body = (_resp.text or "")[:800]
+            except Exception:  # noqa: BLE001 — diagnostics must not raise here
+                _body = ""
+        _detail = f"{type(exc).__name__}: {exc}" + (f" | body: {_body}" if _body else "")
         context.log.error(
             "execute_subtask: engine at %s did not answer (%s). Returning a TYPED failure so "
             "generate_ui_payload still runs — the user gets a card that says what broke "

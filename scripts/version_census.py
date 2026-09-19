@@ -823,6 +823,18 @@ def main() -> int:
     # from a count that shrank with it.
     roster_rc = _report_roster([r[0] for r in rows])
 
+    # LANES, as STATE. The roster above answers "what is deployed"; this answers "who has work
+    # they have not picked up", which went unprinted all week and cost two days on the brief and
+    # the safety walk. It never changes the exit code — a lane being behind is a scheduling fact,
+    # and a census that failed on it would be turned off.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _lane_census import report_lanes
+
+        report_lanes(Path(__file__).resolve().parents[1])
+    except Exception as exc:  # noqa: BLE001 — reporting must not take the census down
+        print(f"\nLANES: unavailable ({type(exc).__name__}) — NOT a claim that lanes are current.")
+
     if expected and bad:
         print(f"\nFAILED: {len(bad)} service(s) not at {args.expect} ({_short(expected)}): "
               f"{', '.join(sorted(bad))}")
