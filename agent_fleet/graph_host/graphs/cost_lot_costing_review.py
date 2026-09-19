@@ -65,7 +65,26 @@ def _merge(a: list, b: list) -> list:
 # The ledger vocabulary, shared with the finance brief. Extracted when this graph became the
 # second consumer — a second copy of a vocabulary is a second vocabulary the moment either is
 # edited.
-from agent_fleet.graph_host.rows import fetch_row as _fetch_row  # noqa: E402
+#
+# FLAT FIRST, which is what `_load_builder` already requires of "every other import here" (§5).
+# The packaged-only spelling crash-looped engine-lg on the 2026-09-19 roll:
+#
+#     RuntimeError: cost_lot_costing_review: cannot import 'build' from
+#     'graphs.cost_lot_costing_review' (flat or packaged): No module named 'agent_fleet'
+#
+# The image does `COPY agent_fleet/graph_host/ /app/`, so this module is `/app/graphs/...` and
+# the vocabulary is `/app/rows.py` — present, and reachable only as `rows`. The module RESOLVED
+# fine; this line in its body is what raised, which is why the host's error names the builder and
+# sends a reader to the loader rather than to the import that actually failed.
+#
+# THIRD INSTANCE OF ONE CLASS: a module importing something absent from its own image, green in
+# every test and broken only in the deployment. `method_registry.py` warns about it in prose, and
+# `tests/safety/test_the_engine_imports_under_the_flat_layout.py` seals it — FOR ENGINE S ONLY.
+# Every engine ships flattened; exactly one has the seal. Filed for the morning, not fixed here.
+try:
+    from rows import fetch_row as _fetch_row  # type: ignore[import-not-found]  # noqa: E402
+except ImportError:  # the packaged layout, which is what the suite imports
+    from agent_fleet.graph_host.rows import fetch_row as _fetch_row  # noqa: E402
 
 class ReviewState(TypedDict, total=False):
     lot: int
