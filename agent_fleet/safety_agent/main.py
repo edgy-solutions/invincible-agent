@@ -665,10 +665,29 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
     try:
         result = fn(**req.params)
     except Exception as exc:  # noqa: BLE001
+        # ── A REFUSAL IS NEVER A 5xx, AND THIS ONE WAS ──────────────────────────────────────
+        #
+        # This returned `status_code=500` with the honest body above it. THE BODY WAS CORRECT AND
+        # NOBODY READ IT: the supervisor discards a 5xx unread, so the engine wrote a precise
+        # cause — `FileNotFoundError: /app/safety_risk_matrix.ttl` — into a response that was
+        # thrown away, and the walk reported a failure with no reason. **A diagnosis carried on a
+        # status code the caller drops is the same as no diagnosis**, which is the defect the
+        # honest body was written to end, arriving one field along.
+        #
+        # 200 WITH `refused: true`, matching engine-cost's `_refusal`: the transport succeeded —
+        # the engine received the call, decided, and answered — and the OUTCOME lives in the body
+        # where a composing verb reads it. The status code describes the HTTP exchange; the body
+        # describes the verb. Conflating them is what made a 5xx look like the honest choice.
+        #
+        # AND THE DISCRIMINANT IS A FIELD, NOT A MESSAGE. `outcome: "engine_fault"` sits beside
+        # the three ADR-0049 states a composing verb must tell apart, so a consumer branches on a
+        # value and never parses prose. This one says the engine broke rather than the question
+        # being unanswerable — a distinction the caller cannot make from a reason string.
         return JSONResponse(
-            status_code=500,
+            status_code=200,
             content={
                 "refused": True,
+                "outcome": "engine_fault",
                 "reason": f"{fn_name} raised {type(exc).__name__}: {exc}",
                 "fn": fn_name,
                 # THE PARAMS AS RECEIVED, because the first question about a failed dispatch is

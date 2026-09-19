@@ -38,20 +38,48 @@ from pathlib import Path
 
 import pytest
 
-_ENGINE = Path(__file__).resolve().parents[2] / "agent_fleet" / "safety_agent"
-_UTILS = Path(__file__).resolve().parents[2] / "agent_fleet" / "utils"
+_REPO = Path(__file__).resolve().parents[2]
+_ENGINE = _REPO / "agent_fleet" / "safety_agent"
+_UTILS = _REPO / "agent_fleet" / "utils"
+_BUILDER = _REPO / ".github" / "workflows" / "build-containers.yml"
+
+#: Files the engine OPENS at runtime, mapped source -> the name it must have beside the module
+#: in the flat `/app` layout. NOT the modules it imports: those are covered by the import seal
+#: above, and an engine can import perfectly while its first real call raises FileNotFoundError.
+#:
+#: `matrix.py` reads `safety_risk_matrix.ttl` through a DEFERRED call, so nothing at import time
+#: touches it — which is exactly why the absence survived every earlier check and surfaced in the
+#: cluster on the first drafted risk instead.
+_DATA_FILES = {
+    _REPO / "setup" / "ontologies" / "safety_risk_matrix.ttl": "safety_risk_matrix.ttl",
+}
 
 
 def _flat_image(tmp_path: Path) -> Path:
     """A directory shaped like `/app`: the engine's modules at the top, `utils/` beside them.
 
-    Mirrors `.github/workflows/build-containers.yml` — `COPY ${AGENT_DIR}/ /app/` plus
-    `COPY agent_fleet/utils/ /app/utils/`. The TTLs are NOT copied, deliberately, because the
-    image does not carry them either: they are primed. An engine that only starts when a file the
-    image never ships is present would pass a laxer seal and fail in the cluster.
+    Mirrors `.github/workflows/build-containers.yml` — `COPY ${AGENT_DIR}/ /app/`, plus
+    `COPY agent_fleet/utils/ /app/utils/`, plus the DATA FILES the engine opens.
+
+    ⛔ THIS FIXTURE USED TO OMIT THE TTL AND CALL THE OMISSION DELIBERATE. The comment read:
+    *"The TTLs are NOT copied, deliberately, because the image does not carry them either: they
+    are primed."* Both halves were true and the conclusion was wrong. The image did not carry it
+    — that was the DEFECT, not the design — and "they are primed" is a fact about Jena, while
+    `matrix.py` parses this file FROM DISK. **A fixture that models the defect and calls it the
+    design certifies the defect**, which is what kept this green while engine-safety raised
+    `FileNotFoundError: /app/safety_risk_matrix.ttl` on its first real call in the cluster.
+
+    The import seal could never have caught it on its own: `import rdflib` and the matrix read
+    are both DEFERRED, so the module imports cleanly with no TTL anywhere. **An image-layout seal
+    has to name the files an engine OPENS, not only the modules it IMPORTS** — those are
+    different populations and only the second one was being checked.
     """
     app = tmp_path / "app"
     app.mkdir()
+    # THE DATA FILES, COPIED BECAUSE THE IMAGE COPIES THEM. Derived from `_DATA_FILES` below so
+    # the fixture and the assertion read one list rather than two that drift.
+    for src, dst in _DATA_FILES.items():
+        shutil.copy2(src, app / dst)
     for py in _ENGINE.glob("*.py"):
         shutil.copy2(py, app / py.name)
     shutil.copytree(_UTILS, app / "utils")
@@ -163,3 +191,94 @@ def test_matrix_path_does_not_raise_under_the_flat_layout(tmp_path):
     )
     assert r.returncode == 0, f"`matrix_path()` raises under the flat layout:\n{r.stderr}"
     assert "PATH_OK" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# THE DATA FILES — a population the import seal above cannot see
+# ---------------------------------------------------------------------------
+
+def test_EVERY_FILE_THE_ENGINE_OPENS_IS_SHIPPED_BY_THE_BUILDER():
+    """**THE FIFTH INSTANCE OF THE `COPY` LAW, and the first one this engine paid for.**
+
+    engine-safety came up healthy, registered, routed at 0.98, and raised
+    `FileNotFoundError: /app/safety_risk_matrix.ttl` on the first real call. The builder shipped
+    every module and no data file.
+
+    **THE IMPORT SEAL ABOVE COULD NOT HAVE CAUGHT IT AND STILL CANNOT.** `import rdflib` and the
+    matrix read are both deferred, so the module imports cleanly with no TTL present anywhere —
+    the engine starts, passes readiness, and fails at first use. *The files an engine IMPORTS and
+    the files it OPENS are different populations, and only the first was being checked.*
+
+    Asserted against the BUILDER rather than against a list here: this file already needs its own
+    copy in `_DATA_FILES` for the fixture, and a second hand-kept list would be the thing that
+    drifts. The builder is the artifact that decides what the image contains, so it is the one
+    worth reading.
+    """
+    builder = _BUILDER.read_text(encoding="utf-8")
+    missing = []
+    for src, dst in _DATA_FILES.items():
+        rel = src.relative_to(_REPO).as_posix()
+        if f"COPY {rel} /app/{dst}" not in builder:
+            missing.append(f"{rel} -> /app/{dst}")
+    assert not missing, (
+        "the engine opens file(s) the agent image does not COPY — it will start, pass readiness "
+        f"and raise FileNotFoundError on the first real call:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_the_builder_check_can_say_no():
+    """THE CONTROL. A builder read that came back empty, or a path spelled so it never matches,
+    would make the assertion above pass by comparing nothing."""
+    builder = _BUILDER.read_text(encoding="utf-8")
+    assert "COPY policy/overlays/ /app/policy/overlays/" in builder, (
+        "the builder is not being read — a known COPY line is absent"
+    )
+    assert "COPY setup/ontologies/a_file_that_does_not_exist.ttl" not in builder
+    assert _DATA_FILES, "the data-file population is empty; this seal quantifies over nothing"
+
+
+def test_the_matrix_RESOLVES_in_the_flat_layout_not_merely_imports(tmp_path):
+    """The read itself, in the image's shape — the assertion whose absence let this ship.
+
+    `test_matrix_path_does_not_raise_under_the_flat_layout` proves `matrix_path()` returns a path.
+    **Returning a path is not finding a file.** This drives the resolver far enough to open it,
+    which is what the first cluster call did and no test did.
+    """
+    app = _flat_image(tmp_path)
+    code = textwrap.dedent(
+        f"""
+        import sys
+        sys.path.insert(0, {str(app)!r})
+        import matrix
+        lvl = matrix.resolve_risk_level("I", "A")
+        print("RESOLVED", lvl)
+        """
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(app), timeout=120
+    )
+    assert r.returncode == 0, (
+        f"resolving a risk level FAILS in the flattened /app layout — the engine starts and dies "
+        f"on its first drafted risk:\n{r.stderr}"
+    )
+    assert "RESOLVED" in r.stdout
+
+
+def test_the_resolve_check_fails_without_the_data_file(tmp_path):
+    """THE MUTATION, RUN. Remove the TTL from the image copy and the resolve must fail — otherwise
+    the test above is passing for some reason other than the file being present, and would stay
+    green through exactly the regression it exists to catch."""
+    app = _flat_image(tmp_path)
+    (app / "safety_risk_matrix.ttl").unlink()
+    code = textwrap.dedent(
+        f"""
+        import sys
+        sys.path.insert(0, {str(app)!r})
+        import matrix
+        matrix.resolve_risk_level("I", "A")
+        """
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(app), timeout=120
+    )
+    assert r.returncode != 0, "the matrix resolved with no TTL present — the file is not the source"
