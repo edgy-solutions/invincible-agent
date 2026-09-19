@@ -33,7 +33,7 @@ docs:runbook-adding-a-graph a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/dc4951f91ae33eaf934d691fb585d97bdf032341bd65d01dab720331cf824a27/adding-a-graph.md" ;
-  mesh:source_committed_at "2026-09-12T22:50:06-05:00" ;
+  mesh:source_committed_at "2026-09-18T22:56:18-05:00" ;
   mesh:body_sha "dc4951f91ae33eaf934d691fb585d97bdf032341bd65d01dab720331cf824a27" ;
   mesh:explains mesh:finProgramBrief ,
     mesh:costLotCostingReview ,
