@@ -25,25 +25,26 @@ except ImportError:  # packaged in the repo
 HANDLE_SLOTS: Dict[str, str] = {}
 CEREMONY_VERBS: set[str] = set()
 
-#: NO REFERENT ON `subject`, AND THIS IS A CONSIDERED NEGATIVE RATHER THAN AN OMISSION.
+#: `subject` TAKES THE UNIVERSAL REFERENT, and the first version of this block refused one.
 #:
-#: Rule 3 of §4 says declare a referent class URI on every spoken `*_id` slot, because without one
-#: the filler emits the NAME into an id slot — `site_id="Aurora"` at 0.92 confidence, answered
-#: `422 unknown site`, the largest single failure class in the planning corpus. `subject` is not an
-#: `*_id` slot, so the rule's letter does not bind; its SPIRIT does, and the same failure is
-#: available here — a filler can put `"adding an engine"` where an IRI belongs.
+#: §4 rule 3 wants a referent class URI on every spoken slot that identifies something, because
+#: without one the filler emits the NAME into the slot — `site_id="Aurora"` at 0.92 confidence,
+#: the largest single failure class in the planning corpus. `subject` has exactly that exposure.
 #:
-#: A referent cannot be declared because the verb is deliberately polymorphic: it explains ANY
-#: resolvable IRI, and the classes it ranges over are every class in the graph. Naming one would
-#: be false, and naming `mesh:DocPage` would be worse than false — that is the class of the PAGE,
-#: not of the thing the page is about, and a consumer comparing `class_uri == referent` would then
-#: only ever accept questions about pages.
+#: WHAT THIS BLOCK USED TO SAY, kept because the reasoning was sound and stopped one step early:
+#: that no referent could be declared, because the verb is polymorphic over every class in the
+#: graph and naming one would be false. Both halves are true. **The conclusion does not follow** —
+#: it skips the universal class, and a universal referent was always the answer. The only real
+#: question was WHOSE, and that took a measurement: `owl:Thing` is outside this system's routable
+#: pool by deliberate design (zero `w3.org` classes in the graph, 2026-09-19), so a referent
+#: pointing there registers cleanly and reaches nothing.
 #:
-#: The mitigation is at the other end and is asserted in the engine's tests: a `subject` that does
-#: not resolve produces an ABSTAIN THAT NAMES WHAT IT RECEIVED, never a guess and never a 422
-#: blaming the caller. A name arriving where an IRI belongs is then a legible answer rather than an
-#: error about characters.
-REFERENTS: Dict[str, str] = {}
+#: `mesh:Thing` is ours, is primed, and carries `mesh:universalReferent true` — which is what the
+#: parameterisation pool reads. It is NOT a parent of anything: nothing is `subClassOf` it, so it
+#: costs no edges and widens no class-chain query. The flag is the universality.
+REFERENTS: Dict[str, str] = {
+    "subject": "http://invincible-agent/mesh#Thing",
+}
 
 
 def explain_handler(subject: str) -> Dict[str, Any]:
