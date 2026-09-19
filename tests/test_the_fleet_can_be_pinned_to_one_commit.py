@@ -36,7 +36,9 @@ import pytest
 _REPO = Path(__file__).resolve().parents[1]
 _CHART = _REPO / "helm" / "invincible-agent"
 _SANDBOX = _CHART / "values-sandbox.yaml"
-_WORKFLOW = _REPO / ".github" / "workflows" / "build-containers.yml"
+#: The agent Dockerfile, a real file since 2026-09-19 (see
+#: tests/test_a_run_block_stays_under_the_expression_limit.py).
+_WORKFLOW = _REPO / ".github" / "docker" / "Dockerfile.agent"
 
 #: Images built from this repo. Third-party images (postgres, restate, keycloak) carry
 #: their own versions and MUST NOT move with a commit pin — a test that swept them in would
@@ -142,9 +144,16 @@ def test_every_runtime_stage_bakes_the_commit():
     chart-injected tag is a claim about what was REQUESTED, and under `:latest` it is not
     even that. Three inline Dockerfiles cover all sixteen services; a stage that misses the
     stamp reports `n/a` forever and its services are invisible to the census."""
-    wf = _WORKFLOW.read_text(encoding="utf-8")
-    dockerfiles = re.findall(r"cat << 'EOF' > (Dockerfile\.\S+)", wf)
+    # ENUMERATED FROM THE DIRECTORY, not from heredoc markers in the workflow. The three
+    # Dockerfiles became real files on 2026-09-19 when the embedding `run:` block crossed
+    # GitHub's 21000-character expression limit; a regex for `cat << 'EOF' >` then found ZERO
+    # and this seal reported "the Dockerfile set changed: []" — true, and about the wrong thing.
+    # The population is the files; the workflow only references them with `-f`.
+    dockerfiles = sorted(p.name for p in (_REPO / ".github" / "docker").glob("Dockerfile.*"))
     assert len(dockerfiles) == 3, f"the Dockerfile set changed: {dockerfiles}"
+    wf = "".join(
+        (_REPO / ".github" / "docker" / n).read_text(encoding="utf-8") for n in dockerfiles
+    )
     assert wf.count("ENV IAGENT_GIT_SHA=$GIT_SHA") == len(dockerfiles), (
         f"{wf.count('ENV IAGENT_GIT_SHA=$GIT_SHA')} stage(s) stamp the commit but there "
         f"are {len(dockerfiles)} Dockerfiles — a runtime without the stamp is invisible "

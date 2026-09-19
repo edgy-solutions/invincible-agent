@@ -34,13 +34,26 @@ import subprocess
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-_WORKFLOW = _REPO / ".github" / "workflows" / "build-containers.yml"
+#: THE DOCKERFILE, not the workflow that used to embed it. The heredoc crossed GitHub's
+#: 21000-char expression limit on 2026-09-19 and the three Dockerfiles became real files
+#: under .github/docker/ — which is what lets this seal read a Dockerfile instead of a
+#: shell string inside a YAML scalar.
+_WORKFLOW = _REPO / ".github" / "docker" / "Dockerfile.agent"
 _MEASURES = _REPO / "agent_fleet" / "cost_agent" / "measures.py"
 _BUILDER = _REPO / "scripts" / "build_cost_package.py"
 
 
 def _wf() -> str:
-    return _WORKFLOW.read_text(encoding="utf-8")
+    # BOTH SOURCES, because this file asserts two different things: the MATRIX rows
+    # (`package_runtime: ".pyodide-cache"`) which live in the workflow, and the COPY
+    # directives which live in the Dockerfile since the 2026-09-19 move. Repointing the
+    # whole constant at the Dockerfile silently dropped the matrix half — green on the
+    # COPY arms, red on the one that reads a matrix row.
+    return (
+        _WORKFLOW.read_text(encoding="utf-8")
+        + (_REPO / ".github" / "workflows" / "build-containers.yml").read_text(
+            encoding="utf-8")
+    )
 
 
 def test_THE_ROOT_CHECK_TESTS_THE_REQUIREMENT_not_a_checkout_shape():

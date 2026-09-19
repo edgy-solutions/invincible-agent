@@ -43,7 +43,8 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 _ENGINE = _REPO / "agent_fleet" / "safety_agent"
 _UTILS = _REPO / "agent_fleet" / "utils"
-_BUILDER = _REPO / ".github" / "workflows" / "build-containers.yml"
+#: The builder is a Dockerfile now, not a heredoc in the workflow.
+_BUILDER = _REPO / ".github" / "docker" / "Dockerfile.agent"
 
 #: Files the engine OPENS at runtime, mapped source -> the name it must have beside the module
 #: in the flat `/app` layout. NOT the modules it imports: those are covered by the import seal

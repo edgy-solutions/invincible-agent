@@ -1,0 +1,34 @@
+FROM python:3.12-slim-bookworm
+# `useradd -r -m` creates the home directory at /home/dagsteruser
+# so dagster_shared.telemetry's get_or_create_user_telemetry_dir
+# doesn't crash with PermissionError. DAGSTER_TELEMETRY_ENABLED=false
+# also short-circuits it but the dir still gets touched on import,
+# so create it as a belt-and-suspenders fix.
+RUN groupadd -r dagsteruser && useradd -r -m -g dagsteruser dagsteruser
+ENV PYTHONUNBUFFERED=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+DAGSTER_HOME="/opt/dagster/dagster_home" \
+DAGSTER_TELEMETRY_ENABLED=false \
+PIP_NO_CACHE_DIR=1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+# Install latest dagster ecosystem — the user-code image
+# (dagster-control-plane) doesn't pin dagster in iagent's
+# pyproject.toml (it pulls `dagster-postgres` which transitively
+# pulls dagster latest), so we MUST match by also not pinning,
+# otherwise the gRPC code-location protocol versions diverge.
+RUN pip install --no-cache-dir \
+dagster dagster-webserver dagster-postgres dagster-graphql
+# ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
+# Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
+# claim about what was requested; under `:latest` it is not even that. This is
+# what the running process can be asked, and it cannot drift from the code in
+# the layer beside it. `scripts/version_census.py` reads it from every service
+# and diffs against a git ref, which is how "is it current?" stops being a
+# person squinting at pod age.
+ARG GIT_SHA=unknown
+ENV IAGENT_GIT_SHA=$GIT_SHA
+USER dagsteruser
+WORKDIR /app
+CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]

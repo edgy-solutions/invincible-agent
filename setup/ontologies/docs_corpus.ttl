@@ -32,9 +32,9 @@ docs:runbook-adding-a-graph a mesh:DocPage ;
   rdfs:label "Runbook — adding a graph to engine-lg" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d/adding-a-graph.md" ;
+  mesh:source "docs/pages/dc4951f91ae33eaf934d691fb585d97bdf032341bd65d01dab720331cf824a27/adding-a-graph.md" ;
   mesh:source_committed_at "2026-09-12T22:50:06-05:00" ;
-  mesh:body_sha "edbfba8ead9dfd599d85a63a0ce8366e1a2b2c2971ecc2e4aa9a4f8f53da323d" ;
+  mesh:body_sha "dc4951f91ae33eaf934d691fb585d97bdf032341bd65d01dab720331cf824a27" ;
   mesh:explains mesh:finProgramBrief ,
     mesh:costLotCostingReview ,
     mesh:StatefulSupportResponse ,

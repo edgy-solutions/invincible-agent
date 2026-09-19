@@ -12,7 +12,7 @@ and the module's own tables all agree.
 
 **The engine does not yet BOOT off these rows**, and that is deliberate sequencing rather than
 an unfinished edit. `policy/measures/` reaches a container through a per-file `COPY` in the
-`Dockerfile.agent` heredoc inside `.github/workflows/build-containers.yml` — the line this
+`.github/docker/Dockerfile.agent` (a real file since 2026-09-19) — the line this
 commit adds — and that file's own comment says the per-file COPY *"is itself the fragile part:
 the next shared-policy file will need"* it. Making `measures.py` import this module at import
 time, before that COPY has ridden into a built image, gives a finance engine that passes every
@@ -158,9 +158,8 @@ def load_method_rows(
         raise MethodRowError(
             f"no ratified method rows under {d} (overlays: "
             f"{[str(p) for p in ov] or 'none'}). If the directory is missing from the image, "
-            f"that is the defect — the COPY that ships it lives in the Dockerfile.agent "
-            f"HEREDOC inside .github/workflows/build-containers.yml, and NOT in any Dockerfile "
-            f"in this repo."
+            f"that is the defect — the COPY that ships it lives in "
+            f"`.github/docker/Dockerfile.agent`, a real file in this repo."
         )
     return rows
 
