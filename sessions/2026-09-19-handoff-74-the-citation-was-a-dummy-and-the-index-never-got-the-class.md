@@ -1,7 +1,8 @@
 # Handoff — 74, safety lane, 2026-09-19
 
-to: ia-74/lane/74 (next session), cc ia-01/lane/01
-read-by:
+to: ia-74/lane/74
+cc: ia-01/lane/01
+read-by: ia-74/lane/74 2026-09-19
 
 **State:** `lane/74` at `f18bc9a`, **2 ahead / 7 behind** `origin/master` (`4dacccd`), working tree
 clean. SDK pin **v0.9.3**. Merge master before anything else — 7 behind is a day's fleet work, and

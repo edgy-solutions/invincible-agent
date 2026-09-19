@@ -2212,7 +2212,13 @@ class EnumerateInstancesRequest(BaseModel):
     PROVIDERS answer, and a seal asserts the two agree rather than a comment claiming it.
     """
     class_uri: str
-    bound_slots: Dict[str, str] = Field(
+    # BUILTIN `dict`, NOT `typing.Dict`. This module carries
+    # `from __future__ import annotations`, so every annotation is a STRING that Pydantic v2
+    # resolves at model-build time — and `Dict` is not imported here, which would have been a
+    # 500 on the first request to this endpoint rather than an error at import.
+    # `test_no_typing_generics_in_pydantic_models` caught it; the file's own idiom is `list[str]`
+    # and `dict` matches it.
+    bound_slots: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Slots already bound in this turn, offered to providers as scoping context. "

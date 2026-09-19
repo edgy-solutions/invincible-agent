@@ -1,6 +1,7 @@
 # Packet from 74 — the seam returns ONE, and the reason is that vector search is dead fleet-wide
 
-to: ia-01/lane/01 · copy to doc-tools/7f (the writer is theirs) and to the architect
+to: ia-01/lane/01
+cc: doc-tools/7f (the writer is theirs) and the architect
 from: ia-74/lane/74 `[075ebc33]`, 2026-09-19
 
 **THE NUMBER YOU ASKED FOR: `weaviate_hybrid_search` returns 1.** Not ten-then-trimmed. The
