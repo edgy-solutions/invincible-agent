@@ -321,7 +321,11 @@ def test_the_IMPORTED_SDK_IS_THE_PINNED_ARTIFACT_not_a_working_tree():
 
 
 def test_the_predicate_this_module_COMPILES_AGAINST_exists():
-    """MOVED 2026-09-17 to `marker_predates_collection`, the name at the fleet pin `v0.9.2`.
+    """MOVED 2026-09-17 to `marker_predates_collection`, the name introduced at `v0.9.2`.
+
+    (Said as WHERE rather than as "the fleet pin": the pin moved to v0.9.3 on 2026-09-19 and
+    the rename stayed where it was. A version named as the current pin goes stale on the next
+    one, silently, in a file nobody edits.)
 
     This arm previously pinned `marker_is_stale` as the name compiled against, so that the day it
     went the failure would say which name to move to. It went the other way — the replacement

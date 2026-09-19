@@ -20,8 +20,12 @@
 # sheet grows a structured expectation block, the field moves there and this file loses it.
 #
 # ── A ROW THAT CANNOT DRAW YET IS RED, NOT ABSENT ────────────────────────────────────────────
-# Three of the four sheets do not exist as files yet (safety, finance, docs — owned tonight by
-# 74, 91 and 5f). Their rows are here with `blocked: <reason>` and they run RED with that reason
+# UPDATED 2026-09-19: safety's sheet has LANDED, so two of the four are still absent (finance and
+# docs — 91 and 5f). `blocked` means THE SHEET DOES NOT EXIST and nothing else; the seal asserts
+# it, and a row impeded some other way runs RED with its live cause rather than borrowing this
+# field. Overloading it would leave `blocked` meaning two things and the seal unable to tell them
+# apart.
+# Their rows are here with `blocked: <reason>` and they run RED with that reason
 # printed. They are NOT excluded and NOT skipped: a skip is a test that did not run, its reason
 # is a claim, and the tell is a skip count that never moves. A red with a named reason is state
 # the morning report can read.
@@ -135,6 +139,11 @@ rows:
     # it is the reason min_rows is 2 rather than 1.
 
   # ── SAFETY (74) ────────────────────────────────────────────────────────────────────────────
+  # UNBLOCKED 2026-09-19: docs/measurements/safety-walk-sheet.md landed (0f1f2cb, lane/74) and
+  # all three questions are now DERIVED from it rather than retyped. Every value below is the
+  # sheet's own: the personas, the verbs, the dispositions, the row counts and the task shape.
+  # The sheet notes the questions are themselves copied from the engine's declared `synonyms` in
+  # agent_fleet/safety_agent/main.py rather than invented, so the chain is engine -> sheet -> row.
   - id: safety-haz-1003-risk-assessment
     sheet: docs/measurements/safety-walk-sheet.md
     sheet_index: 0
@@ -142,18 +151,54 @@ rows:
     user: bob
     persona: SAFETY_ENGINEER
     domains: [SUSTAINMENT]
-    expect_verb: null
+    expect_verb: draft_risk_assessment
     expect_archetype: null
     min_rows: 0
-    dispositions: [task_created]
+    dispositions: [task_requested]
     expect_task:
-      table: human_tasks
+      # WHAT THIS RUNNER CHECKS: the engine's `review_request` block carries this kind and this
+      # audience. WHAT IT DOES NOT CHECK: that a row actually appears in `human_tasks`. The
+      # request and the row are different acts — the engine asks, the workflow engine creates —
+      # and this instrument reads the artifact, so it can only see the asking. The row is 74's to
+      # measure. Recorded here rather than silently dropped, so nobody reads a green on this row
+      # as "bob has a task".
       kind: risk_acceptance_medium
-      assignee: bob
-    blocked: >-
-      awaiting docs/measurements/safety-walk-sheet.md from 74 — the three phrasings, their
-      personas and their expected tasks. Until the sheet exists this row's question is RETYPED
-      rather than derived, which is the one thing this census refuses to treat as verified.
+      audience: risk_acceptance_medium:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+    # DRAWING NO CARD IS THE PASS. The sheet is explicit: "Q1 draws no card at all, and that is
+    # the PASS. The answer is a row in human_tasks, not a card." A walker expecting three cards
+    # scores two defects that are not there.
+
+  - id: safety-unattended-hazards
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 1
+    question: what hazards are unattended
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: find_orphaned_hazards
+    expect_archetype: CONTRIBUTION_RANKING
+    min_rows: 3
+    dispositions: [drawn]
+    # EXACTLY 3 ROWS, ranked HAZ-1001, HAZ-1003, HAZ-1002. min_rows is a FLOOR and cannot see the
+    # order, nor that `not_assessed_count` is 1 and that hazard is absent from the rows — the
+    # sheet's checks are richer than this row is. What this row asserts is that the card draws
+    # with its archetype and is not short; the ordering claims stay a human walk for now.
+
+  - id: safety-deferral-risk-refusal
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 2
+    question: risk of deferring this work order
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: assess_deferral_risk
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    # THE REFUSAL IS THE PASS, asking for `work_order_id`. No expect_options here, unlike the
+    # cost rate-vintage row: that sheet states a two-chip menu as its expectation and this one
+    # does not, so asserting a menu would be inventing a requirement its sheet never made.
 
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   - id: finance-np-meridian-brief

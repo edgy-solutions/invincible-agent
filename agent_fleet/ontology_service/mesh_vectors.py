@@ -15,7 +15,10 @@ WHAT THE CONTRACT ASKS FOR, and where each part lives:
                                     never `DEFAULT_EMBED_MODEL`
     the marker is checked AT OPEN   once per collection, before the first search
 
-**MOVED TO `marker_predates_collection` AT `v0.9.2`**, which is the fleet pin. It was
+**MOVED TO `marker_predates_collection` AT `v0.9.2`**, the release that renamed it. (The
+fleet pin moved on past it — v0.9.3 on 2026-09-19 — so this line says WHERE THE RENAME
+HAPPENED and no longer claims to name the current pin; the appositive was true when
+written and the next pin falsified it without touching this file.) It was
 `marker_is_stale` — a name asserting a CONCLUSION the predicate cannot reach, since what it
 computes is *absent-or-older-than-the-oldest-object*. The old name survives as a deprecating alias
 **only until this caller moved**, which is now: expand/contract with a live consumer, and this lane

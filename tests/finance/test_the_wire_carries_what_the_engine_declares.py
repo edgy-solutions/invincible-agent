@@ -595,11 +595,23 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     (_MESH + "SlotElicitation", _MESH + "AskCard"),
     (_MESH + "WithheldPanel", _MESH + "NamedHole"),
     (_MESH + "WorkflowObservation", _MESH + "WorkflowObservation"),
-    # BACKEND ADVERTISES, FRONTEND DOES NOT BIND — 3, the safety lane's.
-    # Registered to the mesh; no component will ever be chosen for them.
-    (_SAFETY + "DeferralRiskCard", _MESH + "KnowledgeDocument"),
-    (_SAFETY + "OrphanedHazardSet", _MESH + "ContributionRanking"),
-    (_SAFETY + "RiskAssessmentDraft", _MESH + "KnowledgeDocument"),
+    # BACKEND ADVERTISES, FRONTEND DOES NOT BIND — 0. CLOSED 2026-09-19 by cortex-ui df702ca.
+    #
+    # The three safety entries lived here because Engine S advertised OrphanedHazardSet,
+    # DeferralRiskCard and RiskAssessmentDraft to the mesh and cortex bound none of them, so no
+    # component could ever be chosen. The walk census measured the consequence rather than the
+    # gap: `draft a risk assessment for HAZ-1003` routed MATCHED to mesh:draftRiskAssessment and
+    # came back `presentation_source: "unrenderable"` — "no registered capability's contract is
+    # satisfied by this payload" — with "No content available." A correct route and an empty card.
+    #
+    # The rows went into the WRONG MENU first: the presentation agent's table writes
+    # `__system_default__`, while cortex's menu is written by the browser POST and is the one
+    # `select_archetype("cortex-ui-desktop", ...)` reads. That table's own header had predicted it
+    # — "a fix aimed one menu to the left".
+    #
+    # Deleted in the commit that OBSERVED the fix, not the one that made it: the fix is cortex's
+    # (df702ca), this register is ours, and the two live in different repos. An entry left behind
+    # reads as an open defect to everyone who checks the list instead of the mirrors.
 }
 
 
