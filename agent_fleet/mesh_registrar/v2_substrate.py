@@ -404,40 +404,24 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
     """
     import weaviate.classes as wvc
 
+    try:
+        from utils.weaviate_utils import named_vector_config
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.utils.weaviate_utils import named_vector_config
+
     if weaviate_client.collections.exists(_PREDICATE_COLLECTION):
         return
     weaviate_client.collections.create(
         name=_PREDICATE_COLLECTION,
-        # ── SHAPE D: DECLARE THE NAMED SPACE. Ruled 2026-09-19 on 74's measurement. ──────────
-        # THE HALF THAT WAS MISSING, and its absence was silent and total. A bare `create`
-        # emits a named vector space `default` in the schema, while `insert(vector=[...])`
-        # writes to the LEGACY unnamed slot. Both succeed. The row then reports a vector to
-        # every instrument that ASKS — `_additional{vector}`, `include_vector`, a per-URI
-        # fetch — and the named space the index is built on stays empty, so every targeted
-        # search returns nothing. The server says it only when asked to USE one:
-        #     "vector not found for target: default"
-        #
-        # It took the whole router down without a log line. `weaviate_hybrid_search` returned
-        # its BM25 half alone, fleet-wide, on both routing collections.
-        #
-        # `self_provided` RATHER THAN A VECTORIZER, deliberately: we embed with
-        # `embed_query`/LiteLLM and hand Weaviate a finished vector. A collection that
-        # vectorised for itself would embed with a DIFFERENT model than the one used at read
-        # time — the same silent mismatch one layer over, and harder to see because both
-        # halves would look configured.
-        #
-        # BOTH HALVES OR NEITHER. This line is worthless without `vector={"default": ...}` at
-        # the write site below, and that write is REFUSED without this line. Either edit alone
-        # is worse than neither, which is what `test_the_predicate_writer_declares_and_writes_
-        # the_same_space` exists to stop a future cleanup from doing.
-        #
-        # REPAIRS NEW COLLECTIONS ONLY: `collections.exists` above short-circuits, so a live
-        # Predicate collection keeps its broken schema and its legacy-slot rows until the
-        # backfill runs. This stops the defect being RE-CREATED; it does not undo it.
-        vector_config=[wvc.config.Configure.Vectors.self_provided(name="default")],
         inverted_index_config=wvc.config.Configure.inverted_index(
             index_property_length=True,
         ),
+        # THE VECTOR SPACE IS DECLARED, not left to the client's implicit default. A bare
+        # create emits a space named `default` that a positional `vector=` never writes to,
+        # so every row reads back as vectorised and no vector search can find one. See
+        # `weaviate_utils.VECTOR_SPACE` for the measurement; the WRITE half is at the
+        # `data.insert`/`data.replace` below and the two must name the same space.
+        **named_vector_config(),
         properties=[
             wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
@@ -608,17 +592,25 @@ def upsert_weaviate_predicate_row(
               f"(BM25-only until backfill): {e}")
         predicate_vector = None
 
+    try:
+        from utils.weaviate_utils import named_vector
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.utils.weaviate_utils import named_vector
+
     write_kwargs: dict = {
         "uuid": deterministic_uuid,
         "properties": properties,
     }
     if predicate_vector is not None:
-        # SHAPE D, THE WRITE HALF — BY NAME, matching the space declared at the create site.
-        # A bare list here goes to the legacy unnamed slot, which is exactly the defect: the
-        # row reads back as vectorised and is unretrievable. See the long note at the create
-        # site; the two are one change and `test_the_predicate_writer_declares_and_writes_
-        # the_same_space` fails if either is reverted alone.
-        write_kwargs["vector"] = {"default": predicate_vector}
+        # ADDRESSED TO THE NAMED SPACE, never passed positionally. A bare list lands in the
+        # LEGACY slot, which nothing searches: the row then reads back carrying a vector and
+        # `nearObject` on it refuses with "vector not found for target: default".
+        #
+        # BOTH BRANCHES BELOW NEED IT, and the replace branch is the one that would have been
+        # missed: `insert` runs once on a cold store, `replace` runs on EVERY re-registration,
+        # so a fix applied only to insert works until the first roll and then stops. Measured
+        # as its own arm rather than assumed to follow.
+        write_kwargs["vector"] = named_vector(predicate_vector)
 
     if collection.data.exists(uuid=deterministic_uuid):
         collection.data.replace(**write_kwargs)

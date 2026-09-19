@@ -61,6 +61,38 @@ WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 
 
 # ---------------------------------------------------------------------------
+# The named vector space, from the ONE module that defines it
+# ---------------------------------------------------------------------------
+# IMPORTED, NEVER RE-SPELLED. This script and `mesh_registrar/v2_substrate.py` both create and
+# both write the SAME collection, so a second local copy of the space name or the config shape
+# is two declarations of one thing — and the day one of them changed, the two writers would
+# disagree about where the vectors live, which is the defect this whole change exists to close
+# wearing a different hat.
+#
+# RUNNING A FILE IN `scripts/` PUTS `scripts/` ON sys.path, NOT THE REPO, so the import below
+# needs the root on the path first — the repo convention. Without it the failure reads as a
+# missing dependency rather than a path, which is how it nearly shipped.
+#
+# It fails LOUD rather than degrading: a seed that silently wrote to the wrong vector space
+# would recreate the original defect on every sandbox rebuild.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+try:
+    from agent_fleet.utils.weaviate_utils import (
+        VECTOR_SPACE,
+        named_vector,
+        named_vector_config as _named_vector_config,
+    )
+except ImportError as _exc:  # pragma: no cover — run from the repo root
+    print(f"ERROR: cannot import agent_fleet.utils.weaviate_utils ({_exc}). Run this from the "
+          f"repo root: the vector-space declaration lives there and must not be re-spelled here.",
+          file=sys.stderr)
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # The four engines deployed in Phase 2 sandbox. Mirrors what
 # `register_engine_to_mesh()` would have emitted to DataHub (and what
 # doc-tools' sensor would have synced).
@@ -305,24 +337,6 @@ def ensure_predicate_collection(client):
     print(f"[weaviate] Creating {PREDICATE_COLLECTION} collection")
     return client.collections.create(
         name=PREDICATE_COLLECTION,
-        # ── SHAPE D, mirrored from v2_substrate.py, ruled 2026-09-19 ────────────────────────
-        # Declares the named space this collection's index is built on. Without it a bare
-        # `create` emits `default` implicitly while writes land in the legacy unnamed slot,
-        # and every targeted search returns nothing while the rows still READ as vectorised.
-        # The long argument lives at the registrar's create site; this is the same collection
-        # and it must not be created two different ways depending on which writer got there
-        # first — that is precisely what `_ensure_predicate_collection`'s own docstring says
-        # it exists to prevent.
-        #
-        # ⚠ THE WRITE HALF OF THIS SCRIPT IS STILL A GAP, and it is a DIFFERENT gap from the
-        # registrar's. `seed_predicates` below inserts `properties=props` and NO VECTOR AT
-        # ALL, so its rows read back as `{'default': []}` and are equally unretrievable. That
-        # is the one case 74's in-place backfill CANNOT repair — there is nothing to
-        # relocate, so those rows need a RE-EMBED, not a move. Fixing it here means giving
-        # this script an embedder, which is a larger change than shape D and is NOT bundled
-        # in: a half-done embed would produce vectors from a different model than
-        # `embed_query` uses at read time, which is the mismatch this whole ruling is about.
-        vector_config=[wvc.config.Configure.Vectors.self_provided(name="default")],
         # IndexPropertyLength=true is required by Engine O's domain-scope
         # filter which uses `Filter.by_property('domains', length=True).equal(0)`
         # to match domain-agnostic predicates. Without it Weaviate errors:
@@ -330,6 +344,11 @@ def ensure_predicate_collection(client):
         inverted_index_config=wvc.config.Configure.inverted_index(
             index_property_length=True,
         ),
+        # THE VECTOR SPACE IS DECLARED HERE TOO, and this creator matters more than it looks:
+        # it DROPS the collection above, so it decides the schema every subsequent writer
+        # inherits. A bare create emits an implicit `default` space that a positional
+        # `vector=` never writes to — see `weaviate_utils.VECTOR_SPACE`.
+        **_named_vector_config(),
         properties=[
             wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
@@ -382,12 +401,45 @@ def seed_weaviate():
                 "description": eng["description"],
                 "tool_urn": f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{eng['name']},PROD)",
             }
+            # ── THE SECOND DEFECT, AND IT WAS ONLY EVER LATENT ────────────────────────────
+            #
+            # This seed wrote NO VECTOR AT ALL while dropping and recreating the collection,
+            # so every row it produced was BM25-only until `v2_substrate` re-registered and
+            # rewrote it. It never showed up because registration always followed: measured
+            # 2026-09-19, the live Predicate population was 135 rows, 135 vectored, 0 without.
+            # **A defect covered for by a neighbour is still a defect** — and it is the one
+            # case the vector-space backfill cannot repair, because a row with no vector needs
+            # a RE-EMBED rather than a relocation.
+            #
+            # `embed_document`, NOT `embed_query`: a Predicate row is CORPUS, and the read path
+            # embeds the QUERY. The asymmetric task prefixes are the contract; the wrong helper
+            # silently splits the embedding space, which fails exactly like this defect did.
+            vector = None
+            try:
+                from agent_fleet.utils.embed import embed_document
+                vector = embed_document(search_text)
+            except Exception as exc:  # noqa: BLE001
+                # FAIL SOFT, LOUDLY, and the same way the registrar does: a seed must not be
+                # blocked on the LLM stack being up. The row lands BM25-only and says so, which
+                # is a state a reader can act on — unlike the silent version this replaces.
+                print(f"  ! embed_document failed for {eng['verb_iri']}; seeding WITHOUT a "
+                      f"vector (BM25-only until re-registration): {exc}")
+
+            write = {"uuid": uuid, "properties": props}
+            if vector is not None:
+                # ADDRESSED TO THE NAMED SPACE. A positional list lands in the legacy slot,
+                # which nothing searches.
+                write["vector"] = named_vector(vector)
+
+            # Built OUTSIDE the f-string. A nested f-string here would be a template inside a
+            # template, which is the shape that quietly eats a character and still runs.
+            where = "no vector" if vector is None else "vector -> " + VECTOR_SPACE
             if collection.data.exists(uuid=uuid):
-                collection.data.replace(uuid=uuid, properties=props)
-                print(f"  ✓ replaced {eng['verb_iri']} (uuid={uuid})")
+                collection.data.replace(**write)
+                print("  ✓ replaced %s (uuid=%s, %s)" % (eng["verb_iri"], uuid, where))
             else:
-                collection.data.insert(uuid=uuid, properties=props)
-                print(f"  ✓ inserted {eng['verb_iri']} (uuid={uuid})")
+                collection.data.insert(**write)
+                print("  ✓ inserted %s (uuid=%s, %s)" % (eng["verb_iri"], uuid, where))
     finally:
         client.close()
 
