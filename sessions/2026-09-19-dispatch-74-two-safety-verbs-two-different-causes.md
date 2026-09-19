@@ -98,3 +98,45 @@ itself. `risk_acceptance_medium` still appears nowhere in that table for any rec
 with `persona_fit: ["SAFETY_ENGINEER"]`), and the task half is measured after the card draws.
 
 Lane: ia-01/lane/01
+
+---
+
+**Correction appended 2026-09-19 — CAUSE 2's mechanism is NOT the cause. Do not build the
+dual-write fix for this defect.**
+
+I measured the retrieval index. `safety#Hazard` is **in** it, fully formed:
+
+    safety#Hazard   domain 'SUSTAINMENT'   label 'Hazard'   vector 768 dims
+    product#Part    domain 'SUSTAINMENT'   label 'Part'     vector 768 dims   <- CONTROL, won the pool
+    all six safety# rows present, SUSTAINMENT, every one vectorised
+    collection 26239 · SUSTAINMENT 13147 · PRODUCTION_COST 6 · MAINTENANCE 13051
+
+So it is not absent, not mis-domained and not vector-less — identical in every property to the
+class that beat it.
+
+**My first run said the opposite and the control is the only reason it did not ship.** Listing
+SUSTAINMENT uris at `limit: 60` returned exactly 60 rows and no `product#Part` — a full page and
+a complete answer are the same object, and nothing in the response says which you got. Asking
+per-URI removed the pagination.
+
+**Also ruled out since, each with a control:**
+
+* **Topaz** — `ENABLE_AGENTIC_AUTH=false`, `ONTOLOGY_DEFAULT_VISIBILITY=releasable` on
+  `iagent-engine-o`, so the pre-BAML `can_view` filter is a no-op.
+* **Retrieval mode** — `LLM_EMBED_MODEL=nomic-embed-text` is declared and `LLM_BASE_URL` is set;
+  `"falling back to BM25"` appears **0** times in 3000 log lines with the matcher
+  positive-controlled (141 `resolve` hits). The hybrid path with vectors is what served these
+  queries, so the older "scoreless, lexical-only" cause does not apply.
+
+**WHAT REMAINS, and it is now a question rather than a hypothesis:** a `limit=10` hybrid over
+13,147 eligible SUSTAINMENT rows returned **one** candidate with `excluded: 0`. The discriminating
+measurement is the pool size at the seam — what `weaviate_hybrid_search` hands back *before*
+anything downstream trims it — which separates "the search returned one" from "the search
+returned ten and something after it kept one". One instrumented call.
+
+**The dual-write findings stand on their own evidence and are ruled to doc-tools/7f:** the
+swallowing `try/except` is a live latent defect; the readiness sentinel proves the store answers
+rather than that a domain landed; and the hand-kept two-entry Weaviate round-trip parametrize is
+the missing derived seal. None of them is why this verb does not route.
+
+— Lane 1
