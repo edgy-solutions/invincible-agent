@@ -70,131 +70,24 @@ class BriefState(TypedDict, total=False):
     summary: str
 
 
-#: THE FOUR ROW DISPOSITIONS, DECLARED IN ONE PLACE — R-073.
-#:
-#: A brief row is not a name plus a hope. `cortex-ui-60` raised this before the payload existed:
-#: a row saying `{hole: "cost_variance"}` leaves the card choosing among three states with three
-#: different repairs and three different readers, and the honest guess is NO RENDER AT ALL.
-#:
-#: Each maps onto the producer's contract (`presentation_agent/main.py:527`), and the mapping is
-#: WHY the fourth exists rather than being folded into a hole:
-#:
-#:   finding       a verdict was emitted            -> the ordinary finding row
-#:   unsummarised  content exists, verdict absent   -> a FINDING row, artifact linked, NEVER a
-#:                                                     hole. The caller is entitled and the verb
-#:                                                     ran; drawing a hole would tell a reader
-#:                                                     they lack an entitlement they have.
-#:   empty         the verb answered and has NOTHING -> the panel's own rowless card
-#:   unentitled    the caller may not invoke it     -> NAMED_HOLE
-#:   unavailable   failed, timed out, or refused    -> whole-board refusal
-#:
-#: `empty` ADDED 2026-09-18, and the correction underneath it matters more than the term. This
-#: file claimed the dispositions mapped ONE-FOR-ONE onto the presentation contract. THEY DO NOT,
-#: and cortex-ui-60 established it by comparing at source rather than accepting the claim:
-#:
-#:     here      finding · unsummarised · empty · unentitled · unavailable
-#:     cortex              unsummarised · empty · unentitled · unavailable
-#:
-#: `finding` is the POSITIVE case and cortex's list is a vocabulary of ABSENCES, so it has no
-#: slot for it — that asymmetry is fine. `empty` was not: it is an absence these rows can OCCUR
-#: IN and could not NAME, so every verb that answered with nothing was called `unsummarised` —
-#: which asserts CONTENT EXISTS and links an artifact holding none. **That is the exact collapse
-#: R-073 refused, one layer over**, and the two have different lifetimes: `unsummarised` retires
-#: when every verb emits a verdict; `empty` NEVER retires, because a variance analysis with no
-#: variances is a correct answer forever.
-#:
-#: `unsummarised` IS TEMPORARY BY CONSTRUCTION and retires by TEST, not by memory: the seal beside
-#: it asserts no built-in verb produces one. When lane 91's verdict lines cover every measure, the
-#: disposition becomes unreachable and the seal says so.
-ROW_DISPOSITIONS = ("finding", "unsummarised", "empty", "unentitled", "unavailable")
-
-#: WHICH DISPOSITIONS ARE HOLES — the ADR-0049 Ruling 2 set, declared rather than inferred.
-#:
-#: `holes` is what the SDK's `enforce_refusal` reads to enforce a row's `refusal` clause, so it
-#: cannot simply be deleted as a duplicate of `rows` — deleting it would silently retire the
-#: named-hole contract. But cortex-ui-60 is right that carrying both INDEPENDENTLY is one fact
-#: in two places, and named the drift exactly: the first disposition anyone adds that belongs in
-#: `holes` would be in `rows` and absent from `holes`, and a consumer reading `holes` would
-#: render a shorter list THAT LOOKS COMPLETE.
-#:
-#: So `holes` became a PROJECTION of `rows` — one emission, one truth — and this set is the
-#: projection's rule. Sealed as a PARTITION: every declared disposition is a hole or is named
-#: here as not one, so a new term FAILS WHILE UNDECIDED rather than defaulting to "not a hole"
-#: and quietly shrinking the list.
-HOLE_DISPOSITIONS = ("unentitled", "unavailable")
-
-#: The positive counterpart, so the partition has both halves written down and neither is an
-#: "everything else". An unlisted disposition belongs to no side and the seal says so.
-NON_HOLE_DISPOSITIONS = ("finding", "unsummarised", "empty")
-
-
-def holes_from(rows: list[dict]) -> list[dict]:
-    """The named holes a set of rows implies. THE ONLY PLACE `holes` IS BUILT."""
-    return [
-        {"source": r["row"], "label": r["label"], "reason": r["reason"]}
-        for r in rows
-        if r["disposition"] in HOLE_DISPOSITIONS
-    ]
-
-#: The keys a payload may lead with. Read FROM the payload, never recomputed — the same list
-#: `_headline` uses, named once so the row and the prose cannot disagree about what a verdict is.
-VERDICT_KEYS = ("headline", "summary", "value", "verdict")
-
-
-def _verdict_of(payload: dict) -> str | None:
-    """The payload's own verdict, or None. NONE IS A RESULT, not a failure to find one."""
-    for key in VERDICT_KEYS:
-        if isinstance(payload.get(key), (str, int, float)):
-            return str(payload[key])
-    return None
-
-
-def _has_content(payload: dict) -> bool | None:
-    """Does this payload carry anything a reader could open? None means CANNOT TELL.
-
-    DERIVED FROM THE ENVELOPE, not guessed. engine-fin's response always carries `rows`
-    (`finance_agent/main.py`), and omits `verdict` entirely when there is nothing to say — the
-    same honest-absence rule. So an answered verb with `rows: []` has genuinely nothing, and
-    that is a different fact from a verdict being absent.
-
-    THE THIRD ANSWER IS THE POINT. A payload with no `rows` key at all is a shape this graph
-    does not know, and the two wrong guesses are not symmetric:
-
-        calling it `empty`        hides content a reader could have opened
-        calling it `unsummarised` sends them to look and they find nothing
-
-    The second is recoverable by looking; the first is invisible. So an unknown shape fails to
-    `unsummarised`, and this returns None so the caller makes that choice in the open rather
-    than inheriting it from a falsy default.
-    """
-    rows = payload.get("rows")
-    if rows is None:
-        return None
-    return bool(rows)
-
-
-def _disposition_for(payload: dict, verdict: str | None) -> str:
-    """Three-way, and each arm is a different fact with a different repair."""
-    if verdict is not None:
-        return "finding"
-    # `_has_content` returns None for a shape we cannot read; that fails to `unsummarised`,
-    # which sends a reader to look, rather than to `empty`, which tells them not to bother.
-    return "empty" if _has_content(payload) is False else "unsummarised"
-
-
-def _row(source: str, label: str, disposition: str, *,
-         artifact: str | None = None, verdict: str | None = None,
-         reason: str | None = None) -> dict:
-    """One brief row. THE ARTIFACT IS A FIELD ON EVERY ROW, present even when null.
-
-    Absent-versus-empty, the same rule as `disposal` and `failure_cause`: a row with no
-    `artifact` key at all makes a consumer guess whether the hop produced one, and a card that
-    guesses draws the wrong thing confidently. A refused verb HAS no artifact, and saying so is
-    a different statement from not mentioning it.
-    """
-    assert disposition in ROW_DISPOSITIONS, f"undeclared row disposition: {disposition!r}"
-    return {"row": source, "label": label, "disposition": disposition,
-            "artifact": artifact, "verdict": verdict, "reason": reason}
+# ── the ledger vocabulary, SHARED ───────────────────────────────────────────────────────────
+# MOVED to `agent_fleet/graph_host/rows.py` when the cost review became the second consumer.
+# The ruling that produced these terms (R-073) and the reasoning for each is recorded there;
+# what stays here is the graph. Re-exported under the old names so every existing seal and any
+# route-C reader keeps its import — a rename and a move in one change makes the diff about the
+# rename.
+from agent_fleet.graph_host.rows import (  # noqa: E402
+    HOLE_DISPOSITIONS,
+    NON_HOLE_DISPOSITIONS,
+    ROW_DISPOSITIONS,
+    VERDICT_KEYS,
+    disposition_for as _disposition_for,
+    fetch_row as _fetch_row,
+    has_content as _has_content,
+    holes_from,
+    row as _row,
+    verdict_of as _verdict_of,
+)
 
 
 def _fetch(fn: str, label: str):
