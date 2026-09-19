@@ -1,0 +1,42 @@
+# Roll overlay: the frontend digest, and NOTHING else.
+#
+# WHY THIS FILE EXISTS AS ITS OWN FILE, measured 2026-09-19 rather than reasoned:
+#
+# A roll runs `helm upgrade --reuse-values`, which does not read a values file unless the
+# command passes one with `-f`. So the digest pinned in `values-sandbox.yaml` is INVISIBLE to
+# the canonical roll command — the dry-run rendered the frontend as `:latest`, i.e. the roll
+# would have been a silent no-op on the one line it exists to change.
+#
+# THE OBVIOUS FIX IS WRONG, AND ONLY A FULL-MANIFEST DIFF SHOWS IT. Adding
+# `-f values-sandbox.yaml` does carry the digest — and it ALSO re-asserts every other key in
+# that file over the values `--reuse-values` preserved. Measured on the dry-run:
+#
+#     DATAHUB_TOKEN: "eyJhbGciOiJIUzI1NiJ9…"   <- --reuse-values, the live token
+#     DATAHUB_TOKEN: ""                         <- with -f values-sandbox.yaml
+#
+# The token is empty in the values file because it is injected at deploy time. Passing the
+# whole file would have blanked it and broken DataHub auth, for a roll whose only intended
+# change was one image reference. An image-line diff cannot see that; the full manifest can,
+# which is why the check is the manifest and not the images.
+#
+# So: a DECLARED values file (R-034 — never a bare `--set` for the pin) scoped to exactly the
+# one key the roll needs. Helm merges values, so every other key still comes from
+# `--reuse-values`.
+#
+#     helm upgrade iagent helm/invincible-agent -n sandbox \
+#       --reuse-values \
+#       -f helm/invincible-agent/values-roll-frontend-digest.yaml \
+#       --set global.imageTag=<roll sha> \
+#       --no-hooks
+#
+# THE DIGEST IS NOT PERMANENT HERE. It names the cortex-ui build this roll was verified
+# against; the next frontend roll replaces it, and the `values-sandbox.yaml` entry stays as the
+# environment's declared default for a fresh install. Two places name a digest and they answer
+# different questions: that one is "what does a clean install get", this one is "what did THIS
+# roll put on the cluster".
+cortexUi:
+  image:
+    # cortex-ui 8a13dd6. Verified before the roll: resolves in GHCR, multi-arch OCI index with
+    # arm64 present (the nodes are arm64), and NOT the same image as `:latest`, which currently
+    # resolves to 81407e58… and moves on every push to cortex-ui's default branch.
+    digest: "sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced"
