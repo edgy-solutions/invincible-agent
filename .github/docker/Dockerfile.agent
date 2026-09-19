@@ -80,6 +80,23 @@ COPY policy/graphs/ /app/policy/graphs/
 # cortex-bff does NOT need a line: its image copies the whole repo (see its own
 # comment above), which is why /app/policy is complete there and per-file here.
 COPY policy/overlays/ /app/policy/overlays/
+# THE DECISION-TABLE SEED (ADR-0039), and the comment above has now come true again.
+#
+# THIS ONE IS SUBTLER THAN ITS PREDECESSORS BECAUSE THE DOMAIN HALF ALREADY SHIPS.
+# `safety_acceptance_selection` lives in `policy/overlays/sample/decisions/`, which
+# the line directly above copies — so the TABLE was in the image and the SEED it
+# composes against was not, which is the worse of the two arrangements rather than
+# the better one. A missing overlay composes to silence; a missing seed means there
+# is nothing to compose overlays ONTO.
+#
+# `acceptance_selection.decision_dirs()` picks its root by asking whether the seed
+# directory exists, because a composer needs a seed. Without this line it finds no
+# root in the container and `SafetyAcceptance` refuses every acceptance with "no
+# decision table safety_acceptance_selection ... check that policy/decisions/ and
+# policy/overlays/ are both baked into this image" — while the table sits one
+# directory over. Loud and specific, which is the only reason this is an outage and
+# not the eighteen-dead-task-rows shape recorded above.
+COPY policy/decisions/ /app/policy/decisions/
 # THE RATIFIED RISK MATRIX (ADR-0051 §2), and this is the FOURTH time the comment
 # above has come true — it said "the next shared-policy file will need another line
 # here, and forgetting it fails SILENTLY". It did, and this one failed LOUDLY but

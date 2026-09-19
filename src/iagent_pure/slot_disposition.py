@@ -144,6 +144,21 @@ FT_UNSUPPORTED = "unsupported"  # provider: I do not enumerate this class
 FT_NO_PROVIDER = "no_provider"  # nobody was asked — the gap, named rather than hidden
 FT_NO_REFERENT = "no_referent"  # the slot names a literal, not a referent; nothing to list
 
+#: THE FIFTH REASON, AND IT IS THE ONLY ONE WHERE A MENU EXISTED AND WAS REFUSED.
+#:
+#: Ruled 2026-09-16 (`sessions/2026-09-17-dispatch-cost-provider-scoped-by.md`): *"three states
+#: on an enumeration — scoped, class-wide, none. NEVER A CLASS-WIDE LIST WEARING A SCOPED
+#: MENU."* When slots are already bound in the turn and the provider answers class-wide anyway,
+#: the list it returned is real and the MENU would be a lie: `cost#RateTable` enumerates to 12
+#: while lot 3 accepts two, so ten of twelve picks produce the `not_in_model` refusal the menu
+#: exists to prevent — with the user's own click behind it.
+#:
+#: **A MENU IS WORSE THAN FREE TEXT HERE, WHICH IS WHY THIS IS NOT A DEGRADATION.** Free text
+#: does not imply validity; a menu does. Offering ten invalid chips teaches a user that the
+#: system's own suggestions are untrustworthy, and it does it at the moment they were trying to
+#: cooperate. So the options are DROPPED and the reason is named.
+FT_CLASS_WIDE = "class_wide"    # provider answered class-wide for a slot that needed scoping
+
 #: Outcome -> the reason an ask carrying that outcome has no menu. SUPPLIED AT EMIT rather than
 #: refused, because refusing an invalid payload costs the reader the free-text box they could
 #: have typed into, and the fact is derivable from the outcome the disposition already carries.
@@ -163,7 +178,9 @@ _FT_BY_OUTCOME = {
     "mixed": FT_NO_PROVIDER,
     "ambiguous_in_domain": FT_NO_PROVIDER,
 }
-FREE_TEXT_REASONS = frozenset({FT_TOO_MANY, FT_UNSUPPORTED, FT_NO_PROVIDER, FT_NO_REFERENT})
+FREE_TEXT_REASONS = frozenset({
+    FT_TOO_MANY, FT_UNSUPPORTED, FT_NO_PROVIDER, FT_NO_REFERENT, FT_CLASS_WIDE,
+})
 
 
 class Option(NamedTuple):
@@ -186,6 +203,14 @@ class Disposition(NamedTuple):
     total_count: int = 0             # how many EXIST, when a provider counted them
     detail: str = ""                 # provider colour for the honest fallback text
     found: str = ""                  # a cross-class candidate: what WAS found, as context
+    #: WHICH bound slots the enumeration actually applied. Empty means class-wide — and when
+    #: slots WERE offered, that is the refusal above rather than a menu. Slot NAMES rather than
+    #: a boolean, because a provider handed two slots that honours one has produced a list
+    #: scoped by one of two, and a boolean would let a reader believe both were applied.
+    scoped_by: tuple[str, ...] = ()
+    #: What was OFFERED as scoping context. The gap is only computable from both, and the
+    #: surface reading the card is not the code that built the request.
+    bound_slots_offered: tuple[str, ...] = ()
 
     @property
     def is_ask(self) -> bool:
@@ -360,14 +385,73 @@ def decide_disposition(
                 found=found, detail="no enumeration provider was reachable",
             )
 
+        # ── THE SLOTS ALREADY BOUND IN THIS TURN, OFFERED AS SCOPING CONTEXT ──────────
+        #
+        # `accepted` is what will actually reach the verb, so it is exactly the context a
+        # provider needs to narrow a menu to what the verb will accept. Passing it is not a
+        # demand — a provider that cannot scope answers class-wide and says so.
+        #
+        # THE SLOT BEING ASKED ABOUT IS NOT IN `accepted` (that is why we are asking), so
+        # there is no risk of scoping a menu by the very value it exists to obtain.
+        offered = {str(k): str(v) for k, v in accepted.items() if v not in (None, "")}
+
         try:
-            enumerated = dict(enumerate_class(referent) or {})
+            # KEYWORD, AND TOLERANT OF AN ENUMERATOR THAT DOES NOT TAKE IT. Every existing
+            # caller and every test double written against the one-argument shape keeps
+            # working; a `TypeError` here is a SIGNATURE mismatch, not an outage, and must
+            # not be reported as `no_provider` — that would file a code fact as an
+            # infrastructure one, which is the confusion the fan-out's own comments record
+            # paying for twice.
+            try:
+                enumerated = dict(enumerate_class(referent, bound_slots=offered) or {})
+            except TypeError:
+                enumerated = dict(enumerate_class(referent) or {})
         except Exception as exc:  # noqa: BLE001 — an unreachable provider is not a menu
             return Disposition(
                 ASK, slot=name, reason=reason, spoken=spoken,
                 option_source=SRC_NONE, free_text_reason=FT_NO_PROVIDER,
                 detail=f"{type(exc).__name__}",
+                bound_slots_offered=tuple(sorted(offered)),
             )
+
+        # WHAT THE PROVIDER CLAIMS ABOUT ITS OWN LIST. Absent means class-wide, and the
+        # asymmetry is deliberate: a provider that scoped and forgot the field under-claims
+        # and its menu is refused, where the opposite default would dress a class-wide list
+        # as a scoped menu — the exact defect.
+        scoped_by = tuple(
+            str(s) for s in (enumerated.get("scoped_by") or []) if str(s).strip()
+        )
+
+        # ── WHICH SLOTS THIS ONE'S VALID VALUES DEPEND ON — DECLARED, NEVER INFERRED ──
+        #
+        # THE REFUSAL IS FOR "A SCOPED SLOT", NOT FOR ANY SLOT WITH CONTEXT AROUND IT, and
+        # the difference is the whole correctness of this branch. The first version refused
+        # whenever ANY bound slot went unhonoured — and `test_a_pick_from_the_menu_BINDS_and_merges`
+        # went red, correctly: `plan_dependency_neighborhood` binds `direction: upstream`
+        # and `kind: phase`, and NEITHER constrains which projects exist. Treating every
+        # bound value as a scoping dimension refuses menus that were always right, which is
+        # a worse defect than the one being fixed because it fires on working paths.
+        #
+        # ONLY THE DECLARATION KNOWS. `lot` genuinely restricts which rate vintages are
+        # valid; `direction` does not restrict anything. Nothing in a provider's silence
+        # distinguishes "I ignored your context" from "your context does not constrain this
+        # class" — so the slot says which slots scope it, the same move `referent` makes for
+        # the class ("DECLARED, never sniffed from an `_id` suffix: the cost of guessing was
+        # measured").
+        #
+        # ⚠ `iagent_mesh.graph_manifest.SlotDecl` IS `extra="forbid"` AND HAS NO `scoped_by`,
+        # so a verb cannot yet declare this through the SDK path — ca's v0.9.4. Until it can,
+        # no slot declares it, this branch never fires, and the behaviour is exactly today's.
+        # That is the right inert state for a half whose siblings have not landed: it cannot
+        # refuse a menu that was fine, and it turns on the day the declaration exists.
+        declared_scope = tuple(
+            str(s) for s in (decl.get("scoped_by") or []) if str(s).strip()
+        )
+        # Only slots that are BOTH declared as scoping this one AND actually bound this turn.
+        # A declared scope nobody bound cannot narrow anything, and demanding it would refuse
+        # the first turn of every scoped question before its context exists.
+        scope_in_play = tuple(sorted(set(declared_scope) & set(offered)))
+        unscoped_but_required = tuple(sorted(set(scope_in_play) - set(scoped_by)))
 
         eout = str(enumerated.get("outcome") or "")
         if eout == "members":
@@ -377,10 +461,33 @@ def decide_disposition(
                 for m in members
                 if m.get("instance_id")
             )
+            if opts and unscoped_but_required:
+                # ── NEVER A CLASS-WIDE LIST WEARING A SCOPED MENU (ruled 2026-09-16) ──────
+                #
+                # This slot DECLARES that its valid values depend on other slots, those slots
+                # are bound, and the provider did not narrow by them. So the list is wider
+                # than what the verb will accept: `cost#RateTable` enumerates to 12 while
+                # lot 3 accepts two, and ten of those picks produce the `not_in_model`
+                # refusal the menu exists to prevent — with the user's own click behind it.
+                # The list is DROPPED and the reason is named. Free text is honest here
+                # because it does not imply validity, and a menu does.
+                return Disposition(
+                    ASK, slot=name, reason=reason, spoken=spoken, found=found,
+                    option_source=SRC_NONE, free_text_reason=FT_CLASS_WIDE,
+                    total_count=len(opts),
+                    scoped_by=scoped_by,
+                    bound_slots_offered=tuple(sorted(offered)),
+                    detail=(
+                        f"{len(opts)} listed for the class, not scoped by "
+                        f"{', '.join(unscoped_but_required)}"
+                    ),
+                )
             if opts:
                 return Disposition(
                     ASK, slot=name, reason=reason, spoken=spoken, found=found,
                     options=opts, option_source=SRC_ENUMERATION,
+                    scoped_by=scoped_by,
+                    bound_slots_offered=tuple(sorted(offered)),
                 )
             # `members: []` is a real answer and an empty menu is not a menu. The class is
             # enumerable and holds nothing, which is closer to `empty` than to a question.
@@ -497,6 +604,14 @@ def ask_card(
         "free_text_reason": disp.free_text_reason,
         "truncated_from": disp.truncated_from,
         "total_count": disp.total_count,
+        # ── WHAT SCOPED THIS MENU, AND WHAT DID NOT ────────────────────────────────────
+        # Three states, on the card rather than only in the decision: `scoped_by` non-empty
+        # is a scoped menu, empty with slots offered is the refusal above, and empty with
+        # nothing offered is an ordinary class-wide menu — which is correct when no slot was
+        # bound to scope it by. A surface that cannot tell those apart cannot explain to a
+        # user why the chips vanished between two questions about the same class.
+        "scoped_by": list(disp.scoped_by),
+        "bound_slots_offered": list(disp.bound_slots_offered),
         # The merge, per the docstring above.
         "accepted_slots": dict(accepted or {}),
         "message": ask_message(disp),
@@ -530,6 +645,8 @@ def ask_card(
             "option_source": disp.option_source,
             "free_text_reason": disp.free_text_reason,
             "total_count": disp.total_count,
+            "scoped_by": list(disp.scoped_by),
+            "bound_slots_offered": list(disp.bound_slots_offered),
             "already_known": dict(accepted or {}),
         },
         "data": "",
@@ -571,6 +688,18 @@ def ask_message(disp: Disposition) -> str:
     if disp.free_text_reason == FT_TOO_MANY:
         extra = f" There are {disp.detail}." if disp.detail else ""
         return f"Which {slot}?{heard}{extra} Too many to list — name it and I will run this."
+    if disp.free_text_reason == FT_CLASS_WIDE:
+        # IT SAYS A LIST EXISTED AND WHY IT IS NOT BEING SHOWN. "Name it and I will run this"
+        # alone would read as "nothing could be listed", which is false here and sends the
+        # reader to the wrong repair — the provider CAN list this class, it just cannot narrow
+        # it to what they already told us, and that is a provider change rather than a gap.
+        narrowed = ", ".join(disp.bound_slots_offered)
+        context = f" for {narrowed}" if narrowed else ""
+        return (
+            f"Which {slot}?{heard} I can list them, but not narrowed{context} — showing them "
+            f"all would offer choices this question would then reject. Name it and I will run "
+            f"this."
+        )
     return f"Which {slot}?{heard} Name it and I will run this."
 
 
