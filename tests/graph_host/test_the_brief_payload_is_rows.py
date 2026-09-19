@@ -17,8 +17,21 @@ different readers, and the honest guess is **no render at all**. The producer's 
 
 **The brief's stub rows were none of those.** The caller is entitled, the verbs ran, the hop
 artifacts exist. Rendering them as a hole would tell a reader they lack an entitlement they
-have — hence the fourth disposition, ``unsummarised``: content exists, verdict absent, drawn as
-a FINDING row with its artifact.
+have — hence ``unsummarised``: content exists, verdict absent, drawn as a FINDING row with its
+artifact.
+
+AND THEN ``unsummarised`` WAS ABSORBING ``empty``, found the same way and stated here because
+the correction is the more useful half. The first version decided the disposition as *verdict
+present or not*, so a verb that ran and legitimately produced NOTHING was also called
+``unsummarised`` — asserting content exists and linking an artifact holding none. **The collapse
+R-073 refused, one layer over.** The two never retire together: ``unsummarised`` goes when every
+verb emits a verdict, ``empty`` never does, because a variance analysis with no variances is a
+correct answer forever.
+
+This file also claimed the dispositions mapped ONE-FOR-ONE onto the presentation contract. They
+do not, and the asymmetry is the point — ``finding`` is the positive case and cortex's list is a
+vocabulary of absences, so it has no slot for it. That is fine. ``empty`` was not: it is an
+absence these rows can OCCUR IN and could not NAME.
 
 Run: uv run --frozen pytest tests/graph_host/test_the_brief_payload_is_rows.py -v
 """
@@ -97,17 +110,25 @@ def test_the_artifact_is_a_FIELD_on_every_row_even_when_absent(monkeypatch):
 
 
 @needs_langgraph
-def test_the_FOUR_dispositions_are_each_REACHABLE(monkeypatch):
+def test_EVERY_declared_disposition_is_REACHABLE(monkeypatch):
     """PARTITION, derived from the outcomes rather than asserted as a list. A declared
     vocabulary with an unreachable member is a name nobody can produce; one with an unlisted
-    outcome is a row the card has no rule for."""
+    outcome is a row the card has no rule for.
+
+    THIS ROW CAUGHT ITS OWN EXTENSION. When `empty` was added to the declaration it went red
+    immediately — five declared, four reached — which is the partition doing the job a list
+    could not: a new term that nothing emits is caught by the same assertion as an outcome
+    nothing names."""
     import httpx
 
     b = _brief()
     seen = {
         _run(monkeypatch, status=200,
-             payload={"verdict": "v", "artifact_id": "a"})["rows"][0]["disposition"],
-        _run(monkeypatch, status=200, payload={"artifact_id": "a"})["rows"][0]["disposition"],
+             payload={"verdict": "v", "artifact_id": "a", "rows": [1]})["rows"][0]["disposition"],
+        _run(monkeypatch, status=200,
+             payload={"artifact_id": "a", "rows": [1]})["rows"][0]["disposition"],
+        _run(monkeypatch, status=200,
+             payload={"artifact_id": "a", "rows": []})["rows"][0]["disposition"],
         _run(monkeypatch, status=403)["rows"][0]["disposition"],
         _run(monkeypatch, raises=httpx.ConnectError("x"))["rows"][0]["disposition"],
     }
@@ -213,3 +234,72 @@ def test_the_prose_and_the_ROW_read_the_verdict_THE_SAME_WAY():
     payload2 = {"verdict": "Spend above plan"}
     assert b._verdict_of(payload2) == "Spend above plan"
     assert b._headline(payload2) == "Spend above plan"
+
+
+# -- `empty` is not `unsummarised`, in both directions --------------------------------------
+
+@needs_langgraph
+def test_an_ANSWERED_verb_with_NOTHING_is_EMPTY_not_unsummarised(monkeypatch):
+    """cortex-ui-60, reading at source rather than from my description: `unsummarised` was
+    ABSORBING `empty`.
+
+    Every successful call without a verdict became `unsummarised`, which asserts CONTENT EXISTS
+    and links an artifact — so a verb that ran and legitimately produced nothing told a reader
+    to go and open something holding none. **That is the collapse R-073 refused, one layer
+    over**, and the two have different lifetimes: `unsummarised` retires when every verb emits
+    a verdict; `empty` never does, because a variance analysis with no variances is a correct
+    answer forever.
+    """
+    out = _run(monkeypatch, status=200, payload={"artifact_id": "hop-3", "rows": []})
+    row = out["rows"][0]
+    assert row["disposition"] == "empty", (
+        f"an answered verb with no rows was called {row['disposition']!r}, which tells a "
+        f"reader there is content to open"
+    )
+    assert not out.get("holes"), "an entitled caller's answered verb produced a hole"
+    assert row["artifact"] == "hop-3", (
+        "the artifact was dropped. The hop DID produce one and the row should say so — the "
+        "disposition governs whether the card invites opening it, not whether the fact exists."
+    )
+
+
+@needs_langgraph
+def test_CONTENT_without_a_verdict_is_STILL_unsummarised(monkeypatch):
+    """THE MIRROR CONTROL, and the reason it exists: fixing one collapse is the easiest way to
+    create its opposite. A rule that called every verdictless payload `empty` would satisfy the
+    row above while erasing `unsummarised` — the same single-word answer, failing the other
+    way."""
+    row = _run(monkeypatch, status=200,
+               payload={"artifact_id": "hop-4", "rows": [{"x": 1}]})["rows"][0]
+    assert row["disposition"] == "unsummarised"
+
+
+@needs_langgraph
+def test_an_UNREADABLE_payload_shape_fails_to_unsummarised(monkeypatch):
+    """The two wrong guesses are not symmetric, so the fallback is chosen rather than inherited.
+
+        calling it `empty`        hides content a reader could have opened
+        calling it `unsummarised` sends them to look and they find nothing
+
+    The second is recoverable by looking; the first is invisible. A payload with no `rows` key
+    is a shape this graph does not know, and it fails to the recoverable side.
+    """
+    b = _brief()
+    assert b._has_content({"artifact_id": "a"}) is None, (
+        "an unknown shape reported a definite answer about its own content"
+    )
+    row = _run(monkeypatch, status=200, payload={"artifact_id": "hop-5"})["rows"][0]
+    assert row["disposition"] == "unsummarised"
+
+
+@needs_langgraph
+def test_the_content_test_reads_the_key_engine_fin_ACTUALLY_EMITS():
+    """THE JOIN AGAIN, for the new term. `_has_content` keys on `rows`; engine-fin's envelope
+    ends with `"rows": rows`. Rename either and every verdictless payload silently becomes
+    `unsummarised` — the absorption this change exists to end, restored with every per-side
+    test still green."""
+    main_src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+    assert '"rows": rows,' in main_src, (
+        "engine-fin no longer emits `rows` under that key — `_has_content` can no longer tell "
+        "empty from unsummarised, and both collapse to unsummarised silently."
+    )

@@ -81,13 +81,29 @@ class BriefState(TypedDict, total=False):
 #:                                                     hole. The caller is entitled and the verb
 #:                                                     ran; drawing a hole would tell a reader
 #:                                                     they lack an entitlement they have.
+#:   empty         the verb answered and has NOTHING -> the panel's own rowless card
 #:   unentitled    the caller may not invoke it     -> NAMED_HOLE
 #:   unavailable   failed, timed out, or refused    -> whole-board refusal
+#:
+#: `empty` ADDED 2026-09-18, and the correction underneath it matters more than the term. This
+#: file claimed the dispositions mapped ONE-FOR-ONE onto the presentation contract. THEY DO NOT,
+#: and cortex-ui-60 established it by comparing at source rather than accepting the claim:
+#:
+#:     here      finding · unsummarised · empty · unentitled · unavailable
+#:     cortex              unsummarised · empty · unentitled · unavailable
+#:
+#: `finding` is the POSITIVE case and cortex's list is a vocabulary of ABSENCES, so it has no
+#: slot for it — that asymmetry is fine. `empty` was not: it is an absence these rows can OCCUR
+#: IN and could not NAME, so every verb that answered with nothing was called `unsummarised` —
+#: which asserts CONTENT EXISTS and links an artifact holding none. **That is the exact collapse
+#: R-073 refused, one layer over**, and the two have different lifetimes: `unsummarised` retires
+#: when every verb emits a verdict; `empty` NEVER retires, because a variance analysis with no
+#: variances is a correct answer forever.
 #:
 #: `unsummarised` IS TEMPORARY BY CONSTRUCTION and retires by TEST, not by memory: the seal beside
 #: it asserts no built-in verb produces one. When lane 91's verdict lines cover every measure, the
 #: disposition becomes unreachable and the seal says so.
-ROW_DISPOSITIONS = ("finding", "unsummarised", "unentitled", "unavailable")
+ROW_DISPOSITIONS = ("finding", "unsummarised", "empty", "unentitled", "unavailable")
 
 #: The keys a payload may lead with. Read FROM the payload, never recomputed — the same list
 #: `_headline` uses, named once so the row and the prose cannot disagree about what a verdict is.
@@ -100,6 +116,39 @@ def _verdict_of(payload: dict) -> str | None:
         if isinstance(payload.get(key), (str, int, float)):
             return str(payload[key])
     return None
+
+
+def _has_content(payload: dict) -> bool | None:
+    """Does this payload carry anything a reader could open? None means CANNOT TELL.
+
+    DERIVED FROM THE ENVELOPE, not guessed. engine-fin's response always carries `rows`
+    (`finance_agent/main.py`), and omits `verdict` entirely when there is nothing to say — the
+    same honest-absence rule. So an answered verb with `rows: []` has genuinely nothing, and
+    that is a different fact from a verdict being absent.
+
+    THE THIRD ANSWER IS THE POINT. A payload with no `rows` key at all is a shape this graph
+    does not know, and the two wrong guesses are not symmetric:
+
+        calling it `empty`        hides content a reader could have opened
+        calling it `unsummarised` sends them to look and they find nothing
+
+    The second is recoverable by looking; the first is invisible. So an unknown shape fails to
+    `unsummarised`, and this returns None so the caller makes that choice in the open rather
+    than inheriting it from a falsy default.
+    """
+    rows = payload.get("rows")
+    if rows is None:
+        return None
+    return bool(rows)
+
+
+def _disposition_for(payload: dict, verdict: str | None) -> str:
+    """Three-way, and each arm is a different fact with a different repair."""
+    if verdict is not None:
+        return "finding"
+    # `_has_content` returns None for a shape we cannot read; that fails to `unsummarised`,
+    # which sends a reader to look, rather than to `empty`, which tells them not to bother.
+    return "empty" if _has_content(payload) is False else "unsummarised"
 
 
 def _row(source: str, label: str, disposition: str, *,
@@ -160,7 +209,7 @@ def _fetch(fn: str, label: str):
         # never called, which is why the row is emitted where the payload is in hand.
         return {"findings": [{"source": fn, "label": label, "payload": payload,
                               "artifact": artifact}],
-                "rows": [_row(fn, label, "finding" if verdict is not None else "unsummarised",
+                "rows": [_row(fn, label, _disposition_for(payload, verdict),
                               artifact=artifact, verdict=verdict)]}
 
     return node
