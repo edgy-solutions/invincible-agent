@@ -158,6 +158,32 @@ _PROTECTED_BY_BOUNDARY = {
     ),
 }
 
+#: A FOURTH STATE, and it is deliberately NOT one of the three above. A site here matches
+#: exactly and has **no caller at all** — the implementation exists and nothing imports it yet.
+#:
+#: IT IS SEPARATE BECAUSE THE OBVIOUS HOME WOULD HAVE BEEN A LIE. `_KNOWN_OPEN_RUNTIME_SITES`
+#: says its members "work today because their callers pass full IRIs, which is a property of
+#: the callers rather than of these queries". Filing an unwired module there would supply that
+#: reason for a module that HAS no callers — a justification that fits because it was chosen
+#: to fit, and one that would read as measured by the next person.
+#:
+#: THE DECISION IS OWED AT WIRING TIME, not now: whoever wires it chooses main.py::register's
+#: shape (canonicalise at the boundary, queries stay exact — see `_PROTECTED_BY_BOUNDARY`) or
+#: expansion inside the queries. Both are live options while there is no caller to constrain
+#: them; neither can be settled by this register.
+#:
+#: `test_a_NOT_YET_WIRED_site_really_has_no_caller` retires the entry by force. The moment
+#: anything imports the module the arm reds and the entry must move to the state its new
+#: caller puts it in — because a debt entry that outlives its debt is a monument nobody can
+#: tell apart from a live one, which is the lesson `v2_substrate.py` left two registers above.
+_NOT_YET_WIRED = {
+    "agent_fleet/ontology_service/mesh_graph.py": (
+        "eo's Neo4jGraph, merged 2026-09-19. Duplicates main.py's Cypher by design (see "
+        "test_THE_DUPLICATED_CYPHER_STILL_AGREES_WITH_MAIN) and inherits its exact-match "
+        "shape, but nothing imports it yet — measured, zero importers outside its own test."
+    ),
+}
+
 
 def _cypher_literals(tree, source: str):
     """Every string constant that is real Cypher, with its line — docstrings excluded.
@@ -228,10 +254,38 @@ def test_no_UNACCOUNTED_exact_match_on_an_ontology_uri():
         if not any(s.startswith(p) for p in _EXACT_MATCH_WAIVERS)
         and s.rsplit(":", 1)[0] not in _KNOWN_OPEN_RUNTIME_SITES
         and s.rsplit(":", 1)[0] not in _PROTECTED_BY_BOUNDARY
+        and s.rsplit(":", 1)[0] not in _NOT_YET_WIRED
     ]
     assert not unaccounted, (
         f"exact-match OntologyClass uri lookup(s) that cannot see a CURIE and are neither "
         f"waived nor tracked: {unaccounted}. Expand the value, or add it with a reason."
+    )
+
+
+@pytest.mark.parametrize("rel", sorted(_NOT_YET_WIRED))
+def test_a_NOT_YET_WIRED_site_really_has_no_caller(rel: str):
+    """THE ENTRY RETIRES ITSELF. `_NOT_YET_WIRED` is the only one of the four states that is a
+    claim about the REST of the tree rather than about the site, so it is the only one that can
+    go stale without anybody touching the file it describes.
+
+    The claim is "nothing imports this". The moment something does, the module acquires a caller
+    whose uri form decides which of the other three states it belongs in — and this reds to force
+    that choice instead of letting an unwired waiver quietly cover a wired query.
+    """
+    module = Path(rel).stem
+    hits = []
+    for d in ("agent_fleet", "src", "scripts"):
+        for py in (_REPO / d).rglob("*.py"):
+            if py.resolve() == (_REPO / rel).resolve():
+                continue
+            text = py.read_text(encoding="utf-8", errors="replace")
+            if f"import {module}" in text or f"from .{module}" in text or f".{module} import" in text:
+                hits.append(py.relative_to(_REPO).as_posix())
+    assert not hits, (
+        f"{rel} is listed as NOT YET WIRED but is imported by {hits}. It now has a caller, so "
+        f"its uri form is decided by that caller: move it to _PROTECTED_BY_BOUNDARY if the "
+        f"caller canonicalises (main.py::register's shape), or to _KNOWN_OPEN_RUNTIME_SITES if "
+        f"the caller is trusted to pass full IRIs, or expand inside the queries."
     )
 
 
