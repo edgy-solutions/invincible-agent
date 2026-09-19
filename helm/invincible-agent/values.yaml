@@ -1473,6 +1473,10 @@ cortexUi:
   image:
     repository: edgy-solutions/cortex-ui/frontend
     tag: ""
+    # DIGEST WINS OVER TAG when set. Empty here on purpose: the default values file must not
+    # pin a digest that only one environment has pulled. Set it per-environment — see
+    # values-sandbox.yaml, and the rationale in `invincible-agent.image` in _helpers.tpl.
+    digest: ""
   port: 8080
   resources:
     requests:
