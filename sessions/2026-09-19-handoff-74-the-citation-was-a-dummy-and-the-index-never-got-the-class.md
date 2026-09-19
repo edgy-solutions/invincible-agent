@@ -143,4 +143,24 @@ open, so rank 2 carries the longest bar. That looks exactly like a sorting bug. 
 "days open" is the only thing between it and a false defect. The seal asserts the relation so the
 paragraph cannot quietly become a lie.
 
+---
+
+## One thing found on the way out, and it is not safety's
+
+`tests/test_citation_paths.py::test_phantom_allowlist_is_honest` is RED on two rows, and the seal's
+own message is the diagnosis: *"IS in git history — so it is ROT, not a phantom. Restore it or
+repair the citing site; do not allowlist a real deletion."*
+
+    docs/measurements/docs-walk-sheet.md      added by 76706e9 — on origin/lane/5f ONLY, NOT on master
+    docs/measurements/finance-walk-sheet.md   added by d84bba5 — IS on master; absent here only
+                                              because this branch is 7 behind. Arrives on merge.
+
+So **finance is fine and docs is not**: 5f's sheet was written, is in history, and never reached
+master. The citation sites point at it and the allowlist cannot honestly cover it, because an
+allowlist entry for a file that once existed is a claim that it never did.
+
+Neither is mine and neither blocks the task half. Flagged because the seal will keep reporting it
+and the next reader should not spend the morning re-deriving which of the two is real. **Do not
+"fix" this by allowlisting** — the seal refuses that by name and it is right to.
+
 Lane: ia-74/lane/74
