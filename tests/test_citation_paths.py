@@ -102,10 +102,6 @@ PHANTOM_CITATIONS = {
     # when 74, 91 or 5f commits its sheet, THIS FILE goes red and the entry must be deleted —
     # while the census's own `test_a_blocked_row_names_a_sheet_that_really_is_absent` goes red
     # from the other side in the same breath. Neither can leave a landed sheet looking un-landed.
-    "docs/measurements/finance-walk-sheet.md":
-        "Owed by lane 91 (dispatch 2026-09-18), derived from its walk sheet. Cited by "
-        "docs/measurements/walk-census.yaml, whose NP-MERIDIAN row is blocked on it. Delete "
-        "this entry when the sheet lands.",
     "docs/measurements/docs-walk-sheet.md":
         "Owed by lane 5f (dispatch 2026-09-18), alongside mesh:explain's referent widening. "
         "Cited by docs/measurements/walk-census.yaml, whose 'how do I add an engine' row is "

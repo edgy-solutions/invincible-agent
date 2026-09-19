@@ -3380,6 +3380,42 @@ falsely flagged, which is the check editing its own subject.
 **Proof that a lift worked is the gutted rule going red.** Three of three did, and before the lift
 the same mutation was invisible in all three.
 
+### THE SECOND ARGUMENT — and it is not the vacuum one
+
+**MEASURED 2026-09-19, the first time any of these ratchets FIRED in anger.**
+`_MIRROR_GAPS_AT_RATIFICATION` went 18 -> 15. Three `safety:` subjects were backend-only at
+ratification; cortex-ui bound all three (`df702ca`), they stopped being gaps, and the ratchet
+reddened until the lines were deleted.
+
+**THE FIXER DID NOT KNOW THE REGISTER EXISTED.** A debt register in ONE lane's test file records
+defects owned by OTHER lanes, so the commit that fixes one cannot be expected to delete its entry
+— the fixer is in a different repo and has never opened that file. Nothing in the fixing lane can
+prompt them, and nothing in the owning lane runs until someone happens to look.
+
+So, beside "a ratchet must be able to fail":
+
+> **A ratchet is the only thing that can notice a fix landing in a lane that never read the
+> list.** Without it, three CLOSED gaps read as OPEN to everyone who checks the list instead of
+> the mirrors — which is exactly the rot the register was built to refuse, arriving by the one
+> route the register itself cannot watch.
+
+This applies to **every cross-lane register in the fleet**, and the cross-lane ones are the
+registers most likely to have this property: a list is worth keeping precisely when the defects
+outlive the attention of whoever files them.
+
+Two consequences worth stating, because they point opposite ways:
+
+* the entry is deleted in the commit that **OBSERVES** the fix, not the one that makes it — those
+  are different commits, often in different repositories, and requiring the fixer to do it is
+  requiring something structurally unavailable to them;
+* and the observation must be **checked against a commit, never a working tree**. The seal that
+  caught this reads a sibling repo's DIRECTORY, and the fixing lane was mid-edit in that exact
+  file an hour earlier. Retiring an entry on an uncommitted change records as closed something one
+  `git checkout` undoes. A green belongs to a sha, not a directory.
+
+Raised by lane 91 from the firing itself, which is the right provenance for it: the argument was
+not available until a ratchet had fired for a cause nobody designed it for.
+
 ### Two notes that travel with it
 
 **Do not widen another lane's list.** 81 left Lane 1's `_DURATION` entry alone rather than delete
