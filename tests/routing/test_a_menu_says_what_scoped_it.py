@@ -46,17 +46,35 @@ _REPO = Path(__file__).resolve().parents[2]
 #: loop, so the enumerator was never called and ten tests failed for one reason that had nothing
 #: to do with scoping. A fixture that cannot reach the code under test fails like a defect.
 #:
-#: `scoped_by: ["lot"]` IS WHAT MAKES THIS A SCOPED SLOT. The ruling refuses a class-wide menu
-#: "for a scoped slot", not for any slot that happens to have context around it — see
-#: `_UNSCOPED_DECLS` below and the regression that forced the distinction.
+#: `narrowed_by: ["lot"]` IS WHAT MAKES THIS A SCOPED SLOT — ca's field on `SlotDecl`, ruled
+#: 2026-09-19 and paired with the RESPONSE's `scoped_by`. Two names because they are two facts:
+#: `narrowed_by` is what this slot's valid values DEPEND on (static, authored with the verb) and
+#: `scoped_by` is what the provider APPLIED (per call). The refusal is the comparison between
+#: them, so collapsing both onto one name — as my first pass did — hides the whole mechanism.
+#:
+#: The ruling refuses a class-wide menu "for a scoped slot", not for any slot that happens to
+#: have context around it — see `_UNSCOPED_DECLS` and the regression that forced the distinction.
 _DECLS = [{"name": "rate_vintage", "kind": "spoken-mandatory",
-           "referent": "cost#RateTable", "scoped_by": ["lot"]}]
+           "referent": "cost#RateTable", "narrowed_by": ["lot"]}]
 
 #: THE SAME SLOT WITHOUT THE DECLARATION — the control for over-firing. Modelled on
 #: `plan_dependency_neighborhood`, which binds `direction: upstream` and `kind: phase`, NEITHER
 #: of which constrains which projects exist.
 _UNSCOPED_DECLS = [{"name": "rate_vintage", "kind": "spoken-mandatory",
                     "referent": "cost#RateTable"}]
+
+#: The twelve the class holds, of which lot 3 accepts two. The numbers are the dispatch's.
+_TWELVE = [{"instance_id": f"v{i}", "label": f"2021-{i:02d}-01"} for i in range(1, 13)]
+_TWO = _TWELVE[:2]
+
+
+def _enumerator(body, *, seen=None):
+    """A provider double that RECORDS what it was handed — the half a return value cannot show."""
+    def _call(class_uri, *, bound_slots=None):
+        if seen is not None:
+            seen.append({"class_uri": class_uri, "bound_slots": dict(bound_slots or {})})
+        return body
+    return _call
 
 
 def test_the_fixture_reaches_the_enumerator():
@@ -72,18 +90,45 @@ def test_the_fixture_reaches_the_enumerator():
     assert seen, "the enumerator was never called — the fixture does not reach the option ladder"
     assert disp.slot == "rate_vintage"
 
-#: The twelve the class holds, of which lot 3 accepts two. The numbers are the dispatch's.
-_TWELVE = [{"instance_id": f"v{i}", "label": f"2021-{i:02d}-01"} for i in range(1, 13)]
-_TWO = _TWELVE[:2]
 
+def test_the_refusal_compares_declared_AND_bound_not_declared_alone():
+    """CA'S POINT, CONFIRMED FROM THIS SIDE, and it is the arm that proves the intersection.
 
-def _enumerator(body, *, seen=None):
-    """A provider double that RECORDS what it was handed — the half a return value cannot show."""
-    def _call(class_uri, *, bound_slots=None):
-        if seen is not None:
-            seen.append({"class_uri": class_uri, "bound_slots": dict(bound_slots or {})})
-        return body
-    return _call
+    `rate_vintage` declares `narrowed_by: ["lot"]`. On the OPENING turn of every scoped
+    question `lot` is not bound yet — there is nothing to narrow BY. A refusal computed from
+    the DECLARATION ALONE would find `lot` unhonoured, drop the menu, and the user would never
+    get the chips that let them supply the lot in the first place. **The refusal would fire
+    hardest exactly where the menu matters most: the first menu of every turn.**
+
+    So the test is `declared & bound`, and this arm is what fails if the `& set(offered)` in
+    `decide_disposition` is ever dropped.
+    """
+    # Declared scope, NOTHING bound: the menu must still be drawn.
+    opening = decide_disposition(
+        accepted={},
+        declared=_DECLS,
+        enumerate_class=_enumerator({"outcome": "members", "members": _TWELVE}),
+    )
+    assert opening.option_source == SRC_ENUMERATION, (
+        "the opening turn of a scoped question lost its menu — declared-only would refuse here, "
+        "and the user cannot supply `lot` without the chips that ask for it"
+    )
+    assert len(opening.options) == 12
+    assert opening.free_text_reason is None
+
+    # The SAME declaration, once `lot` IS bound and the provider ignored it: now it refuses.
+    once_bound = decide_disposition(
+        accepted={"lot": "3"},
+        declared=_DECLS,
+        enumerate_class=_enumerator({"outcome": "members", "members": _TWELVE}),
+    )
+    assert once_bound.free_text_reason == FT_CLASS_WIDE, (
+        "binding the declared scope did not arm the refusal — the two halves of the "
+        "intersection are not both being read"
+    )
+    # ONE DECLARATION, TWO TURNS, OPPOSITE OUTCOMES. That difference IS the intersection, and
+    # no single-turn assertion can see it.
+    assert bool(opening.options) and not once_bound.options
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +215,7 @@ def test_partially_honoured_is_treated_as_class_wide():
     remaining dimension is unfiltered, so the menu can still offer a value the verb rejects —
     the same failure, smaller.
     """
-    decls = [{**_DECLS[0], "scoped_by": ["lot", "category"]}]
+    decls = [{**_DECLS[0], "narrowed_by": ["lot", "category"]}]
     disp = decide_disposition(
         accepted={"lot": "3", "category": "labor"},
         declared=decls,
@@ -341,7 +386,7 @@ def test_the_supervisor_sends_bound_slots():
 def test_the_slot_declaration_gap_is_real_and_named():
     """THE HALF THIS LANE CANNOT LAND, ASSERTED RATHER THAN WRITTEN IN A COMMENT.
 
-    The refusal is gated on a slot declaring `scoped_by`. `iagent_mesh.graph_manifest.SlotDecl`
+    The refusal is gated on a slot declaring `narrowed_by` — ca's field, ruled 2026-09-19. `iagent_mesh.graph_manifest.SlotDecl`
     is `extra="forbid"` and does not have that field, so **no verb can declare it through the
     SDK path yet** — ca's v0.9.4. Until then the branch is inert and the behaviour is exactly
     today's, which is the right state for a half whose siblings have not landed.
@@ -357,17 +402,17 @@ def test_the_slot_declaration_gap_is_real_and_named():
     )
     fields = set(gm.SlotDecl.model_fields)
     src = (_REPO / "src" / "iagent_pure" / "slot_disposition.py").read_text(encoding="utf-8")
-    assert 'decl.get("scoped_by")' in src, (
+    assert 'decl.get("narrowed_by")' in src, (
         "the ask builder no longer reads a declared scope — the refusal is either dead or "
         "keyed on something else"
     )
-    if "scoped_by" in fields:
-        assert gm.SlotDecl(name="x", kind="spoken-mandatory", scoped_by=["lot"]).scoped_by == [
+    if "narrowed_by" in fields:
+        assert gm.SlotDecl(name="x", kind="spoken-mandatory", narrowed_by=["lot"]).narrowed_by == [
             "lot"
-        ], "the SDK declares scoped_by under a shape this reader cannot use"
+        ], "the SDK declares narrowed_by under a shape this reader cannot use"
     else:
         assert gm.SlotDecl.model_config.get("extra") == "forbid", (
-            "SlotDecl no longer forbids extras, so a verb COULD carry scoped_by through "
+            "SlotDecl no longer forbids extras, so a verb COULD carry narrowed_by through "
             "unvalidated — which is worse than the gap: the field would travel with nothing "
             "checking its shape"
         )
