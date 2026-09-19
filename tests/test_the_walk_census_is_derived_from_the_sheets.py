@@ -15,6 +15,7 @@ Run: uv run --frozen pytest tests/test_the_walk_census_is_derived_from_the_sheet
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,24 @@ def test_A_SHEET_PROMPT_WITH_NO_ROW_IS_CAUGHT(rows, tmp_path):
     )
 
 
+def _the_blocked_row_rules(runnable, blocked):
+    """What a blocked row must satisfy, lifted out of the partition test so that a FIXTURE can
+    exercise it when no real row is blocked.
+
+    It is a helper rather than inline code for exactly one reason: at zero blocked rows an inline
+    loop asserts nothing and still reports green.
+    """
+    for r in blocked:
+        assert len(r.blocked) > 20, (
+            f"{r.id}: blocked reason is {r.blocked!r}. A bare or empty reason reads as a "
+            f"considered negative, and it is not one."
+        )
+        assert r.sheet not in {x.sheet for x in runnable}, (
+            f"{r.id} is blocked on {r.sheet}, but another row runs against that same sheet — "
+            f"so the sheet exists and this reason is stale"
+        )
+
+
 def test_every_row_is_runnable_or_blocked_WITH_A_REASON(rows):
     """THE PARTITION. Every row is in exactly one state and nothing is undecided.
 
@@ -121,18 +140,52 @@ def test_every_row_is_runnable_or_blocked_WITH_A_REASON(rows):
     runnable, blocked = partition(rows)
     assert len(runnable) + len(blocked) == len(rows)
     assert runnable, "no runnable rows — the census would run nothing and report success"
-    assert blocked, (
-        "no blocked rows. Three sheets (safety, finance, docs) do not exist yet; if they now do, "
-        "their rows should be runnable and this assertion should be the thing that changes."
+    # `assert blocked` RETIRED 2026-09-19, and it retired exactly the way it said it would. It
+    # read: "no blocked rows. Three sheets (safety, finance, docs) do not exist yet; if they now
+    # do, their rows should be runnable and THIS ASSERTION SHOULD BE THE THING THAT CHANGES."
+    # All three landed — safety `0f1f2cb`, finance `d84bba5`, docs `76706e9` — so the state it
+    # asserted is over, and keeping it would red on the sheets ARRIVING, which is the single
+    # event it was put there to wait for.
+    #
+    # ITS DEPARTURE TAKES THE RULES BELOW WITH IT, AND THAT IS THE REAL COST. With nothing
+    # blocked the loop body never runs, so the reason-quality rules stay green however far they
+    # rot — a ratchet blind precisely BECAUSE its register is accurate. The unconditional
+    # fixture arm below exercises them in both directions so they keep firing at zero.
+    _the_blocked_row_rules(runnable, blocked)
+
+
+def test_THE_BLOCKED_ROW_RULES_FIRE_EVEN_WITH_NOTHING_BLOCKED(rows):
+    """THE UNCONDITIONAL ARM, and it is the half that survives the census going all-green.
+
+    `test_every_row_is_runnable_or_blocked_WITH_A_REASON` iterates the REAL blocked rows, so the
+    day the last one clears it starts asserting nothing and reporting success — the failure mode
+    an empty register always has. This arm owns the rules instead, against a fixture, so
+    deleting or weakening one of them reds here whatever the census happens to contain today.
+
+    BOTH DIRECTIONS, because an arm that only shows the rules passing cannot tell a live rule
+    from a deleted one.
+    """
+    runnable, _ = partition(rows)
+    assert runnable, "no runnable row to build the fixture from — the fixture cannot fail"
+    sample = runnable[0]
+    elsewhere = [r for r in runnable if r.sheet != sample.sheet]
+
+    # PASSES: a real reason, naming a sheet no runnable row uses.
+    _the_blocked_row_rules(
+        elsewhere,
+        [replace(sample, blocked="the sheet this row needs has not been written yet")],
     )
-    for r in blocked:
-        assert len(r.blocked) > 20, (
-            f"{r.id}: blocked reason is {r.blocked!r}. A bare or empty reason reads as a "
-            f"considered negative, and it is not one."
-        )
-        assert r.sheet not in {x.sheet for x in runnable}, (
-            f"{r.id} is blocked on {r.sheet}, but another row runs against that same sheet — "
-            f"so the sheet exists and this reason is stale"
+
+    # REDS: a bare reason. `none`/`unsupported` is the most trusted wrong answer there is.
+    with pytest.raises(AssertionError):
+        _the_blocked_row_rules(elsewhere, [replace(sample, blocked="none")])
+
+    # REDS: a STALE reason — the sheet it claims is absent is the same one a runnable row draws
+    # against, which is how a blocker outlives the thing that justified it.
+    with pytest.raises(AssertionError):
+        _the_blocked_row_rules(
+            runnable,
+            [replace(sample, blocked="the sheet this row needs has not been written yet")],
         )
 
 
