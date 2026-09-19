@@ -1,5 +1,7 @@
 # Dispatch to ca — cut `v0.9.3` tonight
 
+to: ia-ca/lane/ca
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 Lane 1 holds a **06:00 pin window** for this tag: sixteen pyprojects, the broker, one commit,

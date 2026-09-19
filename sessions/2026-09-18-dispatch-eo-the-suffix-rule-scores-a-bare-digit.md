@@ -1,5 +1,7 @@
 # Dispatch to the eo lane — `name_score`'s suffix rule scores a bare digit at 0.9
 
+to: ia-eo/lane/eo
+
 **Ruled by the architect 2026-09-18.** Relayed to the inbox by Lane 1 because it was ruled in
 conversation and nothing had reached `sessions/` — a session that is idle does not know it has
 work, and the branch showed no sign of it. **Four lines and one test; the architect's estimate is

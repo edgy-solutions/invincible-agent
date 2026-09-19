@@ -1,5 +1,7 @@
 # Dispatch to 74 — the safety sheet as a file, then the persistence writer
 
+to: ia-74/lane/74
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 ## 1. The safety sheet as a file the census can derive from

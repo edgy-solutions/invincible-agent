@@ -1,5 +1,7 @@
 # Dispatch to 5f — `mesh:explain` with referent `owl:Thing`, and the docs sheet
 
+to: ia-5f/lane/5f
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 ## 1. `mesh:explain` with referent `owl:Thing`

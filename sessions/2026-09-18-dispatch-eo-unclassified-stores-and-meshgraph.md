@@ -1,5 +1,7 @@
 # Dispatch to eo — the eleven unclassified stores as packets to owners, then `MeshGraph` on Neo4j
 
+to: ia-eo/lane/eo
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 Your suffix-rule fix is on master and proven — and thank you for catching the two defects in my

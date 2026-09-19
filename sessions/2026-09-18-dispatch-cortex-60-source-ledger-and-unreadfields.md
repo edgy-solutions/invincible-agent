@@ -1,5 +1,7 @@
 # Dispatch to cortex-60 — `SOURCE_LEDGER` against the pod artifact, then `UnreadFields` general
 
+to: ia-cortex-60/lane/cortex-60
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 ## 1. `SOURCE_LEDGER` packaged against the pod artifact, once the roll serves it

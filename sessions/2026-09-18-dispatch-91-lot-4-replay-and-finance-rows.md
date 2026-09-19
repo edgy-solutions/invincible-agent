@@ -1,5 +1,7 @@
 # Dispatch to 91 — replay lot 4 against the provider if it is still empty, then the finance rows
 
+to: ia-91/lane/91
+
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
 ## 1. If lot 4 is still empty after the roll

@@ -43,13 +43,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 #: `to: ia-91/lane/91` — the explicit form, and the one a new packet should carry.
-_TO = re.compile(r"^\s*to:\s*(?:ia-)?([A-Za-z0-9]+)(?:\s*/\s*lane/[A-Za-z0-9]+)?\s*$", re.M | re.I)
+#:
+#: A LANE TOKEN MAY CARRY A HYPHEN. `cortex-60` is a real session address and the first
+#: character class here could not express it, so a packet addressed to that session could not
+#: be addressed at all — the inbox seal reported it UNADDRESSED and the only way to quiet that
+#: was to misname the recipient. A rule that cannot spell a real address is a rule that
+#: manufactures its own violations.
+_TO = re.compile(r"^\s*to:\s*(?:ia-)?([A-Za-z0-9][A-Za-z0-9-]*)(?:\s*/\s*lane/[A-Za-z0-9-]+)?\s*$", re.M | re.I)
 
 #: `read-by: ia-91/lane/91 2026-09-19` — the stamp. The date is recorded for the report and is
 #: deliberately not parsed for correctness: a stamp with a wrong date is still a lane saying it
 #: read the packet, and refusing it on format would make the honest act harder than skipping it.
 _READ_BY = re.compile(
-    r"^\s*read-by:\s*(?:ia-)?([A-Za-z0-9]+)(?:\s*/\s*lane/[A-Za-z0-9]+)?\s*(\S+)?", re.M | re.I
+    r"^\s*read-by:\s*(?:ia-)?([A-Za-z0-9][A-Za-z0-9-]*)(?:\s*/\s*lane/[A-Za-z0-9-]+)?\s*(\S+)?", re.M | re.I
 )
 
 #: The conventions already in the tree, read from the H1.

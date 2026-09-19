@@ -91,6 +91,29 @@ PHANTOM_CITATIONS = {
     "docs/adr/ADR-0016-memory-boundary-revised.md":
         "Linked by ADR-0019. Never created. Same shape as 0006: a numbered ADR referenced as "
         "though it were on file.",
+    # ── THE THREE WALK SHEETS THE CENSUS IS WAITING ON (2026-09-18) ──────────────────────────
+    # A DIFFERENT KIND OF PHANTOM: these have an OWNER AND A DATE, not merely a citation. Each is
+    # named by a walk-census row that is BLOCKED on it, and the census prints that row red with
+    # its reason on every run — so the debt is already visible where it matters. These entries
+    # only stop the citation seal reporting the same fact a second way.
+    #
+    # THEY RETIRE THEMSELVES, which is why this list is right and a blanket exemption would be
+    # wrong. `test_phantom_allowlist_is_honest` fails the moment a path appears in git history:
+    # when 74, 91 or 5f commits its sheet, THIS FILE goes red and the entry must be deleted —
+    # while the census's own `test_a_blocked_row_names_a_sheet_that_really_is_absent` goes red
+    # from the other side in the same breath. Neither can leave a landed sheet looking un-landed.
+    "docs/measurements/safety-walk-sheet.md":
+        "Owed by lane 74 (dispatch 2026-09-18): the three phrasings, their personas and their "
+        "expected tasks. Cited by docs/measurements/walk-census.yaml, whose HAZ-1003 row is "
+        "blocked on it. Delete this entry when the sheet lands.",
+    "docs/measurements/finance-walk-sheet.md":
+        "Owed by lane 91 (dispatch 2026-09-18), derived from its walk sheet. Cited by "
+        "docs/measurements/walk-census.yaml, whose NP-MERIDIAN row is blocked on it. Delete "
+        "this entry when the sheet lands.",
+    "docs/measurements/docs-walk-sheet.md":
+        "Owed by lane 5f (dispatch 2026-09-18), alongside mesh:explain's referent widening. "
+        "Cited by docs/measurements/walk-census.yaml, whose 'how do I add an engine' row is "
+        "blocked on it. Delete this entry when the sheet lands.",
 }
 
 # WITHHELD CITATIONS — the file EXISTS and is deliberately kept OUT of the repo.

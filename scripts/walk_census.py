@@ -157,9 +157,44 @@ async def _run(rows: list[CensusRow], timeout_s: float) -> list[dict]:
 
 
 def _sha() -> str:
+    """The REPO sha — what the rows and their expectations were read from."""
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(_REPO),
                               capture_output=True, text=True, timeout=30).stdout.strip() or "?"
+    except Exception:
+        return "?"
+
+
+def _deployed_sha() -> str:
+    """The sha of the fleet that ANSWERED — which is the one a regression belongs to.
+
+    THE REPO SHA IS THE WRONG STAMP AND WOULD HAVE BEEN QUIETLY WRONG. A census line exists to
+    say "lot 4 broke at <sha>"; `git rev-parse HEAD` names the tree the RUNNER was read from,
+    and those two diverge constantly — tonight by three commits, because a fix was committed
+    while the cluster still served the image built before it. A row attributed to the local HEAD
+    would blame a commit the fleet has never run.
+
+    Derived from the running deployments rather than from the helm values, because what answered
+    is what is running. A mixed fleet is reported as mixed instead of being collapsed to one
+    value: "which sha answered" has no single answer mid-rollout, and saying so is the honest
+    form. Unavailable -> `?`, never the repo sha as a stand-in.
+    """
+    try:
+        r = subprocess.run(
+            ["kubectl", "--context", "edge", "get", "deploy", "-n", "sandbox", "-o",
+             "jsonpath={range .items[*]}{.spec.template.spec.containers[0].image}{'\\n'}{end}"],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "MSYS_NO_PATHCONV": "1"},
+        )
+        tags = {
+            ln.rsplit(":", 1)[-1] for ln in r.stdout.splitlines()
+            if ln.strip() and len(ln.rsplit(":", 1)[-1]) == 40
+        }
+        if not tags:
+            return "?"
+        if len(tags) > 1:
+            return "MIXED(" + ",".join(sorted(t[:7] for t in tags)) + ")"
+        return next(iter(tags))[:7]
     except Exception:
         return "?"
 
@@ -173,8 +208,12 @@ def main() -> int:
     rows = load_rows(CENSUS)
     rec = reconcile(rows, _REPO)
     sha = _sha()
+    deployed = _deployed_sha()
 
-    print(f"WALK CENSUS  sha={sha}  rows={len(rows)}")
+    # BOTH, and labelled. `repo` is where the questions and expectations came from;
+    # `fleet` is what answered them. Printing one number called "sha" invited the
+    # reader to attribute a failure to whichever of the two they assumed it was.
+    print(f"WALK CENSUS  repo={sha}  fleet={deployed}  rows={len(rows)}")
     if not rec.ok:
         # THE DERIVATION IS BROKEN, so the run is not authoritative and says so before it runs
         # anything. A census whose questions have drifted from the sheets is asking text nobody
