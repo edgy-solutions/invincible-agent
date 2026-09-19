@@ -595,11 +595,21 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     (_MESH + "SlotElicitation", _MESH + "AskCard"),
     (_MESH + "WithheldPanel", _MESH + "NamedHole"),
     (_MESH + "WorkflowObservation", _MESH + "WorkflowObservation"),
-    # BACKEND ADVERTISES, FRONTEND DOES NOT BIND — 3, the safety lane's.
-    # Registered to the mesh; no component will ever be chosen for them.
-    (_SAFETY + "DeferralRiskCard", _MESH + "KnowledgeDocument"),
-    (_SAFETY + "OrphanedHazardSet", _MESH + "ContributionRanking"),
-    (_SAFETY + "RiskAssessmentDraft", _MESH + "KnowledgeDocument"),
+    # ── THE THREE SAFETY ROWS ARE GONE FROM THIS REGISTER, 2026-09-19 ────────────────────────
+    #
+    # `safety:DeferralRiskCard`, `safety:OrphanedHazardSet` and `safety:RiskAssessmentDraft`
+    # were backend-only at ratification. The safety lane bound all three in cortex-ui, so they
+    # stopped being gaps and **the ratchet reddened until their lines were deleted** — which is
+    # the entire reason it exists, and the first time it has fired.
+    #
+    # ⚠ THE FIXER DID NOT KNOW THIS REGISTER EXISTED, and that is the interesting part rather
+    # than a complaint. A debt register in one lane's test file records a defect owned by
+    # another lane, so the commit that fixes it cannot be expected to delete the entry. **The
+    # ratchet is what closes that gap** — without it the three would have sat here reading as
+    # open defects to everyone who checked the list instead of the mirrors, which is precisely
+    # the rot this register was built to refuse.
+    #
+    # Fifteen entries remain, all `mesh:` subjects the frontend binds alone.
 }
 
 

@@ -156,6 +156,17 @@ rows:
       rather than derived, which is the one thing this census refuses to treat as verified.
 
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
+  # THE SHEET IS A FILE AS OF 2026-09-19 — docs/measurements/finance-walk-sheet.md — so these
+  # eight rows are DERIVED and the `blocked` on the brief is lifted.
+  #
+  # ⚠ WHAT "DERIVED" MEANS HERE, STATED SO THE ROWS ARE NOT OVER-READ. The prompts come from
+  # each verb's own `OWNS the phrasings` declaration, the archetypes from the capability rows,
+  # and every `min_rows` was MEASURED against the notional seed on 2026-09-19. What none of that
+  # gives is a WALK: no person has seen one of these cards. The cost sheet's five defects were
+  # all inside payloads that would have satisfied route status, verb, archetype and a row floor.
+  #
+  # So these rows assert the engine answers the questions it claims to own. They do not assert
+  # the cards are right, and the sheet says so in its own banner rather than leaving it implied.
   - id: finance-np-meridian-brief
     sheet: docs/measurements/finance-walk-sheet.md
     sheet_index: 0
@@ -167,11 +178,124 @@ rows:
     expect_archetype: null
     min_rows: 3
     dispositions: [drawn]
-    blocked: >-
-      awaiting docs/measurements/finance-walk-sheet.md from 91. The 422 this row used to throw
-      is understood and fixed — fin_program_brief declares checkpointer: true and so needs a
-      thread_id, which the supervisor now threads from run_id. A 422 here again is a NEW cause,
-      not that one.
+    # THE ONLY GRAPH IN THIS SET, and the floor of 3 is its contract: three findings that each
+    # cite the artifact they came from. `expect_archetype: null` because a StatefulSupportResponse
+    # is not a card — asserting an archetype here would assert the wrong contract.
+    #
+    # A 422 HERE IS A NEW CAUSE. The old one — checkpointer: true needing a thread_id, now
+    # threaded from run_id — is on master. It matched this symptom once, which is exactly what
+    # makes it the wrong thing to reach for a second time.
+
+  - id: finance-variance-decomposition
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 1
+    question: why are we over on NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_variance_analysis
+    expect_archetype: VARIANCE_TREE
+    min_rows: 1
+    dispositions: [drawn]
+    # ⚠ THE WEAKEST FLOOR IN THIS FILE, AND IT IS LABELLED RATHER THAN QUIETLY SET TO 1.
+    # The payload is ONE row — the root — and the decomposition hangs off it in `contributors`.
+    # A tree that decomposed into nothing satisfies this floor exactly as well as a correct one.
+    # The real checks are on the screen and in the engine's own suite: depth, a `stop_reason` on
+    # every branch, and children summing to their parent's variance.
+
+  - id: finance-variance-drivers
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 2
+    question: which account is driving the overrun on NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_variance_drivers
+    expect_archetype: CONTRIBUTION_RANKING
+    min_rows: 3
+    dispositions: [drawn]
+
+  - id: finance-funding-status
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 3
+    question: what is the funding status on NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_funding_status
+    expect_archetype: SHORTFALL_GRID
+    min_rows: 18
+    dispositions: [drawn]
+    # SIX FUNDING LINES ACROSS THREE PERIODS. The floor is the full grid rather than a token
+    # count: a grid that lost a period would still draw, and would draw plausibly.
+
+  - id: finance-burn-rate
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 4
+    question: what is the burn rate on NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_burn_rate
+    expect_archetype: MULTI_SERIES
+    min_rows: 6
+    dispositions: [drawn]
+    # TWO SERIES, and the row floor cannot see that. A card drawing cumulative spend alone
+    # satisfies six rows and loses the comparison that is the whole answer.
+
+  - id: finance-performance-indices
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 5
+    question: show me CPI and SPI for NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_performance_indices
+    expect_archetype: MULTI_SERIES
+    min_rows: 6
+    dispositions: [drawn]
+    # THE ONE FINANCE VERB THAT DECLARES NO UNIT, deliberately: CPI is a ratio and a dollar sign
+    # on 0.85 is a lie the producer would be telling. If a currency appears on this card, the
+    # absent-means-silent rule has been broken somewhere between here and the renderer.
+
+  - id: finance-eac-refusal
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 6
+    question: what is the estimate at completion for NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_eac_calculation
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    expect_options: 3
+    # THE REFUSAL IS THE PASS, and scoring it red would fail the engine for doing the one thing
+    # it was built to do. The three formulas disagree by about 13% of the budget on this seed,
+    # so a forecast with no method named is ambiguous by more than a million dollars.
+    #
+    # THE OPTION COUNT IS THE ASSERTION THAT MAKES IT A USABLE REFUSAL. Three values, read out
+    # of the EACMethod declaration, so a fourth formula appears in this menu on the same edit
+    # that adds it. "It asked" and "it asked answerably" are different facts.
+
+  - id: finance-eac-comparison
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 7
+    question: compare the estimate at completion methods for NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_eac_comparison
+    expect_archetype: COMPETING_MEASURES
+    min_rows: 3
+    dispositions: [drawn]
+    # COULD NOT DRAW AT ALL BEFORE 2026-09-18. The archetype existed at every layer from
+    # 2026-09-11 — projector passthrough, component, contract, glyph — with this verb named in
+    # its contract header as its FIRST CONSUMER, and no capability row claimed it. Each side was
+    # complete on its own, so no per-side check could see the join was missing.
+    #
+    # If it draws with blank high and low, the projector's field names have drifted from the
+    # contract's again: the pair the contract reads is lowest_value / highest_value.
 
   # ── DOCS (5f) ──────────────────────────────────────────────────────────────────────────────
   - id: docs-how-do-i-add-an-engine
