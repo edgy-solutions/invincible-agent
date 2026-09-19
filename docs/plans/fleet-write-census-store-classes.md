@@ -161,7 +161,8 @@ first version at least had no evidence behind it.
 `neo4j:OntologyClass` **is** produced in this repo — `scripts/seed_sandbox_predicates.py:243` does
 `MERGE (s:OntologyClass {uri: $input_uri})`, and three other scripts do the same. Measured across
 the tree: **0 node writes in folded code, 5 sites in `scripts/`, 3 in tests.** (The tempting false
-positive is `setup/prime_databases.py:524`, a `CREATE CONSTRAINT … FOR (c:OntologyClass)` — schema,
+positive is `setup/prime_databases.py`'s `CREATE CONSTRAINT ontology_class_uri_unique … FOR
+(c:OntologyClass)` — schema,
 not a node write. Counted, it would make the prime look like a folded producer and invert the whole
 conclusion.)
 
@@ -175,7 +176,7 @@ to state two. Neither clause reaches the right answer without the other.
   unresolved would appear refused. It is a lower bound on folded-ness, never a proof of absence.
 - **"Invoked by a bootstrap" is a name search**, so a script merely *discussed* in folded code would
   read as folded. The one case where it decided an outcome — `sql:lots`/`rates`/`results`, folded on
-  `scripts/build_cost_dataset.py` — was checked by hand: `agent_fleet/cost_agent/measures.py:888`
+  `scripts/build_cost_dataset.py` — was checked by hand: `agent_fleet/cost_agent/measures.py`
   really does `import build_cost_dataset as dataset_builder`. The others were decided by their home
   directory, not by the name search.
 - **A false FOLDED hides debt**, which is the direction this check is weakest in, and the direction
