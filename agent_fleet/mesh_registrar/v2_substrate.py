@@ -408,6 +408,33 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
         return
     weaviate_client.collections.create(
         name=_PREDICATE_COLLECTION,
+        # ── SHAPE D: DECLARE THE NAMED SPACE. Ruled 2026-09-19 on 74's measurement. ──────────
+        # THE HALF THAT WAS MISSING, and its absence was silent and total. A bare `create`
+        # emits a named vector space `default` in the schema, while `insert(vector=[...])`
+        # writes to the LEGACY unnamed slot. Both succeed. The row then reports a vector to
+        # every instrument that ASKS — `_additional{vector}`, `include_vector`, a per-URI
+        # fetch — and the named space the index is built on stays empty, so every targeted
+        # search returns nothing. The server says it only when asked to USE one:
+        #     "vector not found for target: default"
+        #
+        # It took the whole router down without a log line. `weaviate_hybrid_search` returned
+        # its BM25 half alone, fleet-wide, on both routing collections.
+        #
+        # `self_provided` RATHER THAN A VECTORIZER, deliberately: we embed with
+        # `embed_query`/LiteLLM and hand Weaviate a finished vector. A collection that
+        # vectorised for itself would embed with a DIFFERENT model than the one used at read
+        # time — the same silent mismatch one layer over, and harder to see because both
+        # halves would look configured.
+        #
+        # BOTH HALVES OR NEITHER. This line is worthless without `vector={"default": ...}` at
+        # the write site below, and that write is REFUSED without this line. Either edit alone
+        # is worse than neither, which is what `test_the_predicate_writer_declares_and_writes_
+        # the_same_space` exists to stop a future cleanup from doing.
+        #
+        # REPAIRS NEW COLLECTIONS ONLY: `collections.exists` above short-circuits, so a live
+        # Predicate collection keeps its broken schema and its legacy-slot rows until the
+        # backfill runs. This stops the defect being RE-CREATED; it does not undo it.
+        vector_config=[wvc.config.Configure.Vectors.self_provided(name="default")],
         inverted_index_config=wvc.config.Configure.inverted_index(
             index_property_length=True,
         ),
@@ -586,7 +613,12 @@ def upsert_weaviate_predicate_row(
         "properties": properties,
     }
     if predicate_vector is not None:
-        write_kwargs["vector"] = predicate_vector
+        # SHAPE D, THE WRITE HALF — BY NAME, matching the space declared at the create site.
+        # A bare list here goes to the legacy unnamed slot, which is exactly the defect: the
+        # row reads back as vectorised and is unretrievable. See the long note at the create
+        # site; the two are one change and `test_the_predicate_writer_declares_and_writes_
+        # the_same_space` fails if either is reverted alone.
+        write_kwargs["vector"] = {"default": predicate_vector}
 
     if collection.data.exists(uuid=deterministic_uuid):
         collection.data.replace(**write_kwargs)

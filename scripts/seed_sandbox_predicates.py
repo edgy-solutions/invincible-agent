@@ -305,6 +305,24 @@ def ensure_predicate_collection(client):
     print(f"[weaviate] Creating {PREDICATE_COLLECTION} collection")
     return client.collections.create(
         name=PREDICATE_COLLECTION,
+        # ── SHAPE D, mirrored from v2_substrate.py, ruled 2026-09-19 ────────────────────────
+        # Declares the named space this collection's index is built on. Without it a bare
+        # `create` emits `default` implicitly while writes land in the legacy unnamed slot,
+        # and every targeted search returns nothing while the rows still READ as vectorised.
+        # The long argument lives at the registrar's create site; this is the same collection
+        # and it must not be created two different ways depending on which writer got there
+        # first — that is precisely what `_ensure_predicate_collection`'s own docstring says
+        # it exists to prevent.
+        #
+        # ⚠ THE WRITE HALF OF THIS SCRIPT IS STILL A GAP, and it is a DIFFERENT gap from the
+        # registrar's. `seed_predicates` below inserts `properties=props` and NO VECTOR AT
+        # ALL, so its rows read back as `{'default': []}` and are equally unretrievable. That
+        # is the one case 74's in-place backfill CANNOT repair — there is nothing to
+        # relocate, so those rows need a RE-EMBED, not a move. Fixing it here means giving
+        # this script an embedder, which is a larger change than shape D and is NOT bundled
+        # in: a half-done embed would produce vectors from a different model than
+        # `embed_query` uses at read time, which is the mismatch this whole ruling is about.
+        vector_config=[wvc.config.Configure.Vectors.self_provided(name="default")],
         # IndexPropertyLength=true is required by Engine O's domain-scope
         # filter which uses `Filter.by_property('domains', length=True).equal(0)`
         # to match domain-agnostic predicates. Without it Weaviate errors:
