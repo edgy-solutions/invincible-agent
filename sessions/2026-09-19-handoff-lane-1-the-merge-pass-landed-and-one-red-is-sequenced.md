@@ -144,6 +144,45 @@ liveness check, and a row-count seal, both pass on today's broken substrate. **E
 census PASS is a lexical pass.** After the vector fix, run the census and **save its output to a
 file** beside `walk-census.yaml`.
 
+## TWO WARNINGS I OWE THE NEXT READER (from 7f, 2026-09-19 evening)
+
+**THE RETRIEVABILITY SEAL WILL RED EVERY ONTOLOGY INGEST until the writer is fixed and the pool
+rebuilt. That is correct behaviour, not a new breakage** — an ingest producing unsearchable rows
+has not produced a grounding pool. **The first person to see it will read it as a regression
+unless they are told, so tell them.** It carries the server's own error and names 74's packet.
+
+**THE RE-SYNC DID NOT HAPPEN, and stopping it was right.** The architect withdrew it mid-pass;
+the rebuild is Chris's. 7f had a port-forward open and the real asset ready and stopped — a
+by-hand re-sync is the thing Ruling 3 exists because of, and doing it to produce a screenshot for
+a handoff is that act with better intentions. The before-measurement stands instead:
+
+    73 mesh# OntologyClass nodes · mesh:Thing ABSENT · ZERO nodes carrying universal_referent
+
+**Confirm with one query after an authorized prime on an image built from lane/7f** — the deployed
+image predates the commit:
+
+    MATCH (c:OntologyClass) WHERE c.universal_referent IS NOT NULL
+    RETURN c.uri, c.label, c.universal_referent          -- expect exactly ONE row, mesh#Thing
+
+## 74's OPEN QUESTION — MINE, AND IT COMES BEFORE THE POOL LEG
+
+**Does `mesh:explain`'s exclusion from the pool survive a working vector search, or is it the dead
+vector half wearing a referent's clothes?** Nobody has measured it. The flag reaches the node
+either way so 7f's work is not wasted — but **the universal-referent leg may be answering a
+question that does not exist once retrieval works.** Measure this before spending a roll on the
+leg. Do not assert either way until someone has.
+
+## A STALE VENV IS NOT A PIN PROBLEM (7f's 7 failures, diagnosed here)
+
+7f flagged 7 `test_collection_marker` failures as possibly mine, from a `v0.9.0 -> v0.9.1` pin
+move. **It was neither the pin nor this repo.** `interfaces.py` exists at v0.9.0, v0.9.1, v0.9.2
+AND v0.9.3, so that move could not have removed it. Their pin says v0.9.1, whose tree ships 18
+modules; their venv ships **11, a strict subset with no extras** — an older build, not a different
+one. The 7 absent modules (conformance, declarations, discovery, graph_manifest, interfaces,
+results, task_kinds) match their 7 failures exactly. **A version number identifies the DIST, not
+which copy of the code ran.** eo's `test_the_imported_sdk_IS_the_pinned_artifact` is the arm that
+turns this into one loud failure instead of seven mysterious ImportErrors.
+
 ## WHAT IS STILL LANE 1's, UNSTARTED
 
 The roll (cortex image + the projector row + the pool leg when it is real), the walk census run
