@@ -14,6 +14,14 @@ domains:
   - ENTERPRISE
   - DATA_ENGINEERING
   - MAINTENANCE
+  # MANUFACTURING (2026-09-18). ALREADY IN USE BEFORE IT WAS DECLARED: neo4j_expert registers
+  # three verbs with `domains=["MAINTENANCE", "MANUFACTURING"]`, and `mfg_extension.ttl` seeds
+  # its classes under it — while this vocabulary did not contain it, so no group could grant it
+  # and no cell could hold it. A registration naming a domain policy does not know is the
+  # "registration is not entitlement" shape with the cell not merely absent but IMPOSSIBLE.
+  # Granted beside MAINTENANCE in maintenance-mechanics, because the verbs that name it name
+  # both and a caller holding one and not the other reaches half of a verb's declared scope.
+  - MANUFACTURING
   # The domain Engine F's eight registrations live in, and the domain its fourteen
   # fin: OntologyClasses carry (setup/prime_databases.py's ONTOLOGIES entry). Same
   # consequence as PORTFOLIO_PLANNING above: /resolve domain-scopes the class pool to the
@@ -72,3 +80,29 @@ domains:
 # or chased until it is abandoned. Both cost the same the second time. And a correction recorded
 # against one file's copy of a shared instruction does not correct the other copy: the stale half
 # reads as current precisely because its sibling was fixed and this one was not.
+
+# ── PLATFORM DOMAINS ─────────────────────────────────────────────────────────────────────────
+#
+# Held by EVERY group, by declaration. `policy/sync/topaz_sync.py` expands these across every
+# group's personas; they are never written as a per-group grant, because a universal grant copied
+# into each group is a population maintained by remembering to — and the group that gets missed
+# is the one whose users report that the corpus does not answer them.
+#
+# RULED 2026-09-18, after "how do I add an engine?" ground to `idp#Column` at 0.30 with
+# `excluded: []`. `mesh:DocPage` was not ranked low — it was never a candidate, for anyone,
+# because /resolve scopes the OntologyClass pool to the caller's cells and no cell could carry
+# DOCS or MESH.
+#
+# WHY A UNIVERSAL GRANT AND NOT CLASS-LEVEL AGNOSTIC. The obvious answer is to mark the class
+# `domains: []` the way `docs_agent` marks its verb. It is not implementable today: OntologyClass
+# carries no empty-domain rows and the scoping query cannot filter on one. A universal grant that
+# is WRITTEN DOWN is honest in a way an omitted argument never is — the same reason the verb
+# declares `domains=[]` explicitly instead of leaving the argument off.
+#
+# WHAT THEY ARE. Knowledge ABOUT the platform: the runbooks, ADRs and how-do-I prose of the DOCS
+# corpus, and the MESH classes the fleet's own vocabulary is written in. Every entitled user reads
+# them; a runbook only DOCS-entitled personas can ask about is a runbook nobody asks about.
+# WHO a page is FOR is `audience_hint`, which is a hint, not an entitlement cell.
+platform_domains:
+  - DOCS
+  - MESH

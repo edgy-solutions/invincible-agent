@@ -2378,6 +2378,26 @@ inside a possessive pronoun.** "Your X" asserts ownership in a word that reads a
 
 ### R-058.1 — THE REMEDY, RATIFIED 2026-09-14
 
+> ### ⛔ SUPERSEDED SPELLING — `Lane: lane/91 (invincible-agent-81)`
+>
+> **Ratified in conversation, then superseded by [`11b4070`](#) an hour later. Do not reinstate
+> it on the strength of finding the ratification.**
+>
+> `lane/91 (invincible-agent-81)` was ratified for `lane/91` — branch first, session in
+> parentheses — with the reasoning *"sessions die and branches are the record"*. That reasoning
+> was right and the conclusion was not: it put the session address **in** the trailer anyway,
+> which is precisely what R-058.1 forbids. **The session address is a third thing.**
+>
+> **And `lane/91` is the case R-058.1 describes.** That lane's session is `invincible-agent-81`
+> and its worktree is `ia-91` — the numbers do not match, the mismatch was known to the lane, and
+> the superseded spelling recorded both halves of it as though the pairing were meaningful.
+>
+> **CANONICAL: `Lane: ia-91/lane/91`.** Recorded here rather than left in a thread, because the
+> ratification is precise, dated and findable, and a reader who finds it without this line has
+> every reason to trust it — the same mechanism as
+> [[a-stale-claim-is-pre-authenticated]], applied to a decision that was correct when it was made.
+
+
 **`Lane: <worktree>/<branch>` as a trailer on every commit**, e.g. `Lane: ia-01/lane/01`.
 
 **IT NAMES THE DURABLE KEY, NOT THE ADDRESS** — the way the roster does. A session id
@@ -3283,6 +3303,96 @@ were caught only because the control read both sources.
 **The reverse reading is the useful diagnostic.** A seal that turns red when a defect is repaired
 was asserting the defect. Treat green-where-red-was-expected as a signal on healthy code
 ([[a-mutation-that-wont-die]]), and red-on-a-fix as a signal on the seal.
+
+---
+
+## R-080 — A RATCHET IS BLIND WHENEVER ITS REGISTER IS ACCURATE
+
+R-041's exclusion-list form, and worse than an ordinary vacuum because **the blind state is the
+NORMAL one.** A fixture that cannot fail is an accident. A ratchet that cannot fail is a success
+condition — and it is one from the first day the register is correct, not from the day it empties.
+
+A ratchet walks its register looking for entries that have **stopped** being defects. When every
+entry is still a genuine defect — the healthy state, the state the register is maintained to be in
+— it finds nothing. **Finding nothing is indistinguishable from being unable to find anything.**
+
+### Shown, not argued, twice, on two different trees
+
+`invincible-agent-81` gutted BOTH staleness computations in the finance mirror seal to `[]` with
+its registers holding **18 and 5 entries, fully loaded**:
+
+    pre-lift, unmutated             : 16 passed, exit 0
+    pre-lift, BOTH RATCHETS GUTTED  : 16 passed, exit 0
+
+Lane 1 then reproduced it independently on a different seal rather than accepting it — the Engine
+B removal list, `_DOCUMENTED`, **18 live entries**, staleness gutted to `[]`:
+
+    unmutated                       : exit 0
+    gutted, 18 entries live         : exit 0     <- BLIND
+
+**EMPTY IS NOT THE CONDITION; IT IS THE PERMANENT FORM OF IT.**
+
+### The population — DERIVED, and the first count was a reading
+
+R-080 as first filed listed **six** registers and marked most "non-vacuous today". **That was
+never true**, and it is the more dangerous half: it reads as reassurance in a ratified register
+and would keep reading that way until someone re-measured.
+
+The six were found by *reading*. Walking every module-level register in `tests/` for the shape —
+a test computing staleness from the register it guards — finds **fifteen**:
+
+    2  _LEGACY_SELF_BOUND        planning/test_bindings_point_at_archetypes
+    5  NOT_QUESTION_DRIVEN       planning/test_leadership_questions_map
+    8  _EXEMPT                   planning/test_lookup_prefixes_are_derived
+    7  _NO_SCOPE_YET             safety/test_engine_scope_exists_in_policy
+    1  _KNOWN_OPEN_RUNTIME_SITES test_a_curie_is_not_a_missing_class
+    1  _UNRELATED_BY_DESIGN      test_a_route_binds_to_its_handler
+    0  WAIVED                    test_agent_modules_survive_flat_layout
+    4  PHANTOM_CITATIONS         test_citation_paths
+   18  _DOCUMENTED               test_engine_b_removal_list_is_complete
+    0  _KNOWN                    test_no_module_level_name_is_bound_twice
+    8  _S3000L_VERIFIED          test_product_structure_vocabulary
+    3  WAIVED                    test_service_urls_are_real
+    2  _SHADOW_EXEMPT            test_service_urls_are_real
+    3  _NOT_CENSUSED             test_the_census_population_covers_every_engine
+    3  _ONE_SIDED                test_the_domain_registries_agree
+
+**All fifteen are blind today.** Entry count is not the axis; it never was. Two are at zero and
+permanently so; the rest are blind for as long as they are correct, which is most of the time.
+
+81's own file held **three** registers where the ruling recorded one — `_MIRROR_GAPS_AT_RATIFICATION`
+(18), `_ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR` (5), `_CONTRACT_FIELDS_SUPPLIED_PER_ROW` (1) —
+and *"the one-entry list is the one closest to the permanent form, and it is the one nobody would
+have looked at."*
+
+### The remedy, and BOTH halves are load-bearing
+
+**Lift the rule into a function the test calls with data IT owns**, and assert it in two
+directions:
+
+  * an entry that stopped being excused **is** flagged;
+  * an entry still legitimately excused **is not**.
+
+The second half is not decoration. **A ratchet that flagged everything would satisfy the live
+assertion too, for the wrong reason** — and would then be "fixed" by deleting the exemptions it
+falsely flagged, which is the check editing its own subject.
+
+**Proof that a lift worked is the gutted rule going red.** Three of three did, and before the lift
+the same mutation was invisible in all three.
+
+### Two notes that travel with it
+
+**Do not widen another lane's list.** 81 left Lane 1's `_DURATION` entry alone rather than delete
+a duplicate in someone else's seal to quiet their new check; Lane 1 recorded 81's two remaining
+lists rather than fixing them. Each lane closed its own, and the ratchet on each is what tells the
+owner when.
+
+**And the credit correction, kept because it is the more useful reading.** Lane 1 credited 81 with
+the consume-versus-ignore discriminator that let one exclusion entry replace three. 81 returned
+it: the rule was in the data — `scripts/probes/fire_invocation.py` rebinding `payload` from its
+own previous value — and *"what they did was not stop at two."* The same reason Lane 1's
+repo-wide walk found a collision 81's per-file seal could never reach. **A seal scoped to the file
+that taught it cannot find the next one.**
 
 ---
 

@@ -2127,6 +2127,7 @@ def _fill_slots_from_query(
     query: str,
     verb_iri: str,
     declarations,
+    acting_domains: "List[str] | None" = None,
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2155,7 +2156,21 @@ def _fill_slots_from_query(
     try:
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/fill_slots",
-            json={"query": query, "verb_iri": verb_iri, "declarations": declarations},
+            # `acting_domains` FORWARDED so the resolver fan-out can demote providers outside
+            # the caller's scope. Engine O's `_resolve_instance` has taken `asked_domains` all
+            # along; `/fill_slots` never passed it, so every fan-out ran unscoped and the
+            # demotion never fired — the mechanism built and the wire never connected (R-076).
+            #
+            # MEASURED 2026-09-18: a COST_ANALYST asking about "lot 4" had engine-o's
+            # SUSTAINMENT resolver answer beside engine-cost, because nothing told the fan-out
+            # the caller was in PRODUCTION_COST. Two claimants, two classes, an ambiguity
+            # refusal on a question with one exact match, and the lot slot never bound.
+            json={
+                "query": query,
+                "verb_iri": verb_iri,
+                "declarations": declarations,
+                "acting_domains": list(acting_domains or []),
+            },
             timeout=_fill_slots_budget(declarations),
         )
         if resp.status_code != 200:
@@ -2644,6 +2659,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             query=sub_query,
             verb_iri=predicate.get("verb_iri") or "",
             declarations=declared,
+            acting_domains=list(config.entitled_domains or []),
         )
         spoken, resolution = filled.slots, filled.resolution
         # Extracted from the question by the slot filler, which resolves against the graph.

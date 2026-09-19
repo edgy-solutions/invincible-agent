@@ -143,6 +143,26 @@ FT_TOO_MANY = "too_many"        # provider: the class is real and larger than a 
 FT_UNSUPPORTED = "unsupported"  # provider: I do not enumerate this class
 FT_NO_PROVIDER = "no_provider"  # nobody was asked — the gap, named rather than hidden
 FT_NO_REFERENT = "no_referent"  # the slot names a literal, not a referent; nothing to list
+
+#: Outcome -> the reason an ask carrying that outcome has no menu. SUPPLIED AT EMIT rather than
+#: refused, because refusing an invalid payload costs the reader the free-text box they could
+#: have typed into, and the fact is derivable from the outcome the disposition already carries.
+#: cortex-60's point when they closed their half: refusing is the FLOOR, not the goal.
+#:
+#: Only outcomes that can legitimately reach ASK with an empty menu belong here. An outcome
+#: absent from this map raises in `ask_card` — a producer defect, not a gap, and one a reader
+#: could never diagnose from a blank box.
+_FT_BY_OUTCOME = {
+    # `_from_candidates` dropped every candidate as out-of-class: `wrong_class` is BY DEFINITION
+    # a candidate whose class is not the slot's referent, so the class filter removes exactly the
+    # candidate that was kept. The slot has a referent and nothing legitimately fills it.
+    "wrong_class": FT_NO_REFERENT,
+    # The phrase narrowed to nothing a provider would enumerate.
+    "not_specific": FT_NO_PROVIDER,
+    "fuzzy": FT_NO_PROVIDER,
+    "mixed": FT_NO_PROVIDER,
+    "ambiguous_in_domain": FT_NO_PROVIDER,
+}
 FREE_TEXT_REASONS = frozenset({FT_TOO_MANY, FT_UNSUPPORTED, FT_NO_PROVIDER, FT_NO_REFERENT})
 
 
@@ -426,7 +446,39 @@ def ask_card(
     re-issues `{**accepted_slots, slot: chosen}` and makes NO second model call: the second
     turn cannot parse the phrase differently than the first did. The re-route is
     reconstructed, never re-parsed.
+
+    ── AN EMPTY MENU MUST SAY WHY, AND THE BUILDER IS THE END THAT CAN ────────────────────
+
+    `free_text_reason`'s own comment says "Required WHENEVER options are empty" and the field
+    is optional, so nothing enforced it: an ask with no menu and no reason reached the card and
+    drew a free-text box in silence — under a comment reading "why there is no menu — one of
+    four facts, NEVER A SHRUG". The code permitted exactly the shrug the comment forbade, and a
+    reader could not tell *too many to list* from *no provider registered* from *the producer
+    forgot*. Three different repairs behind one blank box.
+
+    **A requirement stated in prose is a requirement enforced by whoever remembers it.** Ruled
+    closed at BOTH ends 2026-09-18: `validateAsk` refuses it on cortex's side (cortex-ui
+    1878a96), and this builder refuses to emit one.
+
+    REFUSING IS THE FLOOR, NOT THE GOAL — cortex-60's point, and it changes the shape of this
+    half. A bare refusal costs the reader the free-text box they could have typed into. So the
+    reason is DERIVED first from the outcome the disposition already carries, and the refusal
+    fires only when nothing can be derived, which is a producer defect rather than a gap.
     """
+    if disp.action == ASK and not disp.options and not disp.free_text_reason:
+        derived = _FT_BY_OUTCOME.get(disp.reason)
+        if derived is None:
+            raise ValueError(
+                f"ask for slot {disp.slot!r} has an EMPTY MENU and no `free_text_reason`, and "
+                f"none can be derived from outcome {disp.reason!r}. An empty menu that cannot "
+                f"say why draws a free-text box that hides which of four facts it is — "
+                f"'too many to list', 'no provider', 'no referent', 'not enumerable' are "
+                f"different repairs. Add the reason at the disposition, or map the outcome in "
+                f"_FT_BY_OUTCOME."
+            )
+        # `_replace`, not `dataclasses.replace` — Disposition is a NamedTuple.
+        disp = disp._replace(free_text_reason=derived)
+
     return {
         # PER-DISPOSITION, so a consumer switching on status cannot draw an abstain as an ask.
         "status": STATUS_BY_DISPOSITION.get(disp.action, "slot_elicitation"),

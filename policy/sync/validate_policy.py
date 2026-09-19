@@ -52,7 +52,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from topaz_sync import PolicyBundle
+from topaz_sync import PolicyBundle, expand_platform_domains
 from grant_sync import load_grants
 from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
@@ -191,7 +191,9 @@ def validate(
                 )
 
     personas = _read_yaml(_enum_source("personas.yaml") / "personas.yaml", errors).get("personas", [])
-    domains = _read_yaml(_enum_source("domains.yaml") / "domains.yaml", errors).get("domains", [])
+    _domains_doc = _read_yaml(_enum_source("domains.yaml") / "domains.yaml", errors)
+    domains = list(_domains_doc.get("domains", []))
+    _platform = list(_domains_doc.get("platform_domains", []))
 
     users_raw = _read_yaml(policy_dir / "users.yaml", errors)
     groups_raw = _read_yaml(policy_dir / "groups.yaml", errors)
@@ -203,10 +205,17 @@ def validate(
     # Entitlement matrix — the PolicyBundle cross-validation is the
     # same one topaz_sync runs before any write.
     try:
+        # THE SAME EXPANSION topaz_sync APPLIES, from the same function. Reading `domains` alone
+        # here validated a DIFFERENT bundle than the sync writes: the validator said 10 domains
+        # while the sync applied 12. A validator that checks a bundle nobody deploys is the
+        # mirror class in its most expensive form — it passes, and the thing it passed is not
+        # the thing that ships.
+        _groups = groups_raw.get("groups", {})
+        domains = expand_platform_domains(domains, _platform, _groups)
         bundle = PolicyBundle(
             personas=personas,
             domains=domains,
-            groups=groups_raw.get("groups", {}),
+            groups=_groups,
             users=users_raw.get("users", []),
         )
         print(f"  users.yaml/groups.yaml: personas={len(bundle.personas)} "

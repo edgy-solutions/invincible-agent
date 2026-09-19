@@ -59,8 +59,35 @@ class BriefState(TypedDict, total=False):
     #: engine holds no standing credential, by design.
     identity: dict[str, str]
     findings: Annotated[list[dict], _merge]
-    holes: Annotated[list[dict], _merge]
+    #: DERIVED IN `synthesise` FROM `rows`, never accumulated from the nodes. Kept because the
+    #: SDK's `enforce_refusal` reads it to enforce the row's `refusal` clause — it is the
+    #: ADR-0049 Ruling 2 contract, not a display field.
+    holes: list[dict]
+    #: THE STRUCTURED PAYLOAD — one row per source, whatever happened to it. Accumulated by the
+    #: same reducer as findings and holes, so a row exists for every node that ran and the card
+    #: can tell "three sources, one unsummarised" from "two sources".
+    rows: Annotated[list[dict], _merge]
     summary: str
+
+
+# ── the ledger vocabulary, SHARED ───────────────────────────────────────────────────────────
+# MOVED to `agent_fleet/graph_host/rows.py` when the cost review became the second consumer.
+# The ruling that produced these terms (R-073) and the reasoning for each is recorded there;
+# what stays here is the graph. Re-exported under the old names so every existing seal and any
+# route-C reader keeps its import — a rename and a move in one change makes the diff about the
+# rename.
+from agent_fleet.graph_host.rows import (  # noqa: E402
+    HOLE_DISPOSITIONS,
+    NON_HOLE_DISPOSITIONS,
+    ROW_DISPOSITIONS,
+    VERDICT_KEYS,
+    disposition_for as _disposition_for,
+    fetch_row as _fetch_row,
+    has_content as _has_content,
+    holes_from,
+    row as _row,
+    verdict_of as _verdict_of,
+)
 
 
 def _fetch(fn: str, label: str):
@@ -72,8 +99,8 @@ def _fetch(fn: str, label: str):
             # NO STANDING CREDENTIAL TO FALL BACK ON. Proceeding here would run the read as the
             # host, which is exactly the laundering the identity ruling forbids. It is a hole,
             # named, rather than a silent success under the wrong subject.
-            return {"holes": [{"source": fn, "label": label,
-                               "reason": "no initiator identity on the request"}]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason="no initiator identity on the request")]}
         try:
             r = httpx.post(
                 f"{ENGINE_FIN_URL}/measure/{fn}",
@@ -82,20 +109,27 @@ def _fetch(fn: str, label: str):
                 timeout=60.0,
             )
         except httpx.HTTPError as exc:
-            return {"holes": [{"source": fn, "label": label, "reason": f"unreachable: {exc}"}]}
+            return {"rows": [_row(fn, label, "unavailable", reason=f"unreachable: {exc}")]}
 
         if r.status_code in (401, 403):
             # THE INITIATOR'S REFUSAL, CARRIED. Not the graph's failure — this caller is not
             # entitled to this measure, and the brief says so where the reader can see it.
-            return {"holes": [{"source": fn, "label": label,
-                               "reason": f"the caller is not entitled to {fn}"}]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason=f"the caller is not entitled to {fn}")]}
         if r.status_code >= 400:
-            return {"holes": [{"source": fn, "label": label,
-                               "reason": f"{fn} returned {r.status_code}"}]}
+            return {"rows": [_row(fn, label, "unavailable",
+                                  reason=f"{fn} returned {r.status_code}")]}
 
         payload = r.json()
+        artifact = payload.get("artifact_id") or payload.get("id")
+        verdict = _verdict_of(payload)
+        # THE ONLY PLACE THAT KNOWS. A verdict absent here is content-without-a-verdict; the
+        # same absence read off the PROSE downstream is indistinguishable from a verb that was
+        # never called, which is why the row is emitted where the payload is in hand.
         return {"findings": [{"source": fn, "label": label, "payload": payload,
-                              "artifact": payload.get("artifact_id") or payload.get("id")}]}
+                              "artifact": artifact}],
+                "rows": [_row(fn, label, _disposition_for(payload, verdict),
+                              artifact=artifact, verdict=verdict)]}
 
     return node
 
@@ -108,8 +142,15 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     free to produce a figure that is in none of them. What a model would add here is prose, and
     prose that can invent a number is worth less than three lines that cannot.
     """
+    # STOPS AT PROSE, ENTIRELY. This node does not build, amend or re-derive `rows` — they are
+    # emitted where the payload is in hand and travel untouched. Structure recovered from prose
+    # is a parser guessing at a sentence this node wrote, and every such guess this project has
+    # shipped has been wrong in a way nothing could see.
     findings = state.get("findings") or []
-    holes = state.get("holes") or []
+    # PROJECTED, NOT READ. `holes` is no longer emitted by the fetch nodes — it is derived here
+    # from the rows, so the two cannot disagree and the prose cannot describe a hole set that
+    # differs from the structured one.
+    holes = holes_from(state.get("rows") or [])
     lines = [f"Program {state['program_id']}:"]
     for f in findings:
         cite = f.get("artifact") or f["source"]
@@ -121,15 +162,18 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     if not findings:
         lines.append("  (no finding was retrievable for this caller; nothing below is omitted "
                      "silently — every source is named above)")
-    return {"summary": "\n".join(lines)}
+    return {"summary": "\n".join(lines), "holes": holes}
 
 
 def _headline(payload: dict) -> str:
-    """The one figure a payload leads with, taken FROM the payload and never recomputed."""
-    for key in ("headline", "summary", "value", "verdict"):
-        if isinstance(payload.get(key), (str, int, float)):
-            return str(payload[key])
-    return "reported (see artifact)"
+    """The prose line's verdict — THE SAME READ THE ROW MAKES, never a second one.
+
+    This had its own copy of the key list. Two readings of "does this payload state a verdict"
+    would agree today and diverge the first time one gained a key, and the divergence would be
+    invisible: the row would say `finding` while the prose said "reported (see artifact)", or
+    the reverse. One function, both callers.
+    """
+    return _verdict_of(payload) or "reported (see artifact)"
 
 
 def build() -> StateGraph:

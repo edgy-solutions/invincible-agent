@@ -38,6 +38,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests._ratchet import stale_entries, ABSENT_FROM_LIVE
+
 _REPO = Path(__file__).resolve().parents[1]
 _FLEET = _REPO / "agent_fleet"
 
@@ -142,13 +144,27 @@ def test_EVERY_ROUTE_BINDS_TO_A_HANDLER_THAT_NAMES_IT():
     )
 
 
+# LIFTED OUT AND EXERCISED AGAINST A FIXTURE, because a ratchet that walks its own list has no
+# reach on the day that list is empty -- and empty is the state the work is aimed at. Shown on
+# 2026-09-18 by lane/91: with their `_KNOWN` emptied (by me), replacing their entire ratchet
+# computation with `stale = []` left the suite GREEN. The guard gutted, nothing said.
+#
+# So the RULE is a function, and the test calls it with data it controls, BOTH DIRECTIONS: an
+# entry that stopped being excused must be flagged, and one still excused must not. A ratchet
+# that flagged everything would satisfy the live assertion too, for the wrong reason.
+def _stale_exemptions(exempt, live) -> list:
+    """Exempt keys that name nothing live. THE RULE, callable with any data."""
+    return sorted(k for k in exempt if k not in live)
+
+
 def test_an_exemption_is_a_claim():
     """An exemption without a reason is the omission again, spelled longer."""
     for key, reason in _UNRELATED_BY_DESIGN.items():
         assert reason and len(reason) > 40, f"{key} is exempt without a reason"
     live = {(e, r) for e, _m, r, _h in _routes()}
-    stale = sorted(set(_UNRELATED_BY_DESIGN) - live)
+    stale = stale_entries(_UNRELATED_BY_DESIGN, live, stale_when=ABSENT_FROM_LIVE)
     assert not stale, f"exemption(s) for routes that no longer exist: {stale}"
+
 
 
 def test_the_pinned_routes_still_point_where_they_should():

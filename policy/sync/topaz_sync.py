@@ -156,6 +156,46 @@ class PolicyBundle(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def expand_platform_domains(
+    domains: "list[str]", platform: "list[str]", groups: "dict[str, Any]"
+) -> "list[str]":
+    """Grant every platform domain to every group's personas, in place, and return the vocabulary.
+
+    ONE DERIVATION, TWO READERS: `load_policy` here and `validate_policy.py`, which builds its own
+    bundle for the overlay-enum path. When this expansion lived inline in `load_policy`, the
+    validator reported 10 domains while the sync applied 12 — two readers of one declaration
+    disagreeing, which is the exact class the domain-registry seal was written for, committed in
+    the change that added the seal.
+
+    DECLARED ONCE, NEVER PER GROUP. A universal grant copied into each group is a population
+    maintained by remembering to; the group that gets missed is the one whose users report that
+    the corpus does not answer them.
+
+    RULED 2026-09-18. `/resolve` domain-scopes the OntologyClass pool to the caller's cells.
+    `mesh:DocPage` is seeded under DOCS and MESH, neither of which was in the vocabulary, so
+    "how do I add an engine?" ground to `idp#Column` at 0.30 with `excluded: []` — not ranked
+    low, NEVER IN THE POOL, for every persona.
+
+    Class-level agnostic (`domains: []` on the class, mirroring how docs_agent declares its verb)
+    is the obvious shape and is not implementable today: OntologyClass carries no empty-domain
+    rows and the scoping query cannot filter on one. A universal grant WRITTEN DOWN is honest in
+    a way an omitted argument never is.
+    """
+    out = list(domains)
+    for pd in platform:
+        if pd not in out:
+            out.append(pd)
+    if platform:
+        for spec in groups.values():
+            grants = (spec or {}).setdefault("grants", [])
+            seen = {(g.get("persona"), g.get("domain")) for g in grants if isinstance(g, dict)}
+            for persona in sorted({g.get("persona") for g in grants if isinstance(g, dict)}):
+                for pd in platform:
+                    if (persona, pd) not in seen:
+                        grants.append({"persona": persona, "domain": pd})
+    return out
+
+
 def load_policy(policy_dir: Path) -> PolicyBundle:
     def _read(name: str) -> dict[str, Any]:
         path = policy_dir / name
@@ -168,9 +208,13 @@ def load_policy(policy_dir: Path) -> PolicyBundle:
         return data
 
     personas = _read("personas.yaml").get("personas", [])
-    domains = _read("domains.yaml").get("domains", [])
+    _domains_doc = _read("domains.yaml")
+    domains = list(_domains_doc.get("domains", []))
+    platform = list(_domains_doc.get("platform_domains", []))
     groups = _read("groups.yaml").get("groups", {})
     users = _read("users.yaml").get("users", [])
+
+    domains = expand_platform_domains(domains, platform, groups)
 
     return PolicyBundle(
         personas=personas,

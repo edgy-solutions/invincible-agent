@@ -1,0 +1,24 @@
+# RATIFIED METHOD ROW — ADR-0053 §2. One file, one method, reviewed like a grant.
+method_id: REMAINING_AT_BUDGET
+name: Remaining work at budgeted rate
+description: >-
+  Assumes the work still to do costs what it was budgeted to cost, whatever has happened so far.
+  The optimistic bound, and the one a program uses when the overrun is believed to be behind it.
+
+module: agent_fleet.finance_agent.measure_modules.eac_formulas
+function: estimate_at_completion
+version: "1.0.0"
+
+slot: method
+slot_of: fin_eac_calculation
+
+# PROJECTS NO INDEX, so it always answers where the other two can be undefined. That property is
+# the reason an "every method undefined" refusal somebody wrote here was UNREACHABLE — and it is
+# a fact about the formula, which is why it is a field and not a comment.
+requires_index: false
+
+derived_from:
+  authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+  clause: EAC (remaining work at budget)
+  citation: name-only
+  transcription: EAC = ACWP + (BAC - BCWP)

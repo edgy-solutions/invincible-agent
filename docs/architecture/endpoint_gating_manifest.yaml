@@ -1052,6 +1052,58 @@ services:
           member list here that becomes sensitive the moment real parties are named, because
           who a program discloses to is itself disclosable. Flagged now rather than found
           later: this is the row that re-classifies FIRST, ahead of the figures."
+      # ── THE MOST SENSITIVE ROUTE IN THIS ENGINE, AND THE ONLY ONE THAT SERVES A FILE ──
+      - method: GET
+        path: /artifact/{filename}
+        identity: "caller authz_id, checked against the recipient's reader list"
+        gate: "AUTHORIZATION on the caller + a DERIVED filename allow-list; transport auth (OBSERVE)"
+        exposes: the-whole-disclosure-package
+        consumers: [cortex-bff card action, the recipient the package was built for]
+        class: gated
+        justification: "Serves a produced customer-validation package — every figure
+          package_export was willing to disclose to one recipient, in one file, over HTTP.
+          EVERY OTHER ROUTE IN THIS ENGINE RETURNS ROWS FOR ONE QUESTION; this returns the
+          bounded set for a whole recipient scope, which is why it is classified separately
+          from /measure rather than folded in with it.
+
+          ── THIS ROW READ `releasable_by_design` FOR ONE COMMIT AND THAT WAS WRONG ──
+          It said the bound was package_export's and not this route's: entitlement filtered
+          once at production (ADR-0047 §5), so a second recipient's package in the same
+          directory was servable to anyone who could reach the engine. It named that as the
+          property to re-examine WHEN THE DATA STOPS BEING NOTIONAL. Ruled 2026-09-14 that
+          notional is not a reason to wait — THE ROUTE'S SHAPE IS WHAT SHIPS TO THE FIRST
+          CUSTOMER, and it ships with whatever check it has on the day.
+
+          THE CALLER IS NOW AUTHORIZED BEFORE ANY BYTES, keyed on the mint-contract `authz_id`
+          — the only field CallerIdentity permits an authorization decision to read — against
+          the reader list for the recipient the artifact belongs to. Refusal is 403 naming the
+          PACKAGE and never its readers, since the recipient list is a disclosure of its own.
+
+          IT DOES NOT INHERIT THE OBSERVE POSTURE, deliberately. Transport auth in OBSERVE
+          decides whether an unverified TRANSPORT is refused; this is an authorization
+          decision about a disclosure and it fails closed while the fleet posture is
+          permissive. An unidentified caller is refused.
+
+          NO SERVICE IDENTITY IS ENTITLED. The card action arrives through cortex-bff, and
+          granting `svc:cortex-bff` would open this route to anyone who can open the UI — a
+          confused deputy one hop out, wearing an authorization check's clothes. A service
+          acting for a person must carry THAT PERSON's identity (ADR-0044).
+
+          AUTHORIZATION IS DECIDED BEFORE EXISTENCE IS REVEALED, so a refused caller learns
+          nothing about whether the package was ever produced.
+
+          TRAVERSAL IS REFUSED STRUCTURALLY: only filenames DERIVED from the recipient scopes
+          this engine packages for, so input is compared against a closed set rather than
+          cleaned into a path. Sanitizing is one missed encoding from serving something else.
+
+          404 IN EVERY DEPLOYED POD TODAY for an entitled caller, and that is honest rather
+          than incidental: the builder and the pinned Pyodide runtime live in the repository
+          checkout and are not in the image, so nothing is ever written there.
+
+          WHAT REMAINS TO RE-EXAMINE when the data stops being notional: the reader list is
+          SEED DATA (`seed.RECIPIENT_READERS`), not policy. A real deployment reads that
+          relation from the grant rail where it can be reviewed and revoked; a mapping in a
+          seed can be changed by anyone who can change the engine."
 
   finance_agent:
     inbound_transport_auth: engine-fin
