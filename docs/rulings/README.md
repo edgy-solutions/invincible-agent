@@ -2725,7 +2725,20 @@ observation; R-057.
 
 ---
 
-## R-055 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+## R-081 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+
+> **RENUMBERED 2026-09-19. This entry was filed as a second `R-055`** and sat here, between
+> R-065 and R-066, under a number already held by *"the other half of R-054: the intermediate
+> state can fail absent."* Two entries under one number is the register failing in its own
+> subject matter — a citation that resolves to whichever of two entries the reader happens to
+> scroll to is meaning recorded where nobody can read it back. It takes `R-081`, the first free
+> number, rather than one near its neighbours, because no integer was free there and a number
+> that moves twice is worse than one that sits out of order.
+>
+> **Citations of the OLD number are not all this entry's.** `R-055.1` and `R-055.2` belong to
+> the *other* R-055 and were left alone — `src/iagent/gateway.py` and
+> `tests/routing/test_the_answer_turn_reads_the_slots_it_bound.py` both cite `R-055.1`, and both
+> still resolve correctly. The two sites that meant THIS entry were repointed in the same commit.
 
 **Three shapes in one day, filed as one entry because they will be recognised faster as a family
 than as instances.** In every one the failure **was** recorded, correctly, by code that was doing
@@ -2994,7 +3007,7 @@ See [[a-sample-is-not-the-population]], [[assert-on-the-claim-not-its-neighbour]
 
 ## R-072 — THREE WAYS A WRITTEN CLAIM GOES WRONG, IN ORDER OF COST
 
-`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-055:
+`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-081:
 
 > meaning where nobody reads it · a claim that **BECAME** false · a claim that was **NEVER** true
 
@@ -3145,7 +3158,7 @@ FIELD and its own comment saying *"same key as VintageRequired above, so a consu
 for what may I say instead."* **The flattening happened downstream of a producer that had already
 done the right thing**, which is why nobody on either end saw it.
 
-**This is R-055's shape at the presentation layer.** R-055 is meaning recorded where nobody reads
+**This is R-081's shape at the presentation layer.** R-081 is meaning recorded where nobody reads
 it; this is meaning recorded in a form nobody can read *back*. A sentence listing options is a menu
 that has been flattened, and the flattening is lossy in exactly the direction that matters.
 

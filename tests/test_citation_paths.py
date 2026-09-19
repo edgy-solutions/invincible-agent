@@ -91,21 +91,20 @@ PHANTOM_CITATIONS = {
     "docs/adr/ADR-0016-memory-boundary-revised.md":
         "Linked by ADR-0019. Never created. Same shape as 0006: a numbered ADR referenced as "
         "though it were on file.",
-    # ── THE THREE WALK SHEETS THE CENSUS IS WAITING ON (2026-09-18) ──────────────────────────
-    # A DIFFERENT KIND OF PHANTOM: these have an OWNER AND A DATE, not merely a citation. Each is
-    # named by a walk-census row that is BLOCKED on it, and the census prints that row red with
-    # its reason on every run — so the debt is already visible where it matters. These entries
-    # only stop the citation seal reporting the same fact a second way.
+    # ── THE THREE WALK SHEETS THE CENSUS WAS WAITING ON — ALL THREE LANDED (2026-09-19) ──────
+    # No walk sheet is allowlisted any more. They retired themselves, which is what the entries
+    # were for; the last one was `docs/measurements/docs-walk-sheet.md`, deleted here when 5f's
+    # `76706e9` reached master. The sheet exists, so its citation resolves on its own and needs
+    # no allowlisting at all.
     #
-    # THEY RETIRE THEMSELVES, which is why this list is right and a blanket exemption would be
-    # wrong. `test_phantom_allowlist_is_honest` fails the moment a path appears in git history:
-    # when 74, 91 or 5f commits its sheet, THIS FILE goes red and the entry must be deleted —
-    # while the census's own `test_a_blocked_row_names_a_sheet_that_really_is_absent` goes red
-    # from the other side in the same breath. Neither can leave a landed sheet looking un-landed.
-    "docs/measurements/docs-walk-sheet.md":
-        "Owed by lane 5f (dispatch 2026-09-18), alongside mesh:explain's referent widening. "
-        "Cited by docs/measurements/walk-census.yaml, whose 'how do I add an engine' row is "
-        "blocked on it. Delete this entry when the sheet lands.",
+    # THE RETIREMENT CLAIM THIS BLOCK USED TO CARRY WAS STALE, and stale in the direction that
+    # reads as safe. It said `test_phantom_allowlist_is_honest` "fails the moment a path appears
+    # in git history: when 74, 91 or 5f commits its sheet, THIS FILE goes red." That was true of
+    # the two-state seal it was written against. Once the third state landed (`1c5f456`) a sheet
+    # committed on its own lane became PENDING — a reported state, not a red — and the entry
+    # stayed legal until the branch reached MASTER. Both versions retire the entry; they
+    # disagree about WHEN, and the stale one promised a red that would not have arrived for
+    # days, which is exactly long enough for someone to conclude the seal was broken.
 }
 
 # WITHHELD CITATIONS — the file EXISTS and is deliberately kept OUT of the repo.

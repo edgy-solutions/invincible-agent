@@ -136,6 +136,23 @@ KNOWN_ARCHETYPES = frozenset({
     # adding-an-engine runbook as its own population: adding an ARCHETYPE has more sites
     # than adding a verb, and they are not the same sites.
     "COMPETING_MEASURES",
+    # SOURCE_LEDGER (cortex-60 + lane 32, 2026-09-19). SEVENTH TIME, and the fourth archetype
+    # in a row the frontend named before this registry did: cortex-ui `a271817` is on its
+    # master, so the door was already refusing a render the backend had no word for.
+    #
+    # WHAT IS DIFFERENT THIS TIME, and it is worth recording because the runbook's population
+    # finally held: the mesh class AND the binding row landed TOGETHER, in lane 32's `f9eea84`,
+    # so six of the eight seals that were red cleared on that merge alone. The two that did not
+    # are this registry and the projector row — sites 1 and 2 of the runbook's six. The FIX PATH
+    # was not rediscovered this time, it was read off `docs/runbooks/adding-an-archetype.md`,
+    # which is what that runbook was written for.
+    #
+    # ONLY THIS SITE IS ADDED HERE. `_PROJECTED_ARCHETYPES` is site 2 and the runbook sequences
+    # it AFTER merge -> roll -> prime -> "ASK the graph", because the projector row carries the
+    # passthrough the card actually reads and that is not knowable until the class resolves.
+    # Adding it now to make a red go green would be inventing the row's content a step early.
+    # It stays red, deliberately, and the red is the correct report of where the sequence is.
+    "SOURCE_LEDGER",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that

@@ -354,9 +354,54 @@ rows:
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
-    blocked: >-
-      awaiting docs/measurements/docs-walk-sheet.md from 5f, AND awaiting mesh:explain's
-      referent widening to owl:Thing. This walk's cause was diagnosed wrong twice: it is not a
-      missing DocPage row (the row exists under MESH) and not a docs# ingest gap (pages are Jena
-      individuals by design). It is recall — the referent is too narrow for the page to enter
-      the pool at all.
+
+  # UNBLOCKED 2026-09-19 — the sheet landed, and the referent's cause was corrected. The reason
+  # this row carried said "awaiting mesh:explain's referent widening to owl:Thing". That widening
+  # CANNOT HAPPEN: no W3C class is in the routable pool (measured, zero w3.org OntologyClass
+  # nodes), because owl# is in doc-tools' meta-ontology filter — and PARAMETERISED_BY needs both
+  # ends to be :OntologyClass, so the referent would have targeted an absent node. The diagnosis
+  # "it is recall, the referent is too narrow" was RIGHT; the prescribed fix was not.
+  #
+  # The referent is now mesh:Thing carrying mesh:universalReferent true, and the pool's
+  # parameterisation leg reads that FLAG. Q1 stays in the census as runnable, and the SHEET
+  # carries the prerequisite that it must not be walked until that leg rolls — a census row says
+  # the question is asked and owned; the sheet says when it can honestly be run.
+  - id: docs-what-is-an-archetype
+    sheet: docs/measurements/docs-walk-sheet.md
+    sheet_index: 1
+    question: what is an archetype
+    user: agent-user
+    persona: DATA_ENGINEER
+    domains: [DOCS]
+    expect_verb: mesh_explain
+    expect_archetype: KNOWLEDGE_DOCUMENT
+    min_rows: 1
+    dispositions: [drawn]
+
+  - id: docs-how-do-i-add-a-canvas-template
+    sheet: docs/measurements/docs-walk-sheet.md
+    sheet_index: 2
+    question: how do I add a canvas template
+    user: agent-user
+    persona: DATA_ENGINEER
+    domains: [DOCS]
+    expect_verb: mesh_explain
+    expect_archetype: KNOWLEDGE_DOCUMENT
+    min_rows: 1
+    dispositions: [drawn]
+
+  # THE DESIGNED REFUSAL, and it is a row rather than a note because the refusal screen is the one
+  # nobody looks at. `rolling-a-service` declares `explains: none` — honestly, its own frontmatter
+  # says the emptiness is the measurement — so NO question can return it through mesh:explain.
+  # The correct answer is an abstain NAMING the subject, and `drawn` would be the defect here.
+  - id: docs-how-do-i-roll-a-service-abstains
+    sheet: docs/measurements/docs-walk-sheet.md
+    sheet_index: 3
+    question: how do I roll a service
+    user: agent-user
+    persona: DATA_ENGINEER
+    domains: [DOCS]
+    expect_verb: mesh_explain
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]

@@ -214,14 +214,14 @@ holds no hazards). Captured from the provider:
   "reason": "missing required slot(s)",
   "missing": ["work_order_id"],
   "slots": [{"name": "work_order_id", "kind": "spoken-mandatory", "type": "str", "required": true,
-             "referent": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/MaintenanceWorkOrder"}]
+             "referent": "https://spec.industrialontologies.org/ontology/construct/MaintenanceWorkOrderRecord"}]
 }
 ```
 
 ### Checks that distinguish
 
 - The refusal **names `work_order_id`** and says it is spoken-mandatory.
-- The referent is **`mro:MaintenanceWorkOrder`** — the IOF class, not a house `maint:WorkOrder`.
+- The referent is **`iof-constr:MaintenanceWorkOrderRecord`** — the standard's real class. ⚠ This was `mro:MaintenanceWorkOrder` until 2026-09-19, cited from a file whose header calls itself a DUMMY extract; the upstream IOF ontology declares no such class. A work order is an INFORMATION CONTENT ENTITY describing a process, not the process.
 - **The surface ASKS the walker for a work order.** A refusal that renders as generalist prose,
   or as "No content available", is the same defect as a card that will not draw — and it is the
   one a walk is most likely to mislabel, because *nothing drew* is what both look like.

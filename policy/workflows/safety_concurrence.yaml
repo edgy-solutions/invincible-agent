@@ -1,9 +1,30 @@
 # ACT ONE of a Serious/High safety acceptance — the user representative's concurrence.
 #
-# STATUS: AUTHORED, NOT YET REACHABLE. The selection row opens it; the chaining row that carries
-# its outcome onward does NOT exist, because the gateway cannot yet resume a workflow for this
-# task kind or carry the verb (see the header block below). ADR-0040 makes these headers the
-# board, so this says so rather than reading as wired.
+# STATUS: ~~AUTHORED, NOT YET REACHABLE. The selection row opens it; the chaining row that
+# carries its outcome onward does NOT exist, because the gateway cannot yet resume a workflow
+# for this task kind or carry the verb.~~
+#
+# CORRECTED 2026-09-19, AND THE TWO CLAUSES ARE HANDLED DIFFERENTLY BECAUSE ONLY ONE COULD BE
+# CHECKED FROM HERE. ADR-0040 makes these headers the board, which is precisely why a header
+# that has gone false is worse than none: it reads as a CONSIDERED status rather than a stale
+# one, and the next reader plans around it.
+#
+#   1. "the chaining row does NOT exist" — FALSE, and provable in this tree with no cluster:
+#      `policy/overlays/sample/decisions/safety_concurrence_chaining.yaml` is present and
+#      carries all three outcomes (concurred -> safety_acceptance_direct; not_concurred and
+#      returned_for_rework -> safety_redraft). It was written 2026-09-13, so this sentence has
+#      been false since that afternoon and stayed on the board for six days.
+#
+#   2. "the gateway cannot yet resume a workflow for this task kind" — NOT VERIFIED EITHER WAY.
+#      Lane 1 reports landing resume-on-any-kind the same day. I did not find it by grepping
+#      `human_tasks.py`, and A GREP THAT FINDS NOTHING IS NOT A NEGATIVE — one pattern over one
+#      file is a search, not a proof. So this half is left OPEN rather than struck, and it is
+#      measured when the task half is walked.
+#
+# STATUS, stated to the width of what is known: AUTHORED. The chaining row exists; whether the
+# gateway resumes on this kind is unmeasured. That is narrower and truer than either "not
+# reachable" or "wired" — and neither half is allowed to carry the other, which is how one
+# stale clause took a whole status down with it.
 #
 # ── WHY THIS IS ONE ACT AND NOT TWO ─────────────────────────────────────────────────────────
 # It was two. `safety_acceptance_with_concurrence` held the concurrence and the acceptance as
