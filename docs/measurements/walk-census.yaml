@@ -139,6 +139,11 @@ rows:
     # it is the reason min_rows is 2 rather than 1.
 
   # ── SAFETY (74) ────────────────────────────────────────────────────────────────────────────
+  # UNBLOCKED 2026-09-19: docs/measurements/safety-walk-sheet.md landed (0f1f2cb, lane/74) and
+  # all three questions are now DERIVED from it rather than retyped. Every value below is the
+  # sheet's own: the personas, the verbs, the dispositions, the row counts and the task shape.
+  # The sheet notes the questions are themselves copied from the engine's declared `synonyms` in
+  # agent_fleet/safety_agent/main.py rather than invented, so the chain is engine -> sheet -> row.
   - id: safety-haz-1003-risk-assessment
     sheet: docs/measurements/safety-walk-sheet.md
     sheet_index: 0
@@ -146,23 +151,24 @@ rows:
     user: bob
     persona: SAFETY_ENGINEER
     domains: [SUSTAINMENT]
-    expect_verb: null
+    expect_verb: draft_risk_assessment
     expect_archetype: null
     min_rows: 0
-    dispositions: [task_created]
+    dispositions: [task_requested]
     expect_task:
-      table: human_tasks
+      # WHAT THIS RUNNER CHECKS: the engine's `review_request` block carries this kind and this
+      # audience. WHAT IT DOES NOT CHECK: that a row actually appears in `human_tasks`. The
+      # request and the row are different acts — the engine asks, the workflow engine creates —
+      # and this instrument reads the artifact, so it can only see the asking. The row is 74's to
+      # measure. Recorded here rather than silently dropped, so nobody reads a green on this row
+      # as "bob has a task".
       kind: risk_acceptance_medium
-      assignee: bob
-    # UNBLOCKED 2026-09-19 — docs/measurements/safety-walk-sheet.md exists and this question is
-    # its prompt 0, DERIVED rather than retyped. The two rows below are its prompts 1 and 2: a
-    # sheet prompt with no census row is as red as a drifted one, so the sheet could not land
-    # carrying three questions against a single row.
+      audience: risk_acceptance_medium:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+    # DRAWING NO CARD IS THE PASS. The sheet is explicit: "Q1 draws no card at all, and that is
+    # the PASS. The answer is a row in human_tasks, not a card." A walker expecting three cards
+    # scores two defects that are not there.
 
-  # PROMPT 1. A DIFFERENT ANSWER SHAPE FROM THE ROW ABOVE, which is why both are here rather than
-  # one standing for the engine: this one DRAWS and the risk assessment does not. A census that
-  # only ever asserted `task_created` would stay green on an engine whose cards had all stopped
-  # rendering.
   - id: safety-unattended-hazards
     sheet: docs/measurements/safety-walk-sheet.md
     sheet_index: 1
@@ -172,17 +178,14 @@ rows:
     domains: [SUSTAINMENT]
     expect_verb: find_orphaned_hazards
     expect_archetype: CONTRIBUTION_RANKING
-    # THREE, NOT SIX. The fixture holds six hazards; three are orphaned, one is not_assessed and
-    # reported SEPARATELY, two are properly mitigated. A floor of 3 asserts the not-assessed
-    # hazard was not folded in — the conflation this verb exists to refuse.
     min_rows: 3
     dispositions: [drawn]
+    # EXACTLY 3 ROWS, ranked HAZ-1001, HAZ-1003, HAZ-1002. min_rows is a FLOOR and cannot see the
+    # order, nor that `not_assessed_count` is 1 and that hazard is absent from the rows — the
+    # sheet's checks are richer than this row is. What this row asserts is that the card draws
+    # with its archetype and is not short; the ordering claims stay a human walk for now.
 
-  # PROMPT 2. A DESIGNED REFUSAL, accepting `slot_required` ONLY and never `drawn`. A card here
-  # would mean the engine invented a work order instead of asking which one, so the narrow list
-  # IS the assertion — accepting both would leave this row unable to tell the behaviour from its
-  # opposite.
-  - id: safety-deferral-risk-asks-for-the-work-order
+  - id: safety-deferral-risk-refusal
     sheet: docs/measurements/safety-walk-sheet.md
     sheet_index: 2
     question: risk of deferring this work order
@@ -193,24 +196,9 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [slot_required]
-    # ⚠ THIS ROW WILL RUN RED UNTIL THE eo LANE LANDS iof_mro.ttl IN THE PRIME MANIFEST, and it
-    # carries NO `blocked:` — which is a correction, not an omission.
-    #
-    # I first wrote one here and the seal refused it, correctly: `blocked` in this census means
-    # THE SHEET DOES NOT EXIST, and the seal asserts exactly that. The sheet exists, so the field
-    # does not apply, and overloading it to mean "impeded for some other reason" would have made
-    # `blocked` stop meaning one thing — with the seal that checks it unable to tell the two
-    # senses apart. A field that means two things is a field that asserts neither.
-    #
-    # THE CAUSE, so a walker reading a red here does not re-diagnose it: Contract D refused this
-    # verb's registration 422, `missing: mro:MaintenanceWorkOrder`, because
-    # agent_fleet/ontology_service/iof_mro.ttl is ON DISK and NOT IN THE PRIME MANIFEST (`iof_mro`
-    # appears zero times in setup/prime_databases.py). Naming the IOF class in the engine was
-    # necessary and NOT sufficient. Not a sheet gap and not a safety defect.
-    #
-    # Running red with the live cause is better than blocked with a written one anyway: the red
-    # moves on its own when the manifest row lands, where a prose reason would need somebody to
-    # remember to delete it.
+    # THE REFUSAL IS THE PASS, asking for `work_order_id`. No expect_options here, unlike the
+    # cost rate-vintage row: that sheet states a two-chip menu as its expectation and this one
+    # does not, so asserting a menu would be inventing a requirement its sheet never made.
 
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   - id: finance-np-meridian-brief
