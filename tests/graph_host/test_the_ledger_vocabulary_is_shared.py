@@ -178,3 +178,49 @@ def test_a_REFUSED_inner_call_RAISES_rather_than_producing_a_hole_row(monkeypatc
     node = c._fetch("cost_lot_breakdown", "lot cost breakdown")
     with pytest.raises(c.RefusedInner):
         node({"lot": 4, "rate_vintage": "2026-Q1", "identity": {"authorization": "Bearer t"}})
+
+
+# -- the root surface keeps a local witness --------------------------------------------------
+
+def test_THIS_REPO_still_witnesses_the_SDKs_PACKAGE_ROOT():
+    """RAISED BY ca AFTER THE SWAP, and it is the half neither of us had covered.
+
+    Measured 2026-09-18: `from iagent_mesh import` had ZERO occurrences across this repo —
+    every consumer used a submodule path — so the SDK's package root was a surface with no
+    local consumer, and breakage there would be felt only by a route-C team following the
+    documented import. The graph host's two files are now its first witness.
+
+    **But a witness can leave, and nothing would announce it.** If these imports are ever
+    rewritten to `iagent_mesh.rows`, the root goes back to having no local consumer and every
+    test here still passes — the surface silently stops being exercised, which is exactly the
+    condition that made the original gap invisible.
+
+    ── WHAT THIS DOES AND DOES NOT CLAIM ────────────────────────────────────────────────────
+    Two files in one engine is a WITNESS, not COVERAGE. ca's export seal is derived over every
+    module's `__all__` and still covers the names these files never touch; this one only
+    asserts that the root has not gone dark locally. Stated because "the root is witnessed" and
+    "the root is covered" are a sentence apart and a great deal of assurance apart.
+    """
+    import ast
+
+    witnesses = []
+    for base in ("agent_fleet", "src"):
+        for py in (_ROOT / base).rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8"))
+            except SyntaxError:  # not this seal's business
+                continue
+            for node in ast.walk(tree):
+                # `from iagent_mesh import X` — the ROOT, not `from iagent_mesh.rows import X`
+                if isinstance(node, ast.ImportFrom) and node.module == "iagent_mesh":
+                    witnesses.append(f"{py.relative_to(_ROOT)}:{node.lineno}")
+
+    assert witnesses, (
+        "NOTHING in this repo imports from `iagent_mesh` at the package ROOT any more. The "
+        "root re-export is the surface a route-C team consumes and no local test would notice "
+        "breaking — it had no witness at all until engine-lg's graphs became one. If these "
+        "imports were deliberately moved to submodule paths, that is a decision to take with "
+        "ca, because it puts the root back in the dark."
+    )

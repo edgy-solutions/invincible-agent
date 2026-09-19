@@ -88,10 +88,21 @@ def test_the_host_LOADS_with_no_agent_fleet_in_the_image(tmp_path):
         import os, sys
         sys.path.insert(0, '.')
         os.environ['GRAPH_POLICY_DIR'] = 'policy/graphs'
+        import iagent_mesh
+        # WHERE IT IMPORTED FROM, not just that it did. ca's wheel check passed while
+        # importing their working tree because cwd was on sys.path and the DISTRIBUTION
+        # reported the installed version — module from the checkout, version from the
+        # metadata. Here the staged /app is first on sys.path, so the same shadowing is
+        # available: a stray iagent_mesh in the image would satisfy every assertion below
+        # while the installed dependency went untested.
+        assert 'site-packages' in iagent_mesh.__file__.replace(chr(92), '/'), (
+            'iagent_mesh did not resolve from site-packages: ' + iagent_mesh.__file__
+        )
         import main
         loaded = main.load_graphs()
         assert loaded, 'the loader admitted nothing'
         print('LOADED', len(loaded), ','.join(sorted(loaded)))
+        print('SDK_FROM', iagent_mesh.__file__)
         """
     )
     # A CHILD PROCESS, because `agent_fleet` is already imported in this one — asserting the
