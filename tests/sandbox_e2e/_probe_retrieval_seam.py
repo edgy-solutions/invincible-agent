@@ -84,6 +84,33 @@ def _rows(resp: dict) -> list:
     return (((resp.get("data") or {}).get("Get") or {}).get("OntologyClass") or [])
 
 
+def _self_verdict(cls: str, uuid: str, k: int = 5) -> str:
+    """Is this object findable by its own vector? SELF WITHIN THE TOP-K AT ~0, never `rows[0]`.
+
+    DUPLICATE VECTORS EXIST AND THIS IS NOT THEORETICAL. `IOF_Core` is loaded into two domains;
+    measured, the largest group of rows sharing one exact vector is 2 in both routing
+    collections. Demonstrated on a scratch pair: `nearObject(a)` returned **b first**, so
+    `rows[0] is self` would have reported a correctly repaired row as broken. Tie order is the
+    store's to choose.
+
+    The same semantics as `scripts/backfill_vector_space.verify_self`, deliberately — two
+    instruments answering one question must answer it the same way.
+    """
+    r = requests.post(BASE + "/v1/graphql", timeout=120, json={"query":
+        '{Get{%s(nearObject:{id:"%s"} limit:%d){_additional{id distance}}}}' % (cls, uuid, k)}).json()
+    if r.get("errors"):
+        return "REFUSED: " + r["errors"][0].get("message", "")[:90]
+    rows = (((r.get("data") or {}).get("Get") or {}).get(cls) or [])
+    for row in rows:
+        add = row.get("_additional") or {}
+        if add.get("id") == uuid:
+            ties = sum(1 for x in rows
+                       if abs((x.get("_additional") or {}).get("distance") or 0.0) <= 1e-4)
+            return "RETRIEVABLE (self in top-%d, distance %s, %d tied at ~0)" % (
+                k, add.get("distance"), ties)
+    return "NOT RETRIEVABLE (self absent from top-%d of %d rows)" % (k, len(rows))
+
+
 def seam(label: str, **kw) -> None:
     """The shipped function itself — NOT a reimplementation of it."""
     try:
@@ -144,10 +171,7 @@ def main_probe() -> None:
     print("  near_vector(own vector)        n=%d"
           % len(coll.query.near_vector(near_vector=stored, limit=5,
                                        return_metadata=md).objects))
-    resp = _gql('{Get{OntologyClass(nearObject:{id:"%s"} limit:3){uri}}}' % oid)
-    print("  nearObject(self)              %s"
-          % (resp["errors"][0]["message"] if resp.get("errors")
-             else "n=%d" % len(_rows(resp))))
+    print("  nearObject(self)              %s" % _self_verdict("OntologyClass", oid))
 
     print()
     print("=== 5. THE BLAST RADIUS — which collections answer a vector query")
@@ -157,10 +181,8 @@ def main_probe() -> None:
         got = (((one.get("data") or {}).get("Get") or {}).get(cls) or [])
         verdict = "no objects"
         if got:
-            r = _gql('{Get{%s(nearObject:{id:"%s"} limit:3){_additional{id}}}}'
-                     % (cls, got[0]["_additional"]["id"]))
-            verdict = ("ERROR: " + r["errors"][0]["message"][:70]) if r.get("errors") \
-                else "n=%d" % len((((r.get("data") or {}).get("Get") or {}).get(cls) or []))
+            # `got[0]` only PICKS a row to probe — it is not an assertion about ordering.
+            verdict = _self_verdict(cls, got[0]["_additional"]["id"])
         print("  %-15s vectorIndexType=%-6r vectorConfig=%-12r %s"
               % (cls, sch.get("vectorIndexType"),
                  list(sch.get("vectorConfig") or {}) or None, verdict))
