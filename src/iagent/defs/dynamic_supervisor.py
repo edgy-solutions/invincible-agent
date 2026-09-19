@@ -2071,42 +2071,62 @@ def _fill_slots_budget(declarations) -> float:
         pass
     return _FILL_SLOTS_TIMEOUT_S
 
-#: THE OPTION SOURCE FOR AN ELICITATION, AND IT IS NOT WIRED YET - deliberately, and the
-#: gap is named rather than papered over.
+#: THE OPTION SOURCE FOR AN ELICITATION. **WIRED SINCE THE FAN-OUT LANDED**, and this comment
+#: said otherwise for long enough to be worth correcting rather than deleting.
 #:
-#: Engine P registered as a `mesh:enumerateInstances` provider (3516103), but there is no
-#: ROUTER-SIDE FAN-OUT: nothing in Engine O dispatches an enumerate the way `/resolve` fans
-#: out a resolve. A registration is not a reachable call, and the supervisor must not invent
-#: a provider's URL - that is the phantom-service-URL shape this repo has already paid for.
+#: It read "IT IS NOT WIRED YET - deliberately, and the gap is named rather than papered over",
+#: and went on to explain that Engine P had registered as a provider with no router-side
+#: fan-out. That was true when written. `POST /enumerate_instances` on Engine O now fans a class
+#: out to every registered provider with its declared budget
+#: (`tests/routing/test_enumerate_fans_out.py`), the chart sets this variable, and it is set on
+#: the live fleet:
 #:
-#: So the disposition runs with no enumerator and reports `free_text_reason: no_provider`,
-#: which is the honest interim ADR-0033 permits WITH ITS ATTEMPT RECORDED. The day the
-#: fan-out lands (the option-source lane's, per the ownership split), setting this env var
-#: is the whole wiring - and `test_free_text_must_carry_a_provider_reason` fails the moment
-#: an ask goes out with no menu and no reason.
+#:     ENUMERATE_INSTANCES_URL: http://iagent-engine-o...:8084/enumerate_instances
+#:
+#: A PRECISE, CONFIDENT, STALE COMMENT IS READ AS CURRENT — and this one named a missing
+#: capability, so anyone diagnosing an empty menu had a ready explanation that had stopped being
+#: the cause. `free_text_reason: no_provider` now means the fan-out ASKED and nobody answered,
+#: which is a different repair from "nobody is wired".
 _ENUMERATE_URL = os.getenv("ENUMERATE_INSTANCES_URL", "")
 _ENUMERATE_TIMEOUT_S = float(os.getenv("ENUMERATE_TIMEOUT_S", "5"))
 
 
 def _make_enumerator(context):
-    """`class_uri -> {outcome, members, count}`, or None when no provider is reachable.
+    """`(class_uri, bound_slots) -> {outcome, members, count, scoped_by}`, or None when no
+    provider is reachable.
 
     None is NOT the same as an empty menu, and the disposition treats them differently:
     None becomes `no_provider` (nobody was asked), an empty `members` list becomes an
     abstain (the class is enumerable and holds nothing). Collapsing those is exactly how
-    free text becomes a default instead of a reported outcome."""
+    free text becomes a default instead of a reported outcome.
+
+    `bound_slots` IS CONTEXT, NOT A FILTER THIS FUNCTION APPLIES. It is handed to the fan-out,
+    which hands it to each provider; the provider narrows or does not, and says which via
+    `scoped_by`. The ask builder then refuses to draw a scoped menu from a class-wide list —
+    `cost#RateTable` enumerates to 12 while lot 3 accepts two, so ten of those twelve picks
+    would produce the refusal the menu exists to prevent.
+
+    THE SECOND PARAMETER IS KEYWORD-ONLY WITH A DEFAULT so that every existing caller — and
+    every test double written against the one-argument shape — keeps working unchanged. A
+    caller that passes nothing offers no context, which is the honest description of what it
+    knows, and gets today's class-wide behaviour.
+    """
     if not _ENUMERATE_URL:
         return None
 
-    def _enumerate(class_uri: str) -> Dict[str, Any]:
+    def _enumerate(class_uri: str, *, bound_slots: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         resp = requests.post(
-            _ENUMERATE_URL, json={"class_uri": class_uri}, timeout=_ENUMERATE_TIMEOUT_S,
+            _ENUMERATE_URL,
+            json={"class_uri": class_uri, "bound_slots": _bound},
+            timeout=_ENUMERATE_TIMEOUT_S,
         )
         resp.raise_for_status()
         body = resp.json() or {}
         context.log.info(
-            "enumerate_instances class_uri=%s outcome=%s count=%s",
+            "enumerate_instances class_uri=%s outcome=%s count=%s offered=%s scoped_by=%s",
             class_uri, body.get("outcome"), body.get("count"),
+            sorted(_bound), body.get("scoped_by") or [],
         )
         return body
 
