@@ -404,6 +404,11 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
     """
     import weaviate.classes as wvc
 
+    try:
+        from utils.weaviate_utils import named_vector_config
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.utils.weaviate_utils import named_vector_config
+
     if weaviate_client.collections.exists(_PREDICATE_COLLECTION):
         return
     weaviate_client.collections.create(
@@ -411,6 +416,12 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
         inverted_index_config=wvc.config.Configure.inverted_index(
             index_property_length=True,
         ),
+        # THE VECTOR SPACE IS DECLARED, not left to the client's implicit default. A bare
+        # create emits a space named `default` that a positional `vector=` never writes to,
+        # so every row reads back as vectorised and no vector search can find one. See
+        # `weaviate_utils.VECTOR_SPACE` for the measurement; the WRITE half is at the
+        # `data.insert`/`data.replace` below and the two must name the same space.
+        **named_vector_config(),
         properties=[
             wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
@@ -581,12 +592,25 @@ def upsert_weaviate_predicate_row(
               f"(BM25-only until backfill): {e}")
         predicate_vector = None
 
+    try:
+        from utils.weaviate_utils import named_vector
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.utils.weaviate_utils import named_vector
+
     write_kwargs: dict = {
         "uuid": deterministic_uuid,
         "properties": properties,
     }
     if predicate_vector is not None:
-        write_kwargs["vector"] = predicate_vector
+        # ADDRESSED TO THE NAMED SPACE, never passed positionally. A bare list lands in the
+        # LEGACY slot, which nothing searches: the row then reads back carrying a vector and
+        # `nearObject` on it refuses with "vector not found for target: default".
+        #
+        # BOTH BRANCHES BELOW NEED IT, and the replace branch is the one that would have been
+        # missed: `insert` runs once on a cold store, `replace` runs on EVERY re-registration,
+        # so a fix applied only to insert works until the first roll and then stops. Measured
+        # as its own arm rather than assumed to follow.
+        write_kwargs["vector"] = named_vector(predicate_vector)
 
     if collection.data.exists(uuid=deterministic_uuid):
         collection.data.replace(**write_kwargs)
