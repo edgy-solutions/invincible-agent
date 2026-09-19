@@ -42,9 +42,13 @@ def test_BOTH_graphs_use_the_SAME_vocabulary_OBJECT():
     """IDENTITY, NOT EQUALITY. Two tuples with the same contents pass an equality check and are
     still two vocabularies — they agree until someone edits one, which is the exact failure
     this extraction exists to prevent and the one an `==` here would not see."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
     from agent_fleet.graph_host.graphs import fin_program_brief as fin
 
+    # AGAINST THE SDK's PACKAGE ROOT. This is what the move makes assertable: the host's
+    # vocabulary is not an equal copy of the contract, it IS the contract object — and asserting
+    # it at the ROOT makes this repo the first local witness to a surface ca's export seal was
+    # guarding with none.
     assert fin.ROW_DISPOSITIONS is shared.ROW_DISPOSITIONS
     assert fin.HOLE_DISPOSITIONS is shared.HOLE_DISPOSITIONS
     assert fin.holes_from is shared.holes_from
@@ -55,7 +59,7 @@ def test_the_partition_holds_in_the_SHARED_module():
     """Every declared term is a hole or is named as not one — no overlap, no remainder. A new
     term FAILS WHILE UNDECIDED rather than defaulting to not-a-hole and silently shrinking the
     named-hole list."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     holes, non = set(shared.HOLE_DISPOSITIONS), set(shared.NON_HOLE_DISPOSITIONS)
     declared = set(shared.ROW_DISPOSITIONS)
@@ -75,7 +79,7 @@ def test_a_FAIL_graph_can_reach_NO_hole_disposition():
     """Read from the ratified row, not restated. A `fail` graph raises on a refused inner call,
     so it never RETURNS a row for one — asserting a hole term against it would be asserting an
     outcome its own contract forbids."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     assert _refusal("cost_lot_costing_review") == "fail", "this seal's subject changed clause"
     reachable = shared.reachable_for(_refusal("cost_lot_costing_review"))
@@ -88,7 +92,7 @@ def test_a_NAMED_HOLE_graph_CAN_reach_them():
     """THE CONTROL. Without it, "a fail graph reaches no holes" is satisfied by a rule that
     returns the non-hole set for everyone — which would make the finance brief's named holes
     unassertable while reading as correct."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     assert _refusal("fin_program_brief") == "named-hole", "this control changed clause"
     reachable = shared.reachable_for(_refusal("fin_program_brief"))
@@ -137,7 +141,7 @@ def test_the_cost_review_reaches_ONLY_what_its_clause_allows(monkeypatch):
     """The two halves joined: what the graph EMITS against what its declared clause ALLOWS. A
     graph reaching a term its contract forbids is the more interesting direction, and no
     per-side check can see it."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     allowed = shared.reachable_for(_refusal("cost_lot_costing_review"))
     seen = {
@@ -174,3 +178,49 @@ def test_a_REFUSED_inner_call_RAISES_rather_than_producing_a_hole_row(monkeypatc
     node = c._fetch("cost_lot_breakdown", "lot cost breakdown")
     with pytest.raises(c.RefusedInner):
         node({"lot": 4, "rate_vintage": "2026-Q1", "identity": {"authorization": "Bearer t"}})
+
+
+# -- the root surface keeps a local witness --------------------------------------------------
+
+def test_THIS_REPO_still_witnesses_the_SDKs_PACKAGE_ROOT():
+    """RAISED BY ca AFTER THE SWAP, and it is the half neither of us had covered.
+
+    Measured 2026-09-18: `from iagent_mesh import` had ZERO occurrences across this repo —
+    every consumer used a submodule path — so the SDK's package root was a surface with no
+    local consumer, and breakage there would be felt only by a route-C team following the
+    documented import. The graph host's two files are now its first witness.
+
+    **But a witness can leave, and nothing would announce it.** If these imports are ever
+    rewritten to `iagent_mesh.rows`, the root goes back to having no local consumer and every
+    test here still passes — the surface silently stops being exercised, which is exactly the
+    condition that made the original gap invisible.
+
+    ── WHAT THIS DOES AND DOES NOT CLAIM ────────────────────────────────────────────────────
+    Two files in one engine is a WITNESS, not COVERAGE. ca's export seal is derived over every
+    module's `__all__` and still covers the names these files never touch; this one only
+    asserts that the root has not gone dark locally. Stated because "the root is witnessed" and
+    "the root is covered" are a sentence apart and a great deal of assurance apart.
+    """
+    import ast
+
+    witnesses = []
+    for base in ("agent_fleet", "src"):
+        for py in (_ROOT / base).rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8"))
+            except SyntaxError:  # not this seal's business
+                continue
+            for node in ast.walk(tree):
+                # `from iagent_mesh import X` — the ROOT, not `from iagent_mesh.rows import X`
+                if isinstance(node, ast.ImportFrom) and node.module == "iagent_mesh":
+                    witnesses.append(f"{py.relative_to(_ROOT)}:{node.lineno}")
+
+    assert witnesses, (
+        "NOTHING in this repo imports from `iagent_mesh` at the package ROOT any more. The "
+        "root re-export is the surface a route-C team consumes and no local test would notice "
+        "breaking — it had no witness at all until engine-lg's graphs became one. If these "
+        "imports were deliberately moved to submodule paths, that is a decision to take with "
+        "ca, because it puts the root back in the dark."
+    )

@@ -81,10 +81,11 @@ def _merge(a: list, b: list) -> list:
 # every test and broken only in the deployment. `method_registry.py` warns about it in prose, and
 # `tests/safety/test_the_engine_imports_under_the_flat_layout.py` seals it — FOR ENGINE S ONLY.
 # Every engine ships flattened; exactly one has the seal. Filed for the morning, not fixed here.
-try:
-    from rows import fetch_row as _fetch_row  # type: ignore[import-not-found]  # noqa: E402
-except ImportError:  # the packaged layout, which is what the suite imports
-    from agent_fleet.graph_host.rows import fetch_row as _fetch_row  # noqa: E402
+# NO FLAT/PACKAGED FORK ANY MORE — see the sibling graph. `iagent_mesh` is an installed
+# dependency, so it resolves from site-packages whatever the image's layout is. The fork existed
+# only because the vocabulary was a repo-relative module.
+from iagent_mesh import fetch_row as _fetch_row  # noqa: E402
+
 
 class ReviewState(TypedDict, total=False):
     lot: int

@@ -70,44 +70,38 @@ class BriefState(TypedDict, total=False):
     summary: str
 
 
-# ── the ledger vocabulary, SHARED ───────────────────────────────────────────────────────────
-# MOVED to `agent_fleet/graph_host/rows.py` when the cost review became the second consumer.
-# The ruling that produced these terms (R-073) and the reasoning for each is recorded there;
-# what stays here is the graph. Re-exported under the old names so every existing seal and any
-# route-C reader keeps its import — a rename and a move in one change makes the diff about the
-# rename.
+# ── the ledger vocabulary, FROM THE SDK (iagent-mesh v0.9.3) ────────────────────────────────
+# The ledger row is ADR-0046's contract, not this host's convention. The argument that carried it
+# is not route C: `holes_from` is the only place `holes` is built, and `enforce_refusal` — the
+# only thing that READS it — already lived in the SDK. Producer here, consumer there. Moving the
+# module does not referee that split, it removes it.
 #
-# FLAT FIRST — see the sibling graph. The image does `COPY agent_fleet/graph_host/ /app/`, so
-# this module is `/app/graphs/...` and the vocabulary is `/app/rows.py`, importable ONLY as
-# `rows`. The packaged-only spelling crash-looped engine-lg on the 2026-09-19 roll; both graphs
-# carried it, and fixing only the one in the traceback would have left this one to fail the
-# moment a brief was asked for. The traceback names a SAMPLE, and the class had two members.
-try:
-    from rows import (  # type: ignore[import-not-found]  # noqa: E402
-        HOLE_DISPOSITIONS,
-        NON_HOLE_DISPOSITIONS,
-        ROW_DISPOSITIONS,
-        VERDICT_KEYS,
-        disposition_for as _disposition_for,
-        fetch_row as _fetch_row,
-        has_content as _has_content,
-        holes_from,
-        row as _row,
-        verdict_of as _verdict_of,
-    )
-except ImportError:  # the packaged layout, which is what the suite imports
-    from agent_fleet.graph_host.rows import (  # noqa: E402
-        HOLE_DISPOSITIONS,
-        NON_HOLE_DISPOSITIONS,
-        ROW_DISPOSITIONS,
-        VERDICT_KEYS,
-        disposition_for as _disposition_for,
-        fetch_row as _fetch_row,
-        has_content as _has_content,
-        holes_from,
-        row as _row,
-        verdict_of as _verdict_of,
-    )
+# AND IT REMOVES A SECOND ONE. While this lived in the repo these imports needed a flat/packaged
+# try/except: the image is `COPY agent_fleet/graph_host/ /app/`, so `agent_fleet` DOES NOT EXIST
+# in it and the packaged spelling crash-looped every pod on the 2026-09-19 roll — green in every
+# test, because the suite imports the packaged layout by construction. `iagent_mesh` is an
+# INSTALLED DEPENDENCY and resolves from site-packages whatever the layout is. The try/except
+# HANDLED the fork; this DELETES the condition.
+#
+# FROM THE PACKAGE ROOT, deliberately. Measured 2026-09-18: `from iagent_mesh import` had ZERO
+# occurrences across this repo — every consumer used a submodule path — so the root was the
+# surface no local consumer exercised and therefore the one nothing here would notice breaking.
+# These lines are its first witness.
+#
+# Re-exported under the old private names so every existing seal keeps its import: a move and a
+# rename in one change makes the diff about the rename.
+from iagent_mesh import (  # noqa: E402
+    HOLE_DISPOSITIONS,
+    NON_HOLE_DISPOSITIONS,
+    ROW_DISPOSITIONS,
+    VERDICT_KEYS,
+    disposition_for as _disposition_for,
+    fetch_row as _fetch_row,
+    has_content as _has_content,
+    holes_from,
+    row as _row,
+    verdict_of as _verdict_of,
+)
 
 
 def _fetch(fn: str, label: str):
