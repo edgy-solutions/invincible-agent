@@ -176,14 +176,31 @@ def test_Q3_REFUSES_and_names_the_slot(client, sheet):
     assert "slot_required" in sheet
 
 
-def test_Q3s_REFERENT_IS_THE_IOF_CLASS_the_sheet_names(client, sheet):
-    """The sheet tells a walker to check for `mro:MaintenanceWorkOrder` rather than a house
-    `maint:WorkOrder`. That is the ADR-0007 ruling, visible on the wire."""
+def test_Q3s_REFERENT_IS_THE_STANDARDS_REAL_CLASS(client, sheet):
+    """ADR-0007's ruling, visible on the wire — and **this seal caught its own sheet going stale
+    on the first real drift**, which is the whole reason it exists.
+
+    The referent was `mro:MaintenanceWorkOrder`, cited from `iof_mro.ttl`, whose own header calls
+    itself a *"Dummy IOF / MIMOSA Maintenance Reference Ontology extract"*. The REAL upstream
+    (`Maintenance.rdf`, already manifested as `IOF_MRO`) declares
+    `iof-constr:MaintenanceWorkOrderRecord` and no `MaintenanceWorkOrder` at all.
+
+    **`endswith("...Record")` rather than `endswith("MaintenanceWorkOrder")`, deliberately**: the
+    dummy's local name is a PREFIX of the standard's, so the loose form passes on BOTH and cannot
+    tell them apart — a check unable to distinguish the two things it was written to distinguish.
+    The namespace is asserted separately because the local name alone is not the identity.
+    """
     body = _measure(client, "assess_deferral_risk", {})
     referent = body["slots"][0]["referent"]
-    assert referent.endswith("MaintenanceWorkOrder"), referent
+    assert referent.endswith("MaintenanceWorkOrderRecord"), referent
+    assert referent.startswith("https://spec.industrialontologies.org/ontology/construct/"), (
+        f"the referent is not in the standard's `construct` namespace: {referent}"
+    )
     assert "internal/maintenance#WorkOrder" not in referent
-    assert "mro:MaintenanceWorkOrder" in sheet
+    assert "MaintenanceReferenceOntology/MaintenanceWorkOrder" not in referent, (
+        "the dummy file's IRI is back — that class exists in no published IOF ontology"
+    )
+    assert "MaintenanceWorkOrderRecord" in sheet
 
 
 def test_the_sheet_still_marks_the_iof_manifest_gap_as_a_RESIDUAL(sheet):

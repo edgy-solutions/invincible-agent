@@ -67,25 +67,50 @@ MESH = "http://invincible-agent/mesh#"
 # ── THE WORK-ORDER SUBJECT IS THE STANDARD'S CLASS, NOT A HOUSE SYNONYM ──────
 #
 # `assessDeferralRisk` declared `maint:WorkOrder` — `http://internal/maintenance#WorkOrder` —
-# and Contract D refused the registration 422, `missing: [that IRI]`, because NO TTL
-# ANYWHERE DECLARES IT. The fix is not to author it: `mro:MaintenanceWorkOrder` already
-# exists (`agent_fleet/ontology_service/iof_mro.ttl:32`) under the IOF Maintenance Reference
-# Ontology, and ADR-0007's survey-before-mint answers the rest — minting a house synonym for
-# a class the standard already names forfeits the citation and creates a second truth about
-# one thing.
+# and Contract D refused the registration 422, `missing: [that IRI]`, because NO TTL ANYWHERE
+# DECLARES IT. The fix is not to author it; ADR-0007's survey-before-mint says use the
+# standard's name, and `product_structure_extension.ttl` made the same ruling for S3000L. A
+# cited-but-invented IRI is worse than an empty slot. THAT PRINCIPLE STANDS.
 #
-# SAME RULING `product_structure_extension.ttl` MADE FOR S3000L: the standard's own names
-# where the standard covers the need, house convention only where it does not and labelled
-# as such. A cited-but-invented IRI is worse than an empty slot.
+# ~~`mro:MaintenanceWorkOrder` already exists (agent_fleet/ontology_service/iof_mro.ttl:32)
+# under the IOF Maintenance Reference Ontology ... this registration still 422s until the eo
+# lane lands `iof_mro.ttl` in the manifest.~~
 #
-# ⚠️ THIS IRI IS DECLARED ON DISK AND IS NOT IN THE PRIME MANIFEST (verified: zero matches
-# for `iof_mro` in `setup/prime_databases.py`). A TTL on disk and absent from the manifest is
-# UNDECLARED AT A FRESH CLUSTER — seal 1's whole lesson, and the `mesh:proposeDisposition`
-# failure exactly: sandbox had the node, every fresh cluster did not, and the registrar
-# refused the edge forever. So this registration still 422s until the eo lane lands
-# `iof_mro.ttl` in the manifest. Changing the IRI here is necessary and NOT sufficient, and
-# saying so is the difference between a fix and a fix that looks finished.
-MRO = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
+# STRUCK 2026-09-19 — THE PRINCIPLE WAS RIGHT AND THE CITATION WAS NOT. Struck rather than
+# deleted because the reasoning above is still the reasoning; only the class it landed on was
+# wrong, and a reader who finds the conclusion gone learns nothing about how it was reached.
+# The manifest-row conclusion is wrong twice over: the dummy must not be primed, and the real
+# upstream already is. See the corrected note below.
+# ⛔ CORRECTED 2026-09-19 — THE PREVIOUS IRI WAS CITED FROM A FILE THAT CALLS ITSELF A DUMMY.
+#
+#   was:  .../maintenance/MaintenanceReferenceOntology/MaintenanceWorkOrder
+#   is:   .../construct/MaintenanceWorkOrderRecord
+#
+# Different NAMESPACE and different LOCAL NAME. I argued ADR-0007 survey-before-mint — use the
+# standard's name rather than minting `maint:WorkOrder` — and then took the name from
+# `agent_fleet/ontology_service/iof_mro.ttl`, whose own header reads **"Dummy IOF / MIMOSA
+# Maintenance Reference Ontology (MRO) extract ... In production, replace with the full IOF MRO
+# ontology"**, and whose class carries `rdfs:comment "Maps to dbt models: stg_work_orders..."` —
+# a sentence no standard would write. **I cited a fixture as a standard, using the rule that
+# exists to stop exactly that.**
+#
+# THE REAL UPSTREAM IS VENDORED BESIDE IT AS `Maintenance.rdf` AND IS ALREADY IN THE PRIME
+# MANIFEST (`IOF_MRO`, domain MAINTENANCE). It declares `iof-constr:MaintenanceWorkOrderRecord`
+# and NO `MaintenanceWorkOrder` at all. Its own definition is why the name differs, and the
+# difference is not cosmetic:
+#
+#   MaintenanceWorkOrderRecord(x) <-> InformationContentEntity(x)
+#                                     ∧ ∃y(MaintenanceProcess(y) ∧ describes(x,y) ∧ isInputOf(x,y))
+#
+# A work order is an INFORMATION CONTENT ENTITY — a record DESCRIBING a maintenance process, not
+# the process. `assessDeferralRisk` takes the record, so the standard's distinction is the one
+# this verb wanted anyway.
+#
+# AND THE FIX IS NOT A MANIFEST ROW FOR THE DUMMY. Priming that file would push a house-invented
+# IRI into the IOF namespace and make a cited-but-invented class REAL — the outcome ADR-0007
+# refuses, reached by way of the rule that refuses it. The upstream is already manifested, so
+# this IRI resolves once the MAINTENANCE ingest actually lands (Cause 2).
+MRO = "https://spec.industrialontologies.org/ontology/construct/"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # THE ENGINE'S SCOPE — and these two names must EXIST IN THE POLICY VOCABULARIES,
@@ -144,7 +169,7 @@ VERBS: List[Dict[str, Any]] = [
     {
         "fn": "assess_deferral_risk",
         "verb": "mesh:assessDeferralRisk",
-        "input_uri": MRO + "MaintenanceWorkOrder",
+        "input_uri": MRO + "MaintenanceWorkOrderRecord",
         "output_uri": SAFETY + "DeferralRiskCard",
         "desc": (
             "For one deferred work order: whether its item is on the safety-critical items "
@@ -204,7 +229,7 @@ BY_FN = {v["fn"]: v for v in VERBS}
 #: is an elicitation offering free text where it should offer a menu, and the provider
 #: answering `unsupported`, which reads to the ask as a CONSIDERED refusal rather than a gap.
 _NOT_ENUMERABLE = {
-    MRO + "MaintenanceWorkOrder": (
+    MRO + "MaintenanceWorkOrderRecord": (
         "owned by the maintenance plane; Engine S reads work orders and does not own them. "
         "Minting a safety-namespaced work-order class to make this self-consistent would be "
         "the parallel-vocabulary mistake the ADR-0007 survey avoided one level up."
