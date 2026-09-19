@@ -33,6 +33,25 @@ from __future__ import annotations
 
 from typing import Any
 
+#: THE PUBLIC SURFACE, DECLARED. Without it `Any` and `annotations` are part of this module's
+#: surface, and a package re-exporting `*` inherits them — which is how v0.7.0 shipped a release
+#: whose whole point was a shared function that the package did not re-export, and how
+#: `SLOT_KINDS` stayed unexported for two releases after. The SDK's ref-coverage seal is derived
+#: from this list, so anything missing here is missing there.
+__all__ = [
+    "ROW_DISPOSITIONS",
+    "HOLE_DISPOSITIONS",
+    "NON_HOLE_DISPOSITIONS",
+    "VERDICT_KEYS",
+    "verdict_of",
+    "has_content",
+    "disposition_for",
+    "row",
+    "holes_from",
+    "reachable_for",
+    "fetch_row",
+]
+
 #: THE FULL VOCABULARY. See `fin_program_brief` for the ruling (R-073) and for why
 #: `unsummarised` is not a hole and `empty` is not `unsummarised`.
 ROW_DISPOSITIONS = ("finding", "unsummarised", "empty", "unentitled", "unavailable")
