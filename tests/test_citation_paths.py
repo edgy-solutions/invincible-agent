@@ -106,10 +106,15 @@ PHANTOM_CITATIONS = {
         "Owed by lane 74 (dispatch 2026-09-18): the three phrasings, their personas and their "
         "expected tasks. Cited by docs/measurements/walk-census.yaml, whose HAZ-1003 row is "
         "blocked on it. Delete this entry when the sheet lands.",
-    "docs/measurements/finance-walk-sheet.md":
-        "Owed by lane 91 (dispatch 2026-09-18), derived from its walk sheet. Cited by "
-        "docs/measurements/walk-census.yaml, whose NP-MERIDIAN row is blocked on it. Delete "
-        "this entry when the sheet lands.",
+    # `docs/measurements/finance-walk-sheet.md` WAS HERE AND ITS SHEET LANDED (d84bba5), so the
+    # entry is gone — the instruction it carried was "delete this entry when the sheet lands."
+    #
+    # ⚠ IT WENT STALE AT THE MOMENT OF THE COMMIT, NOT BEFORE. While the file was untracked,
+    # `git log --diff-filter=A` found nothing and this seal was satisfied; committing it put the
+    # path in history and turned a legal phantom into a false one. **The full suite run twenty
+    # minutes earlier was green on this row and was not wrong** — it measured a tree where the
+    # sheet was not yet a commit. A red that appears only after the commit is the same shape as
+    # the exemptions that could not be tested until a merge was committed.
     "docs/measurements/docs-walk-sheet.md":
         "Owed by lane 5f (dispatch 2026-09-18), alongside mesh:explain's referent widening. "
         "Cited by docs/measurements/walk-census.yaml, whose 'how do I add an engine' row is "
