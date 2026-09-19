@@ -291,8 +291,35 @@ needs_dsn = pytest.mark.skipif(
 
 
 @needs_dsn
-@pytest.mark.asyncio
-async def test_a_thread_written_by_ONE_saver_RESUMES_in_ANOTHER():
+def test_a_thread_written_by_ONE_saver_RESUMES_in_ANOTHER():
+    """Driven by an explicit Runner rather than `pytest.mark.asyncio` — see `_run_on_a_loop_psycopg_can_use`."""
+    _run_on_a_loop_psycopg_can_use(_resume_body())
+
+
+def _run_on_a_loop_psycopg_can_use(coro) -> None:
+    """Run `coro` on a loop psycopg's async path accepts.
+
+    WINDOWS ONLY, AND IT IS THE HARNESS NOT THE ENGINE. psycopg refuses
+    `ProactorEventLoop`, which is Windows' default; engine-lg runs on Linux where the default
+    is already a selector loop, so this never fires in the pod. Recorded rather than worked
+    around silently: a seal that cannot run where a developer invokes it is a seal that gets
+    marked skip and then believed.
+    """
+    import asyncio
+    import sys
+
+    factory = None
+    if sys.platform == "win32":
+        import selectors
+
+        def factory():  # noqa: E306
+            return asyncio.SelectorEventLoop(selectors.SelectSelector())
+
+    with asyncio.Runner(loop_factory=factory) as runner:
+        runner.run(coro)
+
+
+async def _resume_body():
     """THE CLAIM `checkpointer: true` MAKES, and the one an in-process saver cannot support.
 
     A second `AsyncPostgresSaver` over the same DSN is what a second pod IS — a distinct

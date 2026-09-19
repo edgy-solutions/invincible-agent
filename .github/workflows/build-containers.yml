@@ -389,6 +389,28 @@ jobs:
           # cortex-bff does NOT need a line: its image copies the whole repo (see its own
           # comment above), which is why /app/policy is complete there and per-file here.
           COPY policy/overlays/ /app/policy/overlays/
+          # THE RATIFIED RISK MATRIX (ADR-0051 §2), and this is the FOURTH time the comment
+          # above has come true — it said "the next shared-policy file will need another line
+          # here, and forgetting it fails SILENTLY". It did, and this one failed LOUDLY but
+          # LATE: engine-safety came up healthy, registered, routed at 0.98, and raised
+          # `FileNotFoundError: /app/safety_risk_matrix.ttl` ON THE FIRST REAL CALL.
+          #
+          # WHY IT WAS MISSED, AND IT IS NOT THE OBVIOUS REASON. The TTL is also PRIMED into
+          # Jena, so "the ontologies are primed, not shipped" is true — and irrelevant here.
+          # `matrix.py` parses this file FROM DISK to resolve severity x probability to a risk
+          # level; the primed copy serves the graph and no code path reads it for that. A file
+          # can be correctly primed AND required on disk, and the word "ontology" hides the
+          # difference.
+          #
+          # SO THE RULE IS ABOUT THE READ, NOT THE FILETYPE: an engine's IMAGE must carry every
+          # file that engine OPENS, whatever else also holds its contents. The engine's own
+          # layout seal asserted the opposite in its fixture — "the TTLs are NOT copied,
+          # deliberately" — which made this absence look designed and kept it green.
+          #
+          # Unconditional, like the two policy lines above and for the stated reason: one small
+          # file in eleven images costs less than a conditional COPY that fails silently for the
+          # twelfth engine that needs one.
+          COPY setup/ontologies/safety_risk_matrix.ttl /app/safety_risk_matrix.ttl
           # THE FOURTH, and the comment above has now come true three times in a row, which is
           # the argument for stopping counting and shipping the directory. ADR-0053 §2 method
           # rows: the EAC formulas as ratified DATA, so a figure carrying `method: CPI` under §5
