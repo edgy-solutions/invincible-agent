@@ -59,7 +59,10 @@ class BriefState(TypedDict, total=False):
     #: engine holds no standing credential, by design.
     identity: dict[str, str]
     findings: Annotated[list[dict], _merge]
-    holes: Annotated[list[dict], _merge]
+    #: DERIVED IN `synthesise` FROM `rows`, never accumulated from the nodes. Kept because the
+    #: SDK's `enforce_refusal` reads it to enforce the row's `refusal` clause — it is the
+    #: ADR-0049 Ruling 2 contract, not a display field.
+    holes: list[dict]
     #: THE STRUCTURED PAYLOAD — one row per source, whatever happened to it. Accumulated by the
     #: same reducer as findings and holes, so a row exists for every node that ran and the card
     #: can tell "three sources, one unsummarised" from "two sources".
@@ -67,103 +70,24 @@ class BriefState(TypedDict, total=False):
     summary: str
 
 
-#: THE FOUR ROW DISPOSITIONS, DECLARED IN ONE PLACE — R-073.
-#:
-#: A brief row is not a name plus a hope. `cortex-ui-60` raised this before the payload existed:
-#: a row saying `{hole: "cost_variance"}` leaves the card choosing among three states with three
-#: different repairs and three different readers, and the honest guess is NO RENDER AT ALL.
-#:
-#: Each maps onto the producer's contract (`presentation_agent/main.py:527`), and the mapping is
-#: WHY the fourth exists rather than being folded into a hole:
-#:
-#:   finding       a verdict was emitted            -> the ordinary finding row
-#:   unsummarised  content exists, verdict absent   -> a FINDING row, artifact linked, NEVER a
-#:                                                     hole. The caller is entitled and the verb
-#:                                                     ran; drawing a hole would tell a reader
-#:                                                     they lack an entitlement they have.
-#:   empty         the verb answered and has NOTHING -> the panel's own rowless card
-#:   unentitled    the caller may not invoke it     -> NAMED_HOLE
-#:   unavailable   failed, timed out, or refused    -> whole-board refusal
-#:
-#: `empty` ADDED 2026-09-18, and the correction underneath it matters more than the term. This
-#: file claimed the dispositions mapped ONE-FOR-ONE onto the presentation contract. THEY DO NOT,
-#: and cortex-ui-60 established it by comparing at source rather than accepting the claim:
-#:
-#:     here      finding · unsummarised · empty · unentitled · unavailable
-#:     cortex              unsummarised · empty · unentitled · unavailable
-#:
-#: `finding` is the POSITIVE case and cortex's list is a vocabulary of ABSENCES, so it has no
-#: slot for it — that asymmetry is fine. `empty` was not: it is an absence these rows can OCCUR
-#: IN and could not NAME, so every verb that answered with nothing was called `unsummarised` —
-#: which asserts CONTENT EXISTS and links an artifact holding none. **That is the exact collapse
-#: R-073 refused, one layer over**, and the two have different lifetimes: `unsummarised` retires
-#: when every verb emits a verdict; `empty` NEVER retires, because a variance analysis with no
-#: variances is a correct answer forever.
-#:
-#: `unsummarised` IS TEMPORARY BY CONSTRUCTION and retires by TEST, not by memory: the seal beside
-#: it asserts no built-in verb produces one. When lane 91's verdict lines cover every measure, the
-#: disposition becomes unreachable and the seal says so.
-ROW_DISPOSITIONS = ("finding", "unsummarised", "empty", "unentitled", "unavailable")
-
-#: The keys a payload may lead with. Read FROM the payload, never recomputed — the same list
-#: `_headline` uses, named once so the row and the prose cannot disagree about what a verdict is.
-VERDICT_KEYS = ("headline", "summary", "value", "verdict")
-
-
-def _verdict_of(payload: dict) -> str | None:
-    """The payload's own verdict, or None. NONE IS A RESULT, not a failure to find one."""
-    for key in VERDICT_KEYS:
-        if isinstance(payload.get(key), (str, int, float)):
-            return str(payload[key])
-    return None
-
-
-def _has_content(payload: dict) -> bool | None:
-    """Does this payload carry anything a reader could open? None means CANNOT TELL.
-
-    DERIVED FROM THE ENVELOPE, not guessed. engine-fin's response always carries `rows`
-    (`finance_agent/main.py`), and omits `verdict` entirely when there is nothing to say — the
-    same honest-absence rule. So an answered verb with `rows: []` has genuinely nothing, and
-    that is a different fact from a verdict being absent.
-
-    THE THIRD ANSWER IS THE POINT. A payload with no `rows` key at all is a shape this graph
-    does not know, and the two wrong guesses are not symmetric:
-
-        calling it `empty`        hides content a reader could have opened
-        calling it `unsummarised` sends them to look and they find nothing
-
-    The second is recoverable by looking; the first is invisible. So an unknown shape fails to
-    `unsummarised`, and this returns None so the caller makes that choice in the open rather
-    than inheriting it from a falsy default.
-    """
-    rows = payload.get("rows")
-    if rows is None:
-        return None
-    return bool(rows)
-
-
-def _disposition_for(payload: dict, verdict: str | None) -> str:
-    """Three-way, and each arm is a different fact with a different repair."""
-    if verdict is not None:
-        return "finding"
-    # `_has_content` returns None for a shape we cannot read; that fails to `unsummarised`,
-    # which sends a reader to look, rather than to `empty`, which tells them not to bother.
-    return "empty" if _has_content(payload) is False else "unsummarised"
-
-
-def _row(source: str, label: str, disposition: str, *,
-         artifact: str | None = None, verdict: str | None = None,
-         reason: str | None = None) -> dict:
-    """One brief row. THE ARTIFACT IS A FIELD ON EVERY ROW, present even when null.
-
-    Absent-versus-empty, the same rule as `disposal` and `failure_cause`: a row with no
-    `artifact` key at all makes a consumer guess whether the hop produced one, and a card that
-    guesses draws the wrong thing confidently. A refused verb HAS no artifact, and saying so is
-    a different statement from not mentioning it.
-    """
-    assert disposition in ROW_DISPOSITIONS, f"undeclared row disposition: {disposition!r}"
-    return {"row": source, "label": label, "disposition": disposition,
-            "artifact": artifact, "verdict": verdict, "reason": reason}
+# ── the ledger vocabulary, SHARED ───────────────────────────────────────────────────────────
+# MOVED to `agent_fleet/graph_host/rows.py` when the cost review became the second consumer.
+# The ruling that produced these terms (R-073) and the reasoning for each is recorded there;
+# what stays here is the graph. Re-exported under the old names so every existing seal and any
+# route-C reader keeps its import — a rename and a move in one change makes the diff about the
+# rename.
+from agent_fleet.graph_host.rows import (  # noqa: E402
+    HOLE_DISPOSITIONS,
+    NON_HOLE_DISPOSITIONS,
+    ROW_DISPOSITIONS,
+    VERDICT_KEYS,
+    disposition_for as _disposition_for,
+    fetch_row as _fetch_row,
+    has_content as _has_content,
+    holes_from,
+    row as _row,
+    verdict_of as _verdict_of,
+)
 
 
 def _fetch(fn: str, label: str):
@@ -175,9 +99,8 @@ def _fetch(fn: str, label: str):
             # NO STANDING CREDENTIAL TO FALL BACK ON. Proceeding here would run the read as the
             # host, which is exactly the laundering the identity ruling forbids. It is a hole,
             # named, rather than a silent success under the wrong subject.
-            _reason = "no initiator identity on the request"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unentitled", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason="no initiator identity on the request")]}
         try:
             r = httpx.post(
                 f"{ENGINE_FIN_URL}/measure/{fn}",
@@ -186,20 +109,16 @@ def _fetch(fn: str, label: str):
                 timeout=60.0,
             )
         except httpx.HTTPError as exc:
-            _reason = f"unreachable: {exc}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unavailable", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unavailable", reason=f"unreachable: {exc}")]}
 
         if r.status_code in (401, 403):
             # THE INITIATOR'S REFUSAL, CARRIED. Not the graph's failure — this caller is not
             # entitled to this measure, and the brief says so where the reader can see it.
-            _reason = f"the caller is not entitled to {fn}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unentitled", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason=f"the caller is not entitled to {fn}")]}
         if r.status_code >= 400:
-            _reason = f"{fn} returned {r.status_code}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unavailable", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unavailable",
+                                  reason=f"{fn} returned {r.status_code}")]}
 
         payload = r.json()
         artifact = payload.get("artifact_id") or payload.get("id")
@@ -228,7 +147,10 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     # is a parser guessing at a sentence this node wrote, and every such guess this project has
     # shipped has been wrong in a way nothing could see.
     findings = state.get("findings") or []
-    holes = state.get("holes") or []
+    # PROJECTED, NOT READ. `holes` is no longer emitted by the fetch nodes — it is derived here
+    # from the rows, so the two cannot disagree and the prose cannot describe a hole set that
+    # differs from the structured one.
+    holes = holes_from(state.get("rows") or [])
     lines = [f"Program {state['program_id']}:"]
     for f in findings:
         cite = f.get("artifact") or f["source"]
@@ -240,7 +162,7 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     if not findings:
         lines.append("  (no finding was retrievable for this caller; nothing below is omitted "
                      "silently — every source is named above)")
-    return {"summary": "\n".join(lines)}
+    return {"summary": "\n".join(lines), "holes": holes}
 
 
 def _headline(payload: dict) -> str:

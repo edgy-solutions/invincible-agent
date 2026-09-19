@@ -62,6 +62,11 @@ def _merge(a: list, b: list) -> list:
     return (a or []) + (b or [])
 
 
+# The ledger vocabulary, shared with the finance brief. Extracted when this graph became the
+# second consumer — a second copy of a vocabulary is a second vocabulary the moment either is
+# edited.
+from agent_fleet.graph_host.rows import fetch_row as _fetch_row  # noqa: E402
+
 class ReviewState(TypedDict, total=False):
     lot: int
     rate_vintage: str
@@ -69,6 +74,14 @@ class ReviewState(TypedDict, total=False):
     #: it holds no standing credential, which is what makes "runs as the initiator" structural.
     identity: dict[str, str]
     views: Annotated[list[dict], _merge]
+    #: THE LEDGER ROWS — the SOURCE_LEDGER payload, one per declared source. Same vocabulary as
+    #: the finance brief, from the shared module rather than a second copy.
+    #:
+    #: THIS GRAPH CAN REACH ONLY THREE OF THE FIVE TERMS, and that is its `refusal: fail` clause
+    #: rather than an omission: a refused inner call RAISES here, so no row is ever returned for
+    #: one. `reachable_for` derives that from the ratified row so this graph's seal cannot
+    #: hand-list a subset that goes stale if the clause changes.
+    rows: Annotated[list[dict], _merge]
     summary: str
 
 
@@ -100,7 +113,8 @@ def _fetch(fn: str, label: str):
         if isinstance(payload, dict) and payload.get("refusal"):
             raise RefusedInner(f"{fn} refused: {payload.get('refusal')} {payload.get('detail','')}")
         return {"views": [{"source": fn, "label": label, "payload": payload,
-                           "artifact": payload.get("artifact_id") or payload.get("id")}]}
+                           "artifact": payload.get("artifact_id") or payload.get("id")}],
+                "rows": [_fetch_row(fn, label, payload)]}
 
     return node
 
