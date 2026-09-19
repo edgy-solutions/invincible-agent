@@ -262,6 +262,7 @@ A contribution that passes these does not need the maintainer to look at it; one
 | **no passthrough tuple survives** | an archetype added the old way — the row is the only door, asserted rather than assumed |
 | **branches vs. attributes, per card** | a card with decisions the mechanism cannot see — the cheap check, before anyone reads the code |
 | **an interaction test, for an interaction-only attribute** | an absence excluded from the fixture seal and then covered by nothing |
+| **flips checked PER SUBJECT, against the producer's declared reachability** | a seal asserting an outcome the producer's contract FORBIDS |
 | **no ratified attribute survives becoming derivable** | two declarations of one fact, where the flag keeps passing after the string is edited |
 | **the fixture discriminates** | a fixture that cannot fail — the decorative-seal problem, and the reason "at least one" is not enough on its own |
 | the mirror holds both directions | R-076: a producer doing the right thing with no consumer written |
@@ -329,8 +330,12 @@ does each step is the architect's to say, the same way the reviewer role was.
    **three packages, not four** (§4). **Zero visual change, with the parity seal as the proof.**
 3. **Stand up the cross-repo seals** with their pin, their floor and their asserted sha (§6),
    because a contributed package's gate is a cross-repo gate from its first day.
-4. **Build `BRIEF` as the first NEW package through the extension point** — the first evidence the
-   extension point is usable by someone who did not build it.
+4. **Build `SOURCE_LEDGER` as the first NEW package through the extension point** — the first
+   evidence the extension point is usable by someone who did not build it. **The id is
+   `SOURCE_LEDGER`, not `BRIEF`** (settled 2026-09-18): it has **two consumers on day one**, one of
+   them a cost review, and a structure named for a brief would have shipped carrying the wrong
+   noun. **Gated on the first ARTIFACT carrying the payload, not on the payload being landed** —
+   see the third amendment.
 5. **Write the contributor runbook FROM that build**, the way `adding-an-engine.md` was written
    from engine-docs and then used to build the next one.
 6. **The first team outside this one ships the next package.** That is the measurement that
@@ -463,6 +468,68 @@ said anything about a component**, which is the direction §6 says matters, arri
 The fourth is also the instrument-and-subject shape inside a seal: a check matching `data-` patterns
 in a source file matched **its own comment about another card's attribute**. `stripComments` before
 the match is the fix, and it is in the code at `7c17470`.
+
+## AMENDMENT 2026-09-18 (third) — the flip property is PER SUBJECT, and one context is not the archetype
+
+**The fourth archetype broke a property the first three could not have tested**, and it was caught
+**before** the fixture was written rather than in it.
+
+### The case
+
+`SOURCE_LEDGER` has **two producing contexts**, and their ratified clauses reach different state
+sets — verified at source in `agent_fleet/graph_host/rows.py`:
+
+| producer | `refusal` clause | reachable dispositions |
+|---|---|---|
+| `fin_program_brief` | `named-hole` | **all five** — a refused inner call becomes a named hole |
+| `cost_lot_costing_review` | `fail` | **three.** A refused inner call **RAISES**, so no row is ever returned for it, and the two hole terms are **UNREACHABLE BY CONTRACT** |
+
+> ⛔ **SO "EVERY DECLARED ABSENCE FLIPS IN BOTH DIRECTIONS" IS FALSE AS A GLOBAL CLAIM.** Asserting
+> that a hole disposition flips on a `fail` producer **asserts an outcome the producer's contract
+> forbids** — and the producer's own helper says so: *"a seal asserting all five against it would
+> be asserting an outcome the contract forbids."*
+
+**And the consequence reaches the card, not just the seal.** A card that treated a hole-free ledger
+as suspicious — or drew a "no absences" affordance **keyed on the archetype rather than on the
+payload** — would be wrong on **every cost review**.
+
+### The rule
+
+**The flip property is PER SUBJECT, keyed on whatever determines reachability.** The producer
+already exports `reachable_for(refusal)`, deriving the set from the ratified clause, and **the seal
+READS it** rather than hand-listing a subset — which is the form that goes stale the day a row's
+clause changes.
+
+### THE GENERAL FORM, which is why this is in §6 and not a note on one archetype
+
+> **A property proved on single-context subjects can be false for a multi-context one — and it
+> reads as a fact about the ARCHETYPE when it is a fact about one CONTEXT.**
+
+The first three cards each have exactly **one** producing context, so nothing in them could have
+distinguished the two claims. **The difference only appears on the subject nobody had yet**, which
+means the property was not under-tested; it was untestable, and looked settled for that reason.
+
+### It cost nothing because it arrived before the build, and that was a choice someone made
+
+The constraint was volunteered by the producer's lane before the fixture existed, in their words:
+**"I would rather you had it before you build than discover it in a fixture."**
+
+**That sentence is the cheapest correction in this ADR's history and it belongs on the record**,
+because a constraint handed over unprompted is the one form of review that costs the reviewer
+something and the reviewed nothing. Discovered in a fixture, this would have been a rewrite of the
+seal, the fixture and possibly the card.
+
+### Step 2's gate, and why it stays shut
+
+**The `SOURCE_LEDGER` package is NOT started, correctly.** The payload shape is landed and has been
+read at source — **and source-verified is not served.** The architect's gate is **the first ARTIFACT
+carrying it**, and the producer's lane argued for holding **against their own interest**: their lane
+has already shipped a graph that served zero rows behind a green probe.
+
+So the package waits for the pod, the producer's binding waits for the package, and **their mirror
+seal stays correctly RED rather than green over a card that cannot draw.** A red that names a real
+gap is the honest state; a green over an undrawable card is the failure this ADR's whole seal set
+exists to refuse.
 
 ## Non-goals
 
