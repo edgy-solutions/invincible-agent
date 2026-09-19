@@ -43,7 +43,11 @@ _SAFETY = "http://internal/sustainment/safety#"
 # Contract D because no TTL declares it; `mro:MaintenanceWorkOrder` is the IOF Maintenance
 # Reference Ontology class that already exists (agent_fleet/ontology_service/iof_mro.ttl:32).
 # ADR-0007 survey-before-mint: a cited-but-invented IRI is worse than an empty slot.
-_MRO = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
+# CORRECTED 2026-09-19: the previous IRI came from iof_mro.ttl, a file whose header says it is
+# a DUMMY extract. The real upstream (Maintenance.rdf, already manifested as IOF_MRO) declares
+# iof-constr:MaintenanceWorkOrderRecord and no MaintenanceWorkOrder. See main.py for the full
+# note — a work order is an INFORMATION CONTENT ENTITY describing a process, not the process.
+_MRO = "https://spec.industrialontologies.org/ontology/construct/"
 
 #: Injected by the route, never spoken. EMPTY FOR THIS ENGINE — see the docstring.
 HANDLE_SLOTS: Dict[str, set] = {}
@@ -63,7 +67,7 @@ _REFERENT_KIND = {
     "hazard_id":     _SAFETY + "Hazard",
     "write_up_id":   _SAFETY + "WriteUp",
     # POINTS OUT OF THIS ENGINE, on purpose — see the module docstring.
-    "work_order_id": _MRO + "MaintenanceWorkOrder",
+    "work_order_id": _MRO + "MaintenanceWorkOrderRecord",
 }
 
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing
