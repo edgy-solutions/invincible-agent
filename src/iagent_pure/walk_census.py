@@ -61,6 +61,26 @@ DRIFTED = "DRIFTED"
 INDEX_OUT_OF_RANGE = "INDEX_OUT_OF_RANGE"
 
 
+#: WHICH FRONTEND ASKS, and it is part of the question's identity rather than transport detail.
+#:
+#: MEASURED 2026-09-19, after this census spent a run reporting a healthy fleet as broken. The
+#: same question, same persona, same domains, differing ONLY in this field:
+#:
+#:     frontend_id=None                -> KNOWLEDGE_DOCUMENT  source=refused
+#:     frontend_id='cortex'            -> KNOWLEDGE_DOCUMENT  source=refused
+#:     frontend_id='cortex-ui-desktop' -> CONTRIBUTION_RANKING  source=registered
+#:
+#: `live_view_requires_registration` — "the archetype decision is valid only against the render
+#: menu of the client that will render it" (ADR-0017 amendment, on `InterviewRequest`). A caller
+#: that registered no menu gets the labelled default, and a live view is REFUSED there. That
+#: refusal is correct; asking without a frontend and then scoring the archetype is not.
+#:
+#: A walk sheet describes what a PERSON SEES IN THE BROWSER, so the census must ask as the
+#: browser does or it is not walking the sheet. Declared in the census file, never defaulted
+#: silently here — a row asserting an archetype against an unstated menu asserts nothing.
+DEFAULT_FRONTEND = "cortex-ui-desktop"
+
+
 @dataclass(frozen=True)
 class CensusRow:
     id: str
@@ -70,11 +90,16 @@ class CensusRow:
     user: str
     persona: str
     domains: tuple[str, ...]
+    frontend_id: str
     expect_verb: str | None
     expect_archetype: str | None
     min_rows: int
     dispositions: tuple[str, ...]
     expect_task: dict[str, Any] | None = None
+    #: How many option chips the refusal must offer. The sheet's expectation for a
+    #: mandatory-slot ask is a MENU, not a text box — an ask with an empty menu is a
+    #: refusal the walker cannot answer, which is a worse outcome than a wrong card.
+    expect_options: int = 0
     blocked: str = ""
 
     @property
@@ -87,7 +112,7 @@ class CensusError(ValueError):
     than one that is red — it reports nothing and looks like nothing was wrong."""
 
 
-def _row(raw: dict) -> CensusRow:
+def _row(raw: dict, frontend_id: str) -> CensusRow:
     rid = raw.get("id") or "<unnamed row>"
     for k in ("sheet", "sheet_index", "question", "user", "persona", "domains", "dispositions"):
         if raw.get(k) is None:
@@ -115,11 +140,13 @@ def _row(raw: dict) -> CensusRow:
         user=raw["user"],
         persona=raw["persona"],
         domains=tuple(raw["domains"]),
+        frontend_id=raw.get("frontend_id") or frontend_id,
         expect_verb=raw.get("expect_verb"),
         expect_archetype=raw.get("expect_archetype"),
         min_rows=int(raw.get("min_rows") or 0),
         dispositions=disp,
         expect_task=raw.get("expect_task"),
+        expect_options=int(raw.get("expect_options") or 0),
         blocked=(raw.get("blocked") or "").strip(),
     )
 
@@ -133,8 +160,17 @@ def load_rows(census_path: Path) -> list[CensusRow]:
     import yaml
 
     doc = yaml.safe_load(census_path.read_text(encoding="utf-8")) or {}
+    frontend_id = (doc.get("frontend_id") or "").strip()
+    if not frontend_id:
+        raise CensusError(
+            f"{census_path} declares no `frontend_id`. The archetype a question comes back as "
+            f"depends on the render menu of the client that asked: an unregistered caller is "
+            f"REFUSED a live view and gets KNOWLEDGE_DOCUMENT. A census without one scores every "
+            f"archetype against a menu it never named, which is how this file spent a run "
+            f"reporting a healthy fleet as broken."
+        )
     raw_rows = doc.get("rows") or []
-    rows = [_row(r) for r in raw_rows]
+    rows = [_row(r, frontend_id) for r in raw_rows]
     if not rows:
         raise CensusError(
             f"no rows in {census_path}. An empty census runs nothing and reports success, "
@@ -308,13 +344,26 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
     # expected thing happened cannot report what did, and "not drawn" is a far poorer finding
     # than "asked for a slot".
     archetypes = [c.get("archetype") or "" for c in comps]
-    asked = any(
-        isinstance(ev.get("data"), dict) and ev["data"].get("outcome") == "slot_required"
-        for ev in (result.get("events") or [])
-    )
+
+    # AN ABSTAIN IS AN `ELICITATION` COMPONENT, not an event. Measured 2026-09-19; the first
+    # version looked for an event carrying `outcome: slot_required`, found none, and scored a
+    # correct refusal as "drawn" — the refusal is a card, which is exactly why it looked like one.
+    # (Ruled earlier this week: the abstain is ELICITATION, not a new archetype.)
+    elicit = next((c for c in comps if (c.get("archetype") or "") == "ELICITATION"), None)
+    asked = elicit is not None and (elicit.get("disposition") == "ask" or bool(elicit.get("slot")))
     actual = "slot_required" if asked else ("drawn" if comps else "none")
     if actual not in row.dispositions:
         why.append(f"disposition {actual!r}, row accepts {list(row.dispositions)}")
+
+    if asked and row.expect_options:
+        opts = elicit.get("options") or []
+        if len(opts) < row.expect_options:
+            why.append(
+                f"elicitation offers {len(opts)} option(s), sheet expects {row.expect_options} "
+                f"(option_source={elicit.get('option_source')!r}, "
+                f"free_text_reason={elicit.get('free_text_reason')!r}) — an ask with an empty "
+                f"menu is one the walker cannot answer from the card"
+            )
 
     if row.expect_verb and routing and row.expect_verb not in verbs:
         why.append(f"verb {sorted(verbs)} lacks {row.expect_verb!r}")

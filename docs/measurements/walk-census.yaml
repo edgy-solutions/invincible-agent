@@ -36,6 +36,22 @@
 
 version: 1
 
+# WHICH FRONTEND ASKS. Part of each question's identity, not transport detail.
+#
+# MEASURED 2026-09-19, after this census spent a run reporting a HEALTHY fleet as broken. Same
+# question, same persona, same domains, differing only here:
+#
+#     (absent)            -> KNOWLEDGE_DOCUMENT   presentation_source=refused
+#     cortex              -> KNOWLEDGE_DOCUMENT   presentation_source=refused
+#     cortex-ui-desktop   -> CONTRIBUTION_RANKING presentation_source=registered
+#
+# The refusal is `live_view_requires_registration`, and it is CORRECT: an archetype decision is
+# only valid against the render menu of the client that will render it, so a caller that
+# registered no menu gets the labelled default and no live view. A walk sheet describes what a
+# person sees IN THE BROWSER — asking as a script and then scoring the archetype is not walking
+# the sheet, it is walking a different question.
+frontend_id: cortex-ui-desktop
+
 rows:
   # ── COST ───────────────────────────────────────────────────────────────────────────────────
   # The one sheet that exists as a file, and the one whose questions are already parsed by
@@ -68,6 +84,12 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [slot_required]
+    # TWO OPTION CHIPS AND NO TEXT BOX — the sheet's second-walk expectation, set by cortex-ui-60
+    # on 2026-09-12. An empty menu here is the defect the OPTION_SOURCES re-key fixed:
+    # `(verb, slot)` keying meant two verbs declaring the same mandatory rate_vintage carried
+    # nothing between them. Asserted because "it asked" and "it asked answerably" are different
+    # facts, and only the second is a usable refusal.
+    expect_options: 2
     # THE REFUSAL IS THE PASS. `rate_vintage` is a required slot and `_require_vintage` raises
     # unconditionally when it is absent; the phrasing names no vintage and there is nowhere in
     # one question to put one. Scoring this red would fail the engine for doing the single thing

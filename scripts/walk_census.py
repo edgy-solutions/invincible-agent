@@ -102,6 +102,10 @@ async def _fire(client: httpx.AsyncClient, token: str, row: CensusRow,
         "session_id": f"census-{row.id}-{uuid.uuid4().hex[:8]}",
         "active_persona": row.persona,
         "active_domains": list(row.domains),
+        # ASKED AS THE BROWSER ASKS. Without this the fleet correctly refuses a live view
+        # (`live_view_requires_registration`) and every archetype assertion scores a default
+        # menu the walk sheet never describes.
+        "frontend_id": row.frontend_id,
     }
     final: dict[str, Any] | None = None
     events: list[dict] = []
@@ -244,7 +248,8 @@ def main() -> int:
     n_pass = sum(1 for r in results if r["state"] == PASS)
     n_fail = sum(1 for r in results if r["state"] == FAIL)
     n_blk = sum(1 for r in results if r["state"] == BLOCKED)
-    print(f"\n  {n_pass} pass, {n_fail} fail, {n_blk} blocked   sha={sha}")
+    print(f"\n  {n_pass} pass, {n_fail} fail, {n_blk} blocked   "
+          f"repo={sha}  fleet={deployed}")
     # A BLOCKED ROW IS A NON-ZERO EXIT. It is a question the fleet is not being asked, which is
     # exactly the state that goes unnoticed if it exits 0.
     return 0 if (n_fail == 0 and n_blk == 0 and rec.ok) else 1
