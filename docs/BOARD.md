@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **148 of 160 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **154 of 166 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -23,6 +23,30 @@ _Coverage: **148 of 160 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **fleet-write-census-store-classes** — ADR-0054 section 7's named input - the fleet-wide write census, counted as STORES rather than writes. 88 write sites (not the 67 first reported; three instrument defects are shown), 17 stores, 6 classified and 11 UNCLASSIFIED because section 2's text does not decide them. Also the thirteen structural edge types mapped to their write interfaces: five are written by doc-tools, a third writer outside the two doors.
   status: in-flight · owner: invincible-agent-28 [5401d7] - ia-eo / lane/eo · blocked-on: a ruling on whether a PROJECTION is rebuildable, and whether one-shot scripts are stores under ADR-0054 section 4
   → [docs/plans/fleet-write-census-store-classes.md](plans/fleet-write-census-store-classes.md)
+
+- **store-class-answer-artifact-projection** — THE ONE STORE OF EIGHTEEN WHERE THE TWO CLASSIFICATION BASES DISAGREE. Section 2 as amended says rebuildable (the projector replays a durable log); the prime PRESERVES it instead of dropping and rebuilding. CAN-be-rebuilt versus IS-rebuilt, and the ADR has to pick.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo · blocked-on: a ruling on whether `reproducibility` asks CAN or DOES
+  → [docs/plans/store-class-answer-artifact-projection.md](plans/store-class-answer-artifact-projection.md)
+
+- **store-class-cost-dataset-tables** — lots, rates and results - the DuckDB cost dataset. The census first filed all three as UNCLASSIFIED and they are the cleanest rebuildable in the fleet: a declared seed module, a manifest hash, and a named producer, settled by reading the builder's first import.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo
+  → [docs/plans/store-class-cost-dataset-tables.md](plans/store-class-cost-dataset-tables.md)
+
+- **store-class-datahub-dataset-catalog** — The seeded demo catalogue in DataHub: eleven write sites emitting DatasetProperties for platforms postgres and snowflake that DO NOT EXIST. Reproducibility derives cleanly; AUTHORITY is open, because the store describes systems of record the fleet does not have.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo · blocked-on: a ruling on `authority` for a store describing systems that do not exist
+  → [docs/plans/store-class-datahub-dataset-catalog.md](plans/store-class-datahub-dataset-catalog.md)
+
+- **store-class-datahub-mlmodel-registrations** — The registrar's verb catalogue in DataHub - three sites emitting mlModel entities on the mesh platform. Rebuildable as a registration; the open field is SYNC OBLIGATION, because this is the fleet writing INTO a system it does not own and never reads back.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo · blocked-on: a ruling on `sync obligation` when the fleet writes into a system it does not own
+  → [docs/plans/store-class-datahub-mlmodel-registrations.md](plans/store-class-datahub-mlmodel-registrations.md)
+
+- **store-class-user-canvas** — User-authored canvases in Postgres. Reproducibility and authority derive immediately (stateful, here); this packet exists because it is the fleet's clearest waiting case for the RESERVED releasability field - and a reserved field with a case is a different state from one without.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo · blocked-on: §6 releasability remaining reserved while a store needs it
+  → [docs/plans/store-class-user-canvas.md](plans/store-class-user-canvas.md)
+
+- **store-class-watermark-sequence** — neo4j:WatermarkSequence - a store with no row of its own in the census until now, because its only write shares one atomic transaction with three other labels. Stateful and derivable; the packet exists for the COUPLING, which no per-store field can express.
+  status: in-flight · owner: unassigned - raised by invincible-agent-28 [5401d7] / ia-eo · blocked-on: whether ADR-0054 can express a store that is only rebuildable as a SET
+  → [docs/plans/store-class-watermark-sequence.md](plans/store-class-watermark-sequence.md)
 
 ## blocked-on-human
 
