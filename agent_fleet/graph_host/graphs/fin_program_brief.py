@@ -59,7 +59,10 @@ class BriefState(TypedDict, total=False):
     #: engine holds no standing credential, by design.
     identity: dict[str, str]
     findings: Annotated[list[dict], _merge]
-    holes: Annotated[list[dict], _merge]
+    #: DERIVED IN `synthesise` FROM `rows`, never accumulated from the nodes. Kept because the
+    #: SDK's `enforce_refusal` reads it to enforce the row's `refusal` clause — it is the
+    #: ADR-0049 Ruling 2 contract, not a display field.
+    holes: list[dict]
     #: THE STRUCTURED PAYLOAD — one row per source, whatever happened to it. Accumulated by the
     #: same reducer as findings and holes, so a row exists for every node that ran and the card
     #: can tell "three sources, one unsummarised" from "two sources".
@@ -104,6 +107,34 @@ class BriefState(TypedDict, total=False):
 #: it asserts no built-in verb produces one. When lane 91's verdict lines cover every measure, the
 #: disposition becomes unreachable and the seal says so.
 ROW_DISPOSITIONS = ("finding", "unsummarised", "empty", "unentitled", "unavailable")
+
+#: WHICH DISPOSITIONS ARE HOLES — the ADR-0049 Ruling 2 set, declared rather than inferred.
+#:
+#: `holes` is what the SDK's `enforce_refusal` reads to enforce a row's `refusal` clause, so it
+#: cannot simply be deleted as a duplicate of `rows` — deleting it would silently retire the
+#: named-hole contract. But cortex-ui-60 is right that carrying both INDEPENDENTLY is one fact
+#: in two places, and named the drift exactly: the first disposition anyone adds that belongs in
+#: `holes` would be in `rows` and absent from `holes`, and a consumer reading `holes` would
+#: render a shorter list THAT LOOKS COMPLETE.
+#:
+#: So `holes` became a PROJECTION of `rows` — one emission, one truth — and this set is the
+#: projection's rule. Sealed as a PARTITION: every declared disposition is a hole or is named
+#: here as not one, so a new term FAILS WHILE UNDECIDED rather than defaulting to "not a hole"
+#: and quietly shrinking the list.
+HOLE_DISPOSITIONS = ("unentitled", "unavailable")
+
+#: The positive counterpart, so the partition has both halves written down and neither is an
+#: "everything else". An unlisted disposition belongs to no side and the seal says so.
+NON_HOLE_DISPOSITIONS = ("finding", "unsummarised", "empty")
+
+
+def holes_from(rows: list[dict]) -> list[dict]:
+    """The named holes a set of rows implies. THE ONLY PLACE `holes` IS BUILT."""
+    return [
+        {"source": r["row"], "label": r["label"], "reason": r["reason"]}
+        for r in rows
+        if r["disposition"] in HOLE_DISPOSITIONS
+    ]
 
 #: The keys a payload may lead with. Read FROM the payload, never recomputed — the same list
 #: `_headline` uses, named once so the row and the prose cannot disagree about what a verdict is.
@@ -175,9 +206,8 @@ def _fetch(fn: str, label: str):
             # NO STANDING CREDENTIAL TO FALL BACK ON. Proceeding here would run the read as the
             # host, which is exactly the laundering the identity ruling forbids. It is a hole,
             # named, rather than a silent success under the wrong subject.
-            _reason = "no initiator identity on the request"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unentitled", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason="no initiator identity on the request")]}
         try:
             r = httpx.post(
                 f"{ENGINE_FIN_URL}/measure/{fn}",
@@ -186,20 +216,16 @@ def _fetch(fn: str, label: str):
                 timeout=60.0,
             )
         except httpx.HTTPError as exc:
-            _reason = f"unreachable: {exc}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unavailable", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unavailable", reason=f"unreachable: {exc}")]}
 
         if r.status_code in (401, 403):
             # THE INITIATOR'S REFUSAL, CARRIED. Not the graph's failure — this caller is not
             # entitled to this measure, and the brief says so where the reader can see it.
-            _reason = f"the caller is not entitled to {fn}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unentitled", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unentitled",
+                                  reason=f"the caller is not entitled to {fn}")]}
         if r.status_code >= 400:
-            _reason = f"{fn} returned {r.status_code}"
-            return {"holes": [{"source": fn, "label": label, "reason": _reason}],
-                    "rows": [_row(fn, label, "unavailable", reason=_reason)]}
+            return {"rows": [_row(fn, label, "unavailable",
+                                  reason=f"{fn} returned {r.status_code}")]}
 
         payload = r.json()
         artifact = payload.get("artifact_id") or payload.get("id")
@@ -228,7 +254,10 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     # is a parser guessing at a sentence this node wrote, and every such guess this project has
     # shipped has been wrong in a way nothing could see.
     findings = state.get("findings") or []
-    holes = state.get("holes") or []
+    # PROJECTED, NOT READ. `holes` is no longer emitted by the fetch nodes — it is derived here
+    # from the rows, so the two cannot disagree and the prose cannot describe a hole set that
+    # differs from the structured one.
+    holes = holes_from(state.get("rows") or [])
     lines = [f"Program {state['program_id']}:"]
     for f in findings:
         cite = f.get("artifact") or f["source"]
@@ -240,7 +269,7 @@ def synthesise(state: BriefState) -> dict[str, Any]:
     if not findings:
         lines.append("  (no finding was retrievable for this caller; nothing below is omitted "
                      "silently — every source is named above)")
-    return {"summary": "\n".join(lines)}
+    return {"summary": "\n".join(lines), "holes": holes}
 
 
 def _headline(payload: dict) -> str:

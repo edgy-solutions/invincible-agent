@@ -64,8 +64,14 @@ class _Resp:
         return self._p
 
 
-def _run(monkeypatch, *, status=200, payload=None, raises=None, ident=None) -> dict:
-    """Drive ONE fetch node to one outcome and return the state update it produced."""
+def _run(monkeypatch, *, status=200, payload=None, raises=None, ident=None,
+         source="fin_variance_analysis") -> dict:
+    """Drive ONE fetch node to one outcome and return the state update it produced.
+
+    `source` IS A PARAMETER because the projection seal compares rows BY SOURCE. With every row
+    carrying the same one, both sides of that comparison collapse to a single element and agree
+    whatever the filter does — two mutants survived on exactly that before it was fixed.
+    """
     b = _brief()
 
     def _post(*_a, **_k):
@@ -74,7 +80,7 @@ def _run(monkeypatch, *, status=200, payload=None, raises=None, ident=None) -> d
         return _Resp(status, payload)
 
     monkeypatch.setattr(b.httpx, "post", _post)
-    node = b._fetch("fin_variance_analysis", "cost and schedule variance")
+    node = b._fetch(source, "cost and schedule variance")
     return node({"program_id": "NP-MERIDIAN", "identity": ident if ident is not None else _IDENT})
 
 
@@ -156,10 +162,95 @@ def test_an_ENTITLED_caller_with_no_verdict_is_UNSUMMARISED_and_NOT_a_hole(monke
 @needs_langgraph
 def test_an_UNENTITLED_caller_still_produces_a_HOLE(monkeypatch):
     """THE CONTROL for the row above. Without it, "never a hole" passes against a graph that
-    stopped producing holes at all — which would silently retire ADR-0049 Ruling 2."""
+    stopped producing holes at all — which would silently retire ADR-0049 Ruling 2.
+
+    Asserted on the PROJECTION now: the fetch node emits rows only, and `holes` is derived."""
+    b = _brief()
     out = _run(monkeypatch, status=403)
     assert out["rows"][0]["disposition"] == "unentitled"
-    assert out.get("holes"), "the named-hole contract stopped producing holes"
+    assert b.holes_from(out["rows"]), "the named-hole contract stopped producing holes"
+
+
+# -- `holes` is a PROJECTION of `rows`, not a second copy -----------------------------------
+
+@needs_langgraph
+def test_EVERY_disposition_is_CLASSIFIED_as_hole_or_not(monkeypatch):
+    """THE PARTITION THAT MAKES THE DRIFT IMPOSSIBLE — cortex-ui-60's finding, turned into a
+    structure rather than a warning.
+
+    They named it exactly: the first disposition anyone adds that belongs in `holes` would be in
+    `rows` and absent from `holes`, and a consumer reading `holes` would render a shorter list
+    THAT LOOKS COMPLETE. A derived copy is always the one that goes on passing after someone
+    edits the source.
+
+    So every declared disposition must appear in exactly one side. A new term FAILS WHILE
+    UNDECIDED rather than defaulting to "not a hole" and quietly shrinking the list.
+    """
+    b = _brief()
+    holes, non = set(b.HOLE_DISPOSITIONS), set(b.NON_HOLE_DISPOSITIONS)
+    declared = set(b.ROW_DISPOSITIONS)
+    assert not (holes & non), f"classified BOTH ways: {sorted(holes & non)}"
+    unclassified = declared - holes - non
+    assert not unclassified, (
+        f"{sorted(unclassified)} are declared dispositions classified neither as holes nor as "
+        f"non-holes. Decide: a term that defaults to not-a-hole shrinks the named-hole list "
+        f"silently, which is the contract ADR-0049 Ruling 2 exists to keep visible."
+    )
+    assert not (holes | non) - declared, (
+        f"{sorted((holes | non) - declared)} are classified but not declared in "
+        f"ROW_DISPOSITIONS — a rule for a term nothing emits."
+    )
+
+
+@needs_langgraph
+def test_the_fetch_node_emits_NO_holes_of_its_own(monkeypatch):
+    """ONE EMISSION, ONE TRUTH. If a node emitted holes directly, the projection would be a
+    second opinion rather than the only one, and the two could disagree the moment either
+    changed."""
+    import httpx
+
+    for kw in (dict(status=403), dict(status=500), dict(raises=httpx.ConnectError("x")),
+               dict(ident={})):
+        out = _run(monkeypatch, **kw)
+        assert "holes" not in out, (
+            f"{kw} emitted its own holes alongside rows: {out.get('holes')}. `holes` is derived "
+            f"in synthesise; a second producer restores the drift this change removed."
+        )
+
+
+@needs_langgraph
+def test_the_projected_holes_MATCH_the_hole_rows_exactly(monkeypatch):
+    """The projection is asserted against the rows it came from, over every outcome — so a hole
+    that exists in one and not the other is caught wherever it arises."""
+    import httpx
+
+    b = _brief()
+    # DISTINCT SOURCES, one per outcome. Sharing a source makes the comparison below collapse
+    # to a single element and agree whatever the filter does.
+    rows = []
+    rows += _run(monkeypatch, source="v_finding",
+                 status=200, payload={"verdict": "v", "rows": [1]})["rows"]
+    rows += _run(monkeypatch, source="v_empty", status=200, payload={"rows": []})["rows"]
+    rows += _run(monkeypatch, source="v_unsummarised", status=200, payload={"rows": [1]})["rows"]
+    rows += _run(monkeypatch, source="v_unentitled", status=403)["rows"]
+    rows += _run(monkeypatch, source="v_unavailable",
+                 raises=httpx.ConnectError("x"))["rows"]
+
+    projected = {h["source"] for h in b.holes_from(rows)}
+
+    # ANCHORED ON THE OUTCOMES, NOT ON THE CONSTANT. Comparing the projection against a filter
+    # that reads `HOLE_DISPOSITIONS` is two copies of one string agreeing — it passed while
+    # `unavailable` was reclassified out of the hole set, because both sides moved together.
+    # These are the literal HTTP outcomes ADR-0049 Ruling 2 is about.
+    assert projected == {"v_unentitled", "v_unavailable"}, (
+        f"the projected holes are {sorted(projected)}. A 403 is the initiator's refusal carried "
+        f"and an unreachable verb is a failure — both are named holes; an answered verb never "
+        f"is, whatever the vocabulary is edited to say."
+    )
+    assert all(h["reason"] for h in b.holes_from(rows)), (
+        "a projected hole carries no reason — ADR-0049 Ruling 2 is a hole with a REASON, and a "
+        "nameless one is the silent narrowing wearing the contract's clothes"
+    )
 
 
 # -- the JOIN, which is the half that usually goes unasserted -------------------------------
@@ -215,11 +306,12 @@ def test_synthesise_does_NOT_build_or_amend_rows():
     b = _brief()
     rows = [{"row": "fin_burn_rate", "label": "cash burn", "disposition": "finding",
              "artifact": "a-9", "verdict": "Spend above plan", "reason": None}]
-    out = b.synthesise({"program_id": "NP-MERIDIAN", "rows": rows,
-                        "findings": [], "holes": []})
-    assert set(out) == {"summary"}, (
-        f"synthesise returned {sorted(out)} — it must stop at prose and never re-derive rows"
+    out = b.synthesise({"program_id": "NP-MERIDIAN", "rows": rows, "findings": []})
+    assert set(out) == {"summary", "holes"}, (
+        f"synthesise returned {sorted(out)} — it composes prose and PROJECTS holes from the "
+        f"rows, and must never build or amend the rows themselves"
     )
+    assert "rows" not in out, "synthesise re-derived rows"
 
 
 @needs_langgraph
