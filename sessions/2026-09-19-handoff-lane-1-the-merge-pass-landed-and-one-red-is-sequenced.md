@@ -191,3 +191,36 @@ register renumber landed (duplicate R-055 → **R-081**, so it really does end a
 the unlanded rulings are still unnumbered and their content is the architect's.
 
 Lane: ia-01/lane/01
+
+## THE CROSS-REPO `:latest` CLASS — I FIXED ONE OF FOUR
+
+**A filed defect is a sample, not a census, and this one proves it.** The frontend digest pin
+closed ONE instance. Derived from the rendered roll manifest, the fleet chart carries **four**
+cross-repo images, and the other three are still on a moving tag:
+
+    DIGEST-PINNED            ghcr.io/edgy-solutions/cortex-ui/frontend@sha256:c8d6553f…
+    *** :latest — MOVES ***  ghcr.io/edgy-solutions/dag-tools/central-gateway:latest
+    *** :latest — MOVES ***  ghcr.io/edgy-solutions/dag-tools/user-deployment:latest
+    *** :latest — MOVES ***  ghcr.io/edgy-solutions/pub-tools:latest
+
+**All three carry `imagePullPolicy: Always`**, measured — `iagent-central-gateway`,
+`iagent-dag-tools`, `iagent-pub-tools`. That is the frontend's hazard exactly: a push to
+`dag-tools` or `pub-tools` by anyone changes what this fleet runs at the next pod restart, with
+no commit in this repo and no chart change to review. The retag cannot reach them for the same
+structural reason it cannot reach cortex-ui — its population is THIS repo's build matrix, and
+its prefix is `edgy-solutions/invincible-agent`.
+
+**The other 16 non-ours images are fine**: every one carries a real version tag
+(`neo4j:5.26.0`, `keycloak:26.6.4`, `weaviate:1.27.0`, …). The defect is specific to our OWN
+sibling repos, which are the ones nobody thinks of as third-party.
+
+**NOT FIXED TONIGHT, deliberately.** Pinning three more images by digest means verifying three
+more digests and changing what this roll deploys, and tonight's roll is scoped to SOURCE_LEDGER
+and 74's consumer. It is also the same decision the architect already deferred for the retag gap
+("the retag gap itself is fixed after the walks"). Filed with the measurement so it is a known
+cost rather than a discovery.
+
+**7f found the adjacent question and it is worth keeping:** when a PR build job goes green,
+ask whether it PUSHED. Theirs did not — `push: ${{ github.event_name != 'pull_request' }}`,
+job log `push: false` — but the answer is not visible from the green, and with `:latest` +
+`Always` an accidental push would have put an unmerged branch in front of the next restart.
