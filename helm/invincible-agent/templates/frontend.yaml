@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: cortex-ui
-          image: {{ include "invincible-agent.image" (dict "repository" .Values.cortexUi.image.repository "tag" .Values.cortexUi.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "repository" .Values.cortexUi.image.repository "tag" .Values.cortexUi.image.tag "digest" .Values.cortexUi.image.digest "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http

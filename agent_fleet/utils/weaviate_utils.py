@@ -69,3 +69,69 @@ def get_weaviate_client() -> weaviate.WeaviateClient:
 
     _GLOBAL_WEAVIATE_CLIENT = create_weaviate_client()
     return _GLOBAL_WEAVIATE_CLIENT
+
+
+# ---------------------------------------------------------------------------
+# THE NAMED VECTOR SPACE — declared at create, addressed at write, both ends.
+# ---------------------------------------------------------------------------
+#: The one name every routing collection stores its vectors under.
+#:
+#: MEASURED 2026-09-19, on scratch collections in sandbox. A bare
+#: ``collections.create(name, properties)`` on weaviate-client 4.21.0 emits a NAMED vector space
+#: called ``default``; a positional ``insert(vector=[...])`` writes the LEGACY unnamed slot. The
+#: named space — the only target a search can name — then stays empty, and the store answers
+#:
+#:     nearObject(self) -> "vectorize search vector: vector not found for target: default"
+#:
+#: on a row whose vector reads back as ``{'default': '768 dims'}``. **Every presence check
+#: passes and every vector search returns nothing**, with no error and no log line, because the
+#: hybrid's BM25 half still answers. That was live on `OntologyClass` and `Predicate` — the two
+#: collections the router runs on — and it made the whole fleet lexical-only.
+#:
+#: THE DEFECT EXISTED BECAUSE NEITHER END NAMED THE SPACE: implicit on the create, positional on
+#: the write. Naming both ends is the fix, and it also makes a future mistake LOUD — a write to a
+#: space the schema does not declare is a 500 at insert, not a silent miss (measured).
+VECTOR_SPACE = "default"
+
+
+def named_vector_config():
+    """The ``create(...)`` kwargs that declare :data:`VECTOR_SPACE` explicitly.
+
+    TWO FORMS, AND THE FALLBACK IS REAL CODE RATHER THAN DECORATION. ``pyproject.toml`` pins
+    ``weaviate-client>=4.5.4,<5.0`` — a RANGE — and ``Configure.Vectors`` is a later 4.x
+    addition, so a deployment at the floor of that range has only ``Configure.NamedVectors``.
+    Both forms were measured to produce ``vector_config=['default']`` and to retrieve through
+    INSERT and REPLACE alike; the newer one is preferred because the older raises ``Dep024``.
+
+    Returns kwargs to splat, not a value, because the two forms use DIFFERENT PARAMETER NAMES
+    (``vector_config=`` vs ``vectorizer_config=``) — a helper returning only the value would
+    push that difference back onto every call site, which is how one of them would get it wrong.
+    """
+    import weaviate.classes as wvc
+
+    vectors = getattr(wvc.config.Configure, "Vectors", None)
+    if vectors is not None and hasattr(vectors, "self_provided"):
+        return {"vector_config": vectors.self_provided(name=VECTOR_SPACE)}
+    return {
+        "vectorizer_config": [
+            wvc.config.Configure.NamedVectors.none(name=VECTOR_SPACE)
+        ]
+    }
+
+
+def named_vector(vector):
+    """A vector addressed to :data:`VECTOR_SPACE`, or ``None`` when there is nothing to write.
+
+    ``insert``/``replace`` take ``vector=`` either positionally (legacy slot — the defect) or as
+    a mapping (the named space). This is the mapping, built in one place so a call site cannot
+    quietly pass the list form again.
+
+    ``None`` PASSES THROUGH rather than becoming ``{"default": None}``: writing no vector is a
+    legitimate state (the registrar does it when the embed gateway is down, deliberately, so a
+    registration is not blocked on the LLM stack) and it must stay distinguishable from writing
+    one. A row with no vector is equally unretrievable but needs a RE-EMBED, not a relocation —
+    the one case the backfill cannot repair.
+    """
+    if vector is None:
+        return None
+    return {VECTOR_SPACE: list(vector)}

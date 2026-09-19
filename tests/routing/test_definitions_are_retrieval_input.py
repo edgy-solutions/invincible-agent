@@ -134,6 +134,30 @@ KNOWN_SIBLING_BLEED = {
     # Listed as debt rather than cleaned, because touching idp definitions is on hold while
     # the extraction-layer read is in flight.
     ("idp_extension.ttl", "Table"),
+    # ── SOURCE LEDGER, 2026-09-19. DEBT, NOT A CLEAN, AND NOT MINE TO CLEAN. ────────────────
+    # Arrived on master with lane/32's `f9eea84`, caught by this guard on the merge pass that
+    # brought it. The bleeding phrase is the PROVENANCE sentence at the end of the definition:
+    # "First bound to mesh:StatefulSupportResponse (engine-lg's finance brief); the cost lot
+    # review is the intended second." — which names `Response` outside a hierarchy statement.
+    #
+    # It is genuinely useful documentation sitting in the one slot where documentation is
+    # RETRIEVAL INPUT, which is this guard's whole subject: the note about the thing becomes
+    # the text the search finds. Same shape as the three circular definitions above, where
+    # "nobody wrote a query into a definition on purpose."
+    #
+    # WHY IT IS LISTED RATHER THAN REWORDED, and this is a rule rather than a preference:
+    # `capability_admission.py` states that a class's comment IS the definition the router
+    # reads, "so it belongs to the lane that owns the archetype rather than to whoever notices
+    # the red first." I merged this class; I did not author it. Rewording it here would change
+    # routing semantics for an archetype lane 32 owns, silently, in a merge commit.
+    #
+    # IT MATTERS MORE THAN USUAL RIGHT NOW: the vector half of hybrid search is dead on
+    # OntologyClass and Predicate (74, 2026-09-19), so BM25 is doing ALL the routing and a
+    # stray class name in a definition is pure lexical signal for the wrong class. Clearing
+    # this is worth doing before the retrieval backfill, not after.
+    #
+    # OWED BY: ia-32/lane/32. Delete this entry in the change that rewords the definition.
+    ("mesh_system.ttl", "Source Ledger"),
 }
 
 

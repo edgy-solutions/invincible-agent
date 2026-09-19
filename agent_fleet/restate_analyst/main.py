@@ -2687,7 +2687,34 @@ except ImportError:
 # FAILS LOUD, NEVER DEGRADES. A missing definition means a workflow that can be TRIGGERED but not
 # RUN — the trigger succeeds, the runner raises at first use, and the failure surfaces far from its
 # cause. Refusing to boot is the honest alternative, and it surfaces at deploy time where the fix is.
-_EXPECTED_DEFINITIONS = ("grouped_review", "autonomous_review")
+# THE SAFETY PAIR IS DERIVED FROM THE TABLE, NOT LISTED BESIDE IT. `SafetyAcceptance` can be
+# asked to run whichever definition `safety_acceptance_selection` names, so a hand-written list
+# here would be a SAMPLE of the reachable set — and a tailoring that pointed a level at a third
+# definition would ship an unloadable route with this invariant still green. Reading the table's
+# own `then` values is the enumerate-before-asserting rule applied to the only register that
+# knows. Degrades to the static pair if the table cannot be composed, because refusing to boot
+# over an unreadable OVERLAY would take the whole engine down for a domain concern — and the
+# selector itself refuses loudly at first use, which is the failure that belongs to that gap.
+def _expected_definitions() -> tuple[str, ...]:
+    static = ("grouped_review", "autonomous_review")
+    try:
+        try:
+            import acceptance_selection  # type: ignore[no-redef]
+        except ImportError:
+            from agent_fleet.restate_analyst import acceptance_selection
+        targets = acceptance_selection.selectable_definitions()
+    except Exception as exc:  # noqa: BLE001 — see the comment above
+        logger.warning(
+            "could not derive the safety acceptance definitions from the decision table (%s: "
+            "%s) — the boot invariant covers only %s. SafetyAcceptance will refuse loudly at "
+            "first use if the table is still unreadable then.",
+            type(exc).__name__, exc, static,
+        )
+        return static
+    return static + targets
+
+
+_EXPECTED_DEFINITIONS = _expected_definitions()
 
 
 def _assert_definitions_registered() -> None:
@@ -3378,8 +3405,20 @@ except ImportError:
         review_starter,
     )
 
+# SafetyAcceptance — the `review_request` consumer (R-076). Reads the level off the draft's
+# request, asks `safety_acceptance_selection` which definition opens an acceptance at that level,
+# and runs THAT one. Registered unconditionally for the same reason AutonomousReview is:
+# reachability is not liveness, and a service that exists only once something routes to it is a
+# service nobody can probe before the first hazard needs it.
+try:
+    from safety_acceptance_workflow import safety_acceptance  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.safety_acceptance_workflow import (  # noqa: E402
+        safety_acceptance,
+    )
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, autonomous_review, review_starter]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, autonomous_review, review_starter, safety_acceptance]))
 
 
 # ---------------------------------------------------------------------------

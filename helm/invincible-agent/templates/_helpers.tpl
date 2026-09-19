@@ -110,10 +110,27 @@ wrong with it. Comments belong out here, not in there.
      through the other end of this chain. */}}
 {{- $floor := ternary .root.Chart.Version "latest" $ours -}}
 {{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag | default $floor -}}
-{{- if .registry -}}
-{{ .registry }}/{{ $repo }}:{{ $tag }}
+{{- $registry := .registry | default .root.Values.global.imageRegistry -}}
+{{/* DIGEST WINS OVER TAG, AND IT IS THE ONLY WAY TO PIN A CROSS-REPO IMAGE.
+     Added 2026-09-19. Before this, the chart could not express a digest at all — every path
+     ended in `repo:tag`, so a digest could only have been passed as a tag and would have
+     rendered `repo:@sha256:…`, which is not a reference.
+
+     WHY IT MATTERS HERE RATHER THAN EVERYWHERE: for an image this repo builds, the release
+     retags it to `Chart.Version` BY DIGEST, so the tag already names bytes. A CROSS-REPO image
+     is retagged by nobody — `$ours` is false, `$floor` is `latest`, and `latest` is a label
+     that moves on every push to that repository's default branch. The frontend is the live
+     case: the pod runs `:latest` with `pullPolicy: Always`, so the image it serves changes
+     under it at the next restart with no chart change and no commit anywhere in this repo.
+
+     A digest is a statement about bytes; a tag is a statement about a name. Where nothing
+     retags for us, only the first one is a pin. Scoped deliberately: set `digest` on the one
+     image that needs it, not globally — a fleet-wide digest map would have to be regenerated
+     on every build and would rot into the `latest` problem wearing a longer string. */}}
+{{- if .digest -}}
+{{ $registry }}/{{ $repo }}@{{ .digest }}
 {{- else -}}
-{{ .root.Values.global.imageRegistry }}/{{ $repo }}:{{ $tag }}
+{{ $registry }}/{{ $repo }}:{{ $tag }}
 {{- end -}}
 {{- end }}
 

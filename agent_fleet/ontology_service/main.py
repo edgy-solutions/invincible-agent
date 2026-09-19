@@ -2190,8 +2190,41 @@ async def _preempted_subject_is_unanswerable(resolved_uri: str, domains: list) -
 # POST /resolve
 # ---------------------------------------------------------------------------
 class EnumerateInstancesRequest(BaseModel):
-    """Ask the mesh to list the members of a class."""
+    """Ask the mesh to list the members of a class.
+
+    `bound_slots` IS SCOPING CONTEXT, NOT A FILTER THIS ENDPOINT APPLIES (ruled 2026-09-16,
+    `sessions/2026-09-17-dispatch-cost-provider-scoped-by.md`). A provider MAY narrow its list
+    using the slots already bound in the turn, and MUST report whether it did — which is the
+    whole of the `scoped_by` contract:
+
+        scoped_by: ["lot"]   the provider honoured the bound slots; this list is lot-scoped
+        scoped_by: []        it answered CLASS-WIDE, whatever it was given
+        (no response)        no enumeration happened — no provider, or a refusal
+
+    **NEVER A CLASS-WIDE LIST WEARING A SCOPED MENU.** `cost#RateTable` enumerates to 12 while
+    lot 3 accepts two, so a class-wide list offered as a lot-scoped menu makes ten of twelve
+    picks produce the very `not_in_model` refusal the menu exists to prevent. The ask builder
+    can only refuse that menu if this field travels, which is why it travels.
+
+    THE FIELD IS DEFAULTED, NOT REQUIRED, AND THAT IS THE COMPATIBILITY HALF. This is the
+    ROUTER's inbound shape and a v0.8 caller sends only `class_uri`; a required field would 422
+    every existing caller at the moment of the roll. `iagent_mesh.enumeration` is the shape
+    PROVIDERS answer, and a seal asserts the two agree rather than a comment claiming it.
+    """
     class_uri: str
+    # BUILTIN `dict`, NOT `typing.Dict`. This module carries
+    # `from __future__ import annotations`, so every annotation is a STRING that Pydantic v2
+    # resolves at model-build time — and `Dict` is not imported here, which would have been a
+    # 500 on the first request to this endpoint rather than an error at import.
+    # `test_no_typing_generics_in_pydantic_models` caught it; the file's own idiom is `list[str]`
+    # and `dict` matches it.
+    bound_slots: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Slots already bound in this turn, offered to providers as scoping context. "
+            "A provider that ignores them answers class-wide and says so via scoped_by."
+        ),
+    )
 
 
 @app.post("/enumerate_instances")
@@ -2256,7 +2289,15 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         try:
             async with httpx.AsyncClient(timeout=budget) as client:
                 resp = await client.post(
-                    prov["endpoint_url"], json={"class_uri": request.class_uri},
+                    prov["endpoint_url"],
+                    # THE CONTEXT TRAVELS, AND THE PROVIDER DECIDES. Passing bound slots is not
+                    # a demand: a provider that cannot scope answers class-wide and reports
+                    # `scoped_by: []`, which the ask builder reads as "do not draw a scoped
+                    # menu from this". Sent unconditionally — an empty dict is the same request
+                    # this endpoint made before the field existed, so a provider still on the
+                    # old shape sees no change in behaviour, only an extra key.
+                    json={"class_uri": request.class_uri,
+                          "bound_slots": dict(request.bound_slots or {})},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -2267,16 +2308,39 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
             unreachable.append(f"{prov['provider']}({type(exc).__name__})")
             continue
         outcome = str(body.get("outcome") or "")
+        # WHAT THE PROVIDER CLAIMS ABOUT ITS OWN ANSWER, read from the SAME body as the
+        # members it claims it about. ABSENT MEANS CLASS-WIDE, and the asymmetry is
+        # deliberate (iagent_mesh.enumeration): a provider that scoped and forgot the field
+        # is reported as class-wide, so its menu is REFUSED — it under-claims. The opposite
+        # default would dress a forgetful provider's class-wide list as a scoped menu, which
+        # is the exact defect this contract exists to prevent. A provider still on the old
+        # shape therefore behaves correctly here without being changed.
+        _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
             print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']}")
+                  f"({len(body['members'])}) from {prov['provider']} "
+                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
             return {"outcome": "members", "members": body["members"],
                     "count": int(body.get("count") or len(body["members"])),
-                    "provider": prov["provider"]}
+                    "provider": prov["provider"],
+                    # WHICH slots, not whether. A provider handed `{lot, category}` that
+                    # honours only `lot` produced a list scoped by one of two, and a boolean
+                    # would let the ask builder believe both were applied.
+                    "scoped_by": _scoped_by,
+                    # WHAT WAS OFFERED, beside what was honoured. The gap is only computable
+                    # from both, and the caller that built the menu is not always the one
+                    # reading this record.
+                    "bound_slots_offered": sorted(dict(request.bound_slots or {})),
+                    }
         if outcome == "too_many" and best_too_many is None:
             best_too_many = {"outcome": "too_many", "members": [],
                              "count": int(body.get("count") or 0),
-                             "provider": prov["provider"]}
+                             "provider": prov["provider"],
+                             # A too_many THAT WAS SCOPED IS A DIFFERENT FACT from one that
+                             # was not: "this lot has more than a menu's worth" versus "this
+                             # class does". Carried so the reason a user sees is the true one.
+                             "scoped_by": _scoped_by,
+                             "bound_slots_offered": sorted(dict(request.bound_slots or {}))}
         elif outcome == "unsupported":
             declined.append(prov["provider"])
         elif outcome in ("empty", "members"):

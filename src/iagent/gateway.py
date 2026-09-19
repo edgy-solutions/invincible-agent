@@ -3103,6 +3103,12 @@ def _stage(
 from iagent_pure.primary_selection import pick_primary  # noqa: E402
 from iagent_pure.slot_acceptance import accept_slots  # noqa: E402
 
+# THE R-076 CONSUMER's artifact half. Imported as a MODULE, not as three names, so the call site
+# reads `acceptance_request.review_request_of(...)` and a reader can see that the gateway reads
+# the request and never chooses the definition — the choice lives behind the workflow boundary,
+# in `agent_fleet/restate_analyst/acceptance_selection.py`, where a caller cannot reach it.
+from iagent_pure import acceptance_request  # noqa: E402
+
 # THE DIRECT PATH (2026-09-08). A pre-resolved pick executes here rather than in a Dagster
 # run — see `direct_dispatch` for what it keeps from the run and why none of it is optional.
 from . import direct_dispatch  # noqa: E402
@@ -5971,6 +5977,89 @@ async def _stream_direct_outcome(
 
     # ── THE RENDER. Engine F, with the SAME request body the run builds. ────────────────
     _expert = outcome.engine_response or {}
+
+    # ── THE `review_request` CONSUMER'S CALL SITE (R-076) ───────────────────────────────
+    #
+    # `engine-safety` has emitted `review_request` on every drafted risk assessment since
+    # 2026-09-12, with a comment naming THIS FILE as its reader, and nothing ever read it. A
+    # producer that did the right thing and documented it, into silence — and the documentation
+    # is what made it expensive, because "a consumer reads one field for…" stops the next person
+    # looking.
+    #
+    # IT SITS HERE, BEFORE THE RENDER, AND THE POSITION IS THE POINT. Measured 2026-09-19 on the
+    # live fleet: the engine's own `/measure/draft_risk_assessment` response for HAZ-1003 carries
+    # the block in full, and the RENDERED turn carries none of it — Engine F renders a card and
+    # the block does not survive into it. So a consumer placed downstream of the render would
+    # find nothing, forever, and would look correct doing it. (That surface difference is also
+    # why the walk census scores this row `drawn` while the engine asks for a task properly: the
+    # census reads the rendered turn, which never carried the request.)
+    #
+    # AND IT DOES NOT BLOCK THE TURN. The acceptance suspends on a human promise for as long as
+    # a human takes; calling the workflow synchronously would hold this request open for days.
+    # `/send` is one-way — Restate journals it and the turn carries on rendering the draft.
+    #
+    # A FAILURE HERE DOES NOT FAIL THE TURN, AND IT IS NOT SILENT EITHER. The hazard WAS drafted
+    # and the user must see it; but "the draft rendered" and "the acceptance was opened" are
+    # different facts, and merging them is how a safety engineer concludes a review is underway
+    # when nothing was asked of anyone. The cause lands on the artifact, where a reader asks why.
+    if _expert:
+        _rr = acceptance_request.review_request_of(_expert)
+        if _rr:
+            try:
+                _trigger = acceptance_request.acceptance_trigger(_rr)
+                _wf_key = acceptance_request.acceptance_workflow_id(
+                    _trigger["hazard_id"], _trigger["level_slug"],
+                )
+                async with httpx.AsyncClient(timeout=30.0) as _client:
+                    _ar = await _client.post(
+                        f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
+                        f"{_restate_key(_wf_key)}/run/send",
+                        json=_trigger,
+                        # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked
+                        # question must attach to the acceptance already open rather than
+                        # register a second task against the same authority — and the key
+                        # carries the LEVEL because a redraft that moves the hazard to another
+                        # level is a different acceptance by a different authority, which
+                        # keying on the hazard alone would swallow.
+                        headers={"idempotency-key": _wf_key},
+                    )
+                _ar.raise_for_status()
+                logger.info(
+                    "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s",
+                    _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"],
+                )
+            except Exception as exc:  # noqa: BLE001 — the draft still renders; see above
+                _body = ""
+                _resp = getattr(exc, "response", None)
+                if _resp is not None:
+                    try:
+                        _body = _resp.text[:800]
+                    except Exception:  # noqa: BLE001
+                        _body = "<unreadable>"
+                logger.error(
+                    "safety acceptance NOT opened for %s (%s: %s) body=%s",
+                    _rr.get("subject_ref"), type(exc).__name__, exc, _body,
+                )
+                bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+                bundle["resolved_intent"]["acceptance_not_opened"] = {
+                    "exception": type(exc).__name__,
+                    "message": str(exc)[:600],
+                    # WHAT WAS ASKED FOR, beside what came back — a refusal naming a field is
+                    # only actionable against the request that omitted it.
+                    "kind": _rr.get("kind"),
+                    "audience": _rr.get("audience"),
+                    "subject_ref": _rr.get("subject_ref"),
+                    "body": _body,
+                    "where": "_dispatch_answer_artifact/review_request_consumer",
+                }
+                yield _perror(
+                    "The risk assessment was drafted, but its acceptance review could not be "
+                    "opened — no task has been created for the accepting authority.",
+                    kind=direct_dispatch.STAGE_CALLING,
+                    retryable=True,
+                    cause="acceptance_not_opened",
+                )
+
     _predicate = outcome.predicate or {}
     _results = [{
         "persona": _predicate.get("owner_persona") or user_persona,
