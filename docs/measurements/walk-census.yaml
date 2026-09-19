@@ -20,8 +20,12 @@
 # sheet grows a structured expectation block, the field moves there and this file loses it.
 #
 # ── A ROW THAT CANNOT DRAW YET IS RED, NOT ABSENT ────────────────────────────────────────────
-# Three of the four sheets do not exist as files yet (safety, finance, docs — owned tonight by
-# 74, 91 and 5f). Their rows are here with `blocked: <reason>` and they run RED with that reason
+# UPDATED 2026-09-19: safety's sheet has LANDED, so two of the four are still absent (finance and
+# docs — 91 and 5f). `blocked` means THE SHEET DOES NOT EXIST and nothing else; the seal asserts
+# it, and a row impeded some other way runs RED with its live cause rather than borrowing this
+# field. Overloading it would leave `blocked` meaning two things and the seal unable to tell them
+# apart.
+# Their rows are here with `blocked: <reason>` and they run RED with that reason
 # printed. They are NOT excluded and NOT skipped: a skip is a test that did not run, its reason
 # is a claim, and the tell is a skip count that never moves. A red with a named reason is state
 # the morning report can read.
@@ -150,10 +154,63 @@ rows:
       table: human_tasks
       kind: risk_acceptance_medium
       assignee: bob
-    blocked: >-
-      awaiting docs/measurements/safety-walk-sheet.md from 74 — the three phrasings, their
-      personas and their expected tasks. Until the sheet exists this row's question is RETYPED
-      rather than derived, which is the one thing this census refuses to treat as verified.
+    # UNBLOCKED 2026-09-19 — docs/measurements/safety-walk-sheet.md exists and this question is
+    # its prompt 0, DERIVED rather than retyped. The two rows below are its prompts 1 and 2: a
+    # sheet prompt with no census row is as red as a drifted one, so the sheet could not land
+    # carrying three questions against a single row.
+
+  # PROMPT 1. A DIFFERENT ANSWER SHAPE FROM THE ROW ABOVE, which is why both are here rather than
+  # one standing for the engine: this one DRAWS and the risk assessment does not. A census that
+  # only ever asserted `task_created` would stay green on an engine whose cards had all stopped
+  # rendering.
+  - id: safety-unattended-hazards
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 1
+    question: what hazards are unattended
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: find_orphaned_hazards
+    expect_archetype: CONTRIBUTION_RANKING
+    # THREE, NOT SIX. The fixture holds six hazards; three are orphaned, one is not_assessed and
+    # reported SEPARATELY, two are properly mitigated. A floor of 3 asserts the not-assessed
+    # hazard was not folded in — the conflation this verb exists to refuse.
+    min_rows: 3
+    dispositions: [drawn]
+
+  # PROMPT 2. A DESIGNED REFUSAL, accepting `slot_required` ONLY and never `drawn`. A card here
+  # would mean the engine invented a work order instead of asking which one, so the narrow list
+  # IS the assertion — accepting both would leave this row unable to tell the behaviour from its
+  # opposite.
+  - id: safety-deferral-risk-asks-for-the-work-order
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 2
+    question: risk of deferring this work order
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: assess_deferral_risk
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    # ⚠ THIS ROW WILL RUN RED UNTIL THE eo LANE LANDS iof_mro.ttl IN THE PRIME MANIFEST, and it
+    # carries NO `blocked:` — which is a correction, not an omission.
+    #
+    # I first wrote one here and the seal refused it, correctly: `blocked` in this census means
+    # THE SHEET DOES NOT EXIST, and the seal asserts exactly that. The sheet exists, so the field
+    # does not apply, and overloading it to mean "impeded for some other reason" would have made
+    # `blocked` stop meaning one thing — with the seal that checks it unable to tell the two
+    # senses apart. A field that means two things is a field that asserts neither.
+    #
+    # THE CAUSE, so a walker reading a red here does not re-diagnose it: Contract D refused this
+    # verb's registration 422, `missing: mro:MaintenanceWorkOrder`, because
+    # agent_fleet/ontology_service/iof_mro.ttl is ON DISK and NOT IN THE PRIME MANIFEST (`iof_mro`
+    # appears zero times in setup/prime_databases.py). Naming the IOF class in the engine was
+    # necessary and NOT sufficient. Not a sheet gap and not a safety defect.
+    #
+    # Running red with the live cause is better than blocked with a written one anyway: the red
+    # moves on its own when the manifest row lands, where a prose reason would need somebody to
+    # remember to delete it.
 
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   - id: finance-np-meridian-brief
