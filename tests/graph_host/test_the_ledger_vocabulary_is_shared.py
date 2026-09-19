@@ -42,9 +42,13 @@ def test_BOTH_graphs_use_the_SAME_vocabulary_OBJECT():
     """IDENTITY, NOT EQUALITY. Two tuples with the same contents pass an equality check and are
     still two vocabularies — they agree until someone edits one, which is the exact failure
     this extraction exists to prevent and the one an `==` here would not see."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
     from agent_fleet.graph_host.graphs import fin_program_brief as fin
 
+    # AGAINST THE SDK's PACKAGE ROOT. This is what the move makes assertable: the host's
+    # vocabulary is not an equal copy of the contract, it IS the contract object — and asserting
+    # it at the ROOT makes this repo the first local witness to a surface ca's export seal was
+    # guarding with none.
     assert fin.ROW_DISPOSITIONS is shared.ROW_DISPOSITIONS
     assert fin.HOLE_DISPOSITIONS is shared.HOLE_DISPOSITIONS
     assert fin.holes_from is shared.holes_from
@@ -55,7 +59,7 @@ def test_the_partition_holds_in_the_SHARED_module():
     """Every declared term is a hole or is named as not one — no overlap, no remainder. A new
     term FAILS WHILE UNDECIDED rather than defaulting to not-a-hole and silently shrinking the
     named-hole list."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     holes, non = set(shared.HOLE_DISPOSITIONS), set(shared.NON_HOLE_DISPOSITIONS)
     declared = set(shared.ROW_DISPOSITIONS)
@@ -75,7 +79,7 @@ def test_a_FAIL_graph_can_reach_NO_hole_disposition():
     """Read from the ratified row, not restated. A `fail` graph raises on a refused inner call,
     so it never RETURNS a row for one — asserting a hole term against it would be asserting an
     outcome its own contract forbids."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     assert _refusal("cost_lot_costing_review") == "fail", "this seal's subject changed clause"
     reachable = shared.reachable_for(_refusal("cost_lot_costing_review"))
@@ -88,7 +92,7 @@ def test_a_NAMED_HOLE_graph_CAN_reach_them():
     """THE CONTROL. Without it, "a fail graph reaches no holes" is satisfied by a rule that
     returns the non-hole set for everyone — which would make the finance brief's named holes
     unassertable while reading as correct."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     assert _refusal("fin_program_brief") == "named-hole", "this control changed clause"
     reachable = shared.reachable_for(_refusal("fin_program_brief"))
@@ -137,7 +141,7 @@ def test_the_cost_review_reaches_ONLY_what_its_clause_allows(monkeypatch):
     """The two halves joined: what the graph EMITS against what its declared clause ALLOWS. A
     graph reaching a term its contract forbids is the more interesting direction, and no
     per-side check can see it."""
-    from agent_fleet.graph_host import rows as shared
+    import iagent_mesh as shared
 
     allowed = shared.reachable_for(_refusal("cost_lot_costing_review"))
     seen = {
