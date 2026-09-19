@@ -261,6 +261,8 @@ A contribution that passes these does not need the maintainer to look at it; one
 | contract validates against the row | a card reading a field the row does not declare |
 | **no passthrough tuple survives** | an archetype added the old way — the row is the only door, asserted rather than assumed |
 | **branches vs. attributes, per card** | a card with decisions the mechanism cannot see — the cheap check, before anyone reads the code |
+| **an interaction test, for an interaction-only attribute** | an absence excluded from the fixture seal and then covered by nothing |
+| **no ratified attribute survives becoming derivable** | two declarations of one fact, where the flag keeps passing after the string is edited |
 | **the fixture discriminates** | a fixture that cannot fail — the decorative-seal problem, and the reason "at least one" is not enough on its own |
 | the mirror holds both directions | R-076: a producer doing the right thing with no consumer written |
 | declared-absence assertable | a card that draws over a gap without naming it |
@@ -394,6 +396,73 @@ the population.*
 **Step 1 cannot honestly begin with fixtures**, because a fixture flips a declared absence and
 `ContributionRanking` cannot yet say what one of its sharpest decisions was. The derivation above
 comes first, then the declarations, then the fixtures that flip them.
+
+## AMENDMENT 2026-09-18 (step 1 complete) — the fixture seal's boundary, and a ratified attribute that had to go
+
+**Step 1 landed at cortex-ui `7c17470`, 1564 passed.** All three cards derived, declared and
+fixtured — and it produced two rulings and two measurements, each of which came out of doing the
+work rather than out of reading the ADR.
+
+### 1. RULED: an attribute only an INTERACTION produces cannot be flipped by a payload fixture
+
+§2 requires each fixture to flip a declared absence. **Some absences no payload can reach.**
+
+The worked case is `data-pick-refused` on `AskCard`, and the seal states the reason in its own
+exclusion table rather than in a report — quoted here because it is code:
+
+> `"data-pick-refused": "the server refused a pick — a reader ACTION outcome, not a payload
+> property. It cannot be flipped by a fixture because no payload produces it; only an interaction
+> does."`
+
+**So such an attribute is excluded from the fixture seal BY NAME with that reason, and it needs an
+INTERACTION test.** §6 carries both halves.
+
+**Without the sentence the next contributor discovers on their own that "each fixture flips at
+least one" cannot reach part of their card** — and at that moment an honest exclusion reads as an
+evasion. The exclusion is right; the ADR owed it a home.
+
+### 2. RULED: a ratified attribute that turns out to be DERIVABLE is one to REMOVE
+
+`data-no-menu-unexplained` was ratified — a boolean marking one refusal. Repairing the other two
+refusals made it **derivable from `data-ask-refused`**, which carries the reason verbatim. **It is
+gone**, not kept beside its source. (Verified absent at `7c17470`.)
+
+> **Two declarations of one fact drift, and the flag is the one that keeps passing after someone
+> edits the string.**
+
+**And the rule is about ratified things generally, which is why it is ruled rather than inferred: a
+ratification is a claim at a MOMENT, and a later change can turn it into a second copy.** Keeping a
+ratified attribute because it was ratified is how a redundant declaration acquires authority — and
+the redundant one outlives its source precisely because nothing reads it.
+
+### 3. MEASURED — the ratio's third confirmation, on the healthiest card
+
+§2's gate found **`AskCard` UNPACKAGEABLE**, and it is the card with the **best ratio of the
+three**: 13 branches against 14 attributes. Of its three refusal reasons **only one was attributed;
+the other two differed from each other and from the first ONLY IN ENGLISH.** Three producer
+mistakes, three repairs, **one element a test could not tell apart.**
+
+> **So the ratio ordered the work correctly and closed nothing — for the third time, on the card
+> that looked healthiest.** It is a TRIAGE instrument, not a sufficiency one, and §6 should be read
+> that way: a good ratio says where to look last, never that there is nothing to find.
+
+### 4. MEASURED — the seal's four properties, each earned by a failure rather than designed
+
+For the contributor runbook (§8 step 5), in the words of the lane that paid for them:
+
+    declares exactly what it names     present where named, ABSENT where not
+    flips in both directions          an absence only ever seen present is untested
+    leaves the card quiet AND DRAWN    "nothing was missing" and "nothing was drawn" are
+                                      identical from outside; the refusal branch forced this
+    matches the card's SOURCE          comments stripped first — the seal matched its own prose
+                                      about another card's attribute before it matched any code
+
+**The third and fourth were both found by the seal failing on its AUTHOR'S OWN FIXTURES before it
+said anything about a component**, which is the direction §6 says matters, arriving unprompted.
+
+The fourth is also the instrument-and-subject shape inside a seal: a check matching `data-` patterns
+in a source file matched **its own comment about another card's attribute**. `stripComments` before
+the match is the fix, and it is in the code at `7c17470`.
 
 ## Non-goals
 
