@@ -36,6 +36,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from ._engine_extra import requires_rdflib
+
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -237,6 +239,7 @@ def test_the_builder_check_can_say_no():
     assert _DATA_FILES, "the data-file population is empty; this seal quantifies over nothing"
 
 
+@requires_rdflib
 def test_the_matrix_RESOLVES_in_the_flat_layout_not_merely_imports(tmp_path):
     """The read itself, in the image's shape — the assertion whose absence let this ship.
 
@@ -264,6 +267,7 @@ def test_the_matrix_RESOLVES_in_the_flat_layout_not_merely_imports(tmp_path):
     assert "RESOLVED" in r.stdout
 
 
+@requires_rdflib
 def test_the_resolve_check_fails_without_the_data_file(tmp_path):
     """THE MUTATION, RUN. Remove the TTL from the image copy and the resolve must fail — otherwise
     the test above is passing for some reason other than the file being present, and would stay
@@ -282,3 +286,14 @@ def test_the_resolve_check_fails_without_the_data_file(tmp_path):
         [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(app), timeout=120
     )
     assert r.returncode != 0, "the matrix resolved with no TTL present — the file is not the source"
+    # ⛔ AND THE FAILURE MUST BE ABOUT THE FILE. A bare `returncode != 0` passes on ANY crash — a
+    # missing `rdflib`, a syntax error, an import cycle — so the mutation would look caught while
+    # proving nothing about the TTL. NOT HYPOTHETICAL: the sibling test above failed for exactly
+    # that reason minutes after being written, when a venv sync removed `rdflib`, and this weaker
+    # assertion would have gone GREEN on the same run — a mutation passing for the wrong reason
+    # in the same file where its twin failed for the right one. Naming the file is what makes the
+    # red mean what it says.
+    assert "safety_risk_matrix.ttl" in r.stderr or "FileNotFoundError" in r.stderr, (
+        "the resolve failed for a reason OTHER than the missing matrix — this mutation is not "
+        f"testing what it claims:\n{r.stderr[-600:]}"
+    )
