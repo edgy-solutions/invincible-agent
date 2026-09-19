@@ -1,0 +1,193 @@
+# THE WALK CENSUS — every sheet question, fired after every roll, with a sha.
+#
+# WHY THIS EXISTS, IN ONE SENTENCE: every regression this week was found by a human at a
+# browser a day late. A live run over every sheet question, after each roll, turns "did lot 4
+# break" from a question somebody has to think of into a line in the census with a sha on it.
+#
+# ── WHAT IS DERIVED AND WHAT IS DECLARED ─────────────────────────────────────────────────────
+# The QUESTION is derived. Each row names a `sheet` and a `sheet_index`, and the question text
+# below is checked against the sheet's own prompt at that index — BOTH DIRECTIONS, so a prompt
+# added to a sheet with no row here is as red as a row whose text has drifted. Reword a sheet
+# and the census moves with it or fails; it cannot silently keep asking text nobody asks.
+#
+# The text is stored rather than only indexed because the runner has to send something, and an
+# index alone would make a census run depend on the parser at fire time. Storing it makes this
+# file a MIRROR of the sheet, and two mirrors of one declaration is a shape that has bitten this
+# tree before — a row present in one and absent from the other is invisible to every per-side
+# check. That is precisely why the seal quantifies in both directions rather than one.
+#
+# The EXPECTATIONS are declared, because no sheet expresses them machine-readably yet. When a
+# sheet grows a structured expectation block, the field moves there and this file loses it.
+#
+# ── A ROW THAT CANNOT DRAW YET IS RED, NOT ABSENT ────────────────────────────────────────────
+# Three of the four sheets do not exist as files yet (safety, finance, docs — owned tonight by
+# 74, 91 and 5f). Their rows are here with `blocked: <reason>` and they run RED with that reason
+# printed. They are NOT excluded and NOT skipped: a skip is a test that did not run, its reason
+# is a claim, and the tell is a skip count that never moves. A red with a named reason is state
+# the morning report can read.
+#
+# ── DISPOSITIONS ─────────────────────────────────────────────────────────────────────────────
+#   drawn          a card with a payload meeting `min_rows`
+#   slot_required  the system asked for a mandatory slot instead of answering — a PASS where the
+#                  sheet says so, because refusing to guess a required input is the behaviour
+#   task_created   the answer is a row in `human_tasks`, not a 200 (see HAZ-1003)
+# `dispositions` lists what this row ACCEPTS. A row accepting everything asserts nothing, so the
+# seal refuses an empty list and refuses a row that accepts every value in the vocabulary.
+
+version: 1
+
+# WHICH FRONTEND ASKS. Part of each question's identity, not transport detail.
+#
+# MEASURED 2026-09-19, after this census spent a run reporting a HEALTHY fleet as broken. Same
+# question, same persona, same domains, differing only here:
+#
+#     (absent)            -> KNOWLEDGE_DOCUMENT   presentation_source=refused
+#     cortex              -> KNOWLEDGE_DOCUMENT   presentation_source=refused
+#     cortex-ui-desktop   -> CONTRIBUTION_RANKING presentation_source=registered
+#
+# The refusal is `live_view_requires_registration`, and it is CORRECT: an archetype decision is
+# only valid against the render menu of the client that will render it, so a caller that
+# registered no menu gets the labelled default and no live view. A walk sheet describes what a
+# person sees IN THE BROWSER — asking as a script and then scoring the archetype is not walking
+# the sheet, it is walking a different question.
+frontend_id: cortex-ui-desktop
+
+rows:
+  # ── COST ───────────────────────────────────────────────────────────────────────────────────
+  # The one sheet that exists as a file, and the one whose questions are already parsed by
+  # tests/cost/test_the_walk_sheet_resolves_to_cost_lots.py. Same sheet, same regex, same five.
+  - id: cost-supplier-concentration-lot-4
+    sheet: docs/measurements/cost-card-walk-sheet.md
+    sheet_index: 0
+    question: how concentrated is purchasing on lot 4
+    user: alice
+    persona: COST_ANALYST
+    domains: [PRODUCTION_COST]
+    expect_verb: cost_supplier_concentration
+    expect_archetype: CONTRIBUTION_RANKING
+    min_rows: 4
+    dispositions: [drawn]
+    # THE REGRESSION THIS CENSUS WAS BUILT AROUND. Three defects fired at once here: a bare
+    # digit manufactured as a lookup term, the suffix rule scoring any short suffix at 0.9, and
+    # acting domains never forwarded so demotion never ran. All three are on master. The code
+    # bisect was correctly NEGATIVE — the graph gained twenty part numbers containing a 4, so a
+    # latent defect became live on data arrival with no commit to blame.
+
+  - id: cost-rate-comparison-lot-3-refusal
+    sheet: docs/measurements/cost-card-walk-sheet.md
+    sheet_index: 1
+    question: did the rates move against the estimate on lot 3
+    user: alice
+    persona: COST_ANALYST
+    domains: [PRODUCTION_COST]
+    expect_verb: cost_rate_comparison
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    # TWO OPTION CHIPS AND NO TEXT BOX — the sheet's second-walk expectation, set by cortex-ui-60
+    # on 2026-09-12. An empty menu here is the defect the OPTION_SOURCES re-key fixed:
+    # `(verb, slot)` keying meant two verbs declaring the same mandatory rate_vintage carried
+    # nothing between them. Asserted because "it asked" and "it asked answerably" are different
+    # facts, and only the second is a usable refusal.
+    expect_options: 2
+    # THE REFUSAL IS THE PASS. `rate_vintage` is a required slot and `_require_vintage` raises
+    # unconditionally when it is absent; the phrasing names no vintage and there is nowhere in
+    # one question to put one. Scoring this red would fail the engine for doing the single thing
+    # it was built to do. The sheet also sets the render expectation: two option chips and NO
+    # text box, and no UI change between walks — "it looks the same as last time" is the pass.
+
+  - id: cost-rate-comparison-lot-3-vintage
+    sheet: docs/measurements/cost-card-walk-sheet.md
+    sheet_index: 2
+    question: did the rates move against the estimate on lot 3, using the 2021-02-01 vintage
+    user: alice
+    persona: COST_ANALYST
+    domains: [PRODUCTION_COST]
+    expect_verb: cost_rate_comparison
+    expect_archetype: DELTA_SET
+    min_rows: 1
+    dispositions: [drawn]
+
+  - id: cost-labor-split-lot-4
+    sheet: docs/measurements/cost-card-walk-sheet.md
+    sheet_index: 3
+    question: what is the labor split on lot 4
+    user: alice
+    persona: COST_ANALYST
+    domains: [PRODUCTION_COST]
+    expect_verb: cost_labor_composition
+    expect_archetype: CONTRIBUTION_RANKING
+    min_rows: 3
+    dispositions: [drawn]
+
+  - id: cost-rates-fy2021
+    sheet: docs/measurements/cost-card-walk-sheet.md
+    sheet_index: 4
+    question: what rates are we using in FY2021
+    user: alice
+    persona: COST_ANALYST
+    domains: [PRODUCTION_COST]
+    expect_verb: cost_rate_assumptions
+    expect_archetype: MULTI_SERIES
+    min_rows: 2
+    dispositions: [drawn]
+    # TWO vintages plotted, not one point. The sheet calls the single-point outcome a trap, and
+    # it is the reason min_rows is 2 rather than 1.
+
+  # ── SAFETY (74) ────────────────────────────────────────────────────────────────────────────
+  - id: safety-haz-1003-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 0
+    question: draft a risk assessment for HAZ-1003
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: null
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_created]
+    expect_task:
+      table: human_tasks
+      kind: risk_acceptance_medium
+      assignee: bob
+    blocked: >-
+      awaiting docs/measurements/safety-walk-sheet.md from 74 — the three phrasings, their
+      personas and their expected tasks. Until the sheet exists this row's question is RETYPED
+      rather than derived, which is the one thing this census refuses to treat as verified.
+
+  # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
+  - id: finance-np-meridian-brief
+    sheet: docs/measurements/finance-walk-sheet.md
+    sheet_index: 0
+    question: give me the program brief for NP-MERIDIAN
+    user: alice
+    persona: PROGRAM_FINANCE_ANALYST
+    domains: [PROGRAM_FINANCE]
+    expect_verb: fin_program_brief
+    expect_archetype: null
+    min_rows: 3
+    dispositions: [drawn]
+    blocked: >-
+      awaiting docs/measurements/finance-walk-sheet.md from 91. The 422 this row used to throw
+      is understood and fixed — fin_program_brief declares checkpointer: true and so needs a
+      thread_id, which the supervisor now threads from run_id. A 422 here again is a NEW cause,
+      not that one.
+
+  # ── DOCS (5f) ──────────────────────────────────────────────────────────────────────────────
+  - id: docs-how-do-i-add-an-engine
+    sheet: docs/measurements/docs-walk-sheet.md
+    sheet_index: 0
+    question: how do I add an engine
+    user: agent-user
+    persona: DATA_ENGINEER
+    domains: [DOCS]
+    expect_verb: mesh_explain
+    expect_archetype: KNOWLEDGE_DOCUMENT
+    min_rows: 1
+    dispositions: [drawn]
+    blocked: >-
+      awaiting docs/measurements/docs-walk-sheet.md from 5f, AND awaiting mesh:explain's
+      referent widening to owl:Thing. This walk's cause was diagnosed wrong twice: it is not a
+      missing DocPage row (the row exists under MESH) and not a docs# ingest gap (pages are Jena
+      individuals by design). It is recall — the referent is too narrow for the page to enter
+      the pool at all.

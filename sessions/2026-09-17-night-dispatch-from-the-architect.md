@@ -1,5 +1,8 @@
 # Night dispatch — overnight 2026-09-17/18
 
+to: ia-01/lane/01
+read-by: ia-01/lane/01 2026-09-19
+
 From the architect, relayed by Lane 1 (`invincible-agent-65`, `ia-01`/`lane/01`).
 
 **Standing grants as before: merges on the gate, one roll with hooks near morning, nothing that

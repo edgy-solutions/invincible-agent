@@ -1,4 +1,12 @@
-"""`/analyze` answers every call — a refusal, a result, or a named 500. Never nothing.
+"""`/measure/{fn}` answers every call — a result or a NAMED, READABLE refusal. Never nothing, and
+never a 5xx.
+
+⛔ THE TITLE USED TO SAY "a refusal, a result, or a named 500", AND THE LAST THIRD WAS THE DEFECT.
+A 5xx is discarded by the supervisor unread, so the named body rode a status code that threw it
+away: the engine wrote `FileNotFoundError: /app/safety_risk_matrix.ttl` and the walk reported a
+failure with no reason. **A diagnosis carried on a status code the caller drops is the same as no
+diagnosis** — which is the exact defect this file was written to end, arriving one field along
+from where it was fixed.
 
 **THE DEFECT, MEASURED 2026-09-14 AND THEN RE-MEASURED AS A FIX.** `analyze` ended in
 `fn(**req.params)` with the params splatted unfiltered, so ANY key the caller added that the
@@ -135,7 +143,20 @@ def test_a_measure_that_RAISES_still_returns_a_named_body(client, monkeypatch):
     # guaranteed to be the same module object the handler holds.
     monkeypatch.setattr(main.measures, "find_orphaned_hazards", boom)
     r = _post(client, "find_orphaned_hazards", {"scope": "fleet"})
-    assert r.status_code == 500
+    # ⛔ THIS ASSERTED 500 AND THE ASSERTION WAS THE DEFECT. The body was right and the status
+    # code threw it away: the supervisor discards a 5xx UNREAD, so the engine wrote
+    # `FileNotFoundError: /app/safety_risk_matrix.ttl` into a response nobody opened and the walk
+    # reported a failure with no reason. A refusal is never a 5xx — 200 with `refused: true`, the
+    # way engine-cost's `_refusal` answers, because the TRANSPORT succeeded and the outcome
+    # belongs in the body where a composing verb reads it.
+    assert r.status_code == 200, (
+        "a typed refusal must not ride a 5xx — the caller drops it unread, which is the same as "
+        "having no diagnosis at all"
+    )
+    assert r.json()["outcome"] == "engine_fault", (
+        "the refusal carries no DISCRIMINANT — a consumer would have to parse the reason string "
+        "to tell an engine fault from an unanswerable question"
+    )
     body = r.json()
     assert "RuntimeError" in body["reason"] and "matrix file went missing" in body["reason"]
     assert body["fn"] == "find_orphaned_hazards"
@@ -167,3 +188,51 @@ def test_an_unknown_fn_is_still_a_refusal_with_the_known_set(client):
     body = r.json()
     assert body["refused"] is True and "unknown verb" in body["reason"]
     assert "find_orphaned_hazards" in body["known"]
+
+
+def test_NO_RESPONSE_FROM_THIS_ENGINE_IS_A_5xx(client):
+    """**THE CLASS, not the one path that was wrong.** A refusal on a 5xx is discarded unread, so
+    every honest body this engine writes is worthless if it rides one.
+
+    Derived from the verb catalogue and driven down each refusal path rather than asserted about
+    the single case that failed: an unknown verb, an unexpected key, a missing mandatory slot, a
+    raising measure, and a successful call. The status code is the HTTP exchange; the body is the
+    verb's answer. The exchange succeeded in all five.
+    """
+    from agent_fleet.safety_agent import main
+
+    probes = [
+        ("not_a_verb", {}),                                   # unknown verb
+        ("find_orphaned_hazards", {"definitely_not_a_slot": 1}),  # unexpected key
+        ("assess_deferral_risk", {}),                          # missing mandatory slot
+        ("find_orphaned_hazards", {}),                         # the happy path
+    ]
+    for fn, params in probes:
+        r = _post(client, fn, params)
+        assert r.status_code < 500, (
+            f"{fn}{params} answered {r.status_code} — a 5xx is dropped by the supervisor before "
+            f"anyone reads this body: {r.text[:200]}"
+        )
+    assert len(main.VERBS) >= 3, "the catalogue shrank — this seal quantifies over less than it did"
+
+
+def test_a_raising_measure_is_ALSO_not_a_5xx(client, monkeypatch):
+    """The path that actually shipped wrong, driven separately so a regression names it.
+
+    The stub carries the REAL signature — `slots_for` derives a verb's slots from the live
+    signature, so a `*args, **kwargs` double silently redefines the verb it stands in for.
+    """
+    from typing import Any, Optional
+
+    from agent_fleet.safety_agent import main
+
+    def boom(state: Any = None, *, scope: str = "fleet", scope_value: Optional[str] = None):
+        raise FileNotFoundError("/app/safety_risk_matrix.ttl")
+
+    monkeypatch.setattr(main.measures, "find_orphaned_hazards", boom)
+    r = _post(client, "find_orphaned_hazards", {"scope": "fleet"})
+    assert r.status_code == 200, f"the cluster's own failure still rides a 5xx: {r.status_code}"
+    body = r.json()
+    assert body["refused"] is True and body["outcome"] == "engine_fault"
+    # THE CAUSE SURVIVES THE STATUS CHANGE — moving the code must not cost the diagnosis.
+    assert "FileNotFoundError" in body["reason"] and "safety_risk_matrix.ttl" in body["reason"]

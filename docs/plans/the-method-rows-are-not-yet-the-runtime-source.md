@@ -21,7 +21,7 @@ three values stop being a `Literal` in a signature and become the rows that exis
 
 ## Why the switch was not made in the same commit
 
-`policy/measures/` reaches a container through a per-file `COPY` in the `Dockerfile.agent`
+`policy/measures/` reaches a container through a per-file `COPY` in `.github/docker/Dockerfile.agent`
 heredoc inside `.github/workflows/build-containers.yml`. That file's own comment says the
 per-file COPY *"is itself the fragile part: the next shared-policy file will need"* it — and by
 its own count this is the **fourth** time that sentence has come true.

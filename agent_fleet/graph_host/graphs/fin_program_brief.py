@@ -76,18 +76,38 @@ class BriefState(TypedDict, total=False):
 # what stays here is the graph. Re-exported under the old names so every existing seal and any
 # route-C reader keeps its import — a rename and a move in one change makes the diff about the
 # rename.
-from agent_fleet.graph_host.rows import (  # noqa: E402
-    HOLE_DISPOSITIONS,
-    NON_HOLE_DISPOSITIONS,
-    ROW_DISPOSITIONS,
-    VERDICT_KEYS,
-    disposition_for as _disposition_for,
-    fetch_row as _fetch_row,
-    has_content as _has_content,
-    holes_from,
-    row as _row,
-    verdict_of as _verdict_of,
-)
+#
+# FLAT FIRST — see the sibling graph. The image does `COPY agent_fleet/graph_host/ /app/`, so
+# this module is `/app/graphs/...` and the vocabulary is `/app/rows.py`, importable ONLY as
+# `rows`. The packaged-only spelling crash-looped engine-lg on the 2026-09-19 roll; both graphs
+# carried it, and fixing only the one in the traceback would have left this one to fail the
+# moment a brief was asked for. The traceback names a SAMPLE, and the class had two members.
+try:
+    from rows import (  # type: ignore[import-not-found]  # noqa: E402
+        HOLE_DISPOSITIONS,
+        NON_HOLE_DISPOSITIONS,
+        ROW_DISPOSITIONS,
+        VERDICT_KEYS,
+        disposition_for as _disposition_for,
+        fetch_row as _fetch_row,
+        has_content as _has_content,
+        holes_from,
+        row as _row,
+        verdict_of as _verdict_of,
+    )
+except ImportError:  # the packaged layout, which is what the suite imports
+    from agent_fleet.graph_host.rows import (  # noqa: E402
+        HOLE_DISPOSITIONS,
+        NON_HOLE_DISPOSITIONS,
+        ROW_DISPOSITIONS,
+        VERDICT_KEYS,
+        disposition_for as _disposition_for,
+        fetch_row as _fetch_row,
+        has_content as _has_content,
+        holes_from,
+        row as _row,
+        verdict_of as _verdict_of,
+    )
 
 
 def _fetch(fn: str, label: str):

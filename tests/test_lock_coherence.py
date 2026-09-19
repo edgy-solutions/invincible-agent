@@ -149,7 +149,7 @@ def test_the_container_build_uses_locked_not_frozen():
     Asserted on the workflow SOURCE because no test of this repo's code can observe the flag a
     remote builder used. It is the one place the artifact-boundary guarantee is written down.
     """
-    wf = _ROOT / ".github" / "workflows" / "build-containers.yml"
+    wf = _ROOT / ".github" / "docker" / "Dockerfile.agent"
     assert wf.exists(), "build-containers.yml missing — cannot verify the build's lock discipline"
     src = wf.read_text(encoding="utf-8")
     syncs = re.findall(r"uv sync[^\n;]*", src)

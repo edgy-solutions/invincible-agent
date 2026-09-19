@@ -1,0 +1,70 @@
+# STAGE 1: BUILDER
+FROM python:3.12-slim-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git libpq-dev && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV UV_COMPILE_BYTECODE=1 \
+UV_LINK_MODE=copy \
+PYTHONUNBUFFERED=1 \
+UV_PROJECT_ENVIRONMENT=/app/.venv \
+UV_CACHE_DIR=/root/.cache/uv
+WORKDIR /app
+# `--locked`, NOT `--frozen` (changed 2026-08-08 after this exact defect shipped).
+#
+# `--frozen` means "install exactly the lock, SKIP the freshness check". That converts
+# a pyproject/uv.lock DIVERGENCE from a build failure into a WRONG ARTIFACT, built
+# green every time. `iagent-mesh` was declared in ten engine pyprojects and present in
+# ZERO uv.lock files; ten images were published without it, CI passed on all of them,
+# and Engine W CrashLoopBackOff'd on `ModuleNotFoundError: No module named
+# 'iagent_mesh'` the moment it was rolled. A 50-test suite asserting the wiring passed
+# throughout, because every one of its assertions was about the SOURCE TREE.
+#
+# `--locked` fails the build when the lock does not match pyproject. That is the whole
+# difference: a disagreement someone must resolve, instead of a silence someone must
+# notice. Structural rather than procedural — "remember to run `uv lock`" is exactly
+# the discipline that had already failed, and the class survives being named.
+COPY pyproject.toml uv.lock* requirements.txt* ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+if [ -f "uv.lock" ]; then uv sync --locked --no-install-project --no-dev --compile-bytecode; else uv pip install --system -r requirements.txt; fi
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+if [ -f "uv.lock" ]; then uv sync --locked --no-dev --no-install-project --compile-bytecode; else uv pip install --system -e .; fi
+# Bake acryl-datahub into the venv — CONTROL-PLANE IMAGE ONLY — so the
+# gated demoSeed catalog seed (scripts/seed_datahub_catalog.py) can run.
+# The cluster has no PyPI egress, so it can't be pip-installed at Job
+# runtime; and adding it to the root deps would bloat cortex-bff /
+# dagster / projector with acryl's ~150MB (the mesh-registrar pyproject
+# already flags that cost). Installed here into /app/.venv, which the
+# seed's `python` uses. CI has PyPI at build time; runtime doesn't need it.
+RUN --mount=type=cache,target=/root/.cache/uv \
+uv pip install --python /app/.venv/bin/python acryl-datahub
+
+# STAGE 2: SECURE RUNNER
+FROM python:3.12-slim-bookworm
+RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+# PYTHONPATH includes /app/src first so `import iagent.definitions`
+# resolves to /app/src/iagent/definitions.py (the iagent package
+# uses a src/ layout in pyproject.toml [tool.hatch]). Previously
+# missing — `uv sync --no-install-project` doesn't install iagent,
+# so without /app/src on PYTHONPATH the dagster code-location
+# server crashes on startup with `No module named 'iagent'`.
+ENV PYTHONUNBUFFERED=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+PYTHONPATH="/app/src:/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
+PATH="/app/.venv/bin:$PATH" \
+DAGSTER_HOME="/opt/dagster/dagster_home"
+WORKDIR /app
+# Install lightweight runtime libs only (no compilers)
+RUN apt-get update && apt-get install -y --no-install-recommends libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+# ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
+# Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
+# claim about what was requested; under `:latest` it is not even that. This is
+# what the running process can be asked, and it cannot drift from the code in
+# the layer beside it. `scripts/version_census.py` reads it from every service
+# and diffs against a git ref, which is how "is it current?" stops being a
+# person squinting at pod age.
+ARG GIT_SHA=unknown
+ENV IAGENT_GIT_SHA=$GIT_SHA
+COPY --from=builder --chown=dagsteruser:dagsteruser /app /app
+USER dagsteruser
+CMD ["/app/.venv/bin/dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]

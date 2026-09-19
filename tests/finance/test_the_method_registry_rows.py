@@ -290,7 +290,7 @@ def test_an_EMPTY_policy_directory_is_a_missing_COPY_and_not_an_empty_registry(t
 def test_the_policy_directory_is_COPIED_into_the_agent_image():
     """⚠ THE DEPLOYMENT-ONLY FAILURE, sealed at CI time.
 
-    `policy/measures/` reaches a container through a per-file COPY in the `Dockerfile.agent`
+    `policy/measures/` reaches a container through a per-file COPY in `.github/docker/Dockerfile.agent`
     heredoc inside `.github/workflows/build-containers.yml`. That file's own comment says the
     per-file COPY *"is itself the fragile part: the next shared-policy file will need"* it —
     written when `policy/graphs/` was that next file. This directory is the one after.
@@ -300,7 +300,7 @@ def test_the_policy_directory_is_COPIED_into_the_agent_image():
     `measures.py`, and by then the missing COPY is an unstartable pod rather than a red test.
     """
     root = pathlib.Path(__file__).resolve().parents[2]
-    wf = (root / ".github/workflows/build-containers.yml").read_text(encoding="utf-8")
+    wf = (root / ".github/docker/Dockerfile.agent").read_text(encoding="utf-8")
     assert "COPY policy/measures/ /app/policy/measures/" in wf, (
         "policy/measures/ is not COPYed into the agent image. A finance engine that imports "
         "the method registry would pass every test here and fail only in the deployment."

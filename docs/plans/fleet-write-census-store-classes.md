@@ -130,10 +130,15 @@ instrument rather than by the architect.
 The ruling: *"a script that is the ONLY bootstrap for a store is `fold, do not hand-run`'s debt,
 refused by the census until it's folded."* Applied to the 17 resolved stores:
 
+**THE VERDICT IS THREE-STATE, NOT A REFUSAL AND ITS EXCEPTIONS** — `lane/5f`'s framing, adopted
+here because it is better than the two-state rule this section first carried: *produced here* /
+*produced by a declared external door* / *no producer anywhere*, **and only the third is refused.**
+The two stores below stop being exceptions to a refusal and become an ordinary second state.
+
 | verdict | stores | meaning |
 |---|---|---|
-| **REFUSED** | **0** | no store's only writers are unfolded hand-run scripts |
-| ingest door | 2 | `neo4j:OntologyClass`, `weaviate:OntologyClass` — folded writer is doc-tools |
+| **REFUSED** — no producer anywhere | **0** | nothing is bootstrapped by nobody |
+| produced by a declared external door | 2 | `neo4j:OntologyClass`, `weaviate:OntologyClass` — doc-tools ingest |
 | mixed | 3 | `datahub:catalog`, `sql:human_task_projection`, `weaviate:Predicate` — a folded writer exists here, so their scripts are ordinary writes |
 | folded | 12 | no hand-run debt |
 
@@ -150,6 +155,19 @@ using `chr(10)` to dodge an escape) *and* a literal backspace byte where a word 
 It returned "(none)" and the two false refusals stood, now wearing a check that appeared to have
 cleared them. **A broken check that returns a clean negative is worse than no check**, because the
 first version at least had no evidence behind it.
+
+### The two clauses are load-bearing TOGETHER, and either alone gets this store wrong
+
+`neo4j:OntologyClass` **is** produced in this repo — `scripts/seed_sandbox_predicates.py:243` does
+`MERGE (s:OntologyClass {uri: $input_uri})`, and three other scripts do the same. Measured across
+the tree: **0 node writes in folded code, 5 sites in `scripts/`, 3 in tests.** (The tempting false
+positive is `setup/prime_databases.py:524`, a `CREATE CONSTRAINT … FOR (c:OntologyClass)` — schema,
+not a node write. Counted, it would make the prime look like a folded producer and invert the whole
+conclusion.)
+
+So under the three-state derivation alone, this store sits in state **one** — produced here. It is
+`fold, do not hand-run` that says **a hand-run producer is not a bootstrap**, which is what moves it
+to state two. Neither clause reaches the right answer without the other.
 
 ### The limits of this zero, stated because a zero invites the least doubt
 
