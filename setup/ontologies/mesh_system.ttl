@@ -688,6 +688,49 @@ mesh:StepLadder a owl:Class ;
 # `cost:`, and the 2026-08-21 compact-vs-full bug). `docs:` is the fourth candidate and is
 # entered in both places at once, with a seal asserting they agree.
 
+# =============================================================================
+# THE UNIVERSAL REFERENT — mesh:Thing, and why it is a FLAG rather than a parent
+# =============================================================================
+#
+# A polymorphic verb — one that takes any resolvable subject — has no honest referent among the
+# domain classes, and `mesh:explain` is the first. Declaring one class would be false; declaring
+# none leaves the slot with no referent at all, which is the state that lets a filler put a NAME
+# where an IRI belongs.
+#
+# `owl:Thing` IS THE OBVIOUS ANSWER AND IT CANNOT WORK HERE, measured rather than assumed:
+# `http://www.w3.org/2002/07/owl#` is in doc-tools' `_META_ONTOLOGY_IRI_PREFIXES`, so no W3C class
+# is in the routable pool — confirmed in the deployed graph 2026-09-19, ZERO `w3.org` classes
+# among the OntologyClass nodes. That filter exists because W3C-quality generic definitions
+# vector-outcompete domain classes with weaker ones, and `owl:Thing` is its worst case. A referent
+# pointing there would target a node that does not exist, and `PARAMETERISED_BY` needs BOTH ends
+# to be `:OntologyClass` — so the verb would register cleanly and reach nothing.
+#
+# AND A CLASS NAMED "ANY" COVERS NOTHING ON ITS OWN. The parameterisation leg admits a verb when
+# its referent COVERS the resolved subject's class chain. Nothing is `rdfs:subClassOf mesh:Thing`,
+# so coverage would be zero and `explain` would be exactly as unreachable as with `owl:Thing` —
+# with a cleaner failure, which is worse, because it looks like it should work.
+#
+# TWO WAYS TO MAKE IT UNIVERSAL, AND THE REJECTED ONE IS NAMED BECAUSE IT IS THE TEMPTING ONE:
+# asserting every routable class a subclass of `mesh:Thing` at prime time would be a ratified
+# superclass over ~24,000 nodes for one verb's benefit, and it would widen every class-chain query
+# in the system. Refused.
+#
+# SO THE UNIVERSALITY IS A DECLARED PROPERTY ON THE CLASS, and the pool's parameterisation leg
+# admits a verb whose referent CARRIES THE FLAG regardless of subject. The pool reads the FLAG,
+# never the IRI — so this is not a hardcoded class name inside a query, it is a declared property
+# a query honours, and a second universal referent would work without touching the pool.
+
+mesh:universalReferent a owl:DatatypeProperty ;
+  rdfs:domain mesh:Request ;
+  rdfs:range rdfs:Literal ;
+  rdfs:label "universal referent" ;
+  rdfs:comment "Marks a class as standing for ANY resolvable subject, so the parameterisation pool admits a verb declaring it as a referent without checking coverage of the subject's class chain. READ BY THE POOL AS A FLAG, NEVER BY IRI — a query that special-cased a class name would have to be edited for the second universal referent, and would silently keep working for the first after that class was renamed. IT IS NOT A LICENCE TO SKIP THE REFERENT: a verb still declares WHICH class it takes wherever it takes one, and this exists for the narrow case where the honest answer is `any` — a polymorphic verb whose subject is genuinely every class in the graph. A domain verb carrying this flag is a scoping mistake, not a shortcut, because the flag's whole effect is to stop the pool scoping it." .
+
+mesh:Thing a owl:Class ;
+  rdfs:label "Thing" ;
+  mesh:universalReferent true ;
+  rdfs:comment "The universal referent: the class a slot names when what it identifies is ANY resolvable subject rather than one kind. Declared for `mesh:explain`, whose subject is every class in the graph because a page can explain any of them. NOTHING IS A SUBCLASS OF IT AND NOTHING SHOULD BE — its universality is the `mesh:universalReferent` flag above, not a hierarchy, so it costs no edges and widens no class-chain query. IT IS NOT owl:Thing AND NOT A SUBSTITUTE FOR IT: the W3C term is deliberately outside this system's routable pool, because a definition of that quality and generality outranks every domain class in a vector search, and this class carries a comment written to be USELESS as a recall signal for the same reason. A slot pointing here is saying the subject is unconstrained; a slot pointing at a domain class is saying it is constrained, and the difference must stay visible in the declaration." .
+
 mesh:DocPage a owl:Class ;
   rdfs:subClassOf prov:Entity ;
   rdfs:label "Doc Page" ;

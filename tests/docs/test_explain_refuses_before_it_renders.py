@@ -368,3 +368,65 @@ def test_the_binding_holds_no_DRIVER():
         assert banned not in src, (
             f"ontology_reader imports {banned!r} — the binding is supposed to be one HTTP call to "
             f"someone else's named operation, not a second reader of the substrate")
+
+
+# ── THE UNIVERSAL REFERENT ────────────────────────────────────────────────────────────────────
+
+def test_the_subject_slot_declares_the_universal_referent():
+    """A spoken slot with no referent lets a filler put a NAME where an IRI belongs.
+
+    The first version of this engine refused a referent on the grounds that the verb is
+    polymorphic and naming one class would be false. Both halves true, conclusion one step early —
+    it skipped the universal class.
+    """
+    from agent_fleet.docs_agent.slots import slots_for
+
+    decl = {d["name"]: d for d in slots_for("explain")}
+    assert decl["subject"].get("referent") == "http://invincible-agent/mesh#Thing", (
+        "the subject slot lost its referent — the filler is free to emit a name again")
+
+
+def test_mesh_Thing_is_DECLARED_flagged_and_PARENTS_NOTHING():
+    """Three separate claims, and the third is the one a later change would break quietly.
+
+    `mesh:Thing` is universal by a FLAG, not by a hierarchy. The moment something is declared a
+    subclass of it, it stops costing no edges and starts widening every class-chain query in the
+    system — which is the alternative this design refused.
+    """
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(ROOT / "setup" / "ontologies" / "mesh_system.ttl", format="turtle")
+    mesh = rdflib.Namespace("http://invincible-agent/mesh#")
+
+    assert (mesh.Thing, rdflib.RDF.type, rdflib.OWL.Class) in g, "mesh:Thing is not declared"
+    assert (mesh.universalReferent, None, None) in g, "the flag's property is not declared"
+    assert str(g.value(mesh.Thing, mesh.universalReferent)) == "true", (
+        "mesh:Thing does not carry the flag — the pool reads the FLAG, so without it the class is "
+        "a referent that covers nothing and the verb is exactly as unreachable as before")
+
+    children = list(g.subjects(rdflib.RDFS.subClassOf, mesh.Thing))
+    assert not children, (
+        f"{len(children)} class(es) declare themselves subClassOf mesh:Thing. Its universality is "
+        f"the flag, NOT a hierarchy — a parent here widens every class-chain query in the system, "
+        f"which is the ~24,000-node alternative this design refused")
+
+
+def test_it_is_NOT_owl_Thing_and_the_reason_is_measurable():
+    """THE CONTROL ON THE CHOICE. `owl:Thing` is the obvious answer and it cannot work here —
+    not as a matter of taste but because no W3C class is in the routable pool by design.
+
+    Asserted against doc-tools' filter rather than against the graph, so it holds without a
+    cluster: if that prefix list ever drops `owl#`, this choice needs re-arguing rather than
+    silently becoming redundant.
+    """
+    import pathlib as _p
+
+    filt = _p.Path("C:/Users/cnogr/git/doc-tools/doc_tools/assets/ontology_assets.py")
+    if not filt.is_file():
+        pytest.skip("doc-tools not checked out — the filter is the subject and it is not here")
+    src = filt.read_text(encoding="utf-8")
+    assert "http://www.w3.org/2002/07/owl#" in src, (
+        "the OWL namespace is no longer in _META_ONTOLOGY_IRI_PREFIXES. `owl:Thing` may now reach "
+        "the routable pool, which means this engine's choice of mesh:Thing wants re-arguing — and "
+        "it also means the most generic definition in existence is competing with domain classes "
+        "in vector search, which is what that filter exists to prevent")
