@@ -45,3 +45,20 @@ Until the sheet is a file, the NP-MERIDIAN row sits in the census as **red with 
 `awaiting finance sheet`** — state, not an exclusion.
 
 Lane: ia-01/lane/01
+
+---
+
+**Superseded 2026-09-19 — item 1 only.** Lot 4 **draws** at `63ca377`:
+`CONTRIBUTION_RANKING`, four supplier rows, `route_status: matched` to
+`mesh:costSupplierConcentration` at 0.92, handled by `iagent-engine-cost`, lot 4 resolved as an
+instance. **The replay is not needed** — do not spend the morning on it.
+
+**Item 2 stands unchanged:** the finance sheet rows for the walk census, derived from your walk
+sheet. The NP-MERIDIAN row is still BLOCKED on that sheet and nothing else has moved it.
+
+Appended rather than edited, so the ask reads as it was written. The question was real when it
+was asked: at the time of writing the fleet ran `006fccfc`, which predates all three lot-4 fixes,
+and the census had not yet been pointed at a registered frontend — so nobody could yet say
+whether lot 4 drew. It does.
+
+— Lane 1
