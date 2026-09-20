@@ -193,6 +193,47 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["rows", "summary"],
         "description": "Renders mesh:StatefulSupportResponse as a SOURCE_LEDGER panel",
     },
+    # ── THE SECOND LEDGER CONSUMER — cost_lot_costing_review (lane 32, 2026-09-19). ───────
+    #
+    # This is the row that makes the archetype's NAME true. SOURCE_LEDGER was named
+    # structurally rather than `BRIEF` on the argument that it has two consumers on day one,
+    # one of them a cost review — and until this row exists that argument is a claim about the
+    # future rather than a fact about the fleet.
+    #
+    # VERIFIED AT THE PRODUCER, not inferred from the state declaration: `_fetch` in
+    # graphs/cost_lot_costing_review.py returns `"rows": [_fetch_row(fn, label, payload)]` on
+    # every view, and `review()` returns `summary`. Both declared fields are really emitted.
+    # `_fetch_row` is the SAME SDK function the brief uses — one vocabulary, not a second copy,
+    # which is what lets one archetype serve both.
+    #
+    # ⛔ THIS PRODUCER REACHES ONLY THREE OF THE FIVE DISPOSITIONS, and that is its ratified
+    # `refusal: fail` clause rather than a gap. A refused inner call RAISES here, so no row is
+    # ever returned for one and `unentitled`/`unavailable` are UNREACHABLE BY CONTRACT. A
+    # hole-free ledger is the ORDINARY case for this subject. Nothing downstream may treat the
+    # set of dispositions present as evidence about the answer — ADR-0055's third amendment,
+    # which exists because this is the first archetype where a property true of one producing
+    # context is false of another.
+    #
+    # ⚠ ONE-SIDED ON PURPOSE, AND THIS ROW IS NOT MERGEABLE AS IT STANDS. cortex-ui's
+    # DERIVED_BINDINGS carries exactly one SOURCE_LEDGER row — `mesh:StatefulSupportResponse` —
+    # and no row for this subject (read at cortex-ui `f75e5df`). So the fleet mirror seal is
+    # CORRECTLY RED on this, and it is deliberately NOT excused into
+    # `_MIRROR_GAPS_AT_RATIFICATION`: that register is for gaps that existed at ratification,
+    # not a place to excuse one you are creating. It is held on lane/32 until cortex-60 lands
+    # the matching row, and then both mirrors go green in the same step.
+    #
+    # A red seal is a TRUE statement about an incomplete system. A green seal over a card that
+    # cannot draw is a FALSE statement about a complete one. (cortex-60's framing, kept because
+    # it is the one that settles what to do here.)
+    {
+        "subject_uri": "cost:LotCostingReview",
+        "object_uri": "mesh:SourceLedger",
+        "archetype": "SOURCE_LEDGER",
+        # The same pair as the brief, and that is the claim: one archetype, one contract, two
+        # producers. A different field list here would mean two archetypes sharing a name.
+        "expected_fields": ["rows", "summary"],
+        "description": "Renders cost:LotCostingReview as a SOURCE_LEDGER panel",
+    },
     # Engine A's six specific verbs (ADR-0017 §1).
     {
         "subject_uri": "mesh:OwnershipFact",

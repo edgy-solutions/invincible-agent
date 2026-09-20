@@ -65,8 +65,60 @@ _CALLS = {
 #: output class -> verb, derived from the engine's own table rather than restated.
 _VERB_FOR = {uri.rsplit("#", 1)[-1]: fn for fn, uri in measures.OUTPUT_URI.items()}
 
+#: `cost:` subjects that engine-cost does NOT produce, each naming where its conformance lives.
+#:
+#: AN EXCLUSION IS A CLAIM, so it is written down rather than filtered away silently — and the
+#: partition test below fails on any cost-bound subject that is in neither this map nor
+#: `_VERB_FOR`, so the next one cannot quietly leave the population either.
+#:
+#: ⛔ ADDED 2026-09-19 (lane 32) BECAUSE A BINDING IN ANOTHER FILE CHANGED THIS FILE'S
+#: POPULATION. `COST_BINDINGS` was every `cost:` subject and `_VERB_FOR` is derived from
+#: engine-cost's own OUTPUT_URI table; binding a subject produced by an engine-lg GRAPH put a
+#: member in the population with no verb behind it, and the parametrised tests raised KeyError
+#: — a crash rather than a claim about the card, in a suite that had nothing to do with the
+#: change. Same shape as SOURCE_LEDGER's exemption in
+#: tests/planning/test_producers_speak_their_archetype.py, for the same reason: this file's
+#: producer population is MEASURES, and a graph is not one.
+_NOT_A_COST_MEASURE = {
+    "LotCostingReview": (
+        "produced by engine-lg's cost_lot_costing_review GRAPH, not by a cost measure, so "
+        "engine-cost's OUTPUT_URI table cannot name a verb for it. Conformance for this "
+        "binding is in tests/graph_host/test_the_projector_carries_the_ledger.py, which reads "
+        "the producer's own state declaration and its ratified refusal clause"
+    ),
+}
+
 COST_BINDINGS = [b for b in PRESENTATION_CAPABILITIES
-                 if b["subject_uri"].startswith("cost:")]
+                 if b["subject_uri"].startswith("cost:")
+                 and b["subject_uri"].split(":", 1)[1] not in _NOT_A_COST_MEASURE]
+
+
+def test_every_cost_bound_subject_is_a_MEASURE_or_is_EXCLUDED_WITH_A_REASON():
+    """THE PARTITION. Every `cost:` subject is either in this file's basis or in the exclusion
+    map with a stated reason; a subject in neither FAILS HERE rather than crashing a
+    parametrised arm or, worse, being dropped by a filter nobody reads.
+
+    A member that is silently absent from a population is indistinguishable from one that was
+    checked and passed, which is the defect this repo keeps paying for.
+    """
+    bound = {b["subject_uri"].split(":", 1)[1] for b in PRESENTATION_CAPABILITIES
+             if b["subject_uri"].startswith("cost:")}
+    undecided = sorted(bound - set(_VERB_FOR) - set(_NOT_A_COST_MEASURE))
+    assert not undecided, (
+        "these cost-bound subjects are neither produced by a cost measure nor excluded with a "
+        "reason: " + str(undecided) + ". Add the verb to engine-cost's OUTPUT_URI, or add an "
+        "entry to _NOT_A_COST_MEASURE saying where its conformance actually lives."
+    )
+    # the exclusion map may not quietly grow entries that ARE measures -- an exclusion that is
+    # false removes a real subject from the basis and reads as coverage.
+    wrongly_excluded = sorted(set(_NOT_A_COST_MEASURE) & set(_VERB_FOR))
+    assert not wrongly_excluded, (
+        "excluded as 'not a cost measure' but engine-cost does produce them: "
+        + str(wrongly_excluded)
+    )
+    assert all(_NOT_A_COST_MEASURE.values()), "an exclusion with an empty reason is not a claim"
+    # non-vacuity: the basis must not be empty, or every arm below is trivially satisfied
+    assert len(COST_BINDINGS) >= 5, "the cost binding basis collapsed to " + str(len(COST_BINDINGS))
 
 
 def _parse_required(archetype: str) -> set[str] | None:
@@ -103,6 +155,15 @@ def state():
                          ids=[b["subject_uri"] for b in COST_BINDINGS])
 def test_every_bound_cost_verb_emits_its_archetypes_axis_keys(binding, state):
     shape = binding["subject_uri"].split(":", 1)[1]
+    # A CLAIM RATHER THAN A CRASH. Bare subscripting here raised KeyError when a cost-bound
+    # subject had no engine-cost verb, which reads as a broken test rather than as the missing
+    # decision it is — and the reader has to go find the partition test to learn what to do.
+    assert shape in _VERB_FOR, (
+        shape + " is bound under `cost:` and engine-cost's OUTPUT_URI names no verb for it, so "
+        "this file cannot conform it. Add the verb there, or add an entry to "
+        "_NOT_A_COST_MEASURE saying where its conformance lives. See "
+        "test_every_cost_bound_subject_is_a_MEASURE_or_is_EXCLUDED_WITH_A_REASON."
+    )
     fn_name = _VERB_FOR[shape]
     payload = measures.VERBS[fn_name](state, **_CALLS[fn_name])
     rows = payload[_ROW_KEY[binding["archetype"]]]
@@ -118,6 +179,15 @@ def test_every_bound_cost_verb_emits_its_archetypes_axis_keys(binding, state):
 def test_the_expected_fields_on_the_row_are_ACTUALLY_EMITTED(binding, state):
     """A binding advertising a field the producer does not emit is a promise to the selector."""
     shape = binding["subject_uri"].split(":", 1)[1]
+    # A CLAIM RATHER THAN A CRASH. Bare subscripting here raised KeyError when a cost-bound
+    # subject had no engine-cost verb, which reads as a broken test rather than as the missing
+    # decision it is — and the reader has to go find the partition test to learn what to do.
+    assert shape in _VERB_FOR, (
+        shape + " is bound under `cost:` and engine-cost's OUTPUT_URI names no verb for it, so "
+        "this file cannot conform it. Add the verb there, or add an entry to "
+        "_NOT_A_COST_MEASURE saying where its conformance lives. See "
+        "test_every_cost_bound_subject_is_a_MEASURE_or_is_EXCLUDED_WITH_A_REASON."
+    )
     fn_name = _VERB_FOR[shape]
     payload = measures.VERBS[fn_name](state, **_CALLS[fn_name])
     for field in binding["expected_fields"]:

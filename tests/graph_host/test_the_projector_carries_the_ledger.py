@@ -343,6 +343,84 @@ def test_the_MIRRORS_still_match_cortex_uis_contract():
     assert _parse_dispositions(text) == _MIRROR_DISPOSITIONS
 
 
+# ── TWO PRODUCING CONTEXTS, ONE ARCHETYPE ───────────────────────────────────────────────────
+#
+# SOURCE_LEDGER was named structurally rather than `BRIEF` on the argument that it has two
+# consumers on day one. Until both bindings exist that is a claim about the future; these arms
+# are what make it a fact about the fleet, and what stop the two drifting into two archetypes
+# sharing a name.
+
+def _ledger_bindings():
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    return [c for c in PRESENTATION_CAPABILITIES if c.get("archetype") == "SOURCE_LEDGER"]
+
+
+def test_BOTH_ledger_producers_are_BOUND():
+    subjects = {b["subject_uri"] for b in _ledger_bindings()}
+    assert subjects == {"mesh:StatefulSupportResponse", "cost:LotCostingReview"}, (
+        "SOURCE_LEDGER's bound subjects are " + str(sorted(subjects)) + ". The archetype's "
+        "name rests on having two producing contexts; one binding makes the name a forecast."
+    )
+
+
+def test_BOTH_bindings_declare_the_SAME_fields():
+    """One archetype, one contract, two producers. Different field lists would mean two
+    archetypes sharing a name, which is the thing the structural naming was meant to prevent."""
+    declared = {b["subject_uri"]: tuple(b["expected_fields"]) for b in _ledger_bindings()}
+    assert len(set(declared.values())) == 1, (
+        "the two SOURCE_LEDGER bindings declare different fields: " + str(declared)
+    )
+    assert set(next(iter(declared.values()))) == _MIRROR_DECLARED
+
+
+def test_the_COST_REVIEW_emits_both_fields_its_binding_declares():
+    """Read from the producer's own state declaration rather than from the binding that
+    advertises it -- a binding is a claim ABOUT a producer, and the two can disagree."""
+    from agent_fleet.graph_host.graphs.cost_lot_costing_review import ReviewState
+
+    keys = set(ReviewState.__annotations__)
+    missing = _MIRROR_DECLARED - keys
+    assert not missing, (
+        "cost_lot_costing_review is bound to SOURCE_LEDGER and its state declares no "
+        + str(sorted(missing)) + ". A binding whose producer cannot fill the contract draws a "
+        "card that mounts and refuses."
+    )
+
+
+def test_the_COST_REVIEWS_reachable_dispositions_come_from_its_RATIFIED_CLAUSE():
+    """⛔ The property that made this the archetype worth having, and the one a single-context
+    subject could not have tested: `fin_program_brief` is `refusal: named-hole` and reaches all
+    five dispositions; `cost_lot_costing_review` is `refusal: fail` and reaches three, because a
+    refused inner call RAISES and the two hole terms are unreachable BY CONTRACT.
+
+    Derived from the ratified row via `reachable_for`, never hand-listed, so a clause change
+    moves this rather than leaving a stale subset that still passes.
+    """
+    import yaml
+    from iagent_mesh import HOLE_DISPOSITIONS, reachable_for
+
+    rows = {}
+    for name in ("fin_program_brief", "cost_lot_costing_review"):
+        path = _ROOT / "policy" / "graphs" / (name + ".yaml")
+        rows[name] = yaml.safe_load(path.read_text(encoding="utf-8"))["refusal"]
+
+    assert rows["cost_lot_costing_review"] == "fail"
+    assert rows["fin_program_brief"] == "named-hole"
+
+    cost_reach = reachable_for(rows["cost_lot_costing_review"])
+    brief_reach = reachable_for(rows["fin_program_brief"])
+    assert set(HOLE_DISPOSITIONS) & cost_reach == set(), (
+        "a refusal=fail producer reaches " + str(sorted(cost_reach)) + ", which includes a hole "
+        "term. Either the clause changed or `reachable_for` did."
+    )
+    assert set(HOLE_DISPOSITIONS) <= brief_reach
+    # and the two really do DIFFER -- without this the assertions above are satisfied by a
+    # `reachable_for` that returned the same set for every clause.
+    assert cost_reach != brief_reach
+    assert cost_reach < brief_reach
+
+
 @_no_sibling
 def test_the_cards_archetype_id_is_the_one_the_projector_keys_on():
     """The two repos agree on the STRING, which is the only thing joining them at runtime."""
