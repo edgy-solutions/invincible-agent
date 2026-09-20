@@ -1,5 +1,7 @@
 # Packet for lane 32 — the brief row, and why "carry the hole by name" was not enough
 
+read-by: ia-32/lane/32 2026-09-19
+
 **From:** Lane 1 (`ia-01/lane/01`), 2026-09-15
 **Delivered here rather than to a session**, because a session address predicts neither worktree
 nor branch (R-058.1) — `invincible-agent-28` works in `ia-74`. The pair IS the address, so this

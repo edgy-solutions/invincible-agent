@@ -25,7 +25,7 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 
 from iagent_pure.walk_census import (  # noqa: E402
-    DISPOSITIONS, DRIFTED, FAIL, MISSING_ROW, ROW_KEY, CensusError,
+    DISPOSITIONS, DRIFTED, FAIL, MISSING_ROW, PASS, ROW_KEY, CensusError, CensusRow,
     judge, load_rows, partition, reconcile, routing_of, sheet_prompts, verb_names,
 )
 
@@ -203,6 +203,78 @@ def test_a_blocked_row_names_a_sheet_that_really_is_absent(rows):
             f"{r.id} is blocked with reason {r.blocked!r}, but {r.sheet} now exists and parses "
             f"{len(prompts)} prompt(s). The sheet landed; derive the row and unblock it."
         )
+
+
+def test_EVERY_ARCHETYPE_A_ROW_PUTS_A_FLOOR_ON_IS_KEYED(rows):
+    """The question the overlap seal below cannot ask, and the one that actually bit.
+
+    `test_the_row_key_map_agrees_with_engine_costs_own_table` compares `set(theirs) &
+    set(ROW_KEY)`. It asserts the SHARED archetypes agree and is silent about an archetype
+    missing from `ROW_KEY` altogether — which is the only way the defect could occur. It ran,
+    its premise held, and it answered a weaker question than the one it was written for.
+
+    WHAT THAT COST, 2026-09-19: three finance rows — variance-decomposition, funding-status and
+    eac-comparison — were saved into the lexical baseline as "0 row(s) under None", under a
+    partition headed "FOUR finance rows fail on payload shape or row count". All three had drawn
+    correctly at exactly their floor (1, 18 and 3 rows, confirmed against the live fleet and
+    against engine-fin's own wire). The `None` in that message was this table's missing key.
+
+    DERIVED FROM THE CENSUS, never a list kept beside it: a new row naming a new archetype reds
+    on the commit that adds it, which is one commit before anyone runs it against a fleet and
+    reads the gap as a defect.
+    """
+    need = {r.expect_archetype for r in rows if r.expect_archetype and r.min_rows}
+    assert need, "no row puts a floor on an archetype — this seal is asserting nothing"
+    missing = sorted(a for a in need if a not in ROW_KEY)
+    assert not missing, (
+        f"{len(missing)} archetype(s) carry a row floor with no ROW_KEY entry: {missing}. "
+        f"judge() cannot find their rows, counts zero, and files a healthy card as an empty "
+        f"one. Add each to ROW_KEY with the payload key its projector actually emits."
+    )
+
+
+def test_AN_UNKEYED_ARCHETYPE_IS_REPORTED_AS_AN_INSTRUMENT_FAILURE():
+    """BOTH DIRECTIONS, on a fixture this test owns — the rule above must be able to fail.
+
+    A seal that only ever sees a satisfied table proves nothing about what happens when the
+    table is short. So: judge a FULL card whose archetype is deliberately absent from ROW_KEY,
+    and assert the runner says it could not measure — not that the card was empty. The two are
+    opposite findings and the old message could not tell them apart.
+    """
+    unkeyed = "ARCHETYPE_THAT_IS_NOT_KEYED"
+    assert unkeyed not in ROW_KEY, "fixture archetype leaked into the real table"
+
+    def _row(archetype):
+        return CensusRow(
+            id="fixture", sheet=COST_SHEET, sheet_index=0, question="q", user="alice",
+            persona="COST_ANALYST", domains=("PRODUCTION_COST",), expect_verb="",
+            expect_archetype=archetype, min_rows=3, dispositions=("drawn",),
+            frontend_id="cortex-ui-desktop",
+        )
+
+    def _card(archetype):
+        return {
+            "final": {"components": [
+                {"archetype": archetype,
+                 "payload": {"rows": [{"i": 0}, {"i": 1}, {"i": 2}]}}]},
+            "events": [{"event": "route_decision",
+                        "data": {"route_status": "matched",
+                                 "handled_by": {"endpoint_url": "x/v"}}}],
+        }
+
+    state, why = judge(_row(unkeyed), _card(unkeyed))
+    assert state == FAIL, "an archetype the runner cannot measure must not pass silently"
+    joined = " ".join(why)
+    assert "NO ROW_KEY ENTRY" in joined, f"expected an instrument failure, got: {why}"
+    assert "INSTRUMENT failure" in joined, f"the report must name itself as one: {why}"
+    assert "0 row(s) under None" not in joined, (
+        "the old message is back: a card with three rows must never be reported as empty"
+    )
+
+    # AND THE POSITIVE HALF: the identical card, under a KEYED archetype, passes its floor.
+    # Without this the assertions above would also hold for a fixture that was simply broken.
+    state2, why2 = judge(_row("CONTRIBUTION_RANKING"), _card("CONTRIBUTION_RANKING"))
+    assert state2 == PASS, f"the control that must pass did not: {why2}"
 
 
 def test_the_row_key_map_agrees_with_engine_costs_own_table():

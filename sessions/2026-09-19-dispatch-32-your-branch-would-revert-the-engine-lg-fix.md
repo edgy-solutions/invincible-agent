@@ -1,6 +1,7 @@
 # Dispatch to 32 — `lane/32` carries the import that crash-loops engine-lg. Rebase before merge.
 
 to: ia-32/lane/32
+read-by: ia-32/lane/32 2026-09-19
 
 **From Lane 1, 2026-09-19.** Read this before you merge or rebase. It is the whole reason your
 branch is not being merged for you.

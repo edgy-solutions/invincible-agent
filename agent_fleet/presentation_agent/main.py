@@ -779,6 +779,47 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # and it was, at the wire that matters to a card. Both wires were telling the truth about
     # different hops.
     "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label")),
+
+    # ── SOURCE_LEDGER (lane 32, 2026-09-19). Runbook site 2. ──────────────────────────────
+    #
+    # The passthrough is ONE field and that is not an oversight: cortex's
+    # `SOURCE_LEDGER_CONTRACT.fields` declares exactly `rows` (required) and `summary`
+    # (optional string), and the site-4 row in capabilities.py declares the same pair. Read
+    # from the contract rather than chosen — the seal in
+    # tests/graph_host/test_the_projector_carries_the_ledger.py derives this tuple from
+    # cortex-ui's own file when the sibling repo is on disk, so widening the contract without
+    # widening this line is a red rather than a blank field.
+    #
+    # `summary` is ENVELOPE-level, which is the whole reason it needs declaring here. Rows pass
+    # through verbatim, so a row-level addition needs no edit; an envelope-level one needs
+    # exactly this line. That seam has silently dropped envelope fields on this table three
+    # times (`reference`/`verdict` 2026-09-03, the EAC low/high pair 2026-09-15, and W4-2's
+    # bound 2026-09-19), and each time every layer's own tests stayed green.
+    #
+    # ⛔ WHAT IS DELIBERATELY NOT CARRIED, because for this archetype one of them is a
+    #    CREDENTIAL and the omission has to be a decision rather than an accident:
+    #
+    #   identity  the graph threads the INITIATOR'S BEARER TOKEN through state and returns it.
+    #             MEASURED 2026-09-19 against the rolled fleet: the live NP-MERIDIAN response
+    #             carries a real JWT at `identity.authorization`. This projector builds the
+    #             component from scratch and copies only the fields named above, so the token
+    #             cannot reach a browser today — and the seal asserts that, because the way it
+    #             WOULD reach one is somebody widening this tuple in good faith.
+    #   holes     a PROJECTION of rows (filter on the hole dispositions). A card reading both
+    #             would hold one fact in two places, and the derived copy is the one that goes
+    #             on passing after someone edits the source. capabilities.py's site-4 row
+    #             excludes it for the same reason, in the same words.
+    #   findings  the pre-rows accumulation. `rows` supersedes it; carrying both is the same
+    #             two-copies defect pointing the other way.
+    #   program_id  nothing in the contract reads it. A field advertised to a renderer that
+    #             never looks at it is the same defect as one a renderer needs and never gets.
+    #
+    # TWO PRODUCING CONTEXTS, and this row is blind to both by construction (ADR-0055's third
+    # amendment): `fin_program_brief` is `refusal: named-hole` and reaches all five
+    # dispositions, `cost_lot_costing_review` is `refusal: fail` and reaches three, because a
+    # refused inner call RAISES there and the two hole terms are unreachable BY CONTRACT.
+    # Nothing here may key on which dispositions are present.
+    "SOURCE_LEDGER": ("rows", ("summary",)),
 }
 
 
