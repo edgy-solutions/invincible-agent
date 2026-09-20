@@ -7,7 +7,8 @@ Predicate  RETRIEVABILITY CENSUS (read-only)
    NEGATIVE CONTROL nearObject(00000000-dead-4000-8000-000000000000) -> not retrievable  (explorer: get class: concurrentTargetVectorSearch): explorer: get class: vectorize search vector: nearObject params: vector not found)
    total rows          : 133
    retrievable         : 89
-   slot states         : legacy=44, named=89
+   slot states         : named=89, legacy=44, no-vector=0
+   partition sums to   : 133 of 133  (every row is in exactly one bucket)
    VERDICT             : RETRIEVABLE != TOTAL — 44 row(s) unreachable
    failures by slot state: legacy=44
    rows that FAIL nearObject(self), ALL of them:
@@ -75,5 +76,5 @@ Predicate  RETRIEVABILITY CENSUS (read-only)
      mesh:traceLineage Column->LineageTopology                  c4b397e3-04ab-5757-b61c-02500bfd1077  created=2026-09-20T02:08:24Z  slot=named  retrievable=True
      mesh:assessImpact Column->ImpactSet                        5bb2845e-5575-5d32-818f-eafc2d6df942  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
      mesh:describeAsset Column->AssetProfile                    c681c684-ab30-5097-8ab1-d5ac75a97743  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
-   (3.2s)
+   (3.3s)
 command terminated with exit code 1

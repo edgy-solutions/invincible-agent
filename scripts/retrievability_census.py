@@ -234,8 +234,22 @@ def run_class(cls, cutoff_ms):
 
     print("   total rows          : %d" % total)
     print("   retrievable         : %d" % ok_count)
-    print("   slot states         : %s"
-          % ", ".join("%s=%d" % kv for kv in sorted(states.items())))
+    # ALL THREE buckets are printed, zeros included, and they are asserted to sum to the total.
+    # A dict of counts silently omits the bucket that is empty, so "no vectorless rows" would be
+    # read off an ABSENT line -- a plausible negative rather than a measured one. The third
+    # bucket has a known writer (a properties-only batch replace clears the vector), so its being
+    # zero is a claim someone will rely on.
+    print("   slot states         : named=%d, legacy=%d, no-vector=%d"
+          % (states.get("named", 0), states.get("legacy", 0), states.get("no-vector", 0)))
+    partition = states.get("named", 0) + states.get("legacy", 0) + states.get("no-vector", 0)
+    print("   partition sums to   : %d of %d  %s"
+          % (partition, total,
+             "(every row is in exactly one bucket)" if partition == total
+             else "*** MISMATCH — a row escaped the partition ***"))
+    if states.get("no-vector", 0):
+        print("   NOTE: %d row(s) have NO VECTOR IN EITHER SLOT. A relocation backfill cannot "
+              "repair these — there is nothing to relocate; they need a RE-EMBED."
+              % states["no-vector"])
     print("   VERDICT             : %s"
           % ("retrievable == total" if ok_count == total and total
              else "RETRIEVABLE != TOTAL — %d row(s) unreachable" % (total - ok_count)))
