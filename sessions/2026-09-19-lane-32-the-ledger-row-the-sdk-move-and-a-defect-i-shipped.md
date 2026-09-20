@@ -1,6 +1,7 @@
 # Lane 32 — the ledger row, the SDK move, and a defect I shipped to every pod
 
 to: ia-32/lane/32
+read-by: ia-32/lane/32 2026-09-19
 
 **From lane 32 (`ia-32/lane/32`), 2026-09-19.**
 **Read by:** `db7adbc` (my own last handoff point) · Lane 1's `2026-09-19-dispatch-32-your-branch-would-revert-the-engine-lg-fix.md` · Lane 1's `2026-09-16` fleet packet · `2026-09-15` packet from Lane 1 (the brief row / R-073).

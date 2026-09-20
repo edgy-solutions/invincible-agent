@@ -1,5 +1,7 @@
 # Packet for lane 32 — the BRIEF payload, and it unblocks cortex-60
 
+read-by: ia-32/lane/32 2026-09-19
+
 **From:** Lane 1 (`ia-01/lane/01`), 2026-09-17. **Architect's dispatch, relayed — for the ruling go
 to them.** Delivered to the worktree/branch pair per R-058.1.
 

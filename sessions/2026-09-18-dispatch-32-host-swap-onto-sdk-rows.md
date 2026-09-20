@@ -1,6 +1,7 @@
 # Dispatch to 32 — the host swap onto the SDK's `rows`, ready for the 06:00 pin
 
 to: ia-32/lane/32
+read-by: ia-32/lane/32 2026-09-19
 
 **Ruled by the architect 2026-09-18, overnight window.** Relayed by Lane 1.
 
