@@ -114,28 +114,45 @@ def retrievable(cls, uuid):
     Returns (ok, note) -- note is non-empty when self was reachable but NOT rank 0, because a
     duplicate-vector pair is worth reporting even though it is not a retrievability failure.
     """
-    q = ('{Get{%s(nearObject:{id:"%s"} limit:%d){_additional{id distance}}}}'
-         % (cls, uuid, TOP_K))
-    r = requests.post(BASE + "/v1/graphql", json={"query": q}, timeout=120).json()
-    if r.get("errors"):
-        return False, r["errors"][0].get("message", "")[:160]
-    rows = (((r.get("data") or {}).get("Get") or {}).get(cls) or [])
-    for rank, row in enumerate(rows):
-        add = row.get("_additional") or {}
-        if add.get("id") != uuid:
-            continue
-        dist = add.get("distance")
-        if dist is not None and abs(dist) > NEAR_ZERO:
-            return False, "self found at rank %d but distance %.3g exceeds ~0" % (rank, dist)
-        if rank == 0:
-            return True, ""
-        twin = ((rows[0].get("_additional") or {}).get("id"), (rows[0].get("_additional") or {}).get("distance"))
-        return True, "reachable at rank %d; duplicate-vector twin %s at distance %.3g" % (
-            rank, twin[0], twin[1] if twin[1] is not None else float("nan"))
-    if not rows:
-        return False, "nearObject returned no rows at all"
-    return False, "self absent from top-%d (nearest was %s)" % (
-        TOP_K, (rows[0].get("_additional") or {}).get("id"))
+    def _query(kk):
+        q = ('{Get{%s(nearObject:{id:"%s"} limit:%d){_additional{id distance}}}}'
+             % (cls, uuid, kk))
+        r = requests.post(BASE + "/v1/graphql", json={"query": q}, timeout=120).json()
+        if r.get("errors"):
+            return None, r["errors"][0].get("message", "")[:200]
+        return (((r.get("data") or {}).get("Get") or {}).get(cls) or []), ""
+
+    # WIDEN ONCE ON A SATURATED PAGE. Taken from ia-74's verify_self rather than reinvented: if
+    # self is absent but every row on the page is tied at ~0, the top-k is saturated and k was
+    # too small -- so k is retried wider before a regression is reported. That is the only way
+    # this check can be wrong in the safe direction, and one extra query removes it.
+    for attempt_k in (TOP_K, TOP_K * 20):
+        rows, err = _query(attempt_k)
+        if rows is None:
+            return False, "server refused: " + err
+        if not rows:
+            return False, "nearObject returned nothing at k=%d" % attempt_k
+        for rank, row in enumerate(rows):
+            add = row.get("_additional") or {}
+            if add.get("id") != uuid:
+                continue
+            dist = add.get("distance")
+            if dist is not None and abs(dist) > NEAR_ZERO:
+                return False, "self found at rank %d but distance %.3g exceeds ~0" % (rank, dist)
+            if rank == 0:
+                return True, ""
+            first = rows[0].get("_additional") or {}
+            return True, ("reachable at rank %d; duplicate-vector twin %s at distance %.3g"
+                          % (rank, first.get("id"),
+                             first.get("distance") if first.get("distance") is not None
+                             else float("nan")))
+        saturated = all(
+            abs(((r2.get("_additional") or {}).get("distance") or 1.0)) <= NEAR_ZERO
+            for r2 in rows)
+        if not (saturated and len(rows) >= attempt_k):
+            return False, ("self absent from top-%d and the page is NOT saturated with ties — "
+                           "the row is not findable by its own vector" % attempt_k)
+    return False, "self not found even at k=%d among tied rows" % (TOP_K * 20)
 
 
 def label(obj):
