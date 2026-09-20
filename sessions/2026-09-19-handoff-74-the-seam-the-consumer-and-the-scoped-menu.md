@@ -227,3 +227,31 @@ to: an allowlist entry for a file that once existed is a claim that it never did
 unchanged when it ended, and nothing was edited during it — so this count belongs to `e27c08d`
 plus this file, not to a directory someone was typing into. An earlier run of mine was stopped
 rather than read for exactly that reason.
+
+---
+
+## Appended 2026-09-19 — what the task row is actually waiting on
+
+**The architect corrected §2's blocker: the task row no longer waits on cortex.** The running
+frontend already serves the safety rows (`df702ca`). It waits on **the roll that carries the
+`review_request` consumer** — i.e. `917879d` plus the `policy/decisions/` COPY in
+`.github/docker/Dockerfile.agent`, which is the packet
+`2026-09-19-packet-from-74-the-roll-must-carry-one-dockerfile-line.md`.
+
+So the sequence on my side is now: merge → roll → I measure the
+`risk_acceptance_medium` row in `human_task_projection` for bob. Nothing else of mine is
+blocked on another lane.
+
+**Also settled since this file was written**, all in `19bc52f` and `<this commit>`:
+
+* fix D built and sealed for both Predicate creators; the seal is mutation-tested
+* `scripts/backfill_vector_space.py` — dry-run, never applied; `--canary safety` carries the row
+  set INSIDE the file so it reaches a pod without a checkout path; first relocated row verified
+  before a second is written, re-verified every N, stops on the first regression
+* the self-check is **self within top-k at ~0, never `rows[0]`** — demonstrated necessary:
+  on a scratch duplicate pair `nearObject(a)` returned **b first**, and `DocumentChunk` shows a
+  tie too. `_probe_retrieval_seam.py` was brought to the same semantics.
+* the `no-vector` population is **1,315 = 16 real classes + 1,299 blank nodes**, and the index
+  turns out to be **96.2% blank nodes**. Sent to 7f. It does NOT block the backfill: scored
+  against all 12,512 vectorised SUSTAINMENT rows, `safety#Hazard` ranks **1st** with zero blank
+  nodes above it — which also replaces my earlier six-row claim with a population measurement.

@@ -9,11 +9,12 @@
 ║                                                                                          ║
 ║  THAT IS THE REPAIR WORKING, NOT DATA LOSS. The two slots are different keys on the      ║
 ║  wire. Every instrument this fleet has used to ask "is this row vectorised?" reads the   ║
-║  LEGACY key, so it will show 26,239 rows going from "has a vector" to "has no vector"    ║
-║  at the exact moment they become searchable.                                             ║
+║  LEGACY key, so it will show rows going from "has a vector" to "has no vector" at the    ║
+║  exact moment they become searchable.                                                    ║
 ║                                                                                          ║
-║  DO NOT REVERT ON THAT SIGNAL. Verify with nearObject(self) — this script does it for    ║
-║  you, on every batch, and refuses to continue if it regresses.                           ║
+║  DO NOT REVERT ON THAT SIGNAL. Verify with nearObject(self) — this script verifies the   ║
+║  FIRST relocated row before it writes a second, re-verifies every --verify-every rows,   ║
+║  and STOPS on the first regression.                                                      ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════╝
 
 ## What is wrong, and why this is a relocation rather than a rebuild
@@ -25,45 +26,79 @@ answers `"vector not found for target: default"` on a row whose vector reads bac
 `OntologyClass` and `Predicate` were both in that state, which made every routing decision in
 the fleet silently BM25-only.
 
-**The vectors themselves are fine.** They are readable, they are the right dimension, and they
-were computed by the right embedder. Nothing needs re-embedding, no LLM is called, doc-tools is
-not involved and nothing is deleted — each row's own vector is read and written back under the
-name. Measured lossless against a deliberately un-normalised probe: norms identical, max|delta|
-= 0.000e+00, self-distance 0.0 after.
+**The vectors themselves are fine.** Readable, right dimension, right embedder. Nothing is
+re-embedded, no LLM is called, doc-tools is not involved and nothing is deleted — each row's own
+vector is read and written back under the name. Measured lossless against a deliberately
+un-normalised probe: norms identical, max|delta| = 0.000e+00, self-distance 0.0 after.
+
+## SCOPE: NAMED ROWS ONLY — blank nodes are skipped, not relocated
+
+Ruled by the architect 2026-09-19 and confirmed against doc-tools' source: blank nodes do not
+belong in the retrieval index, so nothing relocates them. They are 96.2% of `OntologyClass`
+(25,255 of 26,239), they are there because the Weaviate writer has no `!isBlank` filter while
+its Neo4j sibling has two, and DELETING the existing ones is a separate act that is NOT in this
+script and not ordered. This script only declines to repair them.
+
+## THE EXPECTATION IS THE IDENTITY, NOT THE COUNTS — ruled by the architect 2026-09-19
+
+    blank-skipped + no-vector + would-relocate + already-named + blank-AMBIGUOUS = walked
+
+**That identity is what this script promises. The counts are a SNAPSHOT and go stale in hours.**
+
+    2026-09-19 22:08 local   OntologyClass   25,255 blank + 16 no-vector + 968 relocate = 26,239
+                             Predicate                                    138 relocate  =    138
+    2026-09-19 22:15 local   Predicate         89 ALREADY-NAMED  +  44 relocate         =    133
+
+Those two Predicate readings are seven minutes apart and the collection is not corrupt: a fleet
+roll landed `19bc52f` between them, every engine re-registered its verbs on startup, and the
+fixed writer put the new rows straight into the named space. **That is fix D working in the
+field, measured rather than assumed** — and `OntologyClass` did not move in the same window,
+because doc-tools has not rolled its half. Do not treat a changed count as a defect; treat it as
+a question about which writer ran.
 
 ## THIS SCRIPT DOES NOT RUN ITSELF
 
 `--apply` is required and refuses without `--i-have-read-the-warning`. Default is a dry run.
-Chris authorizes and runs it, in daylight. The ruled order is:
+Chris authorizes and runs it, in daylight, **never during a roll**. The ruled order is:
 
-    1. canary   --classes OntologyClass --uris-file canary.txt   (the six safety# rows)
-    2. verify   the walk census row for `what hazards are unattended` stops abstaining
-    3. the rest --classes OntologyClass,Predicate --apply        (one sitting)
+    1. DRY RUN  the same command, --apply removed, IN THE SAME SITTING, immediately before
+    2. canary   --classes OntologyClass --canary safety --apply --i-have-read-the-warning
+    3. verify   "what hazards are unattended" stops abstaining
+    4. the rest --classes OntologyClass,Predicate --apply --i-have-read-the-warning
+    5. DRY RUN  again, afterwards — and it MUST report `would-relocate` = 0
+
+**STEP 5 IS A FINDING, NOT A RETRY.** A non-zero `would-relocate` on the second dry run does not
+mean the apply half-failed and should be repeated. It means **a live writer is still filling the
+LEGACY slot** while you work — and re-running `--apply` would chase it forever without ever
+closing the gap. Stop, and report which collection moved. The writers this fleet has: engine
+verb registration on startup (fixed by `19bc52f`, shipped), frontend/presentation registration,
+and doc-tools' ontology ingest (**not yet fixed** — its `OntologyClass` writer still writes the
+legacy slot, so a re-ingest undoes this backfill).
+
+**Steps 1 and 5 exist because the store is not still.** Between two of my own readings the
+`Predicate` count moved 138 → 133 with rows deleted and re-created, in seven minutes, with
+nobody touching this script.
 
 ## RUNNING IT — from inside a pod, not through a port-forward
 
-The store is `iagent-weaviate` on the cluster network. **Port-forwards die across every roll and
-a dead forward looks exactly like an empty answer**, which is the last thing this operation
-should be exposed to. Pipe the script into a pod that already has the connection and the deps —
-the same path every measurement behind this change used:
+Port-forwards die across every roll and a dead forward looks exactly like an empty answer. Pipe
+the script into a pod that already has the connection and the deps:
 
     kubectl -n sandbox exec -i <engine-o pod> -- python - --classes OntologyClass \\
         < scripts/backfill_vector_space.py
 
+**STDIN IS THE SCRIPT**, so the row set cannot be piped and `--uris-file` cannot name a path that
+only exists in your checkout. Use `--canary safety` (the set is IN this file, so it travels with
+it) or `--uris a,b,c`. `--uris-file` remains for runs from a checkout with a route to the store.
+
 It reads `WEAVIATE_HOST`/`WEAVIATE_PORT` from the pod's own env, so it needs no configuration.
-Running it from a checkout works too if you have a route to the store.
-
-Usage:
-
-    ... python - --classes OntologyClass                             # dry run, writes nothing
-    ... python - --classes OntologyClass --uris-file canary.txt      # the canary set
-    ... python - --classes OntologyClass --apply --i-have-read-the-warning
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -82,9 +117,129 @@ except ImportError:  # pragma: no cover
 # current image it died on exactly that.
 #
 # Reading the collection's own `vectorConfig` is not a compromise, it is STRONGER: a constant is
-# a local belief about the store, and this is the store's answer. A collection that declares
-# something other than one named space is refused rather than guessed at.
+# a local belief about the store, and this is the store's answer.
 DEFAULT_SPACE = "default"
+
+#: The collections the router reads. Named rather than discovered: a backfill that swept every
+#: collection would also rewrite `DocumentChunk`, which is on the LEGACY schema and works — and
+#: relocating its vectors would break the one collection that is currently fine.
+ROUTING_CLASSES = ("OntologyClass", "Predicate")
+
+#: Named row sets, IN THIS FILE so they travel with it into a pod.
+#:
+#: `safety` is the architect's ruled canary and it is the right one because its pass condition is
+#: not "the script did not crash": *"what hazards are unattended"* currently builds a pool of one
+#: (`product#Part`) and abstains, and the query vector already ranks `safety#Hazard` 0.659 over
+#: `product#Part` 0.520 — so that question is the one that visibly changes. Six rows also means a
+#: mistake costs six rows, every one re-derivable from the ontology.
+CANARY_SETS = {
+    "safety": (
+        "http://internal/sustainment/safety#AcceptanceAuthority",
+        "http://internal/sustainment/safety#Hazard",
+        "http://internal/sustainment/safety#Mitigation",
+        "http://internal/sustainment/safety#RiskAssessment",
+        "http://internal/sustainment/safety#SafetyCriticalItem",
+        "http://internal/sustainment/safety#WriteUp",
+    ),
+}
+
+# ── BLANK NODES ARE NOT RELOCATED, AND THE PREDICATE LIVES HERE ──────────────────────────
+#
+# RULED by the architect 2026-09-19, conditional on doc-tools confirming the read — and the read
+# is confirmed (`doc-tools` `lane/7f` @ aa36e41, by me): blank nodes do not belong in the
+# retrieval index, so this script relocates NAMED rows only.
+#
+# WHY THEY ARE IN THERE AT ALL, because "96% of the index is anonymous nodes" reads like a
+# design decision and is not one. doc-tools has TWO writers off the same rdflib graph. The Neo4j
+# leg excludes blank nodes twice — `FILTER(!isBlank(?uri))` in its SPARQL and an
+# `isinstance(..., rdflib.term.BNode)` in Python — and a test seals it. The Weaviate leg, which
+# is the writer that fills THIS index, carries neither, and nothing seals it. A 2026-06-15 fix
+# reached one writer; the file's own comment counts two. It is a leak, not a design.
+#
+# THE SHAPE, AND THERE ARE TWO OF THEM. rdflib renders a blank node as `BNode.__str__` — `N`
+# followed by a 32-char hex id — and doc-tools documents exactly that form, `N[a-f0-9]{32}`.
+# **The live index carries a SECOND spelling their documented form does not match**: lowercase
+# `n`, the same 32 hex, and a literal `b246` suffix. Measured over the 1,299 vectorless blank
+# rows I had listed: 1,296 are the rdflib form and 3 are the second. Two parsers, one index.
+#
+# WHY THAT MATTERS RATHER THAN BEING TRIVIA: had this script keyed on doc-tools' documented
+# regex, those rows would have been classified NAMED and either relocated or reported to
+# doc-tools as re-embed work. The count that decides the whole dry run turns on the predicate,
+# so the predicate is stated here, in the script, and both known spellings are named.
+#
+# AND THE THIRD BUCKET EXISTS BECAUSE MY SPELLING CENSUS IS A SAMPLE. I enumerated spellings
+# over the 1,299 VECTORLESS blanks, not over all 25,255 — the other 23,956 were never listed
+# row by row. A third spelling in that unexamined majority is entirely possible. So anything
+# that looks blank under the loose form and matches NEITHER known spelling is `ambiguous`: it
+# is not written, it is printed, and it makes the run exit non-zero. An undecided row must not
+# have its fate chosen by whichever regex the tool happened to be written with, and a clean
+# exit must not be available while one exists.
+#
+# These match a URI STRING read back out of the store. The INGEST filter that stops new ones
+# arriving is doc-tools' and must key on `isinstance(..., rdflib.term.BNode)`, not on any string
+# shape — a string predicate is only correct for tools like this one, reading rows back.
+BLANK_URI = re.compile(r"^[Nn][0-9a-f]{20,}$")
+
+#: Collections whose rows carry NO `uri` property, so the blank check above cannot fire on them
+#: — with the reason it is correct that it does not.
+#:
+#: MEASURED, not assumed: a `Predicate` row has `input_uri`/`output_uri` and no `uri`, so
+#: `blankness()` reads "" and answers "named" for every one of them. That is the right outcome
+#: — a Predicate row is a VERB REGISTRATION, not an RDF class node, and a blank node cannot
+#: occur there — but it is right for an accidental reason, and a filter that returns the correct
+#: answer because it is reading a field that does not exist is one collection away from being a
+#: guard that silently passes everything. So the run REPORTS which collections the blank check
+#: was live on, and refuses a clean exit if a collection not named here turns out to carry no
+#: uris at all.
+URILESS_CLASSES = ("Predicate",)
+
+#: The spellings actually observed in this index, each with the evidence for calling it blank.
+BLANK_SPELLINGS = {
+    #: rdflib `BNode.__str__`; doc-tools documents this one. 1,296 of 1,299 listed.
+    "rdflib": re.compile(r"^N[0-9a-f]{32}$"),
+    #: Lowercase, `b246`-suffixed; doc-tools' documented form does NOT match it. 3 of 1,299.
+    "b246": re.compile(r"^n[0-9a-f]{32}b246$"),
+}
+
+
+def partition_ok(counts, seen, skipped_by_range):
+    """Did every walked row land in exactly one outcome?
+
+    Ruled the script's expectation by the architect 2026-09-19: the COUNTS are a snapshot and go
+    stale in hours, but the IDENTITY holds on every run. A row that falls through every branch is
+    otherwise invisible — the totals are simply smaller and still look orderly.
+
+    `skipped_by_range` is not a defect and must be in the sum: `--offset` advances `seen` for
+    rows it steps over, so without that term this fires on a supported flag rather than on a bug.
+    Found by controlling this predicate instead of trusting it — the first version compared
+    `sum(counts) != seen` and was wrong for every `--offset` run.
+    """
+    tallied = sum(counts.values())
+    accounted = tallied + skipped_by_range
+    if accounted == seen:
+        return True, ""
+    return False, ("outcomes sum to %d, %d skipped by --offset/--limit, total %d, but %d rows "
+                   "were walked (%d unaccounted)"
+                   % (tallied, skipped_by_range, accounted, seen, seen - accounted))
+
+
+def blankness(uri):
+    """One of "named", "blank", "ambiguous" — the whole population, partitioned.
+
+    Every row lands in exactly one bucket and none is dropped on the floor. "ambiguous" is a
+    blank-LOOKING uri in neither known spelling, and it FAILS the run rather than being absorbed
+    into either answer.
+    """
+    uri = uri or ""
+    if any(rx.match(uri) for rx in BLANK_SPELLINGS.values()):
+        return "blank"
+    return "ambiguous" if BLANK_URI.match(uri) else "named"
+
+
+#: How near "at distance ~0" is. Cosine on an identical vector is exactly 0.0 in every
+#: measurement so far; the tolerance exists for float32 round-trips, not for near-misses.
+SELF_DISTANCE_TOLERANCE = 1e-4
+
 
 def _base_url():
     """The store's HTTP base, tolerating the THREE shapes the fleet's env actually uses.
@@ -96,9 +251,6 @@ def _base_url():
         WEAVIATE_HTTP_HOST = iagent-weaviate.sandbox.svc.cluster.local:8080   <- host AND port
         WEAVIATE_HOST      = iagent-weaviate                                  <- host only
         WEAVIATE_PORT      = 8080
-
-    So a host value is checked for a port before one is appended. `WEAVIATE_URL` wins outright,
-    for a caller who has a route of their own.
     """
     explicit = os.getenv("WEAVIATE_URL")
     if explicit:
@@ -112,11 +264,6 @@ def _base_url():
 
 
 BASE = _base_url()
-
-#: The collections the router reads. Named rather than discovered: a backfill that swept every
-#: collection would also rewrite `DocumentChunk`, which is on the LEGACY schema and works — and
-#: relocating its vectors would break the one collection that is currently fine.
-ROUTING_CLASSES = ("OntologyClass", "Predicate")
 
 
 def _get(path, **params):
@@ -158,15 +305,60 @@ def slots(obj, space):
     return obj.get("vector"), (obj.get("vectors") or {}).get(space)
 
 
-def retrievable(cls, uuid):
-    """THE ONLY CHECK THAT DISTINGUISHES THE STATES. An object is its own nearest neighbour or
-    the space it was written to is not the space that is indexed."""
-    q = ('{Get{%s(nearObject:{id:"%s"} limit:1){_additional{id}}}}' % (cls, uuid))
-    r = requests.post(BASE + "/v1/graphql", json={"query": q}, timeout=120).json()
-    if r.get("errors"):
-        return False, r["errors"][0].get("message", "")[:160]
-    rows = (((r.get("data") or {}).get("Get") or {}).get(cls) or [])
-    return bool(rows) and rows[0]["_additional"]["id"] == uuid, ""
+def verify_self(cls, uuid, k=5):
+    """Is this row findable by its own vector? Returns (ok, detail).
+
+    **SELF WITHIN THE TOP-K AT DISTANCE ~0, NOT `rows[0] is self`.** Duplicate vectors exist —
+    `IOF_Core` is loaded into two domains — so several rows can sit at distance 0.0 and the
+    store is free to order ties however it likes. An assertion that self ranks FIRST would fail
+    on a correctly repaired row for a reason that has nothing to do with the repair.
+
+    MEASURED, so `k` is not a guess: the largest group of rows sharing one exact vector is **2**
+    in both routing collections (OntologyClass 26,239 rows -> 24,922 distinct vectors, 4 rows in
+    2 pairs; Predicate 135 -> 126 distinct, 18 rows in 9 pairs). k=5 is 2.5x the worst case.
+
+    AND IT CANNOT FALSE-FAIL IF THAT EVER GROWS. If self is absent but the whole page is ties at
+    ~0, the top-k is saturated and k was too small — it retries once, wider, before reporting a
+    regression. Widening on saturation costs one query and removes the only way this check can
+    be wrong in the safe direction.
+    """
+    def _query(kk):
+        q = ('{Get{%s(nearObject:{id:"%s"} limit:%d){_additional{id distance}}}}'
+             % (cls, uuid, kk))
+        r = requests.post(BASE + "/v1/graphql", json={"query": q}, timeout=120).json()
+        if r.get("errors"):
+            return None, r["errors"][0].get("message", "")[:200]
+        return (((r.get("data") or {}).get("Get") or {}).get(cls) or []), ""
+
+    for attempt_k in (k, k * 20):
+        rows, err = _query(attempt_k)
+        if rows is None:
+            # A SERVER ERROR IS A FAILURE, NOT A MISS. "vector not found for target" is the
+            # unrepaired state saying so in words.
+            return False, "server refused: " + err
+        if not rows:
+            return False, "nearObject returned nothing at k=%d" % attempt_k
+        for row in rows:
+            add = row.get("_additional") or {}
+            if add.get("id") == uuid:
+                dist = add.get("distance")
+                if dist is not None and abs(dist) > SELF_DISTANCE_TOLERANCE:
+                    return False, "self found but at distance %s (expected ~0)" % dist
+                ties = sum(1 for r2 in rows
+                           if abs(((r2.get("_additional") or {}).get("distance") or 0.0))
+                           <= SELF_DISTANCE_TOLERANCE)
+                return True, "self in top-%d at distance %s (%d row(s) tied at ~0)" % (
+                    attempt_k, dist, ties)
+        # Self absent. Only worth widening if the page is saturated with ties.
+        saturated = all(
+            abs(((r2.get("_additional") or {}).get("distance") or 1.0))
+            <= SELF_DISTANCE_TOLERANCE for r2 in rows)
+        if not (saturated and len(rows) >= attempt_k):
+            return False, ("self NOT in top-%d and the page is not saturated with ties — the "
+                           "row is not findable by its own vector" % attempt_k)
+        print("      (top-%d was all ties at ~0 and self was not among them — widening)"
+              % attempt_k)
+    return False, "self not found even at k=%d among tied rows" % (k * 20)
 
 
 def relocate(cls, obj, space, apply_it):
@@ -177,6 +369,19 @@ def relocate(cls, obj, space, apply_it):
     the properties are read in the same request as the vector rather than re-derived.
     """
     uuid = obj["id"]
+
+    # ── THE BLANK CHECK IS FIRST, AND THE ORDER IS THE POINT ─────────────────────────────
+    # Checked before `already-named` and before `no-vector` so the outcome counts PARTITION the
+    # collection: every row is blank, ambiguous, named-and-relocatable, named-and-already-done,
+    # or named-and-vectorless, and the five sum to the walk. Put this check later and the 1,299
+    # vectorless blank nodes would land in `no-vector` and be reported to doc-tools as re-embed
+    # work — which is the wrong ask for a row that should not be in the index at all.
+    kind = blankness((obj.get("properties") or {}).get("uri") or "")
+    if kind == "blank":
+        return "blank-skipped"
+    if kind == "ambiguous":
+        return "blank-AMBIGUOUS-skipped"
+
     legacy, named = slots(obj, space)
     if named:
         return "already-named"
@@ -194,6 +399,18 @@ def relocate(cls, obj, space, apply_it):
     return "relocated"
 
 
+def _selected_uris(args):
+    if args.canary:
+        return set(CANARY_SETS[args.canary]), "--canary " + args.canary
+    if args.uris:
+        return {u.strip() for u in args.uris.split(",") if u.strip()}, "--uris"
+    if args.uris_file:
+        with open(args.uris_file, encoding="utf-8") as fh:
+            return ({ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")},
+                    args.uris_file)
+    return None, ""
+
+
 def run_class(cls, args):
     print("=" * 78)
     print("%s  (%s)" % (cls, "APPLY" if args.apply else "DRY RUN — nothing is written"))
@@ -202,59 +419,173 @@ def run_class(cls, args):
     space = space_of(cls)
     print("   indexed vector space, read from the schema: %r" % space)
 
-    wanted = None
-    if args.uris_file:
-        with open(args.uris_file, encoding="utf-8") as fh:
-            wanted = {ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")}
-        print("   restricted to %d uri(s) from %s" % (len(wanted), args.uris_file))
+    wanted, how = _selected_uris(args)
+    if wanted is not None:
+        print("   restricted to %d uri(s) from %s" % (len(wanted), how))
 
     counts = {}
-    seen = skipped = 0
+    novector_uris = []
+    ambiguous_uris = []
+    with_uri = 0
+    skipped_by_range = 0
+    seen = 0
     after = None
-    first_repaired = None
+    verified_once = False
+    since_verify = 0
     t0 = time.time()
+    rc = 0
 
-    while True:
-        objs = page(cls, after=after, limit=args.page_size)
-        if not objs:
-            break
-        after = objs[-1]["id"]
-        for obj in objs:
-            uri = (obj.get("properties") or {}).get("uri") or ""
-            if wanted is not None and uri not in wanted:
-                continue
-            if seen < args.offset:
+    def _report(tag):
+        print("   %s walked %d  %s  (%.1fs)"
+              % (tag, seen, json.dumps(counts, sort_keys=True), time.time() - t0))
+
+    def _verify(uuid, why):
+        ok, detail = verify_self(cls, uuid, k=args.verify_k)
+        print("   VERIFY (%s) %s: %s — %s"
+              % (why, uuid, "RETRIEVABLE" if ok else "NOT RETRIEVABLE", detail))
+        return ok
+
+    try:
+        while True:
+            objs = page(cls, after=after, limit=args.page_size)
+            if not objs:
+                break
+            after = objs[-1]["id"]
+            for obj in objs:
+                uri = (obj.get("properties") or {}).get("uri") or ""
+                if wanted is not None and uri not in wanted:
+                    continue
+                if seen < args.offset:
+                    seen += 1
+                    skipped_by_range += 1
+                    continue
+                if args.limit and (seen - args.offset) >= args.limit:
+                    continue
+
+                outcome = relocate(cls, obj, space, args.apply)
+                counts[outcome] = counts.get(outcome, 0) + 1
+                if uri:
+                    with_uri += 1
+                if outcome == "no-vector":
+                    novector_uris.append(uri or obj["id"])
+                elif outcome == "blank-AMBIGUOUS-skipped":
+                    ambiguous_uris.append(uri or obj["id"])
                 seen += 1
-                continue
-            if args.limit and (seen - args.offset) >= args.limit:
-                skipped += 1
-                continue
-            outcome = relocate(cls, obj, space, args.apply)
-            counts[outcome] = counts.get(outcome, 0) + 1
-            if outcome == "relocated" and first_repaired is None:
-                first_repaired = obj["id"]
-            seen += 1
-        if args.limit and (seen - args.offset) >= args.limit and wanted is None:
-            break
 
-    print("   walked %d  %s  (%.1fs)"
-          % (seen, json.dumps(counts, sort_keys=True), time.time() - t0))
+                if outcome == "relocated":
+                    since_verify += 1
+                    # ── THE FIRST ONE IS VERIFIED BEFORE A SECOND IS WRITTEN ──────────
+                    # The banner promises this. Verifying only at the end would mean a wrong
+                    # write shape rewrote the whole collection before anything noticed — and
+                    # the rows would read as vectorless the entire time, which is exactly the
+                    # signal the banner tells people NOT to panic about. The promise has to
+                    # be true or the banner is asking for trust it has not earned.
+                    if not verified_once:
+                        verified_once = True
+                        since_verify = 0
+                        if not _verify(obj["id"], "first relocated row"):
+                            _report("STOPPED after")
+                            print("   STOPPING BEFORE THE NEXT WRITE. One row was rewritten "
+                                  "and is not searchable: the write shape is wrong, not the "
+                                  "plan. Nothing else has been touched.", file=sys.stderr)
+                            return 1
+                    elif args.verify_every and since_verify >= args.verify_every:
+                        since_verify = 0
+                        if not _verify(obj["id"], "every %d" % args.verify_every):
+                            _report("STOPPED after")
+                            print("   STOPPING: a later row regressed. Earlier rows verified, "
+                                  "so this is not the write shape — check the store's health "
+                                  "before continuing.", file=sys.stderr)
+                            return 1
 
-    # ── THE VERIFICATION, BUILT IN, ON THE ROWS THIS RUN ACTUALLY TOUCHED ──────────────
-    if first_repaired:
-        ok, why = retrievable(cls, first_repaired)
-        print("   VERIFY nearObject(self) on %s: %s%s"
-              % (first_repaired, "RETRIEVABLE" if ok else "STILL NOT RETRIEVABLE",
-                 "" if ok else "  <- " + why))
-        if not ok:
-            print("   STOPPING: rows were rewritten and are still not searchable. Do not "
-                  "continue; the write shape is wrong, not the plan.", file=sys.stderr)
-            return 1
-        print("   (its REST `vector` now reads None and `vectors.%s` holds the dims — that is "
-              "the repair, not loss)" % space)
-    elif args.apply:
+                if args.progress_every and seen % args.progress_every == 0:
+                    _report("...")
+
+            if args.limit and (seen - args.offset) >= args.limit and wanted is None:
+                break
+    except requests.HTTPError as exc:
+        # COUNTS ON THE WAY OUT. An HTTP error mid-walk used to surface as a bare traceback,
+        # which leaves the operator not knowing how many rows were already rewritten — and that
+        # is the single fact they need to decide whether to resume or investigate.
+        _report("FAILED after")
+        print("   HTTP error: %s" % exc, file=sys.stderr)
+        body = getattr(getattr(exc, "response", None), "text", "")
+        if body:
+            print("   body: %s" % body[:500], file=sys.stderr)
+        print("   Re-running is safe: relocated rows are skipped as `already-named`.",
+              file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        _report("INTERRUPTED after")
+        print("   Re-running is safe: relocated rows are skipped as `already-named`.",
+              file=sys.stderr)
+        return 1
+
+    _report("done:")
+
+    # ── THE PARTITION IDENTITY IS THE PROMISE, SO IT IS CHECKED AND NOT JUST DOCUMENTED ──
+    ok, detail = partition_ok(counts, seen, skipped_by_range)
+    if not ok:
+        rc = 2
+        print("   PARTITION BROKEN: %s. Row(s) reached no outcome, so this run's counts "
+              "describe an incomplete population and must not be read as one." % detail,
+              file=sys.stderr)
+
+    # ── SAY WHETHER THE BLANK CHECK WAS LIVE, RATHER THAN LEAVING IT TO BE ASSUMED ───────
+    if seen and not with_uri:
+        if cls in URILESS_CLASSES:
+            print("   the blank-node check was INERT here: %s rows carry no `uri` property, "
+                  "which is expected and correct — a %s row is a verb registration, not an RDF "
+                  "class node." % (cls, cls))
+        else:
+            rc = 2
+            print("   %s rows carry NO `uri` property, so the blank-node check could not fire "
+                  "on ANY row of this collection and every row was treated as named by "
+                  "default. That may be right, but nothing here established it. This run is "
+                  "NOT clean." % cls, file=sys.stderr)
+    elif seen:
+        print("   the blank-node check was live on %d of %d rows (those carrying a `uri`)"
+              % (with_uri, seen))
+
+    if ambiguous_uris:
+        # ── AN UNDECIDED ROW FAILS THE RUN. IT IS NOT SKIPPED QUIETLY ────────────────────
+        # These matched the loose blank spelling and NOT rdflib's documented one. Nothing was
+        # written for them either way — but a run that leaves them unexplained must not exit 0,
+        # because the next person reads a clean exit as "the partition was clean".
+        rc = 2
+        print("   %d row(s) are UNDECIDED: blank under the loose spelling, named under "
+              "rdflib's. Nothing was written for them. This run is NOT clean — the two "
+              "spellings disagree and someone must say which is right before an --apply "
+              "means anything." % len(ambiguous_uris), file=sys.stderr)
+        for u in sorted(ambiguous_uris)[:20]:
+            print("      %s" % u, file=sys.stderr)
+        if len(ambiguous_uris) > 20:
+            print("      ... and %d more" % (len(ambiguous_uris) - 20), file=sys.stderr)
+
+    if novector_uris:
+        # ── THE ONE CASE THIS SCRIPT CANNOT REPAIR, NAMED RATHER THAN COUNTED ────────────
+        print("   %d NAMED row(s) carry NO VECTOR AT ALL. A relocation cannot repair them — "
+              "there is nothing to relocate — they need a RE-EMBED and that is doc-tools' work. "
+              "Blank nodes are NOT in this count: they are skipped above, so this number is the "
+              "re-embed ask and not a population that also needs filtering."
+              % len(novector_uris))
+        if args.list_no_vector:
+            with open(args.list_no_vector, "w", encoding="utf-8") as fh:
+                fh.write("# %s rows with no vector in either slot, %s\n"
+                         % (cls, time.strftime("%Y-%m-%d")))
+                for u in sorted(novector_uris):
+                    fh.write(u + "\n")
+            print("   wrote %d uri(s) to %s" % (len(novector_uris), args.list_no_vector))
+        else:
+            for u in sorted(novector_uris)[:10]:
+                print("      %s" % u)
+            if len(novector_uris) > 10:
+                print("      ... and %d more (use --list-no-vector FILE for all)"
+                      % (len(novector_uris) - 10))
+
+    if args.apply and not verified_once:
         print("   nothing was relocated, so there is nothing to verify")
-    return 0
+    return rc
 
 
 def main(argv=None):
@@ -263,13 +594,30 @@ def main(argv=None):
                    help="comma-separated; default the two routing collections")
     p.add_argument("--offset", type=int, default=0, help="skip this many rows first")
     p.add_argument("--limit", type=int, default=0, help="stop after this many (0 = all)")
-    p.add_argument("--uris-file", help="restrict to the uris listed in this file (the canary)")
+    p.add_argument("--canary", choices=sorted(CANARY_SETS),
+                   help="a named row set defined IN this file, so it travels into a pod")
+    p.add_argument("--uris", help="comma-separated uris; works when stdin is the script")
+    p.add_argument("--uris-file", help="uris from a file — only for runs from a checkout")
     p.add_argument("--page-size", type=int, default=100)
+    p.add_argument("--progress-every", type=int, default=2000,
+                   help="print running counts every N rows (0 = off)")
+    p.add_argument("--verify-every", type=int, default=500,
+                   help="re-verify a relocated row every N relocations (0 = first only)")
+    p.add_argument("--verify-k", type=int, default=5,
+                   help="top-k for the self-retrieval check; the largest measured duplicate "
+                        "group is 2, and it widens itself on a saturated page")
+    p.add_argument("--list-no-vector", metavar="FILE",
+                   help="write the uris that carry no vector at all (re-embed work) here")
     p.add_argument("--apply", action="store_true",
                    help="actually write. Without it this is a dry run.")
     p.add_argument("--i-have-read-the-warning", action="store_true",
                    help="required with --apply; see the banner at the top of this file")
     args = p.parse_args(argv)
+
+    chosen = [f for f in (args.canary, args.uris, args.uris_file) if f]
+    if len(chosen) > 1:
+        print("REFUSING: give at most one of --canary / --uris / --uris-file.", file=sys.stderr)
+        return 2
 
     if args.apply and not args.i_have_read_the_warning:
         print(__doc__.split("## What is wrong")[0], file=sys.stderr)
@@ -290,8 +638,8 @@ def main(argv=None):
               % (unknown, list(ROUTING_CLASSES)), file=sys.stderr)
         return 2
 
-    print("weaviate at %s | space %r | %s"
-          % (BASE, "read per collection", "APPLYING" if args.apply else "DRY RUN"))
+    print("weaviate at %s | space read per collection | %s"
+          % (BASE, "APPLYING" if args.apply else "DRY RUN"))
     rc = 0
     for cls in args.classes.split(","):
         rc |= run_class(cls, args)

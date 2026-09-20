@@ -439,17 +439,37 @@ def decide_disposition(
         # the class ("DECLARED, never sniffed from an `_id` suffix: the cost of guessing was
         # measured").
         #
-        # ⚠ `iagent_mesh.graph_manifest.SlotDecl` IS `extra="forbid"` AND HAS NO `scoped_by`,
-        # so a verb cannot yet declare this through the SDK path — ca's v0.9.4. Until it can,
-        # no slot declares it, this branch never fires, and the behaviour is exactly today's.
-        # That is the right inert state for a half whose siblings have not landed: it cannot
-        # refuse a menu that was fine, and it turns on the day the declaration exists.
+        # ── TWO NAMES, BECAUSE THEY ARE TWO DIFFERENT FACTS (ca's field, ruled 2026-09-19) ──
+        #
+        #     `narrowed_by`  on the SLOT DECLARATION — which slots this one's valid values
+        #                    DEPEND on. A static property of the verb, authored with it.
+        #     `scoped_by`    on the PROVIDER RESPONSE — which of them it actually APPLIED.
+        #                    A per-call report about one list.
+        #
+        # They were both `scoped_by` in my first pass and that was one name over two facts:
+        # a reader of `scoped_by` could not tell "this slot depends on lot" from "the provider
+        # narrowed by lot", and the whole refusal is the comparison BETWEEN them.
+        #
+        # ⚠ `iagent_mesh.graph_manifest.SlotDecl` is `extra="forbid"` and does not carry
+        # `narrowed_by` until v0.9.4 is cut and pinned. Until then no slot declares it, this
+        # branch never fires, and behaviour is exactly today's — the right inert state for a
+        # half whose siblings have not landed.
         declared_scope = tuple(
-            str(s) for s in (decl.get("scoped_by") or []) if str(s).strip()
+            str(s) for s in (decl.get("narrowed_by") or []) if str(s).strip()
         )
-        # Only slots that are BOTH declared as scoping this one AND actually bound this turn.
-        # A declared scope nobody bound cannot narrow anything, and demanding it would refuse
-        # the first turn of every scoped question before its context exists.
+
+        # ── DECLARED **AND** BOUND, AND THE INTERSECTION IS LOAD-BEARING ──────────────────
+        #
+        # CONFIRMED FROM THIS SIDE, at ca's request: comparing against the DECLARATION ALONE
+        # refuses the first menu of every scoped turn. `rate_vintage` declares
+        # `narrowed_by: [lot]`; on the opening turn `lot` is not bound yet, so there is
+        # nothing to narrow BY — a declared-only test would find `lot` unhonoured, refuse the
+        # menu, and the user would never get the chips that let them supply the lot in the
+        # first place. The refusal would fire hardest exactly where the menu matters most.
+        #
+        # So a slot is scoped FOR THIS TURN only where its declaration and the bound slots
+        # overlap. `test_a_declared_scope_nobody_bound_does_not_refuse` is that arm, and it
+        # fails if this line becomes `set(declared_scope)`.
         scope_in_play = tuple(sorted(set(declared_scope) & set(offered)))
         unscoped_but_required = tuple(sorted(set(scope_in_play) - set(scoped_by)))
 
