@@ -39,22 +39,45 @@ belong in the retrieval index, so nothing relocates them. They are 96.2% of `Ont
 its Neo4j sibling has two, and DELETING the existing ones is a separate act that is NOT in this
 script and not ordered. This script only declines to repair them.
 
-Expected dry run on `OntologyClass`, and any difference is a finding rather than a nuisance:
+## THE EXPECTATION IS THE IDENTITY, NOT THE COUNTS — ruled by the architect 2026-09-19
 
-    blank-skipped    25,255      not index rows — doc-tools' ingest filter, not a backfill
-    no-vector            16      NAMED and vectorless: a RE-EMBED, which this cannot do
-    would-relocate      968      the actual work
-                     ------
-                     26,239      the five outcomes partition the walk; they must sum to it
+    blank-skipped + no-vector + would-relocate + already-named + blank-AMBIGUOUS = walked
+
+**That identity is what this script promises. The counts are a SNAPSHOT and go stale in hours.**
+
+    2026-09-19 22:08 local   OntologyClass   25,255 blank + 16 no-vector + 968 relocate = 26,239
+                             Predicate                                    138 relocate  =    138
+    2026-09-19 22:15 local   Predicate         89 ALREADY-NAMED  +  44 relocate         =    133
+
+Those two Predicate readings are seven minutes apart and the collection is not corrupt: a fleet
+roll landed `19bc52f` between them, every engine re-registered its verbs on startup, and the
+fixed writer put the new rows straight into the named space. **That is fix D working in the
+field, measured rather than assumed** — and `OntologyClass` did not move in the same window,
+because doc-tools has not rolled its half. Do not treat a changed count as a defect; treat it as
+a question about which writer ran.
 
 ## THIS SCRIPT DOES NOT RUN ITSELF
 
 `--apply` is required and refuses without `--i-have-read-the-warning`. Default is a dry run.
-Chris authorizes and runs it, in daylight. The ruled order is:
+Chris authorizes and runs it, in daylight, **never during a roll**. The ruled order is:
 
-    1. canary   --classes OntologyClass --canary safety --apply --i-have-read-the-warning
-    2. verify   "what hazards are unattended" stops abstaining
-    3. the rest --classes OntologyClass,Predicate --apply --i-have-read-the-warning
+    1. DRY RUN  the same command, --apply removed, IN THE SAME SITTING, immediately before
+    2. canary   --classes OntologyClass --canary safety --apply --i-have-read-the-warning
+    3. verify   "what hazards are unattended" stops abstaining
+    4. the rest --classes OntologyClass,Predicate --apply --i-have-read-the-warning
+    5. DRY RUN  again, afterwards — and it MUST report `would-relocate` = 0
+
+**STEP 5 IS A FINDING, NOT A RETRY.** A non-zero `would-relocate` on the second dry run does not
+mean the apply half-failed and should be repeated. It means **a live writer is still filling the
+LEGACY slot** while you work — and re-running `--apply` would chase it forever without ever
+closing the gap. Stop, and report which collection moved. The writers this fleet has: engine
+verb registration on startup (fixed by `19bc52f`, shipped), frontend/presentation registration,
+and doc-tools' ontology ingest (**not yet fixed** — its `OntologyClass` writer still writes the
+legacy slot, so a re-ingest undoes this backfill).
+
+**Steps 1 and 5 exist because the store is not still.** Between two of my own readings the
+`Predicate` count moved 138 → 133 with rows deleted and re-created, in seven minutes, with
+nobody touching this script.
 
 ## RUNNING IT — from inside a pod, not through a port-forward
 
@@ -177,6 +200,27 @@ BLANK_SPELLINGS = {
     #: Lowercase, `b246`-suffixed; doc-tools' documented form does NOT match it. 3 of 1,299.
     "b246": re.compile(r"^n[0-9a-f]{32}b246$"),
 }
+
+
+def partition_ok(counts, seen, skipped_by_range):
+    """Did every walked row land in exactly one outcome?
+
+    Ruled the script's expectation by the architect 2026-09-19: the COUNTS are a snapshot and go
+    stale in hours, but the IDENTITY holds on every run. A row that falls through every branch is
+    otherwise invisible — the totals are simply smaller and still look orderly.
+
+    `skipped_by_range` is not a defect and must be in the sum: `--offset` advances `seen` for
+    rows it steps over, so without that term this fires on a supported flag rather than on a bug.
+    Found by controlling this predicate instead of trusting it — the first version compared
+    `sum(counts) != seen` and was wrong for every `--offset` run.
+    """
+    tallied = sum(counts.values())
+    accounted = tallied + skipped_by_range
+    if accounted == seen:
+        return True, ""
+    return False, ("outcomes sum to %d, %d skipped by --offset/--limit, total %d, but %d rows "
+                   "were walked (%d unaccounted)"
+                   % (tallied, skipped_by_range, accounted, seen, seen - accounted))
 
 
 def blankness(uri):
@@ -383,6 +427,7 @@ def run_class(cls, args):
     novector_uris = []
     ambiguous_uris = []
     with_uri = 0
+    skipped_by_range = 0
     seen = 0
     after = None
     verified_once = False
@@ -412,6 +457,7 @@ def run_class(cls, args):
                     continue
                 if seen < args.offset:
                     seen += 1
+                    skipped_by_range += 1
                     continue
                 if args.limit and (seen - args.offset) >= args.limit:
                     continue
@@ -476,6 +522,14 @@ def run_class(cls, args):
         return 1
 
     _report("done:")
+
+    # ── THE PARTITION IDENTITY IS THE PROMISE, SO IT IS CHECKED AND NOT JUST DOCUMENTED ──
+    ok, detail = partition_ok(counts, seen, skipped_by_range)
+    if not ok:
+        rc = 2
+        print("   PARTITION BROKEN: %s. Row(s) reached no outcome, so this run's counts "
+              "describe an incomplete population and must not be read as one." % detail,
+              file=sys.stderr)
 
     # ── SAY WHETHER THE BLANK CHECK WAS LIVE, RATHER THAN LEAVING IT TO BE ASSUMED ───────
     if seen and not with_uri:
