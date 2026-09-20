@@ -10,7 +10,10 @@ engine: engine-cost
 engine produces; **none of it is evidence that anything renders.** The only evidence is the
 card on screen.
 
-**Runs last in the browser session**, after the finance board and the §9.2 decision.
+~~**Runs last in the browser session**, after the finance board and the §9.2 decision.~~
+**STRUCK 2026-09-19 — ruled stale by the architect.** Lot 4 runs **FIRST**: it is the only
+before-picture of a roll, and ordering it last is what left seven hours of rulings with no card
+walked. The line is struck rather than deleted because two other sheets cite this ordering.
 
 **Fleet state assumed:** rev 108, all 17 at `74d6f638f4f5`, all eight cost verbs registered
 (confirmed from `db.relationshipTypes()`).
@@ -43,6 +46,35 @@ card on screen.
 > written, and the instance provider adds two registrations that are not verbs.*
 
 ---
+
+## WALKED 2026-09-19 — Q4 ROUTED, DREW, AND MATCHED TO THE CENT; BOTH FAILURES ARE THE RENDERER
+
+**Walked against the running fleet BEFORE the roll** (`91d8d34`, chart 0.4.4, revision 146), by
+Chris, as alice / `COST_ANALYST` / `PRODUCTION_COST` from the desktop UI. Recorded by Lane 1 from
+the architect's report; I did not watch the screen.
+
+| | question | result |
+|---|---|---|
+| **Q4** | supplier concentration | ✅ **Routed correctly and `CONTRIBUTION_RANKING` DREW**, shares matching this sheet **to the cent**. The `cost_lot_breakdown` misroute recorded in the 09-12 block above is CLOSED — the instance override no longer replaces the subject. |
+
+**Two failures, both in the renderer, neither in the engine:**
+
+1. **The bound is not on screen.** The card cannot show the threshold it ranked against.
+2. **`above_threshold` prints "not drawable" on every row.**
+
+**THE FIRST ONE HAS TWO HALVES AND ONLY ONE OF THEM IS MINE.** The projector was dropping the
+field: `CONTRIBUTION_RANKING`'s passthrough tuple carried no `threshold`, so a bound the producer
+emits correctly at `cost_agent/measures.py:788-789` never reached the wire. Fixed and sealed both
+ways on master 2026-09-19, and it **rides the next roll sha** — it was not worth a roll of its own.
+cortex is building the receiving half in parallel.
+
+> **UNTIL BOTH HALVES RUN, LOT 4 SHOWS WHICH ROWS ARE ABOVE THE BOUND BUT NOT THE BOUND ITSELF.**
+> A re-walk before both land will reproduce failure 1 exactly, and that is the expected result
+> rather than a regression. Do not read it as one.
+
+**What this walk does NOT say:** nothing here is evidence about failure 2, which is cortex's and
+untouched. And per the sheet's own opening, a payload check is not a card walk — this entry is a
+card walk for Q4 only. Q5, Q6 and Q7 were not re-walked in this session.
 
 ## WALKED 2026-09-12 — THREE CARDS DREW, ONE DID NOT, AND THE WALK FOUND FIVE DEFECTS NO SEAL HAD
 
