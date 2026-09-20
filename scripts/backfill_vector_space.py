@@ -87,6 +87,18 @@ the script into a pod that already has the connection and the deps:
     kubectl -n sandbox exec -i <engine-o pod> -- python - --classes OntologyClass \\
         < scripts/backfill_vector_space.py
 
+**`--list-walked` AND `--list-no-vector` WRITE INSIDE THE POD**, because that is where the
+process runs. The path is the pod's, not your checkout's, and the file dies with the pod. Two
+commands, and the second is the one people forget:
+
+    kubectl -n sandbox exec -i <pod> -- python - --classes Predicate \\
+        --list-walked /tmp/predicate-walked.txt < scripts/backfill_vector_space.py
+    kubectl -n sandbox exec <pod> -- cat /tmp/predicate-walked.txt > docs/measurements/<name>.txt
+
+**Do not skip the second one and assume the listing exists.** Saving a census into a container
+that is one roll away from deletion is the same defect as not saving it at all — which is the
+defect this flag was added for.
+
 **STDIN IS THE SCRIPT**, so the row set cannot be piped and `--uris-file` cannot name a path that
 only exists in your checkout. Use `--canary safety` (the set is IN this file, so it travels with
 it) or `--uris a,b,c`. `--uris-file` remains for runs from a checkout with a route to the store.
@@ -428,6 +440,7 @@ def run_class(cls, args):
     ambiguous_uris = []
     with_uri = 0
     skipped_by_range = 0
+    walked_rows = []
     seen = 0
     after = None
     verified_once = False
@@ -466,6 +479,12 @@ def run_class(cls, args):
                 counts[outcome] = counts.get(outcome, 0) + 1
                 if uri:
                     with_uri += 1
+                if args.list_walked:
+                    # Held in memory rather than streamed: the file must be SORTED to be
+                    # diffable, and the walk order is Weaviate's cursor order, not ours.
+                    # 26,239 short tuples is a few MB — cheaper than an unsorted listing that
+                    # nobody can diff, which is the artifact this flag exists to stop producing.
+                    walked_rows.append((obj["id"], outcome, uri))
                 if outcome == "no-vector":
                     novector_uris.append(uri or obj["id"])
                 elif outcome == "blank-AMBIGUOUS-skipped":
@@ -583,6 +602,31 @@ def run_class(cls, args):
                 print("      ... and %d more (use --list-no-vector FILE for all)"
                       % (len(novector_uris) - 10))
 
+    if args.list_walked:
+        # ── THE CENSUS A COUNT CANNOT GIVE YOU ───────────────────────────────────────────
+        # Written because I could not answer "which five rows went?" after reading this
+        # collection's size twice: I had saved the counts and never the identities, and
+        # `Predicate` rows carry no `uri` — the uuid IS the identity, so there is nothing
+        # human-readable to diff on and a count is all you have unless you keep the ids.
+        #
+        # SORTED BY UUID, one row per line, so two runs diff with `diff` and nothing else.
+        # The header records what the numbers alone cannot: which collection, when, and the
+        # totals — so a listing found later is self-describing rather than a bare column.
+        with open(args.list_walked, "w", encoding="utf-8") as fh:
+            fh.write("# %s — every row walked, %s UTC\n"
+                     % (cls, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())))
+            fh.write("# %s\n" % ("APPLY" if args.apply else "DRY RUN — nothing was written"))
+            fh.write("# indexed vector space: %r\n" % space)
+            fh.write("# walked %d   outcomes %s\n"
+                     % (seen, json.dumps(counts, sort_keys=True)))
+            if skipped_by_range:
+                fh.write("# %d row(s) skipped by --offset/--limit and NOT listed below\n"
+                         % skipped_by_range)
+            fh.write("# uuid<TAB>outcome<TAB>uri  (uri is empty where the collection has none)\n")
+            for uuid_, outcome_, uri_ in sorted(walked_rows):
+                fh.write("%s\t%s\t%s\n" % (uuid_, outcome_, uri_))
+        print("   wrote %d walked row(s) to %s" % (len(walked_rows), args.list_walked))
+
     if args.apply and not verified_once:
         print("   nothing was relocated, so there is nothing to verify")
     return rc
@@ -608,6 +652,10 @@ def main(argv=None):
                         "group is 2, and it widens itself on a saturated page")
     p.add_argument("--list-no-vector", metavar="FILE",
                    help="write the uris that carry no vector at all (re-embed work) here")
+    p.add_argument("--list-walked", metavar="FILE",
+                   help="write EVERY walked row — uuid, outcome, uri — sorted by uuid. The "
+                        "census this script could not otherwise produce: a count cannot name "
+                        "which rows moved, and `Predicate` has no human-readable key at all.")
     p.add_argument("--apply", action="store_true",
                    help="actually write. Without it this is a dry run.")
     p.add_argument("--i-have-read-the-warning", action="store_true",
