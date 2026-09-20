@@ -60,12 +60,38 @@ DISPOSITIONS = ("drawn", "slot_required", "task_requested")
 #: Where a card's rows live, per archetype. `DELTA_SET` calls them `effects` — its contract's
 #: word, not a synonym chosen here. Sealed against engine-cost's own table so the two cannot
 #: drift; see `tests/test_the_walk_census_is_derived_from_the_sheets.py`.
+#:
+#: ⚠ THE THREE FINANCE ARCHETYPES BELOW WERE MISSING, AND THEIR ABSENCE SCORED AS A FLEET
+#: DEFECT. Added 2026-09-19 (lane 91) after the lexical baseline filed three finance rows under
+#: "0 row(s) under None" and a partition headed "FOUR finance rows fail on payload shape or row
+#: count". They did not. `judge` looked the archetype up here, got `None`, counted zero, and
+#: printed a floor failure — and `None` in that message is the KEY it never found, not an
+#: archetype the fleet failed to produce.
+#:
+#: MEASURED AGAINST THE LIVE FLEET at `c0005142`, all three drawn with the right archetype and
+#: exactly their floor: VARIANCE_TREE 1 row, SHORTFALL_GRID 18, COMPETING_MEASURES 3 (the last
+#: carrying `lowest_value`/`highest_value`, the pair its contract reads). Engine-fin's own wire
+#: returns the same counts from a deterministic offline seed, so both ends agree and the gap
+#: was only ever here.
+#:
+#: HOW IT SURVIVED A SEAL THAT EXISTS FOR EXACTLY THIS. `test_the_row_key_map_agrees_with_
+#: engine_costs_own_table` compares `set(theirs) & set(ROW_KEY)` — the OVERLAP. It asserts the
+#: shared archetypes agree and is SILENT about an archetype missing from this table altogether,
+#: which is the only way the bug could happen. The guard ran, its premise held, and it answered
+#: a weaker question than the one it was written for. The new seal beside it asks the question
+#: this table actually has to satisfy: every archetype any census row puts a floor on is keyed.
 ROW_KEY = {
     "CONTRIBUTION_RANKING": "rows",
     "MULTI_SERIES": "rows",
     "DELTA_SET": "effects",
     "STEP_LADDER": "steps",
     "KNOWLEDGE_DOCUMENT": "sections",
+    # ── ENGINE F (FINANCE). Keys confirmed twice over: against the live post-projector
+    # payloads, and against the projector's own `_PROJECTED_ARCHETYPES`, which is the
+    # authority on which key a projected card carries.
+    "VARIANCE_TREE": "rows",
+    "SHORTFALL_GRID": "rows",
+    "COMPETING_MEASURES": "rows",
 }
 
 MISSING_ROW = "MISSING_ROW"
@@ -441,10 +467,31 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
             key = ROW_KEY.get(row.expect_archetype)
             comp = next(c for c in comps if c.get("archetype") == row.expect_archetype)
             payload = comp.get("payload") if isinstance(comp.get("payload"), dict) else comp
-            got = payload.get(key) if key else None
-            n = len(got) if isinstance(got, list) else 0
-            if n < row.min_rows:
-                why.append(f"{n} row(s) under {key!r}, floor is {row.min_rows}")
+            if key is None:
+                # THE INSTRUMENT SPEAKS FIRST, the same way it does for a missing routing
+                # projection above — and for the same reason, learned the same way.
+                #
+                # This branch used to fall through to the count below, where `payload.get(None)`
+                # is None, `n` is 0, and the row was filed as "0 row(s) under None, floor is N".
+                # THAT SENTENCE IS A STATEMENT ABOUT THE FLEET AND ITS SUBJECT WAS THIS TABLE.
+                # Three finance rows carried it into a saved baseline, under a heading that said
+                # they failed on payload shape; all three had drawn correctly at exactly their
+                # floor. A reader cannot tell the two apart from that message, because the only
+                # difference is whether `None` is a key or a card — and it reads as a card.
+                #
+                # Reported and NOT counted: an unkeyed archetype means this runner does not know
+                # where the rows live, so it has no basis for a number and must not print one.
+                why.append(
+                    f"NO ROW_KEY ENTRY for archetype {row.expect_archetype!r} — the runner "
+                    f"cannot tell where this card's rows live, so its floor of {row.min_rows} "
+                    f"was never tested. This is an INSTRUMENT failure, not an empty card; the "
+                    f"card may be perfectly full. Add the archetype to ROW_KEY."
+                )
+            else:
+                got = payload.get(key)
+                n = len(got) if isinstance(got, list) else 0
+                if n < row.min_rows:
+                    why.append(f"{n} row(s) under {key!r}, floor is {row.min_rows}")
 
     if status and status not in ("matched", "slot_required") and not asked:
         why.append(f"route_status={status!r}")
