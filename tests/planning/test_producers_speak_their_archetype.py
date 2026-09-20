@@ -106,6 +106,34 @@ _EXEMPT = {
         "the receiver (canvasSeedFromAnswer.ts) and pinned by the CANVAS_SEED arms in "
         "test_planning_archetypes_are_projected.py"
     ),
+    # SOURCE_LEDGER, 2026-09-19 (lane 32). Runbook site 6, and it is exempt HERE for TWO
+    # independent reasons rather than one — worth writing down, because either alone would be
+    # repaired by a change that does not fix the other.
+    #
+    #   1. no PLANNING producer emits a ledger. Its two producers are engine-lg GRAPHS
+    #      (fin_program_brief, cost_lot_costing_review), not measures, so the parametrised
+    #      producer walk in this file cannot reach them: it enumerates
+    #      agent_fleet.planning_agent.measures.
+    #   2. `_CORTEX` in this file resolves to cortex-ui/src/components/PLANNING. The ledger's
+    #      contract is in src/components/LEDGER, so `_parse_required` here would return None
+    #      for it and the mirror would become the only source — a hand-copied list nobody
+    #      checks, which is precisely what the cross-check above exists to prevent.
+    #
+    # ⛔ AND NOT REPAIRED BY REPOINTING `_CORTEX`. That name resolves a DIRECTORY used by
+    # every other entry in _CONTRACTS; widening it to reach a second directory would change
+    # what those entries parse. A name in this file has already been bound twice with exactly
+    # that shape and silently disabled a scan 280 lines away (2026-09-19, lane 91).
+    #
+    # Conformance lives beside the engine that emits it, in
+    # tests/graph_host/test_the_projector_carries_the_ledger.py, which reads the SAME cortex
+    # contract file this one would have and asserts the mirror against it there.
+    "SOURCE_LEDGER": (
+        "no PLANNING producer emits a ledger - engine-lg's fin_program_brief and "
+        "cost_lot_costing_review do, and they are graphs rather than measures so this file's "
+        "producer walk cannot reach them. Its cortex contract also lives in components/ledger "
+        "rather than components/planning, which _CORTEX here does not resolve. Conformance is "
+        "in tests/graph_host/test_the_projector_carries_the_ledger.py"
+    ),
 }
 
 #: THE MIRROR — used only when the sibling repo is absent, and cross-checked against the
