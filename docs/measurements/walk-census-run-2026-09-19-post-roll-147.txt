@@ -140,3 +140,38 @@ WHY THIS MATTERS BEYOND TWO ROWS
   are a far larger version of the same change. That is an argument for the canary the architect
   already ruled, not against the backfill — but "every changed route is a finding, including the
   ones that improve" now has a worked example in each direction.
+
+========================================================================
+CORRECTION, appended 2026-09-20 — the mesh:explain attribution above is WRONG
+
+The analysis says the four docs rows failing is "consistent with mesh:explain being the ONE verb
+row still in the legacy slot". That sentence is false and I am leaving it visible rather than
+editing it, because it was published and someone may already have read it.
+
+THERE ARE TWO PREDICATE ROWS FOR THIS VERB, under two spellings:
+
+  verb_iri                              verb_local                        slot    lastUpdated
+  http://invincible-agent/mesh#explain  //invincible-agent/mesh#explain   legacy  2026-09-18T04:45:34Z
+  mesh:explain                          explain                           named   2026-09-20T02:08:10Z
+
+The LIVE row is `mesh:explain`, it is in the NAMED space, and it IS reachable. engine-docs
+re-registered at this startup and its write went through the fixed writer: that row's
+lastUpdateTimeUnix is 02:08:10Z, one second before the pod logged
+"mesh registration RECOVERED for ...engine_docs_explain...". So the docs rows are NOT failing for
+want of a retrievable verb row, and the backfill has no bearing on them.
+
+The legacy row is a STALE DUPLICATE, created 2026-09-18T03:53Z and untouched since 04:45Z that
+day. Its `verb_local` is `//invincible-agent/mesh#explain`, which is what you get by splitting a
+full `http://…` IRI on its FIRST colon to strip a prefix. So it is a pre-prefix-fix registration
+that was never cleaned up, and it is the "one legacy engine row" — not engine-docs' live row.
+
+IT IS ALSO A LIVE ROUTING HAZARD IN ITS OWN RIGHT, independent of any slot: it carries
+`domains: []`, and the Predicate filter admits empty-domains rows into EVERY persona scope via its
+`length == 0` branch. So an unreachable row under a mangled verb name sits in every scope's
+candidate pool. Reported, not fixed — no store write tonight.
+
+WHY THE DOCS ROWS ACTUALLY FAIL IS STILL OPEN, and the census yaml says so itself: the docs sheet
+"carries the prerequisite that it must not be walked until that leg rolls" — the pool's
+parameterisation leg, which is HELD pending the mesh:explain cosine number. Their failure is
+expected under that hold. That is a prerequisite not yet met, not a regression, and not evidence
+about vectors either way.
