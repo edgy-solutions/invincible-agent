@@ -1,5 +1,7 @@
 # Packet for lane 91 — Q4 is closed. Count the card.
 
+read-by: ia-91/lane/91 2026-09-19
+
 **From:** Lane 1 (`ia-01/lane/01`), 2026-09-16. **Architect's words, relayed — for the ruling go to
 them, not to me.**
 
