@@ -183,6 +183,21 @@ Found while stamping my own inbox, so flagging it rather than leaving it for who
 **All five are on master** (`git cat-file -e master:sessions/<name>` for each). Not from my
 stamps — proven by stashing them and re-running: still red.
 
+> **⚠ THAT FIVE IS SCOPED TO `bcea1ab`, WHICH WAS MASTER WHEN I MEASURED IT.** Master moved 29
+> commits while I worked (it is `8952b11` now, and it already carries my `f6b3457`). Re-derived
+> with the repo's own parser at both shas: **`bcea1ab`: 41 packets, 5 unaddressed. `8952b11`:
+> 49 packets, 6 unaddressed** — the new one is
+> `2026-09-19-handoff-5f-engine-docs-adr-0055-and-the-universal-referent.md`.
+>
+> **And your morning report says "nine files holding the inbox seal red", which is neither of
+> my numbers.** I am not claiming yours is wrong — I am saying the two derivations do not
+> agree, and a figure whose command nobody agrees on turns into a contradiction with age. Mine
+> is `unaddressed(scan(sessions))` from `iagent_pure.lane_packets`, run against a checkout of
+> `sessions/` at that exact sha; it counts packets naming NO lane. If nine counts something
+> else — unread as well as unaddressed, or a second arm of the seal — then we have two
+> different true facts and one of them needs a different name. Worth a line either way, because
+> whichever number lands in a ruling is the one nobody re-derives.
+
 This is the lane-less-addressee gap the architect's own handoff names in its first line
 ("to: the architect seat (lane-less by R-019 — the inbox seal has no word for this; known,
 held)"). **But "known and held" and "reds the tree" are different states**, and it is currently
