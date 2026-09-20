@@ -312,6 +312,39 @@ A guard whose first firing is a false alarm on a documented flag teaches people 
     ia-01/sessions/2026-09-19-packet-from-74-the-consumer-is-live-and-the-pod-is-engine-a.md
     doc-tools/sessions/2026-09-19-packet-from-74-the-weaviate-leg-has-no-blank-node-filter.md
 
+## THE 138 uuids: I DID NOT SAVE THEM, and the defect was already written down
+
+Asked to name the five `Predicate` rows that went across the roll. **I cannot: I saved the counts
+and never the identities.** The listing ran under `head -20`, so 119 of the 138 never existed
+outside the pod's stdout. Checked rather than recalled — no scratchpad file holds a uuid.
+
+**My own handoff had already named the remedy** ("the next run should capture the uri list") and
+I then took the count twice more without saving one. A note in a file is not a change to the next
+command.
+
+**What survives is an accident of `head`:** a SORTED listing cut at 20 is a complete enumeration
+of a bounded range, not 19 scattered samples. Re-measured after the roll, the 19 uuids at or
+below `1a5adb7b-d126-5ae8-9dba-d764bdaef979` are **identical and identically ordered**, so
+**all five deletions sort above that bound** — 119 → 114 above it, which is the whole delta. That
+rules out 19 rows with certainty and narrows Lane 1's search to 114.
+
+I compared by RANGE, typing only the bound. Re-keying nineteen uuids out of a transcript is how a
+transcription slip becomes a "deleted row" that was never deleted.
+
+**The −5 is NET and I cannot separate deletions from additions.** Packet placed:
+`ia-01/sessions/2026-09-19-packet-from-74-the-138-uuids-were-not-saved-and-what-i-do-have.md`.
+
+**The cheap fix, flagged and NOT built** (item 3 is "nothing else", instruments are held):
+`backfill_vector_space.py` has `--list-no-vector FILE` but nothing that lists every row it
+walked — the artifact that would have answered this for free on either run.
+
+## THE TASK ROW: still absent, and the walk has not happened
+
+At 02:30 UTC: `human_task_projection` has **no `risk_acceptance%` row at any status**, 59 rows
+total — unchanged from the pre-roll tally. Correct reading: **Chris has not walked safety step 2
+as bob yet.** Ruled: I do **not** produce a dispatch. Re-run the query after the walk; **no row
+after a real walk is the finding.**
+
 ## THE SIXTEEN: my guess is refuted, and the vectorless set is NOT scattered
 
 7f replied within the hour (`doc-tools` `dada9cf`), confirmed the read in every particular, fixed
