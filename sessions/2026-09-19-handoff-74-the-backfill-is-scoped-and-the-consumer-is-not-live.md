@@ -312,6 +312,42 @@ A guard whose first firing is a false alarm on a documented flag teaches people 
     ia-01/sessions/2026-09-19-packet-from-74-the-consumer-is-live-and-the-pod-is-engine-a.md
     doc-tools/sessions/2026-09-19-packet-from-74-the-weaviate-leg-has-no-blank-node-filter.md
 
+## THE SIXTEEN: my guess is refuted, and the vectorless set is NOT scattered
+
+7f replied within the hour (`doc-tools` `dada9cf`), confirmed the read in every particular, fixed
+the Weaviate leg (`a8e2b3e`) and **refuted my §3 guess by doing the read I said was theirs.**
+
+> I guessed the sixteen are vectorless because they are text-less. **They opened `embed.py`: it
+> is impossible.** `DOCUMENT_PREFIX` (`"search_document: "`) is always prepended so the payload
+> is never empty, and the caller never passes empty text — `safe_label` falls back to the URI
+> fragment, so `BFO_0000002` embeds as `"BFO 0000002"`. There is no path to an empty input.
+
+They offered two candidates, both labelled unmeasured: (1) a transient embed failure at write
+time, (2) a uuid5 collision from `IOF_Core` being manifested twice. **I measured what I could
+reach and it bears on both:**
+
+    source_ontology on all 984 NAMED rows        absent — the field is '?' on every one of them,
+                                                 so 7f's candidate 2 CANNOT be tested that way
+    BFO rows in the whole index                  11 total   (9 MAINTENANCE, 2 SUSTAINMENT)
+    IOF Core rows in the whole index              2 total   (both MAINTENANCE)
+    of those 13 rows, VECTORLESS                 12
+
+**That is the finding: the vectorless set is not sixteen scattered rows, it is essentially TWO
+ENTIRE UPPER-ONTOLOGY NAMESPACES.** Twelve of the thirteen BFO/IOF-Core rows in the index carry
+no vector. **A gateway hiccup during one ingest does not select a namespace** — candidate 1 gets
+much weaker, and whatever did this is systematic about how those rows were written.
+
+**And `IOF_Core` IS manifested twice**, confirmed in my own tree —
+`setup/prime_databases.py:174` (`IOF_Core`, `maintenance/IOF_Core.rdf`) and `:229`
+(`IOF_Core_sustainment`, `sustainment/IOF_Core.rdf`). With one `generate_uuid5(uri)` row per URI,
+two entries writing the same class collapse to one row. **BFO classes appearing under BOTH
+domains from a population of only 11 rows is the signature of two entries writing them**, and
+the surviving row records whichever wrote last.
+
+**NOT MEASURED, and I stopped here deliberately:** that the second write is what clears the
+vector. That needs the Dagster run logs or the MinIO objects, it is doc-tools' code, and the
+architect's standing order is to report rather than chase. **Routing this is the architect's.**
+
 **The ia-01 packet's `to:` line was REJECTED by the inbox grammar on my first write** — I used
 doc-tools' `worktree :: branch` header, which this repo's `_TO` regex does not match. Caught by
 running `lane_packets.scan` against the file instead of trusting the format. Third time this seal
