@@ -1,0 +1,126 @@
+WALK CENSUS — LEXICAL BASELINE
+run at:   2026-09-19T20:13:55Z
+repo sha: b7ea6b080af262a19bd2a90c971a7249d80dcd26
+
+WHY 'LEXICAL': the vector half of hybrid search is DEAD on OntologyClass and Predicate
+(74, 2026-09-19). Every PASS below was reached by BM25 alone. Before-image for the
+post-backfill diff.
+
+ENDPOINT IDENTITY ASSERTED BEFORE THE RUN, NOT ASSUMED:
+  keycloak localhost:18183 -> svc/iagent-keycloak (well-known issuer verified)
+  bff      localhost:18090 -> svc/iagent-cortex-bff (FastAPI 404 on root)
+  FIRST RUN WAS VOID: 18083 (the runner's DEFAULT keycloak port) is held by a STRAY
+  STUB running since 2026-09-10 that answers {"component":"cortex-bff",
+  "git_sha":"deadbeef..."} and 500s every token POST. All 20 rows read UNREACHABLE.
+  That was the instrument, not the fleet.
+========================================================================
+WALK CENSUS  repo=b7ea6b0  fleet=MIXED(91d8d34,d3ca169)  rows=20
+  PASS    cost-supplier-concentration-lot-4      COST_ANALYST
+  FAIL    cost-rate-comparison-lot-3-refusal     COST_ANALYST
+          elicitation offers 0 option(s), sheet expects 2 (option_source='none', free_text_reason='no_referent') � an ask with an empty menu is one the walker cannot answer from the card
+  PASS    cost-rate-comparison-lot-3-vintage     COST_ANALYST
+  PASS    cost-labor-split-lot-4                 COST_ANALYST
+  PASS    cost-rates-fy2021                      COST_ANALYST
+  FAIL    safety-haz-1003-risk-assessment        SAFETY_ENGINEER
+          disposition 'drawn', row accepts ['task_requested']
+  FAIL    safety-unattended-hazards              SAFETY_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'find_orphaned_hazards'
+          archetype ['KNOWLEDGE_DOCUMENT'] lacks 'CONTRIBUTION_RANKING'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    safety-deferral-risk-refusal           SAFETY_ENGINEER
+          disposition 'drawn', row accepts ['slot_required']
+          verb ['UNKNOWN', 'unknown'] lacks 'assess_deferral_risk'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  PASS    finance-np-meridian-brief              PROGRAM_FINANCE_ANALYST
+  FAIL    finance-variance-decomposition         PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 1
+  PASS    finance-variance-drivers               PROGRAM_FINANCE_ANALYST
+  FAIL    finance-funding-status                 PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 18
+  PASS    finance-burn-rate                      PROGRAM_FINANCE_ANALYST
+  FAIL    finance-performance-indices            PROGRAM_FINANCE_ANALYST
+          disposition 'slot_required', row accepts ['drawn']
+          archetype ['ELICITATION'] lacks 'MULTI_SERIES'
+  PASS    finance-eac-refusal                    PROGRAM_FINANCE_ANALYST
+  FAIL    finance-eac-comparison                 PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 3
+  FAIL    docs-how-do-i-add-an-engine            DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-what-is-an-archetype              DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-how-do-i-add-a-canvas-template    DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-how-do-i-roll-a-service-abstains  DATA_ENGINEER
+          disposition 'drawn', row accepts ['slot_required']
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+
+  8 pass, 12 fail, 0 blocked   repo=b7ea6b0  fleet=MIXED(91d8d34,d3ca169)
+EXIT=1
+
+========================================================================
+PARTITION OF THE 12 FAILURES — so the post-backfill diff is readable
+
+Written at baseline time, BEFORE the backfill, so the expectation cannot be
+fitted to the result afterwards.
+
+(a) SIX rows share ONE signature — the dead vector half (74, 2026-09-19):
+        route_status='no_match' · fell back: no_compatible_verbs
+        verb ['UNKNOWN','unknown'] lacks <the row's verb>
+
+      safety-unattended-hazards            lacks find_orphaned_hazards
+      safety-deferral-risk-refusal         lacks assess_deferral_risk
+      docs-how-do-i-add-an-engine          lacks mesh_explain
+      docs-what-is-an-archetype            lacks mesh_explain
+      docs-how-do-i-add-a-canvas-template  lacks mesh_explain
+      docs-how-do-i-roll-a-service-abstains lacks mesh_explain
+
+    THESE ARE THE ROWS THE BACKFILL SHOULD MOVE. The subject never resolves to
+    a class carrying the verb, so the verb cannot enter the enum — which is
+    what a BM25-only pool produces. NOTE the docs rows have a SECOND
+    precondition the sheet states: engine-docs must be ROLLED, not merely
+    merged, because engines re-register only at startup. A docs row still
+    failing after the backfill is not evidence the backfill failed.
+
+(b) TWO rows are FIXED IN THE TREE AND NOT YET ROLLED (merged this pass,
+    fleet is MIXED(91d8d34,d3ca169) which predates them):
+
+      safety-haz-1003-risk-assessment   disposition 'drawn', wants 'task_requested'
+                                        -> 74's review_request CONSUMER (917879d),
+                                           dead without the Dockerfile line
+      cost-rate-comparison-lot-3-refusal  empty menu, option_source='none',
+                                          free_text_reason='no_referent'
+                                        -> the gateway half of scoped_by (8b62f46)
+
+    EXPECT THESE TO MOVE ON THE ROLL, NOT ON THE BACKFILL. If they move before
+    the roll, something else changed and that is the finding.
+
+(c) FOUR finance rows fail on payload shape or row count, NOT on routing —
+    they reached the right verb:
+
+      finance-variance-decomposition   0 rows under None, floor 1
+      finance-funding-status           0 rows under None, floor 18
+      finance-eac-comparison           0 rows under None, floor 3
+      finance-performance-indices      disposition 'slot_required' wants 'drawn';
+                                       archetype ELICITATION lacks MULTI_SERIES
+
+    NO REASON TO EXPECT THE BACKFILL TO TOUCH THESE. If one of them changes,
+    that is a finding in its own right and not a bonus.
+
+AND THE EIGHT PASSES ARE THE SHARPEST PART OF THIS BASELINE. Every one was
+reached by BM25 alone. A pass is not neutral evidence here: the backfill
+changes what the pool contains, so a row that passes now can pass for a
+DIFFERENT reason afterwards, or stop passing. Per the architect: every changed
+route is a finding, INCLUDING the ones that improve.

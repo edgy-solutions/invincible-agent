@@ -43,7 +43,19 @@ PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
 #: Every disposition a row may accept. A row's `dispositions` must be a non-empty PROPER subset:
 #: a row accepting all three asserts nothing about what happened and would stay green through
 #: any behaviour change at all.
-DISPOSITIONS = ("drawn", "slot_required", "task_created")
+#: `task_requested` IS NOT `task_created`, AND THE NAME IS THE WHOLE POINT.
+#:
+#: The engine's payload carries a `review_request` block — kind, task_id, audience, title. That is
+#: the engine ASKING for a task. The row in `human_tasks` is what the workflow engine CREATES when
+#: the definition triggers on that output. They are different acts by different components, and
+#: the architect split them deliberately on 2026-09-19: the card is cortex's, the task row is 74's.
+#:
+#: This runner reads the ARTIFACT, so it can see the request and cannot see the row. Calling the
+#: observable half `task_created` would make the census assert what the WRITER decided and report
+#: it as what the STORE did — a recording double, and the most confident kind of wrong. So the
+#: disposition is named for what is actually observed, and the database row stays out of scope
+#: rather than being faked into it.
+DISPOSITIONS = ("drawn", "slot_required", "task_requested")
 
 #: Where a card's rows live, per archetype. `DELTA_SET` calls them `effects` — its contract's
 #: word, not a synonym chosen here. Sealed against engine-cost's own table so the two cannot
@@ -288,6 +300,14 @@ def routing_of(result: dict) -> dict:
 
 
 def _camel_to_snake(s: str) -> str:
+    """camelCase -> snake_case, and ALL-CAPS left alone.
+
+    Without the guard, `UNKNOWN` becomes `u_n_k_n_o_w_n`, because every character is an
+    uppercase boundary. It printed that way in a real census red and made a legible finding
+    ("the verb is UNKNOWN") read as a corrupted one.
+    """
+    if s.isupper():
+        return s.lower()
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
 
 
@@ -309,6 +329,31 @@ def verb_names(routing: dict) -> set[str]:
     if url:
         out.add(url.rstrip("/").rsplit("/", 1)[-1])
     return {x for x in out if x}
+
+
+def _review_request(result: dict) -> dict:
+    """The engine's `review_request` block, wherever it rides.
+
+    Searched rather than addressed at one key, because the walk sheet captured it on the engine's
+    own `/measure/...` response and the artifact may nest it. An absent block returns {} and the
+    caller treats that as "no task was asked for" — which is a claim about the REQUEST only.
+    """
+    def walk(o):
+        if isinstance(o, dict):
+            rr = o.get("review_request")
+            if isinstance(rr, dict) and rr:
+                return rr
+            for v in o.values():
+                found = walk(v)
+                if found:
+                    return found
+        elif isinstance(o, list):
+            for v in o:
+                found = walk(v)
+                if found:
+                    return found
+        return {}
+    return walk(result.get("final") or {}) or walk(result.get("events") or [])
 
 
 def components_of(result: dict) -> list[dict]:
@@ -351,7 +396,28 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
     # (Ruled earlier this week: the abstain is ELICITATION, not a new archetype.)
     elicit = next((c for c in comps if (c.get("archetype") or "") == "ELICITATION"), None)
     asked = elicit is not None and (elicit.get("disposition") == "ask" or bool(elicit.get("slot")))
-    actual = "slot_required" if asked else ("drawn" if comps else "none")
+
+    # A REVIEW REQUEST IN THE PAYLOAD, which is the engine asking for a task — see DISPOSITIONS.
+    requested = _review_request(result)
+
+    if asked:
+        actual = "slot_required"
+    elif requested:
+        actual = "task_requested"
+    elif comps:
+        actual = "drawn"
+    else:
+        actual = "none"
+
+    if row.expect_task and requested:
+        want_kind = row.expect_task.get("kind")
+        got_kind = requested.get("kind")
+        if want_kind and got_kind != want_kind:
+            why.append(f"review_request kind {got_kind!r} != {want_kind!r}")
+        want_aud = row.expect_task.get("audience")
+        got_aud = requested.get("audience")
+        if want_aud and got_aud != want_aud:
+            why.append(f"review_request audience {got_aud!r} != {want_aud!r}")
     if actual not in row.dispositions:
         why.append(f"disposition {actual!r}, row accepts {list(row.dispositions)}")
 

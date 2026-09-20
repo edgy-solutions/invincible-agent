@@ -559,6 +559,21 @@ cortexUi:
   enabled: true
   image:
     tag: ""
+    # PINNED BY DIGEST FOR THE 2026-09-19 ROLL, and the digest is the pin — not belt-and-braces
+    # over a tag. This image is CROSS-REPO (edgy-solutions/cortex-ui/frontend), so the fleet's
+    # retag-by-digest cannot reach it: scripts/retag_images_by_digest.py derives its population
+    # from THIS repo's build matrix, where cortex-ui appears zero times, and hard-codes the
+    # invincible-agent prefix. So `$ours` is false in the image helper and the tag falls through
+    # to "latest".
+    #
+    # MEASURED 2026-09-19, and the three numbers are the argument:
+    #   running pod   imageID sha256:70a0eead…  (cortex-ui df702ca — serves the safety rows)
+    #   :latest NOW   sha256:81407e58… / f8dc4533…  — ALREADY a different image
+    #   this pin      sha256:c8d6553f…  (cortex-ui 8a13dd6), multi-arch, arm64 present
+    # The running pod is on NEITHER of the other two, and its pullPolicy is Always. So the
+    # frontend currently serving the safety rows is one restart away from becoming whatever
+    # :latest points at, with no chart change and no commit. That is what this line closes.
+    digest: "sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

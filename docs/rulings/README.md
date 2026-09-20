@@ -2725,7 +2725,20 @@ observation; R-057.
 
 ---
 
-## R-055 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+## R-081 — A FAILURE RECORDED HONESTLY WHERE NOBODY READS IS A SUCCESS TO EVERYONE WHO LOOKS
+
+> **RENUMBERED 2026-09-19. This entry was filed as a second `R-055`** and sat here, between
+> R-065 and R-066, under a number already held by *"the other half of R-054: the intermediate
+> state can fail absent."* Two entries under one number is the register failing in its own
+> subject matter — a citation that resolves to whichever of two entries the reader happens to
+> scroll to is meaning recorded where nobody can read it back. It takes `R-081`, the first free
+> number, rather than one near its neighbours, because no integer was free there and a number
+> that moves twice is worse than one that sits out of order.
+>
+> **Citations of the OLD number are not all this entry's.** `R-055.1` and `R-055.2` belong to
+> the *other* R-055 and were left alone — `src/iagent/gateway.py` and
+> `tests/routing/test_the_answer_turn_reads_the_slots_it_bound.py` both cite `R-055.1`, and both
+> still resolve correctly. The two sites that meant THIS entry were repointed in the same commit.
 
 **Three shapes in one day, filed as one entry because they will be recognised faster as a family
 than as instances.** In every one the failure **was** recorded, correctly, by code that was doing
@@ -2994,7 +3007,7 @@ See [[a-sample-is-not-the-population]], [[assert-on-the-claim-not-its-neighbour]
 
 ## R-072 — THREE WAYS A WRITTEN CLAIM GOES WRONG, IN ORDER OF COST
 
-`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-055:
+`iagent-mesh-sdk-ca`'s taxonomy, ruled to sit beside R-081:
 
 > meaning where nobody reads it · a claim that **BECAME** false · a claim that was **NEVER** true
 
@@ -3145,7 +3158,7 @@ FIELD and its own comment saying *"same key as VintageRequired above, so a consu
 for what may I say instead."* **The flattening happened downstream of a producer that had already
 done the right thing**, which is why nobody on either end saw it.
 
-**This is R-055's shape at the presentation layer.** R-055 is meaning recorded where nobody reads
+**This is R-081's shape at the presentation layer.** R-081 is meaning recorded where nobody reads
 it; this is meaning recorded in a form nobody can read *back*. A sentence listing options is a menu
 that has been flattened, and the flattening is lossy in exactly the direction that matters.
 
@@ -3379,6 +3392,42 @@ falsely flagged, which is the check editing its own subject.
 
 **Proof that a lift worked is the gutted rule going red.** Three of three did, and before the lift
 the same mutation was invisible in all three.
+
+### THE SECOND ARGUMENT — and it is not the vacuum one
+
+**MEASURED 2026-09-19, the first time any of these ratchets FIRED in anger.**
+`_MIRROR_GAPS_AT_RATIFICATION` went 18 -> 15. Three `safety:` subjects were backend-only at
+ratification; cortex-ui bound all three (`df702ca`), they stopped being gaps, and the ratchet
+reddened until the lines were deleted.
+
+**THE FIXER DID NOT KNOW THE REGISTER EXISTED.** A debt register in ONE lane's test file records
+defects owned by OTHER lanes, so the commit that fixes one cannot be expected to delete its entry
+— the fixer is in a different repo and has never opened that file. Nothing in the fixing lane can
+prompt them, and nothing in the owning lane runs until someone happens to look.
+
+So, beside "a ratchet must be able to fail":
+
+> **A ratchet is the only thing that can notice a fix landing in a lane that never read the
+> list.** Without it, three CLOSED gaps read as OPEN to everyone who checks the list instead of
+> the mirrors — which is exactly the rot the register was built to refuse, arriving by the one
+> route the register itself cannot watch.
+
+This applies to **every cross-lane register in the fleet**, and the cross-lane ones are the
+registers most likely to have this property: a list is worth keeping precisely when the defects
+outlive the attention of whoever files them.
+
+Two consequences worth stating, because they point opposite ways:
+
+* the entry is deleted in the commit that **OBSERVES** the fix, not the one that makes it — those
+  are different commits, often in different repositories, and requiring the fixer to do it is
+  requiring something structurally unavailable to them;
+* and the observation must be **checked against a commit, never a working tree**. The seal that
+  caught this reads a sibling repo's DIRECTORY, and the fixing lane was mid-edit in that exact
+  file an hour earlier. Retiring an entry on an uncommitted change records as closed something one
+  `git checkout` undoes. A green belongs to a sha, not a directory.
+
+Raised by lane 91 from the firing itself, which is the right provenance for it: the argument was
+not available until a ratchet had fired for a cause nobody designed it for.
 
 ### Two notes that travel with it
 

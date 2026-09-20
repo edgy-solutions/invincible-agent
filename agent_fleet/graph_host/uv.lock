@@ -486,7 +486,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.2" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.3" },
     { name = "langchain-core" },
     { name = "langfuse" },
     { name = "langgraph" },
@@ -612,11 +612,10 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.2"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.2#ca5acaceec1ea37a76618794c1e6f5370363c965" }
+version = "0.9.3"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.3#b6d597f0aecf030dcd2fff814c59b467593a12ee" }
 dependencies = [
     { name = "acryl-datahub" },
-    { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "nest-asyncio" },
@@ -624,7 +623,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "pyyaml" },
-    { name = "uvicorn" },
 ]
 
 [[package]]

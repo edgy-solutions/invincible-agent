@@ -597,17 +597,32 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     (_MESH + "WorkflowObservation", _MESH + "WorkflowObservation"),
     # ── THE THREE SAFETY ROWS ARE GONE FROM THIS REGISTER, 2026-09-19 ────────────────────────
     #
-    # `safety:DeferralRiskCard`, `safety:OrphanedHazardSet` and `safety:RiskAssessmentDraft`
-    # were backend-only at ratification. The safety lane bound all three in cortex-ui, so they
-    # stopped being gaps and **the ratchet reddened until their lines were deleted** — which is
-    # the entire reason it exists, and the first time it has fired.
+    # `safety:DeferralRiskCard`, `safety:OrphanedHazardSet` and `safety:RiskAssessmentDraft` were
+    # backend-only at ratification: Engine S advertised them to the mesh and cortex bound none, so
+    # no component could ever be chosen for them. cortex-ui `df702ca` bound all three, they
+    # stopped being gaps, and **the ratchet reddened until their lines were deleted** — the first
+    # time it has fired, and the entire reason it exists.
     #
     # ⚠ THE FIXER DID NOT KNOW THIS REGISTER EXISTED, and that is the interesting part rather
-    # than a complaint. A debt register in one lane's test file records a defect owned by
-    # another lane, so the commit that fixes it cannot be expected to delete the entry. **The
-    # ratchet is what closes that gap** — without it the three would have sat here reading as
-    # open defects to everyone who checked the list instead of the mirrors, which is precisely
-    # the rot this register was built to refuse.
+    # than a complaint. A debt register in ONE lane's test file records defects owned by OTHER
+    # lanes, so the commit that fixes one cannot be expected to delete the entry. **The ratchet is
+    # the only thing that notices a fix landing in a lane that never read the list** — without it
+    # three CLOSED gaps would read as OPEN to everyone who checked the list instead of the
+    # mirrors. That is a second argument for the ratchet beside the vacuum one, and it applies to
+    # every cross-lane register in the fleet. (Lane 91, routed to R-080.)
+    #
+    # WHAT THE GAP COST WHILE IT WAS OPEN, measured rather than inferred: `draft a risk assessment
+    # for HAZ-1003` routed MATCHED to mesh:draftRiskAssessment and came back
+    # `presentation_source: "unrenderable"` — "no registered capability's contract is satisfied by
+    # this payload" — with "No content available." A correct route and an empty card.
+    #
+    # And the rows went into the WRONG MENU first: the presentation agent's table writes
+    # `__system_default__`, while cortex's menu is written by the browser POST and is the one
+    # `select_archetype("cortex-ui-desktop", ...)` reads. That table's own header had predicted
+    # exactly this — "a fix aimed one menu to the left".
+    #
+    # Deleted in the commit that OBSERVED the fix, not the one that made it: the fix is cortex's,
+    # this register is ours, and the two live in different repos.
     #
     # Fifteen entries remain, all `mesh:` subjects the frontend binds alone.
 }

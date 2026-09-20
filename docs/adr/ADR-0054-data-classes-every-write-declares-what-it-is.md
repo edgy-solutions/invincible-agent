@@ -15,8 +15,10 @@ enforcement points only; no store is reclassified by this ADR**, and the populat
 **provisional** (see §7). The eo lane's fleet-wide write census is the first thing that runs against
 it. **Amended twice** — 2026-09-16, four answers to its first consumer's review, and the class
 does NOT transition; **2026-09-17, five from the fleet-wide write census**, which widens
-`rebuildable` to reach a durable log, classifies scripts by their targets, and gives §4 a **third
-door that lives in another repo**. The census has landed, so §7's "provisional" is history rather
+`rebuildable` to reach a durable log, classifies scripts by their targets, gives §4 a **third door
+that lives in another repo**, and adds that door's **symmetric half** — a repo that cannot see the
+writes must not claim they are ABSENT either, so the refusal derivation has three states and only
+*no producer anywhere* is refused. The census has landed, so §7's "provisional" is history rather
 than state.
 **Date:** 2026-09-16
 **Deciders:** Architect (the four fields and the three enforcement points), Platform team
@@ -498,6 +500,141 @@ form-checked-but-existence-unchecked rule applied to a seal rather than to a lin
 lane's conformance seal already got the matching half right unprompted: it deliberately does **not**
 read the graph for its declared-but-never-written direction, **because the live edges have another
 repo as their author and a graph-reading seal would go red on someone else's correct behaviour.**
+
+### 6. The symmetric half — a repo that cannot see the writes must not claim they are ABSENT either
+
+§5 above rules that a repo which cannot see the writes must not claim they conform. **The same
+blindness runs the other way and is easier to miss, because it produces a REFUSAL — which reads as
+rigour.**
+
+The census's `fold, do not hand-run` derivation refused two stores on its first run:
+`neo4j:OntologyClass` and `weaviate:OntologyClass`, for having no bootstrap that reproduces them.
+**Both refusals were wrong**, and the measurement is the argument — **stated with its scope,
+because the first version of this paragraph was not.**
+
+    MERGE / CREATE of an :OntologyClass NODE      files   sites
+      FOLDED   agent_fleet/ + src/ + setup/           0       0
+      scripts/ (hand-run)                             4       5
+      tests/                                          3       3
+
+**No folded writer in this repo creates those nodes.** Their producer is doc-tools'
+`assets/ontology_assets.py`, folded into the prime and invisible from this tree — the prime's own
+comment says so — and the registrar writes the edges **between nodes it never created**.
+
+> **AN EARLIER DRAFT SAID "0 SITES IN THIS REPO", AND THE COMMAND BEHIND IT WAS SCOPED TO
+> `agent_fleet/` AND `src/`.** Repo-wide the same pattern returns eleven files. **The command was
+> scoped and the sentence claimed the population** — the same defect this lane filed a law about
+> three days ago, in an Accepted ADR this time, caught by the census owner re-deriving a number
+> because it had become load-bearing. The scoped claim is also the *stronger* one: *no folded
+> producer* is precisely the premise the three-state derivation needs, while a bare *zero* invites
+> a contradiction on a reviewer's first grep.
+>
+> **A read count is deliberately not quoted here.** Two patterns for `MATCH (…:OntologyClass)`
+> returned two different totals across the two lanes, the argument does not turn on it, and a
+> figure whose command is not agreed is a figure that will be re-derived into a contradiction.
+
+**THE TEMPTING FALSE POSITIVE, NAMED BECAUSE COUNTING IT INVERTS THE CONCLUSION.**
+`setup/prime_databases.py:535` reads
+`CREATE CONSTRAINT ontology_class_uri_unique … FOR (c:OntologyClass)`. It matches a loose
+`CREATE … :OntologyClass` and it is **schema, not a node write**. Counted, the prime becomes a
+folded producer and the entire external-door conclusion reverses.
+
+### THE WORKED CASE — `neo4j:OntologyClass`, where two rules need each other
+
+**§2 has a worked case for the class-6 rule; this is the worked case for the interlock**, and it
+earns the same treatment for the same reason: a rule with no instance is a rule nobody applies.
+
+The store, declared:
+
+| field | value | |
+|---|---|---|
+| reproducibility | `rebuildable` | reproduced by the prime, every run |
+| authority | `here` | it is this platform's vocabulary |
+| sync obligation | `none` | nothing crosses a location boundary |
+| producer | **doc-tools' `assets/ontology_assets.py`** | via the ingest door's declared store list (§7) |
+
+**What each rule says about it ALONE, and both are wrong:**
+
+| reading | verdict | why it is wrong |
+|---|---|---|
+| the three states, alone | **state one, *produced here*** | four hand-run scripts write these nodes — five sites — so a producer IS present in this repo. It never reaches the external door, and the ingest door's declaration is never consulted. |
+| `fold, do not hand-run`, alone | **REFUSED** | every producer it can see is a hand-run script, so the store has no bootstrap and is §5's debt. This is the refusal the census actually produced. |
+| **the two together** | **state two, *produced by a declared external door*** | a hand-run producer is not a bootstrap, so state one does not apply; and a bootstrap exists behind the ingest door, so the refusal does not either. |
+
+**Neither rule is redundant and neither is sufficient.** Remove the three states and §5 refuses a
+store the prime rebuilds on every run. Remove §5 and the three states classify a hand-run script as
+the producer of record, which is the debt legitimised under a different name — the outcome §5
+exists to prevent, reached by the rules that were supposed to prevent it.
+
+> **This is the second time a store that fits no simple reading has shown that two rules need each
+> other.** The first was edge-authored intent, which fit none of the three lifecycle shapes and
+> proved the shapes are not the schema. This one fits neither of two derivations and proves they
+> interlock. **Both were found by a case, not by reading the rules** — which is the argument for
+> worked cases in an ADR rather than a cleaner statement of the rule.
+
+**AND IT WAS INVISIBLE UNTIL A NUMBER WAS SCOPED HONESTLY.** While the paragraph above said *zero
+writes in this repo*, this store looked like a plain state-two case and the interlock did not
+exist: there was no state-one reading to rule out. **The four script writes are what make the two
+rules collide**, and they were outside the scope of the command that produced the zero.
+
+**So the refusal derivation has THREE states, not two:**
+
+| state | meaning | outcome |
+|---|---|---|
+| **produced here** | a producer in this repo | classified, witness named |
+| **produced by a declared external door** | a producer in another repo's declared store list | **classified, NOT refused** |
+| **no producer anywhere** | nothing claims to reproduce it | **refused** — §5's hand-seeded debt |
+
+**Only the third is refused**, and the census reads the ingest door's declared store list as a
+producer source *before* it refuses anything. Refusing the first two was the conformance-split
+blindness pointed the other way: a single-repo census asserting an ABSENCE it has no standing to
+assert.
+
+### 7. The ingest door declares STORES, not only edge types
+
+§3 above names doc-tools as the third write door and enumerates the eight edge types it MERGEs.
+**That enumeration is incomplete in a way that leaves §6's second state unusable.**
+
+`assets/ontology_assets.py` also writes the **`OntologyClass` nodes in Neo4j** and the
+**`OntologyClass` collection in Weaviate** — both of which §2 classes `rebuildable`. If the ingest
+door's declaration lists only edge types, **the node writes have nothing to check against**: the
+conformance assertion passes over a surface it cannot see, and the census has no producer source to
+read for those two stores.
+
+> **The ingest door declares the STORES it writes, each with its class and doc-tools as producer**,
+> the way the registrar's declaration covers `PARAMETERISED_BY`. Edge types alone describe half of
+> what comes through the door.
+
+### Three corrections from the census owner, and they are one family
+
+All three arrived while these amendments were being written, all three are theirs, and each is a
+way an instrument returns something other than the world:
+
+* **AN INSTRUMENT'S REACH NARROWS THE EVIDENCE FOR ITS OWN WARNING.** The false-zero caution in §5
+  was raised using a figure the census's own scan had produced by omitting `.txt` from its suffix
+  list and `tests/` from its scopes. Right in substance; artefact for evidence.
+* **THE LIST IS WHAT YOU WROTE DOWN, so checking against it returns your own earlier decision as a
+  measurement.** That is the mechanism that makes *a search by list finds the list* survive care —
+  the eight-versus-five count had exactly that shape, a grep for the five already suspected
+  returning confirmation of its own hypothesis.
+* **A CHECK THAT REPORTS ONE INSTANCE PER RUN UNDER-REPORTS BY CONSTRUCTION, and a clean second run
+  reads as a fix.** Worse than flaky, because it is consistent. `test_citation_paths` named one
+  dead path of two in this ADR, and the second was found by deriving the remaining occurrences
+  rather than by trusting the error to have listed them.
+* **A CONSTANT IS NOT A DERIVATION**, and it invents a store. The census's extractor had no
+  derivation rule for DataHub, so it returned a hardcoded `datahub:catalog` for all fourteen sites
+  — **merging two disjoint populations into a store that does not exist.** The registrar emits
+  `urn:li:mlModel` on the `mesh` platform; a seed script emits `DatasetProperties` on `postgres`
+  and `snowflake`. Different entity types, different platforms, zero overlap.
+* **A MIGRATION IS NOT A SECOND BOOTSTRAP.** A category of three stores with *"both a folded writer
+  and a script writer"* dissolved on reading the scripts: four are one-shot repairs that converge
+  and are done, and one is a seeder for a store nothing else touches. **The class-6 collapse risk —
+  two producers disagreeing about one store's shape — has ZERO instances**, and that is a stronger
+  answer than three risks precisely because the label had been too coarse twice in the same
+  direction.
+
+**Their common shape is the one this ADR is built on**: a population that is asserted rather than
+derived, whether the assertion is a list, a scope, or a report's own output.
 
 ## Consequences
 

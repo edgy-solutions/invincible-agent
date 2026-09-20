@@ -91,34 +91,20 @@ PHANTOM_CITATIONS = {
     "docs/adr/ADR-0016-memory-boundary-revised.md":
         "Linked by ADR-0019. Never created. Same shape as 0006: a numbered ADR referenced as "
         "though it were on file.",
-    # ── THE THREE WALK SHEETS THE CENSUS IS WAITING ON (2026-09-18) ──────────────────────────
-    # A DIFFERENT KIND OF PHANTOM: these have an OWNER AND A DATE, not merely a citation. Each is
-    # named by a walk-census row that is BLOCKED on it, and the census prints that row red with
-    # its reason on every run — so the debt is already visible where it matters. These entries
-    # only stop the citation seal reporting the same fact a second way.
+    # ── THE THREE WALK SHEETS THE CENSUS WAS WAITING ON — ALL THREE LANDED (2026-09-19) ──────
+    # No walk sheet is allowlisted any more. They retired themselves, which is what the entries
+    # were for; the last one was `docs/measurements/docs-walk-sheet.md`, deleted here when 5f's
+    # `76706e9` reached master. The sheet exists, so its citation resolves on its own and needs
+    # no allowlisting at all.
     #
-    # THEY RETIRE THEMSELVES, which is why this list is right and a blanket exemption would be
-    # wrong. `test_phantom_allowlist_is_honest` fails the moment a path appears in git history:
-    # when 74, 91 or 5f commits its sheet, THIS FILE goes red and the entry must be deleted —
-    # while the census's own `test_a_blocked_row_names_a_sheet_that_really_is_absent` goes red
-    # from the other side in the same breath. Neither can leave a landed sheet looking un-landed.
-    "docs/measurements/safety-walk-sheet.md":
-        "Owed by lane 74 (dispatch 2026-09-18): the three phrasings, their personas and their "
-        "expected tasks. Cited by docs/measurements/walk-census.yaml, whose HAZ-1003 row is "
-        "blocked on it. Delete this entry when the sheet lands.",
-    # `docs/measurements/finance-walk-sheet.md` WAS HERE AND ITS SHEET LANDED (d84bba5), so the
-    # entry is gone — the instruction it carried was "delete this entry when the sheet lands."
-    #
-    # ⚠ IT WENT STALE AT THE MOMENT OF THE COMMIT, NOT BEFORE. While the file was untracked,
-    # `git log --diff-filter=A` found nothing and this seal was satisfied; committing it put the
-    # path in history and turned a legal phantom into a false one. **The full suite run twenty
-    # minutes earlier was green on this row and was not wrong** — it measured a tree where the
-    # sheet was not yet a commit. A red that appears only after the commit is the same shape as
-    # the exemptions that could not be tested until a merge was committed.
-    "docs/measurements/docs-walk-sheet.md":
-        "Owed by lane 5f (dispatch 2026-09-18), alongside mesh:explain's referent widening. "
-        "Cited by docs/measurements/walk-census.yaml, whose 'how do I add an engine' row is "
-        "blocked on it. Delete this entry when the sheet lands.",
+    # THE RETIREMENT CLAIM THIS BLOCK USED TO CARRY WAS STALE, and stale in the direction that
+    # reads as safe. It said `test_phantom_allowlist_is_honest` "fails the moment a path appears
+    # in git history: when 74, 91 or 5f commits its sheet, THIS FILE goes red." That was true of
+    # the two-state seal it was written against. Once the third state landed (`1c5f456`) a sheet
+    # committed on its own lane became PENDING — a reported state, not a red — and the entry
+    # stayed legal until the branch reached MASTER. Both versions retire the entry; they
+    # disagree about WHEN, and the stale one promised a red that would not have arrived for
+    # days, which is exactly long enough for someone to conclude the seal was broken.
 }
 
 # WITHHELD CITATIONS — the file EXISTS and is deliberately kept OUT of the repo.
@@ -361,25 +347,148 @@ def test_withheld_allowlist_is_honest(path):
     )
 
 
+#: How long a `pending` path may sit on an unmerged branch before it stops reading as work in
+#: flight. CHOSEN, not derived, and stated so nobody later cites it as a measured bound: it is
+#: long enough that an ordinary lane cycle never trips it and short enough that an abandoned
+#: branch cannot hold a deletion open forever.
+PENDING_MAX_AGE_DAYS = 30
+
+
+def _branches_containing(sha):
+    import subprocess
+    r = subprocess.run(["git", "branch", "-a", "--contains", sha],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    out = []
+    for ln in r.stdout.splitlines():
+        b = ln.strip().lstrip("*+ ").strip()
+        if b and "HEAD detached" not in b:
+            out.append(b)
+    return out
+
+
+def _age_days(ref):
+    import subprocess, time
+    r = subprocess.run(["git", "log", "-1", "--format=%ct", ref],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return (time.time() - int(r.stdout.strip())) / 86400.0
+
+
 @pytest.mark.parametrize("path", sorted(PHANTOM_CITATIONS))
 def test_phantom_allowlist_is_honest(path):
-    """An entry is legal ONLY if the path was never added to git history.
+    """An entry is legal only if the path was never added ON MASTER — and there are THREE states.
 
-    Without this, PHANTOM_CITATIONS is a place to hide a deletion: move or delete a real file,
-    add it here, and the seal goes quiet about the exact thing it was built to catch. The
-    escape hatch has to prove its own precondition, or it becomes the defect.
+    The seal used to have two dispositions for three situations, and the missing one cost a
+    false red on 2026-09-19: a walk sheet written by another lane, sitting on that lane's branch,
+    was reported as **ROT** — "restore it or repair the citing site" — when nothing had been
+    deleted and nobody needed to restore anything. The seal was RIGHT that it was not a phantom
+    and WRONG that it was rot. It was neither.
+
+    ── WHY THE SEAL COULD SEE IT AT ALL ────────────────────────────────────────────────────────
+    It reads `git log --all`, so it quantifies over every ref this tree has FETCHED. That is
+    correct for catching a deletion — a deleted file must not be hidden by allowlisting it — and
+    it means the seal sees other lanes' branches perfectly. **It is not blind to the other lane;
+    it has no WORD for what it sees.** This is the worktrees-hide-each-other hazard arriving
+    inside a checker, pointed the other way.
+
+        PHANTOM   never added anywhere          -> legal allowlist entry
+        PENDING   added on a branch, not master -> STATE, reported with the branch and its age
+        ROT       added on master, now gone     -> red; the escape hatch must not hide a deletion
+
+    ── AND `pending` MUST NOT BECOME WHERE ROT HIDES ───────────────────────────────────────────
+    Raised by 5f before this landed, and it is the failure this state invites: a genuinely
+    deleted file that still exists on some abandoned branch would be `pending` forever, and
+    `pending` reads as "someone is on it". So the branch's AGE is reported beside its name and
+    an entry pending longer than `PENDING_MAX_AGE_DAYS` fails — a pending that nobody merges
+    stops being work in flight and becomes an exemption with better manners.
     """
     import subprocess
 
-    r = subprocess.run(
-        ["git", "log", "--all", "--diff-filter=A", "--format=%h", "--", path],
-        cwd=ROOT, capture_output=True, text=True,
+    def added_on(*refs):
+        # `--full-history` IS LOAD-BEARING AND WAS MISSING. Default history simplification
+        # drops commits on merged side-branches, so `git log --all --diff-filter=A -- <path>`
+        # returns EMPTY for a file that really was added and later deleted — which this seal
+        # would then accept as "never written", i.e. a legal phantom. The escape hatch would
+        # have hidden the exact deletion it exists to refuse. Measured 2026-09-19 on
+        # the retired two-laws proposal under the proposals directory: 0 hits without the
+        # flag, 2 with it. (Named in prose rather than by path — a contiguous path in a
+        # COMMENT is a citation to the scanner, which is the trap two lines of this same
+        # file just fell into.)
+        r = subprocess.run(
+            ["git", "log", *refs, "--full-history", "--diff-filter=A", "--format=%h", "--", path],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        assert r.returncode == 0, f"git log failed for {path}: {r.stderr.strip()}"
+        return r.stdout.split()
+
+    # ROT is decided against MASTER alone: a file that master once had and no longer has is a
+    # deletion, whatever any branch holds.
+    on_master = added_on("origin/master") or added_on("master")
+    if on_master:
+        assert not (ROOT / path).is_file(), (
+            f"{path} was added on master ({on_master[0]}) and EXISTS — it is not a phantom at "
+            f"all. Delete its PHANTOM_CITATIONS entry."
+        )
+        raise AssertionError(
+            f"{path} was added on master ({on_master[0]}) and is now gone — so it is ROT, not a "
+            f"phantom. Restore it or repair the citing site; do not allowlist a real deletion."
+        )
+
+    anywhere = added_on("--all")
+    if not anywhere:
+        return  # PHANTOM — never written. The allowlist entry is legal.
+
+    # PENDING — written, on a branch, not yet merged. State, not red, with the branch named so
+    # the reader knows who to ask instead of being told to restore a file nobody deleted.
+    sha = anywhere[0]
+    branches = [b for b in _branches_containing(sha) if "master" not in b]
+    age = _age_days(sha)
+    where = ", ".join(branches) or "<unnamed ref>"
+    assert age is None or age <= PENDING_MAX_AGE_DAYS, (
+        f"{path} has been PENDING on {where} for {age:.0f} days (bound "
+        f"{PENDING_MAX_AGE_DAYS}). A pending entry that nobody merges is an exemption wearing "
+        f"work-in-flight's clothes — merge the branch or move the entry to a real disposition."
     )
-    assert r.returncode == 0, f"git log failed for {path}: {r.stderr.strip()}"
-    assert not r.stdout.strip(), (
-        f"{path} IS in git history (added by {r.stdout.split()[0]}) — so it is ROT, not a "
-        f"phantom. Restore it or repair the citing site; do not allowlist a real deletion."
+    print(f"  PENDING  {path}: on {where}, added {sha}, "
+          f"{'age unknown' if age is None else f'{age:.1f}d old'} — not in master yet")
+
+
+def test_THE_THREE_STATES_ARE_DISTINGUISHABLE():
+    """THE CONTROL FOR THE NEW STATE, and the reason it is here is that `pending` can absorb the
+    others.
+
+    A third disposition that quietly swallowed ROT would make every seal above pass while the
+    escape hatch went back to being the defect it was built against. So each state is exercised
+    against a real path, and the ROT arm is exercised against a file this repo REALLY deleted on
+    master — not a synthetic one, because the question is whether the classifier fires on the
+    shape git actually produces.
+    """
+    import subprocess
+
+    def classify(path):
+        def added_on(*refs):
+            r = subprocess.run(["git", "log", *refs, "--full-history", "--diff-filter=A",
+                                "--format=%h", "--", path],
+                               cwd=ROOT, capture_output=True, text=True)
+            return r.stdout.split() if r.returncode == 0 else []
+        if added_on("origin/master") or added_on("master"):
+            return "EXISTS" if (ROOT / path).is_file() else "ROT"
+        return "PENDING" if added_on("--all") else "PHANTOM"
+
+    # SPLIT SO THIS FILE DOES NOT CITE IT. `DOC_PATH` scans source text, so a contiguous
+    # "docs/..." literal here is indistinguishable from a real citation — and
+    # `test_every_cited_docs_path_resolves` duly reported this control as a dead link. The
+    # instrument and the subject share a surface; the join is the only place to break it.
+    rot = "docs" + "/proposals/two-laws-from-the-safety-seals-routed-for-allocation.md"
+    assert classify(rot) == "ROT", (
+        f"{rot} was added AND deleted on master; the classifier must call that ROT, or the "
+        f"pending state has swallowed the deletion case this allowlist exists to refuse"
     )
+    assert classify("docs" + "/adr/namespace-prefixes.md") == "PHANTOM"
+    assert classify("docs" + "/runbooks/pinning-the-fleet-sdk.md") == "EXISTS"
 
 
 def test_phantom_allowlist_entries_are_still_cited():
