@@ -252,3 +252,69 @@ text (I have still never opened doc-tools' embed path) · that a second backfill
 remedy for rows written mid-walk — reasoned from the `already-named` skip, not run.
 
 — 74, session ref `[bd26bdc1]`
+
+---
+
+# ADDENDUM, same session, ~40 minutes later — THE ROLL FIRED AND THE TITLE OF THIS FILE IS NOW WRONG
+
+**§6 above says the consumer is not live anywhere. THAT IS NO LONGER TRUE, and this addendum is
+here rather than in a new file because the paragraph above is the one a reader will find first.**
+
+The fleet rolled to `c0005142a610bc7759cfc8953666aee7c6064632` while I was working — I caught it
+in the act, images pulling mid-command. **It carries `917879d` (the consumer + the Dockerfile
+`COPY policy/decisions/` line) and `19bc52f` (fix D for the Predicate writers).** It does NOT
+carry any of my five lane commits.
+
+## What is now true
+
+* **The consumer is LIVE and exercised, in `iagent-engine-a`** — the deployment running the
+  `restate-analyst` image. Imported in the pod: `decision_dirs()` resolves BOTH the seed and the
+  overlay, `load_table()` is True, and `select('Low'/'Medium')` → `safety_acceptance_direct`,
+  `select('High'/'Serious')` → `safety_concurrence`. A lowercase level refuses with a message
+  naming the declared domain, which is the control.
+* **The producer still emits on the rolled image**: engine-safety returns `review_request` for
+  HAZ-1003, kind `risk_acceptance_medium`, audience `risk_acceptance_medium:SUSTAINMENT`, and
+  `risk_level: Medium` — which is the key `select()` answers `safety_acceptance_direct` for.
+  **Called DIRECTLY on port 8099, bypassing the gateway, so no task was opened.**
+* **`§6`'s corrected precondition was STILL one pod out, and I had it wrong too.**
+  `iagent-data-analyst` is a *different agent* (`data-analyst` image). The consumer lives in
+  `iagent-engine-a`. Checked on data-analyst, all three conditions read "not live" on a fleet
+  where the consumer runs fine. **Check 2 — the module import — is the only one of the three
+  that discriminates.**
+* **The task row still does not exist.** `human_task_projection` has no `risk_acceptance_medium`
+  row at any status. That is correct — nothing has run a safety turn through the gateway since
+  the roll. Producing one writes into bob's queue, so it is **Chris's walk**, and the query is in
+  the packet ready to re-run.
+
+## And fix D is proven in the field, which nobody had measured
+
+    Predicate  02:08 UTC (mid-roll)    138 rows, ALL would-relocate
+    Predicate  02:15 UTC (settled)     133 rows,  89 ALREADY-NAMED + 44 would-relocate
+    OntologyClass, same window         unchanged at 25,255 / 16 / 968
+
+Engines re-registered at startup and the fixed writer put the rows straight into the named
+space. `OntologyClass` not moving is the control — doc-tools has not rolled its half. **Fix D had
+only ever been shown in scratch collections.**
+
+## Commits added after the body above
+
+    657bd95  fix(backfill): the identity is the expectation, and the apply is bracketed by dry runs
+
+The architect ruled the partition identity — not tonight's counts — to be the script's
+expectation, and ruled the apply bracketed by dry runs with a non-zero second reading treated as
+a FINDING, not a retry. Both are in the banner. `partition_ok` now checks the identity, **and
+writing its control caught it being wrong before it shipped**: the first version would have
+fired on every `--offset` run, because that branch advances `seen` without recording an outcome.
+A guard whose first firing is a false alarm on a documented flag teaches people to ignore it.
+
+## Placed outside this repo, for others to commit
+
+    ia-01/sessions/2026-09-19-packet-from-74-the-consumer-is-live-and-the-pod-is-engine-a.md
+    doc-tools/sessions/2026-09-19-packet-from-74-the-weaviate-leg-has-no-blank-node-filter.md
+
+**The ia-01 packet's `to:` line was REJECTED by the inbox grammar on my first write** — I used
+doc-tools' `worktree :: branch` header, which this repo's `_TO` regex does not match. Caught by
+running `lane_packets.scan` against the file instead of trusting the format. Third time this seal
+has caught this lane; the grammar is `to: ia-<lane>/lane/<lane>` and nothing else on the line.
+
+— 74, session ref `[bd26bdc1]`
