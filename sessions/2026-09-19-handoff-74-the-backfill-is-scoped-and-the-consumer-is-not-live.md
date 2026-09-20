@@ -312,6 +312,63 @@ A guard whose first firing is a false alarm on a documented flag teaches people 
     ia-01/sessions/2026-09-19-packet-from-74-the-consumer-is-live-and-the-pod-is-engine-a.md
     doc-tools/sessions/2026-09-19-packet-from-74-the-weaviate-leg-has-no-blank-node-filter.md
 
+## OVERNIGHT — the four-item order, and the row is still absent AFTER a real walk
+
+**1. THE TASK ROW IS ABSENT, AND THE CONTROL SAYS THAT IS NOW A FINDING.** Lane 1's post-roll
+census HAS saved (`6ad77f3` on `lane/01`), so the precondition is met — I checked that before
+reporting an absence, because an absence measured before the census would have been worthless.
+
+    human_task_projection, 03:05 UTC   59 rows, ZERO `risk_acceptance%` at any status
+    the census's own row               safety-haz-1003-risk-assessment
+                                       disposition 'drawn', wants 'task_requested'
+
+The turn ran, drew a card, and asked for nothing. **I can narrow where it stops, which the
+census cannot see:** in cortex-bff's log at the rolled sha, the pod DID serve the turn (8 lines
+naming `census-safety-haz-1003-...` artifacts, in 3506 lines — that is the positive control),
+and **neither** the dispatch success line **nor** the consumer failure record appears. So at
+`gateway.py:6005-6006` the guard **never entered** — `_expert` or `_rr` was falsy — rather than a
+dispatch being attempted and failing. engine-safety still emits `review_request` for HAZ-1003 on
+the rolled image (called directly on port 8099, bypassing the gateway, so no task opened).
+**Which of the two is falsy I did NOT measure**; `_expert` also lands in the artifact as
+`expert_response` (`:6074`), so one read of a census artifact settles it.
+
+**2. `--list-walked` BUILT AND BOTH LISTINGS COMMITTED.** uuid/outcome/uri, sorted by uuid, with
+a self-describing header. Dry runs at 03:10-03:11 UTC:
+`predicate-walked` 133 = 89 already-named + 44 would-relocate; `ontologyclass-walked` 26,239 =
+25,255 + 16 + 968. Both tally exactly, both sorted, both LF-only.
+
+**3. THE RUNBOOK IS `docs/runbooks/backfilling-the-vector-space.md`**, indexed in the runbooks
+README (that README already records a runbook the index did not admit to — I was not going to be
+the second). Every command in it was RUN tonight before it was written down. The corpus needed
+regenerating after it, in its own commit, because the page stamp derives from the commit.
+
+**TWO INSTRUMENT FAILURES ON THE WAY, AND THEY ARE THE SAME SHAPE AS EACH OTHER.** The first
+`--list-walked` run *appeared to succeed and wrote nothing*: Git Bash rewrote the pod path
+`/tmp/x.txt` into a Windows path, the script raised `FileNotFoundError`, **and my own grep
+filtered the traceback out** — I had grepped for success markers, so the only tell was a line
+that did not appear. Then `grep -c` for carriage returns reported every line as having one both
+BEFORE and AFTER stripping them; settled with `tr -dc` plus a positive control on a file known to
+contain them (0 bytes here, 2 in the control). **Twice in one hour I read a matcher's output as
+a measurement without a control on the matcher.**
+
+## LANE 1'S CORRECTION LANDS ON NEITHER SCRIPT — checked, not assumed
+
+Lane 1's packet says `backfill_vector_space.retrievable()` uses the `rows[0]` form and that the
+per-batch verification could stop on a correctly repaired row. **There is no `retrievable()` in
+my script.** Mine is `verify_self` (`:308`), it enumerates the page for self, and the only three
+`rows[0]` occurrences across my two files are docstrings saying *not* to use it — on
+`origin/master` too, so no checkout gets a different script. **`retrievable()` is THEIR function**
+(`retrievability_census.py:103`) **and it is also correct** — it uses `rows[0]` only to name the
+twin in a note, never as the pass condition, and credits my `verify_self` in its docstring.
+
+**I changed nothing in response**, which is the point of replying rather than quietly "fixing"
+working code. Correction packet placed in ia-01.
+
+**Their five-row measurement is real and it is an upgrade to the record:** twins embedding within
+~1.8e-07 with the tie breaking toward the twin is exactly what the top-k ruling was written
+against, and until their run that rule was defended by a two-row fixture I made by hand. **A rule
+defended by a fixture is now defended by live data.**
+
 ## THE 138 uuids: I DID NOT SAVE THEM, and the defect was already written down
 
 Asked to name the five `Predicate` rows that went across the roll. **I cannot: I saved the counts
