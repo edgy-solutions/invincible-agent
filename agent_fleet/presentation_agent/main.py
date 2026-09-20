@@ -736,8 +736,22 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # VERBATIM here, so the nesting survives, which is what ADR-0045 required when it
     # ruled the verb returns the tree and refused flattening.
     "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label", "verdict")),
+    # `threshold` and `threshold_defaulted` ADDED 2026-09-19, and this is the THIRD time this
+    # tuple has silently dropped a field the producer emitted correctly — see the `reference` and
+    # `verdict` note below, which describes the identical mechanism. cost_agent/measures.py:788-789
+    # puts both at the top level of the cost_supplier_concentration payload, under the comment "THE
+    # BOUND TRAVELS WITH THE VERDICT, always, and says whether the caller chose it". The projector
+    # carries the payload key plus the fields declared here and NOTHING ELSE, so the bound never
+    # reached the card: lot 4 could show which rows were above the threshold and not the threshold
+    # itself. Measured by cortex against the running fleet, not inferred.
+    #
+    # `suppliers_above_threshold` is DELIBERATELY NOT HERE. It is a count the card derives from the
+    # rows it already has, and adding it would put two sources of the same fact on the wire — the
+    # kind of pair that goes out of agreement silently. The bound is a DECLARATION the card cannot
+    # reconstruct; the count is not.
     "CONTRIBUTION_RANKING": ("rows",
-                            ("value_label", "value_unit", "scope_label", "verdict")),
+                            ("value_label", "value_unit", "scope_label", "verdict",
+                             "threshold", "threshold_defaulted")),
     "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label", "verdict")),
     # MULTI_SERIES (ADR-0045 follow-on, 2026-09-02). `series` is in the PASSTHROUGH and the
     # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb

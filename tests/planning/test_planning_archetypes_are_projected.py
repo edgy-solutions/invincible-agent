@@ -383,3 +383,56 @@ def test_CANVAS_SEED_ids_are_strings_so_no_field_is_lifted_off_a_ROW():
     env = [{"persona": "X", "expert_response": {"artifact_ids": ["urn:a", "urn:b"]}}]
     got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
     assert got["artifact_ids"] == ["urn:a", "urn:b"]
+
+
+CONCENTRATION_ROW = {"supplier_id": "S1", "supplier_name": "Acme", "share": "0.62"}
+
+
+def test_CONTRIBUTION_RANKING_carries_THE_BOUND_and_whether_it_was_chosen():
+    """The bound is a DECLARATION the card cannot reconstruct from its rows.
+
+    cost_agent/measures.py:788-789 emits `threshold` and `threshold_defaulted` at the top level
+    of the cost_supplier_concentration payload; this allowlist decides what survives. Before
+    2026-09-19 it carried neither, so lot 4 drew which suppliers were above the bound and never
+    the bound itself — measured by cortex against the running fleet.
+
+    `threshold_defaulted` is asserted as an identity against False, not for truthiness: it
+    answers "did the caller choose this number", and a card that cannot distinguish a chosen
+    0.25 from a defaulted one is the reason the field exists at all."""
+    ns = _fns()
+    got = ns["_project_planning_archetype"](
+        "CONTRIBUTION_RANKING",
+        _envelope([CONCENTRATION_ROW], threshold="0.25", threshold_defaulted=False),
+        "X", None)
+    assert got["threshold"] == "0.25"
+    assert got["threshold_defaulted"] is False, "a chosen bound must not read as a defaulted one"
+
+
+def test_CONTRIBUTION_RANKING_INVENTS_no_bound_when_the_producer_sent_none():
+    """The other direction, and it is the half that makes the first one mean something: a
+    projection that always emits these keys would pass the test above while fabricating a bound
+    on every verb that never declared one."""
+    ns = _fns()
+    got = ns["_project_planning_archetype"](
+        "CONTRIBUTION_RANKING", _envelope([CONCENTRATION_ROW]), "X", None)
+    assert "threshold" not in got
+    assert "threshold_defaulted" not in got
+
+
+def test_CONTRIBUTION_RANKING_does_NOT_carry_suppliers_above_threshold():
+    """The exclusion is deliberate and therefore needs a seal, or it is just an omission that
+    the next person closes as a bug.
+
+    `suppliers_above_threshold` rides beside the other two in the producer's payload
+    (measures.py:790), and it is NOT projected: the card derives that count from the rows it
+    already holds, so putting it on the wire creates two sources of one fact that can go out of
+    agreement silently. The bound cannot be derived; the count can. This test fails if someone
+    adds it to the tuple, which is the only way that decision stays decided."""
+    ns = _fns()
+    got = ns["_project_planning_archetype"](
+        "CONTRIBUTION_RANKING",
+        _envelope([CONCENTRATION_ROW], threshold="0.25", threshold_defaulted=True,
+                  suppliers_above_threshold=3),
+        "X", None)
+    assert got["threshold"] == "0.25", "the fixture must reach the projector at all"
+    assert "suppliers_above_threshold" not in got
