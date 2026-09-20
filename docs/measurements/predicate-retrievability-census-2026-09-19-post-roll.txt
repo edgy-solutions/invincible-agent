@@ -1,0 +1,79 @@
+store: http://iagent-weaviate.sandbox.svc.cluster.local:8080
+cutoff: 2026-09-19T20:13:55Z (1789848835000 ms)
+==============================================================================
+Predicate  RETRIEVABILITY CENSUS (read-only)
+==============================================================================
+   indexed vector space, read from the schema: 'default'
+   NEGATIVE CONTROL nearObject(00000000-dead-4000-8000-000000000000) -> not retrievable  (explorer: get class: concurrentTargetVectorSearch): explorer: get class: vectorize search vector: nearObject params: vector not found)
+   total rows          : 133
+   retrievable         : 89
+   slot states         : legacy=44, named=89
+   VERDICT             : RETRIEVABLE != TOTAL — 44 row(s) unreachable
+   failures by slot state: legacy=44
+   rows that FAIL nearObject(self), ALL of them:
+     mesh:rendersAs ImpactSet->KnowledgeDocument cortex-u 00b1b105-271e-5fab-8868-63b6e3ad7b45 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs PeriodCostSeries->PeriodSeries cortex 00fdc43e-eaf4-5404-b54f-a8f827089bf2 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs PartObsolescenceReviewBatch->GroupedR 12882c86-26f0-5a1e-b91e-4821114d3a21 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs CategoryBreakdown->ContributionRankin 165e996d-6e56-5ef2-b123-48a01dda3317 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs DatasetAnalysisReport->ChartWidget co 18441649-4d44-5cfe-b1e6-5226cf3e907e slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs RateAssumptions->MultiSeries cortex-u 1afa8149-7904-5ca6-bfaa-2a357b1e55dc slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs FundingStatusGrid->ShortfallGrid cort 22e020b2-321c-50b7-910c-09cd3648e8e8 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs FreshnessReport->AssetStateMetric cor 25e13626-39f9-5cd9-909b-51ecb7c6368c slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs SchemaDescription->KnowledgeDocument  2fabf919-f02d-5f5e-b92e-f0bcf888f47a slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs TagFilterResult->HazardDeclaration co 33232ce6-8e83-52ef-9c3f-f598cee8e0c6 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs LaborComposition->ContributionRanking 393f73e7-43b0-5951-8b46-89d9bb80accb slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs ContributionSequence->IntervalTimelin 3a20b1ab-10d0-5c61-a0da-e6f8c3f7b578 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs VarianceDecomposition->VarianceTree c 3e5438ec-ec40-5289-997f-dc446a8decbf slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     http://invincible-agent/mesh#explain DocPage->DocExp 3f7a01b6-189f-5033-a80b-e17004f0ebef slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs CanvasSeedResult->CanvasSeed cortex-u 41ce6bd6-d332-57f2-9aa7-139c8a38e14d slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs HumanApprovalTask->ApprovalTask corte 55f8436f-082a-59b0-bb7c-435929bb4ebe slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs LotCostBreakdown->ContributionRanking 5fd902b1-794b-5080-9720-37ad843a9063 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs InstancesByProperty->InstancesByPrope 67d0c07d-3f6e-5279-8fe3-68273856aaf1 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs EffectSet->DeltaSet cortex-ui-desktop 6b31f28c-ca78-5271-8b4b-87a4f1e1c712 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs KnowledgeRetrievalResponse->Knowledge 6f09a52b-5ef4-580f-ae3d-a8d8e8de2509 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs VarianceDriverRanking->ContributionRa 7e5ee468-71c5-55bf-9ec7-861373815017 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs RateComparison->DeltaSet cortex-ui-de 82f3ea5a-7dd5-5441-a02a-6dcf3ebb936e slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs WithheldPanel->NamedHole cortex-ui-de 83c07268-6665-50fb-b8f8-d9b8fa4bb4b9 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs EstimateAtCompletionComparison->Compe 8d8f883d-4c41-50c9-9a7d-3ca0d59ce711 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs LoadThresholdGrid->ThresholdGrid cort 9213fa24-05b6-5115-9383-4c1ac8b2689d slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs EstimateAtCompletion->ForecastMeasure 972e5336-398a-5d40-81e1-001e52738ea1 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs WorkflowObservation->WorkflowObservat 9f4b5750-f8b2-50f5-a943-6e33acbc1e00 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs FundingGapSet->ShortfallGrid cortex-u a087b7b4-c39a-5c04-b613-5e2df5901bae slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs OrphanedHazardSet->ContributionRankin a4b1250c-cfc8-53cf-970d-bc5f119e88db slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs CatalogListing->KnowledgeDocument cor a7d94133-23eb-570d-b1e6-ca810e721a1c slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs DeferralRiskCard->KnowledgeDocument c b0c49ff2-eee9-5b52-b2fe-ab4cd40e6491 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs RiskAssessmentDraft->KnowledgeDocumen b2045560-148f-5b4f-b2fd-abedf481e3e3 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs BurnRateSeries->MultiSeries cortex-ui b2f93a01-72d3-5d27-a8a3-d011360599c0 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs SupplierConcentration->ContributionRa befd03c9-9944-5166-9e1a-503537b1582b slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs IntervalSchedule->IntervalTimeline co bfd5b2ab-5937-5dd6-a96f-843223e9436a slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs DecisionArtifact->DecisionRecord cort c6718f5a-40ad-5ce4-9fb3-97db457b5d40 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs OwnershipFact->KnowledgeDocument cort cf603596-245c-53de-978a-34e1bfaf5e0d slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs SlotElicitation->AskCard cortex-ui-de d2e5ee97-199d-5927-adca-bf4cb59cd393 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs PerformanceIndexSeries->MultiSeries c d6556a6e-15ae-5fc6-a9e1-a7384ce80735 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs AssetProfile->KnowledgeDocument corte de1c825a-11d8-5ffa-ad1d-5899b68d7a25 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs UnitPriceTrend->MultiSeries cortex-ui e410f2be-e796-592c-b56a-a2b6ef9342c8 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs PriceComposition->StepLadder cortex-u e9c1604c-13bf-55f5-a578-a08a125b436e slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs MaturityMatrix->MatrixGrid cortex-ui- fae30750-ba5d-548b-aa7b-b07d46ab28c7 slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+     mesh:rendersAs LineageTopology->ProcessTopology cort fae48842-398c-5e50-bcc7-cb17d713108f slot=legacy  explorer: get class: concurrentTargetVectorSearch): explorer: get clas
+   reachable, but NOT rank 0 — duplicate-vector pairs (5). Not a retrievability failure; recorded because two rows embedding to ~0 apart is a routing hazard of its own:
+     mesh:assessImpact Dataset->ImpactSet                 29f349be-723d-582d-9472-8b522afa9f5a reachable at rank 1; duplicate-vector twin 5bb2845e-5575-5d32-818f-eafc2d6df942 at distance 1.79e-07
+     mesh:describeAsset Dataset->AssetProfile             7b8afd4a-99a7-5b61-b437-0105a2fff1ff reachable at rank 1; duplicate-vector twin c681c684-ab30-5097-8ab1-d5ac75a97743 at distance 4.77e-07
+     mesh:traceLineage Dataset->LineageTopology           a335f8de-7e9e-5acc-b14c-007795542863 reachable at rank 1; duplicate-vector twin c4b397e3-04ab-5757-b61c-02500bfd1077 at distance -3.58e-07
+     mesh:findSchema Dataset->SchemaDescription           a560931d-93ab-5575-b723-2354f3d51206 reachable at rank 1; duplicate-vector twin 516ba84d-18f5-5ad3-909b-f14fa30d048e at distance 1.79e-07
+     mesh:finFundingStatus FundingLine->FundingStatusGrid d352f2e8-3d85-5b85-9769-21c87383dad0 reachable at rank 1; duplicate-vector twin 6cdc6f83-de24-58c2-9a9a-3f2d89098140 at distance 2.38e-07
+   rows carrying creationTimeUnix: 133 of 133
+   rows newer than the cutoff: 12
+     mesh:rendersAs OrphanedHazardSet->ContributionRanking cort a4b1250c-cfc8-53cf-970d-bc5f119e88db  created=2026-09-20T00:52:00Z  slot=legacy  retrievable=False
+     mesh:rendersAs DeferralRiskCard->KnowledgeDocument cortex- b0c49ff2-eee9-5b52-b2fe-ab4cd40e6491  created=2026-09-20T00:52:01Z  slot=legacy  retrievable=False
+     mesh:rendersAs RiskAssessmentDraft->KnowledgeDocument cort b2045560-148f-5b4f-b2fd-abedf481e3e3  created=2026-09-20T00:52:01Z  slot=legacy  retrievable=False
+     mesh:assessDeferralRisk https://spec.industrialontologies. 7cb3d04d-b996-5da9-bd3d-1d42b07705ba  created=2026-09-20T02:08:06Z  slot=named  retrievable=True
+     mesh:retrieveKnowledge FaultIsolationDataModule->Knowledge 3c0d9d37-55ec-597f-b823-cccdfdee1c96  created=2026-09-20T02:08:13Z  slot=named  retrievable=True
+     mesh:finFundingStatus Program->FundingStatusGrid           6cdc6f83-de24-58c2-9a9a-3f2d89098140  created=2026-09-20T02:08:17Z  slot=named  retrievable=True
+     mesh:retrieveKnowledge WorkInstruction->KnowledgeRetrieval 08205d14-2b13-5327-af80-5a442e11207c  created=2026-09-20T02:08:17Z  slot=named  retrievable=True
+     mesh:retrieveKnowledge IllustratedPartsDataModule->Knowled f9f10a94-b330-5f9e-a95f-de1744dab3a1  created=2026-09-20T02:08:18Z  slot=named  retrievable=True
+     mesh:findSchema Column->SchemaDescription                  516ba84d-18f5-5ad3-909b-f14fa30d048e  created=2026-09-20T02:08:24Z  slot=named  retrievable=True
+     mesh:traceLineage Column->LineageTopology                  c4b397e3-04ab-5757-b61c-02500bfd1077  created=2026-09-20T02:08:24Z  slot=named  retrievable=True
+     mesh:assessImpact Column->ImpactSet                        5bb2845e-5575-5d32-818f-eafc2d6df942  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
+     mesh:describeAsset Column->AssetProfile                    c681c684-ab30-5097-8ab1-d5ac75a97743  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
+   (3.2s)
+command terminated with exit code 1
