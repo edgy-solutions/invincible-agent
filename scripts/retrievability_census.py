@@ -201,6 +201,7 @@ def run_class(cls, cutoff_ms):
     total = 0
     ok_count = 0
     notes = []
+    rows_seen = []
     failures = []
     newer = []
     stamped = 0
@@ -220,6 +221,7 @@ def run_class(cls, cutoff_ms):
             st = slot_state(obj, space)
             states[st] = states.get(st, 0) + 1
             ok, why = retrievable(cls, uuid)
+            rows_seen.append((uuid, uri, st, ok))
             if ok:
                 ok_count += 1
                 if why:
@@ -292,6 +294,16 @@ def run_class(cls, cutoff_ms):
                   % (uri[:58], uuid,
                      time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created / 1000.0)),
                      st, ok))
+
+    # ── THE FULL LISTING, ALWAYS, NOT ON REQUEST ──────────────────────────────────────────
+    # RULED 2026-09-19 after a count could not be diffed: a Predicate total dropped 138 -> 133
+    # across a roll and NOBODY could name the five missing rows, because every prior reading had
+    # saved the COUNT and thrown away the rows. A count is not a population. This listing is what
+    # makes the next such question answerable, so it is emitted with every run and committed
+    # beside the census.
+    print("   ROW LISTING (%d rows, sorted by uuid — save this; a count cannot be diffed):" % total)
+    for uuid, uri, st, ok in sorted(rows_seen, key=lambda r: r[0]):
+        print("     %s  slot=%-9s retrievable=%-5s %s" % (uuid, st, ok, uri))
 
     print("   (%.1fs)" % (time.time() - t0))
     return (0 if ok_count == total and total else 1), total

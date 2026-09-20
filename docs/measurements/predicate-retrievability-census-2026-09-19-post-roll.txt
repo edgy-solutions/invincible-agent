@@ -76,5 +76,139 @@ Predicate  RETRIEVABILITY CENSUS (read-only)
      mesh:traceLineage Column->LineageTopology                  c4b397e3-04ab-5757-b61c-02500bfd1077  created=2026-09-20T02:08:24Z  slot=named  retrievable=True
      mesh:assessImpact Column->ImpactSet                        5bb2845e-5575-5d32-818f-eafc2d6df942  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
      mesh:describeAsset Column->AssetProfile                    c681c684-ab30-5097-8ab1-d5ac75a97743  created=2026-09-20T02:08:25Z  slot=named  retrievable=True
-   (3.3s)
+   ROW LISTING (133 rows, sorted by uuid — save this; a count cannot be diffed):
+     00b1b105-271e-5fab-8868-63b6e3ad7b45  slot=legacy    retrievable=False mesh:rendersAs ImpactSet->KnowledgeDocument cortex-ui-desktop
+     00fdc43e-eaf4-5404-b54f-a8f827089bf2  slot=legacy    retrievable=False mesh:rendersAs PeriodCostSeries->PeriodSeries cortex-ui-desktop
+     0290b35e-1d5e-58d8-a6c9-c4b30b0a92e7  slot=named     retrievable=True  mesh:rendersAs CatalogListing->KnowledgeDocument __system_default__
+     051192fe-a3bc-52a3-a149-1813043f1359  slot=named     retrievable=True  mesh:rendersAs SchemaDescription->KnowledgeDocument __system_default__
+     0706a0bd-9e82-5689-a021-fb8fcae5d437  slot=named     retrievable=True  mesh:queryKnowledgeGraph https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction->GraphExpertResponse
+     072faceb-052c-50bc-84c6-0f10bdd04561  slot=named     retrievable=True  mesh:rendersAs OwnershipFact->KnowledgeDocument __system_default__
+     08205d14-2b13-5327-af80-5a442e11207c  slot=named     retrievable=True  mesh:retrieveKnowledge WorkInstruction->KnowledgeRetrievalResponse
+     0c971103-8584-5110-98d1-3d36325e879e  slot=named     retrievable=True  mesh:finVarianceAnalysis Program->VarianceDecomposition
+     1056fab2-123b-539e-85e3-af1507b6c0e1  slot=named     retrievable=True  mesh:costPriceComposition ProductionLot->PriceComposition
+     10dddb06-3b7e-5861-85fb-b2dd9cbc5760  slot=named     retrievable=True  mesh:findOrphanedHazards Hazard->OrphanedHazardSet
+     12882c86-26f0-5a1e-b91e-4821114d3a21  slot=legacy    retrievable=False mesh:rendersAs PartObsolescenceReviewBatch->GroupedReview cortex-ui-desktop
+     14c38715-2644-50c7-9867-fc949e364baa  slot=named     retrievable=True  mesh:explain DocPage->DocExplanation
+     14d71edc-488f-5a3a-9a13-ba2cfd25dcbd  slot=named     retrievable=True  mesh:rendersAs RateComparison->DeltaSet __system_default__
+     15f05544-c939-52b7-88f5-7a6a24d6ada2  slot=named     retrievable=True  mesh:rendersAs LaborComposition->ContributionRanking __system_default__
+     165e996d-6e56-5ef2-b123-48a01dda3317  slot=legacy    retrievable=False mesh:rendersAs CategoryBreakdown->ContributionRanking cortex-ui-desktop
+     18441649-4d44-5cfe-b1e6-5226cf3e907e  slot=legacy    retrievable=False mesh:rendersAs DatasetAnalysisReport->ChartWidget cortex-ui-desktop
+     19a1d650-b154-51a4-a9a7-65c97b585522  slot=named     retrievable=True  mesh:costLotBreakdown ProductionLot->LotCostBreakdown
+     1a096992-251d-57dc-9384-57eff0fef18e  slot=named     retrievable=True  mesh:finEacCalculation Program->EstimateAtCompletion
+     1a5adb7b-d126-5ae8-9dba-d764bdaef979  slot=named     retrievable=True  mesh:planDependencyNeighborhood Portfolio->DependencyNeighborhoodSet
+     1aacfb7b-d05e-5821-b4b6-3c7dc7262d22  slot=named     retrievable=True  mesh:planCapabilityPath Capability->ContributionSequence
+     1afa8149-7904-5ca6-bfaa-2a357b1e55dc  slot=legacy    retrievable=False mesh:rendersAs RateAssumptions->MultiSeries cortex-ui-desktop
+     203e224d-e41d-596e-a1e8-e3662f3d60c8  slot=named     retrievable=True  mesh:finVarianceDrivers ControlAccount->VarianceDriverRanking
+     22e020b2-321c-50b7-910c-09cd3648e8e8  slot=legacy    retrievable=False mesh:rendersAs FundingStatusGrid->ShortfallGrid cortex-ui-desktop
+     25831278-d47d-5b69-9be4-16f638148596  slot=named     retrievable=True  mesh:packageExport DisclosureRecipient->ExportPackage
+     25e13626-39f9-5cd9-909b-51ecb7c6368c  slot=legacy    retrievable=False mesh:rendersAs FreshnessReport->AssetStateMetric cortex-ui-desktop
+     2660149d-4db8-50d9-8c7a-a5b076c53a96  slot=named     retrievable=True  mesh:analyzeDataset Dataset->DatasetAnalysisReport
+     29f349be-723d-582d-9472-8b522afa9f5a  slot=named     retrievable=True  mesh:assessImpact Dataset->ImpactSet
+     2cc79357-2921-5422-af89-7f409f0127de  slot=named     retrievable=True  mesh:planSchedule Portfolio->IntervalSchedule
+     2fa8343d-f22e-578a-95f3-fef1c58f7618  slot=named     retrievable=True  mesh:rendersAs OrphanedHazardSet->ContributionRanking __system_default__
+     2fabf919-f02d-5f5e-b92e-f0bcf888f47a  slot=legacy    retrievable=False mesh:rendersAs SchemaDescription->KnowledgeDocument cortex-ui-desktop
+     33232ce6-8e83-52ef-9c3f-f598cee8e0c6  slot=legacy    retrievable=False mesh:rendersAs TagFilterResult->HazardDeclaration cortex-ui-desktop
+     3902de5e-ddae-5bbd-bc1f-ca2a550fc5f2  slot=named     retrievable=True  mesh:enumerateInstances InstanceClass->InstanceEnumeration
+     393f73e7-43b0-5951-8b46-89d9bb80accb  slot=legacy    retrievable=False mesh:rendersAs LaborComposition->ContributionRanking cortex-ui-desktop
+     3a20b1ab-10d0-5c61-a0da-e6f8c3f7b578  slot=legacy    retrievable=False mesh:rendersAs ContributionSequence->IntervalTimeline cortex-ui-desktop
+     3a6e287c-570d-5175-a108-38ed03bf98fa  slot=named     retrievable=True  mesh:costUnitPriceTrend ProductionProgram->UnitPriceTrend
+     3c0d9d37-55ec-597f-b823-cccdfdee1c96  slot=named     retrievable=True  mesh:retrieveKnowledge FaultIsolationDataModule->KnowledgeRetrievalResponse
+     3e5438ec-ec40-5289-997f-dc446a8decbf  slot=legacy    retrievable=False mesh:rendersAs VarianceDecomposition->VarianceTree cortex-ui-desktop
+     3f7a01b6-189f-5033-a80b-e17004f0ebef  slot=legacy    retrievable=False http://invincible-agent/mesh#explain DocPage->DocExplanation
+     41ce6bd6-d332-57f2-9aa7-139c8a38e14d  slot=legacy    retrievable=False mesh:rendersAs CanvasSeedResult->CanvasSeed cortex-ui-desktop
+     46dac084-3179-5704-bd43-2081f6b1c087  slot=named     retrievable=True  mesh:rendersAs PriceComposition->StepLadder __system_default__
+     516ba84d-18f5-5ad3-909b-f14fa30d048e  slot=named     retrievable=True  mesh:findSchema Column->SchemaDescription
+     52d96114-1ba6-5d2d-b0d7-eeda0d3f03db  slot=named     retrievable=True  mesh:rendersAs TagFilterResult->HazardDeclaration __system_default__
+     52f9101b-c59e-5c13-9d1f-db6d80f66c6e  slot=named     retrievable=True  mesh:rendersAs BurnRateSeries->MultiSeries __system_default__
+     55f8436f-082a-59b0-bb7c-435929bb4ebe  slot=legacy    retrievable=False mesh:rendersAs HumanApprovalTask->ApprovalTask cortex-ui-desktop
+     58762587-64de-50ff-a9b5-289282472283  slot=named     retrievable=True  mesh:draftRiskAssessment Hazard->RiskAssessmentDraft
+     5ade9f87-bc15-52cb-9b60-dc668e31ca4f  slot=named     retrievable=True  mesh:planSiteLoad Site->LoadThresholdGrid
+     5bb2845e-5575-5d32-818f-eafc2d6df942  slot=named     retrievable=True  mesh:assessImpact Column->ImpactSet
+     5dd853bb-b02e-54f0-8d80-657e2657bc4a  slot=named     retrievable=True  mesh:planTechFootprint Technology->FootprintSet
+     5fd902b1-794b-5080-9720-37ad843a9063  slot=legacy    retrievable=False mesh:rendersAs LotCostBreakdown->ContributionRanking cortex-ui-desktop
+     65b7d671-e48d-56cd-b873-b203f0f8a92c  slot=named     retrievable=True  mesh:rendersAs LotCostBreakdown->ContributionRanking __system_default__
+     65e831da-d7fc-5ff3-9f8d-754d72176950  slot=named     retrievable=True  mesh:planCoverageGap Portfolio->CoverageGapSet
+     67706a37-d629-55c1-8e9a-991e5e9e6069  slot=named     retrievable=True  mesh:rendersAs SupplierConcentration->ContributionRanking __system_default__
+     67d0c07d-3f6e-5279-8fe3-68273856aaf1  slot=legacy    retrievable=False mesh:rendersAs InstancesByProperty->InstancesByProperty cortex-ui-desktop
+     6b31f28c-ca78-5271-8b4b-87a4f1e1c712  slot=legacy    retrievable=False mesh:rendersAs EffectSet->DeltaSet cortex-ui-desktop
+     6cdc6f83-de24-58c2-9a9a-3f2d89098140  slot=named     retrievable=True  mesh:finFundingStatus Program->FundingStatusGrid
+     6f09a52b-5ef4-580f-ae3d-a8d8e8de2509  slot=legacy    retrievable=False mesh:rendersAs KnowledgeRetrievalResponse->KnowledgeDocument cortex-ui-desktop
+     6f8358ff-b131-543a-ad48-c17e7cbd82c3  slot=named     retrievable=True  mesh:rendersAs DatasetAnalysisReport->ChartWidget __system_default__
+     72081c94-aeb4-52be-9cd0-cc9938600ad2  slot=named     retrievable=True  mesh:planMaturityGrid Capability->MaturityMatrix
+     72a38f34-0afe-59ef-a0be-917d9da629bc  slot=named     retrievable=True  mesh:rendersAs DeferralRiskCard->KnowledgeDocument __system_default__
+     72c33837-e7ec-5abc-9f33-9ffbc62f1303  slot=named     retrievable=True  mesh:planSessionChanges Portfolio->ChangeLog
+     75b6fb20-5b2c-5f46-bf5a-bf8153db8aec  slot=named     retrievable=True  mesh:rendersAs EstimateAtCompletion->ForecastMeasure __system_default__
+     787ca4f4-48b6-50af-b243-13def6450678  slot=named     retrievable=True  mesh:finPerformanceIndices PerformanceMeasurementBaseline->PerformanceIndexSeries
+     7b8afd4a-99a7-5b61-b437-0105a2fff1ff  slot=named     retrievable=True  mesh:describeAsset Dataset->AssetProfile
+     7cb3d04d-b996-5da9-bd3d-1d42b07705ba  slot=named     retrievable=True  mesh:assessDeferralRisk https://spec.industrialontologies.org/ontology/construct/MaintenanceWorkOrderRecord->DeferralRiskCard
+     7e5ee468-71c5-55bf-9ec7-861373815017  slot=legacy    retrievable=False mesh:rendersAs VarianceDriverRanking->ContributionRanking cortex-ui-desktop
+     809446c3-c6e0-5229-80b3-128dd780c12d  slot=named     retrievable=True  mesh:enumerateCatalog Dataset->CatalogListing
+     82f3ea5a-7dd5-5441-a02a-6dcf3ebb936e  slot=legacy    retrievable=False mesh:rendersAs RateComparison->DeltaSet cortex-ui-desktop
+     831db460-6e2a-507e-9c8e-ef3ef438a453  slot=named     retrievable=True  mesh:rendersAs PerformanceIndexSeries->MultiSeries __system_default__
+     83c07268-6665-50fb-b8f8-d9b8fa4bb4b9  slot=legacy    retrievable=False mesh:rendersAs WithheldPanel->NamedHole cortex-ui-desktop
+     8d228fa2-b6ac-5625-9815-d0b9eab84331  slot=named     retrievable=True  mesh:costSupplierConcentration Supplier->SupplierConcentration
+     8d8f883d-4c41-50c9-9a7d-3ca0d59ce711  slot=legacy    retrievable=False mesh:rendersAs EstimateAtCompletionComparison->CompetingMeasures cortex-ui-desktop
+     9213fa24-05b6-5115-9383-4c1ac8b2689d  slot=legacy    retrievable=False mesh:rendersAs LoadThresholdGrid->ThresholdGrid cortex-ui-desktop
+     92369111-b5a8-5b88-92d3-2304c3569896  slot=named     retrievable=True  mesh:seedPortfolioCanvas Portfolio->CanvasSeedResult
+     9400e80a-4351-5345-a8da-b6c41b8f4e39  slot=named     retrievable=True  mesh:proposeDisposition SustainmentNotice->DispositionReview
+     9572af05-e2aa-5b8b-bc91-8a0b4b2f52f2  slot=named     retrievable=True  mesh:finEacComparison Program->EstimateAtCompletionComparison
+     972e5336-398a-5d40-81e1-001e52738ea1  slot=legacy    retrievable=False mesh:rendersAs EstimateAtCompletion->ForecastMeasure cortex-ui-desktop
+     9873e0c0-dd73-58af-baf3-cde19b4590a0  slot=named     retrievable=True  mesh:planFundingGap Portfolio->FundingGapSet
+     9b1f5f10-ed02-5c75-ade3-a5394c8db6d7  slot=named     retrievable=True  mesh:lookupOwnership Dataset->OwnershipFact
+     9c89b785-ac60-57d1-a3bd-9faba4a039c3  slot=named     retrievable=True  mesh:planCommitScenario Portfolio->DecisionArtifact
+     9f4b5750-f8b2-50f5-a943-6e33acbc1e00  slot=legacy    retrievable=False mesh:rendersAs WorkflowObservation->WorkflowObservation cortex-ui-desktop
+     9fd19c1e-0415-5a00-9e62-ec317f2a3439  slot=named     retrievable=True  mesh:planCostCurve Portfolio->PeriodCostSeries
+     a087b7b4-c39a-5c04-b613-5e2df5901bae  slot=legacy    retrievable=False mesh:rendersAs FundingGapSet->ShortfallGrid cortex-ui-desktop
+     a335f8de-7e9e-5acc-b14c-007795542863  slot=named     retrievable=True  mesh:traceLineage Dataset->LineageTopology
+     a4b1250c-cfc8-53cf-970d-bc5f119e88db  slot=legacy    retrievable=False mesh:rendersAs OrphanedHazardSet->ContributionRanking cortex-ui-desktop
+     a55fcde9-5a99-57db-888c-f1306c9b2dca  slot=named     retrievable=True  mesh:finBurnRate PerformanceMeasurementBaseline->BurnRateSeries
+     a560931d-93ab-5575-b723-2354f3d51206  slot=named     retrievable=True  mesh:findSchema Dataset->SchemaDescription
+     a62d1fe5-725c-5c63-952d-f225a1974941  slot=named     retrievable=True  mesh:checkFreshness Dataset->FreshnessReport
+     a7d94133-23eb-570d-b1e6-ca810e721a1c  slot=legacy    retrievable=False mesh:rendersAs CatalogListing->KnowledgeDocument cortex-ui-desktop
+     a8964545-0e6a-5cc3-98be-74e0748e0803  slot=named     retrievable=True  mesh:retrieveKnowledge https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual->KnowledgeRetrievalResponse
+     aab344be-83cc-5c97-9f1a-1ed10fb5b5d1  slot=named     retrievable=True  mesh:rendersAs FundingStatusGrid->ShortfallGrid __system_default__
+     b066ff04-5030-5ffd-85bf-5b5967a8505b  slot=named     retrievable=True  mesh:rendersAs AssetProfile->KnowledgeDocument __system_default__
+     b0c49ff2-eee9-5b52-b2fe-ab4cd40e6491  slot=legacy    retrievable=False mesh:rendersAs DeferralRiskCard->KnowledgeDocument cortex-ui-desktop
+     b19ceb9a-29e6-506e-9974-476ccf55c845  slot=named     retrievable=True  mesh:rendersAs LineageTopology->ProcessTopology __system_default__
+     b2045560-148f-5b4f-b2fd-abedf481e3e3  slot=legacy    retrievable=False mesh:rendersAs RiskAssessmentDraft->KnowledgeDocument cortex-ui-desktop
+     b2c19e1e-b152-5c88-80e5-f19a324a5a2d  slot=named     retrievable=True  mesh:costRateComparison ProductionLot->RateComparison
+     b2f93a01-72d3-5d27-a8a3-d011360599c0  slot=legacy    retrievable=False mesh:rendersAs BurnRateSeries->MultiSeries cortex-ui-desktop
+     b35010d1-7cdf-568d-8bb3-7e4d0c469ee7  slot=named     retrievable=True  mesh:rendersAs FreshnessReport->AssetStateMetric __system_default__
+     b6325088-9391-5752-bfae-e5e348e0c785  slot=named     retrievable=True  mesh:rendersAs KnowledgeRetrievalResponse->KnowledgeDocument __system_default__
+     b83064fa-c391-59f0-bfa5-ec2532d11cfa  slot=named     retrievable=True  mesh:planDependencyViolations Portfolio->ConstraintViolationSet
+     ba4e77e2-a6fa-5ce9-83b5-dc5c751d26cd  slot=named     retrievable=True  mesh:resolveInstance InstanceIdentifier->InstanceResolution
+     bcb61032-3691-55e5-a2d0-9c9cf8306dd9  slot=named     retrievable=True  mesh:rendersAs UnitPriceTrend->MultiSeries __system_default__
+     befd03c9-9944-5166-9e1a-503537b1582b  slot=legacy    retrievable=False mesh:rendersAs SupplierConcentration->ContributionRanking cortex-ui-desktop
+     bfd5b2ab-5937-5dd6-a96f-843223e9436a  slot=legacy    retrievable=False mesh:rendersAs IntervalSchedule->IntervalTimeline cortex-ui-desktop
+     c4b397e3-04ab-5757-b61c-02500bfd1077  slot=named     retrievable=True  mesh:traceLineage Column->LineageTopology
+     c4f77f18-0b04-5c7c-8232-c71944507784  slot=named     retrievable=True  mesh:costLaborComposition ProductionLot->LaborComposition
+     c5559b9b-7042-5646-9ffb-8411b64e58cc  slot=named     retrievable=True  mesh:rendersAs RiskAssessmentDraft->KnowledgeDocument __system_default__
+     c6718f5a-40ad-5ce4-9fb3-97db457b5d40  slot=legacy    retrievable=False mesh:rendersAs DecisionArtifact->DecisionRecord cortex-ui-desktop
+     c681c684-ab30-5097-8ab1-d5ac75a97743  slot=named     retrievable=True  mesh:describeAsset Column->AssetProfile
+     c80bd234-fd86-571c-a97d-7ea39cdd4abd  slot=named     retrievable=True  mesh:rendersAs EstimateAtCompletionComparison->CompetingMeasures __system_default__
+     cc45d3dd-f48d-5a61-8a4c-f8edd9e16eed  slot=named     retrievable=True  mesh:analyzeWithCodeAgent AgentTask->AgentResponse
+     cd03a56e-6c8d-543b-b00e-e30d72a191c2  slot=named     retrievable=True  mesh:costRateAssumptions RateTable->RateAssumptions
+     cf603596-245c-53de-978a-34e1bfaf5e0d  slot=legacy    retrievable=False mesh:rendersAs OwnershipFact->KnowledgeDocument cortex-ui-desktop
+     d2e5ee97-199d-5927-adca-bf4cb59cd393  slot=legacy    retrievable=False mesh:rendersAs SlotElicitation->AskCard cortex-ui-desktop
+     d352f2e8-3d85-5b85-9769-21c87383dad0  slot=named     retrievable=True  mesh:finFundingStatus FundingLine->FundingStatusGrid
+     d6556a6e-15ae-5fc6-a9e1-a7384ce80735  slot=legacy    retrievable=False mesh:rendersAs PerformanceIndexSeries->MultiSeries cortex-ui-desktop
+     da8585ef-0877-5766-b1b6-13e2d36efe7f  slot=named     retrievable=True  mesh:finProgramBrief Program->StatefulSupportResponse
+     ddae7ebc-b983-50b4-9bc7-eaded45ffc03  slot=named     retrievable=True  mesh:rendersAs VarianceDecomposition->VarianceTree __system_default__
+     de1c825a-11d8-5ffa-ad1d-5899b68d7a25  slot=legacy    retrievable=False mesh:rendersAs AssetProfile->KnowledgeDocument cortex-ui-desktop
+     e16e1514-b2af-5ce9-9a37-7e10adfceeec  slot=named     retrievable=True  mesh:rendersAs ImpactSet->KnowledgeDocument __system_default__
+     e410f2be-e796-592c-b56a-a2b6ef9342c8  slot=legacy    retrievable=False mesh:rendersAs UnitPriceTrend->MultiSeries cortex-ui-desktop
+     e50d32ba-ff82-5cdb-b21a-8853659ac656  slot=named     retrievable=True  mesh:planDiff Portfolio->EffectSet
+     e9c1604c-13bf-55f5-a578-a08a125b436e  slot=legacy    retrievable=False mesh:rendersAs PriceComposition->StepLadder cortex-ui-desktop
+     eaf69a8d-e94c-5c2e-996f-295afb6da3af  slot=named     retrievable=True  mesh:rendersAs CategoryBreakdown->ContributionRanking __system_default__
+     ed1c345a-9d34-5509-807e-54a11cdba1da  slot=named     retrievable=True  mesh:filterByTag Dataset->TagFilterResult
+     eef56ede-c0fd-5a60-b4ed-eb03625967d1  slot=named     retrievable=True  mesh:costCategoryBreakdown CostCategory->CategoryBreakdown
+     f0133929-f2fa-57ef-9d93-f3545612b295  slot=named     retrievable=True  mesh:costLotCostingReview ProductionLot->LotCostingReview
+     f2534845-ec8c-563d-8b8b-d804f43e766e  slot=named     retrievable=True  mesh:rendersAs RateAssumptions->MultiSeries __system_default__
+     f5bf4c32-3a44-599d-a5a7-49c5995a8882  slot=named     retrievable=True  mesh:planProcessEvolution BusinessProcess->PlateauTimeline
+     f9f10a94-b330-5f9e-a95f-de1744dab3a1  slot=named     retrievable=True  mesh:retrieveKnowledge IllustratedPartsDataModule->KnowledgeRetrievalResponse
+     fa8196f7-6459-5869-b155-eb68234e48bd  slot=named     retrievable=True  mesh:seedCanvas Portfolio->CanvasSeedResult
+     fae30750-ba5d-548b-aa7b-b07d46ab28c7  slot=legacy    retrievable=False mesh:rendersAs MaturityMatrix->MatrixGrid cortex-ui-desktop
+     fae48842-398c-5e50-bcc7-cb17d713108f  slot=legacy    retrievable=False mesh:rendersAs LineageTopology->ProcessTopology cortex-ui-desktop
+     fca12e95-930f-5c97-b7be-2f1bc08f92d8  slot=named     retrievable=True  mesh:rendersAs VarianceDriverRanking->ContributionRanking __system_default__
+   (3.2s)
 command terminated with exit code 1
