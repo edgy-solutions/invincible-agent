@@ -1,0 +1,177 @@
+WALK CENSUS — POST-ROLL, revision 147
+run at:   2026-09-20T03:02:44Z
+repo sha: 3237431 (lane/01)   fleet: MIXED(c000514,d3ca169)
+roll sha: c0005142a610bc7759cfc8953666aee7c6064632
+
+WALK CENSUS  repo=478e3a4  fleet=MIXED(c000514,d3ca169)  rows=20
+  PASS    cost-supplier-concentration-lot-4      COST_ANALYST
+  FAIL    cost-rate-comparison-lot-3-refusal     COST_ANALYST
+          elicitation offers 0 option(s), sheet expects 2 (option_source='none', free_text_reason='no_referent') � an ask with an empty menu is one the walker cannot answer from the card
+  PASS    cost-rate-comparison-lot-3-vintage     COST_ANALYST
+  PASS    cost-labor-split-lot-4                 COST_ANALYST
+  PASS    cost-rates-fy2021                      COST_ANALYST
+  FAIL    safety-haz-1003-risk-assessment        SAFETY_ENGINEER
+          disposition 'drawn', row accepts ['task_requested']
+  FAIL    safety-unattended-hazards              SAFETY_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'find_orphaned_hazards'
+          archetype ['KNOWLEDGE_DOCUMENT'] lacks 'CONTRIBUTION_RANKING'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    safety-deferral-risk-refusal           SAFETY_ENGINEER
+          disposition 'drawn', row accepts ['slot_required']
+          verb ['UNKNOWN', 'unknown'] lacks 'assess_deferral_risk'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  PASS    finance-np-meridian-brief              PROGRAM_FINANCE_ANALYST
+  FAIL    finance-variance-decomposition         PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 1
+  FAIL    finance-variance-drivers               PROGRAM_FINANCE_ANALYST
+          verb ['UNKNOWN', 'unknown'] lacks 'fin_variance_drivers'
+          archetype ['KNOWLEDGE_DOCUMENT'] lacks 'CONTRIBUTION_RANKING'
+          route_status='infra_error'
+          fell back: infra_error
+  FAIL    finance-funding-status                 PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 18
+  PASS    finance-burn-rate                      PROGRAM_FINANCE_ANALYST
+  PASS    finance-performance-indices            PROGRAM_FINANCE_ANALYST
+  PASS    finance-eac-refusal                    PROGRAM_FINANCE_ANALYST
+  FAIL    finance-eac-comparison                 PROGRAM_FINANCE_ANALYST
+          0 row(s) under None, floor is 3
+  FAIL    docs-how-do-i-add-an-engine            DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-what-is-an-archetype              DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-how-do-i-add-a-canvas-template    DATA_ENGINEER
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          0 row(s) under 'sections', floor is 1
+          route_status='no_match'
+          fell back: no_compatible_verbs
+  FAIL    docs-how-do-i-roll-a-service-abstains  DATA_ENGINEER
+          disposition 'drawn', row accepts ['slot_required']
+          verb ['UNKNOWN', 'unknown'] lacks 'mesh_explain'
+          route_status='no_match'
+          fell back: no_compatible_verbs
+
+  8 pass, 12 fail, 0 blocked   repo=478e3a4  fleet=MIXED(c000514,d3ca169)
+
+========================================================================
+ANALYSIS — diffed against docs/measurements/walk-census-run-2026-09-19-lexical-baseline.txt
+
+ENDPOINT IDENTITY ASSERTED BEFORE THE RUN, NOT ASSUMED:
+  keycloak localhost:18183 -> issuer https://keycloak.edgy-solutions.com/realms/invincible-agent
+  bff      localhost:18090 -> FastAPI 404 on root, AND /version reports
+                              git_sha c0005142a610… = THE ROLL SHA (stronger than the 404:
+                              it names the image, not just the framework)
+  18083, the runner's DEFAULT keycloak port (walk_census.py:54), IS STILL THE STRAY STUB:
+  {"component":"cortex-bff","git_sha":"deadbeef…"} and HTTP 500 on every token POST.
+  KEYCLOAK_URL was overridden. That default is a live footgun and is HELD, not fixed.
+
+THE TOTALS ARE IDENTICAL AND THAT IS A COINCIDENCE.
+  baseline   8 pass / 12 fail / 0 blocked
+  post-roll  8 pass / 12 fail / 0 blocked
+A totals comparison would have reported "no change". TWO rows changed verdict, in OPPOSITE
+directions, and they cancelled. The diff is per row for exactly this reason.
+
+  finance-performance-indices    FAIL -> PASS
+  finance-variance-drivers       PASS -> FAIL
+
+AGAINST THE BASELINE'S OWN PARTITION, WRITTEN BEFORE THE FACT — the expectation was
+"(b)'s two rows move, nothing in (a) or (c)". ALL THREE HALVES OF THAT ARE WRONG:
+
+(b) NEITHER of the two fixed-and-unrolled rows moved. Both still fail with the SAME reason:
+      safety-haz-1003-risk-assessment     disposition 'drawn', wants 'task_requested'
+      cost-rate-comparison-lot-3-refusal  elicitation offers 0 options, sheet expects 2
+    The roll was supposed to be what fixed these. It carries both fixes — 74 verified the
+    review_request consumer LIVE on iagent-engine-a by import, not by file presence — and the
+    census drove a real gateway turn through each row. So "the consumer is importable" and "the
+    dispatch opens an acceptance" are now measurably DIFFERENT facts, which is precisely the one
+    link 74 marked as not measured. It is still not satisfied. THIS IS THE FINDING OF THE RUN.
+
+(c) ONE of the four payload-shape rows moved, and the baseline said in advance that this would
+    be "a finding in its own right and not a bonus": finance-performance-indices was failing on
+    disposition 'slot_required' wanting 'drawn' plus archetype ELICITATION lacking MULTI_SERIES,
+    and now PASSES.
+
+(a) The six rows sharing the dead vector half's signature did not move, as expected. The four
+    docs rows still fail identically: verb UNKNOWN lacks mesh_explain, route_status='no_match',
+    fell back no_compatible_verbs. That is consistent with mesh:explain being the ONE verb row
+    still in the legacy slot — see the retrievability census beside this file.
+
+ATTRIBUTION, WITH THE CAUSE LABELLED
+
+  RULED OUT BY MEASUREMENT, not by argument: the 43 cortex presentation bindings becoming
+  visible to vector search. A three-bucket probe run IMMEDIATELY after this census read
+  133 = 89 named + 44 legacy + 0 no-vector — byte-identical to the reading taken before it.
+  The 44 did not move, no page load occurred during the run, so those rows were legacy
+  throughout and cannot have changed any ranking here.
+
+  NOT THE CAUSE, though it is what the run printed: finance-variance-drivers failed in the
+  census with route_status='infra_error' and verb UNKNOWN. Re-running that ONE row produced NO
+  infra_error and a real verb — so the infra_error was transient and is NOT why the row
+  regressed. The row fails on its merits:
+      verb ['finVarianceAnalysis','fin_variance_analysis'] lacks 'fin_variance_drivers'
+      archetype ['VARIANCE_TREE'] lacks 'CONTRIBUTION_RANKING'
+  It MISROUTES to a sibling verb. Both rows exist and BOTH are in the named space
+  (mesh:finVarianceDrivers, mesh:finVarianceAnalysis, mesh:finPerformanceIndices — all three
+  named, all PROGRAM_FINANCE), so this is not absence and not unreachability.
+
+  PLAUSIBLE, AND NOT MEASURED — say it that way: that the vector half of hybrid search coming
+  ALIVE for the 89 re-registered rows is what re-ranked these two. It fits both directions and
+  the timing — the baseline states every one of its 8 passes was reached by BM25 alone, because
+  all 138 rows were then in the legacy slot, and 89 are now named — but I did not observe a
+  single search run in hybrid mode. engine-o's log does not report the mode: the only 'hybrid'
+  strings in 10,626 lines are PROMPT TEXT ("verb matching is done by hybrid vector"), which is a
+  search for a mechanism matching prose about it. Until a run is observed reporting
+  mode='hybrid', this is a fitting story, not a cause.
+
+  WHAT WOULD SETTLE IT: tests/sandbox_e2e/_probe_retrieval_seam.py, which exists to report the
+  seam's mode. One read-only run. Not taken here.
+
+WHY THIS MATTERS BEYOND TWO ROWS
+  If the vector half re-ranking is the cause, then the backfill is not a strictly-improving
+  operation: making rows reachable changed one route for the better and one for the worse in a
+  window where nothing else moved. The remaining 44 Predicate rows and OntologyClass's 26,239
+  are a far larger version of the same change. That is an argument for the canary the architect
+  already ruled, not against the backfill — but "every changed route is a finding, including the
+  ones that improve" now has a worked example in each direction.
+
+========================================================================
+CORRECTION, appended 2026-09-20 — the mesh:explain attribution above is WRONG
+
+The analysis says the four docs rows failing is "consistent with mesh:explain being the ONE verb
+row still in the legacy slot". That sentence is false and I am leaving it visible rather than
+editing it, because it was published and someone may already have read it.
+
+THERE ARE TWO PREDICATE ROWS FOR THIS VERB, under two spellings:
+
+  verb_iri                              verb_local                        slot    lastUpdated
+  http://invincible-agent/mesh#explain  //invincible-agent/mesh#explain   legacy  2026-09-18T04:45:34Z
+  mesh:explain                          explain                           named   2026-09-20T02:08:10Z
+
+The LIVE row is `mesh:explain`, it is in the NAMED space, and it IS reachable. engine-docs
+re-registered at this startup and its write went through the fixed writer: that row's
+lastUpdateTimeUnix is 02:08:10Z, one second before the pod logged
+"mesh registration RECOVERED for ...engine_docs_explain...". So the docs rows are NOT failing for
+want of a retrievable verb row, and the backfill has no bearing on them.
+
+The legacy row is a STALE DUPLICATE, created 2026-09-18T03:53Z and untouched since 04:45Z that
+day. Its `verb_local` is `//invincible-agent/mesh#explain`, which is what you get by splitting a
+full `http://…` IRI on its FIRST colon to strip a prefix. So it is a pre-prefix-fix registration
+that was never cleaned up, and it is the "one legacy engine row" — not engine-docs' live row.
+
+IT IS ALSO A LIVE ROUTING HAZARD IN ITS OWN RIGHT, independent of any slot: it carries
+`domains: []`, and the Predicate filter admits empty-domains rows into EVERY persona scope via its
+`length == 0` branch. So an unreachable row under a mangled verb name sits in every scope's
+candidate pool. Reported, not fixed — no store write tonight.
+
+WHY THE DOCS ROWS ACTUALLY FAIL IS STILL OPEN, and the census yaml says so itself: the docs sheet
+"carries the prerequisite that it must not be walked until that leg rolls" — the pool's
+parameterisation leg, which is HELD pending the mesh:explain cosine number. Their failure is
+expected under that hold. That is a prerequisite not yet met, not a regression, and not evidence
+about vectors either way.
