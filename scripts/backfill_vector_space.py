@@ -31,6 +31,22 @@ re-embedded, no LLM is called, doc-tools is not involved and nothing is deleted 
 vector is read and written back under the name. Measured lossless against a deliberately
 un-normalised probe: norms identical, max|delta| = 0.000e+00, self-distance 0.0 after.
 
+## SCOPE: NAMED ROWS ONLY — blank nodes are skipped, not relocated
+
+Ruled by the architect 2026-09-19 and confirmed against doc-tools' source: blank nodes do not
+belong in the retrieval index, so nothing relocates them. They are 96.2% of `OntologyClass`
+(25,255 of 26,239), they are there because the Weaviate writer has no `!isBlank` filter while
+its Neo4j sibling has two, and DELETING the existing ones is a separate act that is NOT in this
+script and not ordered. This script only declines to repair them.
+
+Expected dry run on `OntologyClass`, and any difference is a finding rather than a nuisance:
+
+    blank-skipped    25,255      not index rows — doc-tools' ingest filter, not a backfill
+    no-vector            16      NAMED and vectorless: a RE-EMBED, which this cannot do
+    would-relocate      968      the actual work
+                     ------
+                     26,239      the five outcomes partition the walk; they must sum to it
+
 ## THIS SCRIPT DOES NOT RUN ITSELF
 
 `--apply` is required and refuses without `--i-have-read-the-warning`. Default is a dry run.
@@ -59,6 +75,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -102,6 +119,78 @@ CANARY_SETS = {
         "http://internal/sustainment/safety#WriteUp",
     ),
 }
+
+# ── BLANK NODES ARE NOT RELOCATED, AND THE PREDICATE LIVES HERE ──────────────────────────
+#
+# RULED by the architect 2026-09-19, conditional on doc-tools confirming the read — and the read
+# is confirmed (`doc-tools` `lane/7f` @ aa36e41, by me): blank nodes do not belong in the
+# retrieval index, so this script relocates NAMED rows only.
+#
+# WHY THEY ARE IN THERE AT ALL, because "96% of the index is anonymous nodes" reads like a
+# design decision and is not one. doc-tools has TWO writers off the same rdflib graph. The Neo4j
+# leg excludes blank nodes twice — `FILTER(!isBlank(?uri))` in its SPARQL and an
+# `isinstance(..., rdflib.term.BNode)` in Python — and a test seals it. The Weaviate leg, which
+# is the writer that fills THIS index, carries neither, and nothing seals it. A 2026-06-15 fix
+# reached one writer; the file's own comment counts two. It is a leak, not a design.
+#
+# THE SHAPE, AND THERE ARE TWO OF THEM. rdflib renders a blank node as `BNode.__str__` — `N`
+# followed by a 32-char hex id — and doc-tools documents exactly that form, `N[a-f0-9]{32}`.
+# **The live index carries a SECOND spelling their documented form does not match**: lowercase
+# `n`, the same 32 hex, and a literal `b246` suffix. Measured over the 1,299 vectorless blank
+# rows I had listed: 1,296 are the rdflib form and 3 are the second. Two parsers, one index.
+#
+# WHY THAT MATTERS RATHER THAN BEING TRIVIA: had this script keyed on doc-tools' documented
+# regex, those rows would have been classified NAMED and either relocated or reported to
+# doc-tools as re-embed work. The count that decides the whole dry run turns on the predicate,
+# so the predicate is stated here, in the script, and both known spellings are named.
+#
+# AND THE THIRD BUCKET EXISTS BECAUSE MY SPELLING CENSUS IS A SAMPLE. I enumerated spellings
+# over the 1,299 VECTORLESS blanks, not over all 25,255 — the other 23,956 were never listed
+# row by row. A third spelling in that unexamined majority is entirely possible. So anything
+# that looks blank under the loose form and matches NEITHER known spelling is `ambiguous`: it
+# is not written, it is printed, and it makes the run exit non-zero. An undecided row must not
+# have its fate chosen by whichever regex the tool happened to be written with, and a clean
+# exit must not be available while one exists.
+#
+# These match a URI STRING read back out of the store. The INGEST filter that stops new ones
+# arriving is doc-tools' and must key on `isinstance(..., rdflib.term.BNode)`, not on any string
+# shape — a string predicate is only correct for tools like this one, reading rows back.
+BLANK_URI = re.compile(r"^[Nn][0-9a-f]{20,}$")
+
+#: Collections whose rows carry NO `uri` property, so the blank check above cannot fire on them
+#: — with the reason it is correct that it does not.
+#:
+#: MEASURED, not assumed: a `Predicate` row has `input_uri`/`output_uri` and no `uri`, so
+#: `blankness()` reads "" and answers "named" for every one of them. That is the right outcome
+#: — a Predicate row is a VERB REGISTRATION, not an RDF class node, and a blank node cannot
+#: occur there — but it is right for an accidental reason, and a filter that returns the correct
+#: answer because it is reading a field that does not exist is one collection away from being a
+#: guard that silently passes everything. So the run REPORTS which collections the blank check
+#: was live on, and refuses a clean exit if a collection not named here turns out to carry no
+#: uris at all.
+URILESS_CLASSES = ("Predicate",)
+
+#: The spellings actually observed in this index, each with the evidence for calling it blank.
+BLANK_SPELLINGS = {
+    #: rdflib `BNode.__str__`; doc-tools documents this one. 1,296 of 1,299 listed.
+    "rdflib": re.compile(r"^N[0-9a-f]{32}$"),
+    #: Lowercase, `b246`-suffixed; doc-tools' documented form does NOT match it. 3 of 1,299.
+    "b246": re.compile(r"^n[0-9a-f]{32}b246$"),
+}
+
+
+def blankness(uri):
+    """One of "named", "blank", "ambiguous" — the whole population, partitioned.
+
+    Every row lands in exactly one bucket and none is dropped on the floor. "ambiguous" is a
+    blank-LOOKING uri in neither known spelling, and it FAILS the run rather than being absorbed
+    into either answer.
+    """
+    uri = uri or ""
+    if any(rx.match(uri) for rx in BLANK_SPELLINGS.values()):
+        return "blank"
+    return "ambiguous" if BLANK_URI.match(uri) else "named"
+
 
 #: How near "at distance ~0" is. Cosine on an identical vector is exactly 0.0 in every
 #: measurement so far; the tolerance exists for float32 round-trips, not for near-misses.
@@ -236,6 +325,19 @@ def relocate(cls, obj, space, apply_it):
     the properties are read in the same request as the vector rather than re-derived.
     """
     uuid = obj["id"]
+
+    # ── THE BLANK CHECK IS FIRST, AND THE ORDER IS THE POINT ─────────────────────────────
+    # Checked before `already-named` and before `no-vector` so the outcome counts PARTITION the
+    # collection: every row is blank, ambiguous, named-and-relocatable, named-and-already-done,
+    # or named-and-vectorless, and the five sum to the walk. Put this check later and the 1,299
+    # vectorless blank nodes would land in `no-vector` and be reported to doc-tools as re-embed
+    # work — which is the wrong ask for a row that should not be in the index at all.
+    kind = blankness((obj.get("properties") or {}).get("uri") or "")
+    if kind == "blank":
+        return "blank-skipped"
+    if kind == "ambiguous":
+        return "blank-AMBIGUOUS-skipped"
+
     legacy, named = slots(obj, space)
     if named:
         return "already-named"
@@ -279,6 +381,8 @@ def run_class(cls, args):
 
     counts = {}
     novector_uris = []
+    ambiguous_uris = []
+    with_uri = 0
     seen = 0
     after = None
     verified_once = False
@@ -314,8 +418,12 @@ def run_class(cls, args):
 
                 outcome = relocate(cls, obj, space, args.apply)
                 counts[outcome] = counts.get(outcome, 0) + 1
+                if uri:
+                    with_uri += 1
                 if outcome == "no-vector":
                     novector_uris.append(uri or obj["id"])
+                elif outcome == "blank-AMBIGUOUS-skipped":
+                    ambiguous_uris.append(uri or obj["id"])
                 seen += 1
 
                 if outcome == "relocated":
@@ -369,10 +477,43 @@ def run_class(cls, args):
 
     _report("done:")
 
+    # ── SAY WHETHER THE BLANK CHECK WAS LIVE, RATHER THAN LEAVING IT TO BE ASSUMED ───────
+    if seen and not with_uri:
+        if cls in URILESS_CLASSES:
+            print("   the blank-node check was INERT here: %s rows carry no `uri` property, "
+                  "which is expected and correct — a %s row is a verb registration, not an RDF "
+                  "class node." % (cls, cls))
+        else:
+            rc = 2
+            print("   %s rows carry NO `uri` property, so the blank-node check could not fire "
+                  "on ANY row of this collection and every row was treated as named by "
+                  "default. That may be right, but nothing here established it. This run is "
+                  "NOT clean." % cls, file=sys.stderr)
+    elif seen:
+        print("   the blank-node check was live on %d of %d rows (those carrying a `uri`)"
+              % (with_uri, seen))
+
+    if ambiguous_uris:
+        # ── AN UNDECIDED ROW FAILS THE RUN. IT IS NOT SKIPPED QUIETLY ────────────────────
+        # These matched the loose blank spelling and NOT rdflib's documented one. Nothing was
+        # written for them either way — but a run that leaves them unexplained must not exit 0,
+        # because the next person reads a clean exit as "the partition was clean".
+        rc = 2
+        print("   %d row(s) are UNDECIDED: blank under the loose spelling, named under "
+              "rdflib's. Nothing was written for them. This run is NOT clean — the two "
+              "spellings disagree and someone must say which is right before an --apply "
+              "means anything." % len(ambiguous_uris), file=sys.stderr)
+        for u in sorted(ambiguous_uris)[:20]:
+            print("      %s" % u, file=sys.stderr)
+        if len(ambiguous_uris) > 20:
+            print("      ... and %d more" % (len(ambiguous_uris) - 20), file=sys.stderr)
+
     if novector_uris:
         # ── THE ONE CASE THIS SCRIPT CANNOT REPAIR, NAMED RATHER THAN COUNTED ────────────
-        print("   %d row(s) carry NO VECTOR AT ALL. A relocation cannot repair them — there is "
-              "nothing to relocate — they need a RE-EMBED and that is doc-tools' work."
+        print("   %d NAMED row(s) carry NO VECTOR AT ALL. A relocation cannot repair them — "
+              "there is nothing to relocate — they need a RE-EMBED and that is doc-tools' work. "
+              "Blank nodes are NOT in this count: they are skipped above, so this number is the "
+              "re-embed ask and not a population that also needs filtering."
               % len(novector_uris))
         if args.list_no_vector:
             with open(args.list_no_vector, "w", encoding="utf-8") as fh:
