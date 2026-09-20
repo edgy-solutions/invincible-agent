@@ -50,12 +50,23 @@ corrections are in §6 rather than quietly fixed.
 
 ## 2. ROLL #2 — ARMED, NOT FIRED
 
-    ROLL SHA   60b512e2f35346e442824d77faadfe109d9dab8a   (master, pushed)
+    ROLL SHA   8952b114d9f5e4361a32cbee532b313fb5b8bbb5   (master, pushed)
+
+**`60b512e2f353…` WAS ARMED FIRST AND IS SUPERSEDED — do not run it.** I verified that sha, then
+kept working: the `.venv.wsl` seal fix, the lane/91+32 merge and this report all landed after it, and
+one of them is lane/32's SOURCE_LEDGER projector row. A roll that omits work already merged to master
+is not the roll anybody wants, so the whole arming was re-run at the real head: **17/17 images
+present with arm64 at `8952b114…`, control absent, CI run `35487603467` green, and the dry run
+re-diffed.** Both armings produced the identical shape, so nothing below changed except the sha.
+
+**The general lesson, since it nearly shipped a wrong command:** an armed sha goes stale the moment
+you commit again, and the artefact that carries it is a command someone will copy and paste.
 
 **Verified tonight:**
 
-* **17/17 images present at that sha with `linux/arm64`**, bogus-sha negative control ABSENT on all
-  seventeen, so the probe discriminates. CI run `35486224214` green.
+* **17/17 images present at `8952b114…` with `linux/arm64`**, bogus-sha negative control ABSENT on
+  all seventeen, so the probe discriminates. CI run `35487603467` green. (The first arming's run,
+  `35486224214`, was green too, at the superseded sha.)
 * **Dry run clean.** Full-manifest diff against deployed revision 147: **84 lines** — 38 `image`,
   2 `checksum/broker-code`, 2 `IAGENT_IMAGE_TAG`. 5883 lines each side, so **nothing is added or
   removed**.
@@ -70,7 +81,7 @@ cd C:\Users\cnogr\git\invincible-agent
 helm --kube-context edge upgrade iagent helm/invincible-agent -n sandbox \
   --reuse-values \
   -f helm/invincible-agent/values-roll-frontend-digest.yaml \
-  --set global.imageTag=60b512e2f35346e442824d77faadfe109d9dab8a \
+  --set global.imageTag=8952b114d9f5e4361a32cbee532b313fb5b8bbb5 \
   --no-hooks
 ```
 
