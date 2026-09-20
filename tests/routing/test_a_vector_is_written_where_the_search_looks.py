@@ -300,7 +300,17 @@ def test_no_other_writer_has_appeared():
     }
     found = set()
     for path in _REPO.rglob("*.py"):
-        if any(part in {".venv", "__pycache__", "node_modules"} for part in path.parts):
+        # `.venv.wsl` IS THE SECOND VIRTUALENV AND IT WAS MISSING FROM THIS SET BY ONE NAME.
+        # AGENTS.md ("Running the tests") states the tree carries TWO: `.venv` (Windows) and
+        # `.venv.wsl` (Linux, what CI matches). Excluding only the first walked straight into
+        # site-packages and reported two DEPENDENCIES as new collection creators —
+        # langchain_community/vectorstores/typesense.py and mem0/vector_stores/weaviate.py — so
+        # this seal went red over code nobody here writes or ships. A red that names a real file
+        # reads as a finding, which is why it survived a full run before being looked at.
+        # Matched on a PREFIX rather than added as a third literal: the next venv will be spelled
+        # differently again, and an exclusion list that must be extended per name is the defect.
+        if any(part == "__pycache__" or part == "node_modules" or part.startswith(".venv")
+               for part in path.parts):
             continue
         try:
             # THE CODE FORM, NOT THE PHRASE. A text match on `collections.create(` reported
