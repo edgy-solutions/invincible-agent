@@ -85,6 +85,6 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   handoff log is for.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
   `docs/architecture/endpoint-gating-audit.md`, venvs and caches.
-- MCP: none. `.mcp.json` (its only server was `forge_extension` at `localhost:50415`) was deleted
-  by Chris on 2026-09-20; the deletion is unstaged in the working tree, for him to commit.
-- Working-tree state at survey: 3 untracked `sessions/*.md` lane packets, plus that deletion.
+- MCP: none. `.mcp.json` (its only server was `forge_extension` at `localhost:50415`) was removed
+  by Chris on 2026-09-20 and the removal is committed (`249fbe0`). Do not re-add it.
+- Working-tree state at survey: 3 untracked `sessions/*.md` lane packets, nothing modified.
