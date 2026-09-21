@@ -97,6 +97,9 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   before `git add`, and stage named paths only — a green belongs to a sha, not a directory.
 - **Commit from a file**: `git commit -F <file>`, never `-m` with backticks (command substitution
   has silently deleted terms from messages here).
+- **Every commit needs a `Lane: <worktree-dir>/<branch>` trailer**, or `.githooks/pre-push`
+  refuses the push (R-058). Derive it, don't type it: basename of `git rev-parse --show-toplevel`,
+  then `git branch --show-current`. Add it with `git commit --trailer`.
 - **Never commit infra detail** (IPs, Pi-hole, kube contexts) — that is what the out-of-repo
   handoff log is for.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
