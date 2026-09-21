@@ -184,7 +184,7 @@ did not reproduce on a single-row re-run — the row fails on its merits, misrou
 |---|---|---|
 | `test_the_two_MIRRORS_agree_FLEET_WIDE` | **introduced by tonight's lane/32 merge.** Backend advertises `LotCostingReview→SourceLedger`; cortex-ui does not bind it | cortex, or whoever owns the staging |
 | `test_THE_REPO_INBOX_IS_FULLY_ADDRESSED` | **9 files naming no lane** — the lane-less-addressee gap. 6 tracked handoffs to lane-less seats (**2 committed by me tonight, as ordered**), 3 untracked ca packets | the architect (it is their open vocabulary item) |
-| `test_EVERY_CITED_ANCHOR_NAMES_A_HEADING_THAT_EXISTS` | a literal placeholder `#r-0NN--slug` at `sessions/2026-09-19-handoff-architecture-seat-no-lane.md:42` | the architect seat |
+| `test_EVERY_CITED_ANCHOR_NAMES_A_HEADING_THAT_EXISTS` | a literal placeholder anchor with slug `r-0NN--slug` — written here **without its leading hash**, because the seal greps every tracked file for that literal and the first version of this line reproduced the defect it was reporting, giving the seal a second site in my own report — at `sessions/2026-09-19-handoff-architecture-seat-no-lane.md:42` | the architect seat |
 
 **Two were fixed tonight.** `SOURCE_LEDGER` having no projector path — my overdue item, gated behind
 a prime — was built by **lane/32**, and their merge turns that seal green. And the writer seal was
