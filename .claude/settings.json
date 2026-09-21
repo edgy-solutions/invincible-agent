@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./**/uv.lock)",
+      "Read(./tests/fixtures/**/*.fos)",
+      "Read(./dist/**)",
+      "Read(./assets/**)",
+      "Read(./baml_shared/baml_client/**)",
+      "Read(./cortex.db)",
+      "Read(./**/__pycache__/**)"
+    ]
+  }
+}
