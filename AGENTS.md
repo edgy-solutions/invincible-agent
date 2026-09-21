@@ -159,13 +159,28 @@ session↔lane mapping was lost. Rebuilding it cost thirteen messages and an hou
 | orchestrator | `invincible-agent-01` | `ia-01` | `lane/01` |
 | architecture seat — **lane-less by R-019** | `invincible-agent-ad` | shared master; routes, never commits shared docs | — |
 | docs / ADR | `invincible-agent-5f` | `ia-5f` | `lane/5f` |
-| engine-lg / graph host | `invincible-agent-22` | `ia-32` | `lane/32` |
-| safety / ADR-0051 | `invincible-agent-28` | `ia-74` | `lane/74` |
-| engine-cost | `invincible-agent-81` | `ia-91` | `lane/91` |
+| **the worker** — safety, engine-lg / graph host, engine-cost, and the store probes | `invincible-agent-28` | `ia-74` | `lane/74` |
+| ~~engine-lg / graph host~~ **CLOSED 2026-09-21** | ~~`invincible-agent-22`~~ | ~~`ia-32`~~ | ~~`lane/32`~~ |
+| ~~engine-cost~~ **CLOSED 2026-09-21** | ~~`invincible-agent-81`~~ | ~~`ia-91`~~ | ~~`lane/91`~~ |
+| ~~store probes~~ **CLOSED 2026-09-21** — never had a row; see the note below | — | ~~`ia-eo`~~ | ~~`lane/eo`~~ |
 | M3.3 / task kinds | `iagent-mesh-sdk-ca` | `iagent-mesh-sdk` — **commits in this repo** | — |
 | cortex | `cortex-ui-60` | `cortex-ui` | deploy branch (**R-009**) |
 | doc-tools | `doc-tools-7f` | `doc-tools` | — |
 | unassigned | remaining sessions | shared master | **no work until assigned BY NAME** |
+
+**CONSOLIDATED 2026-09-21.** The fleet runs as **Lane 1 (`ia-01`/`lane/01`) plus ONE worker
+(`ia-74`/`lane/74`)**, which owns everything lanes 91, 32, 74 and eo owned. The three closed rows
+are **struck, not deleted** — a lane that closes still authored work that is cited by tree and
+branch, and a deleted row makes those citations unresolvable. Their worktrees still exist on disk
+and their branches are still pushed; nothing here deletes either.
+
+**`lane/eo` NEVER HAD A ROW IN THIS TABLE, and it worked for days.** It is struck above so that
+its handoffs resolve, but the gap is the finding: a lane can carry an address, a worktree, a
+branch and a night of measurements without ever appearing in the register that exists to answer
+"who is this". Two things followed from the absence, both measured 2026-09-21: its branch tracked
+`origin/master`, so `git pull` in that worktree pulled **master** (fixed today), and it held zero
+commits of its own. **A roster row is what makes a lane's setup checkable.** When a lane is stood
+up, its row lands before its first commit, not after its last.
 
 **THE ADDRESS COLUMN IS THE LEAST DURABLE THING IN THIS TABLE, and knowing that is the point.**
 A session name changes on restart — the orchestrator answered to `invincible-agent-01` when this
