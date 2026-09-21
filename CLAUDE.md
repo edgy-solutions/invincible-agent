@@ -83,8 +83,14 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
 
 ## Conventions and gotchas visible from the survey
 
-- **Worktree ↔ branch, never a session name.** `ia-NN` ↔ `lane/NN`; lanes push to their branch,
-  the architect merges. No lane's default view is `master`. A bare session name addresses nothing.
+- **Worktree ↔ branch, never a session name.** `ia-NN` ↔ `lane/NN`. No lane's default view is
+  `master`. A bare session name addresses nothing.
+- **Who pushes, who merges.** Lanes push their own branch on every commit (AGENTS.md:133–139).
+  **Merging to master is the gated action** (AGENTS.md:133) — *the charter names no merger.*
+  In practice Lane 1 (`ia-01`/`lane/01`) merges on the standard gate; that comes from the lanes'
+  handoffs, **not** from AGENTS.md. The architecture seat is lane-less: it routes and never
+  commits shared docs (AGENTS.md:160). An unassigned session on shared master does no work
+  until assigned by name.
 - **`master` is not currently green.** The measured failure census and its owner live in
   `docs/plans/suite-signal-session.md`. A green suite is not yet a valid gate.
 - **Shared tree.** Other lanes land work in this same checkout; re-run any generator immediately
