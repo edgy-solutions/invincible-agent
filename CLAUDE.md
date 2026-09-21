@@ -10,6 +10,12 @@ against the caller's grants **before** the model ever sees them (deny-by-default
 per-asset grants). It ships as a fleet of ~20 FastAPI/Restate engines plus a Dagster
 orchestration side and a Helm chart for the home-lab k3s sandbox.
 
+## Handoffs — read this first
+
+Your handoff is the **newest `sessions/*handoff*` file in your own worktree** whose `to:` line
+names your worktree/branch. Read it whole, once — it carries your exact next step. Read inbox
+packets addressed to you the same way.
+
 ## Repos and paths
 
 | what | absolute path |
@@ -17,8 +23,10 @@ orchestration side and a Helm chart for the home-lab k3s sandbox.
 | this repo (master tree) | `C:\Users\cnogr\git\invincible-agent` |
 | lane worktrees | `C:\Users\cnogr\git\ia-01` `ia-32` `ia-5f` `ia-74` `ia-91` `ia-eo` (branches `lane/NN`) |
 | frontend (sibling repo) | `C:\Users\cnogr\git\cortex-ui` |
-| handoff log (NOT in repo) | `C:\Users\cnogr\.claude\projects\c--Users-cnogr-git-invincible-agent\sessions\` — dated `YYYY-MM-DD-<slug>.md`, index + newest-first Log in its `README.md`. Read the newest 1–2 before starting; drop one when you finish substantive work. Deliberately outside git (carries home-lab IPs, kube contexts). |
-| in-repo lane mail | `sessions/` — dated packets/dispatches *between lanes*, tracked and committed. Different channel from the handoff log above; don't confuse them. |
+| infra notes (IPs, kube contexts) — **NOT where lanes hand off** | `C:\Users\cnogr\.claude\projects\c--Users-cnogr-git-invincible-agent\sessions\` — dated `YYYY-MM-DD-<slug>.md`, index in its `README.md`. Deliberately outside git. |
+| lane handoffs and packets | `sessions/` in this repo (and in each lane's own worktree) — tracked and committed. This is the handoff channel; see "Handoffs" above. |
+| SDK | `C:\Users\cnogr\git\iagent-mesh-sdk` |
+| doc-tools | `C:\Users\cnogr\git\doc-tools` |
 | auto-memory index | `C:\Users\cnogr\.claude\projects\c--Users-cnogr-git-invincible-agent\memory\MEMORY.md` |
 
 ## Map
@@ -43,14 +51,17 @@ orchestration side and a Helm chart for the home-lab k3s sandbox.
 ## Run / test / build
 
 ```bash
-uv sync                                    # root deps (orchestrator-side)
+uv sync --extra agent-fleet   # charter form, AGENTS.md:101; one venv per worktree
 dg dev                                     # Dagster at http://localhost:3000
 uvicorn agent_fleet.ontology_service.main:app --port 8084   # any engine, standalone
-uv run pytest tests/                       # unit / contract, no cluster
+uv run pytest tests/                       # unit / contract, no cluster  (see note below)
 uv run tests/sandbox_e2e/test_engine_w_knowledge.py         # e2e via cortex-bff + real JWT
 scripts/upgrade-sandbox.sh                 # deploy the chart (bakes in every values file)
 scripts/roll-litany.sh iagent-engine-w     # roll one service, six verification legs
 ```
+
+**Full suite: Lane 1 only.** Other lanes run their own area's tests. Concurrent suites exhaust the
+paging file on this box and fail with empty stderr.
 
 Procfile: `web` = dagster webserver, `bff` = uvicorn on `src.iagent.gateway:app`.
 Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc.
@@ -69,7 +80,6 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
 | `dist/` (untracked: `*.duckdb`, generated validation `*.html`) | `ls -l dist`; never open the HTML |
 | `assets/` (`*.jpg`, `*.svg`) | `ls`; never read |
 | `cortex.db` (sqlite, untracked), `tmp/`, `agent_workspace/`, `**/__pycache__/`, `.venv*/` | `ls`, or sqlite metadata queries |
-| the handoff log's session files | they are long-form narrative — read the newest 1–2 only, via the `README.md` Log lines first |
 
 ## Conventions and gotchas visible from the survey
 
