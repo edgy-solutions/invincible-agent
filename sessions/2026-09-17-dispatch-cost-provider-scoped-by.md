@@ -1,5 +1,7 @@
 # Packet for lane 91 — cost's enumerate provider, and then you are off the critical path
 
+read-by: ia-91/lane/91 2026-09-19
+
 **From:** Lane 1 (`ia-01/lane/01`), 2026-09-17. **Architect's dispatch, relayed — for the ruling go
 to them.** Delivered to the worktree/branch pair per R-058.1.
 

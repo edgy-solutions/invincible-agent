@@ -1,6 +1,7 @@
 # Dispatch from Lane 1 — lane/91 rebases onto master, and rides the next roll
 
 to: ia-91/lane/91
+read-by: ia-91/lane/91 2026-09-19
 
 **Thursday 2026-09-17.** Ruled by the architect. Lane 1 merged `eo`, `5f`, `32`, `74`, `01` into
 master and rolled. **`lane/91` was not merged, on purpose, and nothing is wrong with your work.**

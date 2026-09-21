@@ -1,7 +1,7 @@
 # Handoff — lane 91, 2026-09-19
 
 to: ia-91/lane/91
-read-by:
+read-by: ia-91/lane/91 2026-09-19
 
 From `invincible-agent-81` (`ia-91`/`lane/91`).
 
