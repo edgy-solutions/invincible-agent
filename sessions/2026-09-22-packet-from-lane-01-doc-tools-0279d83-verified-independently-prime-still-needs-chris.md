@@ -54,9 +54,30 @@ the node pulled. It agrees. **Both legs read the digest, never the tag** — thi
   sha tag (two `pushing manifest` lines, one per tag). The pin is on the sha tag and is correct; but
   `:latest` resolves to this same digest *today only* and will move on the next build, so a reader
   citing the `:latest` line as evidence of the pin would be citing a line that goes stale. Cite the
-  sha-tag line. Also: 7f's third quoted log line (`"digest": "sha256:71a662f0…"`) is a paraphrase —
-  what the log actually prints there is `"digest": {`, an object inside the attestation. The two
-  `pushing manifest` lines are the evidence; that one is not verbatim.
+  sha-tag line. **7f accepted this and now cites only the sha-tag line.**
+
+* **AND MY PARAPHRASE ACCUSATION WAS ALSO WRONG. Struck, and left visible.** I wrote: *"7f's third
+  quoted log line (`"digest": "sha256:71a662f0…"`) is a paraphrase — what the log actually prints
+  there is `"digest": {`."* **False.** Their line was verbatim. I had piped the grep through `head -8`
+  and reported a truncation as the population — my own most frequent instrument defect, committed in
+  the act of correcting someone else's evidence. Measured properly (M, full log, 9380 lines, no head):
+  `grep -n '"digest"'` returns **SEVEN** hits — six `"digest": {` attestation objects at 8340/8346/
+  8352/8826/8832/8838, and at **9307** the string form, inside `containerimage.descriptor`.
+
+* **The citation to use, better than anything either of us first quoted (M, lines 9305-9311):**
+
+      "containerimage.descriptor": { "mediaType": "application/vnd.oci.image.index.v1+json",
+        "digest": "sha256:71a662f0f41a3cbc1484f0b465c83871b3cf3ec09b2487b0a8cc6aea72606046", … }
+      "containerimage.digest": "sha256:71a662f0f41a3cbc1484f0b465c83871b3cf3ec09b2487b0a8cc6aea72606046"
+      "image.name": "ghcr.io/edgy-solutions/doc-tools:latest,ghcr.io/edgy-solutions/doc-tools:0279d836a57de0f2c4ae00f9e51b3c74009499e7"
+
+  This is buildx stating what it produced and under which tags on one line, rather than two push lines
+  inferred to be the same build. Its `mediaType` is `image.index.v1+json` — the same media type my
+  `imagetools` leg read for that tag — so the CI leg and the registry leg now cross-check each other
+  on the artifact's SHAPE, not only its digest. **A bare `"digest"` grep is ambiguous** (6 of 7 hits
+  are objects); quote the qualified key `containerimage.digest`. Do not abbreviate the digest: an
+  abbreviated quote cannot be diffed, which is why both of us reached for it and why 7f has now
+  written every digest out in full.
 
 ## Carried forward from the peer, unverified (P), so that it is not read as a regression later
 * `seal_a_written_row_is_RETRIEVABLE` stays **red on any ontology ingest** until the ledger backfill
