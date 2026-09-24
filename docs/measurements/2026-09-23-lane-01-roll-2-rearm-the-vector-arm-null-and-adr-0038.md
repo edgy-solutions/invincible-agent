@@ -305,3 +305,90 @@ before use, with `0.4.3`–`0.4.7` listed as the control that the tag query can 
   again — the exact fault the packet reports). The inbox derivation reads only this tree, so a packet
   that lives in a sibling repo is invisible to it. Found by searching the sibling repo after this
   tree's search came back empty — with a positive control proving the empty result was real.
+
+---
+
+## 9. Item 5 — the full suite is VOID, not red, and the box is the reason
+
+The order says "run the full suite at head, once, alone. Report the four Windows reds by name."
+**I cannot report four reds, because the run never reached the tests.** It died in collection:
+
+    sha 36229a366444f2953d51a33a4829566669147fb9   python 3.12.11
+    .venv/Lib/site-packages/neo4j/_codec/packstream/v1/__init__.py:52
+        UNPACKED_UINT_16 = {struct_pack(">H", x): x for x in range(0x10000)}
+    E   MemoryError
+    ERROR tests/identity/test_redemption_endpoint.py - MemoryError
+    Interrupted: 1 error during collection
+    1 skipped, 1 error in 326.88s     SUITE EXIT=2
+
+The interpreter was 3.12.11, inside the pin (`>=3.12,<3.13`), so the run **would have been valid**
+— this is not the wrong-tree-interpreter fault. The tracked and untracked state was identical
+before and after, so nothing needs unwinding and `docs/BOARD.md` was never reached.
+
+**A 65536-entry dict is roughly 4 MB. An allocation that small failing is a statement about the
+machine, not about the code**, and the honest classification is VOID — a run that measured
+nothing. Reporting it as "the suite is red" would have been a machine red wearing a code red's
+clothes, which is the same fault cortex-60 caught on their own side today (a comment-only change
+cannot cause an OOM).
+
+### What actually holds the memory — and the two instruments that disagreed
+
+My first diagnosis was **wrong and is recorded here because it was nearly published**: 17 stray
+long-lived `python.exe` processes, start times from 9/10 through 9/23. They are real and they are
+leaked — but their working sets are **0–6 MB each, ~16 MB in total.** They are idle Pylance and
+debugpy helpers plus two `uvicorn backend.main:app` servers from sibling repos. *They are not the
+cause.* Naming them would have been a justification invented downstream of a correct conclusion.
+
+Then two instruments contradicted each other:
+
+| instrument | reading | verdict |
+|---|---|---|
+| `Win32_PageFileUsage.CurrentUsage` + `PhysFree` | 21083 MB of 98304 MB used -> ~77 GB commit free | **wrong instrument** |
+| per-process `PagedMemorySize64`, summed | ~65 GB | **wrong instrument** |
+| `Win32_OperatingSystem.FreeVirtualMemory` | 979 MB free | right, and disbelieved at first |
+| `\Memory\Committed Bytes` / `Commit Limit` | **136.2 GB of 137.1 GB = 99.3%** | **authoritative** |
+
+    \Memory\% Committed Bytes In Use = 99.3
+    \Memory\Available MBytes         = 820
+    \Memory\Pages/sec                = 1123.6      <- sustained thrash
+
+The pagefile's `CurrentUsage` and per-process `PagedMemorySize64` are both **narrower quantities
+than commit charge**, and both read as "plenty of headroom" while the box had 820 MB. I had started
+writing up the roomy figure before the perf counter refuted it. The tell was that two derivations
+disagreed by 70 GB; the resolution was to go to the counter that defines the quantity rather than
+to defend either neighbour.
+
+### The holders, by private commit
+
+    Code        92 processes   25912 MB
+    claude      32 processes   12961 MB
+    firefox     41 processes   12845 MB
+    vmmemWSL     1 process      2578 MB
+    python      22 processes    1099 MB     <- the 17 "stray" ones live here
+    ---
+    all processes Get-Process could read:  77148 MB
+    kernel pool (paged 2127 + nonpaged 2919):  5046 MB
+    total committed:                         136220 MB
+
+**~54 GB is unattributed and I am not going to name a holder for it.** 739 processes exist and
+`Get-Process` cannot read every one's private bytes without elevation, so the residual is at least
+partly under-counting rather than a leak — but I did not measure that, so it stays open. The
+recommendation below does not depend on which it is: the three interactive apps hold ~52 GB of
+reclaimable commit on their own, which is far more than the suite needs.
+
+### Why I did not fix it myself
+
+The reclaimable commit is in **Chris's own editor and browser, and in 32 `claude.exe` processes —
+other lanes' live sessions.** Killing any of those is destructive, outward-facing, and would
+discard work that is not mine. The 17 leaked `python.exe` helpers *are* safely reclaimable and
+*are* mine to point at, but they total ~16 MB and would change nothing. **So there is no action
+available to this seat that makes the suite runnable**, and inventing one by trimming a 16 MB
+target would have been theatre.
+
+**This is the standing hazard, in a new form.** The known rule is "concurrent full suites exhaust
+the paging file"; no second suite ran here. The constraint is really *total commit on this box*,
+and a single suite is enough to cross it when the interactive apps are already holding 52 GB.
+
+**Item 5 remains open.** It needs commit headroom, then one run at head, alone, capturing the tree
+before and after (the suite mutates `docs/BOARD.md` — do not stage that on a green) and the real
+exit code, not the tail's.
