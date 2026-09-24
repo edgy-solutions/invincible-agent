@@ -36,7 +36,32 @@
 # roll put on the cluster".
 cortexUi:
   image:
-    # cortex-ui 8a13dd6. Verified before the roll: resolves in GHCR, multi-arch OCI index with
-    # arm64 present (the nodes are arm64), and NOT the same image as `:latest`, which currently
-    # resolves to 81407e58… and moves on every push to cortex-ui's default branch.
-    digest: "sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced"
+    # RE-ARMED 2026-09-23 for roll #2. cortex-ui `ea060f37e6078ef666f35db72956afa3e75971ba`
+    # (`ea060f3`) — the commit that binds `cost:LotCostingReview` to `SOURCE_LEDGER`, i.e. the
+    # frontend half that turned `test_the_two_MIRRORS_agree_FLEET_WIDE` green on master.
+    #
+    # DERIVED, NOT TYPED. The architect's order carried this digest abbreviated
+    # (`sha256:38cda6c84b3c…`). An abbreviated digest cannot be diffed and must never be
+    # completed by hand, so the full value below was resolved from the registry by walking
+    # cortex-ui's recent shas against `imagetools inspect` until one matched that prefix — the
+    # match is `ea060f3`, and nothing else in the last eight commits has a published tag.
+    #
+    # Verified before arming (measured 2026-09-23, not carried over from the previous pin):
+    #   * resolves in GHCR as an OCI image index (`application/vnd.oci.image.index.v1+json`)
+    #   * linux/arm64 present alongside linux/amd64 — the nodes are arm64
+    #
+    # WHAT IS NO LONGER TRUE, and is deliberately not copied forward from the previous pin:
+    # that comment asserted the pinned digest was "NOT the same image as `:latest`". For THIS
+    # digest that is false — `:latest` resolves to `sha256:38cda6c8…` today, the same image,
+    # because `ea060f3` is the newest push to cortex-ui's default branch. That coincidence is
+    # not a problem and not a reason to wait: the pin is BY DIGEST, so what `:latest` points at
+    # is irrelevant to what this roll deploys. It is recorded only so nobody re-derives the old
+    # sentence as though it had been re-checked — it would be a stale claim wearing a pin's
+    # authority, and `:latest` will move away from this digest on cortex-ui's next merge.
+    #
+    # The previous pin was `sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced`
+    # (cortex-ui `8a13dd6`), and that IS what the cluster is running right now — measured, not
+    # assumed from this file's own history: pod `iagent-cortex-ui-5c7c784464-7g5xl` reports
+    # `…/cortex-ui/frontend@sha256:c8d6553f…`. So the frontend line of this roll is a real change,
+    # `c8d6553f` -> `38cda6c8`, and the dry-run manifest must show exactly that.
+    digest: "sha256:38cda6c84b3ce6a23f2545c9ae8a7e23cf4e97c7cd632f69da042851eeba21d7"
