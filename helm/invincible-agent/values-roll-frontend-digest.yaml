@@ -1,4 +1,4 @@
-# Roll overlay: the frontend digest, and NOTHING else.
+# Roll overlay: the four CROSS-REPO digests this roll pins, and NOTHING else.
 #
 # WHY THIS FILE EXISTS AS ITS OWN FILE, measured 2026-09-19 rather than reasoned:
 #
@@ -80,3 +80,64 @@ cortexUi:
     # frontend line of this roll is therefore `c8d6553f` -> `28f752f2`, one step, and the dry-run
     # manifest must show exactly that.
     digest: "sha256:28f752f2111b760c9110db6389e0f057da9b268b63c4464d2ce889cbb3a03479"
+
+# ===========================================================================================
+# THE THREE SIBLINGS — pinned 2026-09-23 on the architect's order, to their RUNNING digests.
+#
+# THE FILE'S NAME IS NOW NARROWER THAN ITS CONTENTS. It was created for the frontend alone and
+# the architect's order names it explicitly, so it keeps the name rather than gaining a rename
+# nobody asked for. Read it as "the roll's cross-repo digest overlay".
+#
+# WHY THESE THREE AND NOT THE OTHER SEVENTEEN: `global.imageTag` is scoped to `$ours` — images
+# whose repository sits under `global.imagePrefix`. These three plus the frontend are the whole
+# cross-repo population (`_helpers.tpl:77,95` names them, and that list was paid for twice in
+# ImagePullBackOffs). Nothing retags them by digest for us, so `latest` is the floor and a floor
+# that moves is not a pin.
+#
+# DERIVED, NOT TYPED. The order carried the three digests abbreviated; the binding of digest to
+# image was read off the cluster (`imageID` on the running pods), not inferred from the order's
+# list order — which it then happened to match. `imageID` is the REPO digest, not the per-arch
+# manifest digest: proved on the frontend, whose pod reports `imageID`
+# `…/cortex-ui/frontend@sha256:c8d6553f…`, the same index digest measured independently in GHCR.
+#
+# MEASURED FOR EACH OF THE THREE, 2026-09-23:
+#   * the digest resolves as `application/vnd.oci.image.index.v1+json`
+#   * linux/arm64 present alongside linux/amd64 — the nodes are arm64
+#   * one distinct `imageID` across every pod of each image (pub-tools and dag-tools run two
+#     pods apiece; a split would have meant the deployment was mid-flight)
+#
+# WHAT `:latest` POINTS AT, read in the same breath, because that is the whole reason for the pin:
+#
+#     central-gateway   running c05e0131   :latest c05e0131   CONVERGED
+#     user-deployment   running 70092098   :latest 70092098   CONVERGED
+#     pub-tools         running ed93f7b1   :latest 1555b341   DIVERGED
+#
+# SO TWO OF THESE THREE PINS CHANGE NOTHING TODAY AND ONE IS LOAD-BEARING, and saying so is the
+# point. For the two converged images the pin is prospective: it fixes bytes that already match,
+# so the next push to that repository can no longer move them under us. For pub-tools the pin is
+# what makes this roll correct at all — measured, not assumed:
+#
+#     all five containers:  ref=…:latest   pullPolicy=Always
+#
+# A roll restarts pods. With `:latest` + `Always` and `:latest` already moved, the two pub-tools
+# pods would have pulled `1555b341` DURING THIS ROLL — an unreviewed image arriving as a side
+# effect of a roll whose intended change was the frontend. The pin is the thing that stops it.
+#
+# `1555b341` IS NOT REJECTED, IT IS NOT REVIEWED. It does not ship here. It ships as its own
+# deliberate roll, after someone reads what is in it — recorded so the next hand finds a deferral
+# with a reason attached and not an unexplained older digest.
+centralGateway:
+  image:
+    digest: "sha256:c05e0131995d52bca6fe047f982789fee6d8a2673d50870716a8afdfe395e268"
+
+userDeployments:
+  # Partial entries on purpose: helm merges maps recursively, so `registry`, `repository` and
+  # `tag` continue to come from `--reuse-values`. That is an assertion about helm's merge, and
+  # the FULL-MANIFEST diff is what checks it — an image-line diff would show the digest arriving
+  # and stay silent about a sibling key it quietly dropped.
+  pub-tools:
+    image:
+      digest: "sha256:ed93f7b14b6a3d4a094c098d0fb6233deb077b1271440fb851e8952d717bc9bc"
+  dag-tools:
+    image:
+      digest: "sha256:70092098e5f3615e12c96c834b29e3e30122291e4169b578eb06753248f295f3"
