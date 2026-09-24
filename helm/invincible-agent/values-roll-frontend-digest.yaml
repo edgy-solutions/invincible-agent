@@ -36,32 +36,47 @@
 # roll put on the cluster".
 cortexUi:
   image:
-    # RE-ARMED 2026-09-23 for roll #2. cortex-ui `ea060f37e6078ef666f35db72956afa3e75971ba`
-    # (`ea060f3`) — the commit that binds `cost:LotCostingReview` to `SOURCE_LEDGER`, i.e. the
-    # frontend half that turned `test_the_two_MIRRORS_agree_FLEET_WIDE` green on master.
+    # RE-ARMED AGAIN 2026-09-23 for roll #2, superseding `38cda6c8`. cortex-ui tag
+    # `a6950b2500b369456680b23f29db7189524bf4c0` — the head of the six-commit push
+    # `ea060f3..a6950b2`.
     #
-    # DERIVED, NOT TYPED. The architect's order carried this digest abbreviated
-    # (`sha256:38cda6c84b3c…`). An abbreviated digest cannot be diffed and must never be
-    # completed by hand, so the full value below was resolved from the registry by walking
-    # cortex-ui's recent shas against `imagetools inspect` until one matched that prefix — the
-    # match is `ea060f3`, and nothing else in the last eight commits has a published tag.
+    # THE GHCR TAG IS THE FULL 40-CHARACTER SHA, and this is a footgun with a measured control:
+    # the architect's order carried the tag abbreviated (`a6950b25`), and
+    # `imagetools inspect …/frontend:a6950b25` answers `not found`. A 404 there is
+    # INDISTINGUISHABLE from "not built yet" and from "no anonymous pull access" — three very
+    # different states, one message. So the tag below is the full sha, and it was not accepted on
+    # its face: it was resolved, and the resolution matched the digest the order named.
     #
-    # Verified before arming (measured 2026-09-23, not carried over from the previous pin):
-    #   * resolves in GHCR as an OCI image index (`application/vnd.oci.image.index.v1+json`)
+    # Verified in this seat before arming (measured 2026-09-23 — cortex-60's packet asserts all of
+    # this too, and that is why it was re-run here rather than quoted):
+    #   * `…/frontend@sha256:28f752f2…` resolves as an OCI image index
+    #     (`application/vnd.oci.image.index.v1+json`)
     #   * linux/arm64 present alongside linux/amd64 — the nodes are arm64
+    #   * BOTH DIRECTIONS of the tag↔digest binding: the full tag above resolves to exactly
+    #     `sha256:28f752f2…`. A digest that merely "exists" is not the digest that tag ships.
+    #   * control, in the same breath: the superseded `sha256:38cda6c8…` STILL resolves. Nothing
+    #     was deleted; it was overtaken. An absence assertion would have been wrong here.
     #
-    # WHAT IS NO LONGER TRUE, and is deliberately not copied forward from the previous pin:
-    # that comment asserted the pinned digest was "NOT the same image as `:latest`". For THIS
-    # digest that is false — `:latest` resolves to `sha256:38cda6c8…` today, the same image,
-    # because `ea060f3` is the newest push to cortex-ui's default branch. That coincidence is
-    # not a problem and not a reason to wait: the pin is BY DIGEST, so what `:latest` points at
-    # is irrelevant to what this roll deploys. It is recorded only so nobody re-derives the old
-    # sentence as though it had been re-checked — it would be a stale claim wearing a pin's
-    # authority, and `:latest` will move away from this digest on cortex-ui's next merge.
+    # `:latest` NOW RESOLVES TO THIS DIGEST — and that is the second time a cortex-ui push has
+    # moved `:latest` off a digest the architect had already accepted (cortex-60 reports the same
+    # shape at `4c0375b`/`8a13dd6`). It is a property of the pipeline, not an accident, and the
+    # previous version of this comment predicted exactly it. The pin is BY DIGEST, so what
+    # `:latest` points at cannot change what this roll deploys — which is the whole reason the
+    # pin is a digest and not a tag. Recorded so the coincidence is never re-derived as though it
+    # had been re-checked.
     #
-    # The previous pin was `sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced`
-    # (cortex-ui `8a13dd6`), and that IS what the cluster is running right now — measured, not
-    # assumed from this file's own history: pod `iagent-cortex-ui-5c7c784464-7g5xl` reports
-    # `…/cortex-ui/frontend@sha256:c8d6553f…`. So the frontend line of this roll is a real change,
-    # `c8d6553f` -> `38cda6c8`, and the dry-run manifest must show exactly that.
-    digest: "sha256:38cda6c84b3ce6a23f2545c9ae8a7e23cf4e97c7cd632f69da042851eeba21d7"
+    # WHAT CHANGED BETWEEN `38cda6c8` AND THIS DIGEST — cortex-60's measurement, not mine, and
+    # marked as theirs deliberately: six commits, of which the only two touching `src/` are
+    # comment-only, and `sessions/`-only commits do not reach the image. So the two digests differ
+    # by no behavioural change to shipped code. They differ AS DIGESTS regardless — build metadata
+    # and layer timestamps guarantee that — so a differing digest here is NOT evidence of a
+    # differing application, and nobody should read one into it. Not independently re-measured in
+    # this seat; the roll's gate does not depend on it, because the pin is exact either way.
+    #
+    # THE BEFORE-SIDE, re-measured rather than carried forward from the previous arming: the
+    # cluster is running `sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced`
+    # (cortex-ui `8a13dd6`) — pod `iagent-cortex-ui-5c7c784464-7g5xl`. `38cda6c8` was ARMED AND
+    # NEVER FIRED, so it deployed nothing and there is no intermediate state to unwind. The
+    # frontend line of this roll is therefore `c8d6553f` -> `28f752f2`, one step, and the dry-run
+    # manifest must show exactly that.
+    digest: "sha256:28f752f2111b760c9110db6389e0f057da9b268b63c4464d2ce889cbb3a03479"
