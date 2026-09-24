@@ -51,7 +51,27 @@ from iagent_pure.walk_census import (  # noqa: E402
 )
 
 CENSUS = _REPO / "docs" / "measurements" / "walk-census.yaml"
-KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:18083/realms/invincible-agent")
+#: NO DEFAULT, DELIBERATELY — and the removal IS the fix, not a missing convenience.
+#:
+#: This read `http://localhost:18083/realms/invincible-agent` until 2026-09-23. 18083 is the
+#: fleet's port-forward convention for keycloak (`tests/sandbox_e2e/mesh_client.py:5`, its README,
+#: `tests/sandbox_e2e/test_engine_d_datahub_suite.py`), but on the box that runs this census the
+#: port was squatted by a leftover stub from a DELETED scratchpad. Measured 2026-09-23, all three
+#: legs: the realm path returns `{"component": "cortex-bff", "git_sha": "deadbeef…"}` — not a realm
+#: document — and the token endpoint answers **500 to valid and invalid credentials alike**. So the
+#: census reported *"keycloak refused a token"* about a request keycloak never saw.
+#:
+#: A dead forward fails loudly; a LIVE forward to the wrong process ANSWERS. That is why a default
+#: port is the hazard here rather than the convenience: it decides silently which process gets to
+#: adjudicate credentials.
+#:
+#: And the repair is deliberately NOT a different number. Four other sites already declare 18083;
+#: inventing a rival default here would make this the fifth mirror of one value, and a default
+#: invented locally becomes a contract the moment anything relies on it. Instead the operator must
+#: SAY where keycloak is, and `_assert_is_keycloak` verifies the endpoint is keycloak before any
+#: answer of its is believed. If the fleet wants a census port, it should be declared once,
+#: fleet-wide, not a fifth time here.
+KEYCLOAK_URL = os.getenv("KEYCLOAK_URL")
 BFF_URL = os.getenv("BFF_URL", "http://localhost:18090")
 CLIENT_ID = os.getenv("KC_CLIENT_ID", "cortex-ui")
 
@@ -79,19 +99,96 @@ class Unreachable(RuntimeError):
     returning nothing."""
 
 
+class NotKeycloak(Unreachable):
+    """The endpoint ANSWERED, but not as keycloak — so nothing it said is about credentials.
+
+    A THIRD state, and it needs to be its own: `Unreachable` covers a forward that is dead, and a
+    refusal covers a credential keycloak rejected. Neither describes a live socket held by some
+    other process, which is the case that actually occurred (a stub 500ing every credential) and
+    the one the old message misreported as *"keycloak refused a token"*.
+    """
+
+
+def _keycloak_url() -> str:
+    """The configured realm URL, or a failure that says what to do about it."""
+    if not KEYCLOAK_URL:
+        raise Unreachable(
+            "KEYCLOAK_URL is not set, and this census no longer guesses a port — see the comment "
+            "on KEYCLOAK_URL for why a guess is the defect and not the convenience.\n"
+            "  kubectl -n sandbox port-forward svc/iagent-keycloak 18083:8080 &\n"
+            "  KEYCLOAK_URL=http://localhost:18083/realms/invincible-agent \\\n"
+            "    uv run --frozen python scripts/walk_census.py\n"
+            "Check what holds the port before trusting it: the realm path must return a realm "
+            "document carrying `realm` and `public_key`, not merely HTTP 200."
+        )
+    return KEYCLOAK_URL.rstrip("/")
+
+
+#: The two fields a keycloak realm document always carries and a stub answering 200 will not.
+_REALM_DOC_KEYS = ("realm", "public_key")
+
+
+async def _assert_is_keycloak(client: httpx.AsyncClient) -> None:
+    """Assert endpoint IDENTITY once, before any credential is judged by whatever is listening.
+
+    Ordering is the whole point: without this, the first thing that reads the endpoint is a
+    credential check, and a non-keycloak answer arrives already dressed as a verdict about the
+    credential. Asked in this order, the same wrong process produces an unambiguous report.
+    """
+    url = _keycloak_url()
+    try:
+        r = await client.get(url, timeout=10.0)
+    except httpx.HTTPError as exc:
+        raise Unreachable(f"keycloak at {url} unreachable: {exc}") from exc
+    try:
+        doc = r.json()
+    except ValueError:
+        doc = None
+    missing = (
+        [k for k in _REALM_DOC_KEYS if not isinstance(doc, dict) or k not in doc]
+        if r.status_code == 200
+        else list(_REALM_DOC_KEYS)
+    )
+    if missing:
+        raise NotKeycloak(
+            f"{url} answered HTTP {r.status_code} but not as keycloak: a realm document is "
+            f"missing {missing}. Body: {r.text[:200]!r}\n"
+            "Something else holds this port. A stub on the census's old default answered exactly "
+            "like this, and 500'd every credential, which the census used to report as a refusal."
+        )
+
+
 async def _token(client: httpx.AsyncClient, user: str) -> str:
+    url = _keycloak_url()
     try:
         r = await client.post(
-            f"{KEYCLOAK_URL}/protocol/openid-connect/token",
+            f"{url}/protocol/openid-connect/token",
             data={"client_id": CLIENT_ID, "grant_type": "password",
                   "username": user, "password": _password(user)},
             timeout=15.0,
         )
     except httpx.HTTPError as exc:
-        raise Unreachable(f"keycloak at {KEYCLOAK_URL} unreachable: {exc}") from exc
-    if r.status_code != 200:
-        raise Unreachable(f"keycloak refused a token for {user!r}: {r.status_code} {r.text[:200]}")
-    return r.json()["access_token"]
+        raise Unreachable(f"keycloak at {url} unreachable: {exc}") from exc
+    if r.status_code == 200:
+        return r.json()["access_token"]
+    try:
+        err = r.json().get("error")
+    except ValueError:
+        err = None
+    # A REFUSAL IS A 4xx THAT NAMES ITS REASON. keycloak rejects a credential with 400/401 and an
+    # OAuth `error` field (`invalid_grant`, `invalid_client`); anything else — a 5xx, HTML, an
+    # empty body, a 4xx with no `error` — is the endpoint failing, and calling that a refusal
+    # blames the credential for the endpoint's state.
+    if r.status_code in (400, 401) and err:
+        raise Unreachable(
+            f"keycloak REFUSED a token for {user!r}: {r.status_code} {err} — the endpoint is "
+            f"keycloak and it rejected this credential. Body: {r.text[:200]}"
+        )
+    raise NotKeycloak(
+        f"the token endpoint at {url} answered HTTP {r.status_code} with no OAuth error field, "
+        f"for user {user!r}. THIS IS NOT A REFUSAL and says nothing about the credential — it is "
+        f"the endpoint failing or not being keycloak. Body: {r.text[:200]!r}"
+    )
 
 
 async def _fire(client: httpx.AsyncClient, token: str, row: CensusRow,
@@ -143,6 +240,11 @@ async def _fire(client: httpx.AsyncClient, token: str, row: CensusRow,
 async def _run(rows: list[CensusRow], timeout_s: float) -> list[dict]:
     out = []
     async with httpx.AsyncClient() as client:
+        # IDENTITY FIRST, ONCE, AND FATAL. Not per-row: a wrong endpoint is a property of the run,
+        # and letting it fail row-by-row would print N credential verdicts about one bad forward —
+        # a uniform column that reads as a broken fleet. Raised, not appended, so no census output
+        # is produced at all; a census that cannot authenticate has measured nothing.
+        await _assert_is_keycloak(client)
         tokens: dict[str, str] = {}
         for row in rows:
             try:
