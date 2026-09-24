@@ -124,6 +124,46 @@ _NOT_ENUMERABLE: set[str] = set()
 #: Classes this provider can find that no verb serves. Also empty, also asserted at boot.
 _NO_VERB_BY_DESIGN: set[str] = set()
 
+#: Classes whose MEMBERSHIP IS A PROPERTY OF ANOTHER SLOT'S VALUE: class -> (the slot whose
+#: value form the members must be expressed in, the slots that must be bound to compute them).
+#:
+#: `cost#RateTable` is here because its class-wide ids and the values its slot accepts are
+#: DIFFERENT FORMS, which is a sharper defect than a menu merely being too wide. Measured
+#: 2026-09-23 against this engine's own state: the 12 class-wide ids are `<fy>-<vintage>`
+#: (`_rate_tables` above), every value `rate_vintage` accepts is a bare `<vintage>`, and the
+#: intersection is EMPTY. So a chip drawn from the class-wide list is refused by the verb even
+#: when the user picks the right vintage — worse than free text by this module's own standard,
+#: that free text does not imply validity and a menu does.
+_SCOPED_BY_SLOT: dict[str, tuple[str, tuple[str, ...]]] = {
+    COST + "RateTable": ("rate_vintage", ("lot",)),
+}
+
+
+def _scoped_members(state: CostState, slot: str,
+                    bound: dict[str, Any]) -> Optional[list[dict[str, str]]]:
+    """The members of a slot-scoped class, in the value form the slot accepts, or None.
+
+    ONE SOURCE OF TRUTH FOR THE VALUE FORM, and that is the whole reason this delegates rather
+    than computing vintages from `state` directly. `measures._SLOT_OPTION_SOURCES` already
+    derives what `rate_vintage` accepts from the lot in hand; a second derivation here would be
+    two mirrors of one declaration, and a divergence between them is invisible to any check
+    that reads only one of them.
+
+    Imported inside the function deliberately: `measures` pulls in `export` and `pricing`, and
+    an enumeration path should not carry that at module import time. There is no cycle either
+    way today (checked), so this is about weight, not about breakage.
+    """
+    try:  # flat in the image (/app), packaged in the repo — the idiom this engine already uses
+        from measures import options_for
+    except ImportError:
+        from agent_fleet.cost_agent.measures import options_for
+    # `fn_name` is per-slot by contract and deliberately unused by `options_for`; passing the
+    # slot's own name keeps the call honest rather than inventing a verb this path has none of.
+    values = options_for(state, slot, slot, bound)
+    if values is None:
+        return None
+    return [{"instance_id": v, "label": v} for v in values]
+
 
 def members_of(state: CostState, class_uri: str) -> list[dict[str, str]]:
     builder = _RESOLVABLE.get(class_uri)
@@ -242,7 +282,8 @@ def resolve(state: CostState, identifier: str, class_uri: Optional[str] = None
             if c["score"] >= RESOLVE_FLOOR]
 
 
-def enumerate_class(state: CostState, class_uri: str, limit: int = 8) -> dict[str, Any]:
+def enumerate_class(state: CostState, class_uri: str, limit: int = 8,
+                    bound_slots: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Members, or a refusal in one of two named ways that mean different things.
 
       * `members`     — here they are, and a menu is legitimate.
@@ -263,6 +304,31 @@ def enumerate_class(state: CostState, class_uri: str, limit: int = 8) -> dict[st
                 # `.get("members") or []` should not have to special-case which outcome it
                 # is reading.
                 "members": []}
+    # SCOPED BEFORE CLASS-WIDE, because for a class in `_SCOPED_BY_SLOT` the class-wide answer
+    # is not a wider version of the scoped one — it is a list in a form the verb REFUSES.
+    #
+    # `scoped_by` NAMES THE SLOTS HONOURED, and engine-o's contract reads its ABSENCE as
+    # class-wide (ontology_service/main.py:2318-2333): a provider that scoped and forgot the
+    # field under-claims and has its menu refused, which is the safe direction. So this branch
+    # must set it whenever it narrows, and must not set it when it does not.
+    scoped = _SCOPED_BY_SLOT.get(class_uri)
+    if scoped is not None:
+        slot, needs = scoped
+        bound = dict(bound_slots or {})
+        if all(bound.get(n) is not None for n in needs):
+            scoped_members = _scoped_members(state, slot, bound)
+            if scoped_members is not None:
+                return {**base, "outcome": "members", "members": scoped_members,
+                        "count": len(scoped_members), "scoped_by": list(needs)}
+            # THE SCOPING SLOT WAS BOUND TO SOMETHING THIS MODEL DOES NOT HOLD (an unknown lot).
+            # That falls through to the class-wide answer below, which is this engine's
+            # PRE-EXISTING behaviour and is knowingly wrong in the same way the unscoped case is:
+            # the chips it draws are in a form the verb refuses. It is left as it was rather than
+            # fixed here because the honest answer needs an `outcome` the enumeration contract
+            # does not have — `too_many` would claim a cardinality reason that is false at 12
+            # against a bound of 25, and a new value files as "no provider holds this class" in
+            # engine-o's else-arm. That vocabulary is a contract decision; it is flagged in the
+            # report for this commit, not invented here.
     members = members_of(state, class_uri)
     if len(members) > limit:
         # THE COUNT IS THE POINT. "too many" without a number is indistinguishable from "I

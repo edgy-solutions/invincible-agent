@@ -57,6 +57,19 @@ slots:
     kind: spoken-mandatory
     type: string
     required: true
+    # THE REFERENT LANDS WITH ITS SCOPING OR IT DOES NOT LAND, and that is why this line and
+    # engine-cost's `bound_slots` are one commit. Declared alone, this does NOT degrade to the
+    # free-text box it replaces — `class_wide` has a single producer
+    # (`slot_disposition.py:496`) behind `declared_scope ∩ offered`, which needs a `narrowed_by`
+    # no row has — so it draws a TWELVE-option class-wide menu instead. Worse than free text
+    # twice over: ten of the twelve are invalid for any given lot, and all twelve are in the id
+    # form `<fy>-<vintage>` while this slot accepts a bare `<vintage>`. Measured 2026-09-23:
+    # class-wide ids ∩ accepted(lot 3) was EMPTY, so every chip was refused by the verb.
+    #
+    # NO `narrowed_by` HERE. The runtime guard that would refuse a provider which stops scoping
+    # arrives in SDK v0.9.4; on the pinned v0.9.3 a declared scope is inert, and declaring one
+    # now would read as a live guard that is not one.
+    referent: http://invincible-agent/cost#RateTable
 
 arity: single             # forced: `lot` is both required and a referent
 
