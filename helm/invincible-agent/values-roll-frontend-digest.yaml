@@ -126,6 +126,18 @@ cortexUi:
 # `1555b341` IS NOT REJECTED, IT IS NOT REVIEWED. It does not ship here. It ships as its own
 # deliberate roll, after someone reads what is in it — recorded so the next hand finds a deferral
 # with a reason attached and not an unexplained older digest.
+#
+# SETTING A DIGEST HERE WAS NOT ENOUGH, AND THAT IS WHY THE GATE IS A MANIFEST DIFF. The first
+# arming of these three pins rendered `:latest` for all three — the values were correct and the
+# pin was inert. The helper honours a digest; three of its four cross-repo call sites never passed
+# it one, so `.digest` was nil and every path fell through to the tag branch. The frontend worked
+# only because `frontend.yaml` passes it explicitly. Fixed at `engines.yaml` and at both
+# `user-deployments.yaml` call sites, in the same commit as this block.
+#
+# AN IMAGE-LINE DIFF WOULD HAVE PASSED THAT. It would have shown the frontend digest arriving —
+# the change everyone was looking for — and said nothing about three pins that did not arrive. If
+# you add a digest to a fourth image, render it and read the rendered reference: a values file is
+# a request, and only the manifest is the answer.
 centralGateway:
   image:
     digest: "sha256:c05e0131995d52bca6fe047f982789fee6d8a2673d50870716a8afdfe395e268"
