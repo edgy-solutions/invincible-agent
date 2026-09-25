@@ -42,6 +42,42 @@ written back under a name. Measured lossless: norms identical, max|delta| 0.000e
 
 ## 0. STOP CONDITIONS — check these first, they are cheap
 
+* **PROVE THE SCRIPT, in the file that is about to run.** Step 2 pipes the script over stdin from
+  **this checkout** (`< scripts/backfill_vector_space.py`), so the pod's image is irrelevant: the
+  copy in your tree *is* the program. **Run this from `master` only** — a lane worktree can be
+  behind, ahead, or mid-rebase, and the counts below are properties of a **copy**, not of "the
+  script".
+
+      cd /c/Users/cnogr/git/invincible-agent      # MASTER TREE. Not a lane worktree.
+      git branch --show-current                   # expect: master
+      git rev-parse --short HEAD                  # RECORD THIS. Every count you report is its.
+      f=scripts/backfill_vector_space.py
+      grep -c '^def verify_self' "$f"             # expect 1   — the ruled top-k check is present
+      grep -c '^def retrievable'  "$f"            # expect 0   — the rows[0] form is GONE
+      grep -c -- '--list-walked'  "$f"            # expect 3   — the flag exists (>=1 is the rule)
+      git status --porcelain "$f"                 # expect NOTHING printed
+
+  **Any other answer: stop.** A `1` on the second line means you are holding a copy from before
+  `7ac0765`, whose verification asks "is self the *single* nearest neighbour" under `limit:1` — it
+  reds on a row it has just repaired correctly, and five known duplicate-vector twins in this index
+  will trip it. A `0` on the third means `--list-walked` is absent and the run cannot save the
+  uuids it walked; 138 `Predicate` uuids were lost in exactly that way on 2026-09-19.
+
+  **And positive-control the greps before you trust the zero** — a matcher that matches nothing
+  also returns `0`, and that reads as a pass:
+
+      git show 7ac0765~1:scripts/backfill_vector_space.py | grep -c '^def retrievable'   # expect 1
+
+  If that prints `1` the pattern works and your `0` above is a real absence. If it prints `0` your
+  `grep` is broken, or the sha is unreachable, and **you have measured nothing**.
+
+  *Why this step exists:* on 2026-09-19 a correction naming `retrievable()` and `rows[0]` in this
+  file was reported back as landing on no script at all. The correction was right — it landed on
+  the copy at `7ac0765~1`, `:161` and `:169` — and the reply was written from a *different copy of
+  the same path*. Counts above stated at 2026-09-23 with `master` at `c6436ee`, and identically in
+  `lane/74` at `1c1f061`; the control discriminates on all three lines (`7ac0765~1` answers
+  1 / 0 / 0).
+
 * **Is a roll in progress?** If yes, stop. No backfill during a roll, no roll during a backfill.
 
       kubectl -n sandbox get pods | awk 'NR>1 && $2!="1/1" && $3!="Completed"'

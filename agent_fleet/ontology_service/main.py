@@ -2081,8 +2081,17 @@ _SERVED_CACHE: dict = {}
 _SERVED_TTL_S = float(os.getenv("SERVED_CLASSES_TTL_S", "120"))
 
 
-async def _served_class_uris(domains: list, include_referents: bool = True) -> frozenset:
-    """Classes carrying a verb in these domains, plus (by default) declared referents.
+async def _served_class_uris(domains: list, include_referents: bool = False) -> frozenset:
+    """Classes carrying a verb in these domains, and the referents only if asked for them.
+
+    THE DEFAULT IS THE STRICT QUESTION, DELIBERATELY, AND FLIPPING IT CHANGED NO BEHAVIOUR.
+    Both call sites pass the flag explicitly, so today's answers are identical either way; what
+    moved is which question a THIRD caller gets for free. Of the two mistakes available by
+    omission, "forgot to include referents" narrows the candidate pool and surfaces as a
+    refusal someone reports, while "accidentally included them" widens it and surfaces as the
+    generalist answering confidently about a class no verb can answer — the exact failure the
+    productive-option gate and the post-preemption check both exist to remove. The recoverable
+    mistake is the one that gets to be the default.
 
     RETURNS AN EMPTY SET ON ANY FAILURE, AND THE CALLER MUST READ THAT AS "DO NOT FILTER".
     That direction is not a detail: an empty served-set applied as a filter would empty the
@@ -2443,7 +2452,12 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # answering from a dead end beats answering nothing while the cause is found.
     _gate_excluded: list[dict] = []
     if candidates:
-        _served = await _served_class_uris(request.domains or ([request.domain] if request.domain else []))
+        # include_referents=True IS THE GATE'S QUESTION AND IS PASSED EXPLICITLY, not defaulted.
+        # "May the resolver OFFER this class?" — a declared mesh:ResolvableReferent is groundable
+        # on purpose, so it belongs in the candidate pool. Dropping this kwarg silently narrows
+        # the pool by every declared referent, which reads as a routing regression nowhere near
+        # this line. The post-preemption check at :2192 asks the OTHER question and says so too.
+        _served = await _served_class_uris(request.domains or ([request.domain] if request.domain else []), include_referents=True)
         if _served:
             _productive = [c for c in candidates if c.get("uri") in _served]
             _unproductive = len(candidates) - len(_productive)

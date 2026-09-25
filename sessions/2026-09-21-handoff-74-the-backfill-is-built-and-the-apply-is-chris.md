@@ -80,8 +80,13 @@ Last green: 842 passed / 157 skipped, at the pre-rebase head.
   `src/iagent_pure/lane_packets.py:52` is end-anchored, so doc-tools' `to: <path> :: lane/7f` form
   does not scan. Use `to: ia-01/lane/01` and put routing on its own line. Run `lane_packets.scan`
   against a packet **before** committing it.
-* **Lane 1 reported a `rows[0]` defect in my script. It lands on neither script.** Verified and
-  replied; I changed nothing, which is the point of saying so.
+* **WITHDRAWN 2026-09-23 — "Lane 1 reported a `rows[0]` defect in my script; it lands on neither
+  script" was wrong. It landed on mine.** `scripts/backfill_vector_space.py` at `7ac0765~1` carried
+  `def retrievable` at `:161` and `rows[0]["_additional"]["id"] == uuid` as the pass condition at
+  `:169` under `limit:1` — Lane 1's file, function name and form were all correct about the copy
+  they held. My negative was true only of the copy after my own fix `7ac0765`
+  (2026-09-19 17:14:38 -0500); I read my tree and `origin/master` and asserted it of every copy,
+  theirs included. A sample stated as a population, pointed across a lane.
 
 ## Files changed this session (all committed on lane/74)
 

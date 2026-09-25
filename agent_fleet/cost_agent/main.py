@@ -483,6 +483,15 @@ class EnumerateRequest(BaseModel):
     #: then this default stops mattering. Raised here because the card is broken today and a
     #: correct-by-contract refusal is no comfort to the person looking at it.
     limit: int = 25
+    #: SLOT VALUES ALREADY KNOWN FOR THE ASK THIS ENUMERATION IS FOR. Engine-o has been sending
+    #: this field all along — `ontology_service/main.py:2300` puts it in every provider request —
+    #: and this engine was dropping it, which is the whole reason `rate_vintage` drew a class-wide
+    #: menu: the contract existed upstream and the provider had not implemented its half.
+    #:
+    #: DEFAULTS TO EMPTY RATHER THAN None so `enumerate_class` never has to tell "no slots bound"
+    #: from "this caller does not speak the field". Both mean class-wide here, and a class-wide
+    #: answer reports no `scoped_by`, which engine-o reads as class-wide by design.
+    bound_slots: dict[str, Any] = {}
 
 
 @app.post("/resolve_instance")
@@ -498,8 +507,14 @@ def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
 
 @app.post("/enumerate_instances")
 def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
-    """List the members of a cost class, or refuse in one of two named ways."""
-    return instances.enumerate_class(STATE, req.class_uri, req.limit)
+    """List the members of a cost class, or refuse in one of two named ways.
+
+    `bound_slots` is FORWARDED, not interpreted here: which classes are scopeable and by which
+    slots is a property of the model, and `instances._SCOPED_BY_SLOT` is where the model lives.
+    A second copy of that judgement at the route would be the sample-shaped fix this engine has
+    already been bitten by once (`_SLOT_OPTION_SOURCES` was keyed per-verb and covered one).
+    """
+    return instances.enumerate_class(STATE, req.class_uri, req.limit, req.bound_slots)
 
 
 def _refusal(kind: str, message: str, **extra: Any) -> dict[str, Any]:

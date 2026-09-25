@@ -76,9 +76,9 @@ docs:runbook-backfilling-the-vector-space a mesh:DocPage ;
   rdfs:label "Runbook — backfilling the vector space (Chris's morning procedure)" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/b42ace7ebb5a732c0d2a9a5b9e0a30d9a3b58f703aa6a732fb1717505f108f9d/backfilling-the-vector-space.md" ;
-  mesh:source_committed_at "2026-09-19T22:17:01-05:00" ;
-  mesh:body_sha "b42ace7ebb5a732c0d2a9a5b9e0a30d9a3b58f703aa6a732fb1717505f108f9d" .
+  mesh:source "docs/pages/4c483230769cf707b3725e9b770f5c986f7020aa8ada9169525571e88c932f82/backfilling-the-vector-space.md" ;
+  mesh:source_committed_at "2026-09-23T21:20:39-05:00" ;
+  mesh:body_sha "4c483230769cf707b3725e9b770f5c986f7020aa8ada9169525571e88c932f82" .
 # backfilling-the-vector-space.md: explains none — an honest row, not an omission.
 
 docs:runbook-pinning-the-fleet-sdk a mesh:DocPage ;
