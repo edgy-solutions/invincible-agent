@@ -73,6 +73,25 @@ from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 
+# FLAT FIRST, PACKAGED IN THE FALLBACK — the fleet rule, and I had this backwards for one run.
+#
+# I wrote it package-first to guarantee ONE module object, because this module exports a constant
+# the seal asserts by identity and a class the store is judged by, and the finance engine has
+# already paid for a dual import that made two classes of one name (a correct `except` missed a
+# live exception). `test_no_module_imports_agent_fleet_OUTSIDE_a_flat_first_fallback` refused it,
+# and it is right: `agent_fleet` DOES NOT EXIST in this engine's image, so package-first would take
+# the `except` arm on every real import — handling the fork on the only path that matters rather
+# than taking the one that works.
+#
+# The identity concern does not go away, it moves: two objects are possible only if
+# `graph_host/` is itself on `sys.path` while a caller imports the packaged spelling. That is a
+# situation to DETECT, not to order around, and `test_the_HOST_and_the_SCRUB_share_ONE_declaration`
+# asserts `is` rather than `==` precisely so it fires if it ever happens.
+try:
+    import identity_scrub as _scrub
+except ImportError:  # pragma: no cover - repo layout, where the package root is importable
+    from agent_fleet.graph_host import identity_scrub as _scrub  # type: ignore[no-redef]
+
 COMPONENT = "engine-lg"
 PORT = int(os.getenv("PORT", "8098"))
 
@@ -162,7 +181,14 @@ async def _open_saver(stack: Any) -> None:
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-        saver = await stack.enter_async_context(AsyncPostgresSaver.from_conn_string(dsn))
+        # THE DURABLE SAVER IS A SCRUBBING SUBCLASS, AND `from_conn_string` IS WHY THAT IS SAFE:
+        # it does `yield cls(conn=conn, serde=serde)`, so a subclass inherits the whole
+        # construction path and `_SAVER` is still a genuine `AsyncPostgresSaver` — which the
+        # readiness identity check below and LangGraph's own `isinstance` gate both require. A
+        # delegating wrapper was tried first and measured: `compile()` refuses it with
+        # "Expected an instance of BaseCheckpointSaver".
+        _Scrubbing = _scrub.scrubbing_saver_class(AsyncPostgresSaver)
+        saver = await stack.enter_async_context(_Scrubbing.from_conn_string(dsn))
         # ASSERTED REACHABLE AT OPEN, not on first use. `setup()` creates the checkpoint
         # tables and round-trips the connection, so a DSN that is declared-but-wrong fails
         # HERE, named, instead of at the first graph a user runs.
@@ -184,7 +210,12 @@ def _saver_for(m: GraphManifest) -> Any:
     """
     from langgraph.checkpoint.memory import InMemorySaver
 
-    return _SAVER if _SAVER is not None else InMemorySaver()
+    # THE FALLBACK SCRUBS TOO, THOUGH IT PERSISTS NOTHING. Not because process memory is a
+    # disclosure — it dies with the pod — but because a scrub that applies only on the durable path
+    # is a scrub you lose by unsetting an environment variable, and every test that runs offline
+    # would then be exercising an unscrubbed saver while claiming to cover the scrubbed one. Same
+    # class either way, so an arm proves the mechanism rather than the deployment.
+    return _SAVER if _SAVER is not None else _scrub.scrubbing_saver_class(InMemorySaver)()
 
 
 def checkpointer_readiness() -> tuple[bool, dict]:
@@ -423,7 +454,13 @@ class GraphRequest(BaseModel):
 
 #: The headers that carry WHO IS ASKING, forwarded verbatim to every inner verb. Named as a
 #: constant so the set is one thing rather than three string literals at the point of use.
-_IDENTITY_HEADERS = ("authorization", "x-originator-sub", "x-originator-email")
+#:
+#: DECLARED IN `identity_scrub` AND RE-EXPORTED HERE, not spelled twice. The scrub redacts exactly
+#: the headers this endpoint accepts, and those two sets agreeing is not a property any per-file
+#: check can see: a fourth identity header added here and not there would forward a credential the
+#: store then keeps, and every test of either file would stay green. The alias keeps the existing
+#: name for this module's own readers while there remains one tuple.
+_IDENTITY_HEADERS = _scrub.IDENTITY_HEADERS
 
 
 @app.post("/graphs/{graph_id}")
@@ -491,7 +528,12 @@ async def run_graph(graph_id: str, http_request: Request, request: GraphRequest)
             ),
         )
     state = dict(request.params)
-    state["identity"] = identity
+    # THE SCRUB'S KEY, NOT A MATCHING LITERAL. This is the write that makes the credential a state
+    # channel, and `identity_scrub` is what keeps it from reaching the store; the two naming the
+    # same channel is the whole mechanism. Spelled as a literal on either side, a rename here
+    # would leave the scrub redacting a channel nobody writes — a pass on every arm, and five
+    # plaintext tokens per thread in `checkpoint_blobs` again.
+    state[_scrub.IDENTITY_CHANNEL] = identity
     config: dict = {"configurable": {"thread_id": request.thread_id or graph_id,
                                      "user_id": request.user_id}}
     out = await graph.ainvoke(state, config=config)
