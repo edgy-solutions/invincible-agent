@@ -189,6 +189,92 @@ HOURS_UNIT = "hours"
 DEFAULT_CONCENTRATION_THRESHOLD = Decimal("0.25")
 
 
+# ---------------------------------------------------------------------------------------
+# THE `method` BLOCK — how a figure was computed, travelling with the figure
+#
+# THE SHAPE IS THE UI's, NOT MINE. `cortex-ui/src/lib/cardExport.ts` already declares
+# `MethodBlock { formula: string; inputs: {name, value}[]; bound: string | null }` and reads it
+# with `readMethod`, which DROPS THE BLOCK WHOLE when `formula` is empty and runs `formatLeaf`
+# over whatever `bound` holds. So `bound` is a STRING here, not the nested
+# `{name, value, defaulted}` object that reads better in JSON: the nested form would arrive as a
+# JSON blob printed inside the bound cell — a producer and a consumer each complete on its own
+# side, disagreeing in the seam nobody asserts.
+#
+# WHETHER THE BOUND WAS DEFAULTED IS SAID IN WORDS, AND AGAIN AS A FLAG. The words are what the
+# UI renders today; `bound_defaulted` is for a reader that needs to branch on it. Both are
+# derived from the SAME argument inside this one helper, so they cannot go out of agreement —
+# the only reason two statements of one fact are allowed here.
+#
+# `bound_defaulted` IS `None`, NEVER `False`, WHEN THERE IS NO BOUND. `False` means "there is a
+# bound and the caller chose it", which is a claim about a caller who was never asked. Three of
+# the four rankings have no bound at all, and a plausible-looking `false` reads as considered.
+#
+# THE SHA IS THE ARTIFACT's, NOT GIT's. `_baked_algorithm_sha()` reads `IAGENT_GIT_SHA` off the
+# image and returns None when it is absent or the literal "unknown" — the same claim
+# `package_export` attests with, and the only one available in a pod. None rather than a
+# placeholder, because "unknown" is a sha-shaped string that matches no commit and a reader must
+# be able to tell "not attested" from "attested as this".
+# ---------------------------------------------------------------------------------------
+def _input_value(value: Any) -> Any:
+    """Every stated value as a string, except None.
+
+    Decimal is not JSON and float rounds the money it is printing, so a Decimal MUST be
+    stringified. Doing it to the ints and strings too keeps one column one type — a column that
+    mixes them makes the card decide how to format per row, which is how two figures on one card
+    come to disagree about their own precision. None stays None: absent is not the word "None".
+    """
+    return None if value is None else str(value)
+
+
+def _method(
+    *,
+    formula: str,
+    inputs: list[tuple[str, Any]],
+    bound: Optional[str] = None,
+    bound_defaulted: Optional[bool] = None,
+) -> dict[str, Any]:
+    """The producer's account of its own arithmetic.
+
+    `inputs` is an ORDERED list of pairs rather than a dict, because the order is part of the
+    account: the names appear in the order the formula uses them and a reader recomputing the
+    figure reads down the list. `readMethod` accepts either shape; only one of them is readable.
+
+    The bound and its flag are checked against each other rather than trusted, because the two
+    ways of getting this wrong are the two that read as deliberate — a bound with no word on
+    where it came from, and a defaulted flag on a measure that has no bound.
+    """
+    if not formula.strip():
+        raise ValueError(
+            "a method block with no formula is dropped WHOLE by the UI's readMethod, so an "
+            "empty formula ships a card reading 'method not supplied' about a method this "
+            "producer does in fact have"
+        )
+    if (bound is None) != (bound_defaulted is None):
+        raise ValueError(
+            f"bound={bound!r} and bound_defaulted={bound_defaulted!r} disagree about whether "
+            "this measure has a bound; a flag without a bound, or a bound without a flag, is "
+            "the half-stated disclosure this block exists to end"
+        )
+    return {
+        "formula": formula,
+        "inputs": [{"name": n, "value": _input_value(v)} for n, v in inputs],
+        "bound": bound,
+        "bound_defaulted": bound_defaulted,
+        "producer_sha": _baked_algorithm_sha(),
+    }
+
+
+def _bound_text(*, name: str, value: Any, defaulted: bool) -> str:
+    """The bound as one sentence, saying who chose it.
+
+    "0.25" alone is the EAC-without-method ambiguity in another costume: a verdict against a
+    bound the reader cannot attribute is unreproducible, and nothing in the figure distinguishes
+    the engine's round quarter from a threshold the caller tuned.
+    """
+    origin = "engine default, the caller stated none" if defaulted else "stated by the caller"
+    return f"{name} = {value} ({origin})"
+
+
 def _require_vintage(state: CostState, fiscal_year: int, rate_vintage: Optional[str]) -> str:
     """The designed refusal: a forward-looking figure needs its assumption set NAMED.
 
@@ -317,6 +403,24 @@ def cost_lot_breakdown(state: CostState, *, lot: int, rate_vintage: str) -> dict
         "quantity": lot_obj.quantity,
         "fiscal_year": lot_obj.fiscal_year,
         "rate_vintage": rates.vintage,
+        # THE DENOMINATOR IS AN INPUT, not a decoration. `share_of_total` cannot be checked
+        # without the total, and the total appears nowhere else in this payload — a reader can
+        # add the five prices back up, which is exactly the arithmetic the block exists to spare
+        # them.
+        "method": _method(
+            formula=(
+                "contribution = the lot's recorded price for the category; "
+                "share_of_total = contribution / lot total (null when the total is zero); "
+                "rank = position by descending contribution"
+            ),
+            inputs=[
+                ("lot", lot_obj.number),
+                ("rate_vintage", rates.vintage),
+                ("fiscal_year", lot_obj.fiscal_year),
+                ("lot total", _total),
+                ("categories", len(rows)),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -474,6 +578,24 @@ def cost_labor_composition(state: CostState, *, lot: int) -> dict[str, Any]:
         "fiscal_year": lot_obj.fiscal_year,
         "total_labor": str(total),
         "value_unit": VALUE_UNIT,
+        # NO RATE VINTAGE IN THE INPUTS, and its absence is stated in the formula rather than
+        # left to be noticed: these are recorded hours and applied rates, not a forward-looking
+        # figure, so there is no assumption set to name. A vintage listed here would be an input
+        # this verb never reads.
+        "method": _method(
+            formula=(
+                "contribution = recorded hours x the rate applied to that kind of work; "
+                "share_of_total = contribution / lot direct labor; "
+                "rank = position by descending contribution. Recorded hours and applied rates, "
+                "so no rate vintage is involved"
+            ),
+            inputs=[
+                ("lot", lot_obj.number),
+                ("fiscal_year", lot_obj.fiscal_year),
+                ("lot direct labor", total),
+                ("labor kinds", len(rows)),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -726,6 +848,31 @@ def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
         "total": str(total),
         "value_unit": VALUE_UNIT,
         "compared_to_lot": None if prior is None else prior.number,
+        # THE FORMULA SAYS WHAT `favourable` IS ABOUT, because the obvious reading is wrong and
+        # the card gives a reader no way to check. It is PER-UNIT COST MOVEMENT, not the share
+        # movement beside it: a bucket's share can rise because another bucket fell, on a lot that
+        # got cheaper overall, and "degraded" rendered in red over that would be a false claim.
+        # The same sentence also says where the verdict is ABSENT, which is the half a reader
+        # cannot infer from a card that simply does not draw one.
+        "method": _method(
+            formula=(
+                "contribution = the lot's recorded amount for the bucket; "
+                "share_of_total = amount / lot total; "
+                "share_delta_vs_prior_lot = this share - the prior lot's share; "
+                "per_unit_amount = amount / lot quantity; "
+                "favourable = the bucket's PER-UNIT amount fell against the prior lot -- not its "
+                "share, which can rise on a lot that got cheaper. Absent on the first lot, and "
+                "absent when the per-unit figure did not move"
+            ),
+            inputs=[
+                ("lot", lot_obj.number),
+                ("fiscal_year", lot_obj.fiscal_year),
+                ("lot total", total),
+                ("lot quantity", lot_obj.quantity),
+                ("compared_to_lot", None if prior is None else prior.number),
+                ("prior lot quantity", None if prior is None else prior.quantity),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -789,6 +936,28 @@ def cost_supplier_concentration(
         "threshold_defaulted": defaulted,
         "suppliers_above_threshold": len(above),
         "largest_share": str(top),
+        # THE ONE RANKING WITH A BOUND, so it is the one whose `bound` is not null. The top-level
+        # `threshold`/`threshold_defaulted` pair STAYS: it is the existing wire contract, the
+        # projector's allowlist names it, and cortex reads it. This block does not replace it — it
+        # states the same bound where the formula that uses it can be read beside it, and both come
+        # from the same two locals, so they cannot disagree.
+        "method": _method(
+            formula=(
+                "contribution = the supplier's purchased amount in this lot; "
+                "share_of_purchased = amount / total purchased value; "
+                "above_threshold = share_of_purchased > threshold (strictly greater: a supplier "
+                "sitting exactly ON the bound is not above it); "
+                "rank = position by descending amount"
+            ),
+            inputs=[
+                ("lot", lot_obj.number),
+                ("fiscal_year", lot_obj.fiscal_year),
+                ("total purchased value", purchased),
+                ("suppliers", len(rows)),
+            ],
+            bound=_bound_text(name="threshold", value=bound, defaulted=defaulted),
+            bound_defaulted=defaulted,
+        ),
         "rows": rows,
     }
 
