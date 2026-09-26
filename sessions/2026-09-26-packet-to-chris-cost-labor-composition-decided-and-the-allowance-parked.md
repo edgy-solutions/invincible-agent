@@ -156,7 +156,8 @@ and naming the same condition, so they are not waiting on a round 13.
 1. a second `**`-spread builder table appears in `agent_fleet/finance_agent/main.py`'s envelope, or
    the existing one moves;
 2. a table is proposed for `_ACCOUNTED_OPAQUE_SPREAD_TABLES` (which now requires a register and a
-   producer, so it cannot be added quietly);
+   producer, so it cannot be added quietly) — **and §8 gives the one measurement that must be run
+   when that happens**;
 3. a second engine emits `mesh:CompetingMeasures` — today `capabilities.py:401-402` is the only
    binding, and the one-producer premise several of these arms rest on would stop holding.
 
@@ -179,6 +180,13 @@ closes the question.
 Same family as a plausible negative reading as a considered one, and as an obstacle stated but never
 checked. The rule I am keeping: **a question that has been open for more than one round with no new
 evidence on either side is not contested — it is unexamined. Go and read the artifact.**
+
+**And there was a second reason, which the peer named better than I did.** Releasing the item to me
+they wrote that four rounds of UNDECIDED *"isn't a shortage of analysis, it's an absent owner"* — and
+in their case a hard one: `agent_fleet/cost_agent/measures.py` is **read-only to their lane**, so they
+could review a patch and never write one. Neither of us had said that out loud in four packets. Worth
+a convention: **when a status line says undecided, say who cannot decide it and why.** "Undecided"
+plus a reachability fact is an assignment; "undecided" alone is a shrug that both sides can sign.
 
 ---
 
@@ -213,3 +221,42 @@ evidence on either side is not contested — it is unexamined. Go and read the a
 **Next from me, per your ordering:** the docs feature and bob's task, both of which are waiting on
 roll #3 and the classify read. The fleet sha beside the payload is still owed to `cortex-ui-ff` on
 the next roll fire, with its derivation named.
+
+---
+
+# 8. One measurement taken after §2 was written, because it was aimed at §2
+
+`cortex-ui-ff`'s round 13 arrived while this packet was being written and named a hazard on **my**
+side, so I fired it rather than filing it — a claim about the allowance's final shape is worth
+exactly the run it has had. Their finding: *anywhere an allow-list subtracts from a population a
+guard iterates, the subtraction is a second lever on that guard's reach* — and on their side a
+positive control survived because **the guarded population and the judged population were not the
+same population.** That is true of the shape of my file too: the operand rule's controls
+(`_OPERANDS_ACCEPTED` / `_OPERANDS_REFUSED`) all run against **synthetic** builders, while the arm at
+`:1003` judges the **real** one. Two populations, one control.
+
+```
+P1  the real summary spread DELETED from main.py's envelope -- the subject gone, not widened
+      -> RED, 3 arms by name:  test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES
+                               test_the_envelope_POPULATION_ONLY_GROWS
+                               test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES
+P2  the judged population narrowed to nothing INSIDE the rule (`_spread_operands(builder)[:0]`)
+      -> RED: test_the_OPERAND_RULE_accepts_only_the_shapes_it_recognises
+```
+
+**Refused in both directions, by different arms.** The emptying is caught on the real builder by the
+population ratchet, and inside the rule by the synthetic controls — so neither arm is covering for
+the other. `main.py` and the seal byte-identical after each pass. **§2 stands as written.**
+
+**The residual, and it is the reason this belongs beside §4 rather than in a commit message.** All
+three P1 reds are about the `SUMMARY` table *specifically* — one reads its typed values, one is the
+COMPETING_MEASURES contract, one is the population ratchet. A **second** allowed table would arrive
+with a register and a producer (§3 forces that) but **not** automatically with an arm that notices its
+spread disappearing. So the reopen condition in §4 now carries its own check:
+
+> **When a table is added to the allowance, delete its spread from the envelope and confirm that
+> something reds BY NAME.** If nothing does, the new table has a register nobody would miss.
+
+That is the same object as the rule I already hold — a population derived from a consumer is blind to
+its subject being deleted, so it wants one measured ratchet — and this is the first time I have known
+in advance *which* ratchet, and that it covers exactly one table.
