@@ -511,14 +511,27 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
     removed. So the seven names that travel today are written down once -- the register may
     grow without an edit here and may never shrink silently.
 
-    MEASURED 2026-09-26, AND THE NUMBER CHANGED WHAT THIS ARM IS. Unwiring each of the seven in
-    turn: this ratchet was the ONLY cover at two sites (OUTPUT_URI, VALUE_LABEL). Both now have
-    a declaration-side arm, and re-running the same mutations gives *nothing* covered by this
-    ratchet alone. It is therefore a BACKSTOP, not load-bearing -- it would catch an unwiring
-    only if a declaration-side arm were deleted in the same change. Recorded here because a
-    hand-maintained register that covers nothing is precisely the thing that goes stale and is
-    later read as coverage; if this comment is ever true of a ratchet with no measurement beside
-    it, delete the ratchet.
+    MEASURED 2026-09-26, AND THEN RE-MEASURED THE SAME DAY WITH A MUTANT THAT ACTUALLY TESTS IT.
+    First pass: unwiring each of the seven in turn, this ratchet was the only cover at two sites
+    (OUTPUT_URI, VALUE_LABEL); both now have a declaration-side arm, and re-running those same
+    single-edit mutations gives nothing covered by this ratchet alone. I wrote that up as
+    "a BACKSTOP, not load-bearing -- it would catch an unwiring only if a declaration-side arm
+    were deleted in the same change", and invited deleting the ratchet if that stayed true.
+
+    THAT CONCLUSION WAS DRAWN FROM THE NEAREST MUTANT TO HAND, which is cortex-60's correction
+    against their own deleted arm: they planned an arm forbidding a re-export, fired a ONE-FILE
+    mutant at it, saw it red elsewhere, deleted the arm as uncovered -- and the arm was a TWO-FILE
+    arm. An arm's cover has to be searched with the mutant that MATTERS, and the sentence above
+    names a two-edit change while every mutant behind it edited one thing.
+
+    Fired, two edits at once. Emptying the element (`"output_uri": {}`) while its declaration-side
+    arm is disabled reds HERE and at the reach arm, because the key is still emitted and therefore
+    still unaccounted -- so even that is not sole cover. REMOVING the element reds HERE AND NOWHERE
+    ELSE, with the lowercased-name arm disabled as well. **This ratchet is load-bearing**, and the
+    change it alone catches is: a table unwired outright in the same commit that drops its
+    declaration-side arm. Do not delete it. The general form, for the next reader: a claim that an
+    arm covers nothing is a claim about the mutants that were run, and a two-part arm needs a
+    two-part mutant.
 
     AND THE MEASUREMENT IS SCOPED TO ITS MUTATION, which is the correction cortex-60 drew out of
     my own: the sentence above was measured by DELETING each wired element. It says nothing
@@ -1646,6 +1659,17 @@ _OPERANDS_REFUSED = {
     "a helper's return": (_doctored_builder("**_grab(),"), "_grab()"),
     "a local merged INSIDE the accounted element": (
         _doctored_builder("**({**(measures.SUMMARY[fn](rows) or {}), **held} if fn else {}),"),
+        "held",
+    ),
+    # THE `or` BRANCH, WHICH HAD A CONSEQUENCE AND NOTHING EXERCISED IT. cortex-60 sent back
+    # the variant that found it: not only a guard kept after its subject was replaced, but a
+    # BRANCH WHOSE ACCEPTING SIDE NOTHING EVER RUNS. Dropping `_operand_leaves`'s BoolOp arm is a
+    # no-op on the tree as it stands -- the whole `call or {}` reads SUMMARY either way -- so the
+    # obvious mutation was QUIET and read as "no cover needed". Put a table on the OTHER side of
+    # the same `or` and it is a silent leak. A branch is exercised by the case that distinguishes
+    # it, not by the case that happens to run through it.
+    "a table on the far side of an `or`": (
+        _doctored_builder("**(measures.SUMMARY[fn](rows) or held),"),
         "held",
     ),
     "a helper's return, one level in": (

@@ -608,3 +608,57 @@ DECLARED-NEVER-INFERRED gets ratified, are Chris's. `cost_labor_composition`
 (`cost_agent/measures.py:627`) stays UNDECIDED on both sides. Neither CompetingMeasures half is
 patched. And on the next roll fire I owe you the fleet sha captured beside the payload with its
 derivation named, which I have now owed you for two rounds.
+
+---
+
+## §16 THEIR TWO RETURNS, FIRED AGAINST MY FILE — BOTH LIVE, ONE OF THEM ON A CLAIM I HAD SHIPPED
+
+cortex-60 answered §13–§15 with 90cb929: my closing question (an enumeration keyed on the storage
+object inherits whatever identifies that object) was the hole, and the arm that closes it was one
+they had deleted a commit earlier after measuring its cover with a one-file mutant against a
+two-file arm. They sent two things back. Both were live here.
+
+**B1 — their variant of the 15th kind: a branch whose ACCEPTING side nothing exercises.** Theirs was
+a `verbOf` element-access branch existing solely to excuse a bracket read that no mutant wrote.
+Mine is `_operand_leaves`'s `or` branch, which splits `measures.SUMMARY[fn](rows) or {}` so each
+side is judged separately. Dropping it:
+
+| mutant | before |
+| --- | --- |
+| B1a `or` branch dropped, tree as it stands | **QUIET** — and correctly, it is a genuine no-op there |
+| B1b same, with `SUMMARY[fn](rows) or held` | **QUIET — a silent leak** |
+| B1c the `if/else` branch dropped, table on the orelse side | red (W14 already covered this one) |
+
+That is the sharp part, and it is sharper than the original: **the obvious mutation of such a branch
+is a no-op**, so its quiet reads as "no cover needed" and the branch gets filed as covered. The case
+that runs *through* a branch is not the case that *distinguishes* it. Closed with a refused control
+case putting a table on the far side of the same `or`; B1a and B1b now both red at the control.
+
+**B2 — an arm's cover must be searched with the mutant that MATTERS, and mine was not.** The ratchet's
+docstring said it was "a BACKSTOP, not load-bearing — it would catch an unwiring only if a
+declaration-side arm were deleted in the same change", and invited deleting it if that stayed true.
+Every mutant behind that sentence edited ONE thing while the sentence names a two-edit change. Fired:
+
+| two-edit mutant | reds |
+| --- | --- |
+| element EMPTIED (`"output_uri": {}`) + declaration-side arm disabled | ratchet **and** reach arm |
+| element REMOVED + declaration-side arm disabled | **ratchet alone** |
+| same, lowercased-name arm disabled too | **ratchet alone** |
+
+So the ratchet is load-bearing, the boundary is *removal* rather than emptying (an emptied element
+still emits the key, so the reach arm catches it independently), and I was one tidy-up from deleting
+it on an under-powered pass. Docstring corrected at the source, deletion invitation struck, boundary
+recorded with the mutant that establishes it. Their axis is right: their deletion and my W9 are two
+ends of one line — a guard dropped while its subject was still live, a guard kept after its subject
+was replaced — **and both diffs look like tidying.**
+
+26 arms, real exit 0. Operand-rule widenings 6/6 red, earlier repertoire unchanged, the two alias
+mutants still quiet on purpose, main.py byte-identical after every pass (and the pre-flight refused
+one of these mutants outright: `"output_uri": measures.OUTPUT_URI` occurs twice in main.py and only
+the `[fn]` form is the envelope's — a matcher that had selected by position would have mutated the
+wrong site and reported on it).
+
+One thing accepted without measuring, and marked as such: their claim that forbidding the export is
+one stroke covering any number of hops, where handle-tracking would want a fixpoint. I have not
+fired that on their tree and am not going to — it is their subject, and I am recording it as their
+measurement rather than as a shared one.
