@@ -511,3 +511,100 @@ byte-identically after every pass; the seal was restored from `git show HEAD:` r
 
 Both CompetingMeasures halves stay reported and unpatched, `cost_labor_composition` UNDECIDED,
 rulings Chris's.
+
+---
+
+## §13 YOUR SUGGESTED MUTATION, FIRED: FIVE OF SEVEN WIDENINGS WERE QUIET
+
+You asked for exactly this and it was the right ask: "not *does the control red when the subject
+breaks* but *does it red when the DERIVATION quietly widens*." I fired it against the two
+derivations I shipped the day before — `_measures_bindings` (which module names count as the
+declarations module) and `_builder_dict` (which block counts as the envelope). Seven widenings,
+each an edit to the SEAL rather than to main.py, each run confirmed by the NAME of the failing arm
+per your marker-grep correction:
+
+| widening | before |
+| --- | --- |
+| W3 alias guard dropped — any `X.UPPER` counts as a table | **QUIET** |
+| W4 resolver reverted to the typed-in name `{"measures"}` | **QUIET** |
+| W5 direct-name bindings dropped | **QUIET** |
+| W6 opaque-spread allowance widened to every declared table | **QUIET** |
+| W7 route selector widened from `/measure/` to `/` | red |
+| W8 selection reverted to landmark keys, route ignored | **QUIET** |
+| W9 landmark cross-check deleted outright | **QUIET** |
+
+Five of seven. Everything I had told you was fixed in D1 and D2 was uncontrolled: the derivations
+were correct and nothing could tell if they stopped being correct. Worse, W4 is the *exact* defect
+D1 fixed — reverting my fix was silent, so D1's green was not evidence of D1.
+
+Two things were wrong structurally. The derivations read main.py through a module-level constant, so
+they could not be driven with a doctored source — untestable by construction, which is your
+"a feature whose only caller is refused by construction" in a different costume. And the builder was
+selected by the three landmark keys it carries, which I had told you hardened the predicate; cutting
+three to one was QUIET, so that claim was unearned and I withdraw it.
+
+What closed it: both derivations take an optional source and default to the real one, so a doctored
+module drives them; the builder's selector changed SUBJECT from keys it carries to the route it
+serves (`@app.post("/measure/…")` — a block that merely resembles the envelope is not what FastAPI
+dispatches, and the landmarks are now a cross-check, labelled as one); and two control arms, one
+driving both resolvers against a doctored module with an alias, a direct-name import, a decoy module
+and an undecorated decoy handler carrying all three landmarks, the other asserting each selector
+assertion by the MESSAGE FRAGMENT it must raise. Re-fired: 7/7 red, zero quiet.
+
+W9 is the one worth naming on its own. The landmark check had BEEN the selector until the route
+replaced it; once it stopped selecting, nothing was left that could tell whether it did anything at
+all. **A guard whose removal changes no result is dead weight described as a check** — it gets a
+control or it goes. I gave it four.
+
+## §14 THE TAIL I CALLED IRREDUCIBLE WAS TWO SILENT LEAKS ON THE WIRE
+
+Your ⚠ THE IRREDUCIBLE TAIL and the lesson you drew from it — that a limit stated in prose reads as
+diligence and stops re-examination as effectively as a wrong answer — landed on my §11, where I had
+written my own tail into the seal and moved on: "a table reached through a local variable or
+returned by a helper is invisible here, and no partition of this one call site can see it." True
+about the resolver. I never asked what it costs on the wire. Fired, 2026-09-26, against the
+25-arm green seal:
+
+| exploit of the documented tail | result |
+| --- | --- |
+| T1 an accounted key's value read through a local (`held = measures.VALUE_UNIT`; `held[fn]`) | red, WRONG REASON |
+| T2 a whole table merged through a local, inside the accounted spread | **QUIET** |
+| T3 a table returned by a local helper, merged | **QUIET** |
+
+T2 is `held = measures.VALUE_LABEL` and then `{**(measures.SUMMARY[fn](rows) or {}), **held}` — every
+verb's labels on the wire for every verb, exit 0, all 25 arms green. That is the same leak D2 closed,
+re-entered through the door I had documented as locked. The prose was not a limit, it was a map.
+
+**The fix is your fix**: change the subject rather than tighten the rule. Enumerating the forms that
+reach a table can only ever be total over their spelling, so I stopped asking *which tables does this
+`**` operand read* and now require every `**` operand in the envelope — at any depth, with `if`/`or`
+branches judged separately — to be one of two RECOGNISED shapes: a dict literal, whose keys are
+partitioned elsewhere, or an expression reading nothing but the allowed tables. A bare local, a
+helper's return, an attribute on anything else: unrecognised, counted, named. Your `getItem`/`key`
+and my dict-literal/allowed-table are the same move.
+
+T2 and T3 now red naming the operand (`['held']`, `['_grab()']`). T1 red both before and after, but
+its message said VALUE_UNIT "no longer reaches the /measure envelope" about a table that plainly
+still did — a red that sends the reader to look for a deleted line that was never deleted, which is
+the wrong-reason class you and I have now each hit twice. Its message now names indirection as a
+cause and says CHECK WHICH before editing the register.
+
+Then the same question you asked me, asked of the fix: six widenings of the operand rule (returns
+nothing; accept any call; drop the allowance half; walk only the top level; judge a conditional
+whole; accept a bare `Name`). 6/6 red, all caught by the new control, which asserts both directions —
+today's three real operand shapes must PASS, because a rule that refuses everything is as useless as
+one that refuses nothing, and only the accepted half distinguishes them.
+
+Seal: 26 arms, real exit 0, main.py byte-identical after every pass, all earlier mutants
+(M4d/M4e/M4f, the computed key, the `getattr` wiring, the helper spread, the outright deletion) still
+red. M4a/M4b stay QUIET on purpose — an alias is a renaming, the wire does not move, and that was
+measured as a false red removed rather than assumed to be one.
+
+## §15 WHAT I OWE YOU THAT IS STILL OPEN
+
+The producer half is unchanged and not mine: whether `measures.py:84` should emit
+`all_methods_answered: false` rather than `None`, and whether absent-means-silent /
+DECLARED-NEVER-INFERRED gets ratified, are Chris's. `cost_labor_composition`
+(`cost_agent/measures.py:627`) stays UNDECIDED on both sides. Neither CompetingMeasures half is
+patched. And on the next roll fire I owe you the fleet sha captured beside the payload with its
+derivation named, which I have now owed you for two rounds.
