@@ -348,6 +348,32 @@ _JENA = _jena_posture(os.environ)
 _JENA_ENDPOINT = _JENA.endpoint
 _JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
 
+# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena, for LEG 3 of
+# `_FIND_COMPAT_VERBS_CYPHER` (the universal-referent leg). Flatten-aware import, same shape as
+# `substrate_posture` above.
+try:
+    from mesh_ontology import JenaMeshOntology as _JenaMeshOntology  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.mesh_ontology import JenaMeshOntology as _JenaMeshOntology
+
+
+def _jena_ontology_post(url: str, *, data: dict, headers: dict):
+    """Sync POST for `JenaMeshOntology`, carrying the SAME credential `_jena_client()` uses.
+
+    `_jena_client()` returns an `httpx.AsyncClient`; `JenaMeshOntology`'s two operations are
+    SYNC — measured, not assumed, in its own module docstring — so its default transport (no
+    `post` supplied) is a bare `httpx.Client()` with no credential at all. Posting through this
+    function instead keeps `_JENA.auth` the ONE place the Fuseki credential is derived, rather
+    than growing a second copy of it beside a second client.
+    """
+    with httpx.Client(timeout=5.0, auth=_JENA.auth) as client:
+        return client.post(url, data=data, headers=headers)
+
+
+# One instance, reused across requests — `JenaMeshOntology` holds only a bounded provenance
+# ring (see its own docstring), so there is nothing per-request to isolate.
+_JENA_ONTOLOGY = _JenaMeshOntology(endpoint=_JENA_ENDPOINT, post=_jena_ontology_post)
+
 
 def _jena_client() -> httpx.AsyncClient:
     """THE ONE PLACE a Jena connection is constructed.
@@ -729,6 +755,7 @@ from fastapi import Depends
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+from iagent_mesh import Initiator
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -4428,6 +4455,98 @@ class FindCompatibleVerbsResponse(BaseModel):
     cypher_executed: str | None = None
 
 
+# THE SENTINEL FOR "NOT IN THE SUBJECT'S ANCESTOR CHAIN". Module-level so it has exactly ONE
+# declaration: `_pick_best_per_verb` (below, inside `classify_predicate`) reads ancestor distance
+# against it, and LEG 3 of `_FIND_COMPAT_VERBS_CYPHER` is substituted with it the same way
+# `$MAXHOPS$` is — a second `10**6` written into the Cypher would be a second declaration of one
+# sentinel, free to drift the day either changes. LEG 3 admits a verb with no real hop count (the
+# referent's FLAG admits it, not a walk from `start`), and this is the value that tells
+# `_pick_best_per_verb` "treat this exactly as unreachable", same as a LEG 1/2 candidate that
+# never returned.
+UNREACHABLE = 10**6
+
+# THE CANDIDATE UNIVERSAL REFERENTS LEG 3 ASKS JENA TO CONFIRM. `MeshOntology.ask`/`.construct`
+# are IRI-keyed — the Protocol declares NAMED OPERATIONS ONLY, deliberately, so there is no "list
+# every class where P" query to discover this set with. The pool can only CONFIRM a candidate,
+# never discover one, so a second universal referent needs its IRI added here the same way it
+# needs adding to `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
+# declared today (`setup/ontologies/mesh_system.ttl:736`) — engines are independently deployed
+# with no shared import path between them, so this is not a second copy of a Python constant, it
+# is the SAME IRI read out of the SAME ttl by two engines that cannot import one another.
+_CANDIDATE_UNIVERSAL_REFERENTS: tuple[str, ...] = (
+    "http://invincible-agent/mesh#Thing",
+)
+
+_RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+_OWL_CLASS_IRI = "http://www.w3.org/2002/07/owl#Class"
+_UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
+
+# WHO THIS READ IS ATTRIBUTED TO, AND A GAP FLAGGED RATHER THAN PAPERED OVER. `Initiator` is a
+# required argument on every `MeshOntology` operation, and `require_person` refuses a "service"
+# identity at the boundary — by design, so a read is never attributed to nobody a person can be
+# asked about. `find_compatible_verbs` carries no caller identity today: its request is exactly
+# `{subject_uri, max_hops, entitled_domains}`, and this endpoint has no real person to attribute
+# a Jena read to. Declaring `kind="person"` here to get past the refusal would be fabricating an
+# identity, which is precisely what the boundary check exists to prevent — so this is declared
+# `kind="service"` HONESTLY, which means `.construct()` below is refused EVERY TIME by
+# `require_person` until this route carries a real caller identity to attribute the read to (the
+# same undeliverable-today gap `agent_fleet/docs_agent/reads.py` documents for `audience_hint`).
+# That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
+# it is exercised here rather than worked around — threading a real identity through this route
+# is a design decision for a person, not a substitute this pool should invent.
+_POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
+
+
+def _confirms_universal_referent(rows, subject: str) -> bool:
+    """Does this CONSTRUCT result say `subject` is BOTH an `owl:Class` AND flagged universal?
+
+    Pure and offline-checkable on purpose: `rows` is whatever `MeshResult.rows` holds (parsed
+    rdflib triples in production, plain 3-tuples of strings in a seal), and the two facts are
+    read off the SAME subgraph rather than assumed from the candidate list — the pool trusts what
+    Jena answered, not the Python literal that named the candidate.
+    """
+    is_class = False
+    carries_flag = False
+    for s, p, o in rows:
+        if str(s) != subject:
+            continue
+        if str(p) == _RDF_TYPE_IRI and str(o) == _OWL_CLASS_IRI:
+            is_class = True
+        elif str(p) == _UNIVERSAL_REFERENT_PROP_IRI and str(o).strip().lower() == "true":
+            carries_flag = True
+    return is_class and carries_flag
+
+
+def _universal_referent_iris() -> list[str]:
+    """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
+
+    NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
+    documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
+    into "not confirmed" — the caller gets an empty list, LEG 3 contributes zero rows, and the
+    pool degrades to LEGs 1+2. Logged AT MOST ONCE per call, not once per candidate, so an empty
+    result reads as one line rather than a burst.
+    """
+    confirmed: list[str] = []
+    refusal_detail: str | None = None
+    for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
+        try:
+            result = _JENA_ONTOLOGY.construct(_POOL_READ_INITIATOR, subject=candidate)
+        except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
+            refusal_detail = f"{type(exc).__name__}: {exc}"
+            continue
+        if not result.answered_ok:
+            refusal_detail = f"{result.outcome}: {result.detail}"
+            continue
+        if _confirms_universal_referent(result.rows, candidate):
+            confirmed.append(candidate)
+    if not confirmed and refusal_detail:
+        logging.info(
+            "LEG 3 universal-referent read produced nothing (%s) — pool degrades to LEGs 1+2",
+            refusal_detail,
+        )
+    return confirmed
+
+
 # NB on the shape of this query: the `*0..N` form is the trick that
 # unifies "the subject's own class" with "any registered ancestor"
 # under a single MATCH — at hop=0, `scope` rebinds to `start`. We
@@ -4525,6 +4644,68 @@ RETURN DISTINCT
     coalesce(r.slots, '[]')       AS slots,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(ref))) AS hops,
     'referent'                    AS compatibility
+
+UNION ALL
+
+// LEG 3 - UNIVERSAL REFERENT. A verb whose REQUIRED slot's referent is flagged UNIVERSAL is
+// compatible with EVERY class subject - not because the referent covers the subject's ancestor
+// chain (LEG 2's rule), but because the referent declares itself unconstrained. `mesh:explain`
+// is the first verb this reaches: its subject is "every class in the graph", so no single domain
+// class is an honest referent for it.
+//
+// NOTHING IS `subClassOf` `mesh:Thing`, BY DESIGN (setup/ontologies/mesh_system.ttl:736).
+// Asserting a hierarchy - every routable class a subclass of `mesh:Thing` - would be a ratified
+// superclass over ~24,000 nodes for one verb's benefit, and it would widen every class-chain
+// query in the system. So the universality is a DECLARED FLAG on the referent class, never a
+// position in the class tree, and this leg admits on the flag rather than on coverage - which is
+// exactly why LEG 2's `subClassOf*` walk can never reach `mesh:Thing` and why that is correct.
+//
+// THE FLAG IS READ FROM JENA, NOT FROM A NEO4J PROPERTY, AND NOT BY PARSING `r.slots` HERE - the
+// same reason LEG 2 reads an edge instead of parsing a declaration: two readers of one fact go
+// out of agreement at the first edit nobody mirrored. `mesh:universalReferent` is primed into
+// Jena, not Neo4j, so `find_compatible_verbs` asks Jena which candidate classes carry it and
+// hands the CONFIRMED set in as `$universal_referents` - a plain IRI list, never a class name
+// baked into this query. An empty list (Jena unreachable, the read refused, or a candidate Jena
+// does not confirm) makes this leg contribute zero rows; degrading to LEGs 1+2 is the point, not
+// a bug to route around.
+//
+// SCOPED TO CLASSES ON BOTH ENDS. `start` must already be a registered `:OntologyClass` - never
+// a bare string that happens to match `$subject_uri` - and the referent match requires
+// `ref:OntologyClass`, so a universal-referent IRI that is not a graph class admits nothing.
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH (ref:OntologyClass)
+WHERE ref.uri IN $universal_referents
+MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
+WHERE coalesce(p.required, false) = true
+  AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
+// IDENTITY IS (verb_iri, _tool_urn), THE SAME PAIR LEG 2 JOINS ON. Joining on verb_iri alone
+// would let one provider's parameterisation admit ANOTHER provider's verb - LEG 2's comment
+// above records the measurement (13 verbs registered by more than one provider) and the same
+// arithmetic applies here.
+MATCH (vsubj)-[r]->(o:OntologyClass)
+WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    // THE VERB'S OWN SUBJECT, exactly as LEG 2 returns it - `mesh:explain`'s answer is about
+    // `mesh:DocPage`, never about `start`, whatever class actually asked the question.
+    vsubj.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
+    r.required_args               AS required_args,
+    coalesce(r.slots, '[]')       AS slots,
+    // NO REAL HOP COUNT EXISTS - `start` was never walked to `ref`, only checked for existing as
+    // a class. The sentinel says "not in the subject's ancestor chain", exactly as it does
+    // inside `_pick_best_per_verb`'s ranking below: this verb is admitted by the referent's
+    // FLAG, not by any distance from `start`, and substituted the same way `$MAXHOPS$` is so
+    // there is exactly one declaration of the sentinel, not a literal re-typed into the Cypher.
+    $UNREACHABLE$                 AS hops,
+    'universal'                   AS compatibility
 """
 
 
@@ -4553,7 +4734,15 @@ async def find_compatible_verbs(
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
     max_hops = max(0, min(10, int(request.max_hops or 5)))
-    cypher = _FIND_COMPAT_VERBS_CYPHER.replace("$MAXHOPS$", str(max_hops))
+    cypher = (
+        _FIND_COMPAT_VERBS_CYPHER
+        .replace("$MAXHOPS$", str(max_hops))
+        .replace("$UNREACHABLE$", str(UNREACHABLE))
+    )
+    # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
+    # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
+    # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
+    universal_referents = await asyncio.to_thread(_universal_referent_iris)
 
     def _run() -> list[dict]:
         with _NEO4J_DRIVER.session() as session:
@@ -4562,6 +4751,7 @@ async def find_compatible_verbs(
                 for r in session.run(
                     cypher,
                     subject_uri=request.subject_uri,
+                    universal_referents=universal_referents,
                 )
             ]
 
@@ -4979,7 +5169,10 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         best: dict[str, dict] = {}
         best_hops: dict[str, int] = {}
         first_seen_index: dict[str, int] = {}
-        UNREACHABLE = 10**6
+        # Module-level constant (declared once, above `_FIND_COMPAT_VERBS_CYPHER`) — LEG 3 of
+        # that query is substituted with the SAME value, so a candidate it admits with no real
+        # hop count reads here exactly as unreachable, the same as a LEG 1/2 candidate that
+        # never returned.
         for i, cand in enumerate(rows):
             v = cand.get("verb_iri") or ""
             if not v:

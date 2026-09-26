@@ -138,9 +138,12 @@ def _cypher() -> str:
     return src[i:src.index(_FENCE, i)]
 
 
-def _legs() -> tuple[str, str]:
-    a, b = _cypher().split("UNION ALL", 1)
-    return a, b
+def _legs() -> list[str]:
+    """Every leg of the union, in source order. Split on ALL occurrences of `UNION ALL`, not
+    just the first - a query with N legs has N-1 of them, and stopping at one silently drops
+    every leg added after the second back into the last element, where a leg-specific assertion
+    would keep passing against text that is not the leg it claims to check."""
+    return _cypher().split("UNION ALL")
 
 
 def _columns(text: str) -> list[str]:
@@ -183,7 +186,7 @@ def test_ONLY_REQUIRED_SLOTS_WIDEN_THE_POOL():
     Measured against the live graph with a required:false edge in place: the verb was NOT
     returned, so this is asserting a behaviour that was observed rather than intended.
     """
-    _, leg2 = _legs()
+    leg2 = _legs()[1]
     assert re.search(r"coalesce\(p\.required,\s*false\)\s*=\s*true", leg2), (
         "the parameterisation leg does not filter on `required`, so an optional slot widens the "
         "pool and the classifier sees verbs the subject merely appears in"
@@ -198,7 +201,7 @@ def test_THE_PARAMETERISED_ROW_REPORTS_THE_VERBS_OWN_SUBJECT():
     resolved subject as input_uri would tell every downstream reader the verb is about the lot,
     and the arity check would then demand an instance the verb does not take.
     """
-    _, leg2 = _legs()
+    leg2 = _legs()[1]
     assert "vsubj.uri" in leg2 and "AS input_uri" in leg2, (
         "the parameterisation leg reports the RESOLVED subject as input_uri, so the binding is "
         "inverted: the answer would claim to be about the parameter"
@@ -208,7 +211,7 @@ def test_THE_PARAMETERISED_ROW_REPORTS_THE_VERBS_OWN_SUBJECT():
 def test_THE_JOIN_BACK_TO_THE_VERB_IS_BY_IRI():
     """The edge cannot point at a relationship, so it carries the verb's iri instead. Without the
     join, one PARAMETERISED_BY edge would admit EVERY verb on that subject class."""
-    _, leg2 = _legs()
+    leg2 = _legs()[1]
     assert "r.iri = p.verb_iri" in leg2, (
         "the leg does not join the edge back to a specific verb, so a single parameterisation "
         "edge admits every verb registered on that subject class"
@@ -231,7 +234,7 @@ def test_THE_JOIN_CARRIES_THE_PROVIDER_IDENTITY_not_just_the_verb():
     Exercised against sandbox with two providers of one verb where only A is parameterised:
     A admitted, B excluded, exactly one row, graph left clean.
     """
-    _, leg2 = _legs()
+    leg2 = _legs()[1]
     assert "r._tool_urn = p._tool_urn" in leg2, (
         "the parameterisation leg joins on verb_iri alone, so ONE provider's declared parameter "
         "admits EVERY provider registered under that iri - a row the declaration never "
@@ -243,15 +246,20 @@ def test_THE_JOIN_CARRIES_THE_PROVIDER_IDENTITY_not_just_the_verb():
     )
 
 
-def test_BOTH_LEGS_RETURN_THE_SAME_COLUMNS():
+def test_EVERY_LEG_RETURNS_THE_SAME_COLUMNS():
     """A UNION with mismatched columns is a runtime SyntaxError, and this query's own history is
     a comment character taking routing down with a 500. Checked statically because the failure is
-    TOTAL: /find_compatible_verbs returns nothing and every question falls to the generalist."""
-    a, b = _legs()
-    assert _columns(a) == _columns(b), (
-        "the legs return different columns and the query will not parse: "
-        "coverage=" + str(_columns(a)) + " parameterised=" + str(_columns(b))
-    )
+    TOTAL: /find_compatible_verbs returns nothing and every question falls to the generalist.
+
+    Named for what it checks, not for how many legs happened to exist when it was written -
+    'BOTH' was already stale the day a third leg landed and nobody touched this name."""
+    legs = _legs()
+    first = _columns(legs[0])
+    for i, leg in enumerate(legs[1:], start=1):
+        assert _columns(leg) == first, (
+            "the legs return different columns and the query will not parse: "
+            "leg[0]=" + str(first) + " leg[" + str(i) + "]=" + str(_columns(leg))
+        )
 
 
 def test_THE_EDGE_CONTRACT_IS_WRITTEN_DOWN_FOR_THE_REGISTRAR():
