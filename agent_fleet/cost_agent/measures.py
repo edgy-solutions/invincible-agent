@@ -189,6 +189,123 @@ HOURS_UNIT = "hours"
 DEFAULT_CONCENTRATION_THRESHOLD = Decimal("0.25")
 
 
+# ---------------------------------------------------------------------------------------
+# THE `method` BLOCK — how a figure was computed, travelling with the figure
+#
+# THE SHAPE IS NOT THIS ENGINE's. It is declared once, for every engine that emits a block, in
+# `tests/_method_block_contract.py`, with each decision's author recorded beside it: inputs as an
+# ordered list of `{name, value, unit?}`, `bound` as float|None, values stringified, the unit key
+# OMITTED (never null) where the quantity is dimensionless. Read that file before changing
+# anything here — engine-finance emits this same archetype, and the reason the shape lives outside
+# both engines is that an invariant BETWEEN two producers is invisible to each one's own seal.
+#
+# WHAT THE RECONCILIATION COST, stated because it was a real loss and not a tidy-up. The first
+# form shipped here (546e6be) sent `bound` as the sentence "threshold = 0.30 (stated by the
+# caller)", which renders better and is one engine's private shape. Under float|None the sentence
+# dies, so the bound's NAME is stated as an INPUT — where the formula reads it anyway — and its
+# ATTRIBUTION survives only in `bound_defaulted`, which `readMethod` drops. Nothing renders who
+# chose a bound today. That is a cortex-side change, reported and not made from here.
+#
+# `bound_defaulted` IS DERIVED FROM THE SAME ARGUMENT as the bound, inside one helper, which is
+# the only reason two statements of one fact are allowed to stand.
+#
+# `bound_defaulted` IS `None`, NEVER `False`, WHEN THERE IS NO BOUND. `False` means "there is a
+# bound and the caller chose it", which is a claim about a caller who was never asked. Three of
+# the four rankings have no bound at all, and a plausible-looking `false` reads as considered.
+#
+# THE SHA IS THE ARTIFACT's, NOT GIT's. `_baked_algorithm_sha()` reads `IAGENT_GIT_SHA` off the
+# image and returns None when it is absent or the literal "unknown" — the same claim
+# `package_export` attests with, and the only one available in a pod. None rather than a
+# placeholder, because "unknown" is a sha-shaped string that matches no commit and a reader must
+# be able to tell "not attested" from "attested as this".
+# ---------------------------------------------------------------------------------------
+def _input_value(value: Any) -> Any:
+    """Every stated value as a string, except None.
+
+    Decimal is not JSON and float rounds the money it is printing, so a Decimal MUST be
+    stringified. Doing it to the ints and strings too keeps one column one type — a column that
+    mixes them makes the card decide how to format per row, which is how two figures on one card
+    come to disagree about their own precision. None stays None: absent is not the word "None".
+    """
+    return None if value is None else str(value)
+
+
+def _inp(name: str, value: Any, unit: Optional[str] = None) -> dict[str, Any]:
+    """One stated input: `{name, value, unit?}`.
+
+    THE UNIT KEY IS OMITTED WHEN NO UNIT IS STATED, never sent as None. That is lane/ca's SDK
+    convention for this field, and the absent key means exactly "not stated" -- NOT
+    "dimensionless", which is the convention for a chart series' `unit` and a different field
+    that happens to share the name. The distinction is load-bearing in one direction only:
+    "not stated" is the weaker claim and is true of every omission here, including a lot number,
+    which is not a quantity and has no dimension to be free of. The declaration, the attribution
+    and the correction all live in `tests/_method_block_contract.py`, the one place the shape is
+    written down for every engine that emits a block.
+
+    The unit exists because a card showing "31221216" beside "5" cannot tell dollars from a
+    count. cortex's `MethodInput` has no unit field yet and `readMethod` drops it, so this is on
+    the wire ahead of the card rather than rendered today.
+    """
+    stated: dict[str, Any] = {"name": name, "value": _input_value(value)}
+    if unit:
+        stated["unit"] = unit
+    return stated
+
+
+def _method(
+    *,
+    formula: str,
+    inputs: list[dict[str, Any]],
+    bound: Optional[float] = None,
+    bound_defaulted: Optional[bool] = None,
+) -> dict[str, Any]:
+    """The producer's account of its own arithmetic. ONE SHAPE, declared outside this engine.
+
+    `inputs` is an ORDERED list of `{name, value, unit?}` rather than a mapping, because the
+    order is part of the account: the names appear in the order the formula uses them and a
+    reader recomputing the figure reads down the list. `readMethod` accepts either shape; only
+    one of them is readable.
+
+    `bound` IS A NUMBER, not a sentence. The first form shipped here was
+    "threshold = 0.30 (stated by the caller)", which reads better and is not the shape the fleet
+    agreed: engine-finance emits this same archetype, and two engines sending two shapes under
+    one field name is exactly the drift a reconciliation exists to stop. What the narrowing costs
+    is the attribution; the bound's NAME is recovered by stating it among the inputs — where it
+    belongs anyway, since the formula reads it — and the attribution survives only in
+    `bound_defaulted`, which the consumer drops. That last is a cortex-side gap, reported and
+    not patched from here.
+
+    The bound and its flag are checked against each other rather than trusted, because the two
+    ways of getting this wrong are the two that read as deliberate — a bound with no word on
+    where it came from, and a defaulted flag on a measure that has no bound.
+    """
+    if not formula.strip():
+        raise ValueError(
+            "a method block with no formula is dropped WHOLE by the UI's readMethod, so an "
+            "empty formula ships a card reading 'method not supplied' about a method this "
+            "producer does in fact have"
+        )
+    if (bound is None) != (bound_defaulted is None):
+        raise ValueError(
+            f"bound={bound!r} and bound_defaulted={bound_defaulted!r} disagree about whether "
+            "this measure has a bound; a flag without a bound, or a bound without a flag, is "
+            "the half-stated disclosure this block exists to end"
+        )
+    if bound is not None and not isinstance(bound, float):
+        raise ValueError(
+            f"bound={bound!r} is {type(bound).__name__}; the reconciled shape is float|None. A "
+            "Decimal is not JSON and a string is the form this engine narrowed AWAY from, so "
+            "either one here means a call site was left behind by the reconciliation"
+        )
+    return {
+        "formula": formula,
+        "inputs": list(inputs),
+        "bound": bound,
+        "bound_defaulted": bound_defaulted,
+        "producer_sha": _baked_algorithm_sha(),
+    }
+
+
 def _require_vintage(state: CostState, fiscal_year: int, rate_vintage: Optional[str]) -> str:
     """The designed refusal: a forward-looking figure needs its assumption set NAMED.
 
@@ -317,6 +434,24 @@ def cost_lot_breakdown(state: CostState, *, lot: int, rate_vintage: str) -> dict
         "quantity": lot_obj.quantity,
         "fiscal_year": lot_obj.fiscal_year,
         "rate_vintage": rates.vintage,
+        # THE DENOMINATOR IS AN INPUT, not a decoration. `share_of_total` cannot be checked
+        # without the total, and the total appears nowhere else in this payload — a reader can
+        # add the five prices back up, which is exactly the arithmetic the block exists to spare
+        # them.
+        "method": _method(
+            formula=(
+                "contribution = the lot's recorded price for the category; "
+                "share_of_total = contribution / lot total (null when the total is zero); "
+                "rank = position by descending contribution"
+            ),
+            inputs=[
+                _inp("lot", lot_obj.number),
+                _inp("rate_vintage", rates.vintage),
+                _inp("fiscal_year", lot_obj.fiscal_year),
+                _inp("lot total", _total, VALUE_UNIT),
+                _inp("categories", len(rows)),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -474,6 +609,24 @@ def cost_labor_composition(state: CostState, *, lot: int) -> dict[str, Any]:
         "fiscal_year": lot_obj.fiscal_year,
         "total_labor": str(total),
         "value_unit": VALUE_UNIT,
+        # NO RATE VINTAGE IN THE INPUTS, and its absence is stated in the formula rather than
+        # left to be noticed: these are recorded hours and applied rates, not a forward-looking
+        # figure, so there is no assumption set to name. A vintage listed here would be an input
+        # this verb never reads.
+        "method": _method(
+            formula=(
+                "contribution = recorded hours x the rate applied to that kind of work; "
+                "share_of_total = contribution / lot direct labor; "
+                "rank = position by descending contribution. Recorded hours and applied rates, "
+                "so no rate vintage is involved"
+            ),
+            inputs=[
+                _inp("lot", lot_obj.number),
+                _inp("fiscal_year", lot_obj.fiscal_year),
+                _inp("lot direct labor", total, VALUE_UNIT),
+                _inp("labor kinds", len(rows)),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -726,6 +879,34 @@ def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
         "total": str(total),
         "value_unit": VALUE_UNIT,
         "compared_to_lot": None if prior is None else prior.number,
+        # THE FORMULA SAYS WHAT `favourable` IS ABOUT, because the obvious reading is wrong and
+        # the card gives a reader no way to check. It is PER-UNIT COST MOVEMENT, not the share
+        # movement beside it: a bucket's share can rise because another bucket fell, on a lot that
+        # got cheaper overall, and "degraded" rendered in red over that would be a false claim.
+        # The same sentence also says where the verdict is ABSENT, which is the half a reader
+        # cannot infer from a card that simply does not draw one.
+        "method": _method(
+            formula=(
+                "contribution = the lot's recorded amount for the bucket; "
+                "share_of_total = amount / lot total; "
+                "share_delta_vs_prior_lot = this share - the prior lot's share; "
+                "per_unit_amount = amount / lot quantity; "
+                "favourable = the bucket's PER-UNIT amount fell against the prior lot -- not its "
+                "share, which can rise on a lot that got cheaper. Absent on the first lot, and "
+                "absent when the per-unit figure did not move"
+            ),
+            inputs=[
+                _inp("lot", lot_obj.number),
+                _inp("fiscal_year", lot_obj.fiscal_year),
+                _inp("lot total", total, VALUE_UNIT),
+                # NO UNIT ON THE QUANTITIES, and that is the convention speaking rather than an
+                # omission: a count of articles is dimensionless. The per-unit figure the formula
+                # derives from them is USD-per-article, and it is a ROW field, not an input.
+                _inp("lot quantity", lot_obj.quantity),
+                _inp("compared_to_lot", None if prior is None else prior.number),
+                _inp("prior lot quantity", None if prior is None else prior.quantity),
+            ],
+        ),
         "rows": rows,
     }
 
@@ -789,6 +970,36 @@ def cost_supplier_concentration(
         "threshold_defaulted": defaulted,
         "suppliers_above_threshold": len(above),
         "largest_share": str(top),
+        # THE ONE RANKING WITH A BOUND, so it is the one whose `bound` is not null. The top-level
+        # `threshold`/`threshold_defaulted` pair STAYS: it is the existing wire contract, the
+        # projector's allowlist names it, and cortex reads it. This block does not replace it — it
+        # states the same bound where the formula that uses it can be read beside it, and both come
+        # from the same two locals, so they cannot disagree.
+        "method": _method(
+            formula=(
+                "contribution = the supplier's purchased amount in this lot; "
+                "share_of_purchased = amount / total purchased value; "
+                "above_threshold = share_of_purchased > threshold (strictly greater: a supplier "
+                "sitting exactly ON the bound is not above it); "
+                "rank = position by descending amount"
+            ),
+            inputs=[
+                _inp("lot", lot_obj.number),
+                _inp("fiscal_year", lot_obj.fiscal_year),
+                _inp("total purchased value", purchased, VALUE_UNIT),
+                _inp("suppliers", len(rows)),
+                # THE BOUND IS STATED AS AN INPUT, which is where its NAME survives now that
+                # `bound` is a bare number. It is not a duplicate of the `bound` field: that one
+                # is the machine value a consumer compares against, this one is the labelled row
+                # a reader recomputing `above_threshold` reads down the list to find. Both come
+                # from the same local as the envelope's `threshold`, so all three agree by
+                # construction — and the seal asserts the agreement anyway, because an invariant
+                # BETWEEN three declarations is checked by none of them.
+                _inp("threshold", bound),
+            ],
+            bound=float(bound),
+            bound_defaulted=defaulted,
+        ),
         "rows": rows,
     }
 

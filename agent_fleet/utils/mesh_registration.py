@@ -162,6 +162,10 @@ def engine_mint(*, client_id: str, secret_env: str):
 _REG_PENDING = "pending"
 _REG_OK = "registered"
 _REG_RETRYING = "retrying"
+# A PERMANENTLY refused registration is not "retrying" -- nothing about waiting makes a
+# Contract-D-malformed manifest acceptable -- and it must not roll up as "pending", which
+# reads as "not started yet".
+_REG_FAILED = "failed"
 
 _REG_LOCK = threading.Lock()
 _REG_STATE: dict = {"status": _REG_PENDING, "components": {}, "last_error": None}
@@ -191,7 +195,9 @@ def registration_is_ready() -> bool:
 
     An engine with nothing to register is ready — `components` is empty and the status stays
     at its initial value, which is the correct answer for a service that registers no verbs
-    (Engine O consumes the registry; the presentation agent registers on its own path).
+    (Engine O consumes the registry and registers nothing; engine-f's presentation
+    capabilities DO record here, so an engine-f holding an unregistered presentation is
+    visible in `registration_status()` rather than only in a log line).
     """
     with _REG_LOCK:
         if not _REG_STATE["components"]:
@@ -206,6 +212,7 @@ def _record(component: str, status: str, error: str | None = None) -> None:
             _REG_STATE["last_error"] = error
         vals = list(_REG_STATE["components"].values())
         _REG_STATE["status"] = _REG_OK if all(v == _REG_OK for v in vals) else (
+            _REG_FAILED if _REG_FAILED in vals else
             _REG_RETRYING if _REG_RETRYING in vals else _REG_PENDING
         )
 
@@ -978,6 +985,7 @@ def register_presentation_to_mesh(
                 "✅ presentation %s registered VIA GATEWAY — rendersAs row is the "
                 "gateway's to write.", name,
             )
+            _record(name, _REG_OK)
             return
         # FALLING BACK. Loud, and with the REASON CLASS named, because the two
         # classes have OPPOSITE repairs and one symptom (rendersAs stays 0):
@@ -999,6 +1007,40 @@ def register_presentation_to_mesh(
             name, outcome[0], outcome[1],
         )
         _fallback_reason = outcome[0]
+
+        # THE RETRY WAITS ON THE GRAPH WRITE, NOT ON A LOG LINE. Per ADR-0006 §Addendum the
+        # gateway is SOLE WRITER of the rendersAs row, so only a gateway acceptance is the
+        # thing being waited for; the DataHub fallback writes an AUDIT RECORD ONLY and must
+        # never satisfy the retry or mark the component registered. A retry that accepted
+        # the fallback would report success over a presentation that is still undiscoverable
+        # via /search_predicates.
+        #
+        # WHY REFUSED IS NOT RETRIED: the three reason classes have opposite repairs.
+        # gateway-unreachable is a network or credential fault and
+        # gateway-rejected-STALE-IMAGE is a deploy ordering fault — both are cured by time,
+        # and retrying is exactly the remedy. gateway-rejected-REFUSED means a CURRENT
+        # gateway rejected THIS manifest; no amount of waiting makes it acceptable, so a
+        # retry loop there is a busy loop that hides a real defect behind a permanent
+        # "retrying".
+        if outcome[0] == "gateway-rejected-REFUSED":
+            _record(name, _REG_FAILED, outcome[1])
+        else:
+            def attempt_once():
+                return _emit_presentation_to_registrar(
+                    registrar_url=registrar_url,
+                    name=name,
+                    description=description,
+                    subject_uri=subject_uri,
+                    object_uri=object_uri,
+                    archetype=archetype,
+                    expected_fields=list(expected_fields or []),
+                    persona_fit=list(persona_fit or []),
+                    domain_fit=list(domain_fit or []),
+                    version=version,
+                    mint=mint,
+                ) is True
+
+            _start_retry(name, attempt_once)
     else:
         _fallback_reason = "no-registrar-url"
 

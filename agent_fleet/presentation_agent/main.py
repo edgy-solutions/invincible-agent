@@ -749,9 +749,16 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # rows it already has, and adding it would put two sources of the same fact on the wire — the
     # kind of pair that goes out of agreement silently. The bound is a DECLARATION the card cannot
     # reconstruct; the count is not.
+    # `method` ADDED 2026-09-24 — the FOURTH field this tuple would otherwise have dropped, by
+    # the mechanism the notes above describe. The four cost producers put a `method` block at the
+    # ENVELOPE level (formula, inputs by name with values, the bound and whether it was defaulted,
+    # producer sha), and cortex's `CardExportButton` already reads `method` off the component
+    # first and the `rendered_output` envelope second. Without this entry the component never
+    # carries it and the export renders "method not supplied" about four producers that supply
+    # one — green on both sides and blank on the card.
     "CONTRIBUTION_RANKING": ("rows",
                             ("value_label", "value_unit", "scope_label", "verdict",
-                             "threshold", "threshold_defaulted")),
+                             "threshold", "threshold_defaulted", "method")),
     "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label", "verdict")),
     # MULTI_SERIES (ADR-0045 follow-on, 2026-09-02). `series` is in the PASSTHROUGH and the
     # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb

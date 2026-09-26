@@ -60,9 +60,14 @@ def mr():
 # ── the state machine ───────────────────────────────────────────────────────
 
 def test_an_engine_with_nothing_to_register_is_ready(mr):
-    """Engine O consumes the registry; the presentation agent registers on its own path. A
-    check that reported them not-ready would take two healthy services out of rotation to fix
-    a problem neither has."""
+    """Engine O consumes the registry and registers nothing. A check that reported it not-ready
+    would take a healthy service out of rotation to fix a problem it does not have.
+
+    This used to name the presentation agent alongside it, on the grounds that it "registers on
+    its own path" — and that path recorded nothing anywhere, which is exactly what made
+    engine-f's unregistered presentations invisible to the one signal this fleet trusts. Its
+    capabilities now record here; see
+    test_registration_retries_until_the_graph_write_lands.py."""
     assert mr.registration_is_ready() is True
 
 
