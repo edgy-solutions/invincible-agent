@@ -185,9 +185,14 @@ the ones a docs commit *could* plausibly have broken — were each opened and at
   failure off this directory and onto the sha — the report would falsify its own next paragraph by
   being committed. I did not widen the seal's phantom allowlist instead: that entry belongs to
   whoever owns the packet, and turning a red green is not a docs commit's business.
-- `test_EVERY_CITED_ANCHOR_NAMES_A_HEADING_THAT_EXISTS` reds on the placeholder ruling id
-  `#r-0NN--slug` at `sessions/2026-09-19-handoff-architecture-seat-no-lane.md:42` — tracked, and
-  not this seat's.
+- `test_EVERY_CITED_ANCHOR_NAMES_A_HEADING_THAT_EXISTS` reds on a placeholder ruling id — the
+  `r-0NN` stand-in with a `slug` suffix, written as an anchor — at
+  `sessions/2026-09-19-handoff-architecture-seat-no-lane.md:42`, tracked and not this seat's.
+  **I have deliberately not written that id in the anchor form the seal collects.** Correcting
+  myself: the first version of this line did, and that made this report a *second* citing site —
+  the same trap the bullet above describes for the dead docs path, walked into one bullet later
+  for the anchor. The seal then named two sites, one of which was the report complaining about
+  the other. Described rather than spelled, for the same reason and with the same reasoning.
 - `test_THE_REPO_INBOX_IS_FULLY_ADDRESSED` names **16** packets carrying no `to:` lane. My own
   packet is not among them; it carries `to: doc-tools/lane/7f`.
 
