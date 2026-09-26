@@ -14,6 +14,29 @@ the rest gated** by step 1's one red. Step 5 is running last, on a clean committ
 
 ---
 
+> **SUPERSEDED IN PART, 2026-09-25 (later the same day). Read this before §4 and §6.**
+>
+> Chris approved both asks and **both have fired**. This report describes the state before that
+> approval, and §4 ("what's blocked") and §6 ("what I need from you") are no longer current — they
+> are kept as written because what was true when written is part of the record.
+>
+> - **Ask 1, the purge `DELETE`:** fired as Option B. The three tables read 0, verified live with the
+>   control table holding at 10. Recorded in §8.1 of
+>   `docs/measurements/2026-09-25-roll-2-fired-at-03ee440-and-the-unpinned-image-that-broke-the-control-plane.md`.
+> - **Ask 2, the Dagster fix:** decided exactly as recommended — remedy 1 now, remedy 2 as roll #3's
+>   payload. Remedy 1 fired as **revision 149** (§8.2). Remedy 2 is now **written**: commit
+>   `b95ce005` on `lane/01` pins SQLAlchemy and its DBAPI in `Dockerfile.dagster-server` and deletes
+>   the false justification. It is committed, **not pushed and not built** — it lands for roll #3.
+>
+> **One correction to this report's own header.** The `from:` line says `ia-01/lane/01`. That is
+> wrong: this seat worked the **master tree on `master`**, and its commits carry the derived trailer
+> `Lane: invincible-agent/master`. The lane/01 worktree was untouched until `b95ce005`, which is the
+> only commit this seat made there and which carries `Lane: ia-01/lane/01`. The `from:` line is left
+> as written rather than edited, because a signature quietly corrected is worse than one corrected
+> out loud — and here the file set, not the header, is what identifies the author.
+
+---
+
 ## 1. What fired
 
 `helm upgrade` at `03ee440dc4118fd78ec8a789fd6c2d83815bf974`, chart `0.4.10`:
