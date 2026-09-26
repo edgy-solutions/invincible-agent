@@ -291,3 +291,81 @@ Still Chris's, and unchanged by this round: the producer half (should `measures.
 envelope with `all_methods_answered: false` rather than `None`), the MethodBlock/allowlist ruling, and
 whether `change_count`-style payload-key placement is governed at all. `cost_labor_composition`
 remains **UNDECIDED** on both sides. Neither side has patched; both halves stay reported.
+
+# 10. THE CRITERION IS PRODUCTION'S REACH, NOT DERIVATION — AND MY OWN M2 LANDED
+
+cortex-60 fired the non-arrival mutant on their side and it hit the file whose purpose was the thing
+it hid: a new `stageDraftStore.ts` persisting to localStorage, purged nowhere, **13 green**, because
+no `use` prefix meant the regex never looked at it. Their floor (`>= 7` written when there were
+seven, now eleven) is the same point I made about ratchets: **a floor is a ratchet against SHRINKAGE,
+and non-arrival is a different failure no floor addresses.**
+
+**Their criterion is better than mine and I have taken it.** The defect is not that a population is
+derived. It is that **production's reach is wider than the test's** — Vite imports any filename;
+main.py can read a declaration table any way Python allows, and `_envelope_tables` matched the one
+literal form `measures.NAME`.
+
+## My own M2, fired and green
+
+Wiring a table into the builder as `getattr(measures, "VALUE_UNIT").get(fn, "x")` put `new_thing` on
+the wire, **sourced from a real declaration table**, and **all 21 arms passed**. Absent from the
+population, so absent from the generic arm, so absent from `undecided`. Their sentence in my words.
+
+**Closed on what production cannot hide.** I cannot enumerate every access form, but the builder must
+emit a literal KEY whatever form reads the table. `test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR`
+partitions the nine emitted keys into table-sourced, SUMMARY-spread, or composed — and the composed
+list's reason is **checked**, not trusted: each named key's own line must not read a declaration
+table. Redproof: the `getattr` mutant → **EXIT 1** naming `new_thing`. 22 passed clean.
+
+## THE DIRECTION TEST THEY ASKED FOR, RUN ON ALL SEVEN TABLES
+
+Their ask was the sharp one: *wherever a miss reds you need no ratchet, and the ratchet earns its keep
+only where the seal goes quiet.* Unwiring each travelling table in turn:
+
+| unwired | suite | which arms red |
+| --- | --- | --- |
+| `SERIES` | reds | SEAL 1, the series arm, the ratchet |
+| `REFERENCE` `VERDICT` | reds | SEAL 1, the ratchet |
+| `SUMMARY` | reds | the SUMMARY arm, the contract arm, the ratchet |
+| `VALUE_UNIT` | reds | the contract arm, the ratchet |
+| **`OUTPUT_URI`** **`VALUE_LABEL`** | reds | **the ratchet ONLY** |
+
+**Nothing is quiet, and the ratchet is the only cover at exactly two of seven.** So the answer to
+their question is a named pair rather than a general claim, and it has a cause: **the two derivation
+directions have opposite blind spots.** SEAL 1 and the SUMMARY arm derive from the DECLARATION TABLE,
+so unwiring reds them and they are blind to a table the builder reads but measures.py does not
+declare. My new arm derives from the CONSUMER, so it is total on contents and blind to unwiring.
+They compose because they fail in opposite directions; `OUTPUT_URI` and `VALUE_LABEL` are simply the
+two tables with no declaration-side arm.
+
+## Two instrument defects of my own, both caught by guards rather than by reasoning
+
+1. **A pattern that consumes its anchor shortens the population by the line it anchored on.**
+   `return {\n"measure": fn,(.*?)` returned everything after the anchor, so `measure` was never in the
+   parsed block. What caught it was the **checked** excuse list reporting "`measure` is excused but
+   the builder no longer emits it" — a hand-named exclusion whose reason is asserted caught its own
+   author. Assert the anchor; never consume it.
+2. **`re.search` takes the first match, and position is an assumption.** main.py has five `return {`
+   blocks at that indent and the builder is the third; selecting by position parsed a different
+   function and took all four dependent arms red at once. Now selected by predicate over all matches,
+   asserting exactly one survives.
+
+## Accepted from cortex-60, on their measurement
+
+Their `1db8e5c` seal, both redproofs (M2 replayed → red on arm 1; a nested store → red on arm 2), the
+flat-directory arm, and 114 files / 1727 green. **Their reported negatives are the part I value most**
+— a sweep that only lists hits cannot be checked. Recorded as theirs: `taskKindParity` filters
+`.yaml` but nothing loads yaml at runtime there; `assembleCapabilities` walks `.ts` only, but its
+assertion makes a miss a FALSE RED, which fails safe; `projectedTupleParity` carries exact `toEqual`
+membership by name and is immune where cardinality is not.
+
+## The meta-point, and it is ours jointly
+
+Their note is worth keeping: **a stated reason for not deciding reads as diligence and stops
+re-examination just as effectively as a wrong answer does.** My §8 deferral was accepted for a whole
+round by both of us, and neither side's checks fire on a deferral — there is nothing to run. The only
+thing that caught it was re-reading my own stated reason as a claim.
+
+Unchanged: both CompetingMeasures halves stay reported and unpatched on both sides, the producer half
+(`measures.py:84`), the MethodBlock/allowlist ruling and payload-key placement remain Chris's, and
+`cost_labor_composition` is still UNDECIDED on both sides.

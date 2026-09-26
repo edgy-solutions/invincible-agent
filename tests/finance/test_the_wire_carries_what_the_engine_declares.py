@@ -166,11 +166,27 @@ def _strip_prose(src: str) -> str:
 
 
 def _builder_block() -> str:
-    """The `/measure/<fn>` envelope builder's own source, prose stripped."""
+    """The `/measure/<fn>` envelope builder's own source, prose stripped.
+
+    THE ANCHOR IS ASSERTED, NOT CONSUMED. The first form of this helper matched
+    `return {\\n"measure": fn,` and returned everything AFTER it, which silently held the
+    `measure` key out of the block -- and the checked excuse list below reported it as "excused
+    but the builder no longer emits it". A pattern that consumes its anchor shortens the
+    population by exactly the line it anchored on."""
     src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
-    block = re.search(r'^    return \{\n\s+"measure": fn,(.*?)^    \}', src, re.S | re.M)
-    assert block, "could not find the /measure envelope builder -- its shape moved"
-    return _strip_prose(block.group(1))
+    # SELECTED BY ITS ANCHOR, not by position: main.py has five `return {` blocks at this
+    # indent and the envelope builder is the third. A `re.search` takes the first, so the
+    # pattern must carry a predicate rather than an assumption about order.
+    bodies = [
+        _strip_prose(m.group(1))
+        for m in re.finditer(r"^    return \{\n(.*?)^    \}", src, re.S | re.M)
+    ]
+    matching = [b for b in bodies if '"measure": fn' in b]
+    assert len(matching) == 1, (
+        f"expected exactly one `return {{` block carrying the `measure` key, found "
+        f"{len(matching)} of {len(bodies)} -- the envelope builder's shape moved"
+    )
+    return matching[0]
 
 
 def _envelope_tables() -> set[str]:
@@ -272,6 +288,53 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
         f"deliberate, remove the name from _TRAVELS_TODAY in the same commit and say why -- "
         f"an unwired table is invisible to a population derived from the wiring."
     )
+
+
+# Keys the builder composes itself rather than reading from a declaration table. Named, and
+# the arm below CHECKS the reason rather than trusting it.
+_NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
+
+
+def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
+    """THE REACH ARM, and cortex-60's criterion is what it is built against: the defect is not
+    that a population is derived, it is that PRODUCTION'S REACH IS WIDER THAN THE TEST'S.
+    `_envelope_tables` matches one literal form, `measures.NAME`, and main.py can read a table
+    any way Python allows. Measured on this file: a table wired in as
+    `getattr(measures, "VALUE_UNIT").get(fn, "x")` put `new_thing` on the wire, sourced from a
+    declaration table, and all 21 arms stayed GREEN -- it is absent from the population, so it
+    is absent from the generic arm, so it is absent from `undecided`. The gap detector cannot
+    report a gap it is not looking at.
+
+    So this arm partitions what production CANNOT hide: the keys the builder literally emits.
+    Every one is the lowercased name of a table in the population, a member SUMMARY spreads, or
+    one of the composed keys named above -- and an unaccounted key reds whatever access form
+    put it there."""
+    block = _builder_block()
+    emitted = set(re.findall(r'"([a-z][a-z_]*)"\s*:', block))
+    assert emitted, "parsed no keys out of the envelope builder -- the regex is stale"
+
+    from_tables = {t.lower() for t in _envelope_tables()}
+    spread_by_summary: set[str] = set()
+    for fn, summary_of in measures.SUMMARY.items():
+        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+        spread_by_summary |= set(summary_of(rows) or {})
+
+    unaccounted = emitted - from_tables - spread_by_summary - _NOT_FROM_A_TABLE
+    assert not unaccounted, (
+        f"these keys reach the /measure envelope and no arm in this file asserts them: "
+        f"{sorted(unaccounted)}. If one reads a declaration table by a form "
+        f"`measures.NAME` does not match, the population cannot see it."
+    )
+
+    # THE EXCUSE LIST, CHECKED. Otherwise it can quietly absorb a table-sourced key and this
+    # arm becomes the thing it was written to prevent.
+    for key in sorted(_NOT_FROM_A_TABLE):
+        source = next((ln for ln in block.splitlines() if f'"{key}"' in ln), None)
+        assert source is not None, f"`{key}` is excused but the builder no longer emits it"
+        assert "measures." not in source and "getattr(measures" not in source, (
+            f"`{key}` is excused as a composed key, but its line reads a declaration table: "
+            f"{source.strip()!r} -- it belongs in the population, not the excuse list"
+        )
 
 
 def test_the_wire_gap_detector_and_its_prose_stripper_can_actually_FAIL():
