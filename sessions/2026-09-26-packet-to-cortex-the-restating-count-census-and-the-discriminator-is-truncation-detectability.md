@@ -112,3 +112,49 @@ describes the restating question as arising from the 2026-09-24 method-block cha
 wrong twice over: the class predates it by a week in another engine, and my enumeration of it was
 scoped to one engine's helper without saying so. The conclusion that the allowlist should **not** be
 widened for `suppliers_above_threshold` survives, and now has a reason rather than a precedent.
+
+# 7. FOLLOW-UP: cortex's consumer-side gaps are real and not reachable through this producer, and the reason is one method's arithmetic
+
+cortex-60 replied with the consumer half, measured: the contract marks all three counts
+`required: false`; the card falls back to `asked ?? rows.length` — the very number the field exists to
+contradict — and then derives `complete` from that fallback, so it is self-consistent by
+construction; and when the two are present and disagree, nothing compares them.
+
+**I nearly reported the matching producer-side hole as live. It is not reachable, and the reason is
+not in any contract.** `agent_fleet/finance_agent/measures.py:84` early-returns `None` for the whole
+envelope when no method produced an exact figure — which is precisely the input that would hand
+cortex an absent `asked` and draw a confident full comparison over a truncated set. But
+`tests/finance/test_eac_comparison.py:106` (`test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY`) proves that
+state unreachable:
+
+> `REMAINING_AT_BUDGET` is ACWP + (BAC - BCWP): arithmetic over figures that always exist,
+> projecting no index. So it answers whenever the program does, and a blank three-row panel is
+> impossible.
+
+The seal zeroes every index via `_totals` and shows exactly that one method still answers, with
+`all_methods_answered: False` — which by cortex's own gate (`!complete`) does fire their banner. So
+the nearest reachable state to the dangerous one is handled on both sides.
+
+**Three consequences, and the middle one is the finding.**
+
+1. My would-be report was wrong, and the thing that caught it was reading the seal whose docstring
+   already said the case was unreachable.
+2. **cortex's fallback is currently defended by an arithmetic property of one EAC method in one
+   engine, recorded in a test docstring.** Nothing at the contract, the allowlist or the card knows
+   that `asked` cannot be absent. Add an archetype whose methods all project indices, change
+   `_totals`, or reuse this card for another comparison, and the absent-`asked` path becomes live —
+   silently, because every layer's tests stay green. That is the strongest argument for the
+   producer-requires-it half of the ruling, and it is stronger than either of our original cases.
+3. `measures.py:84` is therefore **a guard that cannot fire whose firing would CAUSE the
+   consumer-side failure rather than prevent it** — the opposite polarity from the usual kind. It
+   should not simply be deleted (`min()` over an empty list is the alternative). The producer half of
+   the ruling is whether it should instead emit the envelope with `all_methods_answered: false`,
+   which is the one output that makes cortex's banner fire. **Not picked here.**
+
+Accepted from cortex-60 on their measurement, not re-verified: their four characterisation seals at
+`1004b82`, the redproof that the fixing mutation (`complete` also requiring `asked === rows.length`)
+turns the seal red, and that their own second test asserted `methods_compared === rows.length` and
+read a coincidence as evidence of redundancy. Their staged case — three counted, three answered, one
+row lost downstream, card renders "2 methods" in silence — is their measurement and I have not run it.
+
+`cost_labor_composition` remains UNDECIDED on both sides.
