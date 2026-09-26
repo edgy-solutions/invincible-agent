@@ -36,7 +36,7 @@ import os
 from typing import Any, List, Literal, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -659,8 +659,8 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
-def health() -> dict:
-    """Liveness + DB-reachability check."""
+def health(response: Response) -> dict:
+    """Readiness probe: DB-reachability check."""
     db_ok = False
     db_error = None
     try:
@@ -669,8 +669,18 @@ def health() -> dict:
         db_ok = True
     except Exception as e:
         db_error = str(e)[:200]
+    # `/health` is the READINESS probe for this service
+    # (helm/invincible-agent/templates/mesh-registrar.yaml) and `/v1/healthz` is the
+    # LIVENESS probe. This endpoint already MEASURED bolt reachability and reported it in
+    # the body, but returned 200 either way — and a kubelet probe reads the status code,
+    # never the body. So the check ran, its premise was true, and the probe it was wired
+    # to could not see the answer it had computed. A registrar that cannot reach bolt
+    # cannot do its only job (it is the sole writer of predicate edges), so it belongs out
+    # of the Service endpoints until it can.
+    if not db_ok:
+        response.status_code = 503
     return {
-        "status": "ok",
+        "status": "ok" if db_ok else "degraded",
         "neo4j_reachable": db_ok,
         "neo4j_error": db_error,
         "version": REGISTRAR_VERSION,
@@ -1189,6 +1199,13 @@ def _run_saga(
     )
 
 
+# Deliberately DB-FREE: this is the LIVENESS probe. Wiring a slow dependency to liveness
+# converts a Neo4j outage into a CrashLoopBackOff, which is worse than the outage it would
+# be reporting. The bolt dependency belongs on readiness (`/health`) and only there.
+#
+# THE COMMENT GOES ABOVE THE DECORATOR, not between it and the def: a decorator binds to the
+# NEXT definition, and anything inserted into that gap silently re-points the route. This
+# repo has already paid for that once, with a 422 that accused the caller.
 @app.get("/v1/healthz")
 def healthz() -> dict:
     return {"status": "ok", "version": REGISTRAR_VERSION}
