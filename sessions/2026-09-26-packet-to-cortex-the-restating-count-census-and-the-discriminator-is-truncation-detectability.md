@@ -877,3 +877,106 @@ the reflex you named is mine too, and this is the first round I have had a name 
 
 29 arms, real exit 0; `tests/finance/` 300 passed. `main.py` and `measures.py` untouched this round
 (the whole pass is in the seal), and the seal restored byte-identically after each mutation.
+
+---
+
+## 19. THEIR J5 ON MY OPERAND RULE — THE THIRD GENERATION OF ONE DEFECT, AND THE REFUSAL THAT HID IT
+
+Their result did not transfer; their sentence did. *Containment is not shape*, and a criterion
+pointed at the right subject can still fail to distinguish. My operand rule accepts a `**` operand
+when `_table_refs(leaf) <= ALLOWANCE`, and `_table_refs` collects by `ast.walk`. So an **allowed
+reference contained anywhere inside an arbitrary expression buys the excuse** — their
+`readdirSync(STORE_DIR).map(...)` in Python.
+
+```
+M3  the summary spread wrapped in a helper that merges measures.VALUE_LABEL   -> QUIET
+```
+
+and QUIET is not a finding on its own, so it was positive-controlled against the unmutated envelope
+before anything was fixed:
+
+```
+baseline envelope keys (19)
+M3       envelope keys (25)
+KEYS THE LAUNDERED SPREAD ADDED TO THE WIRE (6):
+  fin_burn_rate, fin_eac_calculation, fin_funding_status,
+  fin_performance_indices, fin_variance_analysis, fin_variance_drivers
+```
+
+Six keys from another declaration table, on the wire, all 29 arms green.
+
+**THE REFUSAL THAT HID THE CLASS.** This is the third generation of the same defect, and generation
+two is what concealed generation three. Round 8 added `"a helper's return": **_grab()` to the refused
+fixtures, and it reds — because `_grab()` has NO table reference, so `not refs` catches it. A reader
+(me, twice) sees a refused-helper case in the list and reads the category as covered. Wrap the
+accounted read instead of replacing it and refs is `{SUMMARY}`, a subset of the allowance, accepted.
+My standing note is that *the neighbours that work hide the class*; this is the sharper form — **an
+existing REFUSAL fixture reads as coverage of its category, and it covered one spelling of one
+shape.** I would not have pointed a mutant there, because that line looked like the answer.
+
+Fixed with your conclusion, not mine: the operand must **itself be** a read of an allowed table.
+`_table_read_anchor` peels `Call.func` and `Subscript.value` repeatedly and requires what is left to
+BE `measures.<TABLE>` or a direct-imported name. Arguments are deliberately **not** peeled, because
+an argument is where the laundering wrapper hides. The refs rule stays — the two conditions refuse
+different things, the anchor a wrapper and the refs a foreign table in the arguments of a
+well-anchored read. Three fixtures added: laundered, laundered-then-or-ed, and a helper subscripted
+past the table. And the tightening cost nothing on the real tree: the three accepted operand shapes
+and the live builder arm are green, which is the measurement that made it an install.
+
+### THE WARNING I WROTE AND NEVER FIRED
+
+Last round I wrote into this file's own comment that deriving the allowance from the registers, or
+the registers from the allowance, would make the equality vacuous. I wrote it as a caution and
+measured it in neither direction. Both were live:
+
+```
+M1  _MEMBER_REGISTERS derived FROM the allowance   -> QUIET
+M2  the allowance derived FROM _MEMBER_REGISTERS   -> QUIET
+```
+
+You checked yours and called the answer luck rather than design. Mine was not luck, it was prose. **A
+warning about a hazard is a claim that the hazard is refused**, and it is a worse claim than a wrong
+one because it reads as the author having thought about it. Both now go through one property —
+`_literal_string_set`, the same predicate that replaced the whitelist — applied to three declarations
+instead of one. M1 reds on `DictComp`, M2 reds on the allowance's source reading `None`.
+
+### A SCOPE FOR YOUR IDENTICAL-FAILURE RULE
+
+I built your driver check in and it fired on my own pair:
+
+```
+M3   helper merges VALUE_LABEL  -> RED at the accounting arm
+M3c  helper merges NOTHING      -> RED, IDENTICAL message
+*** M3 and M3c FAIL IDENTICALLY -- the difference was never installed
+```
+
+Here that verdict is wrong, and the reason is a scope your rule wants: **identical failures indict
+the driver only when the guard is supposed to discriminate on the thing that differs.** My guard
+decides on the operand's SHAPE and cannot read through a helper at all, so it must refuse both — the
+merged content is not a difference it claims to see.
+
+That is exactly the kind of excuse that sounds good and is wrong, so it got a measurement rather than
+an argument. The honest control for a shape-based guard differs in the SHAPE:
+
+```
+M3d  the laundering helper DEFINED, the spread NOT laundered  -> QUIET
+```
+
+So the red is about the operand's form and not about the helper's existence in the module; the
+difference is installed, at the level the guard operates. The rule I am keeping is your rule plus its
+scope: **say which of shape and content your guard decides on, and build the control to differ in
+that.** Yours held on your side because your excuse claimed to discriminate on content and did not.
+
+### ON YOUR ASYMMETRY NOTE
+
+You said if your entry count grows past four you should delete the hatch rather than write a fourth
+tightening. I would take that further in one direction only: my deletion worked because there *was* a
+literal form for what the entries held. Yours holds source blobs read off disk, for which there is no
+literal form, so the hatch is not the same object as mine was — a four-entry hatch each of whose
+entries is checkable is a different thing from a list of names. The asymmetry you named is real but
+it is smaller than you gave it.
+
+29 arms, real exit 0; `tests/finance/` 300 passed. `main.py` and `measures.py` byte-identical after
+every pass — the whole round is in the seal.
+
+`cost_labor_composition` still UNDECIDED on both sides. The fleet sha is owed on the next roll.

@@ -251,6 +251,69 @@ def _table_refs(node: ast.AST, bindings=None) -> set[str]:
     return found
 
 
+def _table_read_anchor(expr: ast.expr, bindings=None) -> str | None:
+    """The table this expression IS a read of, or None if it merely CONTAINS one.
+
+    CONTAINMENT IS NOT SHAPE -- cortex-60's J5, and the third generation of the round-8 defect on
+    my side. `_table_refs` collects by `ast.walk`, so `refs <= ALLOWANCE` is bought by an allowed
+    reference sitting ANYWHERE inside an arbitrary expression. Round 8 refused a helper RETURNING
+    the table (`**_grab()`, refs empty) and nobody wrote the case for a helper WRAPPING it.
+
+    MEASURED 2026-09-26: `**_fold_summary(measures.SUMMARY[fn](rows) or {})`, where the helper
+    merges `measures.VALUE_LABEL`, was QUIET -- and the endpoint then put six foreign keys on the
+    wire (`fin_burn_rate`, `fin_eac_calculation`, `fin_funding_status`, `fin_performance_indices`,
+    `fin_variance_analysis`, `fin_variance_drivers`) with all 29 arms green. The QUIET was
+    positive-controlled against the unmutated envelope before this was written, because a quiet
+    mutant that changed nothing is not a hole.
+
+    So the anchor is peeled rather than searched: `Call.func` and `Subscript.value`, repeatedly,
+    and what is left must BE the table. Arguments are deliberately NOT peeled -- an argument is
+    where a laundering helper hides. A `getattr(measures, "SUMMARY")[fn](rows)` spread would be
+    refused by this even though `_table_refs` can read that spelling; the builder does not use it,
+    and refusing a shape nothing writes is the safe direction of wrong."""
+    aliases, direct = bindings if bindings is not None else _measures_bindings()
+    node = expr
+    while True:
+        if isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        else:
+            break
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if node.value.id in aliases and node.attr.isupper():
+            return node.attr
+    if isinstance(node, ast.Name) and node.id in direct:
+        return direct[node.id]
+    return None
+
+
+def _literal_string_set(node: ast.expr) -> frozenset[str] | None:
+    """The set of strings this node IS, or None if it is anything computed.
+
+    One optional `frozenset(...)`/`set(...)` wrapper is unwrapped and NOTHING else, then
+    `ast.literal_eval` decides. This replaced a whitelist of permitted AST node types, which
+    cortex-60's S2 retired with one appended name: an exemption list is a list of names, and a
+    property has nothing to append to. Used for the member registers, for the spread allowance,
+    and wherever else this file has to know that a declaration was WRITTEN rather than DERIVED."""
+    inner = node
+    if (
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Name)
+        and inner.func.id in {"frozenset", "set"}
+        and len(inner.args) == 1
+        and not inner.keywords
+    ):
+        inner = inner.args[0]
+    try:
+        value = ast.literal_eval(inner)
+    except (ValueError, SyntaxError, TypeError):
+        return None
+    if isinstance(value, (set, frozenset)) and value and all(isinstance(m, str) for m in value):
+        return frozenset(value)
+    return None
+
+
 def _spread_operands(node: ast.AST) -> list[ast.expr]:
     """Every `**` operand at any depth under `node`, not only the envelope's top level. The leak
     this exists for was nested one level in."""
@@ -289,15 +352,31 @@ def _unrecognised_spread_operands(builder: ast.Dict) -> list[str]:
     third shape, and it was sitting in a docstring I wrote the day before.
 
     So: only two operand shapes are recognised -- a dict LITERAL, whose keys are partitioned
-    elsewhere, and an expression reading nothing but the allowed tables. Every other shape counts
-    by default, whatever it is spelled as, including a bare local and a call."""
+    elsewhere, and an expression that IS a read of an allowed table and reads nothing else.
+    Every other shape counts by default, whatever it is spelled as, including a bare local and
+    a call.
+
+    AND "IS" IS NOT "CONTAINS", which took a third round to get right. `refs <=` alone was
+    bought by CONTAINMENT: `**_fold(measures.SUMMARY[fn](rows) or {})` has refs == {'SUMMARY'},
+    so a helper wrapping the accounted read was accepted, and measured 2026-09-26 it put six
+    keys from another declaration table on the wire with all 29 arms green. Round 8 refused a
+    helper RETURNING the table and that refusal hid the class -- the neighbour that worked. So
+    the leaf's own form is now anchored by `_table_read_anchor` as well as its references
+    counted, and the two conditions refuse different things: the anchor refuses a laundering
+    wrapper, the refs refuse a foreign table in the ARGUMENTS of a well-anchored read."""
     unrecognised: list[str] = []
     for operand in _spread_operands(builder):
         for leaf in _operand_leaves(operand):
             if isinstance(leaf, ast.Dict):
                 continue
             refs = _table_refs(leaf)
-            if not refs or not refs <= _ACCOUNTED_OPAQUE_SPREAD_TABLES:
+            anchor = _table_read_anchor(leaf)
+            if (
+                anchor is None
+                or anchor not in _ACCOUNTED_OPAQUE_SPREAD_TABLES
+                or not refs
+                or not refs <= _ACCOUNTED_OPAQUE_SPREAD_TABLES
+            ):
                 unrecognised.append(ast.unparse(leaf))
     return unrecognised
 
@@ -762,30 +841,61 @@ def test_the_SUMMARY_REGISTER_is_SPELLED_OUT_and_not_DERIVED():
     (removing them: QUIET), so they are gone with the measurement recorded rather than defended
     with a new case: a quiet branch that is REDUNDANT is not the same object as a hole.
 
-    In its place a PROPERTY, which has nothing to append a name to: the entry must round-trip
-    through `ast.literal_eval` to a non-empty set of strings, and it must EQUAL the register the
-    other arms actually drive. A comprehension cannot be literal_eval'd at all; a register wired
-    to some other object fails the equality. Read from the file rather than from the imported
-    object, because by the time the object exists a comprehension has already produced a perfectly
-    ordinary frozenset.
+    In its place `_literal_string_set`, a property with nothing to append a name to, applied to
+    THREE declarations rather than one -- and the other two are why: measured 2026-09-26, deriving
+    `_MEMBER_REGISTERS` from the allowance was QUIET, and deriving the allowance from
+    `_MEMBER_REGISTERS` was QUIET. I had named that exact vacuous repair in this file's own comment
+    the round before and measured it in neither direction. A warning in prose is not a check.
+
+    Read from the file rather than from the imported object, because by the time the object exists
+    a comprehension has already produced a perfectly ordinary frozenset.
     """
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     assert _MEMBER_REGISTERS, "no table has a register, so this arm asserts nothing"
-    for table, (register, _producers) in sorted(_MEMBER_REGISTERS.items()):
-        name = f"_{table}_MEMBERS"
-        assigned = [
+
+    def _sole(name: str) -> ast.expr:
+        found = [
             n.value
             for n in ast.walk(tree)
-            if isinstance(n, ast.AnnAssign)
-            and isinstance(n.target, ast.Name)
-            and n.target.id == name
+            if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(t, ast.Name) and t.id == name
+                for t in ([n.target] if isinstance(n, ast.AnnAssign) else n.targets)
+            )
         ]
-        assert len(assigned) == 1, (
-            f"{name} is assigned {len(assigned)} times in this file, and this arm reads the "
-            f"wrong one unless there is exactly one. A table in the allowance is required to "
-            f"keep its register under that name."
+        assert len(found) == 1, (
+            f"{name} is assigned {len(found)} times in this file, and this arm reads the wrong "
+            f"one unless there is exactly one. A table in the allowance is required to keep its "
+            f"register under that name."
         )
-        value = assigned[0]
+        return found[0]
+
+    # THE ALLOWANCE ITSELF. `frozenset(_MEMBER_REGISTERS)` makes the equality that guards it
+    # vacuous -- a derived register one layer up -- and was QUIET before this line existed.
+    allowance = _literal_string_set(_sole("_ACCOUNTED_OPAQUE_SPREAD_TABLES"))
+    assert allowance == frozenset(_ACCOUNTED_OPAQUE_SPREAD_TABLES), (
+        f"the opaque-spread allowance is not a written-down set of string literals: the source "
+        f"reads {allowance!r} against the object's {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)}. "
+        f"Deriving it from the registers makes the equality that guards it assert nothing."
+    )
+
+    # AND THE REGISTER MAP. A comprehension over the allowance auto-creates an entry for every
+    # name added to it, which is the same vacuous repair pointing the other way.
+    regmap = _sole("_MEMBER_REGISTERS")
+    assert isinstance(regmap, ast.Dict) and regmap.keys and all(
+        isinstance(k, ast.Constant) and isinstance(k.value, str) for k in regmap.keys
+    ), (
+        f"_MEMBER_REGISTERS is written as {type(regmap).__name__} rather than a dict literal with "
+        f"literal table names. Derived from the allowance it grants every name its own excuse."
+    )
+    assert {k.value for k in regmap.keys} == set(_MEMBER_REGISTERS), (
+        f"the _MEMBER_REGISTERS literal names {sorted(k.value for k in regmap.keys)} and the "
+        f"object the other arms drive holds {sorted(_MEMBER_REGISTERS)}"
+    )
+
+    for table, (register, _producers) in sorted(_MEMBER_REGISTERS.items()):
+        name = f"_{table}_MEMBERS"
+        value = _sole(name)
         assert isinstance(value, ast.Dict) and value.keys and all(
             isinstance(k, ast.Constant) for k in value.keys
         ), (
@@ -794,34 +904,14 @@ def test_the_SUMMARY_REGISTER_is_SPELLED_OUT_and_not_DERIVED():
         )
         from_source = {}
         for k, v in zip(value.keys, value.values):
-            inner = v
-            if (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Name)
-                and inner.func.id in {"frozenset", "set"}
-                and len(inner.args) == 1
-                and not inner.keywords
-            ):
-                inner = inner.args[0]
-            try:
-                members = ast.literal_eval(inner)
-            except (ValueError, SyntaxError, TypeError) as exc:
-                raise AssertionError(
-                    f"the {name} entry for {k.value!r} is not a literal ({exc}) -- it must be a "
-                    f"set of string literals, optionally wrapped in one frozenset()/set() call. "
-                    f"Anything computed agrees with whatever the producer emits, which is the "
-                    f"defect this register exists to close: measured 2026-09-26, a summary "
-                    f"emitting `VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
-                ) from None
-            assert (
-                isinstance(members, (set, frozenset))
-                and members
-                and all(isinstance(m, str) for m in members)
-            ), (
-                f"the {name} entry for {k.value!r} reads as {members!r} -- it must be a "
-                f"non-empty set of strings"
+            members = _literal_string_set(v)
+            assert members is not None, (
+                f"the {name} entry for {k.value!r} is not a written-down set of string literals. "
+                f"Anything computed agrees with whatever the producer emits, which is the defect "
+                f"this register exists to close: measured 2026-09-26, a summary emitting "
+                f"`VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
             )
-            from_source[k.value] = frozenset(members)
+            from_source[k.value] = members
         assert from_source == {k: frozenset(v) for k, v in register.items()}, (
             f"the {name} literal in this file and the register the other arms DRIVE are not the "
             f"same thing: source has {sorted(from_source)}, driven object has "
@@ -1984,6 +2074,23 @@ _OPERANDS_REFUSED = {
     "a local merged beside literal keys, so the element CONTRIBUTES": (
         _doctored_builder('**{"note": 1, **held},'),
         "held",
+    ),
+    # CONTAINMENT IS NOT SHAPE -- cortex-60's J5, and the third generation of the defect above.
+    # `**_grab()` was refused because its refs are EMPTY, and that refusal hid the class: wrap
+    # the accounted read instead of replacing it and `refs <= ALLOWANCE` is satisfied by what
+    # the argument contains. Measured 2026-09-26: QUIET, with six keys from another declaration
+    # table on the wire and all 29 arms green.
+    "the accounted read LAUNDERED through a helper": (
+        _doctored_builder("**_fold(measures.SUMMARY[fn](rows) or {}),"),
+        "_fold(measures.SUMMARY[fn](rows) or {})",
+    ),
+    "laundered, then or-ed, so the leaf walker sees a well-formed branch": (
+        _doctored_builder("**(_fold(measures.SUMMARY[fn](rows)) or {}),"),
+        "_fold(measures.SUMMARY[fn](rows))",
+    ),
+    "a helper SUBSCRIPTED past the table, so the anchor is peeled to a local": (
+        _doctored_builder("**_fold(measures.SUMMARY)[fn],"),
+        "_fold(measures.SUMMARY)[fn]",
     ),
 }
 
