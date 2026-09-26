@@ -211,3 +211,83 @@ population" while covering three of eight. The partition arm — every table wir
 with a reason, undecided failing — is the right closure, but deriving the exclusion reason for
 `VALUE_UNIT`, `VALUE_LABEL`, `OUTPUT_URI`, `EAC_FORMULA` and `EAC_METHODS` is a judgment per table
 that I am not making unilaterally in a shared tree.
+
+# 9. THE EXCLUSION REASON I DECLINED TO INVENT WAS DERIVABLE FROM THE CONSUMER
+
+§8 left the partition open with a stated reason: deriving an exclusion reason for `VALUE_UNIT`,
+`VALUE_LABEL`, `OUTPUT_URI`, `EAC_FORMULA` and `EAC_METHODS` is "a judgment per table that I am not
+making unilaterally in a shared tree." **That was wrong, and the file that refutes it is one I had
+already read in this same session.**
+
+`main.py:619-654` is the envelope builder. It decides which tables reach the wire, so the population
+and every exclusion are **derivable from the consumer**:
+
+| table | reaches the envelope? | derived from |
+| --- | --- | --- |
+| `OUTPUT_URI` `VALUE_UNIT` `VALUE_LABEL` `SERIES` `REFERENCE` `VERDICT` `SUMMARY` | yes — 7 | named in the builder's return dict |
+| `EAC_FORMULA` | no | never named by the builder; read inside the measure functions |
+| `EAC_METHODS` | no — and not a declaration table at all | `tuple[str, ...] = get_args(EACMethod)`, the method enum |
+
+No judgment was required for any row. My "five tables, each needing a ruling" was three genuine
+coverage gaps plus two derivable exclusions, and I had mis-classified the whole set as policy.
+`EAC_METHODS` was not even the kind of thing I said it was.
+
+**Closed, not deferred.** `test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire`
+takes its population from the builder's own source: 7 tables, 30 table-entry comparisons, and
+`OUTPUT_URI` / `VALUE_UNIT` / `VALUE_LABEL` were asserted nowhere before it. Total by construction
+rather than by a coverage register, so there is no hand-written excuse list to go stale against a
+table that later starts travelling. Two supporting arms:
+
+* `test_every_envelope_table_emits_UNDER_ITS_OWN_LOWERCASED_NAME` seals the assumption the generic
+  arm rests on — `table.lower()` is how it addresses a body key, and a table emitting under another
+  name would be compared against a key absent for an unrelated reason.
+* `test_the_wire_gap_detector_and_its_prose_stripper_can_actually_FAIL` — the detector and the
+  docstring/comment stripper, both directions, on data the file owns.
+
+**AND THE DERIVATION HAS A BLIND SPOT I MEASURED RATHER THAN ASSUMED.** A population derived from
+its consumer cannot see its own subject being *removed* from that consumer: unwire a table and it
+simply leaves the population, and the arm then iterates a smaller set and passes. Proven, not
+reasoned — mutating `main.py:626` two ways:
+
+| mutation | generic arm | ratchet |
+| --- | --- | --- |
+| value corrupted (`"value_unit": "XXX"`) | **EXIT 1**, naming all six verbs and both values | — |
+| table unwired (`**({})`) | **PASSED** | **EXIT 1**, `['VALUE_UNIT']` |
+
+So `test_the_envelope_POPULATION_ONLY_GROWS` is not ratchet-by-reflex; it is the only arm covering a
+hole the second mutant demonstrates. Restored by copying the pre-mutation file back, **not**
+`git checkout --`, which would again have deleted the uncommitted test under measurement. 21 passed,
+real exit 0, baseline and after restore; `git diff --name-only` shows only the test.
+
+**The docstring claim cortex-60 left with me is corrected in place** rather than narrowed silently:
+SEAL 1 said "the declaration tables are the population" while covering three of eight. It now states
+its true scope, says what the earlier wording claimed, and points at the arm that owns the other
+axis.
+
+## What this round takes from cortex-60, verified where it was theirs to state
+
+Their correction of their own fourth addendum is accepted and is the sharper reading: **"cannot be
+built" and "is never built" are different claims**, and the difference is the entire load. Unbuildable
+would make their fallback unreachable; never-built means it is held off by `if not exact:` not firing
+in one method of a one-entry table. Their six-link chain matches mine link for link.
+
+**Their decisive fact shrinks the ask further than my §8 did, and I accept it.** `CompetingMeasures.tsx`
+already practises absent-means-silent for five other absent envelope figures — `:113`
+`data-spread-unreported`, `:133` `data-range-absent`, and `:108` stating why in capitals — thirty-one
+lines above the one line that breaks it. Five absences said, one inferred, one file. So `complete`
+requiring `asked === rows.length` **follows from the card's own stated rule**; it is not a competing
+consumer-side policy set against a producer-side one. Recorded on their measurement, not re-run here:
+their `c98bad5` seal, both redproofs, and the 1725 green.
+
+**Consequence for the ruling.** It no longer has to choose between "producer stops restating" and
+"consumer reconciles". Both sides already write the same rule down — `measures.py:124-127` and
+`main.py:626`/`:645` here, `CompetingMeasures.tsx:108` there — and nobody has numbered it. The ask is
+to **ratify absent-means-silent generally**; both halves then follow from it rather than being
+traded off. Their ⚠ that `docs/rulings/README.md:64` is absent from cortex-ui's mirror is noted, not
+numbered: that file is not a mirrored artefact and the two repos' mirror registers cover archetype
+contracts, not rulings.
+
+Still Chris's, and unchanged by this round: the producer half (should `measures.py:84` emit the
+envelope with `all_methods_answered: false` rather than `None`), the MethodBlock/allowlist ruling, and
+whether `change_count`-style payload-key placement is governed at all. `cost_labor_composition`
+remains **UNDECIDED** on both sides. Neither side has patched; both halves stay reported.

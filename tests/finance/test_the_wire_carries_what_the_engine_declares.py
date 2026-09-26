@@ -55,8 +55,11 @@ def _envelope(fn: str) -> dict:
 def test_the_measure_response_BODY_carries_every_declared_envelope_field():
     """Asserted on the real HTTP body, not on the measure function's return value.
 
-    The declaration tables are the population, so a seventh verb that declares a reference
-    inherits this without an edit here.
+    SERIES, REFERENCE and VERDICT are this arm's population -- THREE of the tables the
+    envelope builder reads, not all of them, and the earlier wording here said "the
+    declaration tables are the population" while covering three of eight. A seventh verb
+    entering one of these three inherits this arm without an edit; a new TABLE does not, and
+    that axis is `test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire`.
     """
     for fn, decl in measures.SERIES.items():
         body = _envelope(fn)
@@ -141,6 +144,149 @@ def test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES():
             f"`{key}` is the completeness detector and arrived as {eac.get(key)!r}; absent or "
             f"untyped, the card falls back to counting the rows it was given"
         )
+
+
+# -- THE POPULATION, DERIVED FROM ITS CONSUMER ------------------------------------------
+#
+# SEAL 1 named three tables and the SUMMARY arm above a fourth. I wrote in the 2026-09-26
+# packet that closing this partition needed an exclusion REASON per table and was therefore
+# not mine to invent in a shared tree. That was wrong, and cheaply so: the envelope builder
+# decides which tables reach the wire, so the population AND every exclusion are derivable
+# from the consumer. `EAC_FORMULA` and `EAC_METHODS` fall out because the builder never names
+# them -- they are read inside the measure functions -- and that is a derivation, not a
+# judgment. The reason I declined to invent was sitting in the file I had already read.
+
+
+def _strip_prose(src: str) -> str:
+    """Docstrings and `#` comments removed BEFORE any token search, because a name in prose
+    ABOUT a mechanism reads exactly like the mechanism -- and the builder's comments discuss
+    the very tables being counted. Controlled both directions below."""
+    src = re.sub(r'""".*?"""', "", src, flags=re.S)
+    return re.sub(r"#.*$", "", src, flags=re.M)
+
+
+def _builder_block() -> str:
+    """The `/measure/<fn>` envelope builder's own source, prose stripped."""
+    src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+    block = re.search(r'^    return \{\n\s+"measure": fn,(.*?)^    \}', src, re.S | re.M)
+    assert block, "could not find the /measure envelope builder -- its shape moved"
+    return _strip_prose(block.group(1))
+
+
+def _envelope_tables() -> set[str]:
+    """The tables whose values reach the response body, parsed from the builder rather than
+    from a remembered list."""
+    found = set(re.findall(r"measures\.([A-Z][A-Z_]+)", _builder_block()))
+    assert found, "parsed no tables out of the envelope builder -- the regex is stale, not main.py"
+    return found
+
+
+def _wire_gap(table: str, fn: str, expected, body: dict) -> str | None:
+    """PURE, so the control can drive it with a doctored body. Returns why the declared value
+    did not reach `body`, or None when it did. ON THE VALUE, NOT THE KEY."""
+    if table == "SUMMARY":
+        for key, value in expected.items():
+            if key not in body:
+                return f"{fn}: declared summary field `{key}` never reached the wire"
+            if body[key] != value:
+                return f"{fn}: `{key}` is {body[key]!r} on the wire, {value!r} in the engine"
+        return None
+    key = table.lower()
+    if key not in body:
+        return f"{fn}: {table} declares {expected!r} and the body carries no `{key}`"
+    if body[key] != expected:
+        return f"{fn}: `{key}` is {body[key]!r} on the wire, {expected!r} in {table}"
+    return None
+
+
+def test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire():
+    """TOTAL BY CONSTRUCTION rather than by a coverage register: the population is the
+    builder's own source, so a ninth table added there arrives under this arm with no edit
+    here, and there is no hand-written excuse list to go stale against a table that later
+    starts travelling. OUTPUT_URI, VALUE_UNIT and VALUE_LABEL reach the wire and were
+    asserted nowhere before this arm.
+    """
+    gaps: list[str] = []
+    for table in sorted(_envelope_tables()):
+        decl = getattr(measures, table)
+        for fn in sorted(decl):
+            expected = decl[fn]
+            body = _envelope(fn)
+            if callable(expected):
+                rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+                expected = expected(rows)
+                if expected is None:
+                    if table == "SUMMARY":
+                        # NOT a silent continue: `or {}` at main.py:651 drops every key this
+                        # table declares, and "summary" is never a body key, so the generic
+                        # comparison below could not see it. Stated as the failure it is.
+                        gaps.append(
+                            f"{fn}: SUMMARY returned None, so `or {{}}` dropped every envelope "
+                            f"key it declares and a consumer will invent them"
+                        )
+                        continue
+                    # ABSENT-MEANS-SILENT, the rule main.py states at both :626 and :645:
+                    # nothing to say emits no key. Asserted as an absence, not skipped.
+                    if table.lower() in body:
+                        gaps.append(
+                            f"{fn}: {table} computed None yet `{table.lower()}` is on the wire"
+                        )
+                    continue
+            gap = _wire_gap(table, fn, expected, body)
+            if gap:
+                gaps.append(gap)
+    assert not gaps, "declared by the engine, and did not arrive:\n  " + "\n  ".join(gaps)
+
+
+def test_every_envelope_table_emits_UNDER_ITS_OWN_LOWERCASED_NAME():
+    """THE ASSUMPTION THE ARM ABOVE RESTS ON, sealed instead of trusted. `table.lower()` is
+    how that arm knows which body key to compare, so a table emitting under some other key
+    would be checked against a key that is absent for an unrelated reason -- a red for the
+    wrong cause, or with the `in` test inverted, a green. SUMMARY is the one exception and is
+    named, because it spreads its members into the envelope and owns no key of its own."""
+    block = _builder_block()
+    wrong = []
+    for table in sorted(_envelope_tables() - {"SUMMARY"}):
+        if not re.search(rf'"{table.lower()}"\s*:', block):
+            wrong.append(table)
+    assert not wrong, (
+        f"these tables reach the envelope under some key other than their own name: {wrong} -- "
+        f"the generic wire arm's `table.lower()` cannot address them"
+    )
+
+
+_TRAVELS_TODAY = frozenset(
+    {"OUTPUT_URI", "VALUE_UNIT", "VALUE_LABEL", "SERIES", "REFERENCE", "VERDICT", "SUMMARY"}
+)
+
+
+def test_the_envelope_POPULATION_ONLY_GROWS():
+    """THE RATCHET, and it exists because deriving a population from its consumer has one
+    blind spot: a table DELETED from the builder leaves the population, and the arm above then
+    iterates a smaller set and passes. The derivation cannot see its own subject being
+    removed. So the seven names that travel today are written down once -- the register may
+    grow without an edit here and may never shrink silently."""
+    missing = _TRAVELS_TODAY - _envelope_tables()
+    assert not missing, (
+        f"these tables no longer reach the /measure envelope: {sorted(missing)}. If that is "
+        f"deliberate, remove the name from _TRAVELS_TODAY in the same commit and say why -- "
+        f"an unwired table is invisible to a population derived from the wiring."
+    )
+
+
+def test_the_wire_gap_detector_and_its_prose_stripper_can_actually_FAIL():
+    """THE CONTROL, on data this file owns. A detector returning None for everything reads
+    exactly like a clean wire, and a stripper that strips nothing reads exactly like one that
+    works -- this file has already paid once for a token matched in prose about itself."""
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {"value_unit": "USD"}) is None
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {}), "an absent key read as present"
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {"value_unit": "EUR"}), "a wrong value read as right"
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {"n": 3}) is None
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {"n": 2}), "a wrong count read as right"
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {}), "a dropped summary read as delivered"
+    assert "HIDDEN" not in _strip_prose("# measures.HIDDEN_TABLE[fn]\n")
+    assert "HIDDEN" not in _strip_prose('"""measures.HIDDEN_TABLE[fn]"""\n')
+    assert "HIDDEN" in _strip_prose("x = measures.HIDDEN_TABLE[fn]\n"), "the stripper ate code"
 
 
 # -- SEAL 2 -- the seam that actually broke ---------------------------------------------
