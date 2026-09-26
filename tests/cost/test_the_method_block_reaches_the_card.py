@@ -10,15 +10,19 @@ BOTH HOPS, because each half is green on its own while the pair is broken:
     exactly as written. That has now happened four times to this one tuple (`reference`,
     `verdict`, `threshold`/`threshold_defaulted`, and this), each time found in a browser.
 
-── AND A THIRD SURFACE THIS FILE ASSERTS AGAINST RATHER THAN ASSUMES ─────────────────────────
-The block's SHAPE is cortex's, not ours. `cortex-ui/src/lib/cardExport.ts` declares
-`MethodBlock { formula, inputs, bound: string | null }` and `readMethod` DROPS THE BLOCK WHOLE
-when `formula` is empty. So `bound` is a string here and not the nested `{name,value,defaulted}`
-object that reads better in JSON — that form would have rendered as a JSON blob inside the bound
-cell, a producer and a consumer each complete on its own side and wrong only in the seam. The
-field names are PARSED from that contract file when the sibling repo is checked out, and the
-mirror below is asserted equal to the parse whenever both are available: a hand-copied list
-nobody checks is the second-source-of-truth defect this repo keeps paying for.
+── THE SHAPE IS DECLARED OUTSIDE THIS FILE, AND OUTSIDE THIS ENGINE ──────────────────────────
+`tests/_method_block_contract.py` holds it once, for every engine that emits a block, with each
+decision's author recorded: inputs as an ordered list of `{name, value, unit?}`, `bound` as
+float|None, values stringified, the unit key OMITTED rather than null where the quantity is
+dimensionless. This file IMPORTS that rather than restating it — a mirror nobody checks is the
+second-source-of-truth defect this repo keeps paying for, and the mirror this file used to hold
+is what the reconciliation had to go and edit in two places.
+
+The consumer's half of the contract is PARSED from `cortex-ui/src/lib/cardExport.ts` when the
+sibling repo is checked out, never mirrored. `readMethod` drops a block WHOLE when `formula`
+trims empty, `formatLeaf` JSON-stringifies an object, and `MethodInput` has NO unit field — so
+`unit` is on the wire ahead of the card, which the parity seal records as a partition rather than
+letting an equality check hide it.
 
 ── THE POPULATION IS DERIVED, NOT LISTED ─────────────────────────────────────────────────────
 "The four cost producers" is a sentence I could have typed and been wrong about. The basis is
@@ -31,7 +35,6 @@ Run: uv run --frozen pytest tests/cost/test_the_method_block_reaches_the_card.py
 """
 from __future__ import annotations
 
-import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -40,20 +43,17 @@ import pytest
 from agent_fleet.cost_agent import measures
 from agent_fleet.cost_agent.seed import build_state
 from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+from tests import _method_block_contract as contract
 
 _CARD_EXPORT = (
     Path(__file__).resolve().parents[2].parent
     / "cortex-ui" / "src" / "lib" / "cardExport.ts"
 )
 
-#: The UI's MethodBlock fields, mirrored — and asserted equal to the parsed interface below
-#: whenever cortex-ui is checked out beside this repo.
-_UI_METHOD_FIELDS = {"formula", "inputs", "bound"}
-
-#: What this producer adds beyond the UI's declared block. `bound_defaulted` is the flag a reader
-#: branches on (the UI renders the words instead); `producer_sha` is the attestation the order
-#: asked for. Named here so a field added without a decision fails the exact-keys arm below.
-_OURS_BEYOND_THE_UI = {"bound_defaulted", "producer_sha"}
+#: IMPORTED, NOT MIRRORED. Two engines emit this block and the shape is one decision, so the
+#: field sets live in `tests/_method_block_contract.py` with the reason each field exists.
+_UI_METHOD_FIELDS = set(contract.BLOCK_FIELDS_IN_THE_UI)
+_OURS_BEYOND_THE_UI = set(contract.BLOCK_FIELDS_BEYOND_THE_UI)
 
 #: CONTRIBUTION_RANKING producers that are not cost measures. AN EXCLUSION IS A CLAIM, so each
 #: carries its reason and the partition arm fails on any member that is in neither set.
@@ -129,19 +129,17 @@ def test_the_population_is_DERIVED_and_every_member_is_decided():
 
 
 def test_the_UIs_declared_METHOD_FIELDS_are_PARSED_not_remembered():
-    """The mirror, checked against the contract it mirrors.
+    """The declaration, checked against the consumer that gave it its field names.
 
-    Skipped only when cortex-ui is not checked out beside this repo — and the arms that use
-    `_UI_METHOD_FIELDS` still run in that case, so the mirror is exercised either way.
+    Skipped only when cortex-ui is not checked out beside this repo — and the arms that use the
+    declared field sets still run in that case, so the declaration is exercised either way.
     """
     if not _CARD_EXPORT.is_file():
-        pytest.skip(f"cortex-ui not checked out at {_CARD_EXPORT}; the mirror is used unchecked")
+        pytest.skip(f"cortex-ui not checked out at {_CARD_EXPORT}; the declaration runs unchecked")
     src = _CARD_EXPORT.read_text(encoding="utf-8")
-    m = re.search(r"export interface MethodBlock \{(.*?)^\}", src, re.S | re.M)
-    assert m, "MethodBlock is no longer declared in cardExport.ts — the shape moved"
-    parsed = set(re.findall(r"^\s*(\w+)\s*[?]?:", m.group(1), re.M))
+    parsed = set(contract.ui_block_fields(src))
     assert parsed == _UI_METHOD_FIELDS, (
-        f"cortex declares {sorted(parsed)}; this file mirrors {sorted(_UI_METHOD_FIELDS)}"
+        f"cortex declares {sorted(parsed)}; the contract declares {sorted(_UI_METHOD_FIELDS)}"
     )
 
 
@@ -160,16 +158,27 @@ def test_every_cost_ranking_emits_a_method_block_the_UI_can_READ(verb, state):
     assert isinstance(method, dict), f"{verb} emitted no method block"
     assert set(method) == _UI_METHOD_FIELDS | _OURS_BEYOND_THE_UI, sorted(method)
 
+    # THE SHARED CHECKER, run against this engine's real payload. It reports every departure at
+    # once rather than the first, and it is the same function engine-finance's seal will call —
+    # which is the only reason "one shape" is a checkable claim rather than an agreement.
+    assert contract.check_block(method) == [], contract.check_block(method)
+
+    # And the two gates the CONSUMER applies, asserted here too rather than trusted to the
+    # checker: a checker and the thing it checks sharing one author is one witness, not two.
     assert isinstance(method["formula"], str) and method["formula"].strip(), (
         "an empty formula is dropped WHOLE by readMethod — the card would say 'method not "
         "supplied' about a producer that supplied one"
     )
     assert isinstance(method["inputs"], list) and method["inputs"], f"{verb} stated no inputs"
     for entry in method["inputs"]:
-        assert set(entry) == {"name", "value"}, entry
+        assert set(entry) <= set(contract.INPUT_FIELDS), entry
+        assert set(contract.INPUT_REQUIRED) <= set(entry), entry
         # ONLY THE NAME GATES A ROW in readMethod, so a nameless input is dropped silently.
         assert isinstance(entry["name"], str) and entry["name"].strip(), entry
         assert entry["value"] is None or isinstance(entry["value"], str), entry
+        # ABSENT, NEVER NULL. lane/ca's convention: absent means dimensionless by the contract,
+        # so `"unit": None` would read as an unknown currency on a figure that is a count.
+        assert "unit" not in entry or (entry["unit"] and isinstance(entry["unit"], str)), entry
     assert "producer_sha" in method, "the attestation must be present even when it is None"
 
 
@@ -183,15 +192,24 @@ def test_the_method_block_is_JSON_SAFE(verb, state):
 
 
 @pytest.mark.parametrize("verb", BASIS)
-def test_the_bound_is_a_STRING_or_NULL_and_never_a_nested_object(verb, state):
-    """cortex runs `formatLeaf` over `bound`, which JSON.stringifies an object.
+def test_the_bound_is_a_FLOAT_or_NULL_and_never_a_string_or_an_object(verb, state):
+    """float|None, which is the RECONCILED shape and not the one this engine shipped first.
 
-    A nested `{name, value, defaulted}` would therefore appear in the card's bound cell as raw
-    JSON — not dropped, which would at least be visible, but printed as machine text in a
-    sentence-shaped slot. This arm is the only thing standing between a future edit and that.
+    Two other forms are wrong here and each was reasonable once. A nested
+    `{name, value, defaulted}` is better JSON and appears in the card's bound cell as raw
+    machine text, because `formatLeaf` JSON-stringifies an object. A SENTENCE is what 546e6be
+    shipped and it renders best of the three — and it is one engine's private shape under a field
+    name another engine also fills, which is the drift this reconciliation exists to end. So the
+    string is asserted absent too, explicitly, rather than merely not-a-dict.
+
+    A Decimal is the third: it is not JSON and would 500 the route, which the JSON arm catches
+    from the other side.
     """
-    method = _payload(state, verb)["method"]
-    assert method["bound"] is None or isinstance(method["bound"], str), method["bound"]
+    bound = _payload(state, verb)["method"]["bound"]
+    assert bound is None or isinstance(bound, float), bound
+    assert not isinstance(bound, str), (
+        f"bound={bound!r} is a string; that is the form this engine narrowed AWAY from"
+    )
 
 
 @pytest.mark.parametrize("verb", BASIS)
@@ -215,33 +233,41 @@ def test_bound_and_its_FLAG_agree_and_an_UNBOUNDED_measure_says_NOTHING(verb, st
 def test_the_BOUNDED_measure_states_the_value_AND_WHO_CHOSE_IT(state):
     """Both directions, because the defaulted flag is only meaningful if it can read False.
 
-    A block that always says "engine default" would satisfy the first half and be wrong about
-    every caller-supplied threshold — and the supplied one is the case where the reader most needs
-    to know the number was not ours.
+    A block that always reported "defaulted" would satisfy the first half and be wrong about every
+    caller-supplied threshold — and the supplied one is the case where the reader most needs to
+    know the number was not ours.
+
+    WHERE THE ATTRIBUTION LIVES CHANGED WITH THE SHAPE, and this arm changed with it rather than
+    being deleted. Under the sentence form the origin was a phrase inside `bound`; under float|None
+    the only carrier is `bound_defaulted`, so that flag now bears the whole claim — which is
+    precisely why both of its values are driven here, and why the packet says plainly that nothing
+    in the CARD shows it (`readMethod` drops the flag).
     """
     defaulted = measures.cost_supplier_concentration(state, lot=3)["method"]
     chosen_payload = measures.cost_supplier_concentration(state, lot=3, threshold=0.30)
     chosen = chosen_payload["method"]
 
     assert defaulted["bound_defaulted"] is True
-    assert str(measures.DEFAULT_CONCENTRATION_THRESHOLD) in defaulted["bound"]
-    assert "default" in defaulted["bound"]
+    assert defaulted["bound"] == float(measures.DEFAULT_CONCENTRATION_THRESHOLD)
 
     assert chosen["bound_defaulted"] is False, "a chosen bound must not read as a defaulted one"
-    # DERIVED, not typed. The engine renders a caller's 0.30 through `str()` and it comes out
-    # "0.3" — a hand-typed "0.30" reds on a float repr instead of on the claim, which is exactly
-    # what it did on this file's first run. The claim is that the bound carries the CALLER's
-    # number and NOT the engine's, so both halves of that are asserted.
-    assert chosen_payload["threshold"] in chosen["bound"], chosen["bound"]
-    assert str(measures.DEFAULT_CONCENTRATION_THRESHOLD) not in chosen["bound"], chosen["bound"]
-    # `"caller" in bound` was the first version of this line and it SURVIVED the mutation that
-    # made the origin always read "engine default, the caller stated none" — the word "caller" is
-    # in BOTH sentences, so the check matched the phrase that denies the caller chose anything.
-    # A bound whose value differs is not a bound whose ORIGIN differs, and the origin is the claim.
-    assert "stated by the caller" in chosen["bound"], chosen["bound"]
-    assert "engine default" not in chosen["bound"], chosen["bound"]
-    assert "engine default" in defaulted["bound"], defaulted["bound"]
+    # DERIVED FROM THE CALLER'S ARGUMENT, not typed. The claim is that the bound carries the
+    # CALLER's number and NOT the engine's, so both halves are asserted — a value arm that only
+    # said "equals 0.3" would pass against an engine that ignored the argument and happened to
+    # default to it.
+    assert chosen["bound"] == 0.30, chosen["bound"]
+    assert chosen["bound"] != float(measures.DEFAULT_CONCENTRATION_THRESHOLD), chosen["bound"]
     assert defaulted["bound"] != chosen["bound"]
+
+    # AND THE BOUND'S NAME SURVIVES, which is the half the narrowing could have lost silently.
+    # A bare 0.3 in a cell is the EAC-without-method ambiguity again; the shared checker asserts
+    # the three declarations of this one local — block bound, the input that names it, and the
+    # envelope's labelled threshold — cannot disagree.
+    assert contract.check_bound_agrees(
+        chosen, envelope_threshold=chosen_payload["threshold"], bound_input_name="threshold"
+    ) == [], contract.check_bound_agrees(
+        chosen, envelope_threshold=chosen_payload["threshold"], bound_input_name="threshold"
+    )
 
 
 def test_the_TOP_LEVEL_threshold_pair_SURVIVES_the_addition(state):
@@ -258,7 +284,11 @@ def test_the_TOP_LEVEL_threshold_pair_SURVIVES_the_addition(state):
     assert isinstance(payload["threshold"], str)
     assert Decimal(payload["threshold"]) == Decimal("0.30")
     assert payload["threshold_defaulted"] is False
-    assert payload["threshold"] in payload["method"]["bound"]
+    # THE SAME NUMBER IN TWO REPRESENTATIONS, compared as numbers. The envelope carries the string
+    # (its existing contract) and the block carries the float (the reconciled one), so a textual
+    # comparison would red on the representation instead of on the agreement — which is the arm
+    # this line replaced.
+    assert float(payload["threshold"]) == payload["method"]["bound"]
     assert payload["threshold_defaulted"] == payload["method"]["bound_defaulted"]
 
 
@@ -292,6 +322,47 @@ def test_the_stated_DENOMINATOR_is_the_one_the_rows_add_up_to(verb, denominator,
     assert abs(total - summed) < Decimal("0.01"), f"{verb}: stated {total}, rows sum to {summed}"
 
 
+@pytest.mark.parametrize(
+    "verb,denominator,rowsum",
+    [
+        ("cost_lot_breakdown", "lot total", "contribution"),
+        ("cost_labor_composition", "lot direct labor", "contribution"),
+        ("cost_category_breakdown", "lot total", "contribution"),
+        ("cost_supplier_concentration", "total purchased value", "contribution"),
+    ],
+)
+def test_the_MONEY_input_carries_its_unit_and_the_COUNTS_carry_none(
+    verb, denominator, rowsum, state
+):
+    """The unit is only worth having where it DISTINGUISHES, so both halves are asserted.
+
+    THIS ARM EXISTS BECAUSE A MUTATION SURVIVED WITHOUT IT. Striking `VALUE_UNIT` off the "lot
+    total" call site killed nothing: every other arm checked the unit's FORM when present and
+    nothing checked its PRESENCE, so the one field the reconciliation added could be silently
+    dropped from the one input that needs it. A shape sealed and a claim unsealed.
+
+    The claim is that a card showing "31221216" beside "5" can tell dollars from a count. So the
+    denominator — money in all four payloads — must state the unit, and every other input must
+    OMIT the key: `"unit": None` on a count would read as an unknown currency, and a stated unit
+    on a count would be a false dimension. Exactly one unit-bearing input per payload, and it is
+    the one the formula divides by.
+    """
+    inputs = _payload(state, verb)["method"]["inputs"]
+    by_name = {i["name"]: i for i in inputs}
+    assert denominator in by_name, f"{verb} does not state {denominator!r} among its inputs"
+
+    assert by_name[denominator].get("unit") == measures.VALUE_UNIT, (
+        f"{verb}'s {denominator!r} is money and states unit="
+        f"{by_name[denominator].get('unit')!r}"
+    )
+    united = sorted(n for n, i in by_name.items() if "unit" in i)
+    assert united == [denominator], (
+        f"{verb} states a unit on {united}; only the money denominator has a dimension here. "
+        "Counts and identifiers are dimensionless BY OMISSION, which is the convention adopted "
+        "unchanged from the other engine that emits this block"
+    )
+
+
 def test_the_formula_names_WHAT_THE_VERDICT_IS_ABOUT(state):
     """cost_category_breakdown's `favourable` is per-unit COST movement, not share movement.
 
@@ -321,15 +392,30 @@ def test_the_helper_REFUSES_a_HALF_STATED_bound():
     everything would satisfy both raises and ship no method at all.
     """
     with pytest.raises(ValueError, match="disagree"):
-        measures._method(formula="f", inputs=[], bound="threshold = 0.25")
+        measures._method(formula="f", inputs=[], bound=0.25)
     with pytest.raises(ValueError, match="disagree"):
         measures._method(formula="f", inputs=[], bound_defaulted=True)
     with pytest.raises(ValueError, match="dropped"):
-        measures._method(formula="   ", inputs=[("a", 1)])
+        measures._method(formula="   ", inputs=[measures._inp("a", 1)])
+    # THE THIRD REFUSAL CAME WITH THE RECONCILIATION: a Decimal or a string bound means a call
+    # site was left behind by the narrowing, which is a silent wrong shape rather than a crash.
+    with pytest.raises(ValueError, match="float"):
+        measures._method(formula="f", inputs=[], bound=Decimal("0.25"), bound_defaulted=True)
+    with pytest.raises(ValueError, match="float"):
+        measures._method(formula="f", inputs=[], bound="threshold = 0.25", bound_defaulted=True)
 
-    ok = measures._method(formula="f", inputs=[("a", Decimal("1.5"))],
-                          bound="threshold = 0.25", bound_defaulted=True)
-    assert ok["inputs"] == [{"name": "a", "value": "1.5"}], "Decimal must not reach the wire"
+    ok = measures._method(formula="f", inputs=[measures._inp("a", Decimal("1.5"), "USD")],
+                          bound=0.25, bound_defaulted=True)
+    assert ok["inputs"] == [{"name": "a", "value": "1.5", "unit": "USD"}], (
+        "Decimal must not reach the wire, and a stated unit must"
+    )
+    # AND THE OMISSION IS THE STATEMENT. `_inp` with no unit must produce no unit KEY — a helper
+    # that wrote `"unit": None` would satisfy every other arm in this file and break the one
+    # convention this reconciliation adopted from the other engine unchanged.
+    assert measures._inp("a", 1) == {"name": "a", "value": "1"}
+    assert "unit" not in measures._inp("a", 1)
+    assert "unit" not in measures._inp("a", 1, None)
+    assert "unit" not in measures._inp("a", 1, "")
 
 
 def test_producer_sha_is_the_BAKED_one_and_None_when_UNATTESTED(monkeypatch, state):
@@ -417,5 +503,6 @@ def test_the_projected_component_is_what_the_UIs_export_reader_looks_AT():
         "X", None)
     assert got["method"]["formula"] == payload["method"]["formula"]
     assert got["method"]["bound"] == payload["method"]["bound"]
-    # The bound survives on BOTH wires, and they must still agree after the hop.
-    assert got["threshold"] in got["method"]["bound"]
+    # The bound survives on BOTH wires, and they must still agree after the hop — as numbers,
+    # because the two wires carry two representations of one local by design.
+    assert float(got["threshold"]) == got["method"]["bound"]
