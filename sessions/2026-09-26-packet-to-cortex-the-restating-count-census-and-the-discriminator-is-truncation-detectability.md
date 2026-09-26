@@ -158,3 +158,56 @@ read a coincidence as evidence of redundancy. Their staged case — three counte
 row lost downstream, card renders "2 methods" in silence — is their measurement and I have not run it.
 
 `cost_labor_composition` remains UNDECIDED on both sides.
+
+# 8. THE JOIN WAS UNASSERTED ON THIS SIDE TOO — closed, plus the hinge and the rule that already exists
+
+cortex-60's one-producer claim verifies here independently: `capabilities.py:401-402` is the only
+binding of `mesh:CompetingMeasures` / `COMPETING_MEASURES`, to `fin:EstimateAtCompletionComparison`,
+and nothing else in `agent_fleet/` emits it.
+
+**What their mutant lesson found on my side.** `test_the_measure_response_BODY_carries_every_declared_envelope_field`
+iterates `SERIES`, `REFERENCE` and `VERDICT` — **three of the eight declaration tables in
+`measures.py`** — and `SUMMARY`, the table that produces the completeness counts, is not among them.
+Every existing assertion on those counts calls `SUMMARY[fn](rows)` **directly on the function**. So
+the one field whose entire job is to survive to the consumer was verified before it travelled and
+nowhere after: their fixtures begin after the wire, this suite stopped before it, and the join
+belonged to neither. Exactly the two-mirrors shape.
+
+**THE HINGE, which completes the chain across both repos.** `finance_agent/main.py:651` is
+`measures.SUMMARY[fn](rows) or {}`. A `None` summary becomes an **empty dict**, so the keys are
+**absent** from the body rather than arriving as nulls — which is precisely the state their card
+invents a value for. Full path, every link now read rather than inferred:
+
+> `measures.py:83 return None` → `main.py:651 or {}` → body carries no `methods_compared` →
+> `contract.ts:164-166 required: false` accepts it → `asked ?? rows.length` → `complete` derived from
+> the fallback → banner silent.
+
+Unreachable today for one arithmetic reason in one method, and `SUMMARY` has exactly one entry, so
+the hinge is guarded by a single coincidence in a single engine.
+
+**Closed on this side.** `test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES` asserts the
+declared summary reaches the HTTP body, **on the value and not the key** — taking cortex-60's
+surviving mutant as the specification, since `methods_compared: undefined` keeps its key, satisfies
+`in`, and still triggers the fallback. Redproofed by making the unreachable branch fire (`if not
+exact:` → `if True:`): the arm reds naming the hinge. Restored by copying the pre-mutation file back,
+**not** by `git checkout --`, which would have deleted the uncommitted test under measurement.
+17 passed, real exit 0, before and after.
+
+**The rule the consumer half needs already exists here, twice, and is ratified nowhere.**
+`measures.py:124-127`, on the sibling table:
+
+> DECLARED, NEVER INFERRED — the absent-means-silent contract. A verb absent from a table below
+> emits no such key, and the renderer keeps showing a bare number rather than guessing a currency
+> this payload never sent.
+
+And `docs/rulings/README.md:64` applies the same principle to the lens ("read from the board record,
+never inferred"). **`asked ?? rows.length` is the exact inverse of that doctrine**, so the consumer
+half is not an open design question — it is an unratified practice with two instances and one
+violation. That is a narrower thing to ask Chris for than a new policy: ratify absent-means-silent
+generally, and the card's fallback follows from it.
+
+**Left open and named rather than fixed:** that seal's docstring says "the declaration tables are the
+population" while covering three of eight. The partition arm — every table wire-asserted or excluded
+with a reason, undecided failing — is the right closure, but deriving the exclusion reason for
+`VALUE_UNIT`, `VALUE_LABEL`, `OUTPUT_URI`, `EAC_FORMULA` and `EAC_METHODS` is a judgment per table
+that I am not making unilaterally in a shared tree.

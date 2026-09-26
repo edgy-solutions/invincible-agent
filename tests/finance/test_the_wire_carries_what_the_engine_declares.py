@@ -94,6 +94,55 @@ def test_series_entries_keep_their_unit_and_dashed_on_the_wire():
     )
 
 
+def test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES():
+    """SEAL 1 covered SERIES, REFERENCE and VERDICT and NOT `SUMMARY` -- the table that
+    produces the completeness counts. Every existing assertion on those counts calls
+    `SUMMARY[fn](rows)` directly, so the one field whose whole job is to SURVIVE to the
+    consumer was verified before it travelled and nowhere after. cortex's fixtures start after
+    the wire and this suite stopped before it, which is a join asserted on neither side.
+
+    ASSERTED ON THE VALUE, NOT THE KEY, and that distinction is measured rather than assumed:
+    cortex-60 had a mutant survive the key-presence form of this arm, because a member written
+    `methods_compared: undefined` keeps its key, satisfies `in`, and still sends their card
+    down `?? rows.length`. Presence of a key is not availability of a figure.
+
+    `main.py:651` is the hinge this arm guards: `SUMMARY[fn](rows) or {}` turns a None summary
+    into an ABSENT key rather than a null one, which is precisely the state a consumer then
+    invents a value for. The counts cannot currently be absent -- see
+    test_eac_comparison.test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY -- but nothing between the
+    two repos asserted that, and it holds for one arithmetic reason in one method.
+    """
+    for fn, summary_of in measures.SUMMARY.items():
+        body = _envelope(fn)
+        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+        expected = summary_of(rows)
+        assert expected is not None, (
+            f"{fn}: the summary returned None, so `or {{}}` at main.py:651 dropped every "
+            f"envelope key and a consumer reading the absence will invent them"
+        )
+        for key, value in expected.items():
+            assert key in body, f"{fn}: declared summary field `{key}` never reached the wire"
+            if value is None:
+                continue
+            assert body[key] == value, (
+                f"{fn}: `{key}` on the wire is {body[key]!r}, the engine computed {value!r}"
+            )
+            assert isinstance(body[key], (int, float, str, bool)), (
+                f"{fn}: `{key}` arrived as {type(body[key]).__name__}, not a usable figure"
+            )
+
+    # THE COMPLETENESS COUNTS BY NAME, because the loop above would still pass if the table
+    # stopped declaring them. These three are the truncation detector: a consumer that counts
+    # its own rows instead cannot tell a full set from a truncated one.
+    eac = _envelope("fin_eac_comparison")
+    for key, kind in (("methods_compared", int), ("methods_answered", int),
+                      ("all_methods_answered", bool)):
+        assert isinstance(eac.get(key), kind), (
+            f"`{key}` is the completeness detector and arrived as {eac.get(key)!r}; absent or "
+            f"untyped, the card falls back to counting the rows it was given"
+        )
+
+
 # -- SEAL 2 -- the seam that actually broke ---------------------------------------------
 
 def _projector_passthrough() -> dict:
