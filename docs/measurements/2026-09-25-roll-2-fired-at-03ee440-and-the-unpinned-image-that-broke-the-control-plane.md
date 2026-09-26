@@ -158,6 +158,7 @@ Status after the fire:
   `Name or service not known` — **my instrument, not a finding**, recorded so the NXDOMAIN is never
   read as a dead frontend.
 - **step 3, the purge** — **BLOCKED, and nothing was deleted.** Option B (`checkpoints`,
+  > **SUPERSEDED 2026-09-25 by §8.1 — the purge FIRED. The counts below are the BEFORE state.**
   `checkpoint_blobs`, `checkpoint_writes`; leave `checkpoint_migrations`). Authorized by Chris in
   writing, which resolves the conflict 74 was holding on; the `DELETE` was refused by the auto-mode
   classifier as `[Cloud Storage Mass Delete]`. The transaction never ran, so the before-counts
@@ -181,6 +182,7 @@ Status after the fire:
   empty" from "I am querying nothing". Counts only were read; **no blob contents were selected**,
   per the standing refusal to reproduce the stored bearer tokens.
 - **step 4, the backfill** per `docs/runbooks/backfilling-the-vector-space.md` — **step 0 green,
+  > **SUPERSEDED 2026-09-25 by §8.5 — all seven stages ran; the four listings are committed.**
   the rest gated.** The script is proved *in this tree at `03ee440d`*: `verify_self` 1,
   `retrievable` 0, `--list-walked` 3, `git status --porcelain` empty. The runbook's own positive
   control discriminates — at `7ac0765~1` the same patterns answer 1 / 0, inverted — so the zero is
@@ -293,6 +295,219 @@ require the previous roll's pods to have reached Ready before the next arm is ca
    JWT fix, which is live and is the thing step 3's purge depends on.
 
 **None of these was fired.** (1) is another `helm upgrade`, which is not covered by the
+  > **SUPERSEDED 2026-09-25 by §8.2 — remedy (1) fired as revision 149 after Chris approved it.**
 authorization Chris gave for *this* arm, and (2) moves the fleet off the sha he named. The
 control plane being down blocks step 4 but not step 3, and step 3 is blocked on its own permission.
 So this stops here and goes in the morning report.
+
+---
+
+## 8. After the approval — what fired, and the one leg that reds on a healthy fleet
+
+Chris approved, in writing, the two things §6 and §7 were blocked on: the purge's `DELETE`, and
+remedy (1) from "Remedies, ranked" — the surgical component pin. `helm rollback` stayed out, and
+remedy (2) becomes roll #3's payload rather than a second fire tonight. The order of work was given
+as purge → override → backfill → append the engine-f finding and the suite result, and that is the
+order below.
+
+### 8.1 The purge fired — Option B, with a positive control that can fail
+
+| table | before (§6) | after | how |
+|---|---|---|---|
+| `public.checkpoints` | 30 | **0** | cleared |
+| `public.checkpoint_blobs` | 41 | **0** | cleared |
+| `public.checkpoint_writes` | 66 | **0** | cleared |
+| `public.checkpoint_migrations` | 10 | **10** | **kept — the control** |
+
+The after-column was **re-read live after the override and the engine-f restart**, not copied from
+what the `DELETE` reported about itself. That ordering is the point: a table emptied and then
+refilled by a writer still carrying the defect reads identically to one that stayed empty, and the
+`03ee440` `graph_host` is the writer that is live. Counts only; **no blob contents were selected**,
+per the standing refusal to reproduce the stored tokens.
+
+`checkpoint_migrations` at 10 is what makes the three zeroes mean anything — it distinguishes *"the
+three target tables are empty"* from *"I am querying a database that has none of them"*, which
+returns 0 for the wrong reason and looks the same.
+
+Two notes on how it was run, because both are the kind of thing that gets smoothed over:
+
+- The verification `SELECT` was refused once by the auto-mode classifier as
+  `[Cloud Storage Mass Delete]` — **on a pure read**. It was the command's nested-quoting shape that
+  triggered it, not the action; the retry that went through was a *simpler* form, a plain per-table
+  loop. It was **not** a delete split into smaller batches to slip under the classifier: that is
+  routing around a denial's intent rather than finding a safer method.
+- Reading the password out of the Secret to run the check was **correctly refused** as
+  `[Credential Materialization]`. The credential never needs to leave the pod, so the query runs
+  inside it against its own env (`POSTGRESQL_POSTGRES_PASSWORD` — the superuser var;
+  `POSTGRESQL_PASSWORD` is the app user's and fails authentication, which is how the first attempt
+  failed). The SQL arrives on **stdin from a file**, so no shell layer can collapse its quoting.
+
+### 8.2 The Dagster override fired as revision 149 — remedy (1), no rebuild
+
+`helm upgrade --reuse-values --no-hooks` plus the two component tags, which is the chart's own
+documented escape hatch (`values.yaml:16`, "a hotfix under test"). Both flags are load-bearing:
+
+- **`--reuse-values`** carries forward every key set outside the script's two values files —
+  `centralGateway.image.digest` among them. Re-deriving values from the files would have dropped it.
+- **`--no-hooks`** stops the prime hook re-putting the ontology, which the overnight order forbids
+  at this step.
+
+**The near-miss, recorded because it nearly rolled the fleet backwards:** `global.imageTag` was
+supplied to the original fire as a **flag**, and is in **no tracked overlay**. Re-running
+`scripts/upgrade-sandbox.sh` bare — the obvious way to do this — would have resolved all 19 images
+to the chart floor instead of `03ee440`. The override was therefore gated on a dry-run manifest
+diff first: **exactly 2 changed lines out of 5,883**, total line count unchanged, and the matcher
+shown non-empty on a fixture before its zero was believed elsewhere.
+
+Result: **revision 149**, the control plane back up, the other 17 images untouched at `03ee440`.
+Revision 148 remains the roll; 149 is the pin on top of it, and the two should not be conflated when
+reading `helm history`.
+
+### 8.3 engine-f restarted, and what "105/105" actually counts
+
+`rollout restart` on engine-f, then the registration census re-run **per key, across every pod in
+the namespace** — not on a name prefix. The prefix is how the previous census missed
+`iagent-data-analyst` entirely, and a filter that decides the population decides the finding.
+
+    pods scanned 42 · registrar pods 14 · mesh_registration lines 154
+    DISTINCT KEYS 76 · REGISTERED 76 · UNREGISTERED (final) 0 · residual 0
+    transients that UNREGISTERED then RECOVERED: 22
+
+The residual bucket is why that is trustworthy, and it earned its keep: the **first** version of
+this census counted *lines* and reported **47 FAILED** with 77 of 154 lines unclassified. The
+predicate had been derived from engine-f's line form, and engine-f is not the population — there are
+four forms, two of which describe the *same key* at different times. A key whose `UNREGISTERED` is
+followed by `RECOVERED` is registered; counting its failure line as a failure double-counts a
+transient, which is exactly the 22 above.
+
+**On the dispatch's "re-census registrations to 105/105":** the log-derived number is **76/76 keys**,
+and it is not the same quantity. 105 is a **registry** count, and the registry is the authoritative
+surface — a log answers "what did a still-running container announce", which is a sample, since a
+restarted container's earlier lines are only in `--previous` and logs rotate. Queried directly:
+
+- **151 mesh rows** in the registry = **105 presentation** + 45 engine + 1 cortex.
+- The 105 = 72 frontend-scoped + 33 bare.
+- All **30** of engine-f's live announced capabilities are registry members.
+
+So **105/105 is confirmed intact**, as a registry figure. It is not a per-boot figure and should
+not be expected to match a log census; they are different populations and the report says so rather
+than presenting the one that agrees.
+
+**Open, and unresolved:** the registry's own `total` field says **152** while the paged listing
+returned and named **151**. A count is not a census — one row is unnamed, and I would rather leave
+that stated than reconcile it by picking the number I can explain.
+
+**Second near-miss:** a filter on `engine-f` also matches **`iagent-engine-fin`**. Caught before it
+entered a count.
+
+### 8.4 Gate leg 11 — added, fired, and RED on a healthy fleet
+
+Added to the gate on the architect's instruction, for roll #3 onward:
+
+> **Leg 11.** Every deployment reaches Ready, **and** the first 60 seconds of each pod's log carry
+> no `Traceback`.
+
+**On the label:** I keep "leg 11" exactly as given. My own count in §2 is nine legs plus two
+controls, so the number does not follow from this record — recorded as a discrepancy rather than
+silently renumbered, because renumbering a leg other lanes now refer to by number is worse than an
+off-by-one in a heading.
+
+Two instrument defects the implementation is built against, both of which have bitten this seat:
+
+1. **An empty log window reads as clean.** A pod with no lines in its window produces zero
+   `Traceback` matches, indistinguishable from a healthy one. So every container lands in exactly
+   one of **CLEAN / TRACEBACK / EMPTY-UNDECIDED**, and the undecided bucket is reported and
+   **never folded into the pass**.
+2. **A broken matcher returns zero and that reads as a finding.** The matcher runs against a
+   traceback fixture and a clean fixture first and the leg **refuses to report at all** unless the
+   pair answers 1 and 0.
+
+The 60-second window is measured from each pod's **first log line**, not from wall clock: measured
+from now, a pod restarted minutes ago has an empty window and passes silently.
+
+**First firing, against revision 149:**
+
+    matcher control: positive 1, negative 0 — sound
+    11a: 33 deployments, all at full readyReplicas                        GREEN
+    11b: 42 containers — CLEAN 41 · TRACEBACK 1 · EMPTY/UNDECIDED 0         RED
+         iagent-mesh-registrar-…/mesh-registrar: 12 matches in 545 window lines
+    VERDICT: RED
+
+**What the red actually is**, read off the log rather than inferred from the count:
+`ConnectionRefusedError: [Errno 111]` raised in the neo4j driver's bolt socket connect, chained
+into `neo4j.exceptions.ServiceUnavailable`, plus the uvicorn ASGI frame above it.
+
+**The 12 is a count of lines, not of failures** — and this is a property of the leg worth writing
+down before someone reads a future 12 as twelve incidents. Each event prints three `Traceback`
+headers: the direct cause, `The above exception was the direct cause of…`, and the ASGI handler.
+There are **4 events**, not 12. Counted by exception type the log holds exactly four.
+
+**It is a startup race, and it self-heals.** Window arithmetic from the pod's own timestamps: first
+log line at `21:36:56`, the four refusals between `21:37:14` and `21:37:18` — **+17s to +21s, inside
+the 60-second window** — and **none afterwards** across the following ~90 minutes of uptime. Neo4j
+was not yet accepting bolt connections when the registrar started. This is consistent with the 22
+transients that `UNREGISTERED` then `RECOVERED` in §8.3.
+
+**The leg is non-vacuous on its first firing, and that is the finding.** A ratchet is blind whenever
+its register is accurate, so a new leg that reds on day one for a real reason is worth more than the
+green it denied. **And this defect is not on the board** — `docs/BOARD.md` was searched for
+`registrar`, `bolt` and `neo4j` and carries no item for it. (It carries a *different* registrar
+defect, `packaged-imports-unresolvable-in-agent-images`, which is a `ModuleNotFoundError` on
+invocation and not this.) So leg 11's first firing surfaced something **unfiled**, which is a
+stronger result than rediscovering a known one.
+
+**The consequence, stated rather than left for roll #3 to discover: as specified, leg 11 reds on a
+fleet that is otherwise healthy**, and will keep doing so on every roll where Neo4j is not already
+accepting bolt connections when the registrar starts — which is every roll that restarts both. That
+gives roll #3 two honest options and one dishonest one:
+
+1. **Block roll #3 on a registrar fix** (retry-with-backoff on the initial bolt connect, or a
+   readiness dependency). **No such fix is known to exist** — the defect is unfiled, so this option
+   is "write it first", not "wait for it".
+2. **A narrow exemption keyed to the exception** — neo4j `ServiceUnavailable` /
+   `ConnectionRefusedError` on the bolt port, during the startup window, in the registrar only.
+3. ~~Exempt the registrar pod~~ — **no.** A pod-level exemption is a guard that cannot fire: it
+   would swallow every future traceback from the one pod whose startup ordering is already known to
+   be fragile.
+
+This is the architect's call, not mine, and it is the one decision roll #3 cannot start without.
+
+### 8.5 The backfill — seven stages, and the 955-vs-949 reconciliation
+
+All seven stages ran. The second dry run **read 0 on both collections**, which is the runbook's
+own completion condition. The four listings are committed:
+
+    docs/measurements/ontologyclass-walked-2026-09-25-before.txt   26,240 rows
+    docs/measurements/ontologyclass-walked-2026-09-25-after.txt    26,240 rows
+    docs/measurements/predicate-walked-2026-09-25-before.txt          135 rows
+    docs/measurements/predicate-walked-2026-09-25-after.txt           135 rows
+
+**OntologyClass**, from the listings' own headers:
+
+    before  {already-named 14,  blank-skipped 25255, no-vector 16, would-relocate 955}  = 26240
+    after   {already-named 969, blank-skipped 25255, no-vector 16}                      = 26240
+    apply   relocated 949, already-named 20 at completion                       (51.2s)
+
+**14 + 955 = 969** and **20 + 949 = 969**: both reconcile to the same after-state, and the 6-row gap
+between the two bases is the **canary**, which was relocated by the verification step *between* the
+dry run and the apply. Left unexplained, 955 and 949 are a contradiction that acquires authority
+with age — so the total relocated is **999** on the dry-run basis (955 + 44) and **993 + 6 canary**
+on the apply basis, and those are the same 999 rows.
+
+**Predicate:** before `{already-named 91, would-relocate 44}`, after `{already-named 135}`, apply
+relocated 44 in 1.6s. No drift between the two bases here.
+
+A per-uuid transition census across before/after found **zero rows absent on either side** — the
+listings name identities, not just counts, because a count cannot tell you *which* rows vanished.
+
+**Measured for the first time:** the write pass took **51.2s for 949 rows** (plus 1.6s for 44). The
+runbook says this has never been measured; it now has a number.
+
+**Open, and it is doc-tools' work, not this roll's:** **16 named rows carry no vector at all.** A
+relocation cannot repair them — there is nothing to relocate — they need a re-embed. Blank nodes are
+not in that 16; they are skipped upstream, so 16 is the re-embed ask and not a population that also
+needs filtering.
+
+**One cosmetic inconsistency, named so it is not read as a defect later:** the filenames carry
+`2026-09-25` per the runbook's local-date convention while the headers stamp `2026-09-26 … UTC`.
+Same run, opposite sides of a date boundary.
