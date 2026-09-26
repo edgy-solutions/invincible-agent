@@ -556,8 +556,21 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 # the arm below CHECKS the reason rather than trusting it.
 _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
 
-# The tables an opaque `**` spread may draw from. SUMMARY's members are asserted by
-# test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES.
+# The tables an opaque `**` spread may draw from. SUMMARY's members are registered in
+# _SUMMARY_MEMBERS below and asserted in BOTH DIRECTIONS by
+# test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree.
+#
+# THAT DELEGATION USED TO NAME test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES, and
+# cortex-60's lesson is what broke it: a prediction written into a comment is a mutant nobody
+# has run yet, and if a sentence names a shape precisely enough to argue it is safe, it is
+# precise enough to fire. Fired 2026-09-26 -- the summary producer emitting a key lifted from
+# another declaration table (`VALUE_LABEL["fin_burn_rate"]`) was QUIET, and emitting a key it
+# invented outright was QUIET, while the control (dropping a completeness count) went red at
+# two arms. The named arm computes `expected = summary_of(rows)` and compares the wire to
+# THAT: both halves of the comparison come from one producer call, so it asserts the VALUES of
+# whatever members the producer names and can never refuse a member it did not expect. The
+# reach arm then subtracted the same call. An exclusion computed from its own subject widens
+# when its subject does.
 #
 # BY CONTENT, NOT BY NAME. This was a text marker, `"measures.SUMMARY" in src`, and cortex-60
 # flagged the boundary while fixing the same class on their side: an accounted spread is
@@ -574,6 +587,197 @@ _DECLARED_TABLES = frozenset(
     n for n in dir(measures) if n.isupper() and isinstance(getattr(measures, n), dict)
 )
 
+# What SUMMARY's producers emit, written down per verb. This is the whole content of the
+# allowance above: the envelope merges this table opaquely, so the only thing standing between
+# a producer and the wire is a register that does not move when the producer does.
+_SUMMARY_MEMBERS: dict[str, frozenset[str]] = {
+    "fin_eac_comparison": frozenset(
+        {
+            "methods_compared",
+            "methods_answered",
+            "all_methods_answered",
+            "spread_exact",
+            "spread",
+            "spread_percent_of_bac",
+            "lowest_eac",
+            "highest_eac",
+            "lowest_exact",
+            "highest_exact",
+            "lowest_value",
+            "highest_value",
+            "reference_value",
+        }
+    ),
+}
+
+
+def _rows_for(fn: str):
+    return getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+
+
+def _summary_register_disagreements(producers, register, rows_for) -> list[str]:
+    """Every way the register and the producers can disagree, as complaints rather than as an
+    assertion -- so the arm that uses it and the arm that CONTROLS it drive the same code.
+
+    `or {}` mirrors main.py: a None summary contributes no members, which must read as every
+    registered member having stopped travelling.
+    """
+    out: list[str] = []
+    for fn in sorted(set(register) - set(producers)):
+        out.append(
+            f"{fn}: the register holds members for it and measures.SUMMARY declares no summary "
+            f"for it, so nothing merges them onto the wire"
+        )
+    for fn in sorted(set(producers) - set(register)):
+        out.append(
+            f"{fn}: a summary is merged into the /measure envelope for it and the register holds "
+            f"nothing, so every key it emits reaches the wire unasserted"
+        )
+    for fn in sorted(set(producers) & set(register)):
+        produced = set(producers[fn](rows_for(fn)) or {})
+        for key in sorted(produced - register[fn]):
+            out.append(
+                f"{fn}: emits {key!r}, which the register does not hold -- it is merged by an "
+                f"opaque `**` spread, so it reaches the wire with nothing asserting where its "
+                f"content came from. Add it and say what declares it; do NOT widen the register "
+                f"to whatever the producer happens to emit, which is the comparison this exists "
+                f"to break."
+            )
+        for key in sorted(register[fn] - produced):
+            out.append(
+                f"{fn}: the register holds {key!r} and the summary no longer emits it, so that "
+                f"field stopped reaching the wire. The typed-values arm cannot see this: it "
+                f"iterates the producer's own keys."
+            )
+    return out
+
+
+def test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree():
+    """A NUMBER CANNOT REFUSE ITS OWN RE-STATEMENT; A NAME CAN. That is cortex-60's line, and
+    this arm is what it buys: the allowance above waves SUMMARY's content onto the wire, and
+    until this existed nothing in the file could say what that content was supposed to BE.
+    Both arms that touched it computed the member set by CALLING the producer, which is the
+    seventh kind on my own list of guards that cannot fire -- both halves of the comparison
+    share an upstream.
+
+    Asserted in BOTH DIRECTIONS, and each direction catches a different change:
+
+    * a member the producer emits and the register does not know -> a key reached the wire
+      whose source no arm in this file asserts. Measured: a producer emitting
+      `VALUE_LABEL["fin_burn_rate"]` and a producer emitting an invented literal were BOTH
+      quiet before this arm.
+    * a member the register holds and the producer no longer emits -> the field stopped
+      travelling. The typed-values arm is blind to this by construction, because it iterates
+      the producer's own keys.
+    * a verb gaining or losing a summary at all -> the key sets must match, or a new verb's
+      summary would merge onto the wire with nothing written down for it.
+
+    The register is CONTENT, not shape, so it is spelled out rather than derived. Deriving it
+    from `summary_of(rows)` would reproduce exactly the defect it exists to close.
+    """
+    assert not _summary_register_disagreements(measures.SUMMARY, _SUMMARY_MEMBERS, _rows_for), (
+        "the summary register and the producer disagree:\n  "
+        + "\n  ".join(
+            _summary_register_disagreements(measures.SUMMARY, _SUMMARY_MEMBERS, _rows_for)
+        )
+    )
+
+
+# The doctored producers the control arm drives the comparison with. A fake summary needs no
+# rows, so each ignores its argument -- the point is the member SET, and doctoring measures.py
+# to exercise this would put the subject and the instrument in the same file.
+_REGISTER_MUST_REPORT = (
+    ("a producer emitting a key the register does not hold",
+     {"fin_x": lambda _r: {"kept": 1, "smuggled": 2}}, {"fin_x": frozenset({"kept"})},
+     "smuggled"),
+    ("a producer that stopped emitting a registered key",
+     {"fin_x": lambda _r: {"kept": 1}}, {"fin_x": frozenset({"kept", "dropped"})},
+     "dropped"),
+    ("a verb whose summary is merged with nothing written down for it",
+     {"fin_x": lambda _r: {"kept": 1}, "fin_y": lambda _r: {"also": 2}},
+     {"fin_x": frozenset({"kept"})}, "fin_y"),
+    ("a registered verb measures.py no longer declares a summary for",
+     {"fin_x": lambda _r: {"kept": 1}},
+     {"fin_x": frozenset({"kept"}), "fin_gone": frozenset({"kept"})}, "fin_gone"),
+    ("a producer returning None, which `or {}` turns into an empty member set",
+     {"fin_x": lambda _r: None}, {"fin_x": frozenset({"kept"})}, "kept"),
+)
+
+
+def test_the_SUMMARY_REGISTER_COMPARISON_can_actually_REPORT():
+    """THE CONTROL FOR THE ARM ABOVE, and it exists because that arm's whole content is a
+    comparison the real tree satisfies -- so on this tree it is green whether it compares
+    anything or not. Both defects it was written to close (a producer emitting another
+    declaration table's content, a producer inventing a key) were QUIET before it existed, and
+    a green arm is not evidence that they are covered now.
+
+    Five doctored producers, each with the disagreement it must be able to name. The last one
+    is the shape the envelope actually depends on: `SUMMARY[fn](rows) or {}` turns a None
+    summary into an ABSENT key rather than a null one, so a producer that starts returning None
+    must read as every registered member having stopped travelling, not as a clean pass.
+    """
+    for label, producers, register, fragment in _REGISTER_MUST_REPORT:
+        found = _summary_register_disagreements(producers, register, lambda _fn: None)
+        assert found, f"{label}: the comparison reported nothing"
+        assert any(fragment in c for c in found), (
+            f"{label}: the comparison reported {found}, and none of it names {fragment!r} -- "
+            f"a complaint that does not name its subject sends the next reader to the wrong "
+            f"half of the pair."
+        )
+
+
+def test_the_SUMMARY_REGISTER_is_SPELLED_OUT_and_not_DERIVED():
+    """THE ONE THING THE MUTATION PASS CANNOT REACH. The register closes the leak only while
+    it is written down: replace those literals with anything computed from `summary_of(rows)`
+    and the comparison becomes a call against itself again, which is exactly the state that let
+    a producer put another table's content on the wire with every arm green. That edit looks
+    like a tidy-up -- the same shape of change as every other one in this file's history that
+    turned out to matter -- and no mutant of the register's CONTENT can object to it, because a
+    derived register agrees with the producer by construction.
+
+    So the shape is asserted from the source: every value in the register must be a set of
+    string LITERALS. Read from the file rather than from the imported object, because by the
+    time the object exists a comprehension has already produced a perfectly ordinary frozenset.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    assigned = [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AnnAssign)
+        and isinstance(n.target, ast.Name)
+        and n.target.id == "_SUMMARY_MEMBERS"
+    ]
+    assert len(assigned) == 1, (
+        f"_SUMMARY_MEMBERS is assigned {len(assigned)} times in this file, and this arm reads "
+        f"the first -- a second assignment would be invisible to it"
+    )
+    value = assigned[0]
+    assert isinstance(value, ast.Dict) and value.keys and all(
+        isinstance(k, ast.Constant) for k in value.keys
+    ), (
+        f"_SUMMARY_MEMBERS is written as {type(value).__name__} rather than a non-empty dict "
+        f"literal with literal verb names. A computed register cannot refuse a producer."
+    )
+    for k, v in zip(value.keys, value.values):
+        leaves = [
+            n
+            for n in ast.walk(v)
+            if not isinstance(
+                n, (ast.Call, ast.Name, ast.Load, ast.Set, ast.Constant, ast.Tuple, ast.List)
+            )
+        ]
+        assert not leaves, (
+            f"the register entry for {k.value!r} contains "
+            f"{sorted({type(n).__name__ for n in leaves})} -- it must be a set of string literals "
+            f"and nothing else. A comprehension here agrees with whatever the producer emits, "
+            f"which is the defect this register exists to close: measured 2026-09-26, a summary "
+            f"emitting `VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
+        )
+        strings = [n for n in ast.walk(v) if isinstance(n, ast.Constant)]
+        assert strings and all(isinstance(n.value, str) for n in strings), (
+            f"the register entry for {k.value!r} holds non-string or no constants"
+        )
+
 
 def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
     """THE DIRECTION TEST'S OWN CONCLUSION, ACTED ON. Unwiring each of the seven travelling
@@ -584,9 +788,16 @@ def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
     Iterating the TABLE is what makes an unwiring red, because the two derivation directions
     have opposite blind spots: an arm over the declaration reds when the builder stops reading
     it and is blind to a table the builder reads that measures.py never declared; an arm over
-    the builder is total on contents and blind to unwiring. This is the cheap half of that pair,
-    and after it the ratchet covers nothing alone -- which is the point at which a ratchet is
-    honest rather than load-bearing.
+    the builder is total on contents and blind to unwiring. This is the cheap half of that pair.
+
+    THE SENTENCE THAT USED TO END THIS DOCSTRING IS WITHDRAWN -- "after it the ratchet covers
+    nothing alone, which is the point at which a ratchet is honest rather than load-bearing".
+    It was the same claim the ratchet's own docstring made, measured with the same single-edit
+    mutants, and when that claim was re-measured with a two-edit mutant and struck at the
+    source, it survived HERE. A correction has as many homes as the claim had. Removing a wired
+    element outright while its declaration-side arm is disabled reds at the ratchet ALONE, so
+    the ratchet is load-bearing and this arm does not retire it; see its docstring for the
+    mutant that establishes the boundary.
     """
     for table, key in (("OUTPUT_URI", "output_uri"), ("VALUE_LABEL", "value_label")):
         decl = getattr(measures, table)
@@ -659,12 +870,32 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
     )
 
     from_tables = {t.lower() for t in _envelope_tables()}
-    spread_by_summary: set[str] = set()
-    for fn, summary_of in measures.SUMMARY.items():
-        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
-        spread_by_summary |= set(summary_of(rows) or {})
 
-    unaccounted = emitted - from_tables - spread_by_summary - _NOT_FROM_A_TABLE
+    # A TERM IN THE WRONG LAYER, REMOVED. This subtracted `- spread_by_summary`, the member
+    # names SUMMARY contributes, first computed as `set(summary_of(rows) or {})` and then --
+    # after that was caught as an exclusion derived from its own subject -- from the register.
+    # Both were BORN DEAD. `emitted` is a STATIC read of the builder's literal keys; a summary
+    # member reaches the wire at RUNTIME through an opaque `**` and is never a member of
+    # `emitted` at all. Measured 2026-09-26: the intersection is empty, and the nine literal
+    # keys are exactly six table-sourced plus three excused, leaving the term nothing to
+    # remove. Fixing the tautology did not make it cover anything -- N9, a widened producer
+    # with the register arm disabled, was QUIET with the term as shipped.
+    #
+    # AND HAD IT EVER FIRED IT WOULD HAVE BEEN WRONG. The only state in which it removes
+    # something is a builder spelling a literal key that shares a name with a summary member,
+    # and excusing that is exactly the excuse-by-NAME the operand rule above exists to refuse.
+    # So the collision it would have hidden is asserted instead -- in the layer where it lives.
+    # What accounts for the spread is not a subtraction here; it is
+    # test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree, over the spread's own content.
+    collides = emitted & {k for members in _SUMMARY_MEMBERS.values() for k in members}
+    assert not collides, (
+        f"the envelope spells {sorted(collides)} as a literal key AND merges a SUMMARY member "
+        f"of the same name through the opaque `**` spread, so one key has two sources and "
+        f"whichever element comes last in the builder silently wins. Rename one, or drop the "
+        f"literal -- do not leave the wire deciding it by element order."
+    )
+
+    unaccounted = emitted - from_tables - _NOT_FROM_A_TABLE
     assert not unaccounted, (
         f"these keys reach the /measure envelope and no arm in this file asserts them: "
         f"{sorted(unaccounted)}. If one reads a declaration table by a form "

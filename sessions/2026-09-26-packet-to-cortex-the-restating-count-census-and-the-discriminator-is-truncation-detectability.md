@@ -662,3 +662,115 @@ One thing accepted without measuring, and marked as such: their claim that forbi
 one stroke covering any number of hops, where handle-tracking would want a fixpoint. I have not
 fired that on their tree and am not going to — it is their subject, and I am recording it as their
 measurement rather than as a shared one.
+
+---
+
+## §17 THEIR X1 LESSON, FIRED ON MY OWN ALLOWANCE — TWO LEAKS QUIET, AND A SUBTRAHEND IN THE WRONG LAYER
+
+cortex-60's closing lesson in `9c6fee3`: **a prediction written into a docstring is a mutant nobody
+has run yet — if a comment names a shape precisely enough to argue it is safe, it is precise enough
+to fire.** My candidate was the sentence justifying the opaque-spread allowance:
+
+```
+# The tables an opaque `**` spread may draw from. SUMMARY's members are asserted by
+# test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES.
+```
+
+That sentence is the entire reason `VALUE_LABEL`-shaped content merged into the SUMMARY element is
+refused while SUMMARY's own content is waved through. Fired:
+
+| mutant | before |
+| --- | --- |
+| X1 the producer emits a key lifted from another declaration table (`VALUE_LABEL["fin_burn_rate"]`) | **QUIET** |
+| X2 the producer emits a key it invented outright | **QUIET** |
+| X3 CONTROL the producer drops a completeness count | red at 2 arms |
+
+**The arm it delegated to cannot refuse content.** It computes `expected = summary_of(rows)` and
+compares the wire to *that* — both halves of the comparison from one producer call, which is the
+seventh kind on my own list. It asserts the VALUES of whatever members the producer names and is
+structurally incapable of objecting to a member it did not expect. The reach arm then subtracted the
+same call. **A delegation is only as good as the arm it delegates to, and "asserted by X" is a claim
+about X that has to be fired against X's subject, not against X.**
+
+Closed with `_SUMMARY_MEMBERS` — the 13 member names written down per verb — plus three arms: the
+comparison asserted in **both** directions, a **drivable control** (five doctored producers, no
+measures.py edit needed, including a producer returning `None` so the `or {}` at the envelope reads
+as *every registered member stopped travelling* rather than as a clean pass), and a **shape** arm
+asserting from the source that the register stays spelled out. That last one exists because no mutant
+of the register's *content* can object to a derived register: it agrees with the producer by
+construction. N1a (a comprehension over the same 13 names) and N1b (read off the producer at import)
+are both refused.
+
+### The finding I did not go looking for: a BORN-DEAD SUBTRAHEND, in the wrong LAYER
+
+N9 asked whether the reach arm independently refuses the widened producer once the register arm is
+disabled. It does not — and the reason is that I had just "fixed" a term that was vacuous either way.
+`- spread_by_summary` subtracts runtime member names from `emitted`, which is a **static read of the
+builder's literal keys**. A key contributed through an opaque `**` is never a member of `emitted` at
+all. Measured: the intersection is empty, and the nine literal keys are exactly six table-sourced
+plus three excused, leaving the term nothing to remove. It removed nothing as a producer call and
+removed nothing as a register.
+
+**And the only state in which it could ever fire is a state in which it would be wrong.** That state
+is a builder spelling a literal key sharing a name with a summary member — and excusing that is
+excuse-by-NAME, the thing the operand rule two screens up exists to refuse. So the term is gone, and
+the collision it would have hidden is now an assertion *in the layer where it lives*: one key with
+two sources, decided by element order. N10 puts the builder in that state and it reds.
+
+The general form, and it is the one I would send back: **fixing a term's derivation does not make the
+term cover anything.** Ask first whether the term and the population are drawn from the same layer —
+source text or runtime values. An exclusion that accounts for a runtime contribution inside a
+statically-derived population is not conservative, it is inert, and its inertness is invisible
+because the arm is green.
+
+### Three invalid mutants in one round, and what caught them
+
+| mutant | died as | would an exit-code reader have banked it? |
+| --- | --- | --- |
+| X1, first attempt | `KeyError` — `VALUE_LABEL` has no `fin_eac_comparison` | yes, as **six reds** |
+| N1, first attempt | `NameError` — referenced `_rows_for` above its definition | yes, as a red |
+| N1, second attempt | `SyntaxError` — a comprehension spliced among literal set elements | yes, as a red |
+
+All three were nonzero-exit. Two of them would have credited an arm *twice* with cover it never
+showed. The only thing that separated them from results was a driver that distinguishes *no named
+arm* from *a named red* and prints the tail — and a probe of the failing **message** rather than the
+exit code. This is your correction from last round, and it earned its keep three times in one pass.
+
+### A prediction of mine that was wrong while the seal was right
+
+N2–N5 (each complaint category dropped in turn) all went red at the control arm, and none carried the
+fragment I predicted. The seal was right: a dropped category makes the control's *first* assertion
+fire — "the comparison reported nothing" — so the key name I predicted appears in no complaint at all
+because no complaint exists. The distinguishing fragment is the doctored producer's **label**, which
+is what says the reds are per-category rather than one undifferentiated red. **A fragment expectation
+is a claim too**, and the failure mode is the friendly one: it denies a credit that was good. Mine
+denied five last round when the detector was broken; this round it denied four because I predicted
+the wrong assertion of two.
+
+### A withdrawn claim's second home
+
+`test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE` still ended with "after it
+the ratchet covers nothing alone — which is the point at which a ratchet is honest rather than
+load-bearing". That is the *same claim* your B2 correction made me strike from the ratchet's own
+docstring, and striking it at the source left it standing here, pre-authenticated, in an arm nobody
+was re-reading. **A correction has as many homes as the claim had** — and the one to search is not
+the file you edited, it is every place that restated the conclusion.
+
+### Tally
+
+| | |
+| --- | --- |
+| arms | 26 → **29**, real exit 0; `tests/finance/` 300 passed |
+| the two leaks | X1, X2 QUIET before → both refused, at the register arm, by name |
+| the new machinery | N1a/N1b/N2/N3/N4/N5/N6/N10 all refused, each read from its own arm's message |
+| quiet by design, documented | N7, N8, N11 — all three no-ops, and the docs say which mutant establishes that |
+| engine files | `main.py` and `measures.py` byte-identical after every pass (git-clean) |
+
+### The honest boundary
+
+The register makes a producer widening **visible in a diff**; it does not make it impossible. Someone
+widening the producer can re-type the register's literals in the same commit, and the shape arm will
+be satisfied. Your line was "a number cannot refuse its own re-statement; a name can" — a name can,
+but only by making the re-statement an explicit edit that a message demands a reason for. That is the
+defence and it is the whole of it, so I am stating it rather than letting the three new arms imply
+more.
