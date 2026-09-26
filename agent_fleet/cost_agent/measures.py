@@ -233,11 +233,14 @@ def _input_value(value: Any) -> Any:
 def _inp(name: str, value: Any, unit: Optional[str] = None) -> dict[str, Any]:
     """One stated input: `{name, value, unit?}`.
 
-    THE UNIT KEY IS OMITTED WHEN THERE IS NO UNIT, never sent as None. That is lane/ca's stated
-    convention and it is load-bearing: absent means DIMENSIONLESS by the contract, so a null
-    would read as an unknown currency on a figure that is a count. The declaration and the
-    reason both live in `tests/_method_block_contract.py`, the one place the shape is written
-    down for every engine that emits a block.
+    THE UNIT KEY IS OMITTED WHEN NO UNIT IS STATED, never sent as None. That is lane/ca's SDK
+    convention for this field, and the absent key means exactly "not stated" -- NOT
+    "dimensionless", which is the convention for a chart series' `unit` and a different field
+    that happens to share the name. The distinction is load-bearing in one direction only:
+    "not stated" is the weaker claim and is true of every omission here, including a lot number,
+    which is not a quantity and has no dimension to be free of. The declaration, the attribution
+    and the correction all live in `tests/_method_block_contract.py`, the one place the shape is
+    written down for every engine that emits a block.
 
     The unit exists because a card showing "31221216" beside "5" cannot tell dollars from a
     count. cortex's `MethodInput` has no unit field yet and `readMethod` drops it, so this is on

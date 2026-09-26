@@ -17,14 +17,24 @@ nobody can reopen without reopening all of it:
     figure reads down the list. The consumer accepts either shape (see `readMethod`), so only
     the producer can make it readable.
 
-  * A UNIT KEY IS ABSENT WHEN THE QUANTITY IS DIMENSIONLESS -- never `"unit": None`.
-    lane/ca's stated convention, quoted from
-    `agent_fleet/finance_agent/measures.py` on `lane/ca-m33-cutover`: "NO `unit` KEY AT ALL, not
-    `"unit": None`. Absent means DIMENSIONLESS by the contract -- a ratio, not an unknown
-    currency". Taken as-is rather than renegotiated: this file exists to hold one shape, and the
-    engine that already has a convention is the one whose convention it should be.
-    `"unit": None` is REFUSED rather than tolerated, because tolerating it is how "absent means
-    dimensionless" quietly becomes "absent or null, and nobody knows which the producer meant".
+  * A UNIT KEY IS ABSENT WHEN NO UNIT IS STATED -- never `"unit": None`. lane/ca's SDK
+    convention for this field, from their packet of 2026-09-25 on `iagent_mesh/models.py`:
+    "`unit=None` means *no unit stated*, not dimensionless; a blank unit is refused."
+    `"unit": None` is REFUSED here rather than tolerated, because tolerating it is how one
+    absent-state quietly becomes two -- "absent or null, and nobody knows which the producer
+    meant".
+
+    ⛔ THIS BULLET PREVIOUSLY SAID "ABSENT MEANS DIMENSIONLESS", CITING A COMMENT ABOUT A
+    DIFFERENT FIELD. The quotation was accurate and the referent exists -- but
+    `agent_fleet/finance_agent/measures.py:163` is establishing the convention for a CHART
+    SERIES' `unit` ("THE UNIT BELONGS TO THE SERIES", line 146), where absent really does mean
+    dimensionless because CPI and SPI render as bare ratios. Two different fields on two
+    different structures share the name `unit`, and this file carried one's semantic to the
+    other. Nothing on the wire changes -- the key is omitted either way -- but the CLAIM did:
+    "dimensionless" is a positive assertion that a quantity is a pure ratio, and it is false of
+    a lot number, which is not a quantity at all. A renderer licensed to print a bare ratio
+    wherever the key is absent would have been reading a statement the producer never made.
+    Assert the WEAKER of two readings when only one of them is attested for the field in hand.
 
   * `bound` is a NUMBER or None. The order, verbatim: "bound float|None". This NARROWS what
     lane/74 shipped in 546e6be, which sent one sentence naming the bound and who chose it. The
@@ -91,13 +101,15 @@ BLOCK_FIELDS = tuple(BLOCK_FIELDS_IN_THE_UI) + tuple(BLOCK_FIELDS_BEYOND_THE_UI)
 
 INPUT_REQUIRED = ("name", "value")
 
-#: Optional, and the OMISSION is the statement -- see the unit convention in the module
-#: docstring. `readMethod` drops this field today; it is on the wire because a card showing
-#: "31221216" beside "5" with no units cannot tell dollars from a count.
+#: Optional, and the OMISSION is a statement about what was NOT said -- see the unit convention
+#: in the module docstring. `readMethod` drops this field today; it is on the wire because a card
+#: showing "31221216" beside "5" with no units cannot tell dollars from a count.
 INPUT_OPTIONAL = {
     "unit": (
-        "absent means DIMENSIONLESS by lane/ca's convention; the consumer's MethodInput has no "
-        "unit field and readMethod drops it, so this is on the wire ahead of the card"
+        "absent means NO UNIT STATED (lane/ca's SDK convention for this field, 2026-09-25) -- "
+        "NOT dimensionless, which is the convention for a chart series' unit and a different "
+        "field; the consumer's MethodInput has no unit field and readMethod drops it, so this "
+        "is on the wire ahead of the card"
     ),
 }
 
@@ -196,8 +208,8 @@ def check_inputs(inputs: Any) -> list[str]:
             unit = item["unit"]
             if unit is None:
                 bad.append(
-                    f"{where} carries \"unit\": None. The convention is NO UNIT KEY AT ALL for "
-                    "a dimensionless quantity; a null unit reads as an unknown one"
+                    f"{where} carries \"unit\": None. The convention is NO UNIT KEY AT ALL when "
+                    "no unit is stated; a null unit makes two spellings of one absent-state"
                 )
             elif not isinstance(unit, str) or not unit.strip():
                 bad.append(f"{where}.unit={unit!r} is not a stated unit; omit the key instead")
