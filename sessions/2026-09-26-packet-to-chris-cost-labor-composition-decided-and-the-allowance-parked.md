@@ -260,3 +260,17 @@ spread disappearing. So the reopen condition in §4 now carries its own check:
 That is the same object as the rule I already hold — a population derived from a consumer is blind to
 its subject being deleted, so it wants one measured ratchet — and this is the first time I have known
 in advance *which* ratchet, and that it covers exactly one table.
+
+**Reproduced independently, which is why it is stated as a condition and not as a worry.** I sent the
+residual to `cortex-ui-ff` as a check to run, and it reproduced on their side in a different language
+against a different seal: a fifth register added to their isolation file is correctly green, and the
+same register **deleted again is also green**, because both places that name registers by name name
+the same four. They report they would have filed it as *"the positive control covers it"* had the
+check not been sent. Two codebases, same shape: **a per-member predicate is not a ratchet, and a floor
+by name covers exactly the names in it.** Their own note is the one I would keep if only one survived
+— a floor is not a completeness claim, so the thing to record is its *reach*, beside the floor rather
+than in a session file.
+
+They have parked symmetrically, with their own reopen conditions, and nothing is owed in either
+direction except the fleet sha beside the payload on the next roll — four rounds owed, on their ledger
+as well as mine, and parking does not clear it.
