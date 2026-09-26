@@ -13,12 +13,41 @@ PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
 libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
-# Install latest dagster ecosystem — the user-code image
-# (dagster-control-plane) doesn't pin dagster in iagent's
-# pyproject.toml (it pulls `dagster-postgres` which transitively
-# pulls dagster latest), so we MUST match by also not pinning,
-# otherwise the gRPC code-location protocol versions diverge.
+# SQLAlchemy AND ITS DBAPI ARE PINNED. Both versions are read off the image
+# that was measured working, not chosen: SQLAlchemy 2.0.54 and psycopg2-binary
+# 2.9.13, as installed in dagster-server:c0005142, which served fine while
+# :03ee440 crash-looped. Do not "tidy" these into floors.
+#
+# What happened, measured 2026-09-25: two builds of this identical Dockerfile at
+# two commits resolved SQLAlchemy 2.0.54 and 2.1.0. 2.1 changed which DBAPI a
+# bare `postgresql://` URL selects, from psycopg2 to psycopg3, so create_engine
+# reached dialects/postgresql/psycopg.py and died on
+# `ModuleNotFoundError: No module named 'psycopg'`. Nothing had been dropped —
+# psycopg2-binary was present in both images. The URL simply started resolving
+# to a driver that was never installed. The DBAPI is pinned as well as
+# SQLAlchemy because a driver that arrives transitively is undeclared, and
+# undeclared means it can leave without notice (pyproject.toml says the same
+# about dagster, for the same reason).
+#
+# The comment removed from here claimed the user-code image does not pin
+# dagster, so this one must not pin either or the gRPC protocol versions
+# diverge. That was false and load-bearing: dagster-control-plane builds with
+# `uv sync --locked` and uv.lock fixes dagster at 1.12.20, while the WORKING
+# pair here ran 1.13.23 — already a full minor apart. The match it was written
+# to protect never existed, and the unpinning it justified turned every rebuild
+# into a dice roll.
+#
+# STILL UNPINNED, AND KNOWN: the four dagster distributions below. So this image
+# is still not reproducible from its own tag — an image does not belong to a sha
+# when its dependencies are unpinned. This change closes the failure that was
+# measured, not the class. Pinning the ecosystem to what uv.lock resolves is the
+# ranked-best remedy and is a separate decision.
+#
+# If pip cannot satisfy these pins against a future dagster, it fails HERE, at
+# build time, loudly — which is the point. That is a better failure than a
+# control plane that resolves a driver it does not carry.
 RUN pip install --no-cache-dir \
+"sqlalchemy==2.0.54" "psycopg2-binary==2.9.13" \
 dagster dagster-webserver dagster-postgres dagster-graphql
 # ── THE IMAGE CARRIES ITS OWN COMMIT ───────────────────────────────────────
 # Baked at BUILD time, not injected by the chart. A tag in the pod spec is a
