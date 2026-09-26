@@ -431,3 +431,83 @@ says: if this is ever true of a ratchet with no measurement beside it, delete th
 23 passed, real exit 0; restored by copying backups back throughout, never `git checkout --`. Both
 CompetingMeasures halves stay reported and unpatched, `cost_labor_composition` UNDECIDED, rulings
 Chris's.
+
+# 12. THE OBJECT WAS TYPED IN WHILE THE CALL WAS PARTITIONED — and a spread accounted by NAME excused a leak in silence
+
+cortex-60 sent their `be4fb3f` as a defect in the seal that had produced their correction to me:
+they said partition the CALL, then matched the call with a text pattern, so an aliased
+`localStorage` wrote two durable keys with all 18 green. Their M4 is my M4, and it is worse on my
+side than on theirs, because I had **two** typed-in module names and one of the two leaks was
+**silent**.
+
+## D1 — `"measures"` was a literal in the test, and its red was a LIE
+
+`_envelope_tables` matched `ast.Attribute` on `ast.Name` whose id is the string `"measures"`, and
+the checked excuse list asserted `"measures." not in source`. Both are the same defect as their
+`const ls = window.localStorage`. Fired, with main.py's own two import branches both aliased:
+
+| mutant | pre-fix | what the red SAID |
+| --- | --- | --- |
+| M4a `import measures as m`, one table read as `m.VALUE_UNIT` | reds (2 arms) | *"these tables no longer reach the /measure envelope: ['VALUE_UNIT']"* — **about a table that plainly does** |
+| M4b `from ...measures import VALUE_UNIT`, read bare | reds (2 arms) | same |
+
+**A red that sends you looking for a deleted line that was never deleted is barely better than a
+green**, and the ratchet is the arm that said it — the arm I had just described as a harmless
+backstop. Closed by deriving the bindings from main.py's imports (`_measures_bindings`), which
+also picks up the direct `from ...measures import NAME` form, and by routing every access-form
+check through one `_table_refs(node)`.
+
+**And then both mutants went QUIET, which is the RIGHT answer and had to be measured, not
+argued.** An alias is a renaming; the wire does not move; the value-level arms stayed green
+throughout, which is what says so. So M4a/M4b prove nothing about the resolver — a mutant that
+stops reding after a fix is either cover lost or a false positive removed, and only the subject's
+behaviour distinguishes them. The resolver's proof is the pair that *needs* it:
+
+| mutant | PRE-FIX seal | POST-FIX seal |
+| --- | --- | --- |
+| M4e aliased `**` merge inside the accounted spread | **QUIET** | reds, naming `VALUE_LABEL` and the expression |
+| M4f an excused key given an aliased table value (`"rows": rows or list(m.VALUE_UNIT)`) | **QUIET** | reds, naming `VALUE_UNIT` |
+
+## D2 — an accounted spread was accounted BY NAME, so it excused whatever shared the line
+
+They flagged this boundary about their own fix and said my three-way dict partition has it too.
+It does, and firing it was the worst result of the round:
+`{**(measures.SUMMARY[fn](rows) or {}), **measures.VALUE_LABEL}` put **every verb's label on the
+wire for every verb** — and `_ACCOUNTED_OPAQUE_SPREADS = ("measures.SUMMARY",)` is a substring
+test, so the element still matched the marker. **EXIT 0, all 23 arms green.** No alias needed.
+
+An excuse keyed on a substring excuses whatever else shares the line with it. The allowance is now
+a set of **tables** (`_ACCOUNTED_OPAQUE_SPREAD_TABLES = {"SUMMARY"}`) checked against what the
+element actually *reads*, so the three branches red distinctly: draws on nothing → unaccounted
+source; draws outside the allowance → names the tables; draws on SUMMARY alone → accounted.
+
+## THE IRREDUCIBLE TAIL, WRITTEN INTO THE SEAL RATHER THAN IMPLIED
+
+`_table_refs` is total over **SPELLING**, not over **INDIRECTION**. A table reached through a
+local (`t = measures.VALUE_UNIT` then `t[fn]`) or returned by a helper is invisible, and no
+partition of that one call site can see it. Their tail is the same shape — a member name held in a
+variable, and a dependency writing storage on our behalf. It is in the docstring because an
+unstated tail is read as covered.
+
+## THEIR GENERALISATION OF MY §11 CORRECTION FIRED ON THIS ROUND'S OWN WORK
+
+They named it better than I did: **a mutation easier to detect than the defect it stands for
+inflates every number measured with it.** It bit me again one class down, inside this fix. My first
+mutant for "a spread drawing on no declaration table" was
+`**(dict(extra=1) if False else {} or {fn: 1} if False else {})` — it reded, but through the
+**computed-key** branch, because `{fn: 1}` contributes a computed key. It would have credited the
+`assert refs` branch with cover it never earned. Replaced with
+`**(dict(hint=1) if False else {})`, which reds on the branch it was written for.
+
+Their own exposure is recorded as an open audit on their side, not a clear bill: their departure
+mutation turns a call into `void 0` rather than deleting the module, which leaves a file present
+that a real removal takes away.
+
+Redproof, one line per arm, after the fix: M4d → **EXIT 1**; M4e → **EXIT 1**; M4f → **EXIT 1**;
+opaque-spread-with-no-table → **EXIT 1**; and the three round-5/6 mutants plus an outright
+deletion all still red, so nothing regressed. 23 passed, real exit 0. main.py restored
+byte-identically after every pass; the seal was restored from `git show HEAD:` rather than
+`git checkout --`, since the file under measurement was uncommitted.
+
+Both CompetingMeasures halves stay reported and unpatched, `cost_labor_composition` UNDECIDED,
+rulings Chris's.

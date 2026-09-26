@@ -166,6 +166,73 @@ def _strip_prose(src: str) -> str:
     return re.sub(r"#.*$", "", src, flags=re.M)
 
 
+def _main_src() -> str:
+    return (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+
+
+def _measures_bindings() -> tuple[frozenset[str], dict[str, str]]:
+    """Every name in main.py that leads to a declaration table, DERIVED FROM ITS IMPORTS rather
+    than typed here.
+
+    cortex-60 sent this as a defect in the seal that produced their own correction to me: they
+    told me to partition the CALL rather than the literal, and then matched the call with a text
+    pattern, so a module doing `const ls = window.localStorage` wrote two durable keys with all
+    18 green. `"measures"` was typed into this file exactly that way. MEASURED 2026-09-26, and
+    the distinction matters more than the exit code: `import measures as m` DOES red today --
+    but the ratchet reds saying VALUE_UNIT "no longer reaches the /measure envelope" about a
+    table that still reaches it under another name. A red that sends you looking for a deleted
+    line that was never deleted is barely better than a green.
+
+    Returns (names bound to the module, {bare name: table}). main.py's try/except already binds
+    the module two ways, and a third spelling must not need an edit here.
+    """
+    aliases: set[str] = set()
+    direct: dict[str, str] = {}
+    for node in ast.walk(ast.parse(_main_src())):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "measures" or a.name.endswith(".measures"):
+                    aliases.add(a.asname or a.name.split(".")[-1])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "measures":
+                    aliases.add(a.asname or "measures")
+            if (node.module or "").split(".")[-1] == "measures":
+                for a in node.names:
+                    if a.name.isupper():
+                        direct[a.asname or a.name] = a.name
+    assert aliases or direct, (
+        "main.py binds no name to the measures module -- this file cannot find the tables at all"
+    )
+    return frozenset(aliases), direct
+
+
+def _table_refs(node: ast.AST) -> set[str]:
+    """Declaration tables referenced anywhere under `node`, by any spelling main.py can use:
+    `<alias>.NAME`, `getattr(<alias>, "NAME")`, and a bare name imported directly.
+
+    TOTAL OVER SPELLING, NOT OVER INDIRECTION -- a table reached through a local variable
+    (`t = measures.VALUE_UNIT` then `t[fn]`) or returned by a helper is invisible here, and no
+    partition of this one call site can see it. cortex-60 named the same tail on their side (a
+    member name held in a variable, and a dependency writing storage on our behalf). Stated,
+    not implied, because an unstated tail is read as covered."""
+    aliases, direct = _measures_bindings()
+    found: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+            if n.value.id in aliases and n.attr.isupper():
+                found.add(n.attr)
+        elif isinstance(n, ast.Name) and n.id in direct:
+            found.add(direct[n.id])
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr":
+            if len(n.args) >= 2:
+                target, name = n.args[0], n.args[1]
+                if (isinstance(target, ast.Name) and target.id in aliases
+                        and isinstance(name, ast.Constant) and isinstance(name.value, str)):
+                    found.add(name.value)
+    return found
+
+
 def _builder_block() -> str:
     """The `/measure/<fn>` envelope builder's own source, prose stripped.
 
@@ -174,7 +241,7 @@ def _builder_block() -> str:
     `measure` key out of the block -- and the checked excuse list below reported it as "excused
     but the builder no longer emits it". A pattern that consumes its anchor shortens the
     population by exactly the line it anchored on."""
-    src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+    src = _main_src()
     # SELECTED BY ITS ANCHOR, not by position: main.py has five `return {` blocks at this
     # indent and the envelope builder is the third. A `re.search` takes the first, so the
     # pattern must carry a predicate rather than an assumption about order.
@@ -201,7 +268,7 @@ def _builder_dict() -> ast.Dict:
     predicate matching two blocks, but the quiet failure is a predicate matching a block that
     merely RESEMBLES the builder, and one landmark is easy to resemble.
     """
-    src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+    src = _main_src()
     found = []
     for node in ast.walk(ast.parse(src)):
         if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Dict):
@@ -226,13 +293,13 @@ def _classify_key(key: ast.expr, literal: set[str], computed: list[str]) -> None
         computed.append(ast.unparse(key))
 
 
-def _builder_key_forms() -> tuple[set[str], list[str], list[str]]:
+def _builder_key_forms() -> tuple[set[str], list[ast.expr], list[str]]:
     """Every key-producing element of the envelope, partitioned into (literal names, opaque
     `**` spreads, key forms this arm cannot account for). Total over the call: a literal key, a
     computed key and a spread are the only three things a dict display can contain."""
     literal: set[str] = set()
     computed: list[str] = []
-    opaque: list[str] = []
+    opaque: list[ast.expr] = []
     builder = _builder_dict()
     for key, value in zip(builder.keys, builder.values):
         if key is not None:
@@ -250,25 +317,15 @@ def _builder_key_forms() -> tuple[set[str], list[str], list[str]]:
                 contributes = True
                 _classify_key(inner, literal, computed)
         if not contributes:
-            opaque.append(ast.unparse(value))
+            opaque.append(value)
     return literal, opaque, computed
 
 
 def _envelope_tables() -> set[str]:
-    """The tables whose values reach the response body, read from the builder's AST rather than
-    matched as text -- `getattr(measures, "NAME")` is a Call, not an Attribute, and a text
-    pattern for `measures.NAME` cannot see it."""
-    found: set[str] = set()
-    for node in ast.walk(_builder_dict()):
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            if node.value.id == "measures" and node.attr.isupper():
-                found.add(node.attr)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "getattr" and len(node.args) >= 2:
-                target, name = node.args[0], node.args[1]
-                if (isinstance(target, ast.Name) and target.id == "measures"
-                        and isinstance(name, ast.Constant) and isinstance(name.value, str)):
-                    found.add(name.value)
+    """The tables whose values reach the response body, read from the builder's AST through the
+    DERIVED bindings -- `getattr(measures, "NAME")` is a Call and not an Attribute, and an
+    aliased import is neither."""
+    found = _table_refs(_builder_dict())
     assert found, "found no declaration tables in the envelope builder -- its shape moved"
     return found
 
@@ -366,7 +423,16 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
     only if a declaration-side arm were deleted in the same change. Recorded here because a
     hand-maintained register that covers nothing is precisely the thing that goes stale and is
     later read as coverage; if this comment is ever true of a ratchet with no measurement beside
-    it, delete the ratchet."""
+    it, delete the ratchet.
+
+    AND THE MEASUREMENT IS SCOPED TO ITS MUTATION, which is the correction cortex-60 drew out of
+    my own: the sentence above was measured by DELETING each wired element. It says nothing
+    about a table RENAMED at the read site. That was measured separately: before the bindings
+    were derived, `import measures as m` made this arm red claiming VALUE_UNIT "no longer
+    reaches the envelope" while it plainly did. An alias is a renaming and not a leak, so the
+    right behaviour is silence, and this arm is silent on it now -- a false red removed, not
+    cover lost. The value-level arms stayed green throughout, which is what says the wire did
+    not move."""
     missing = _TRAVELS_TODAY - _envelope_tables()
     assert not missing, (
         f"these tables no longer reach the /measure envelope: {sorted(missing)}. If that is "
@@ -379,9 +445,17 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 # the arm below CHECKS the reason rather than trusting it.
 _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
 
-# The one `**` spread carrying keys no dict literal in the builder names. SUMMARY's members are
-# asserted by test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES.
-_ACCOUNTED_OPAQUE_SPREADS = ("measures.SUMMARY",)
+# The tables an opaque `**` spread may draw from. SUMMARY's members are asserted by
+# test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES.
+#
+# BY CONTENT, NOT BY NAME. This was a text marker, `"measures.SUMMARY" in src`, and cortex-60
+# flagged the boundary while fixing the same class on their side: an accounted spread is
+# accounted by NAME and not by CONTENT. Fired 2026-09-26, and it was QUIET -- merging a second
+# table into that element (`{**(measures.SUMMARY[fn](rows) or {}), **measures.VALUE_LABEL}`)
+# put every verb's label on the wire for every verb, with all 23 arms green, because the
+# element still contained the marker. An excuse keyed on a substring excuses whatever else
+# shares the line with it.
+_ACCOUNTED_OPAQUE_SPREAD_TABLES = frozenset({"SUMMARY"})
 
 
 def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
@@ -410,10 +484,12 @@ def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
 def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
     """THE REACH ARM, and cortex-60's criterion is what it is built against: the defect is not
     that a population is derived, it is that PRODUCTION'S REACH IS WIDER THAN THE TEST'S.
-    `_envelope_tables` matches one literal form, `measures.NAME`, and main.py can read a table
-    any way Python allows. Measured on this file: a table wired in as
+    `_envelope_tables` once matched ONE literal form, `measures.NAME`, while main.py can read a
+    table any way Python allows. It now resolves the module's bindings from main.py's own
+    imports (`_measures_bindings`), so an alias is not a blind spot -- but the reason that
+    helper exists is measured, not assumed. Measured on this file: a table wired in as
     `getattr(measures, "VALUE_UNIT").get(fn, "x")` put `new_thing` on the wire, sourced from a
-    declaration table, and all 21 arms stayed GREEN -- it is absent from the population, so it
+    declaration table, and every arm stayed GREEN -- it is absent from the population, so it
     is absent from the generic arm, so it is absent from `undecided`. The gap detector cannot
     report a gap it is not looking at.
 
@@ -434,14 +510,22 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
         f"{computed} -- a computed key reaches the wire and no arm can assert it. Give it a "
         f"literal name, or assert it where it is composed."
     )
-    unaccounted_spreads = [
-        src for src in opaque
-        if not any(marker in src for marker in _ACCOUNTED_OPAQUE_SPREADS)
-    ]
-    assert not unaccounted_spreads, (
-        f"the envelope spreads a mapping from an unaccounted source: {unaccounted_spreads} -- "
-        f"whatever keys it carries reach the wire unasserted"
-    )
+    # AN OPAQUE SPREAD IS ACCOUNTED BY WHAT IT READS, NOT BY WHAT IT SPELLS. A spread drawing
+    # on no declaration table at all is unaccounted; one drawing on a table outside the
+    # allowance carries that table's keys to the wire with nothing asserting them.
+    for element in opaque:
+        refs = _table_refs(element)
+        src = ast.unparse(element)
+        assert refs, (
+            f"the envelope spreads a mapping from an unaccounted source: {src!r} -- whatever "
+            f"keys it carries reach the wire unasserted"
+        )
+        extra = refs - _ACCOUNTED_OPAQUE_SPREAD_TABLES
+        assert not extra, (
+            f"the envelope spreads {sorted(extra)} inside an element accounted for "
+            f"{sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)}: {src!r} -- every key those tables "
+            f"carry reaches the wire, and no arm in this file addresses them"
+        )
 
     from_tables = {t.lower() for t in _envelope_tables()}
     spread_by_summary: set[str] = set()
@@ -458,12 +542,23 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
 
     # THE EXCUSE LIST, CHECKED. Otherwise it can quietly absorb a table-sourced key and this
     # arm becomes the thing it was written to prevent.
+    builder = _builder_dict()
     for key in sorted(_NOT_FROM_A_TABLE):
-        source = next((ln for ln in block.splitlines() if f'"{key}"' in ln), None)
-        assert source is not None, f"`{key}` is excused but the builder no longer emits it"
-        assert "measures." not in source and "getattr(measures" not in source, (
-            f"`{key}` is excused as a composed key, but its line reads a declaration table: "
-            f"{source.strip()!r} -- it belongs in the population, not the excuse list"
+        values = [
+            v for k, v in zip(builder.keys, builder.values)
+            if isinstance(k, ast.Constant) and k.value == key
+        ]
+        assert len(values) == 1, (
+            f"`{key}` is excused and the builder emits it {len(values)} times -- zero means the "
+            f"excuse list has gone stale, and more than one means the excuse covers a key it "
+            f"was never read against"
+        )
+        # ON THE AST, not on the line's text: `"measures." not in source` was a second typed-in
+        # module name, so an aliased read would have been excused as a composed key.
+        reads = _table_refs(values[0])
+        assert not reads, (
+            f"`{key}` is excused as a composed key, but its value reads {sorted(reads)}: "
+            f"{ast.unparse(values[0])!r} -- it belongs in the population, not the excuse list"
         )
 
 
