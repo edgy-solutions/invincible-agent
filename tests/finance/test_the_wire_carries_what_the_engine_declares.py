@@ -22,6 +22,7 @@ broke, and is derived from the engine's own declaration tables rather than a rem
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -189,11 +190,86 @@ def _builder_block() -> str:
     return matching[0]
 
 
+def _builder_dict() -> ast.Dict:
+    """The envelope builder's return dict as an AST node.
+
+    A REGEX CANNOT SEE A COMPUTED KEY, which is why this exists: `f"extra_{fn}": ...` put a key
+    on the wire from a real declaration table with all 22 arms green. cortex-60's correction --
+    PARTITION THE CALL, NOT THE LITERAL.
+
+    Selected by THREE landmark keys rather than one. Their point: exactly-one-asserted stops a
+    predicate matching two blocks, but the quiet failure is a predicate matching a block that
+    merely RESEMBLES the builder, and one landmark is easy to resemble.
+    """
+    src = (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+    found = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Dict):
+            continue
+        literals = {
+            k.value for k in node.value.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+        if {"measure", "rows", "data_provenance"} <= literals:
+            found.append(node.value)
+    assert len(found) == 1, (
+        f"expected exactly one `return {{...}}` carrying all three landmark keys, found "
+        f"{len(found)} -- the envelope builder's shape moved"
+    )
+    return found[0]
+
+
+def _classify_key(key: ast.expr, literal: set[str], computed: list[str]) -> None:
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        literal.add(key.value)
+    else:
+        computed.append(ast.unparse(key))
+
+
+def _builder_key_forms() -> tuple[set[str], list[str], list[str]]:
+    """Every key-producing element of the envelope, partitioned into (literal names, opaque
+    `**` spreads, key forms this arm cannot account for). Total over the call: a literal key, a
+    computed key and a spread are the only three things a dict display can contain."""
+    literal: set[str] = set()
+    computed: list[str] = []
+    opaque: list[str] = []
+    builder = _builder_dict()
+    for key, value in zip(builder.keys, builder.values):
+        if key is not None:
+            _classify_key(key, literal, computed)
+            continue
+        # A `**expr` element. Any dict literal inside it contributes its own keys; an
+        # expression carrying no keyed dict at all is opaque and must be accounted by name.
+        contributes = False
+        for node in ast.walk(value):
+            if not isinstance(node, ast.Dict):
+                continue
+            for inner in node.keys:
+                if inner is None:
+                    continue
+                contributes = True
+                _classify_key(inner, literal, computed)
+        if not contributes:
+            opaque.append(ast.unparse(value))
+    return literal, opaque, computed
+
+
 def _envelope_tables() -> set[str]:
-    """The tables whose values reach the response body, parsed from the builder rather than
-    from a remembered list."""
-    found = set(re.findall(r"measures\.([A-Z][A-Z_]+)", _builder_block()))
-    assert found, "parsed no tables out of the envelope builder -- the regex is stale, not main.py"
+    """The tables whose values reach the response body, read from the builder's AST rather than
+    matched as text -- `getattr(measures, "NAME")` is a Call, not an Attribute, and a text
+    pattern for `measures.NAME` cannot see it."""
+    found: set[str] = set()
+    for node in ast.walk(_builder_dict()):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id == "measures" and node.attr.isupper():
+                found.add(node.attr)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "getattr" and len(node.args) >= 2:
+                target, name = node.args[0], node.args[1]
+                if (isinstance(target, ast.Name) and target.id == "measures"
+                        and isinstance(name, ast.Constant) and isinstance(name.value, str)):
+                    found.add(name.value)
+    assert found, "found no declaration tables in the envelope builder -- its shape moved"
     return found
 
 
@@ -281,7 +357,16 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
     blind spot: a table DELETED from the builder leaves the population, and the arm above then
     iterates a smaller set and passes. The derivation cannot see its own subject being
     removed. So the seven names that travel today are written down once -- the register may
-    grow without an edit here and may never shrink silently."""
+    grow without an edit here and may never shrink silently.
+
+    MEASURED 2026-09-26, AND THE NUMBER CHANGED WHAT THIS ARM IS. Unwiring each of the seven in
+    turn: this ratchet was the ONLY cover at two sites (OUTPUT_URI, VALUE_LABEL). Both now have
+    a declaration-side arm, and re-running the same mutations gives *nothing* covered by this
+    ratchet alone. It is therefore a BACKSTOP, not load-bearing -- it would catch an unwiring
+    only if a declaration-side arm were deleted in the same change. Recorded here because a
+    hand-maintained register that covers nothing is precisely the thing that goes stale and is
+    later read as coverage; if this comment is ever true of a ratchet with no measurement beside
+    it, delete the ratchet."""
     missing = _TRAVELS_TODAY - _envelope_tables()
     assert not missing, (
         f"these tables no longer reach the /measure envelope: {sorted(missing)}. If that is "
@@ -293,6 +378,33 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 # Keys the builder composes itself rather than reading from a declaration table. Named, and
 # the arm below CHECKS the reason rather than trusting it.
 _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
+
+# The one `**` spread carrying keys no dict literal in the builder names. SUMMARY's members are
+# asserted by test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES.
+_ACCOUNTED_OPAQUE_SPREADS = ("measures.SUMMARY",)
+
+
+def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
+    """THE DIRECTION TEST'S OWN CONCLUSION, ACTED ON. Unwiring each of the seven travelling
+    tables showed these two are the only ones whose loss nothing but the ratchet notices -- and
+    a ratchet catches SHRINKAGE only, so cortex-60's read is right: they want a declaration-side
+    arm, not a better ratchet.
+
+    Iterating the TABLE is what makes an unwiring red, because the two derivation directions
+    have opposite blind spots: an arm over the declaration reds when the builder stops reading
+    it and is blind to a table the builder reads that measures.py never declared; an arm over
+    the builder is total on contents and blind to unwiring. This is the cheap half of that pair,
+    and after it the ratchet covers nothing alone -- which is the point at which a ratchet is
+    honest rather than load-bearing.
+    """
+    for table, key in (("OUTPUT_URI", "output_uri"), ("VALUE_LABEL", "value_label")):
+        decl = getattr(measures, table)
+        for fn in sorted(decl):
+            body = _envelope(fn)
+            assert body.get(key) == decl[fn], (
+                f"{fn}: {table} declares {decl[fn]!r} and the body carries "
+                f"{body.get(key)!r} under `{key}`"
+            )
 
 
 def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
@@ -310,8 +422,26 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
     one of the composed keys named above -- and an unaccounted key reds whatever access form
     put it there."""
     block = _builder_block()
-    emitted = set(re.findall(r'"([a-z][a-z_]*)"\s*:', block))
-    assert emitted, "parsed no keys out of the envelope builder -- the regex is stale"
+    emitted, opaque, computed = _builder_key_forms()
+    assert emitted, "found no keys in the envelope builder -- its shape moved"
+
+    # THE CALL, NOT THE LITERAL. cortex-60's correction: their own `useComposerDraft` computes
+    # its storage key, so a literal-key partition would have missed a module already present.
+    # My nine keys are literals TODAY; a key that becomes f-string composed must red here
+    # rather than travel unasserted, which is exactly what it did when this was a regex.
+    assert not computed, (
+        f"the envelope emits {len(computed)} key(s) this file cannot account for by name: "
+        f"{computed} -- a computed key reaches the wire and no arm can assert it. Give it a "
+        f"literal name, or assert it where it is composed."
+    )
+    unaccounted_spreads = [
+        src for src in opaque
+        if not any(marker in src for marker in _ACCOUNTED_OPAQUE_SPREADS)
+    ]
+    assert not unaccounted_spreads, (
+        f"the envelope spreads a mapping from an unaccounted source: {unaccounted_spreads} -- "
+        f"whatever keys it carries reach the wire unasserted"
+    )
 
     from_tables = {t.lower() for t in _envelope_tables()}
     spread_by_summary: set[str] = set()

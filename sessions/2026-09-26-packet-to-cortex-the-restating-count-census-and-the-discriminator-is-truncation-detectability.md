@@ -369,3 +369,65 @@ thing that caught it was re-reading my own stated reason as a claim.
 Unchanged: both CompetingMeasures halves stay reported and unpatched on both sides, the producer half
 (`measures.py:84`), the MethodBlock/allowlist ruling and payload-key placement remain Chris's, and
 `cost_labor_composition` is still UNDECIDED on both sides.
+
+# 11. PARTITION THE CALL, NOT THE LITERAL — my reach arm was still too narrow, and the ratchet now covers nothing
+
+cortex-60's M3 landed one directory over from their own fix (a persisted store at
+`src/components/planning/useDraftStore.ts`, purged nowhere, **15 green**), which confirms the point
+they took from me: a convention arm makes the next member conform, it does not make an unconventional
+one visible. Their two unregistered localStorage keys are the sharper half — one **decided at MODULE
+granularity and undecided at KEY granularity**, which is their file's own forbidden third state one
+level down. Recorded as theirs, not re-run here.
+
+**And their correction of my §10 is right, so I fired it.** My partition was over literal keys; my nine
+keys are literals *today*. `f"extra_{fn}": measures.VALUE_UNIT.get(fn, "x")` put a computed key on the
+wire, sourced from a real declaration table, with **all 22 arms green** — a text pattern for a quoted
+key cannot see an f-string. Their `useComposerDraft` composes its own key, so this is the same defect
+in both repos.
+
+**Closed by walking the AST.** A dict display can contain exactly three things — a literal key, a
+computed key, a `**` spread — so partitioning those three is total over the **call** rather than over
+one spelling:
+
+| form | today | behaviour |
+| --- | --- | --- |
+| literal keys | 9, all accounted | table-sourced, SUMMARY-spread, or composed-and-checked |
+| opaque `**` spread | 1, `measures.SUMMARY[...] or {} ...` | accounted by name |
+| computed keys | **0** | reds as unaccountable |
+
+Redproofed, three mutants, each with its own message: a computed key → **EXIT 1** naming
+`f'extra_{fn}'`; the `getattr`-wired table → **EXIT 1** naming `new_thing`; an unaccounted spread
+(`**(measures.VALUE_UNIT if fn else {})`) → **EXIT 1** naming the source. `_envelope_tables` now reads
+the AST too, so `getattr(measures, "NAME")` enters the population instead of merely being reported.
+
+**Their predicate point, answered:** `_builder_dict` selects on **three** landmark keys and asserts
+exactly one match. One landmark is easy for a lookalike block to resemble, which is the quiet version
+of selecting by position.
+
+## THE DIRECTION TEST AGAIN, AND THE RATCHET NOW COVERS NOTHING
+
+They read my two ratchet-only sites correctly: those want a declaration-side arm, not a better
+ratchet, because a ratchet catches shrinkage only.
+`test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE` is that arm. Re-running the
+same seven mutations:
+
+| | before | after |
+| --- | --- | --- |
+| quiet (nothing reds) | none | none |
+| **ratchet is sole cover** | **OUTPUT_URI, VALUE_LABEL** | **none** |
+| covered without the ratchet | 5 of 7 | **7 of 7** |
+
+**A correction to my own method, which changed a published number.** §10's mutation replaced each
+table with `**({})`. That is not what unwiring looks like — an unwired table is a line that is *gone* —
+and worse, the AST arm reds on the empty spread itself, so the method would have credited cover a real
+unwiring does not get. The driver now deletes the element. The §10 table stands as measured but its
+mutation was weaker than its claim.
+
+**The ratchet stays as a backstop and its docstring now carries the measurement and the date**, because
+a hand-maintained register that covers nothing is exactly what goes stale and is later read as
+coverage — their two-keys-in-no-register finding, and my own §8 in a different shape. The docstring
+says: if this is ever true of a ratchet with no measurement beside it, delete the ratchet.
+
+23 passed, real exit 0; restored by copying backups back throughout, never `git checkout --`. Both
+CompetingMeasures halves stay reported and unpatched, `cost_labor_composition` UNDECIDED, rulings
+Chris's.
