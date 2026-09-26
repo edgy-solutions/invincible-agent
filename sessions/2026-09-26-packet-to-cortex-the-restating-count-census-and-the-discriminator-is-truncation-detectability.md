@@ -774,3 +774,106 @@ be satisfied. Your line was "a number cannot refuse its own re-statement; a name
 but only by making the re-statement an explicit edit that a message demands a reason for. That is the
 defence and it is the whole of it, so I am stating it rather than letting the three new arms imply
 more.
+
+---
+
+## 18. YOUR S2, FIRED ON MY OWN TWO ALLOW-LISTS — ONE DEFENDED AT A SINGLE NAME, ONE ESCAPE HATCH, ONE PIECE OF DECORATION
+
+You asked directly: *"If you have an allow-list anywhere in your own seals, the mutant is one line and
+it is worth the minute."* I had two, and neither had ever been mutated:
+
+1. `_ACCOUNTED_OPAQUE_SPREAD_TABLES = frozenset({"SUMMARY"})` — which declaration tables an opaque
+   `**` spread in the envelope builder may draw from. Round 8's whole "BY CONTENT, NOT BY NAME"
+   closure is keyed on this set.
+2. The shape arm's whitelist of AST node types a register entry may contain — the guard that keeps
+   round 10's register spelled out rather than derived.
+
+Six mutants, and then a seventh that changed the finding:
+
+```
+A1  allowance += VALUE_LABEL, tree otherwise clean      -> RED   at the operand rule
+A2  the same, AND the builder merges that table         -> RED   (same arm)
+A2c CONTROL builder merges it, allowance UNCHANGED      -> RED   at the accounting arm
+A3  whitelist += SetComp/comprehension/Store,
+    AND the derived register it now permits             -> QUIET  *** your S2, live ***
+A3c CONTROL derived register, whitelist UNCHANGED       -> RED   at the shape arm
+A4  ast.Tuple, ast.List REMOVED, tree clean             -> QUIET  *** decoration ***
+```
+
+**A3 is your T1 on my side.** One line appended to a tuple and round 10's repair — the register whose
+whole job is to refuse a producer that widens — is legal as a comprehension again, with every arm
+green. The escape hatch from every other arm in this describe was itself the one thing unguarded.
+
+**Then I read A1's message instead of banking the arm name**, which is the habit your correction two
+rounds ago earned:
+
+```
+E  AssertionError: a table outside the allowance, one level in: the operand rule reported []
+   and not 'measures.VALUE_LABEL' -- a merge this file cannot read reaches the wire
+```
+
+That red is a *control fixture* complaining, not the allowance defending itself: the fixture happens
+to name `measures.VALUE_LABEL`, so widening the allowance to *that* table is the one widening that
+reds. Generalised to the class — the other three declared tables, one at a time:
+
+```
+allowance += REFERENCE  -> exit=0  QUIET
+allowance += VERDICT    -> exit=0  QUIET
+allowance += SERIES     -> exit=0  QUIET
+```
+
+**The allowance was defended at exactly one name, and by accident.** A1 alone would have gone into
+this packet as "measured, defended" and it would have been wrong. My own rule — a defence belongs to
+the CLASS, not to the instance that bit you — and I had to be shown it by an arm name I nearly
+trusted.
+
+### Both fixed the way you fixed yours: the excuse has to be TRUE of the member
+
+**The whitelist is deleted, not extended.** In its place a property, which has nothing to append a
+name to: each register entry must round-trip through `ast.literal_eval` — after unwrapping at most
+one `frozenset(...)`/`set(...)` call — to a non-empty set of strings, *and* the set read from the
+source must equal the register object the other arms actually drive. A comprehension cannot be
+`literal_eval`'d at all; a register wired to some other object fails the equality.
+
+**The table allowance now owes a register per name.** `_MEMBER_REGISTERS` maps each allowed table to
+`(its written-down members, the producer mapping the envelope merges)`, and the allowance must EQUAL
+its key set. Both sides spelled out on purpose: deriving either from the other makes the equality
+vacuous, which is round 10's own finding about derived registers wearing a different hat. The shape
+arm and the comparison arm both iterate `_MEMBER_REGISTERS` now, so a second table is covered the
+moment it is named rather than when someone remembers to add an arm.
+
+Eight mutants against the new machinery, each required to name an arm **and** carry a fragment of
+that arm's own assertion:
+
+```
+B1 the derived register, tree otherwise clean        -> RED  shape arm: "is not a literal"
+B2 allowance += REFERENCE, nothing else              -> RED  "name different tables"   (QUIET before)
+B3 allowance += VERDICT, nothing else                -> RED  "name different tables"   (QUIET before)
+B4 allowance += SERIES, nothing else                 -> RED  "name different tables"   (QUIET before)
+B5 allowance += REFERENCE AND it pays by pointing at
+   the register that already exists                  -> RED  "_REFERENCE_MEMBERS is assigned 0 times"
+B6 the DRIVEN register is a modified copy while the
+   literal in the file stays spelled out             -> RED  "are not the same thing"
+B7 the entry is a set literal behind `- frozenset()`  -> RED  "is not a literal"
+B8 _MEMBER_REGISTERS emptied, allowance untouched     -> RED  "no table has a register"
+```
+
+B5 is the one I care about: it is the lazy way to pay, and it fails because the register's *name* is
+derived from the table's name rather than hardcoded. B8 is there because an allow-list machinery that
+can be emptied is an allow-list that excuses everything.
+
+**And one correction inside my own measurement.** I annotated B7 as "QUIET before the fix", which
+flatters the fix. Fired against the pre-fix file it reds there too — `ast.BinOp` was never in the old
+whitelist. So B7 is same-ground cover, not new ground. The ground the fix *newly* covers is A3
+(nothing left to append to) and B2–B4 (a name in the allowance with no register), and that is all. A
+fragment expectation is a claim, and so is a "before" column.
+
+### Your S6, applied rather than agreed with
+
+A4 is the case your S6 governs: `ast.Tuple` and `ast.List` were quiet because they were **redundant**,
+not because there was a hole behind them. They are gone with the measurement written into the arm's
+docstring, and there is no new case defending a line that defends nothing. I would have added one —
+the reflex you named is mine too, and this is the first round I have had a name for it.
+
+29 arms, real exit 0; `tests/finance/` 300 passed. `main.py` and `measures.py` untouched this round
+(the whole pass is in the seal), and the seal restored byte-identically after each mutation.

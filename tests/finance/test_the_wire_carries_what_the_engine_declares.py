@@ -556,9 +556,18 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 # the arm below CHECKS the reason rather than trusting it.
 _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
 
-# The tables an opaque `**` spread may draw from. SUMMARY's members are registered in
-# _SUMMARY_MEMBERS below and asserted in BOTH DIRECTIONS by
+# The tables an opaque `**` spread may draw from. Each name here MUST appear in
+# _MEMBER_REGISTERS below -- written-down members plus the producer mapping to compare them
+# against -- and the registers are asserted in BOTH DIRECTIONS by
 # test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree.
+#
+# THE NAME IS NOT THE EXCUSE. This set was defended at exactly ONE name until 2026-09-26, and
+# only by accident: adding a second table reddened an arm whose MESSAGE showed the red came
+# from a control fixture that happens to name `measures.VALUE_LABEL`. Generalised to the
+# class, REFERENCE, VERDICT and SERIES were each QUIET on their own. cortex-60's S2 -- an
+# allow-list keyed on a NAME excuses whatever is given that name; a declarative exemption is a
+# comment -- and my own rule that a defence belongs to the CLASS, not to the instance that bit
+# you. The register requirement is what makes the excuse checkable.
 #
 # THAT DELEGATION USED TO NAME test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES, and
 # cortex-60's lesson is what broke it: a prediction written into a comment is a mutant nobody
@@ -608,6 +617,18 @@ _SUMMARY_MEMBERS: dict[str, frozenset[str]] = {
             "reference_value",
         }
     ),
+}
+
+# WHAT THE ALLOWANCE OWES, PER TABLE: the written-down register, and the producer mapping the
+# envelope actually merges. Both halves are needed for the excuse to be checkable -- members
+# with nothing to compare them to is a list of hopes, and a producer with no register is the
+# call-against-itself this file spent round 10 removing.
+#
+# Spelled out rather than derived from the allowance, and the allowance spelled out rather than
+# derived from this -- the control arm asserts they are EQUAL. Deriving either direction would
+# make that equality vacuous, which is the same defect as a register derived from its producer.
+_MEMBER_REGISTERS: dict[str, tuple[dict[str, frozenset[str]], object]] = {
+    "SUMMARY": (_SUMMARY_MEMBERS, measures.SUMMARY),
 }
 
 
@@ -675,12 +696,12 @@ def test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree():
     The register is CONTENT, not shape, so it is spelled out rather than derived. Deriving it
     from `summary_of(rows)` would reproduce exactly the defect it exists to close.
     """
-    assert not _summary_register_disagreements(measures.SUMMARY, _SUMMARY_MEMBERS, _rows_for), (
-        "the summary register and the producer disagree:\n  "
-        + "\n  ".join(
-            _summary_register_disagreements(measures.SUMMARY, _SUMMARY_MEMBERS, _rows_for)
+    assert _MEMBER_REGISTERS, "no table has a register, so this arm asserts nothing"
+    for table, (register, producers) in sorted(_MEMBER_REGISTERS.items()):
+        complaints = _summary_register_disagreements(producers, register, _rows_for)
+        assert not complaints, (
+            f"the {table} register and its producer disagree:\n  " + "\n  ".join(complaints)
         )
-    )
 
 
 # The doctored producers the control arm drives the comparison with. A fake summary needs no
@@ -727,55 +748,84 @@ def test_the_SUMMARY_REGISTER_COMPARISON_can_actually_REPORT():
 
 
 def test_the_SUMMARY_REGISTER_is_SPELLED_OUT_and_not_DERIVED():
-    """THE ONE THING THE MUTATION PASS CANNOT REACH. The register closes the leak only while
-    it is written down: replace those literals with anything computed from `summary_of(rows)`
-    and the comparison becomes a call against itself again, which is exactly the state that let
-    a producer put another table's content on the wire with every arm green. That edit looks
-    like a tidy-up -- the same shape of change as every other one in this file's history that
-    turned out to matter -- and no mutant of the register's CONTENT can object to it, because a
-    derived register agrees with the producer by construction.
+    """THE ONE THING THE MUTATION PASS CANNOT REACH. A register closes the leak only while it is
+    written down: replace those literals with anything computed from `summary_of(rows)` and the
+    comparison becomes a call against itself again, which is exactly the state that let a producer
+    put another table's content on the wire with every arm green. That edit looks like a tidy-up,
+    and no mutant of the register's CONTENT can object to it, because a derived register agrees
+    with the producer by construction.
 
-    So the shape is asserted from the source: every value in the register must be a set of
-    string LITERALS. Read from the file rather than from the imported object, because by the
-    time the object exists a comprehension has already produced a perfectly ordinary frozenset.
+    NO WHITELIST. This arm used to filter the entry's AST against a tuple of permitted node types,
+    and cortex-60's S2 caught it: one more name in that tuple and the derived register is legal
+    again -- measured QUIET on 2026-09-26, the escape hatch from every other arm here being itself
+    unguarded. `ast.Tuple` and `ast.List` in that tuple were measured as doing nothing at all
+    (removing them: QUIET), so they are gone with the measurement recorded rather than defended
+    with a new case: a quiet branch that is REDUNDANT is not the same object as a hole.
+
+    In its place a PROPERTY, which has nothing to append a name to: the entry must round-trip
+    through `ast.literal_eval` to a non-empty set of strings, and it must EQUAL the register the
+    other arms actually drive. A comprehension cannot be literal_eval'd at all; a register wired
+    to some other object fails the equality. Read from the file rather than from the imported
+    object, because by the time the object exists a comprehension has already produced a perfectly
+    ordinary frozenset.
     """
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    assigned = [
-        n.value
-        for n in ast.walk(tree)
-        if isinstance(n, ast.AnnAssign)
-        and isinstance(n.target, ast.Name)
-        and n.target.id == "_SUMMARY_MEMBERS"
-    ]
-    assert len(assigned) == 1, (
-        f"_SUMMARY_MEMBERS is assigned {len(assigned)} times in this file, and this arm reads "
-        f"the first -- a second assignment would be invisible to it"
-    )
-    value = assigned[0]
-    assert isinstance(value, ast.Dict) and value.keys and all(
-        isinstance(k, ast.Constant) for k in value.keys
-    ), (
-        f"_SUMMARY_MEMBERS is written as {type(value).__name__} rather than a non-empty dict "
-        f"literal with literal verb names. A computed register cannot refuse a producer."
-    )
-    for k, v in zip(value.keys, value.values):
-        leaves = [
-            n
-            for n in ast.walk(v)
-            if not isinstance(
-                n, (ast.Call, ast.Name, ast.Load, ast.Set, ast.Constant, ast.Tuple, ast.List)
-            )
+    assert _MEMBER_REGISTERS, "no table has a register, so this arm asserts nothing"
+    for table, (register, _producers) in sorted(_MEMBER_REGISTERS.items()):
+        name = f"_{table}_MEMBERS"
+        assigned = [
+            n.value
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AnnAssign)
+            and isinstance(n.target, ast.Name)
+            and n.target.id == name
         ]
-        assert not leaves, (
-            f"the register entry for {k.value!r} contains "
-            f"{sorted({type(n).__name__ for n in leaves})} -- it must be a set of string literals "
-            f"and nothing else. A comprehension here agrees with whatever the producer emits, "
-            f"which is the defect this register exists to close: measured 2026-09-26, a summary "
-            f"emitting `VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
+        assert len(assigned) == 1, (
+            f"{name} is assigned {len(assigned)} times in this file, and this arm reads the "
+            f"wrong one unless there is exactly one. A table in the allowance is required to "
+            f"keep its register under that name."
         )
-        strings = [n for n in ast.walk(v) if isinstance(n, ast.Constant)]
-        assert strings and all(isinstance(n.value, str) for n in strings), (
-            f"the register entry for {k.value!r} holds non-string or no constants"
+        value = assigned[0]
+        assert isinstance(value, ast.Dict) and value.keys and all(
+            isinstance(k, ast.Constant) for k in value.keys
+        ), (
+            f"{name} is written as {type(value).__name__} rather than a non-empty dict "
+            f"literal with literal verb names. A computed register cannot refuse a producer."
+        )
+        from_source = {}
+        for k, v in zip(value.keys, value.values):
+            inner = v
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id in {"frozenset", "set"}
+                and len(inner.args) == 1
+                and not inner.keywords
+            ):
+                inner = inner.args[0]
+            try:
+                members = ast.literal_eval(inner)
+            except (ValueError, SyntaxError, TypeError) as exc:
+                raise AssertionError(
+                    f"the {name} entry for {k.value!r} is not a literal ({exc}) -- it must be a "
+                    f"set of string literals, optionally wrapped in one frozenset()/set() call. "
+                    f"Anything computed agrees with whatever the producer emits, which is the "
+                    f"defect this register exists to close: measured 2026-09-26, a summary "
+                    f"emitting `VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
+                ) from None
+            assert (
+                isinstance(members, (set, frozenset))
+                and members
+                and all(isinstance(m, str) for m in members)
+            ), (
+                f"the {name} entry for {k.value!r} reads as {members!r} -- it must be a "
+                f"non-empty set of strings"
+            )
+            from_source[k.value] = frozenset(members)
+        assert from_source == {k: frozenset(v) for k, v in register.items()}, (
+            f"the {name} literal in this file and the register the other arms DRIVE are not the "
+            f"same thing: source has {sorted(from_source)}, driven object has "
+            f"{sorted(register)}. Asserting the shape of a literal nothing reads is decoration."
         )
 
 
@@ -866,7 +916,8 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
         f"account for: {unrecognised} -- whatever keys they carry reach the wire unasserted. A "
         f"local or a helper return is exactly how the resolver's tail becomes a leak; give the "
         f"value literal keys, or read the table at the merge and add it to "
-        f"_ACCOUNTED_OPAQUE_SPREAD_TABLES with an arm that asserts its members."
+        f"_ACCOUNTED_OPAQUE_SPREAD_TABLES **and** a spelled-out register in _MEMBER_REGISTERS "
+        f"-- the name alone excuses nothing."
     )
 
     from_tables = {t.lower() for t in _envelope_tables()}
@@ -1824,6 +1875,19 @@ def test_the_BUILDER_SELECTOR_and_the_BINDING_RESOLVER_can_actually_FAIL():
     assert _ACCOUNTED_OPAQUE_SPREAD_TABLES < _DECLARED_TABLES, (
         f"the opaque-spread allowance {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)} is not a PROPER "
         f"subset of the declared tables {sorted(_DECLARED_TABLES)} -- it excuses every spread"
+    )
+
+    # AND EVERY NAME IN IT MUST HAVE PAID FOR ITS PLACE. Adding REFERENCE, VERDICT or SERIES to
+    # the allowance was QUIET all three times on 2026-09-26: the set was defended at one name,
+    # and only by a control fixture's accident. A name with no register is a declarative
+    # exemption, which is a comment. Both sides are spelled out on purpose -- deriving one from
+    # the other makes this equality vacuous the same way a derived register is vacuous.
+    assert _ACCOUNTED_OPAQUE_SPREAD_TABLES == frozenset(_MEMBER_REGISTERS), (
+        f"the allowance {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)} and the member registers "
+        f"{sorted(_MEMBER_REGISTERS)} name different tables -- "
+        f"{sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES ^ frozenset(_MEMBER_REGISTERS))} appears in "
+        f"one and not the other. An opaque spread may be excused only by a table whose members "
+        f"are written down and compared against a producer."
     )
 
 
