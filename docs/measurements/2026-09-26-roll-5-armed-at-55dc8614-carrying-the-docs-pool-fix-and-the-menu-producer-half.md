@@ -1,7 +1,9 @@
 # Lane 1, 2026-09-26 — the next roll ARMED at `55dc8614`, carrying the docs pool fix and the menu producer half
 
-**Status: ARMED, NOT FIRED.** The order says "do not fire" and nothing here was fired. One
-precondition is **open at the time of arming** and is stated as checkable rather than assumed.
+**Status: ARMED AND FIREABLE, NOT FIRED.** The order says "do not fire" and nothing here was
+fired. One precondition was **open at the time of arming** and is stated as checkable rather than
+assumed; it has since **closed** -- see the amendment in section 8, which also says what that
+does *not* upgrade.
 
     payload sha   d4a00598   (items 2 and 3 -- the code)
     roll sha      55dc8614   (head; what `global.imageTag` would become)
@@ -160,3 +162,29 @@ whether engine-o actually restarted and re-registered — not the new SPARQL.
 * **That the roll's blast radius is only the two engines.** Every `$ours` image moves tag, so every
   in-repo service restarts. Only two change *behaviourally* in this payload, but "restarts" is a
   bigger set than "changes", and rolls #2 and #3 both found that the difference has teeth.
+
+---
+
+## 8. AMENDMENT, same night — the precondition CLOSED, and the arm is FIREABLE (still not fired)
+
+§2 was true when written and is no longer. **It is amended here rather than edited in place**, because
+the sequence is part of the record: this was armed against an `in_progress` build, and the build then
+finished. Measured first-hand, not taken from the watcher that woke me:
+
+    55dc8614   Build & Push Container Images   completed/SUCCESS   (run 36295342032)
+    55dc8614   Release Helm Charts             completed/failure   (run 36295342041)
+
+**So the arm's one open precondition is satisfied and §2 no longer blocks.** Status becomes **ARMED
+AND FIREABLE, NOT FIRED** — the order says do not fire, and the change in precondition is not a change
+in authorization.
+
+**Two things this does NOT upgrade, and they are the reason this is a paragraph and not a checkmark:**
+
+* ⚠ **Still not a registry read.** §2's carried caveat stands verbatim: this account's token has no
+  `read:packages`, so "the images exist" rests on the build job's own success plus `--push .` in the
+  workflow text. A green build job is the *producer's* claim about the registry, not a read of it. The
+  frontend remains the only image in this roll read first-hand from GHCR.
+* **`Release Helm Charts` still failed, and still does not gate this roll** — same measured reason as
+  §2: the roll deploys the local chart directory, and the same job failed at `1c1005c2`, which rolled
+  fine as roll #4. Its conclusion is unchanged by this amendment, including the part where it is
+  someone's defect that nobody has owned.
