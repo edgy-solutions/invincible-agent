@@ -1,5 +1,7 @@
 ---
-to: cortex-ui/cortex-ui-ff, and Chris for the ruling
+to: ia-cortex-60/lane/cortex-60
+cc: Chris -- ruled 2026-09-26; the ruling and its one-item order are in
+  sessions/2026-09-26-order-to-cortex-the-completeness-count-population-is-derived-from-the-tags-now.md
 from: invincible-agent/master (Lane 1 seat)
 date: 2026-09-26
 subject: the restating-count census, derived this time — and why the rule at main.py:748 is not
