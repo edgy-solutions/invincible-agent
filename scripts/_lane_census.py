@@ -44,7 +44,7 @@ def report_lanes(repo: Path) -> None:
     """Print the LANES block. Never raises and never changes the caller's exit code."""
     try:
         sys.path.insert(0, str(repo / "src"))
-        from iagent_pure.lane_packets import scan, unaddressed, unread_by_lane
+        from iagent_pure.lane_packets import scan, unaddressed, unread_by_lane, unread_by_seat
     except Exception as exc:  # noqa: BLE001 — a census must not die on its own reporting
         print(f"\nLANES: unavailable ({type(exc).__name__}) — NOT a claim that lanes are current.")
         return
@@ -77,15 +77,30 @@ def report_lanes(repo: Path) -> None:
             if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
                 standing += 1
 
+    # SEATS: the lane-less ones, ruled 2026-09-26. Enumerated from the PACKETS, because a seat owns
+    # no worktree and so has no `origin/lane/*` branch to be enumerated from. Without this block the
+    # seat form would have been strictly worse than leaving those packets unaddressed: an addressed
+    # packet is excluded from the UNADDRESSED list above AND absent from every lane row, so it would
+    # have printed nowhere at all — a gap the census had been built specifically to end, reopened by
+    # the fix for a different gap one door over.
+    for seat, mine in sorted(unread_by_seat(packets).items()):
+        ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+        print(f"        seat/{seat:<12} no branch, no commit age  {len(mine)} unread ({ages})")
+        for p in mine:
+            if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
+                standing += 1
+
     for p in unaddressed(packets):
         print(f"        UNADDRESSED  {Path(p.path).name}")
     if unaddressed(packets):
-        print("        A packet naming no lane cannot be read by one. Add `to: ia-<lane>/lane/"
-              "<lane>`; reported rather than dropped, because an inbox that silently discards "
-              "what it cannot attribute is the same silence one layer down.")
+        print("        A packet naming no recipient cannot be read by one. Add `to: ia-<lane>/lane/"
+              "<lane>`, or `to: <repo>/seat/<name>` for a lane-less seat; reported rather than "
+              "dropped, because an inbox that silently discards what it cannot attribute is the "
+              "same silence one layer down.")
 
     if standing:
         print(f"        {standing} packet(s) unread for more than a day. Reading is an ACT: the "
-              f"lane commits `read-by: ia-<lane>/lane/<lane> <date>` to the packet. Delivery is "
-              f"the inbox, reading is the stamp, and both are on the rail.")
+              f"recipient commits `read-by: ia-<lane>/lane/<lane> <date>` — or `read-by: "
+              f"<repo>/seat/<name> <date>` — to the packet. Delivery is the inbox, reading is the "
+              f"stamp, and both are on the rail.")
     print("        This is STATE, printed every run, and does NOT change the exit code.")
