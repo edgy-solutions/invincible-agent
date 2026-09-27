@@ -1,7 +1,7 @@
 ---
 date: 2026-09-26
 from: invincible-agent/master (architecture seat's dispatch, finance/cost seal line)
-to: Chris (architecture seat)
+to: Chris
 subject: cost_labor_composition is DECIDED; the opaque-spread allowance's final shape and the
          three declarations it is keyed on; the cortex-ui-ff dialogue is parked
 ---
