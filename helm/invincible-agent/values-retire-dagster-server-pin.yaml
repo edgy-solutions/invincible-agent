@@ -1,0 +1,83 @@
+# Roll overlay: RETIRE the `dagster-server` tag pin. Two keys, and nothing else.
+#
+# WHAT THIS RETIRES, and why it needs a file at all.
+#
+# `helm get values iagent -n sandbox` carried, at revision 150:
+#
+#     dagster.webserver.image.tag: c0005142a610bc7759cfc8953666aee7c6064632
+#     dagster.daemon.image.tag:    c0005142a610bc7759cfc8953666aee7c6064632
+#
+# `grep -rn c0005142a610bc helm/` returns NOTHING. The pin is in no tracked values file: it
+# entered the RELEASE through a one-off `--set` on an earlier roll, and `--reuse-values` has
+# carried it forward on every roll since. Measured consequence, 2026-09-26: roll #3 fired at
+# revision 150 with `--set global.imageTag=b5eeb408…`, moved eighteen services, and did not move
+# the ONE service it was armed for — because every other component carries `tag: ""` and inherits
+# `global.imageTag`, and these two do not.
+#
+# THE TRACKED DECLARATION ALREADY SAYS EMPTY. `values-sandbox.yaml:497,517` declares `tag: ""`
+# for both webserver and daemon. So this file is not a new opinion about the tag; it is the
+# existing declaration, carried into a roll that cannot see it. A roll runs
+# `helm upgrade --reuse-values`, which does not read a values file unless one is passed with
+# `-f` — the same defect `values-roll-frontend-digest.yaml`'s header records for the frontend
+# digest — and passing `-f values-sandbox.yaml` instead would re-assert every other key in that
+# file over the values `--reuse-values` preserved, which is measured there to blank
+# `DATAHUB_TOKEN`.
+#
+# WHAT `tag: ""` RESOLVES TO — READ OFF THE HELPER, NOT THE COMMENT NEXT TO THE KEY.
+# `values.yaml` annotates both keys `# defaults to .Chart.AppVersion`. That comment is wrong, and
+# believing it would have made this file pointless. `_helpers.tpl:112` is the consumer:
+#
+#     $tag := .tag | default (ternary global.imageTag "" $ours) | default global.defaultImageTag | default $floor
+#
+# `$ours` is `hasPrefix "<global.imagePrefix>/"` on the repository, and the repository here is
+# `<imagePrefix>/dagster-server` — so `$ours` is TRUE and an empty tag falls through to
+# `global.imageTag`, which is exactly what the roll sets. `Chart.Version` is only the floor, four
+# steps later.
+#
+# EMPTYING RATHER THAN RE-PINNING AT A NEWER SHA, deliberately. Setting these to `b5eeb408`
+# would work for one roll and re-arm the identical trap for the next, since `--reuse-values`
+# would carry the new sha forward exactly as it carried `c0005142`. Emptying reproduces the
+# behaviour that was MEASURED to work in revision 150: all eighteen components that moved carry
+# `tag: ""`.
+#
+# THE SHA THAT RETIRES IT: `b5eeb408e5658530193b05e1b503d9ec03dbe95a`. The likeliest reading of
+# the original pin is that master's `dagster-server` was broken and `c0005142` was the last good
+# one — and `b95ce005` (the SQLAlchemy pin, an ancestor of `b5eeb408`) is precisely what was
+# authored to fix it. That is a READING, not a measurement. If the pin had another reason, this
+# file is wrong and the pin should come back — with its reason written here next to it, which is
+# the whole point of the file existing.
+#
+# WHEN THIS FILE BECOMES REDUNDANT, so it does not outlive its job: once a roll fires that does
+# not carry the release's `c0005142` forward — i.e. once `helm get values iagent -n sandbox`
+# shows `tag: ""` for both keys — this overlay asserts nothing the release does not already hold,
+# and it should be deleted rather than passed on habit.
+#
+# THAT CONDITION IS ALREADY MET. Roll #4 fired this overlay at revision 151, and `helm get values`
+# now reports `tag: ""` for both keys — measured in
+# `docs/measurements/2026-09-26-roll-4-retires-the-dagster-server-pin-and-the-control-plane-is-now-at-b5eeb408.md`.
+# The file is committed anyway, once, because it is the only tracked record of the retirement at
+# the moment it happened. DELETE IT rather than passing it on the next roll.
+#
+# THE GATE IS THE RENDERED MANIFEST, NOT THIS FILE. A values file is a request. Whether an empty
+# string in a `-f` overlay actually displaces a non-empty value that `--reuse-values` preserved
+# is a claim about helm's merge, and the only thing that answers it is the rendered image
+# reference. Read it before firing:
+#
+#     helm upgrade iagent helm/invincible-agent -n sandbox --kube-context <ctx> \
+#       --reuse-values \
+#       -f helm/invincible-agent/values-roll-frontend-digest.yaml \
+#       -f helm/invincible-agent/values-retire-dagster-server-pin.yaml \
+#       --set global.imageTag=<roll sha> \
+#       --no-hooks
+#
+dagster:
+  webserver:
+    image:
+      tag: ""
+  daemon:
+    # Both keys, because the templates read them SEPARATELY:
+    # `templates/dagster.yaml:27` uses `dagster.webserver.image.tag` and `:131` uses
+    # `dagster.daemon.image.tag`. Emptying one would leave the other pinned, and the symptom
+    # would be half a control plane on each image.
+    image:
+      tag: ""
