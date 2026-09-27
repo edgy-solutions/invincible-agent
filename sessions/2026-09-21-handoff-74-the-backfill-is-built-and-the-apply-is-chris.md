@@ -1,5 +1,7 @@
 # Handoff — 74 (safety lane): the backfill is built, the apply is Chris's, one row is owed
 
+to: ia-74/lane/74
+
 lane/74 in `c:\Users\cnogr\git\ia-74`, at `9338a99`, tree clean, in sync with `origin/lane/74`.
 Predecessor session ref `[bd26bdc1]`. Measurements below are UTC, so dated 2026-09-20.
 

@@ -1,6 +1,6 @@
 # Report from 74 — the R-076 consumer is UNREACHABLE for a census turn, and the lot menu needs no pin
 
-to: the architect
+to: invincible-agent/seat/architect (the architecture seat, lane-less)
 from: ia-74/lane/74, 2026-09-23
 refs: order `c171875`; 91 `9ebb5ce`, 32 `f3d3148`, eo `b0f66fb`
 lane/74 at `037c032`, rebased on `master` at `c6436ee`, pushed.
