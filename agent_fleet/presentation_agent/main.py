@@ -258,6 +258,29 @@ def _extract_agent_response(raw_data: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _wrapper_field(raw_data: Any, key: str) -> Any:
+    """Read a key off the SUPERVISOR'S WRAPPER, not off the expert's response.
+
+    `_extract_agent_response` deliberately descends into `expert_response`; these fields live
+    one level ABOVE it, on the wrapper cortex-bff builds
+    (`{persona, user_persona, answerer_persona, predicate_verb_iri, sub_query, route_status,
+    expert_response}` — gateway.py's `_results`). An ELICITATION needs the wrapper's
+    `sub_query`: the question as the user asked it, which the refusal payload itself never
+    carries because an engine refusing a verb was never handed the phrase.
+
+    Returns None rather than "" for absent, so a caller can tell *not on the wire* from
+    *empty string on the wire*. That distinction is the whole point for `accepted_slots` —
+    see `_render_refusal_menu`.
+    """
+    if isinstance(raw_data, list) and raw_data:
+        first = raw_data[0]
+        if isinstance(first, dict) and key in first:
+            return first[key]
+    if isinstance(raw_data, dict) and key in raw_data:
+        return raw_data[key]
+    return None
+
+
 def _render_document_deterministic(
     raw_data: Any,
     persona: str,
@@ -1189,8 +1212,51 @@ def _as_options(values: "list") -> "list[Dict[str, Any]]":
     ]
 
 
+def _reroute_fields(raw_data: Any) -> Dict[str, Any]:
+    """The two fields an option-bearing ELICITATION needs to be ANSWERABLE, and no others.
+
+    A menu whose options cannot be turned back into a routed request is a menu that renders
+    and then dead-ends. `answer_ask` (src/iagent_pure/slot_disposition.py) reconstructs the
+    re-route from the CARD:
+
+        slot     = card["slot"]                       # already emitted
+        accepted = card["accepted_slots"]             # and this
+        return Reroute(BIND, {**accepted, slot: value})
+
+    `sub_query` is the phrase as asked, for the free-text arm and for a surface that must show
+    which question the menu belongs to. It rides on the supervisor's WRAPPER rather than in the
+    refusal payload, because an engine refusing a verb was never handed the phrase.
+
+    ⛔ `accepted_slots` IS OMITTED WHEN IT IS NOT ON THE WIRE, AND THAT IS DELIBERATE — IT MUST
+    NOT BE DEFAULTED TO `{}`.
+
+    Neither caller of `/render_ui` sends it today (measured 2026-09-26: gateway.py's `_results`
+    wrapper and dynamic_supervisor.py's POST body both carry `sub_query` and NOT
+    `accepted_slots`; the accepted set exists in `direct_dispatch` only as a Dagster
+    materialization). Emitting `{}` to satisfy a schema would be strictly worse than omitting
+    it, and this is the one place that can be said: `answer_ask` does `{**accepted, slot: value}`,
+    so an empty dict does not mean "no slots were bound" — it re-routes having DROPPED every
+    slot the first turn got right, with no error anywhere, which is precisely the failure
+    `slot_disposition`'s own docstring says the field exists to prevent ("a re-route pre-binding
+    ONLY the answered slot would suppress filling of every other slot the first turn already got
+    right"). A defaulted `{}` would manufacture that bug and make the seal green over it.
+
+    So: ABSENT means "this producer could not know", which a consumer can refuse. `{}` would
+    mean "nothing was bound", which is a false claim. The wire gap is the blocker and is
+    reported as one; when a caller starts sending the field, it appears here with no change.
+    """
+    out: Dict[str, Any] = {}
+    _sq = _wrapper_field(raw_data, "sub_query")
+    if _sq is not None:
+        out["sub_query"] = str(_sq)
+    _acc = _wrapper_field(raw_data, "accepted_slots")
+    if isinstance(_acc, dict):
+        out["accepted_slots"] = dict(_acc)
+    return out
+
+
 def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
-                         persona: str) -> Dict[str, Any]:
+                         persona: str, raw_data: Any = None) -> Dict[str, Any]:
     """A refusal that names what you may say instead, drawn as the ask it is.
 
     NAMED RATHER THAN INLINE so the provenance seal can see it: that seal enumerates
@@ -1198,12 +1264,16 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
     pre-selection WITH A REASON. Two anonymous `return {"components": ...}` are
     indistinguishable to it — and an allowlist keyed on a shapeless string would have to be
     loosened to admit them, which is how an allowlist of FACTS becomes one of preferences.
+
+    `raw_data` is threaded in for `_reroute_fields` only — see its docstring for why the
+    re-route fields cannot come from `ref`.
     """
     return {"components": [{
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": slot,
         "options": _as_options(opts),
+        **_reroute_fields(raw_data),
         # NAMES THE MECHANISM HONESTLY. Not `enumeration` — no enumerate provider was asked;
         # the engine recomputed the legal values while refusing. A consumer that needs to tell
         # "the class was listed" from "the engine said what it accepts" can, and one that does
@@ -1215,13 +1285,21 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
 
 
 def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
-                         persona: str) -> Dict[str, Any]:
-    """An abstain drawn as an ask whose options are VERBS. See the ruling at the call site."""
+                         persona: str, raw_data: Any = None) -> Dict[str, Any]:
+    """An abstain drawn as an ask whose options are VERBS. See the ruling at the call site.
+
+    CARRIES THE RE-ROUTE FIELDS FOR THE SAME REASON THE REFUSAL MENU DOES. The dispatch named
+    `_render_refusal_menu`, but the defect is a property of PUTTING OPTIONS ON THE WIRE, not of
+    which producer did it — and the seal is written against that population ("an option on the
+    wire without both"), so this producer is in it. An abstain menu that cannot be answered
+    dead-ends exactly as a refusal menu does.
+    """
     return {"components": [{
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": "verb",
         "options": _as_options(cands),
+        **_reroute_fields(raw_data),
         "option_source": "candidates",
         "reason": "no_verb_classified",
         "message": str(abst.get("message") or ""),
@@ -1306,7 +1384,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             logger.info(
                 "render_ui: abstain carries %d candidate verb(s) -> ELICITATION", len(_cands),
             )
-            return _render_abstain_menu(_abst, _cands, effective_persona)
+            return _render_abstain_menu(_abst, _cands, effective_persona, request.raw_data)
         # NO CANDIDATES IS A DIFFERENT ANSWER and must not draw an empty menu: it means the
         # registry held nothing comparable for this subject, which the ordinary refusal path
         # says in words. Same absent-versus-empty rule as the refusal below.
@@ -1340,7 +1418,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 "render_ui: refusal outcome=%s carries %d option(s) for slot %r -> ELICITATION",
                 _ref.get("outcome"), len(_opts), _slot,
             )
-            return _render_refusal_menu(_ref, _opts, _slot, effective_persona)
+            return _render_refusal_menu(_ref, _opts, _slot, effective_persona, request.raw_data)
         if _slot and _opts == []:
             # THE OTHER TRUE STATE: the engine computed the list and it is genuinely empty.
             # Rendered as an ask with NO menu and the reason said, never as a menu of nothing.

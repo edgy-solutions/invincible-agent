@@ -467,8 +467,52 @@ async def get_baml_persona_string() -> str:
 async def get_baml_domain_string() -> str:
     return await _domain_string_with_driver(_NEO4J_DRIVER)
 
+#: The classes a resolver must never OFFER as a subject. Derived from what a class
+#: IS (`rdfs:subClassOf+` one of these roots), never from its namespace.
+#: THIS ENGINE IS THE MASTER. doc-tools' `_RESPONSE_SHAPE_ROOTS`
+#: (doc_tools/assets/ontology_assets.py) applies the same rule when it builds the
+#: Weaviate index; tests/routing/test_response_shapes_are_not_groundable.py
+#: cross-checks the two so a third copy cannot drift in silently.
+_RESPONSE_SHAPE_ROOTS: tuple[str, ...] = (
+    "http://invincible-agent/mesh#Response",
+    "http://invincible-agent/mesh#Archetype",
+)
+
+
+def cold_start_fallback_domains(
+    domains: list[str] | None, domain: str | None
+) -> list[str]:
+    """The domains `/resolve`'s cold-start fallback reads: the caller's own, plus MESH.
+
+    A MODULE-LEVEL FUNCTION SO THE SEAL CAN CALL THE REAL ONE. This was three inline lines in
+    the `/resolve` handler, which left the seal no choice but to MIRROR it — and a mirror is
+    not a seal: with the mirror in place, disabling the MESH append here left
+    `test_the_fallback_query_RUN_yields_DocPage_and_NO_response_shape` GREEN (measured
+    2026-09-26, mutant B survived). The MESH half of the fix was uncovered by construction.
+    Anything that changes which domains the fallback spans must change THIS function.
+
+    MESH is unconditional because the archetype/system classes every domain's verbs declare as
+    their `input_uri` — `mesh:DocPage`, the registered subject of `mesh:explain`, among them —
+    are declared only in `mesh_system.ttl` and therefore live only in the MESH graph. A
+    domain-scoped read structurally cannot offer them, however completely that domain's own
+    ontology is indexed, which is why a DOCS caller saw a one-class pool holding the wrong class.
+    """
+    out = list(domains or ([domain] if domain else []))
+    if "MESH" not in {d.upper() for d in out}:
+        out.append("MESH")
+    return out
+
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
+#
+# THE COLD-START FALLBACK APPLIES THE SAME EXCLUSION THE WEAVIATE INDEX APPLIES. Before the
+# `FILTER NOT EXISTS` below existed, the two disagreed: doc-tools' ontology_assets.py excludes
+# response shapes (classes under `_RESPONSE_SHAPE_ROOTS`) when it builds the Weaviate
+# OntologyClass index, but this fallback query — taken only when Weaviate has nothing for the
+# domain — read the raw RDF graph with no such exclusion, so it happily handed back the one
+# class the index had refused. That disagreement is what produced the DOCS dead end:
+# `docs:DocExplanation` (DOCS's only class) IS `rdfs:subClassOf mesh:Response`, so the index
+# correctly holds zero rows for DOCS and the cold-start fallback then offered it right back.
 _SPARQL_MAINTENANCE_CLASSES = """
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -476,15 +520,19 @@ PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX iof-ann: <https://spec.industrialontologies.org/ontology/annotation/>
 
 SELECT ?cls ?label ?definition ?example
-WHERE {
+WHERE {{
     ?cls a owl:Class ;
          rdfs:label ?label .
     FILTER (isURI(?cls))
-    OPTIONAL { ?cls iof-ann:naturalLanguageDefinition ?definition . }
-    OPTIONAL { ?cls skos:example ?example . }
-}
+    FILTER NOT EXISTS {{
+        ?cls rdfs:subClassOf+ ?__shape_root .
+        VALUES ?__shape_root {{ {shape_roots} }}
+    }}
+    OPTIONAL {{ ?cls iof-ann:naturalLanguageDefinition ?definition . }}
+    OPTIONAL {{ ?cls skos:example ?example . }}
+}}
 ORDER BY ?label
-"""
+""".format(shape_roots=" ".join(f"<{_r}>" for _r in _RESPONSE_SHAPE_ROOTS))
 
 
 # THE OUTCOME DECISION IS A PURE MODULE, so the rule separating "nothing matched" from "could not
@@ -529,11 +577,18 @@ def _get_local_graph() -> rdflib.Graph:
     return _LOCAL_GRAPH
 
 
-async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
+async def execute_sparql(
+    query: str, domain: str = "MAINTENANCE", *, domains: list[str] | None = None
+) -> list[dict]:
     """
     Execute SPARQL query using the Hybrid Strategy:
     1. Try Apache Jena Fuseki (Fast/Enterprise)
     2. Fallback to local rdflib (Safe/Development)
+
+    `domains`, WHEN NON-EMPTY, SUPERSEDES `domain` — it scopes the query to the UNION of every
+    listed domain's two graphs (vocabulary + instances) rather than one domain's pair. Passing
+    only `domain` (the pre-existing call shape) is untouched byte-for-byte: `domains=None`/`[]`
+    falls straight back to the single-domain path below.
     """
     # Scope to the named graph the reproducible ingest actually writes:
     # doc-tools ontology_assets.py PUTs each domain's ontology to
@@ -551,7 +606,6 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # to the LAST file (MAINTENANCE = mil_extension alone, IOF core/MRO destroyed), so
     # {domain} points at a real-but-THIN graph until the producer switches to
     # append/merge. Shipping the name fix alone yields a thin menu, not a full one.
-    _dom = "".join(c for c in (domain or "") if c.isalnum() or c == "_") or "MAINTENANCE"
     # READ-SIDE UNION mirroring the write-side split (2026-07-23). A domain's triples live in TWO
     # graphs: its manifest-reproducible VOCABULARY graph <http://internal/{DOMAIN}> and its
     # non-reproducible runtime INSTANCE graph <http://internal/{DOMAIN}_INSTANCES> (doc-tools writes
@@ -562,8 +616,20 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # A domain with no instance graph (e.g. MAINTENANCE_INSTANCES absent) simply contributes nothing.
     # NOTE: this is why the split did NOT re-hide instances the way the default graph did — the
     # domain-scoped read now spans both graphs by construction.
-    _graph_scope = (f"VALUES ?__mesh_g {{ <http://internal/{_dom}> "
-                    f"<http://internal/{_dom}_INSTANCES> }} GRAPH ?__mesh_g")
+    #
+    # `domains` extends this same union across MULTIPLE domains in one query (e.g. the caller's
+    # domain plus MESH) — each domain sanitised the SAME way `domain` always was, so a caller
+    # passing one name via either parameter gets byte-identical graph scoping.
+    _dom_list = [d for d in (domains or []) if d] or [domain or "MAINTENANCE"]
+    _sanitised_doms = [
+        "".join(c for c in (d or "") if c.isalnum() or c == "_") or "MAINTENANCE"
+        for d in _dom_list
+    ]
+    _graph_uris: list[str] = []
+    for _d in _sanitised_doms:
+        _graph_uris.append(f"<http://internal/{_d}>")
+        _graph_uris.append(f"<http://internal/{_d}_INSTANCES>")
+    _graph_scope = f"VALUES ?__mesh_g {{ {' '.join(_graph_uris)} }} GRAPH ?__mesh_g"
 
     # 🛑 Strictly enforce data segregation by wrapping the query in the graph context.
     # This assumes the input query uses standard triple patterns that we want to scope.
@@ -2440,8 +2506,19 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         print("⚠️ No vectors found. Falling back to raw SPARQL/RDF Graph.")
         print("⚠️ Action Required: doc-tools pipeline must sync ontologies into Weaviate.")
         print("="*60)
-        
-        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
+
+        # THE FALLBACK PREVIOUSLY READ THE SINGULAR `domain` WHILE THE SUPERVISOR SENDS BOTH — a
+        # DOCS-scoped caller (request.domains == ["DOCS"], request.domain unset/stale) silently
+        # answered from MAINTENANCE instead of DOCS, because only `request.domain` reached
+        # `execute_sparql`. Span every domain the caller actually sent.
+        #
+        # MESH MUST ALWAYS BE SPANNED TOO: the archetype/system classes every domain's verbs
+        # declare as their `input_uri` (e.g. `mesh:DocPage`, the registered subject of
+        # `mesh:explain`) live in the MESH system graph, not in any single domain's graph — a
+        # domain-scoped pool structurally cannot contain them, however completely that domain's
+        # own ontology is indexed.
+        _fallback_domains = cold_start_fallback_domains(request.domains, request.domain)
+        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domains=_fallback_domains)
         for row in rows:
             candidates.append({
                 "uri": row.get("cls"),
@@ -2509,6 +2586,20 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 print("[Engine O] productive-option gate would have emptied the pool "
                       f"({len(candidates)} candidate(s), 0 served) — NOT filtering. "
                       "Suspect a served-set computed against the wrong domains.")
+                # A GATE THAT DEGRADES OPEN SILENTLY IS A GUARD THAT CANNOT FIRE. The branch
+                # above records what it REMOVES; this branch removes nothing, but a reader of
+                # the artifact still needs to see that the gate stood down rather than never
+                # having run — so every candidate it declined to filter is recorded too.
+                _gate_excluded = [
+                    {
+                        "kind": "class",
+                        "uri": str(c.get("uri") or ""),
+                        "gate": "productive_option",
+                        "disposal": "retained",
+                        "reason": "no_verb_in_scope_but_pool_would_empty",
+                    }
+                    for c in candidates
+                ]
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
