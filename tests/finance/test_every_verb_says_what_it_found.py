@@ -102,6 +102,55 @@ def _rows_for(fn):
     return getattr(m, fn)(STATE, program_id="NP-MERIDIAN")
 
 
+def test_the_EAC_verdict_NAMES_the_method_and_does_not_fall_back_to_the_word_forecast():
+    """⛔ THE ARM THAT MAKES THE ROW-KEY RENAME OBSERVABLE (ruling 5, 2026-09-26).
+
+    `_verdict_eac` reads the method off the row **with a silent default** —
+    `row.get("method_label", "forecast")`. Every other arm in this module was already green
+    against the *unrenamed* key, and would have stayed green: the fallback returns `"forecast"`,
+    which is non-None, carries no banned judgement word, and leads with a figure. So the rename
+    at `measures.py:805` could have been landed while this verdict quietly stopped naming CPI,
+    and **nothing in the suite would have said so**.
+
+    That makes this the arm, not the comment beside the read. It asserts the verdict names the
+    method the row actually carries — derived from the row, never typed — and asserts the
+    fallback word is ABSENT, because the fallback is the exact failure mode.
+
+    THE MUTANT IT IS OWED, RUN 2026-09-26. Reverting `measures.py`'s read to
+    `row.get("method", "forecast")` reds it, on the FIRST assertion, with the verdict measured as
+
+        'forecast: 2,152,381 USD above budget'
+
+    — a grammatical, judgement-free, figure-leading sentence that names no method. That string is
+    the whole argument for this arm existing: nothing else in the suite can tell it from the
+    right answer.
+
+    WHICH HALF CATCHES WHAT, since assertions short-circuit and only the first one reported.
+    `label in verdict` catches the read drifting off the key. `"forecast:" not in verdict` is NOT
+    redundant to it: it catches the caption gaining the fallback word while still interpolating
+    the label (`f"forecast: {row.get('method_label')}…"`), which the first half would pass. The
+    mutant above was killed by the first half; the second is unexercised by it and is kept on
+    that stated distinction rather than on habit.
+    """
+    rows = _rows_for("fin_eac_calculation")
+    rows = rows["rows"] if isinstance(rows, dict) else rows
+    label = rows[0]["method_label"]
+    assert label, "the row carries no method label; the assertion below would be vacuous"
+
+    verdict = m.VERDICT["fin_eac_calculation"](rows)
+    assert verdict is not None, (
+        "the EAC verdict is absent on seed data, so this arm cannot see whether it names the "
+        "method — the forecast does not land on the budget here, which is its only honest None")
+    assert label in verdict, (
+        f"the EAC verdict {verdict!r} does not name the method {label!r} the row carries. The "
+        f"figure without its method is the ambiguity `mesh:ForecastMeasure` exists to refuse, "
+        f"and the likely cause is the row key and this read having drifted apart")
+    assert "forecast:" not in verdict, (
+        f"the EAC verdict {verdict!r} led with the FALLBACK word, which means `_verdict_eac`'s "
+        f"`.get` missed the row's key entirely and defaulted. The verdict is still a valid "
+        f"sentence, which is exactly why this needs its own assertion")
+
+
 def test_the_spread_verdict_reads_the_EXACT_column_and_not_the_float_edge():
     """THE SPREAD IS THE FINDING (R-001), and it is the subtraction the money ruling names.
 

@@ -192,7 +192,7 @@ def test_the_COMPARISON_verb_agrees_with_this_module_on_every_method():
     from agent_fleet.finance_agent.seed import build_seed
 
     state = build_seed()
-    compared = {r["method"]: r for r in engine.fin_eac_comparison(state,
+    compared = {r["method_label"]: r for r in engine.fin_eac_comparison(state,
                                                                   program_id="NP-MERIDIAN")}
     assert set(compared) == set(M.FORMULA), (
         f"the comparison verb reports {sorted(compared)}, the module declares "
@@ -274,7 +274,7 @@ def test_the_COMPARISON_verb_keeps_an_undefined_methods_ROW_with_its_reason():
     rows = engine.fin_eac_comparison(state, program_id="NP-MERIDIAN", window=empty[:2])
     assert len(rows) == len(M.FORMULA), "a method was DROPPED rather than explained"
 
-    by_method = {r["method"]: r for r in rows}
+    by_method = {r["method_label"]: r for r in rows}
     assert by_method["CPI"]["eac"] is None
     assert "CPI" in by_method["CPI"]["unavailable_reason"]
     assert by_method["CPI_SPI"]["eac"] is None

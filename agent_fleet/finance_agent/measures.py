@@ -275,7 +275,12 @@ def _verdict_eac(rows: list[dict[str, Any]]) -> Optional[str]:
     if not vac:
         return None
     side = "below" if vac > 0 else "above"
-    return (f"{row.get('method', 'forecast')}: {abs(vac):,.0f} {unit} {side} budget".replace(
+    # `method_label` — renamed with the row it reads (ruling 5). THIS READ HAS A SILENT DEFAULT,
+    # which is why it is called out rather than just edited: had the key been missed here, the
+    # caption would have read "forecast: 1,234 USD above budget" instead of naming CPI, and
+    # nothing would have gone red. A consumer with a fallback is the one a rename injures
+    # quietly, so it is the one to find FIRST, not last.
+    return (f"{row.get('method_label', 'forecast')}: {abs(vac):,.0f} {unit} {side} budget".replace(
         "  ", " "))
 
 
@@ -802,7 +807,16 @@ def fin_eac_calculation(
         # THE METHOD AND ITS FORMULA RIDE ON THE ROW. Not metadata: they are the half of
         # the answer that makes the number interpretable, and a card that shows the figure
         # without them reproduces exactly the ambiguity the mandatory slot exists to refuse.
-        "method": method,
+        #
+        # `method_label`, NOT `method` — ruling 5, 2026-09-26. Do not rename it back. Across
+        # the fleet `method` names an OBJECT: the method BLOCK whose shape is declared once in
+        # `tests/_method_block_contract.py` for every engine that emits one. This row carried
+        # the same key holding a STRING, so one key had two types depending on which producer
+        # you read, and a consumer that reaches for `row.method` expecting the block gets a
+        # string it can destructure into a plausible EMPTY block instead of an error. The
+        # INPUT slot stays `method` (see `slots_for` above): the slot is the question, this is
+        # the answer, and only the answer collided.
+        "method_label": method,
         "formula": EAC_FORMULA[method],
         "eac": eac,
         # vac, etc and percent_complete follow from the forecast and are derived together, so
@@ -916,7 +930,11 @@ def fin_eac_comparison(
             # ONE ROW PER METHOD, each carrying its own formula — the half of the answer that
             # makes the number interpretable, and the reason three rows read as three forecasts
             # rather than as one figure repeated.
-            "method": method,
+            #
+            # `method_label`, NOT `method` — ruling 5, 2026-09-26; the reason is written out at
+            # `fin_eac_calculation`'s row above. Here the collision is worse, not better: the
+            # loop variable IS named `method`, so the old key read as self-evidently right.
+            "method_label": method,
             "formula": EAC_FORMULA[method],
             # THE EXACT FIGURE AND THE EDGE FIGURE, both, which is the cost engine's pattern:
             # the authoritative money is a quantized Decimal STRING and the float is what a

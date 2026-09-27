@@ -400,7 +400,9 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "subject_uri": "fin:EstimateAtCompletionComparison",
         "object_uri": "mesh:CompetingMeasures",
         "archetype": "COMPETING_MEASURES",
-        "expected_fields": ["method", "formula", "value", "unavailable_reason",
+        # `method_label` (ruling 5, 2026-09-26): the row key that names which EAC formula this
+        # row is, renamed off `method` because fleet-wide `method` names the method BLOCK object.
+        "expected_fields": ["method_label", "formula", "value", "unavailable_reason",
                             "spread", "spread_percent_of_bac", "lowest_value", "highest_value",
                             "reference_value", "methods_compared", "methods_answered",
                             "all_methods_answered", "value_unit"],
@@ -410,7 +412,10 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "subject_uri": "fin:EstimateAtCompletion",
         "object_uri": "mesh:ForecastMeasure",
         "archetype": "FORECAST_MEASURE",
-        "expected_fields": ["eac", "method", "formula", "vac", "etc", "bac",
+        # `method_label` (ruling 5, 2026-09-26) — see the COMPETING_MEASURES row above. The
+        # description below still says "the figure WITH its method", and that is still what the
+        # card must show; only the key's spelling moved.
+        "expected_fields": ["eac", "method_label", "formula", "vac", "etc", "bac",
                             "cpi", "spi", "value_unit"],
         "description": "Renders fin:EstimateAtCompletion as a FORECAST_MEASURE — the figure WITH its method and formula; a forecast drawn without its method re-creates the ambiguity the mandatory-method refusal just made the asker resolve",
     },

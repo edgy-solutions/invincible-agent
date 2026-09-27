@@ -53,7 +53,16 @@ def load_module(path: str, name: str = "_pre_extraction"):
 #: Row identity, tried in order. A moved value the report cannot NAME is a moved value nobody
 #: can look up — and the whole point of §6b's two numbers is that each move is attributable.
 #: `?` only when a row carries none of these, which is itself worth seeing.
-_LABEL_KEYS = ("period", "entity_id", "subject_id", "method", "program_id", "line_id")
+#:
+#: `method_label` SITS IN `method`'s OLD POSITION, and the position is the point (ruling 5,
+#: 2026-09-26). Finance's `fin_eac_comparison` emits one row per EAC method, all carrying the
+#: SAME `program_id` — and `program_id` is later in this tuple than the method key. So the method
+#: key is what distinguishes those three rows here. Renaming the producer's key without renaming
+#: it here would not have errored: every row would have fallen through to `program_id`, three
+#: distinct forecasts would have reported under one label, and the report would have looked
+#: complete while losing exactly the attributability this tuple exists to provide.
+_LABEL_KEYS = ("period", "entity_id", "subject_id", "method_label", "method",
+               "program_id", "line_id")
 
 
 def _label(row: dict[str, Any]) -> str:
