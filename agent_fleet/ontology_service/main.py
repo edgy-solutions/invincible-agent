@@ -82,10 +82,18 @@ except ImportError:
 # applies the nomic-embed-text task prefix that pairs with embed_document's
 # write-side prefix. NEVER call embed_document from a query path or vice
 # versa; the prefixes split the embedding space.
+#
+# `observe_query_embedding` is the SAME call with its identity attached — one response carrying the
+# vector AND the model that served it, which is what the mesh reader compares against a collection
+# marker. It is imported through the same dual-layout dance rather than a second one, so a layout
+# that breaks breaks in one place.
 try:
-    from utils.embed import embed_query  # container flat layout
+    from utils.embed import embed_query, observe_query_embedding  # container flat layout
 except ImportError:
-    from agent_fleet.utils.embed import embed_query  # source layout
+    from agent_fleet.utils.embed import (  # source layout
+        embed_query,
+        observe_query_embedding,
+    )
 
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities
@@ -726,6 +734,17 @@ from fastapi import Depends
 # REQUIRE_TRANSPORT_AUTH flips. The announcement is the pre-positioned string the contract
 # phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
 # the announcement has a real posture the gauge cannot read.
+from iagent_mesh.interfaces import Initiator
+
+# `WeaviateVectors` lives beside this file, so it takes the SAME dual-layout try/except every other
+# sibling here takes (`state_sparql`, `sustainment_instance_provider`). A relative import would work
+# in the source layout and fail in the container's flat one, where this module is top-level — and it
+# would fail at import time, i.e. the whole service, not the one route the flag governs.
+try:
+    from mesh_vectors import WeaviateVectors  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.mesh_vectors import WeaviateVectors
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
@@ -919,6 +938,23 @@ class SemanticResolutionResponse(BaseModel):
     # already printed this; printing is not carrying. Shape: [{kind, uri, gate, disposal,
     # reason}], matching the supervisor's verb-level trace so both layers render as one list.
     excluded: list[dict] = Field(default_factory=list)
+    # HOW THE POOL IN HAND WAS RETRIEVED: "hybrid" (vector + BM25), "bm25" (the embedding
+    # endpoint failed and we degraded), "rdf_graph" (both Weaviate arms returned nothing and
+    # Step 1.5's SPARQL cold-start filled the pool instead), or None when no retrieval was
+    # attempted at all — no client, or the collection is absent. FOUR STATES, because the fleet
+    # ran sixty-seven days BM25-only with nothing in any result saying so, and "we never
+    # searched" is not "we searched worse".
+    #
+    # THE VOCABULARY IS OPEN AND IS NOT `WeaviateVectors.MODES`. The first two literals come from
+    # the retrieval arm; "rdf_graph" does not, because the cold-start branch REPLACES the pool
+    # and a mode that named the arm that found nothing would be a stale claim about a pool it
+    # never produced. A consumer that switches on this field needs a default branch; one that
+    # asserts membership in MODES will red the moment a cold start happens.
+    #
+    # Carried by BOTH arms of the class-pool fork and with the same vocabulary, which is what makes
+    # `ONTOLOGY_CLASS_POOL_VIA_MESH` measurable rather than merely switchable. A field only the
+    # off-by-default arm populated would make the flag the only way to learn the mode.
+    mode: str | None = None
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -1059,8 +1095,20 @@ def _weaviate_hybrid_search_sync(
     domain: str | None = None,
     domains: list[str] | None = None,
     limit: int = 10,
-) -> list[dict]:
+) -> tuple[list[dict], str | None]:
     """Synchronous hybrid search implementation. gRPC blocks here.
+
+    RETURNS `(rows, mode)`, and the second half is not decoration.
+    `test_a_substrate_failure_is_not_an_empty_result.py` has been carrying the note for twelve
+    days — *"the BM25 fallback being SILENT is a separate, ruled defect: the retrieval mode
+    belongs in the return"* — and this is that return. The fleet ran sixty-seven days BM25-only
+    with nothing in any result saying so.
+
+    `mode` is `"hybrid"`, `"bm25"`, or **None when no retrieval was attempted at all** (no client,
+    or the collection is absent). None is a THIRD STATE, not a synonym for bm25: a caller that
+    cannot tell "we searched with keywords only" from "we never searched" reads a missing substrate
+    as a degraded one. The two real modes come from `WeaviateVectors.MODES`, imported rather than
+    restated — see `_class_pool_via_mesh_sync`.
 
     Always invoke via ``await asyncio.to_thread(...)`` from async paths so
     the event loop stays free and /health keeps responding.
@@ -1086,9 +1134,10 @@ def _weaviate_hybrid_search_sync(
     cluster state.
     """
     if not _WEAVIATE_CLIENT:
-        return []
+        return [], None
     if not _WEAVIATE_CLIENT.collections.exists("OntologyClass"):
-        return []
+        return [], None
+    mode = "hybrid"
     try:
         collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
         # Resolve which domains the filter spans. List supersedes
@@ -1113,6 +1162,10 @@ def _weaviate_hybrid_search_sync(
             # BM25 so /resolve stays available. Surfaces as reduced
             # routing accuracy in observability, not a hard failure.
             print(f"embed_query failed, falling back to BM25 for OntologyClass: {e}")
+            # AND SAY SO IN THE RETURN. The print above is the whole reason the fleet could run
+            # sixty-seven days BM25-only without noticing: a degradation announced only to stdout
+            # is announced to nobody who has to decide anything.
+            mode = "bm25"
             response = collection.query.bm25(
                 query=query, limit=limit, filters=filters,
                 # 2026-07-02 (decision-path visualizer Part 0): extract
@@ -1145,7 +1198,7 @@ def _weaviate_hybrid_search_sync(
                 ),
             }
             for obj in response.objects
-        ]
+        ], mode
     except Exception as e:
         # RULED 2026-09-14: A MID-QUERY FAILURE IS A REFUSAL, NEVER AN EMPTY SUCCESS.
         #
@@ -1169,6 +1222,137 @@ def _weaviate_hybrid_search_sync(
         ) from e
 
 
+# ---------------------------------------------------------------------------
+# ROUTE MIGRATION PILOT — ONE ROUTE, DEFAULT OFF (2026-09-26)
+# ---------------------------------------------------------------------------
+#: `/resolve`'s CLASS CANDIDATE POOL, served by the `MeshVectors` implementation instead of the
+#: hand-rolled query above. OFF by default and it stays off: this exists to make the diff between
+#: the two arms measurable, not to change what the fleet serves.
+#:
+#: WHY THIS ROUTE AND NOT `/classes`. `/classes` returns a domain's WHOLE class list from SPARQL,
+#: so no relevance-ranked arm can be row-identical to it and the equality seal would have nothing
+#: to assert. `/resolve` hits the SAME collection with the SAME domain filter — measured
+#: byte-for-byte identical logic, `by_property("domain")`, `.equal` for one and `.contains_any`
+#: for many, uppercased on both sides — so rows CAN be compared, and a difference means something.
+#:
+#: `WeaviateVectors` had exactly ONE consumer before this: its own conformance test. An
+#: implementation whose only caller is its test is a claim about an interface, not a use of one.
+ONTOLOGY_CLASS_POOL_VIA_MESH = os.getenv(
+    "ONTOLOGY_CLASS_POOL_VIA_MESH", "false"
+).lower() in ("true", "1", "yes")
+
+
+def _class_pool_via_mesh_sync(
+    query: str,
+    domain: str | None = None,
+    domains: list[str] | None = None,
+    limit: int = 10,
+    user_email: str = "",
+) -> tuple[list[dict], str | None]:
+    """The same candidate pool, through `WeaviateVectors.nominate`. Blocking; call via a thread.
+
+    THE PROJECTION IS ADAPTED HERE, NOT IN THE IMPLEMENTATION. `nominate` returns the object's own
+    properties; `/resolve`'s consumers read `{uri, label, description, score}`, where `description`
+    is the `definition` property under another name and `score` is retrieval METADATA rather than a
+    property at all. That mapping is this route's contract, not the mesh interface's, so it lives at
+    the call site — the implementation stays the shape every other engine would get.
+
+    THREE PLACES THE ARMS DIFFER, and each is reported rather than smoothed over:
+
+    1. **Identity.** `nominate` refuses a service initiator, so this arm needs a person, and
+       `ResolveRequest.user_email` defaults to `""`. An empty subject is minted as NOTHING here: it
+       is refused, because `Initiator(subject="", kind="person")` would pass the interface's check
+       while being exactly what that check exists to stop — a read whose provenance no person can
+       be asked about, wearing the right label. The incumbent arm ignores identity entirely, so an
+       anonymous `/resolve` succeeds with the flag off and is refused with it on. THAT IS THE
+       DIFF, and it is the one that would have to be settled before any default moves.
+    2. **The 503.** `MeshResult.failed` and `.unreachable` are mapped to HTTPException 503, not to
+       an empty list. RULED 2026-09-14: `/resolve` reads an empty pool as WEAVIATE COLD START and
+       answers from the maintenance ontology, so returning `[]` on a substrate failure produces a
+       confident WRONG-DOMAIN answer under a banner announcing a false diagnosis. `MeshResult`
+       distinguishes empty from failed, which is what makes this mapping possible at all — but the
+       mapping still has to be written, and writing it wrong reinstates the exact defect.
+    3. **The marker.** `nominate` checks the collection marker at open and REFUSES a model
+       mismatch; the incumbent has no such check and would search a space its query vector does not
+       live in. That is the new arm being stricter, so it can only turn an answer into a refusal,
+       never a refusal into an answer.
+    """
+    if not _WEAVIATE_CLIENT:
+        return [], None
+
+    if not (user_email or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ONTOLOGY_CLASS_POOL_VIA_MESH is on and this request carries no user_email. The "
+                "mesh read is attributed to a person or it is not made: a blank subject is "
+                "provenance nobody can be asked about. Thread identity to /resolve, or run with "
+                "the flag off."
+            ),
+        )
+
+    impl = WeaviateVectors(
+        client=_WEAVIATE_CLIENT,
+        embed=observe_query_embedding,
+        filters=wvc.query.Filter,
+        # THE SAME METADATA THE INCUMBENT ASKS FOR, from the same driver module. Without it the
+        # mesh arm returns rows whose `score` is None for every candidate, which is not a row the
+        # incumbent's pool can be compared against — the equality seal would red on a difference
+        # this fork did not intend and the panel would lose the losers' scores.
+        metadata=wvc.query.MetadataQuery,
+        report=lambda m: logging.warning("[Engine O] mesh class pool: %s", m),
+    )
+
+    scope: list[str] = [d for d in (domains or []) if d] or ([domain] if domain else [])
+    result = impl.nominate(
+        Initiator(subject=user_email, kind="person"),
+        collection="OntologyClass",
+        text=query,
+        domains=scope,
+        limit=limit,
+    )
+
+    if result.outcome in ("failed", "unreachable"):
+        # See point 2 above. An EMPTY result still means cold start and still takes that path;
+        # only the FAILURE is separated out, which is the entire distinction ADR-0009 asks for.
+        logging.error("Weaviate OntologyClass search failed (mesh arm): %s", result.detail)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate OntologyClass search failed — routing cannot proceed. This is a "
+                "substrate failure, not an empty result; an empty result is a cold start and is "
+                f"served from the graph instead. Cause: {result.detail}"
+            ),
+        )
+
+    # THE PROJECTION IS THE INCUMBENT'S, EXPRESSION FOR EXPRESSION, and the differences that
+    # remain are deliberate and named:
+    #
+    #   `.get("definition", "")` WITHOUT an `or ""`. The draft had one, and it silently made the
+    #   two arms disagree on a row whose `definition` is stored as null: the incumbent emits None
+    #   there, this arm would have emitted "". Row identity is the thing the flag's seal asserts,
+    #   so the arms must agree even where BOTH are arguably wrong — the incumbent's None reaching
+    #   an f-string and rendering "None: None" in a BAML enum description is a real defect, and it
+    #   is a defect of the pool builder, not of this fork. Reported, not smuggled into a migration.
+    #
+    #   `.get("uri")` where the incumbent writes `obj.properties["uri"]`. The incumbent RAISES on a
+    #   row with no uri and that raise lands in its own except-clause, which turns it into the 503;
+    #   this arm would emit a None-uri candidate instead. Not aligned, because the mesh arm's
+    #   refusals are structured (`MeshResult.failed`) and a KeyError is not one of them — and a
+    #   uri-less OntologyClass row has never been observed. STATED, so the next reader does not
+    #   discover it as a surprise.
+    rows = [
+        {
+            "uri": r.get("uri"),
+            "label": r.get("label"),
+            "description": r.get("definition", ""),
+            "score": r.get("score"),
+        }
+        for r in (result.rows or ())
+    ]
+    return rows, result.mode
+
+
 async def weaviate_hybrid_search(
     query: str,
     domain: str | None = None,
@@ -1181,7 +1365,38 @@ async def weaviate_hybrid_search(
     non-empty — query-driven cross-domain pool scoping per the
     routing_domain lock fix (2026-06-28). Backward-compatible with
     callers passing only `domain`.
+
+    Keeps the `list[dict]` contract its existing callers read. `/resolve` wants the mode too and
+    uses `class_pool_with_mode`; `/classify_legacy_table` does not and is unchanged.
     """
+    rows, _mode = await asyncio.to_thread(
+        _weaviate_hybrid_search_sync, query, domain, domains, limit
+    )
+    return rows
+
+
+async def class_pool_with_mode(
+    query: str,
+    domain: str | None = None,
+    domains: list[str] | None = None,
+    limit: int = 10,
+    user_email: str = "",
+) -> tuple[list[dict], str | None]:
+    """`/resolve`'s candidate pool, from whichever arm the flag selects, with its retrieval mode.
+
+    THE FORK IS HERE AND NOWHERE ELSE, so there is one place to read to know which arm served a
+    request. Both arms return `(rows, mode)` with the same vocabulary, which is what makes the
+    equality seal a comparison rather than two separate descriptions.
+
+    NO `try/except` IN THIS FUNCTION, and that is load-bearing rather than tidy: a handler here
+    would sit ABOVE both sync bodies and re-swallow the 503 they raise, and every assertion in
+    `test_a_substrate_failure_is_not_an_empty_result.py` would still pass. That seal names its
+    wrappers, so this one is in its population — derived from the module, not typed into a list.
+    """
+    if ONTOLOGY_CLASS_POOL_VIA_MESH:
+        return await asyncio.to_thread(
+            _class_pool_via_mesh_sync, query, domain, domains, limit, user_email
+        )
     return await asyncio.to_thread(
         _weaviate_hybrid_search_sync, query, domain, domains, limit
     )
@@ -2399,13 +2614,20 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # rather than locking to entitled_domains[0]. See ResolveRequest
     # docstring + [[failure-mode-pluralism-in-fixes]] for the
     # diagnose-each-mechanism rationale.
-    candidates = await weaviate_hybrid_search(
+    #
+    # THE ONE MIGRATED ROUTE (2026-09-26). `class_pool_with_mode` forks on
+    # ONTOLOGY_CLASS_POOL_VIA_MESH, which is OFF, so this line's behaviour is unchanged — what it
+    # adds is `retrieval_mode`, which both arms now report. `user_email` is threaded because the
+    # mesh arm attributes the read to a person and refuses a blank subject; the incumbent arm
+    # ignores it, as it always has.
+    candidates, retrieval_mode = await class_pool_with_mode(
         query=request.query,
         domain=request.domain,
         domains=request.domains,
         limit=10,
+        user_email=request.user_email,
     )
-    
+
     # Step 1.5: COLD START FALLBACK -> If Weaviate is empty, read the RDF graph
     if not candidates:
         print("="*60)
@@ -2413,7 +2635,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         print("⚠️ No vectors found. Falling back to raw SPARQL/RDF Graph.")
         print("⚠️ Action Required: doc-tools pipeline must sync ontologies into Weaviate.")
         print("="*60)
-        
+
         rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
         for row in rows:
             candidates.append({
@@ -2421,6 +2643,21 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 "label": row.get("label"),
                 "description": row.get("definition") or ""
             })
+        # AND THE MODE FOLLOWS THE POOL, because this branch REPLACES it. `retrieval_mode`
+        # documents how the candidates IN HAND were retrieved; leaving it at the Weaviate
+        # arm's answer would report "hybrid" over a pool that came from SPARQL — a precise,
+        # confident, wrong account of a retrieval that returned nothing. That is the failure
+        # this field was added to end, one branch below where it was added.
+        #
+        # ONLY WHEN ROWS ACTUALLY ARRIVED. If SPARQL is empty too, both attempts failed and
+        # the pool is empty either way; the Weaviate arm's mode is then the only retrieval
+        # there is to report, and overwriting it would erase the one fact still available —
+        # whether the vector arm was tried at all, or had already degraded to BM25.
+        #
+        # A THIRD LITERAL, so this field's vocabulary is NOT WeaviateVectors.MODES. Any
+        # reader keying on it must treat the set as open; see SemanticResolutionResponse.mode.
+        if rows:
+            retrieval_mode = "rdf_graph"
 
     # ── Step 1.55: ONTOLOGY-IRI VISIBILITY GATE (ADR-0025, select-from-
     # authorized-set). Filter the candidate pool to the classes the caller may
@@ -2596,6 +2833,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                         confidence_score=0.0,
                         reasoning=_unserved_subject_msg(entity_ref, instance_subject),
                         provenance=instance_provenance,
+                        mode=retrieval_mode,
                     )
                 return SemanticResolutionResponse(
                     resolved_uri=instance_subject,
@@ -2609,6 +2847,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                         f"match={instance_provenance.get('instance_match')})."
                     ),
                     provenance=instance_provenance,
+                    mode=retrieval_mode,
                 )
         # All entity_refs returned no candidates — fall through.
 
@@ -2617,7 +2856,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         return SemanticResolutionResponse(
             resolved_uri="UNKNOWN",
             confidence_score=0.0,
-            reasoning=f"No ontology classes found in Weaviate OR the RDF graph for domain {request.domain}."
+            reasoning=f"No ontology classes found in Weaviate OR the RDF graph for domain {request.domain}.",
+            mode=retrieval_mode,
         )
 
     # Step 2: Build BAML TypeBuilder
@@ -2676,6 +2916,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                     provenance=instance_provenance,
                     candidates=candidates,
                     excluded=_gate_excluded,
+                    mode=retrieval_mode,
                 )
             return SemanticResolutionResponse(
                 resolved_uri=instance_subject,
@@ -2693,6 +2934,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # resolution then overrode to Y".
                 candidates=candidates,
                 excluded=_gate_excluded,
+                mode=retrieval_mode,
             )
 
         # STRUCTURAL ABSTENTION GATE (ADR-0026 abstention-gate arc).
@@ -2719,6 +2961,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 provenance=instance_provenance,
                 candidates=candidates,
                 excluded=_gate_excluded,
+                mode=retrieval_mode,
             )
 
         # Gate did NOT fire: either a generic term the extractor
@@ -2739,6 +2982,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             provenance=_prov,
             candidates=candidates,
             excluded=_gate_excluded,
+            mode=retrieval_mode,
         )
 
     # Step 5: Return structured response (no identifier extracted).
@@ -2763,6 +3007,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         provenance=_prov,
         candidates=candidates,
         excluded=_gate_excluded,
+        mode=retrieval_mode,
     )
 
 

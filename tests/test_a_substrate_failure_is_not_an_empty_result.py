@@ -47,6 +47,13 @@ _MAIN = _REPO / "agent_fleet" / "ontology_service" / "main.py"
 #: thread, so a handler added there would be a third place for this defect to live.
 _RULED = ("_weaviate_hybrid_search_sync", "_predicate_hybrid_search_sync")
 
+#: THE THIRD REFUSING BODY, added 2026-09-26 with the `ONTOLOGY_CLASS_POOL_VIA_MESH` arm. It is
+#: deliberately NOT in `_RULED`: it holds no driver, so it has neither the `try/except` nor the
+#: BM25 fallback the three parametrized arms assert on, and putting it there would red two of them
+#: for having the correct shape. It gets its own arm asserting the same RULING, and it belongs in
+#: the derived caller population below — a handler above it swallows a 503 just as effectively.
+_MESH_ARM = "_class_pool_via_mesh_sync"
+
 
 def _fn(name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
     tree = ast.parse(_MAIN.read_text(encoding="utf-8"))
@@ -56,24 +63,70 @@ def _fn(name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
     raise AssertionError(f"{name} is gone from main.py — this seal has lost its subject")
 
 
+def _is_empty_container(v: ast.AST | None) -> bool:
+    """Is this expression an empty container LITERAL or an empty builtin constructor call?"""
+    if isinstance(v, (ast.List, ast.Dict, ast.Set)) and not (
+        getattr(v, "elts", None) or getattr(v, "keys", None)
+    ):
+        return True
+    return (
+        isinstance(v, ast.Call)
+        and isinstance(v.func, ast.Name)
+        and v.func.id in ("list", "dict", "set", "frozenset")
+        and not v.args
+    )
+
+
 def _returns_empty_container(node: ast.AST) -> int | None:
-    """Line of a `return []` / `return {}` / `return list()` inside `node`, if any."""
+    """Line of a `return []` / `return {}` / `return list()` inside `node`, if any.
+
+    **AND OF A `return [], mode`.** The ruled functions' return type became `(rows, mode)` on
+    2026-09-26, which DEMOTED this detector without touching it: it only ever looked at the
+    returned expression itself, so a handler writing `return [], "bm25"` — an empty success with a
+    retrieval mode stapled on, the same defect under a new spelling — walked straight past it. The
+    seal would have stayed green and reported the ruling held.
+
+    Only ONE LEVEL of tuple is unwrapped, deliberately. The subject is a function's own return
+    SHAPE; a container nested inside an element of that tuple is somebody else's payload, not this
+    rule's empty success. Peel the spine, not the arguments.
+    """
     for n in ast.walk(node):
         if not isinstance(n, ast.Return):
             continue
         v = n.value
-        if isinstance(v, (ast.List, ast.Dict, ast.Set)) and not (
-            getattr(v, "elts", None) or getattr(v, "keys", None)
-        ):
+        if _is_empty_container(v):
             return n.lineno
-        if (
-            isinstance(v, ast.Call)
-            and isinstance(v.func, ast.Name)
-            and v.func.id in ("list", "dict", "set", "frozenset")
-            and not v.args
-        ):
+        if isinstance(v, ast.Tuple) and any(_is_empty_container(e) for e in v.elts):
             return n.lineno
     return None
+
+
+def test_the_DETECTOR_sees_an_empty_container_inside_a_returned_tuple():
+    """THE POSITIVE CONTROL FOR THE MATCHER, because a detector that finds nothing and a subject
+    with nothing to find are the same green.
+
+    The shapes are parsed here rather than looked for in `main.py`: what is under test is the REACH
+    of `_returns_empty_container`, and the file under seal is supposed to contain none of them. The
+    last two are the negatives — a non-empty tuple return must NOT be flagged, or the widening
+    would red every healthy projection in the module and get reverted as noise.
+    """
+    handler = ast.parse(
+        "def f():\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:\n"
+        "        return [], None\n"
+    )
+    assert _returns_empty_container(handler) is not None, "the tuple form is still invisible"
+    for src, want in (
+        ("def f():\n    return []\n", True),
+        ("def f():\n    return [], 'bm25'\n", True),
+        ("def f():\n    return list(), None\n", True),
+        ("def f():\n    return rows, mode\n", False),
+        ("def f():\n    return [{'uri': 'x'}], 'hybrid'\n", False),
+    ):
+        got = _returns_empty_container(ast.parse(src)) is not None
+        assert got is want, f"detector said {got} for {src!r}"
 
 
 @pytest.mark.parametrize("name", _RULED)
@@ -141,14 +194,87 @@ def test_the_EMBED_FALLBACK_is_untouched(name):
     assert calls, f"{name} no longer has a BM25 fallback for an embed failure"
 
 
-def test_the_async_wrappers_ADD_NO_handler_of_their_own():
+def _callers_of_the_sync_bodies() -> dict[str, list[int]]:
+    """Every function in `main.py` that names one of the refusing sync bodies, and its handlers.
+
+    **DERIVED, BECAUSE THE HAND-TYPED VERSION WENT STALE THE DAY A THIRD WRAPPER ARRIVED.** This
+    was a literal `("weaviate_hybrid_search", "predicate_hybrid_search")`, and on 2026-09-26
+    `class_pool_with_mode` was added ABOVE both of them as `/resolve`'s fork point — a new frame in
+    exactly the position this arm exists to guard, invisible to it, and nothing about adding it
+    would have prompted anyone to edit a tuple in a different file.
+
+    The population is every function whose body REFERENCES a refusing body by name. That spelling
+    covers `asyncio.to_thread(_weaviate_hybrid_search_sync, ...)`, where the callee is an argument
+    rather than the called expression, and it is what the wrappers actually do.
+    """
+    tree = ast.parse(_MAIN.read_text(encoding="utf-8"))
+    refusing = set(_RULED) | {_MESH_ARM}
+    found: dict[str, list[int]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name in refusing:
+            continue
+        names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        if names & refusing:
+            found[node.name] = [
+                h.lineno for h in ast.walk(node) if isinstance(h, ast.ExceptHandler)
+            ]
+    return found
+
+
+def test_the_wrappers_ADD_NO_handler_of_their_own():
     """Reachability is a property of a path. The rule above is asserted on the sync bodies; a
-    `try/except` added to the async wrapper would sit ABOVE them and re-swallow the refusal, and
-    every assertion in this file would still pass."""
-    for name in ("weaviate_hybrid_search", "predicate_hybrid_search"):
-        fn = _fn(name)
-        handlers = [h.lineno for h in ast.walk(fn) if isinstance(h, ast.ExceptHandler)]
-        assert not handlers, (
-            f"{name} grew an exception handler at line(s) {handlers}. The wrapper only hands off "
-            f"to a thread; a handler here would absorb the 503 the sync body now raises."
-        )
+    `try/except` added to a frame ABOVE them would re-swallow the refusal, and every other
+    assertion in this file would still pass.
+    """
+    callers = _callers_of_the_sync_bodies()
+    offenders = {n: h for n, h in callers.items() if h}
+    assert not offenders, (
+        f"a frame above the refusing sync bodies grew an exception handler: {offenders}. These "
+        f"wrappers only hand off to a thread; a handler here would absorb the 503 the sync body "
+        f"raises, and the rest of this file cannot see it."
+    )
+
+
+def test_the_DERIVED_population_still_contains_the_frames_it_was_written_for():
+    """AN ANCHOR COUNT, because a derivation that silently matches NOTHING is the same green as a
+    clean module. If the wrappers are ever renamed or the call moves behind an indirection the
+    name-reference rule cannot see, this reds and says the population went empty or thin — rather
+    than the arm above quietly guarding a set of zero.
+    """
+    callers = _callers_of_the_sync_bodies()
+    assert "weaviate_hybrid_search" in callers, sorted(callers)
+    assert "predicate_hybrid_search" in callers, sorted(callers)
+    assert "class_pool_with_mode" in callers, (
+        f"the /resolve fork point is not in the derived population: {sorted(callers)}"
+    )
+    assert len(callers) >= 3, sorted(callers)
+
+
+def test_the_MESH_ARM_refuses_rather_than_returning_an_empty_pool():
+    """THE SAME RULING ON THE OTHER ARM'S SHAPE, which is why it is not in `_RULED`.
+
+    The three parametrized arms above assume the DRIVER shape: a `try/except` around a Weaviate
+    call, with a BM25 fallback inside it. The mesh arm holds no driver — it reads a `MeshResult`
+    whose `outcome` already distinguishes answered / empty / failed / unreachable, so its refusal
+    lives in an `if`, not a handler, and it has no `bm25` call of its own to control. Forcing it
+    into `_RULED` would red two arms for having the right shape.
+
+    What must hold is the ruling itself: the two FAILURE outcomes raise, and `empty` does not.
+    """
+    fn = _fn(_MESH_ARM)
+    src = ast.get_source_segment(_MAIN.read_text(encoding="utf-8"), fn) or ""
+    assert '"failed"' in src and '"unreachable"' in src, (
+        f"{_MESH_ARM} no longer distinguishes the failure outcomes; a MeshResult.failed read as an "
+        f"empty pool is the cold-start misdiagnosis this whole file is about"
+    )
+    codes = [
+        kw.value.value
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+        and isinstance(n.exc.func, ast.Name) and n.exc.func.id == "HTTPException"
+        for kw in n.exc.keywords
+        if kw.arg == "status_code" and isinstance(kw.value, ast.Constant)
+    ]
+    assert 503 in codes, f"{_MESH_ARM} raises {codes or 'nothing'}, never a 503"
