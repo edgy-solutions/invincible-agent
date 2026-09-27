@@ -32,6 +32,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from iagent_pure.engine_abstain import ABSTAINED
+from iagent_pure.generalist_fallback import (
+    FALLBACK, FALLBACK_FIELD, REASON_FIELD, answered_by_generalist, missing_disclosure,
+)
+
 #: The prompt form a walk sheet uses, and the ONE place it is written down.
 #:
 #: Identical to the regex in `tests/cost/test_the_walk_sheet_resolves_to_cost_lots.py`, which has
@@ -41,8 +46,27 @@ from typing import Any
 PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
 
 #: Every disposition a row may accept. A row's `dispositions` must be a non-empty PROPER subset:
-#: a row accepting all three asserts nothing about what happened and would stay green through
+#: a row accepting all four asserts nothing about what happened and would stay green through
 #: any behaviour change at all.
+#:
+#: ⚠ WIDENING THIS TUPLE DEMOTES THE PROPER-SUBSET GUARD BELOW IT, AND THAT GUARD'S SEAL CANNOT
+#: SEE IT. `test_a_row_accepting_every_disposition_is_refused` builds its catch-all row by calling
+#: `list(DISPOSITIONS)`, so it keeps passing after a widening — correctly: the guard does still
+#: refuse a true catch-all. What it cannot notice is that the guard's REACH shrank. Before
+#: `abstained` existed, a row accepting `[drawn, slot_required, task_requested]` was refused as
+#: vacuous; those three are now a proper subset and load fine, asserting only "not an abstain".
+#: That is a weaker assertion rather than a false one, so this is recorded and not patched — but
+#: whoever adds the fifth member should know the guard gets cheaper every time, because a derived
+#: seal reports its guard's RULE and never its reach. (Every row in the sheet accepts exactly one
+#: disposition today, so nothing is currently leaning on the slack.)
+#:
+#: THE FIFTH MEMBER ARRIVED THE SAME DAY: `fallback`, below. The paragraph above was written as a
+#: warning and is now a measurement, so it gets a number rather than a caution — a warning about a
+#: hazard is a claim that the hazard is refused, and this one was not. The proper-subset guard's
+#: reach is now: it refuses a row accepting all FIVE, and accepts the 30 four-member subsets that
+#: were refused when the tuple had four. Still not false, still weaker. The seal asserts the count
+#: of rows leaning on the slack is ZERO, which is the part that would actually bite.
+#:
 #: `task_requested` IS NOT `task_created`, AND THE NAME IS THE WHOLE POINT.
 #:
 #: The engine's payload carries a `review_request` block — kind, task_id, audience, title. That is
@@ -55,7 +79,23 @@ PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
 #: it as what the STORE did — a recording double, and the most confident kind of wrong. So the
 #: disposition is named for what is actually observed, and the database row stays out of scope
 #: rather than being faked into it.
-DISPOSITIONS = ("drawn", "slot_required", "task_requested")
+#:
+#: `abstained` — ADDED 2026-09-26, and it is the disposition this instrument was MISSING rather
+#: than one the fleet gained. An engine that declines to answer (docs_agent's `explain` when no
+#: page explains the subject) returns `abstained: True`, and nothing read it: the supervisor
+#: stamped `route_status: "matched"` and this runner, seeing a component with no rows, scored a
+#: correct refusal as `drawn`. Row `docs-how-do-i-roll-a-service-abstains` says in words that
+#: `drawn` "would be the defect here" — so the sheet named the defect before the vocabulary could
+#: express it. See `iagent_pure.engine_abstain`, which both sides now call.
+#:
+#: `fallback` — ADDED 2026-09-26, ruled the same day. The generalist answering because nothing
+#: matched is CORRECT routing (ADR-0008), and it draws a card, so it scored `drawn` — a verdict
+#: that is true, passing, and says nothing. Three of the four docs rows reported as passing on
+#: disposition while being answered from the maintenance ontology. This is the sibling of
+#: `abstained` in every respect: a fact the wire already carried (`fallback: true`, a structured
+#: `fallback_reason`, `provider: engine_a_fallback`) that no consumer read. See
+#: `iagent_pure.generalist_fallback`.
+DISPOSITIONS = ("drawn", "slot_required", "task_requested", ABSTAINED, FALLBACK)
 
 #: Where a card's rows live, per archetype. `DELTA_SET` calls them `effects` — its contract's
 #: word, not a synonym chosen here. Sealed against engine-cost's own table so the two cannot
@@ -430,6 +470,37 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         actual = "slot_required"
     elif requested:
         actual = "task_requested"
+    elif status == ABSTAINED:
+        # AN ENGINE THAT DECLINED, READ FROM THE ROUTING LAYER RATHER THAN THE CARD — because the
+        # card looks identical to a thin answer. docs_agent's abstain is a KNOWLEDGE_DOCUMENT
+        # component with no sections, so `comps` is non-empty and the old chain fell through to
+        # `drawn`, scoring the refusal the sheet designed as the defect the sheet warned about.
+        #
+        # ⚠ THIS ARM IS DELIBERATELY BELOW `asked`, and moving it up would break a live ruling.
+        # The classifier's abstain (route_status `abstained` since ADR-0008's amendment) is drawn
+        # as a verb MENU when candidates exist, which is an ELICITATION and scores `slot_required`
+        # — and the sheet's `slot_required` rows depend on that. Their COUNT is asserted in the
+        # seal rather than written here: the first draft of this comment named four rows by line
+        # number, and the same change that added this arm converted one of the four to `abstained`
+        # and shifted every line number. A number typed into a comment is stale one edit later.
+        # `abstained` is therefore the disposition for an abstain the walker CANNOT answer from
+        # the card: no menu, because there was nothing to offer.
+        actual = ABSTAINED
+    elif answered_by_generalist(routing):
+        # THE GENERALIST ANSWERED, AND IT DRAWS A CARD. That is why this arm has to exist above
+        # `drawn` rather than being a flag on it: `drawn` is TRUE of a fallback answer and tells
+        # the reader nothing, which is precisely how three of the four docs rows reported as
+        # passing while being answered from the maintenance ontology. A disposition that is true
+        # of both the thing you want and the thing you are looking for cannot distinguish them.
+        #
+        # ADR-0008 IS NOT BEING CONTRADICTED HERE. The routing is correct — with an empty pool the
+        # generalist is the only honest answer — so this changes no routing and no fallback. It
+        # changes what the SHEET is allowed to call a pass. Ruled 2026-09-26.
+        #
+        # ⚠ BELOW `asked`, `requested` AND `abstained`, all three deliberately. Each of those is a
+        # more specific fact about the same answer, and a fallback that also asked for a slot is
+        # better reported as the ask. Putting this arm higher would silently reclassify them.
+        actual = FALLBACK
     elif comps:
         actual = "drawn"
     else:
@@ -445,7 +516,16 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         if want_aud and got_aud != want_aud:
             why.append(f"review_request audience {got_aud!r} != {want_aud!r}")
     if actual not in row.dispositions:
-        why.append(f"disposition {actual!r}, row accepts {list(row.dispositions)}")
+        # THE REASON TRAVELS WITH THE VERDICT when the verdict is `fallback`. Without it the line
+        # reads "disposition 'fallback', row accepts ['drawn']" and sends the reader to open the
+        # payload to learn WHY nothing matched — which is the whole content of the finding. See the
+        # `fell back:` line at the end of this function, which is now the OTHER half of one report
+        # rather than a second accusation for the same fact.
+        detail = ""
+        if actual == FALLBACK:
+            detail = (f" — the generalist answered because nothing matched "
+                      f"({routing.get(REASON_FIELD) or 'reason unstated'})")
+        why.append(f"disposition {actual!r}, row accepts {list(row.dispositions)}{detail}")
 
     if asked and row.expect_options:
         opts = elicit.get("options") or []
@@ -493,10 +573,44 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
                 if n < row.min_rows:
                     why.append(f"{n} row(s) under {key!r}, floor is {row.min_rows}")
 
-    if status and status not in ("matched", "slot_required") and not asked:
+    # AN UNEXPECTED ROUTING STATUS, reported as its own reason. `abstained` joins the accepted set
+    # because it is now a disposition: an abstain is judged by whether the ROW accepts one, and
+    # naming it here as well would fail every abstain twice for one fact, including the rows that
+    # want it. THIS HIDES NOTHING, and that is checkable rather than asserted — a row accepting
+    # `[drawn]` that receives an abstain still fails, on the disposition line, because `actual` is
+    # `abstained` and is not in the row's list. The seal fires exactly that case.
+    #
+    # `no_match` ON A FALLBACK joins them, and ONLY that pair. Every fallback carries
+    # `route_status: "no_match"` — forced at dynamic_supervisor.py:1842, with its own comment saying
+    # a fallback must never outrank a match — so `route_status='no_match'` beside
+    # "the generalist answered because nothing matched" is the same sentence twice. `infra_error`
+    # is deliberately NOT folded in: it is also a fallback, but routing FAILING is a different fact
+    # from routing finding nothing, and the disposition line cannot carry both.
+    _folded = status == "no_match" and actual == FALLBACK
+    if status and status not in ("matched", "slot_required", ABSTAINED) and not asked and not _folded:
         why.append(f"route_status={status!r}")
-    if routing.get("fallback"):
-        why.append(f"fell back: {routing.get('fallback_reason') or 'unstated'}")
+    # A FALLBACK THAT DID NOT SAY SO — the ruled defect, 2026-09-26, and the one arm here that is
+    # about the ANSWER'S HONESTY rather than about whether it matched the sheet.
+    #
+    # ADR-0008 requires the generalist to say *"I am answering as a generalist because no
+    # registered tool matched your request"* rather than presenting as authoritative. The wire has
+    # carried the three markers of that sentence since Part 0 and no consumer read them, so
+    # nothing would have noticed if one stopped being emitted. This is the consumer. The gaps are
+    # listed rather than summarised because the three markers are produced in different places and
+    # a bare "undisclosed" sends the reader to find out which.
+    #
+    # It fires on a fallback whether or not the ROW accepts one: a row that expects a fallback
+    # expects a DISCLOSED fallback, and exempting the expected case would leave the seal unable to
+    # see an undisclosed answer anywhere the sheet already tolerates fallbacks — which is where
+    # they mostly live.
+    for _gap in missing_disclosure(routing):
+        why.append(f"UNDISCLOSED FALLBACK: {_gap}")
+
+    # AND THE PLAIN FALLBACK LINE, now only where the disposition did NOT already carry it: an
+    # abstain or an ask can also be a fallback, and there the disposition says `abstained` and this
+    # is the only place the fallback and its reason appear at all.
+    if routing.get(FALLBACK_FIELD) and actual != FALLBACK:
+        why.append(f"fell back: {routing.get(REASON_FIELD) or 'unstated'}")
 
     return (FAIL if why else PASS), why
 

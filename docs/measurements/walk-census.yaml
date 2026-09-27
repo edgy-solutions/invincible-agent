@@ -34,7 +34,22 @@
 #   drawn          a card with a payload meeting `min_rows`
 #   slot_required  the system asked for a mandatory slot instead of answering — a PASS where the
 #                  sheet says so, because refusing to guess a required input is the behaviour
-#   task_created   the answer is a row in `human_tasks`, not a 200 (see HAZ-1003)
+#   task_requested the engine's payload carries a `review_request` — the engine ASKING for a task
+#                  (see HAZ-1003). NOT `task_created`: the row in `human_tasks` is a different act
+#                  by a different component, and this runner reads the artifact, so it can see the
+#                  request and cannot see the row. This legend said `task_created` until
+#                  2026-09-26, naming the one thing the vocabulary's own docstring says it is not.
+#   abstained      the engine was reached and declined — no page explains the subject, no rows
+#                  exist to return. A WORDED refusal naming the subject, not a menu: an abstain
+#                  that CAN offer verbs is drawn as one and scores `slot_required` instead.
+#   fallback       the GENERALIST answered, because nothing in the registry matched. Correct
+#                  routing per ADR-0008 and not a failure of it — but it is not `drawn`, which is
+#                  what this runner scored until 2026-09-26. The generalist draws a card, so
+#                  `drawn` was TRUE, passing, and silent: three of the four docs rows reported as
+#                  passing on disposition while being answered from the maintenance ontology. A
+#                  row accepting `fallback` accepts a DISCLOSED one — the answer must say on the
+#                  wire that it came from the generalist and why, or the row fails whatever it
+#                  accepts (`iagent_pure.generalist_fallback`).
 # `dispositions` lists what this row ACCEPTS. A row accepting everything asserts nothing, so the
 # seal refuses an empty list and refuses a row that accepts every value in the vocabulary.
 
@@ -394,6 +409,17 @@ rows:
   # nobody looks at. `rolling-a-service` declares `explains: none` — honestly, its own frontmatter
   # says the emptiness is the measurement — so NO question can return it through mesh:explain.
   # The correct answer is an abstain NAMING the subject, and `drawn` would be the defect here.
+  #
+  # MEASURED 2026-09-26, three fires: this row came back `drawn`, exactly as warned above. The
+  # engine was never at fault — `explain` already returns `abstained: True` with the subject in it.
+  # Nothing read that field, so the supervisor stamped `route_status: matched` and the refusal drew
+  # as a sectionless card. Fixed at the routing layer (`iagent_pure.engine_abstain`).
+  #
+  # `dispositions` WAS `[slot_required]`, WHICH WAS THE WRONG CLAIM even while it was the only one
+  # the vocabulary could express. This row's subject is a doc-corpus gap: there are no comparable
+  # verbs to offer, and `presentation_agent` explicitly refuses to draw an empty menu, so no
+  # ELICITATION is ever produced here and `slot_required` was unreachable for this row. It asserted
+  # a neighbour of the claim. `[abstained]` asserts the claim.
   - id: docs-how-do-i-roll-a-service-abstains
     sheet: docs/measurements/docs-walk-sheet.md
     sheet_index: 3
@@ -404,4 +430,4 @@ rows:
     expect_verb: mesh_explain
     expect_archetype: null
     min_rows: 0
-    dispositions: [slot_required]
+    dispositions: [abstained]
