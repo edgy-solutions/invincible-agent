@@ -830,6 +830,58 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
 }
 
 
+#: THE TAG RULING 1 CREATED, and the vocabulary is THE SDK'S rather than a new one. A key in a
+#: `_PROJECTED_ARCHETYPES` passthrough that is COMPLETENESS-BEARING names which field of
+#: `iagent_mesh.enumeration.EnumerateInstancesResponse` it stands in for, so this fleet has one
+#: vocabulary for the fact instead of two:
+#:
+#:   total_available  a count of the PRODUCER'S set. Not re-derivable from the rows that arrive,
+#:                    because a truncated payload reproduces every derivation over itself and
+#:                    agrees with whatever survived.
+#:   completeness     the tri-state claim proper. Per ruling 6 it is ABSENT when the producer did
+#:                    not evaluate it -- never `None`, and never inferred from a count.
+#:
+#: THE SDK SAYS THE SAME THING FIRST, and this tag is deliberately a restatement of it rather
+#: than a second opinion: `enumeration.py:57-59` names inferring completeness from
+#: `len(instances) < limit` as the defect, and `:199-202` says the field is a three-value
+#: `Literal` and not a boolean precisely so "the provider said complete" stays distinguishable
+#: from "the provider never said".
+#:
+#: WHY A TAG AND NOT A LIST OF NAMES. cortex's parity seal pinned these three BY NAME
+#: (`projectedTupleParity.test.ts:423`, "The three completeness-bearing counts travel, BY NAME"),
+#: so a FOURTH completeness count was invisible to it. That is the per-member-predicate defect
+#: this fleet has now met three times, and it is what a floor by name always is: it covers
+#: exactly the names in it. A tag makes the POPULATION derivable, so the count of
+#: completeness-bearing keys comes from the tags rather than from a floor someone must remember
+#: to widen.
+#:
+#: `methods_answered` EARNS ITS PLACE FOR A REASON THE COMMENT ABOVE NEVER STATED, and the reason
+#: is checkable rather than argued. The producer derives it as
+#: `len([Decimal(r["eac_exact"]) for r in rows if r.get("eac_exact") is not None])`
+#: (`finance_agent/measures.py:79`, used at `:90`) -- and `eac_exact` IS NOT IN THE CARD'S ROW
+#: CONTRACT. The discriminating field is withheld from the row, so the card cannot run the
+#: producer's predicate over the rows it holds, truncated or not. Were it derivable it would be
+#: the `suppliers_above_threshold` shape and would have to be WITHHELD. So the day `eac_exact`
+#: joins `CompetingMeasures.contract.ts` this tag becomes wrong; the seal asserts that absence,
+#: so the change cannot pass quietly.
+#:
+#: RULING 2's EXEMPTION IS KEYED ON THE OBSTACLE, NOT ON A VERSION. These keys keep their
+#: engine-specific names -- rather than migrating to the SDK's `completeness`/`total_available`
+#: -- for exactly as long as those fields are UNAVAILABLE on this envelope surface. Measured,
+#: not assumed: both names exist at SDK 0.9.3, on `EnumerateInstancesResponse` and on no other
+#: type, in neither the Python nor the TS surface, and nowhere in `cortex-ui/src`; and this
+#: module imports only `iagent_mesh.transport_auth`, so the projected envelope is a plain dict
+#: with no field to migrate TO. "Until v0.9.4 lands" was this trigger's first form and was
+#: withdrawn: a version number is a NAME, 0.9.4 can land carrying nothing relevant, and an
+#: exemption keyed on a name excuses whatever is given that name. The seal asserts the premise
+#: itself, so the exemption reds the day a completeness field becomes available envelope-side.
+_COMPLETENESS_BEARING: Dict[str, str] = {
+    "methods_compared": "total_available",
+    "methods_answered": "total_available",
+    "all_methods_answered": "completeness",
+}
+
+
 def _project_planning_archetype(
     archetype: str,
     raw_data: Any,
