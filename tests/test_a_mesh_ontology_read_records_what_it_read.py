@@ -166,6 +166,20 @@ def test_the_SDKs_ontology_arm_runs_the_moment_the_pin_carries_it():
     Turtle verbatim, so with an injected POST the "typed terms appear in the Turtle" check largely
     re-reads this file's own fixture. What makes the property non-trivial is the round trip, and that
     is asserted separately above rather than left to this arm to imply.
+
+    THAT WEAK LEG WAS CLOSED LIVE 2026-09-28, out of tree, because a documented limit is a claim and
+    a claim is owed a run. `check_ontology_contract` was driven from the SDK's working tree against
+    THIS implementation talking to the sandbox's real Fuseki: `ask` present → `answered`, absent →
+    `empty`, `construct` → 5032 characters of Turtle with term types intact. It PASSED, and 5 of 5
+    positive controls failed as required (absent raises; absent answers; types stripped; empty
+    `typed_terms`; an undiscriminating fixture term). See
+    `docs/measurements/mesh-ontology-conformance-live-2026-09-28.md`.
+
+    AND THE FIXTURE'S TYPES ARE NOT THE STORE'S. `TYPED_TERMS` above is `xsd:date` and `@en`; the
+    sandbox store emits `@en-US`, `xsd:anyURI`, `xsd:integer` and `xsd:boolean`, and no `xsd:date`
+    at all. That does not weaken the offline arm — its property is discrimination between a typed
+    form and its own stripped twin, which holds for any type — but it does mean the offline fixture
+    is not evidence about the production serializer. The live run is.
     """
     if _ONTOLOGY_ARM is None:
         installed = importlib.metadata.version("iagent-mesh")
