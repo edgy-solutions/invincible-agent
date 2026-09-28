@@ -3100,6 +3100,10 @@ def _stage(
 
 # ONE rule for "which subtask did the answer come from", shared with the supervisor's card
 # selector. See iagent_pure/primary_selection.py for why this is not two local functions.
+from iagent_pure.lineage_claim import (  # noqa: E402
+    lineage_is_honoured,
+    pre_resolved_route_allowed,
+)
 from iagent_pure.primary_selection import pick_primary  # noqa: E402
 from iagent_pure.slot_acceptance import accept_slots  # noqa: E402
 
@@ -3977,6 +3981,41 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
         # above, which exists to stop an undispatchable route.
         "owner_persona": str(intent.get("owner_persona") or ""),
     }
+
+
+def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
+    """Does this artifact EXIST and belong to this caller? Existence, never routability.
+
+    WHY NOT JUST CALL `_pre_resolved_from_ask` AND TEST IT. That function answers a different
+    question and answers `{}` to three states at once: an unknown id, another caller's
+    artifact, and a REAL artifact of the caller's own whose ask predates subject capture. The
+    third is a perfectly good lineage parent, so reusing that emptiness here would refuse the
+    exact turns this check exists to admit — a guard borrowed from a neighbour, deciding on a
+    premise that is not the one it was written for.
+
+    IT RUNS THE SAME CYPHER CONSTANT, deliberately. The ownership EDGE is the rule (see
+    `_PRE_RESOLVED_CYPHER`'s comment for why the edge and not the id is what authorizes), and
+    a second spelling of that rule is a second thing to keep correct. Only the READING
+    differs: this one asks whether a row came back at all and ignores what is on it.
+
+    FALSE ON EVERY UNCERTAINTY, an unreachable graph included. A refused lineage claim costs
+    one card that does not fold; an accepted claim on an id nobody can vouch for costs a
+    `MERGE` that fabricates the ancestor it claims to have found.
+    """
+    if not artifact_id or not user_id:
+        return False
+    try:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _PRE_RESOLVED_CYPHER, artifact_id=artifact_id, user_id=user_id
+            ).single()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "artifact ownership check failed for %s: %s — refusing the lineage claim",
+            artifact_id, exc,
+        )
+        return False
+    return rec is not None
 
 
 #: How a slot's value came to be known. THE SOURCE IS CARRIED, NOT JUST THE VALUE, and the
@@ -4866,15 +4905,56 @@ async def _generate_dagster_stream_inner(
     # naming it, and the rail would then fold two cards together on a lineage nobody produced.
     # Refusing is cheap; a phantom in the provenance graph is not.
     _answers_something = bool(request.bound_slots) or bool(request.spoken_answer)
-    _answering_artifact_id = (
-        (request.answering_artifact_id or None) if _answers_something else None
+    _names_an_ask = bool(request.answering_artifact_id)
+    _carries_prose = bool((request.message or "").strip())
+
+    # ── WHY PROSE BUYS LINEAGE AND DOES NOT BUY THE ROUTE ────────────────────────────────
+    #
+    # THE TURN THAT WAS BEING DROPPED (HAZ-1003): the person reads a drawn card and types a
+    # sentence about it. That turn descends from the card on any honest reading — it is the
+    # next step of one conversation — and it carries neither a pick nor a typed slot answer.
+    # One predicate gated BOTH the lineage claim and the pre-resolved route, so honouring the
+    # first meant granting the second, and the composer turn rendered as an orphan card.
+    #
+    # THE TWO GATES REST ON DIFFERENT EVIDENCE, which is why they come apart here rather than
+    # being widened together. `bound_slots` and `spoken_answer` are shapes only a client that
+    # was SHOWN this ask's menu can produce, so their presence is itself weak evidence that
+    # the named ask is real. Prose is not evidence of anything: every ordinary question
+    # carries prose, so `named + prose` is satisfiable by any caller typing any sentence at
+    # any id they care to invent.
+    #
+    # SO THE WIDENED ARM PAYS FOR ITSELF WITH A GRAPH READ — existence AND ownership, under
+    # the same edge and through the same Cypher constant the route lookup uses. Without it
+    # this arm would be reachable with nothing but prose and a guessed id, and the writer's
+    # `MERGE (parent:AnswerArtifact {id: $parent_id})` CREATES the node, so that is precisely
+    # how a phantom ancestor gets conjured. The check is ordered last on purpose: two free
+    # predicates first, the round-trip only for the turns that could actually widen anything.
+    #
+    # ⚠ WHAT THIS DELIBERATELY DOES **NOT** DO. The answering arm is still honoured WITHOUT
+    # that read, exactly as before today. That is a pre-existing hole in the same guard and I
+    # am NAMING it, not closing it: adding the check there would refuse valid lineage in any
+    # window where the ask's own write has not landed by the time the answer turn arrives, and
+    # whether that race exists on this path is UNMEASURED. Measure it, then close it.
+    # THE RULE IS CALLED, NOT RESTATED. `iagent_pure.lineage_claim` holds it at module level so
+    # its seal exercises the real decision; a copy of the branching here would be the mirror
+    # `cold_start_fallback_domains` records a surviving mutant for.
+    _lineage_honoured, _lineage_refused_because = lineage_is_honoured(
+        names_an_ask=_names_an_ask,
+        answers_something=_answers_something,
+        carries_prose=_carries_prose,
+        # LAZY, so the round trip is paid only on the arm that needs it.
+        ownership_ok=lambda: _artifact_is_the_callers(
+            request.answering_artifact_id or "", user_id
+        ),
     )
-    if request.answering_artifact_id and not _answers_something:
+
+    _answering_artifact_id = (
+        (request.answering_artifact_id or None) if _lineage_honoured else None
+    )
+    if _names_an_ask and not _lineage_honoured:
         logger.warning(
-            "lineage claim REFUSED for run %s: answering_artifact_id=%r was sent on a turn "
-            "carrying neither a pick nor a typed answer. An ordinary question does not "
-            "descend from an ask.",
-            session_id, request.answering_artifact_id,
+            "lineage claim REFUSED for run %s: answering_artifact_id=%r — %s",
+            session_id, request.answering_artifact_id, _lineage_refused_because,
         )
     # THE OTHER TWO OUTCOMES, BECAUSE ONLY THE REFUSAL WAS AUDIBLE.
     #
@@ -4889,9 +4969,14 @@ async def _generate_dagster_stream_inner(
     # layer below this line, and it is the shape that produced two cards where the fold
     # was fully built on both sides and merely had nothing to fold.
     elif _answering_artifact_id:
+        # WHICH ARM HONOURED IT, because the two carry different guarantees and a reader
+        # diagnosing a fold needs to know which one they are looking at: the answering arm
+        # took the id on the turn's shape, the prose arm took it on a verified ownership edge.
         logger.info(
-            "lineage claim ACCEPTED for run %s: this turn answers %s",
+            "lineage claim ACCEPTED for run %s: this turn answers %s (%s)",
             session_id, _answering_artifact_id,
+            "turn carries an answer" if _answers_something
+            else "prose turn, artifact existence and ownership verified",
         )
     elif _answers_something:
         # GUARDED ON `_answers_something`, and the first version was NOT — it would have
@@ -4907,7 +4992,18 @@ async def _generate_dagster_stream_inner(
     # THE SKIP, DECIDED WHERE THE ID HAS ALREADY BEEN JUDGED. Only an ACCEPTED claim gets
     # here: `_answering_artifact_id` is None for a refused one and for an ordinary question,
     # and the lookup is scoped to this caller's own ownership edge on top of that.
-    _pre_resolved = _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+    #
+    # ⛔ AND IT KEEPS THE STRICTER PREMISE, which is the point of the split above. An accepted
+    # lineage claim draws an arrow; a pre-resolved route DISPATCHES A VERB AGAINST A SUBJECT
+    # nobody re-confirmed on this turn. The prose arm was widened for the first and must not
+    # leak into the second, so `_answers_something` is named again here rather than inherited
+    # through `_answering_artifact_id` — the two gates now differ, and relying on the id alone
+    # would silently re-join them the day anyone widened the lineage arm again.
+    _pre_resolved = (
+        _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+        if pre_resolved_route_allowed(answers_something=_answers_something)
+        else {}
+    )
     if _pre_resolved:
         logger.info(
             "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
@@ -4915,13 +5011,23 @@ async def _generate_dagster_stream_inner(
             session_id, _answering_artifact_id,
             _pre_resolved["subject_uri"], _pre_resolved["verb_iri"],
         )
-    elif _answering_artifact_id:
+    elif _answering_artifact_id and _answers_something:
         # AUDIBLE, because this is the branch that silently costs the user 40 seconds. An
         # accepted lineage claim that yields no route means the ask predates the subject
         # capture, or the artifact is not this caller's. Both route the ordinary way; only
         # one of them is worth investigating, and a log line is how anyone tells them apart.
         logger.info(
             "no pre-resolved route on ask %s for run %s — routing the full path",
+            _answering_artifact_id, session_id,
+        )
+    elif _answering_artifact_id:
+        # THE PROSE ARM, AND IT NEEDS ITS OWN LINE RATHER THAN THE ONE ABOVE. That line says
+        # "no pre-resolved route", which reads as a lookup that came back empty — and here the
+        # lookup never ran, by design. Reporting a result for a query nobody issued is how a
+        # correct refusal gets diagnosed as a broken one.
+        logger.info(
+            "lineage only on ask %s for run %s: a prose turn keeps the arrow and takes the "
+            "full routing path by design — a pre-resolved route needs a pick or a typed answer",
             _answering_artifact_id, session_id,
         )
 
