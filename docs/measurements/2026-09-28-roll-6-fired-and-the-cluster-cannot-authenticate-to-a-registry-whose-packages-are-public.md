@@ -165,8 +165,10 @@ is fixed before ~11:25, this roll completes on its own** with no second fire.
 The live credential write is not mine to make. In preference order:
 
 1. **Delete the stale secret and let the anonymous path serve**, since the packages are public:
-   `kubectl -n sandbox delete secret ghcr-pull-secret`. Cheapest, reversible, and the measurement
-   above says it should work. It leaves the chart referencing a missing secret, which kubelet tolerates.
+   `kubectl -n sandbox delete secret ghcr-pull-secret`. Cheapest, and **measured from a node** (below),
+   not inferred. It leaves the chart referencing a missing secret, which kubelet tolerates.
+   **This one is not reversible by me** — I cannot reconstruct a credential I have never read, so if
+   the secret is wanted back it has to be re-created from the PAT, not restored by me.
 2. **Rotate it** with a PAT carrying `read:packages`, if any payload package is ever private.
 3. Confirm with a throwaway pull of `…/cortex-bff:ec055c49…` on the sandbox **before** re-firing.
 
@@ -175,10 +177,42 @@ cluster's and is why the first registry query returned a false negative.
 
 ---
 
-## What I did **not** verify
+## ✅ The remediation is now measured FROM A NODE, not from my workstation
 
-- **That deleting the secret fixes it.** The anonymous pull was measured from this workstation, not
-  from a node. The node and I do not share an egress path, and a proxy or a mirror could differ.
+The caveat this section used to carry was the load-bearing one: *the anonymous pull was measured from
+this workstation, and the node and I do not share an egress path.* That is the same defect as the gate
+itself — **a census through a helper is a claim about the helper** — so leaving it written down while
+recommending a credential deletion would have repeated the error inside its own correction.
+
+Closed by running the consumer's own query. First the premise, because the test is worthless if the
+pod inherits a credential: the namespace's `default` ServiceAccount attaches **no** `imagePullSecrets`
+(the field is empty), so a pod that names none presents none.
+
+```
+kubectl -n sandbox run ghcr-anon-test-l01 --restart=Never \
+  --image=…/invincible-agent/cortex-bff:ec055c49… --command -- /bin/true
+```
+
+| reading | result |
+| --- | --- |
+| pod phase | **`Succeeded`** |
+| node | **`k3s-worker5`** — a node, not this workstation |
+| pull secrets on the pod | **none** |
+| kubelet event | `Successfully pulled image "…/cortex-bff:ec055c49…" in **23.001s**. Image size: 400058008 bytes` |
+
+**A kubelet pulled a payload image with no credential.** So the 403 is caused by the credential being
+*presented*, and removing it is not a hope — it is the measured path. The test pod was deleted.
+
+⛔ **This is the check the gate was missing, and it costs 23 seconds.** It belongs in the roll
+procedure ahead of the upgrade, not in the post-mortem of one: it exercises the real consumer, the
+real image, and the real egress path, and it fails before a release can reach `pending-upgrade`.
+
+Note what it does **not** show: that the secret is expired, or what is wrong with it. It shows only
+that the anonymous path works from a node, which is all option 1 needs.
+
+---
+
+## What I did **not** verify
 - **Why the credential stopped working.** Not read, by rule. Expiry is inference from its age and
   from roll #5 succeeding yesterday.
 - ~~Whether every one of the 19 packages allows anonymous pulls.~~ **Closed rather than left as a
