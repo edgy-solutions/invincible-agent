@@ -77,10 +77,12 @@ def _import_engine_f():
     files passed ALONE; the trio failed together at collection — i.e. I had measured a sample and
     read it as the population.
 
-    `tests/conftest.py`'s `_restore_globally_stubbed_modules` exists for exactly this class and
-    could not help: it is `scope="module"`, so its snapshot is taken after collection has already
-    finished. Stubbing inside the tests puts the mutation back INSIDE that fixture's window, which
-    is what makes the cleanup the conftest owns actually apply to this file.
+    `tests/conftest.py`'s `_no_module_leaves_a_double_behind` (renamed from
+    `_restore_globally_stubbed_modules` 2026-09-27) exists for exactly this class and could not
+    help: it is `scope="module"`, so its snapshot is taken after collection has already finished.
+    That limit survived the rename and is now written down beside the fixture rather than only
+    here. Stubbing inside the tests puts the mutation back INSIDE that fixture's window, which is
+    what makes the cleanup the conftest owns actually apply to this file.
 
     The module does `from baml_client import b` at line 41, and `baml_client` is GENERATED and
     not installed in this venv — every existing test therefore imports only
