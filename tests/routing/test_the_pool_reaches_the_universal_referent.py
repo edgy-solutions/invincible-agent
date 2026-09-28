@@ -54,7 +54,7 @@ from fastapi.testclient import TestClient
 
 from iagent_mesh import Initiator
 from iagent_mesh.interfaces import ServiceIdentityRefused
-from iagent_pure.walk_census import load_rows
+from iagent_pure.walk_census import load_rows, verb_names
 
 _REPO = Path(__file__).resolve().parents[2]
 _ONTO = _REPO / "agent_fleet" / "ontology_service" / "main.py"
@@ -457,20 +457,43 @@ _DOCS_CENSUS_ROWS = load_rows(_CENSUS)
 _DOCS_ROWS = [r for r in _DOCS_CENSUS_ROWS if r.id.startswith("docs-")]
 
 
-def test_the_docs_census_still_has_exactly_four_rows_all_expecting_mesh_explain():
+def test_the_docs_census_still_has_exactly_four_rows_EXPECTING_A_PRODUCIBLE_SPELLING():
     """Read from the source, not restated as a count - if the census grows or shrinks this
-    file's own list below must be re-derived, and this arm is what catches the drift."""
+    file's own list below must be re-derived, and this arm is what catches the drift.
+
+    ⛔ THIS ARM USED TO PIN THE DEFECT IT WAS WATCHING FOR. Until 2026-09-27 the second half
+    read `assert row.expect_verb == "mesh_explain"` - and `mesh_explain` is a spelling
+    `verb_names` cannot produce, because every one of the three spellings it offers is taken
+    AFTER splitting the IRI on `#`, `/` or `:`. So the count half was derived from the source,
+    exactly as the first line of this docstring claims, and the SPELLING half was a restated
+    literal wearing the same sentence's authority. It had been green over the mis-spelling for
+    as long as the mis-spelling existed, for the plain reason that it AGREED with it, and it
+    redded on the fix - a correct-in-form drift red that arrived pointing at the repair.
+
+    So the spelling is now DERIVED from the verb the four rows actually route to. A seal on a
+    value must call the producer of that value, or it is a second copy of the thing it guards.
+    """
     assert len(_DOCS_ROWS) == 4, sorted(r.id for r in _DOCS_ROWS)
+    producible = verb_names({"action": {"iri": "mesh:explain"}})
+    assert producible, "verb_names offered no spelling at all - this arm is asserting nothing"
     for row in _DOCS_ROWS:
-        assert row.expect_verb == "mesh_explain", row.id
+        assert row.expect_verb in producible, (
+            f"{row.id} expects {row.expect_verb!r}, which mesh:explain does not produce "
+            f"(it produces {sorted(producible)}). A census expectation no answer can satisfy "
+            f"reds every row it is on, and reds it for the instrument's reason, not the "
+            f"fleet's."
+        )
 
 
 @pytest.mark.parametrize("row", _DOCS_ROWS, ids=[r.id for r in _DOCS_ROWS])
 def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     engine_o_module, client, row
 ):
-    """Pool MEMBERSHIP only - not the final draw/abstain outcome. All four rows declare
-    `expect_verb: mesh_explain`; only the fourth's DISPOSITION differs (`slot_required`, because
+    """Pool MEMBERSHIP only - not the final draw/abstain outcome. All four rows route to
+    `mesh:explain` (they declare `expect_verb: explain`, the spelling `verb_names` produces from
+    that IRI - see the arm above, which used to hard-code the mis-spelling `mesh_explain` and so
+    pinned the very drift it was written to catch); only the fourth's DISPOSITION differs
+    (`slot_required`, because
     `rolling-a-service` declares `explains: none` - a page-instance refusal downstream of this
     endpoint). So this asserts mesh:explain is a CANDIDATE for all four, which is exactly as far
     as `/find_compatible_verbs` can honestly speak, and never asserts which ones draw.

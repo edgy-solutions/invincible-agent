@@ -268,9 +268,11 @@ def _wrapper_field(raw_data: Any, key: str) -> Any:
     `sub_query`: the question as the user asked it, which the refusal payload itself never
     carries because an engine refusing a verb was never handed the phrase.
 
-    Returns None rather than "" for absent, so a caller can tell *not on the wire* from
-    *empty string on the wire*. That distinction is the whole point for `accepted_slots` —
-    see `_render_refusal_menu`.
+    Returns None rather than "" for absent, so a caller can tell *not on the wrapper* from
+    *empty string on the wrapper*. Say WRAPPER and not "wire": absent here means absent from the
+    wrapper only, and a field this returns `None` for may still be present in the ENVELOPE
+    (`expert_response`) that `_project_flat_archetype` reads — `accepted_slots` is exactly that
+    case. That distinction is the whole point for `accepted_slots` — see `_reroute_fields`.
     """
     if isinstance(raw_data, list) and raw_data:
         first = raw_data[0]
@@ -650,6 +652,27 @@ def _project_flat_archetype(
     for field in required + optional:
         if field in resp:
             component[field] = resp[field]
+
+    # ── THE RE-ROUTE FIELDS, FILLED FROM THE WRAPPER ONLY WHERE THE ENVELOPE IS SILENT ──
+    #
+    # THIS PRODUCER INHERITED THE FIELDS INSTEAD OF INJECTING THEM, and was correct only by
+    # luck. Roll #5 (revision 153) measured the live docs asks: they come through HERE, not
+    # through `_render_refusal_menu`, and they carried `sub_query` only because their one
+    # upstream — `slot_disposition.py:619` — happens to set it. An envelope that carries
+    # `options` and no phrase produces a card with a menu and nothing to re-route with, which
+    # is the precise lot-3 defect, on a path the fix for lot 3 never touched. `cost_agent`'s
+    # refusals carry `slot` and `available` and no `sub_query` at all; they reach a card
+    # through the refusal menu today, and nothing but today's routing keeps them out of here.
+    #
+    # `setdefault`, SO THE ENVELOPE WINS. The producer that computed the ask knows more than
+    # the wrapper does: where both carry a field the envelope's value stands, and the wrapper
+    # only fills a hole. Scoped to ELICITATION because these two fields are declared on that
+    # archetype and nowhere else — a NAMED_HOLE must not acquire an `accepted_slots`.
+    #
+    # `_reroute_fields` is defined below this function; the name resolves at call time.
+    if archetype == "ELICITATION":
+        for _field, _value in _reroute_fields(raw_data).items():
+            component.setdefault(_field, _value)
     return component
 
 
@@ -1230,9 +1253,26 @@ def _reroute_fields(raw_data: Any) -> Dict[str, Any]:
     ⛔ `accepted_slots` IS OMITTED WHEN IT IS NOT ON THE WIRE, AND THAT IS DELIBERATE — IT MUST
     NOT BE DEFAULTED TO `{}`.
 
-    Neither caller of `/render_ui` sends it today (measured 2026-09-26: gateway.py's `_results`
-    wrapper and dynamic_supervisor.py's POST body both carry `sub_query` and NOT
-    `accepted_slots`; the accepted set exists in `direct_dispatch` only as a Dagster
+    ⚠️ THE SCOPE OF THAT CLAIM IS THE **WRAPPER**, WHICH IS THE ONLY THING THIS FUNCTION READS.
+    Corrected 2026-09-27 (roll #5): the 2026-09-26 measurement below is a claim about the
+    supervisor wrapper, and was read for a while as a claim about the wire. It is not one.
+
+        the WRAPPER   gateway.py's `_results`, dynamic_supervisor.py's POST body
+                      -> `sub_query`, and NO `accepted_slots`          <- what `_wrapper_field`
+                                                                          sees; the gap is HERE
+        the ENVELOPE  src/iagent_pure/slot_disposition.py:634
+                      `"accepted_slots": dict(accepted or {})`         -> ALWAYS present
+
+    So `accepted_slots` IS on the wire, inside `expert_response`, on every ask that engine builds
+    — and `_project_flat_archetype` reads the envelope, so the live ELICITATION cards carry it.
+    A `{}` arriving from :634 is the INFORMED report of a producer that holds `accepted` as a
+    parameter and is saying nothing was bound yet, which is true on a first ask. The `{}` this
+    docstring forbids is the UNINFORMED one — a default invented by a producer that cannot know.
+    The rule is about a producer's KNOWLEDGE, not about the value.
+
+    Neither caller of `/render_ui` sends it in the WRAPPER today (measured 2026-09-26:
+    gateway.py's `_results` wrapper and dynamic_supervisor.py's POST body both carry `sub_query`
+    and NOT `accepted_slots`; the accepted set exists in `direct_dispatch` only as a Dagster
     materialization). Emitting `{}` to satisfy a schema would be strictly worse than omitting
     it, and this is the one place that can be said: `answer_ask` does `{**accepted, slot: value}`,
     so an empty dict does not mean "no slots were bound" — it re-routes having DROPPED every
@@ -1242,8 +1282,9 @@ def _reroute_fields(raw_data: Any) -> Dict[str, Any]:
     right"). A defaulted `{}` would manufacture that bug and make the seal green over it.
 
     So: ABSENT means "this producer could not know", which a consumer can refuse. `{}` would
-    mean "nothing was bound", which is a false claim. The wire gap is the blocker and is
-    reported as one; when a caller starts sending the field, it appears here with no change.
+    mean "nothing was bound", which is a false claim — false FROM HERE, where nothing knows. The
+    WRAPPER gap is the blocker and is reported as one; when a caller starts sending the field in
+    the wrapper, it appears here with no change. The envelope path never needed this fix.
     """
     out: Dict[str, Any] = {}
     _sq = _wrapper_field(raw_data, "sub_query")

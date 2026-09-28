@@ -1147,6 +1147,43 @@ class FindPathResponse(BaseModel):
     reason: str | None = None
 
 
+def class_scan_scope_domains(
+    domains: list[str] | None, domain: str | None
+) -> list[str]:
+    """The domains the OntologyClass scan's filter spans: the caller's own, plus MESH.
+
+    A MODULE-LEVEL FUNCTION FOR THE SAME REASON `cold_start_fallback_domains` IS ONE — so the
+    seal can call the REAL one. That docstring records what a mirror cost: with the rule inlined
+    in the handler, disabling the MESH append left the seal green (mutant B survived, measured
+    2026-09-26). Anything that changes which domains this scan spans must change THIS function.
+
+    WHY MESH, AND WHY THIS IS THE SAME RULE AS THE FALLBACK'S: the archetype and system classes
+    every domain's verbs declare as their `input_uri` — `mesh:DocPage`, the registered subject of
+    `mesh:explain`, among them — are declared only in `mesh_system.ttl` and so carry `domain ==
+    "MESH"` in the index. A read filtered to `domain == "DOCS"` structurally cannot return them,
+    however completely DOCS is indexed. So `cold_start_fallback_domains` is CALLED here rather
+    than restated: one rule, one site, and a change to it cannot land in one path only.
+
+    WHAT IT COST, measured 2026-09-27 (roll #5, revision 153): `docs-what-is-an-archetype`
+    routed, drew, and produced 0 rows under `sections` — an EMPTY document, not a missing verb.
+    The DOCS-scoped scan returned nothing, so `/resolve` took the cold-start fallback every time;
+    the fallback is what makes the verb resolvable and is not what fills a document.
+
+    ⚠ AN UNSCOPED CALLER STAYS UNSCOPED. `cold_start_fallback_domains(None, None)` returns
+    `["MESH"]`, and passing that through would NARROW a whole-index read to MESH alone — a
+    regression wearing the fix's clothes. Empty in, empty out: the caller who scoped to nothing
+    is asking for everything, and MESH is already inside everything.
+    """
+    scope: list[str] = []
+    if domains:
+        scope = [d.upper() for d in domains if d]
+    elif domain:
+        scope = [domain.upper()]
+    if not scope:
+        return []
+    return [d.upper() for d in cold_start_fallback_domains(scope, None)]
+
+
 def _weaviate_hybrid_search_sync(
     query: str,
     domain: str | None = None,
@@ -1185,12 +1222,10 @@ def _weaviate_hybrid_search_sync(
     try:
         collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
         # Resolve which domains the filter spans. List supersedes
-        # single-string per the routing_domain lock fix (2026-06-28).
-        scope_domains: list[str] = []
-        if domains:
-            scope_domains = [d.upper() for d in domains if d]
-        elif domain:
-            scope_domains = [domain.upper()]
+        # single-string per the routing_domain lock fix (2026-06-28), and MESH rides along
+        # whenever the caller scoped at all — see `class_scan_scope_domains`, which is where
+        # that rule lives so a seal can call it instead of mirroring it.
+        scope_domains: list[str] = class_scan_scope_domains(domains, domain)
 
         if len(scope_domains) == 0:
             filters = None

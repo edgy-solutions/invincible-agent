@@ -350,7 +350,7 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
@@ -373,7 +373,7 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
@@ -385,7 +385,7 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
@@ -401,7 +401,7 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: null
     min_rows: 0
     dispositions: [slot_required]

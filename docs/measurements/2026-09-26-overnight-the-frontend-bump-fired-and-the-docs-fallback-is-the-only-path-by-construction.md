@@ -236,11 +236,29 @@ lot 3 report. Both now carry `**_reroute_fields(raw_data)`. A seal's subject is 
 line number, so `test_every_option_bearing_producer_is_covered` **AST-derives** the population from
 the module: a third producer reds on the count instead of quietly inheriting the defect.
 
-### 3.2 `sub_query` is on the wire; `accepted_slots` is not on the wire at all
+> ⚠️ **Corrected 2026-09-27** (roll #5). That last sentence was false when written, and this is the
+> harder home to find because it was written in the same act as §3.2 — fixing one reads as handling
+> the class. The third producer **already existed** (`_project_flat_archetype`, the one that serves
+> production) and the arm was **green over it**: the derivation keys on a dict literal carrying an
+> `"options"` key, and a table-driven producer reading `_FLAT_ARCHETYPES` never spells that shape.
+> Derived-not-listed is not the same as complete — a derivation still hard-codes a code *shape*.
+> Repaired 2026-09-27: two shapes, a *checkable* forwarder excuse, third producer covered, 5/5
+> mutants killed by their named arms.
+
+### 3.2 `sub_query` is on the WRAPPER; `accepted_slots` is not on the WRAPPER
+
+> ⚠️ **Corrected 2026-09-27** (roll #5 — `2026-09-27-roll-5-fired-revision-153-…`, §5.1). The
+> heading here read *"not on the wire at all"*. That was wrong in scope, not in measurement: what
+> was measured was the **wrapper**, and `accepted_slots` **is** on the wire, one level down, inside
+> `expert_response` — `src/iagent_pure/slot_disposition.py:634` emits
+> `"accepted_slots": dict(accepted or {})` on **every** ask. The live ELICITATION cards carry it,
+> because `_project_flat_archetype` reads the envelope and not the wrapper. A `{}` from :634 is the
+> *informed* report that nothing was bound yet; §3.3's forbidden `{}` is the *uninformed* default
+> from a producer that cannot know. The rule is about a producer's knowledge, not about the value.
 
 Measured: `/render_ui`'s two callers (`gateway.py`'s `_results` wrapper, `dynamic_supervisor.py`'s
-POST body) both send `sub_query`; **neither sends `accepted_slots`**. The accepted set exists in
-`direct_dispatch` only as a Dagster materialization.
+POST body) both send `sub_query`; **neither sends `accepted_slots` in the wrapper**. The accepted
+set exists in `direct_dispatch` only as a Dagster materialization.
 
 ### 3.3 ⛔ The seal DELIBERATELY does not require `accepted_slots` present-and-empty
 

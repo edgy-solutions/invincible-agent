@@ -22,10 +22,22 @@ it, so a new producer fails the count instead of quietly inheriting the defect.
 
 ⛔ WHAT THIS FILE DELIBERATELY DOES NOT REQUIRE: `accepted_slots` present-and-empty.
 
-`accepted_slots` is NOT ON THE WIRE TODAY. Measured 2026-09-26: `/render_ui`'s two callers
-(`src/iagent/gateway.py`'s `_results` wrapper, `src/iagent/defs/dynamic_supervisor.py`'s POST
-body) both send `sub_query` and neither sends `accepted_slots`; the accepted set exists in
-`direct_dispatch` only as a Dagster materialization. A seal demanding the key would be
+`accepted_slots` IS NOT ON THE **WRAPPER** TODAY — and the unqualified version of that sentence,
+which stood here until 2026-09-27, was false. ⚠ NARROWED AFTER A LIVE READ (roll #5, revision
+153): the field arrives on real cards as `{}`, by a route this measurement never looked down.
+
+    the WRAPPER   gateway.py's `_results`, dynamic_supervisor's POST body -> sub_query, NO accepted_slots
+    the ENVELOPE  slot_disposition.py:634 `dict(accepted or {})`          -> BOTH, always
+
+`_wrapper_field` reads the wrapper, so the conditional in `_reroute_fields` is still justified
+exactly as written. What was wrong was the SCOPE of the claim: "not on the wire" was read off two
+callers and stated about the wire. A field reaching the card through the envelope is on the wire.
+
+**And the envelope's `{}` is CORRECT, which is the distinction the rest of this docstring turns
+on.** `slot_disposition` holds the accepted set as a parameter, so `{}` there is the informed
+report that nothing was bound — true on a first ask. The value forbidden below is an UNINFORMED
+`{}`, invented by a producer that cannot know. A rule about a value is a rule about a producer's
+knowledge; check which producer before calling the value a defect. A seal demanding the key would be
 satisfied by `accepted_slots: {}` — and an empty dict is not a missing value here, it is a
 FALSE ONE: `{**accepted, slot: value}` with `accepted == {}` re-routes having silently dropped
 every slot the first turn bound, which is the exact failure `slot_disposition`'s docstring says
@@ -142,6 +154,30 @@ def _option_bearing_cards():
             ["fin:variance_drivers", "fin:burn_rate"], "PROGRAM_FINANCE_ANALYST",
             _wrapper(),
         )["components"][0],
+        # ── THE THIRD PRODUCER, AND THE ONE THAT ACTUALLY SERVES PRODUCTION'S ASKS ──────
+        #
+        # Added 2026-09-27 after roll #5: the live docs ELICITATION cards come from HERE, not
+        # from the two above. It is TABLE-DRIVEN (`_FLAT_ARCHETYPES["ELICITATION"]`) rather
+        # than a dict literal, which is exactly why the derivation in
+        # `test_every_option_bearing_producer_is_covered` could not see it — see that arm.
+        #
+        # ⛔ EXERCISED WITH AN ENVELOPE THAT LACKS THE PHRASE, DELIBERATELY. Production's only
+        # current envelope builder (`slot_disposition.py:619`) sets `sub_query` itself, so a
+        # fixture copied from it would pass no matter what this producer did: it would control
+        # the logic and not whether the logic still points at anything. The population is "an
+        # envelope carrying options", and NOTHING forces a member of it to carry the phrase —
+        # `cost_agent`'s refusals, measured, carry `slot` and `available` and no `sub_query` at
+        # all (0 occurrences in that file). They reach a card through `_render_refusal_menu`
+        # today; the day one reaches this projector instead, this fixture is that turn.
+        "_project_flat_archetype": _pf()._project_flat_archetype(
+            "ELICITATION",
+            _wrapper(expert_response={
+                "slot": "rate_vintage",
+                "options": [{"value": "2021-02-01", "label": "FY2021"}],
+                "option_source": "refusal",
+            }),
+            "PROGRAM_FINANCE_ANALYST",
+        ),
     }
 
 
@@ -242,6 +278,60 @@ def test_the_wire_gap_is_real_and_is_PINNED_to_the_wrapper_that_feeds_it():
     )
 
 
+def test_the_envelope_WINS_and_the_wrapper_only_fills_a_hole():
+    """The precedence of the fill added to `_project_flat_archetype`, both directions.
+
+    A FILL AND AN OVERRIDE ARE DIFFERENT CHANGES and only one of them is wanted. The producer
+    that computed the ask knows more than the wrapper: `slot_disposition` sets `sub_query` from
+    the sub-question it was actually resolving, which on a decomposed turn is NOT the user's
+    whole message. So a wrapper value must never displace an envelope value — it may only fill
+    a hole.
+
+    Without this arm, `setdefault` -> `component[k] = v` passes every other arm in this file and
+    silently replaces the sub-question with the parent phrase on every decomposed ask.
+    """
+    both = _pf()._project_flat_archetype(
+        "ELICITATION",
+        _wrapper("THE WRAPPER PHRASE", expert_response={
+            "slot": "rate_vintage", "sub_query": "THE ENVELOPE PHRASE",
+            "options": [{"value": "2021-02-01", "label": "FY2021"}],
+        }),
+        "PROGRAM_FINANCE_ANALYST",
+    )
+    assert both["sub_query"] == "THE ENVELOPE PHRASE", (
+        "the wrapper's phrase displaced the envelope's. The fill must be a `setdefault`: on a "
+        f"decomposed turn this silently swaps the sub-question for the parent. Got {both['sub_query']!r}"
+    )
+
+    hole = _pf()._project_flat_archetype(
+        "ELICITATION",
+        _wrapper("THE WRAPPER PHRASE", expert_response={
+            "slot": "rate_vintage",
+            "options": [{"value": "2021-02-01", "label": "FY2021"}],
+        }),
+        "PROGRAM_FINANCE_ANALYST",
+    )
+    assert hole["sub_query"] == "THE WRAPPER PHRASE", (
+        "the envelope carried no phrase and the wrapper's did not fill the hole — the card "
+        f"cannot be re-routed. Got {hole.get('sub_query')!r}"
+    )
+
+    # AND THE FILL MUST NOT REACH THE OTHER FLAT ARCHETYPE. `accepted_slots` is declared on
+    # ELICITATION only; a NAMED_HOLE that acquired one would be inventing a field its contract
+    # does not have, and `cortex-ui`'s registry reads these by name.
+    hole_card = _pf()._project_flat_archetype(
+        "NAMED_HOLE",
+        _wrapper(accepted_slots={"program_id": "NP-MERIDIAN"},
+                 expert_response={"disposition": "unentitled", "reason": "no grant"}),
+        "PROGRAM_FINANCE_ANALYST",
+    )
+    assert hole_card is not None, "fixture no longer draws a NAMED_HOLE; re-derive it"
+    assert "accepted_slots" not in hole_card and "sub_query" not in hole_card, (
+        "the ELICITATION-only fill leaked into NAMED_HOLE: "
+        f"{sorted(set(hole_card) & {'sub_query', 'accepted_slots'})}"
+    )
+
+
 def test_every_option_bearing_producer_is_covered():
     """DERIVE THE POPULATION, DO NOT LIST IT.
 
@@ -252,7 +342,29 @@ def test_every_option_bearing_producer_is_covered():
     population rather than as a line number.
     """
     tree = ast.parse(io.open(_PRESENTATION, encoding="utf-8").read())
-    emitters = set()
+
+    # ── SHAPE 2 FIRST: the DECLARATION TABLES that name `options` as a field ────────────
+    # `_FLAT_ARCHETYPES` is one. Derived rather than named, so a second table is found the
+    # same way — and an AnnAssign (`_FLAT_ARCHETYPES: Dict[str, tuple] = {...}`) is a
+    # different node type from a plain Assign, which is the kind of detail that silently
+    # halves a census.
+    tables = set()
+    for node in tree.body:
+        targets = (
+            node.targets if isinstance(node, ast.Assign)
+            else [node.target] if isinstance(node, ast.AnnAssign) else []
+        )
+        if node.__class__ not in (ast.Assign, ast.AnnAssign) or node.value is None:
+            continue
+        if any(isinstance(c, ast.Constant) and c.value == "options"
+               for c in ast.walk(node.value)):
+            tables.update(t.id for t in targets if isinstance(t, ast.Name))
+    assert tables, (
+        "no module-level table names `options` any more. This derivation's SECOND shape has "
+        "gone blind — re-derive it rather than letting it silently fall back to shape 1."
+    )
+
+    literal, tabled, calls = {}, {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -260,16 +372,45 @@ def test_every_option_bearing_producer_is_covered():
             if isinstance(sub, ast.Dict) and any(
                 isinstance(k, ast.Constant) and k.value == "options" for k in sub.keys
             ):
-                emitters.add(node.name)
-                break
+                literal[node.name] = node.lineno
+            if isinstance(sub, ast.Name) and sub.id in tables:
+                tabled[node.name] = node.lineno
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
+                calls.setdefault(node.name, set()).add(sub.func.id)
+
+    emitters = set(literal) | set(tabled)
+
+    # ── THE EXEMPTION, MADE CHECKABLE RATHER THAN A LIST OF NAMES ───────────────────────
+    # The old version subtracted `{"_as_options", "render_ui"}` — a literal allowlist, which is
+    # the shape where one appended name retires the assertion. A FORWARDER is derivable: it
+    # builds no `{"options": ...}` of its own AND it calls another derived emitter, i.e. it
+    # returns somebody else's card. `_render_archetype_hardened` is one (it tests membership in
+    # `_FLAT_ARCHETYPES` and delegates to `_project_flat_archetype`, main.py:1063-1064).
+    forwarders = {
+        n for n in emitters
+        if n not in literal and (calls.get(n, set()) & emitters)
+    }
+    producers = emitters - forwarders
 
     covered = set(_option_bearing_cards())
-    # `_as_options` builds the option list itself and emits no card; render_ui only forwards.
-    emitters -= {"_as_options", "render_ui"}
-    assert emitters == covered, (
+    assert producers == covered, (
         "the set of producers that put `options` on a card has changed.\n"
-        f"  emit options   : {sorted(emitters)}\n"
-        f"  covered here   : {sorted(covered)}\n"
-        "Add the new producer to `_option_bearing_cards()` (and give it `**_reroute_fields(...)`), "
-        "or remove the stale name."
+        f"  shape 1, dict literal with an 'options' key : {sorted(literal)}\n"
+        f"  shape 2, reads a table naming 'options'     : {sorted(tabled)}\n"
+        f"  forwarders (derived, not listed)            : {sorted(forwarders)}\n"
+        f"  => producers : {sorted(producers)}\n"
+        f"     covered   : {sorted(covered)}\n"
+        "Add the new producer to `_option_bearing_cards()` and make it carry the re-route "
+        "fields, or remove the stale name."
+    )
+
+    # ⚠ THE TAIL THIS DERIVATION STILL CANNOT SEE, enumerated rather than implied. Two shapes
+    # are two shapes, not all of them: a card assembled by `dict(...)`/`.update()`, one whose
+    # field names arrive as a parameter, or one built in ANOTHER MODULE would all escape. That
+    # is why the arms above call the real producers instead of reading source — this arm bounds
+    # the population, it does not define the property. The defect that prompted the repair was
+    # exactly this: "derived, not listed" still hard-codes one way of writing a producer.
+    assert not (forwarders & set(literal)), (
+        f"a forwarder that also builds its own options dict: {sorted(forwarders & set(literal))}. "
+        "The forwarder test has stopped discriminating — it must not excuse a real producer."
     )
