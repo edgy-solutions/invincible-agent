@@ -157,15 +157,35 @@ class Neo4jGraph:
 
     @staticmethod
     def _require_person(initiator: Initiator, operation: str) -> None:
-        """A service identity is refused at the boundary.
+        """Refuse every kind that is not a person. AN ALLOWLIST, and that is the whole point.
 
-        Not sniffed from the subject's spelling — `kind` is declared at the edge that minted the
-        token, and parsing a subject is the rule this one exists beside, not a cheaper version.
+        This body read ``if initiator.kind == "service"`` until 2026-09-27. A comparison that
+        names what it REFUSES admits everything it does not name, so when the SDK widened
+        ``Initiator.kind`` with a third value (``delegate``, landed in iagent-mesh-sdk at
+        ``7e429d5``), this line would have passed a delegate straight through the boundary it
+        exists to gate -- silently, which is the one failure a boundary check must not have.
+        ``!= "person"`` refuses a fourth kind by construction instead of by whoever remembers
+        that this line is here.
+
+        Not sniffed from the subject's spelling -- ``kind`` is declared at the edge that minted
+        the token, and parsing a subject is the rule this one exists beside, not a cheaper
+        version of it.
+
+        **INTERIM, AND ITS RETIREMENT IS SEALED RATHER THAN PROMISED.**
+        ``Initiator.require_person`` is this same allowlist in the SDK, and ca's packet of
+        2026-09-27 asks for this copy to become that one call. It cannot yet: the pin is
+        ``iagent-mesh @ v0.9.3``, whose installed ``require_person`` is still the DENYLIST, so
+        importing it today would be a step backwards rather than a de-duplication.
+        ``DelegateIdentityRefused`` does not exist at that pin either, which is why the raise
+        below names the refused kind in its MESSAGE and not in its type. Both conditions are
+        arms in ``tests/test_the_person_guard_is_an_allowlist_everywhere.py``: they go red when
+        the pin moves, and they name what to do then.
         """
-        if initiator.kind == "service":
+        if initiator.kind != "person":
             raise ServiceIdentityRefused(
-                f"{operation}: a read attributed to a service records provenance no person can "
-                f"be asked about (subject={initiator.subject!r})"
+                f"{operation}: refused an initiator of kind {initiator.kind!r} "
+                f"(subject={initiator.subject!r}) -- only a person may be asked about a read "
+                f"made in their name, and this kind is not one"
             )
 
     # ── the one place a query meets the driver ──────────────────────────────────────────────
