@@ -1155,6 +1155,12 @@ def _classify_route(
                 # which is exactly the pre-widening behaviour, so an engine-o that has
                 # not yet learned the field keeps working and reads the old story.
                 "verb_compatibility": verb_compatibility,
+                # The person the read is attributed to. Engine-o's predicate search is the
+                # second route behind ONTOLOGY_CLASS_POOL_VIA_MESH, and with that flag on the
+                # mesh arm refuses a blank subject rather than minting an anonymous person --
+                # so an unthreaded identity here is a 400 from engine-o, not a quiet
+                # attribution loss. Threaded the same way /resolve already receives it.
+                "user_email": user_email,
             },
             timeout=30,  # LLM call inside; longer than /search_predicates.
         )

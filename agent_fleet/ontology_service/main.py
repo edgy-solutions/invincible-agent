@@ -1043,6 +1043,16 @@ class SearchPredicatesRequest(BaseModel):
     """
     query: str = Field(..., description="NL phrasing — drives Weaviate hybrid search")
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
+    #: The person the read is attributed to, threaded from the supervisor's JWT the same way
+    #: `ResolveRequest.user_email` is. The FIELD defaults to the empty string so no existing
+    #: caller breaks; the FLAG is a separate default, and it is DEFAULT OFF -- said here in the
+    #: decided form because a window that names the flag beside the word "defaults" and leaves the
+    #: polarity to the reader is an undecided claim, which the agreement seal reds on. With
+    #: `ONTOLOGY_CLASS_POOL_VIA_MESH` on, a blank value is REFUSED rather than minted as an
+    #: anonymous person -- see `_predicate_pool_via_mesh_sync`. Deliberately NOT `user_id` above:
+    #: that field is an audit-log slice key documented as null for canary traffic, and an audit
+    #: label borrowed as a provenance claim would make every canary read look like a person's.
+    user_email: str = Field(default="", description="Caller identity; required when the mesh arm is on")
     # ADR-0015 Phase 1: optional audit context. Callers that want trace
     # correlation pass request_id; cron canaries set audit_source to
     # distinguish synthetic traffic from real (default user_request).
@@ -1475,6 +1485,98 @@ def _anti_synonym_overlap(query: str, anti_synonyms: list[str]) -> float:
     return len(inter) / len(union) if union else 0.0
 
 
+def _predicate_row(query: str, props: dict, score: float | None) -> dict:
+    """One verb candidate, from a store object's properties and its retrieval score.
+
+    **SHARED BY BOTH ARMS OF THE MIGRATION, AND THE CHOICE HAS A PRICE THIS DOCSTRING OWES THE
+    READER.** The class-pool pilot duplicated its projection expression-for-expression so the
+    equality seal compared two independent expressions; that projection was four keys. This one is
+    fourteen, with an anti-synonym penalty, two JSON-string tolerances and a re-rank, and two copies
+    of it would agree only for as long as nobody edited one of them.
+
+    What sharing costs is exactly what item 3 of the overnight packet measured: **a defect sitting
+    identically on both sides of an equality seal is invisible to it**, however many ways the
+    equality is parametrized. Reverting one arm of the `definition` repair reddened 22 arms;
+    reverting both reddened 4 and the parity arms stayed silent. So the seal for this function is
+    NOT the parity arms — it is the arms that assert the VALUE (the penalty's arithmetic, the floor
+    at zero, the two serializations, the re-rank order, a scoreless row sorting last), plus an arm
+    that there is no SECOND implementation of it. Shared code with value arms; never shared code
+    with parity arms alone.
+
+    `props` is whatever the arm's driver handed back: `obj.properties` on the incumbent, and on the
+    mesh arm the `nominate` row, which is the properties plus a `score` key. The extra key is
+    ignored here on purpose — the score this row reports is the ARGUMENT, so the caller decides
+    which number is the ranking one and the two arms cannot disagree about it silently.
+    """
+    # Read verb_anti_synonyms if doc-tools has propagated them to
+    # the Predicate collection. Missing/empty → penalty is 0; this
+    # path is the graceful-degradation phase before doc-tools
+    # ships its propagation update. See ADR-0008 follow-up.
+    raw_anti = props.get("verb_anti_synonyms") or []
+    if isinstance(raw_anti, str):
+        # doc-tools may serialize as JSON string for parity with
+        # mesh_verb_anti_synonyms; tolerate either shape.
+        try:
+            parsed = json.loads(raw_anti)
+            raw_anti = parsed if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            raw_anti = []
+    anti_overlap = _anti_synonym_overlap(query, list(raw_anti))
+    adjusted_score = score
+    if score is not None and anti_overlap > 0.0:
+        # Penalize by alpha * overlap. Floor at 0.0 — a candidate
+        # never gets a negative score even if its anti-synonyms
+        # tokenize-overlap the query completely.
+        adjusted_score = max(0.0, score - _ANTI_SYN_PENALTY_ALPHA * anti_overlap)
+    # verb_synonyms may be stored as a JSON-string (older sync) or
+    # a list (newer sync). Tolerate either.
+    raw_syn = props.get("verb_synonyms") or []
+    if isinstance(raw_syn, str):
+        try:
+            parsed = json.loads(raw_syn)
+            raw_syn = parsed if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            raw_syn = []
+    return {
+        "verb_iri": props.get("verb_iri", ""),
+        "verb_type": props.get("verb_local", ""),
+        "input_uri": props.get("input_uri", ""),
+        "output_uri": props.get("output_uri", ""),
+        "endpoint": props.get("endpoint_url", ""),
+        "owner_persona": props.get("owner_persona") or None,
+        "domains": list(props.get("domains") or []),
+        "cost_class": props.get("cost_class") or None,
+        "requires_human_approval": bool(props.get("requires_human_approval", False)),
+        "score": adjusted_score,
+        # Diagnostic fields — let the supervisor / structured log
+        # see exactly how much the anti-synonym pass shifted things.
+        "raw_score": score,
+        "anti_synonym_overlap": anti_overlap,
+        # ADR-0008 yellow-zone verifier needs these so the BAML LLM
+        # has the verb's documentation in hand when judging the
+        # match. Empty strings fall through cleanly when doc-tools
+        # hasn't propagated the field.
+        "description": props.get("description") or "",
+        "verb_synonyms": list(raw_syn),
+    }
+
+
+def _predicate_ranked(rows: list[dict]) -> list[dict]:
+    """The pool ordered by the ADJUSTED score, with a scoreless row sorting last.
+
+    Re-rank by adjusted score so the supervisor's top-1 reflects the penalty. Without this the
+    order would still be Weaviate's BM25 ranking and a penalty on the top-1 wouldn't change
+    selection — which is the whole point of computing the penalty at all.
+
+    `sorted` rather than `list.sort` because both arms hand it a list they built; it is stable, so
+    the order this returns is byte-identical to the in-place sort it replaced (measured across the
+    extraction, not argued).
+    """
+    return sorted(
+        rows, key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True
+    )
+
+
 def _predicate_hybrid_search_sync(
     query: str,
     entitled_domains: list[str],
@@ -1563,69 +1665,18 @@ def _predicate_hybrid_search_sync(
 
         out: list[dict] = []
         for obj in response.objects:
-            p = obj.properties
             score = None
             if obj.metadata and obj.metadata.score is not None:
                 try:
                     score = float(obj.metadata.score)
                 except (TypeError, ValueError):
                     score = None
-            # Read verb_anti_synonyms if doc-tools has propagated them to
-            # the Predicate collection. Missing/empty → penalty is 0; this
-            # path is the graceful-degradation phase before doc-tools
-            # ships its propagation update. See ADR-0008 follow-up.
-            raw_anti = p.get("verb_anti_synonyms") or []
-            if isinstance(raw_anti, str):
-                # doc-tools may serialize as JSON string for parity with
-                # mesh_verb_anti_synonyms; tolerate either shape.
-                try:
-                    parsed = json.loads(raw_anti)
-                    raw_anti = parsed if isinstance(parsed, list) else []
-                except (ValueError, TypeError):
-                    raw_anti = []
-            anti_overlap = _anti_synonym_overlap(query, list(raw_anti))
-            adjusted_score = score
-            if score is not None and anti_overlap > 0.0:
-                # Penalize by alpha * overlap. Floor at 0.0 — a candidate
-                # never gets a negative score even if its anti-synonyms
-                # tokenize-overlap the query completely.
-                adjusted_score = max(0.0, score - _ANTI_SYN_PENALTY_ALPHA * anti_overlap)
-            # verb_synonyms may be stored as a JSON-string (older sync) or
-            # a list (newer sync). Tolerate either.
-            raw_syn = p.get("verb_synonyms") or []
-            if isinstance(raw_syn, str):
-                try:
-                    parsed = json.loads(raw_syn)
-                    raw_syn = parsed if isinstance(parsed, list) else []
-                except (ValueError, TypeError):
-                    raw_syn = []
-            out.append({
-                "verb_iri": p.get("verb_iri", ""),
-                "verb_type": p.get("verb_local", ""),
-                "input_uri": p.get("input_uri", ""),
-                "output_uri": p.get("output_uri", ""),
-                "endpoint": p.get("endpoint_url", ""),
-                "owner_persona": p.get("owner_persona") or None,
-                "domains": list(p.get("domains") or []),
-                "cost_class": p.get("cost_class") or None,
-                "requires_human_approval": bool(p.get("requires_human_approval", False)),
-                "score": adjusted_score,
-                # Diagnostic fields — let the supervisor / structured log
-                # see exactly how much the anti-synonym pass shifted things.
-                "raw_score": score,
-                "anti_synonym_overlap": anti_overlap,
-                # ADR-0008 yellow-zone verifier needs these so the BAML LLM
-                # has the verb's documentation in hand when judging the
-                # match. Empty strings fall through cleanly when doc-tools
-                # hasn't propagated the field.
-                "description": p.get("description") or "",
-                "verb_synonyms": list(raw_syn),
-            })
-        # Re-rank by adjusted score so the supervisor's top-1 reflects the
-        # penalty. Without this the order would still be Weaviate's BM25
-        # ranking and a penalty on the top-1 wouldn't change selection.
-        out.sort(key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True)
-        return out
+            # THE PROJECTION MOVED OUT, THE DRIVER UNWRAP STAYED. `obj.metadata` is a Weaviate
+            # concept and the mesh arm never sees one, so sharing the unwrap would have made the
+            # shared function take a driver object from one caller and a plain float from the other.
+            # What both arms genuinely have in common is (properties, score) and nothing above it.
+            out.append(_predicate_row(query, obj.properties, score))
+        return _predicate_ranked(out)
     except Exception as e:
         # RULED 2026-09-14, same rule as the OntologyClass search above.
         #
@@ -1647,10 +1698,136 @@ def _predicate_hybrid_search_sync(
         ) from e
 
 
-async def predicate_hybrid_search(
-    query: str, entitled_domains: list[str], limit: int = 10
+def _predicate_pool_via_mesh_sync(
+    query: str,
+    entitled_domains: list[str],
+    limit: int,
+    user_email: str = "",
 ) -> list[dict]:
-    """Async wrapper for the predicate hybrid search."""
+    """The same verb-candidate pool, through `WeaviateVectors.nominate`. Blocking; call via a thread.
+
+    THE SECOND ROUTE ONTO THE SHARED IMPLEMENTATION, behind the same flag as the first. The class
+    pool proved the interface can serve one route; a second route is what turns it from a shape that
+    fits one caller into an interface — `nominate`'s docstring already says `domains` is a SEQUENCE
+    because "both live call sites scope by an entitlement LIST", and this is the second of those two
+    call sites finally reaching it through the interface rather than around it.
+
+    WHAT IS SHARED AND WHAT IS NOT. Retrieval forks; the projection does not. `_predicate_row` and
+    `_predicate_ranked` are called by both arms, so the anti-synonym penalty, the two JSON-string
+    tolerances and the re-rank cannot drift between them — and because a defect in shared code is
+    invisible to a parity seal, those functions are sealed by arms asserting their VALUES. See
+    `_predicate_row`'s docstring for the measurement that decided this.
+
+    FOUR PLACES THE ARMS DIFFER, each reported rather than smoothed over:
+
+    1. **Identity.** `nominate` refuses a service initiator, so this arm needs a person, and
+       neither `SearchPredicatesRequest` nor `ClassifyPredicateRequest` carried one before this
+       change. A blank subject is refused here rather than minted, for the reason the class pool
+       gives: `Initiator(subject="", kind="person")` passes the interface's check while being
+       exactly what that check exists to stop. `SearchPredicatesRequest.user_id` was NOT reused for
+       it — that field is documented as an audit-log slice key that is "null for canary", and
+       borrowing an audit label as a provenance claim would make every canary read look like a
+       person's.
+    2. **The entitlement scope is CASE-FOLDED on this arm and is not on the incumbent — and no
+       caller can reach the difference, which is a fact about the CALLERS and not about either
+       arm.** `WeaviateVectors._domain_filter` upper-cases the scope; `_predicate_hybrid_search_sync`
+       passes `entitled_domains` to `contains_any` verbatim. What makes the difference unreachable
+       today is two lines in the routes above, not anything in either search: `/search_predicates`
+       and `/classify_predicate` BOTH compute `entitled = [d.upper() for d in ...]` before calling,
+       one of them calling it "defensive" against a mis-cased POST. So the guard lives with the
+       consumer, and it is written down here because a defect this arm cannot express is worth less
+       than the reason it cannot. Direction, if either route ever drops that line: against an
+       upper-case store the mesh arm matches rows a lower-case scope would have missed, which is a
+       scope WIDENING — and row identity against a scripted store cannot see it, because a double
+       ignores the filter it is handed (measured by the class pilot's `domain scope dropped`
+       mutant). The seal therefore asserts BOTH halves: the arms differ on a lower-case scope, and
+       every call site upper-cases so they never do.
+    3. **The 503.** `MeshResult.failed` and `.unreachable` become a 503, never an empty list.
+       RULED 2026-09-14 for this route specifically: an empty list from the predicate search means
+       NO PREDICATE MATCHED and the supervisor falls back to the generalist on it, so a substrate
+       outage returned as `[]` is a confident no-match under a false diagnosis.
+    4. **A row owning its own `score` property.** `nominate` keeps the stored property and DROPS the
+       retrieval score, reporting the collision; the incumbent ignores any stored `score` and always
+       reports the retrieval one. No Predicate row has ever carried that property, so the behaviour
+       is PINNED by an arm rather than aligned by guess — the same treatment the class pilot gave a
+       `uri`-less row.
+    """
+    if not _WEAVIATE_CLIENT:
+        return []
+
+    if not (user_email or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ONTOLOGY_CLASS_POOL_VIA_MESH is on and this request carries no user_email. The "
+                "mesh read is attributed to a person or it is not made: a blank subject is "
+                "provenance nobody can be asked about. Thread identity to /search_predicates and "
+                "/classify_predicate, or run with the flag off."
+            ),
+        )
+
+    impl = WeaviateVectors(
+        client=_WEAVIATE_CLIENT,
+        embed=observe_query_embedding,
+        filters=wvc.query.Filter,
+        # The same metadata the incumbent asks for, from the same driver module — without it every
+        # row's `score` is None, and on THIS route the score is not decoration: the anti-synonym
+        # penalty is computed from it and the pool is re-ranked by the result.
+        metadata=wvc.query.MetadataQuery,
+        report=lambda m: logging.warning("[Engine O] mesh predicate pool: %s", m),
+    )
+
+    result = impl.nominate(
+        Initiator(subject=user_email, kind="person"),
+        collection=_PREDICATE_COLLECTION,
+        text=query,
+        domains=list(entitled_domains or []),
+        limit=limit,
+    )
+
+    if result.outcome in ("failed", "unreachable"):
+        # See point 3 above. An EMPTY result still means "no predicate matched" and still returns
+        # `[]`; only the FAILURE is separated out.
+        logging.error(
+            "[ontology-service] Predicate hybrid search failed (mesh arm): %s", result.detail
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weaviate Predicate search failed — routing cannot proceed. This is a substrate "
+                f"failure, not an empty candidate set. Cause: {result.detail}"
+            ),
+        )
+
+    return _predicate_ranked(
+        [_predicate_row(query, r, r.get("score")) for r in (result.rows or ())]
+    )
+
+
+async def predicate_hybrid_search(
+    query: str, entitled_domains: list[str], limit: int = 10, user_email: str = ""
+) -> list[dict]:
+    """Async wrapper for the predicate hybrid search — and the second migrated route's FORK.
+
+    THE FORK IS HERE AND NOWHERE ELSE, so there is one place to read to know which arm served a
+    request, and both of this route's call sites (`/search_predicates`, `/classify_predicate`) get
+    the same answer to that question.
+
+    THE FLAG IS DELIBERATELY THE CLASS POOL'S, and its name is now narrower than its scope.
+    `ONTOLOGY_CLASS_POOL_VIA_MESH` gates this route too, which the order asked for ("behind the same
+    flag"): one switch rolls both routes back, and one switch is what an operator can use under
+    load. The cost is a name that says CLASS and gates two pools — recorded here rather than
+    renamed, because the variable is set in a deployed values file and a rename is a change to the
+    chart, not to this module. Reported for the naming decision; not taken unilaterally.
+
+    NO `try/except` IN THIS FUNCTION, for the reason `class_pool_with_mode` gives: a handler here
+    would sit above both sync bodies and re-swallow the 503 they raise, and every arm asserting that
+    a substrate failure is not an empty result would still pass.
+    """
+    if ONTOLOGY_CLASS_POOL_VIA_MESH:
+        return await asyncio.to_thread(
+            _predicate_pool_via_mesh_sync, query, entitled_domains, limit, user_email
+        )
     return await asyncio.to_thread(
         _predicate_hybrid_search_sync, query, entitled_domains, limit
     )
@@ -3236,6 +3413,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
         query=request.query,
         entitled_domains=entitled,
         limit=request.limit,
+        user_email=request.user_email,
     )
     _search_ms = int((time.perf_counter() - _search_t0) * 1000)
 
@@ -4940,6 +5118,13 @@ class ClassifyPredicateRequest(BaseModel):
     # Domain scope from the JWT entitled_domains claim. The Weaviate
     # candidate set is filtered to predicates this caller is entitled to.
     entitled_domains: list[str] = Field(default_factory=list)
+    # The person the read is attributed to, threaded from the supervisor's JWT the same way
+    # ResolveRequest.user_email is. The FIELD defaults to the empty string so no existing caller
+    # breaks; the FLAG is a separate default, and it is DEFAULT OFF -- said in the decided form
+    # because naming the flag beside the word "defaults" without a polarity is an undecided claim.
+    # With ONTOLOGY_CLASS_POOL_VIA_MESH on, a blank value is refused rather than minted as an
+    # anonymous person. See _predicate_pool_via_mesh_sync.
+    user_email: str = ""
     # Primary domain used as the BAML domain field. Match what /resolve
     # was called with for consistency.
     domain: str = "MAINTENANCE"
@@ -5111,6 +5296,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         query=request.query,
         entitled_domains=entitled,
         limit=max(request.candidate_limit, 25),  # widen so the filter survives
+        user_email=request.user_email,
     )
 
     # ADR-0018 addendum + ADR-0006 §Addendum conjunctive-read invariant

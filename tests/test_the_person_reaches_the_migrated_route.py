@@ -78,6 +78,17 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "_call_engine_a_fallback", "<dict>", ("config." + FIELD,)),
     ("10 · onto the engine-A dispatch, specialist branch (the twin that was once empty)",
      SUPERVISOR, "execute_subtask", "<dict>", ("config." + FIELD,)),
+    # Hops 11-12: the SECOND migrated route, the predicate search, behind the same flag as the class
+    # pool. The identity now has a second destination, and it leaves from a function this chain
+    # ALREADY visits -- which is how the next dropped hop gets missed rather than caught: hop 6
+    # proves ``_classify_route`` hands the identity to ``_resolve_subject``, and hop 6 stays green
+    # whether or not the classify payload carries it. Hop 11 covers the payload, and because
+    # ``_classify_route`` posts to TWO endpoints, the arm below says WHICH payload -- a hop matched
+    # on the wrong dict literal in the right function is this file's own neighbour defect.
+    ("11 · onto the wire to /classify_predicate, the second migrated route",
+     SUPERVISOR, "_classify_route", "<dict>", (FIELD,)),
+    ("12 · into the Initiator the second migrated route mints",
+     ENGINE_O, "_predicate_pool_via_mesh_sync", "Initiator", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
@@ -364,26 +375,99 @@ def test_the_ORCHESTRATION_SIDE_forwards_the_identity_only_along_the_sealed_chai
     )
 
 
+def test_HOP_11_lands_in_the_POST_PAYLOAD_and_not_in_one_of_the_seven_other_dicts() -> None:
+    """WHICH dict literal hop 11 matched, asserted separately from the fact that one did.
+
+    The hop matcher accepts any dict in the enclosing function carrying the identity's key. The
+    reason that is too wide here is MEASURED, and it is not the reason first written down: the guess
+    was that ``_classify_route`` posts to two endpoints, and it does not -- ``/resolve`` and
+    ``/find_compatible_verbs`` are posted from helpers, so there is exactly one payload. What the
+    function does hold is EIGHT dict literals, six of them the 12-to-17-key diagnostic dicts it
+    RETURNS to its caller.
+
+    Those returned dicts are the live hazard, because they are where an identity would plausibly be
+    added for a reason that is not threading: one ``"user_email": user_email`` entry in a telemetry
+    dict turns hop 11 green, leaves hops 5, 6 and the unsealed-sites census green, and sends the
+    classify payload out anonymous -- a 400 from engine-o with the flag on, an unattributed mesh read
+    with it off. So the population is the dicts, and the assertion is which one.
+    """
+    fn = _function(SUPERVISOR, "_classify_route")
+
+    posts: dict[str, set[str]] = {}
+    for node in ast.walk(fn):
+        if not (isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "post"):
+            continue
+        url = ast.unparse(node.args[0]) if node.args else "<no url>"
+        payload = next((kw.value for kw in node.keywords if kw.arg == "json"), None)
+        posts[url] = {
+            k.value for k in (payload.keys if isinstance(payload, ast.Dict) else [])
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+
+    classify = [u for u in posts if "/classify_predicate" in u]
+    assert len(classify) == 1, (
+        f"expected exactly one POST to /classify_predicate in _classify_route, found {classify} "
+        f"among {sorted(posts)}"
+    )
+    assert FIELD in posts[classify[0]], (
+        f"the /classify_predicate payload does not carry {FIELD!r}; its keys are "
+        f"{sorted(posts[classify[0]])}. Engine-o's predicate search is behind "
+        "ONTOLOGY_CLASS_POOL_VIA_MESH and refuses a blank subject, so this omission is a 400 with "
+        "the flag on and an unattributed read with it off -- and hop 11 cannot tell you which of "
+        "this function's dicts it matched."
+    )
+
+    # THE ANCHOR: the arm only discriminates while there is something to discriminate FROM. If the
+    # payload becomes the function's only dict, hop 11 is already exact and this arm is a second
+    # green saying the same thing -- which is worth knowing rather than carrying.
+    others = [
+        d.lineno for d in ast.walk(fn)
+        if isinstance(d, ast.Dict) and d.keys and d is not None
+    ]
+    assert len(others) >= 2, (
+        f"_classify_route now holds {len(others)} non-empty dict literals. Hop 11 matches any of "
+        "them, so with only the payload left this arm adds nothing over hop 11; delete it rather "
+        "than keeping a green that cannot fail."
+    )
+
+
+#: Every function in engine-o that mints an Initiator. MEASURED, not assumed, and widened by the
+#: arm at the bottom of this file refusing to pass until the new mint is named here -- which is how
+#: the second entry arrived: the predicate search's mint reddened that census on the commit that
+#: introduced it, at main.py:1778, before any of this file's ten hops noticed a thing.
+#:
+#: This set is also the population of the mint arm just below, so naming a route here buys it both
+#: the subject assertion and the kind assertion rather than only the one the hop table covers.
+EXPECTED_MINTS: set[str] = {"_class_pool_via_mesh_sync", "_predicate_pool_via_mesh_sync"}
+
+
 # -- the terminal: what the identity is FOR ----------------------------------------------------
 
 
-def test_the_MINT_declares_a_person_and_takes_its_subject_from_the_chain() -> None:
-    """Hop 8 is the only hop whose failure is loud, because the migrated route refuses a blank
-    subject with a 400 (sealed behaviourally in test_the_migrated_route_returns_the_same_rows.py).
-    What is sealed HERE is that the subject is the threaded value rather than a constant, and that
-    the kind is declared -- never sniffed from the subject's spelling, which is the rule
-    ``Initiator`` exists to carry.
+@pytest.mark.parametrize("route", sorted(EXPECTED_MINTS))
+def test_the_MINT_declares_a_person_and_takes_its_subject_from_the_chain(route: str) -> None:
+    """Hops 8 and 12 are the only hops whose failure is loud, because both migrated routes refuse a
+    blank subject with a 400 (sealed behaviourally in the two parity files). What is sealed HERE is
+    that the subject is the threaded value rather than a constant, and that the kind is declared --
+    never sniffed from the subject's spelling, which is the rule ``Initiator`` exists to carry.
+
+    PARAMETRIZED OVER THE MINT CENSUS rather than named at one route, and that is a repair of this
+    arm rather than an extension of it: written for the class pool, it hard-coded that route's name,
+    so the second route's mint would have been checked for its SUBJECT by hop 12 and not at all for
+    its KIND. The declared kind is the whole of what distinguishes a person's read from a service's,
+    and a defence of it belongs to every mint rather than to the one that existed when it was
+    written. Widening ``EXPECTED_MINTS`` now costs whoever adds a third route both assertions.
     """
-    fn = _function(ENGINE_O, "_class_pool_via_mesh_sync")
+    fn = _function(ENGINE_O, route)
     mints = [
         node
         for node in ast.walk(fn)
         if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "Initiator"
     ]
-    assert len(mints) == 1, f"expected exactly one Initiator mint in the migrated route, got {len(mints)}"
+    assert len(mints) == 1, f"expected exactly one Initiator mint in {route}, got {len(mints)}"
     kwargs = {kw.arg: ast.unparse(kw.value) for kw in mints[0].keywords}
     assert kwargs.get("subject") == FIELD, (
-        f"the migrated route mints its Initiator with subject={kwargs.get('subject')!r} rather "
+        f"{route} mints its Initiator with subject={kwargs.get('subject')!r} rather "
         f"than the threaded {FIELD!r} -- the chain sealed above then ends in nothing"
     )
     assert kwargs.get("kind") == "'person'", (
@@ -391,13 +475,6 @@ def test_the_MINT_declares_a_person_and_takes_its_subject_from_the_chain() -> No
         "at the mint; anything else here is either a service read wearing a person's subject or a "
         "kind inferred from that subject, and inference is the rule this field replaces."
     )
-
-
-#: Every function in engine-o that mints an Initiator. Measured, not assumed: there is exactly one
-#: today, and it is the migrated route's. A SECOND route onto a mesh interface (the next item of
-#: work on this lane) must mint its own, and this set is what forces that mint to be threaded
-#: rather than defaulted.
-EXPECTED_MINTS: set[str] = {"_class_pool_via_mesh_sync"}
 
 
 def test_the_ENGINE_mints_an_Initiator_only_where_this_file_seals_the_chain() -> None:
