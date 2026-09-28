@@ -245,8 +245,13 @@ def _scripted():
     two calls the arms equal when they are not. It differs only on a **stored null**, where the
     incumbent's `.get("definition", "")` passes `None` straight through, and on a **missing key**,
     where both must produce `""`. Both rows are here so the equality arms can see the difference;
-    the `None` reaching the wire is a pool-builder defect in its own right, reported rather than
+    the `None` reaching the wire was a pool-builder defect in its own right, reported rather than
     quietly repaired inside a migration that was supposed to change nothing.
+
+    REPAIRED 2026-09-28, on both arms and outside that migration, with the value arms and the
+    `_enum_description` arms further down this file. This sentence is updated rather than deleted
+    because the fixture's SHAPE is still what it says: five `definition` variants chosen by mutation,
+    and the stored-null row is now load-bearing for the repair as well as for the equality.
 
     A FRESH LIST PER CALL. Every `_Obj` is handed to both arms in turn, and a shared mutable fixture
     is how the second arm starts passing because the first consumed something.
@@ -523,3 +528,193 @@ def test_the_FOOTPRINT_names_the_packages_the_module_under_test_actually_needs(m
         f"`wvc.query.Filter` and `wvc.query.MetadataQuery` are read off the `classes` submodule, "
         f"and it is not in the footprint: {sorted(_FOOTPRINT)}"
     )
+
+
+# ── THE POOL-BUILDER DEFECT, now repaired: a stored null is not a description ───────────────
+#
+# §2.3 of the pilot report filed this and deliberately did not fix it: the mesh projection was
+# aligned to the incumbent's `.get("definition", "")` EXPRESSION FOR EXPRESSION, including the
+# `None` a stored-null property yields, because row identity was the thing the flag's seal
+# asserted and a repair smuggled into a migration is the one change no arm above could see.
+#
+# It is now outside that migration and repaired on BOTH arms at once, so the equality arms stay
+# green and cannot see the fix either -- which is exactly why these arms assert the VALUE. The
+# fixture needs nothing new: `mesh:StoredNull` and `mesh:NoDefinitionKey` were put there by the
+# mutation that found the draft's `or ""`, and they are the two rows that separate the readings.
+#
+# THAT CLAIM IS MEASURED, NOT ASSUMED, AND THE NUMBERS RUN THE WRONG WAY ROUND. Reverting ONE arm of
+# the repair reds 22: the 2 value arms for that side, plus all 20 parametrizations of
+# `test_the_FLAG_CHANGES_NO_ROWS_for_any_census_question`, because a one-sided change is a parity
+# difference and parity is what that arm is for. Reverting BOTH -- the state this repair replaced --
+# leaves parity SILENT and reds exactly 4, the value arms below. A defect sitting identically on both
+# sides of an equality seal is invisible to it however many ways it is parametrized.
+
+
+def _by_uri(rows: list[dict], uri: str) -> dict:
+    hit = [r for r in rows if r.get("uri") == uri]
+    assert len(hit) == 1, f"expected exactly one {uri} row in the pool, got {len(hit)}: {rows!r}"
+    return hit[0]
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["incumbent", "mesh"])
+def test_a_STORED_NULL_definition_reaches_the_wire_as_a_STRING(main, monkeypatch, on):
+    """`{"definition": None}` in the store must not become `description=None` on the wire.
+
+    A `.get("definition", "")` does not defend against this: the default applies to a MISSING key,
+    never to a key whose stored value is null. The `None` then reaches an f-string eight frames
+    later and renders the word "None" into a BAML enum description -- a defect that never raises,
+    never logs, and is visible only as a class the model was told is called "Stored Null: None".
+    """
+    rows, _mode, _counts, _client = _pool(main, monkeypatch, _ROWS[0], on=on)
+    row = _by_uri(rows, "mesh:StoredNull")
+    assert row["description"] is not None, (
+        f"a stored-null definition reached the wire as None on the "
+        f"{'mesh' if on else 'incumbent'} arm: {row!r}"
+    )
+    assert row["description"] == ""
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["incumbent", "mesh"])
+def test_a_MISSING_definition_key_still_reaches_the_wire_as_a_STRING(main, monkeypatch, on):
+    """The neighbour that ALREADY worked, and the control for the repair above.
+
+    It shares the arm's population and its gate and differs only in what the guard decides on -- a
+    key that is absent rather than a key whose value is null. A repair that broke it would mean the
+    fix had changed the defaulting rule rather than the null handling.
+    """
+    rows, _mode, _counts, _client = _pool(main, monkeypatch, _ROWS[0], on=on)
+    assert _by_uri(rows, "mesh:NoDefinitionKey")["description"] == ""
+
+
+@pytest.mark.parametrize("on", [False, True], ids=["incumbent", "mesh"])
+def test_NO_row_in_the_pool_carries_a_NON_STRING_description(main, monkeypatch, on):
+    """The class, not the instance that bit us. A defence aimed only at `mesh:StoredNull` would be
+    a defence of one fixture row; the pool builder's contract is that `description` is a string for
+    EVERY row it emits, whatever the store held."""
+    rows, _mode, _counts, _client = _pool(main, monkeypatch, _ROWS[0], on=on)
+    assert rows, "an empty pool satisfies every claim below vacuously"
+    offenders = [r for r in rows if not isinstance(r.get("description"), str)]
+    assert not offenders, f"these rows left the pool builder with a non-string description: {offenders!r}"
+
+
+# ── AND THE CONSUMER, because "" is not the end of it ───────────────────────────────────────
+
+
+def test_the_ENUM_DESCRIPTION_omits_the_separator_when_there_is_no_definition(main):
+    """Repairing the builder turns `"Stored Null: None"` into `"Stored Null: "`, which is the SAME
+    defect one character shorter: filler in a BAML prompt.
+
+    This fleet already ruled on it, at `_get_active_ontology_classes`, where an absent definition
+    renders as NOTHING and the comment gives the reason -- 'No definition available.' repeated
+    across hundreds of classes is pure token noise and teaches the model to pattern-match the
+    filler instead of the names. The enum builder is the same question and gets the same answer.
+    """
+    assert main._enum_description("Stored Null", "") == "Stored Null"
+    assert main._enum_description("Stored Null", None) == "Stored Null"
+    assert main._enum_description("Stored Null", "   ") == "Stored Null"
+
+
+def test_the_ENUM_DESCRIPTION_keeps_both_when_there_IS_a_definition(main):
+    """The accepting side. An over-strict helper that dropped every definition would satisfy the
+    arm above and quietly strip the ontology's meaning out of the prompt."""
+    assert (
+        main._enum_description("Production Cost", "cost accumulated against a lot")
+        == "Production Cost: cost accumulated against a lot"
+    )
+
+
+def test_the_ENUM_DESCRIPTION_HELPER_has_no_second_implementation(main):
+    """A census, because this rendering had TWO copies before the helper existed and a third would
+    be written the same way. Derived from the AST: no f-string in the module may join a label and a
+    description with `": "` outside the helper itself.
+
+    ITS POPULATION IS DELIBERATELY WIDER THAN THE NEXT ARM'S, AND THE ASYMMETRY IS MEASURED. The next
+    arm requires the helper only at `tb.OntologyClass` receivers, because that is where a label and a
+    definition are known to travel together. This one bans the SHAPE module-wide, wherever it appears
+    and on whatever enum -- a mutant that gave `tb.Predicate` a `f"{label}: {description}"` builder
+    reds here and nowhere else, which is the intended reading: a second enum growing that pair is the
+    same defect arriving somewhere new, and the ruling it would diverge from is not enum-specific.
+    """
+    import ast
+
+    src = Path(main.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    helper = [
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_enum_description"
+    ]
+    assert len(helper) == 1, "expected exactly one `_enum_description` definition"
+    helper_range = range(helper[0].lineno, (helper[0].end_lineno or helper[0].lineno) + 1)
+
+    copies = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr) or node.lineno in helper_range:
+            continue
+        text = ast.unparse(node)
+        if "label" in text and "description" in text and ": " in text:
+            copies.append((node.lineno, text))
+    assert not copies, (
+        "a label/description rendering was written again instead of calling `_enum_description`; "
+        f"the ruling it is about to diverge from lives at `_get_active_ontology_classes`: {copies!r}"
+    )
+
+
+def test_EVERY_enum_value_description_is_BUILT_BY_the_helper(main):
+    """The other direction. The census above is blind to a call site that renders the pair some way
+    that is not an f-string, so this one fixes the population from the consumer's end.
+
+    THE POPULATION IS THE `OntologyClass` ENUM AND ONLY IT, DERIVED FROM THE RECEIVER. A first draft
+    took every `add_value(...).description(...)` in the module and red on six sites that are not this
+    defect at all: `tb.Predicate` (a registered predicate's own sentence, and the abstain option's
+    prose), `tb.PersonaTarget` and `tb.Domain` (legacy prompt tables), `tb.Intent`. None of them
+    carries a label and a definition, so a label/definition helper is the wrong shape for them and a
+    red there would have been a false one. The narrowing is by the enum's TYPE rather than by a list
+    of line numbers, so a third `OntologyClass` builder is caught and a fourth `Predicate` one is
+    not.
+    """
+    import ast
+
+    src = Path(main.__file__).read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "description"
+        and isinstance(node.func.value, ast.Call)
+        and isinstance(node.func.value.func, ast.Attribute)
+        and node.func.value.func.attr == "add_value"
+        and isinstance(node.func.value.func.value, ast.Attribute)
+        and node.func.value.func.value.attr == "OntologyClass"
+    ]
+    assert len(calls) >= 2, (
+        f"expected at least the two known OntologyClass enum builders, found {len(calls)} -- if the "
+        f"enum was renamed, this census is now looking at nothing"
+    )
+    strays = [
+        (c.lineno, ast.unparse(c.args[0]) if c.args else "<no argument>")
+        for c in calls
+        if not (
+            c.args
+            and isinstance(c.args[0], ast.Call)
+            and isinstance(c.args[0].func, ast.Name)
+            and c.args[0].func.id == "_enum_description"
+        )
+    ]
+    assert not strays, f"these enum descriptions bypass `_enum_description`: {strays!r}"
+
+
+def test_the_ENUM_DESCRIPTION_handles_an_ABSENT_LABEL_the_same_way(main):
+    """The sibling written in the same act, which is the hardest home to find.
+
+    `label` is read with `.get` one line from where `definition` is, out of the same store rows, so
+    it can be a stored null for exactly the same reason -- and a helper that guarded only the
+    definition would render `"None: cost accumulated against a lot"`, which is the original defect
+    with the fields swapped. Fixing one field and calling the class handled is how this defect got a
+    second generation in the first place.
+    """
+    assert main._enum_description(None, "cost accumulated against a lot") == "cost accumulated against a lot"
+    assert main._enum_description("", "rate applied to labor hours") == "rate applied to labor hours"
+    assert main._enum_description(None, None) == ""
+    assert main._enum_description("  ", "  ") == ""

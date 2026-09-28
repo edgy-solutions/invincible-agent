@@ -66,6 +66,24 @@ A draft of the projection wrote `r.get("definition", "") or ""`, which agrees wi
 present definition *and* on an empty-string one. It differs **only** on a stored null. That is why
 the fixture carries one.
 
+> **CORRECTED 2026-09-28 — repaired.** The paragraph above is kept because its *reason* still holds;
+> its verdict no longer does. Ordered as item 3 of the overnight packet and done outside the
+> migration, on **both** arms in one commit (`obj.properties.get("definition") or ""` and
+> `r.get("definition") or ""`), so the equality arms stay green and cannot see it — which is why the
+> repair is sealed by arms that assert the **value**, not the parity.
+>
+> Three things this section did not know. (a) `"None: None"` overstates it: the incumbent reads the
+> label with `.get` one line away, so the real rendering is `"Stored Null: None"` — and the label is
+> the same defect one field over, which is why the repair is a helper taking `str | None` for both.
+> (b) Repairing the builder only turns that into `"Stored Null: "`, which is the same defect one
+> character shorter; this fleet had **already ruled** the question at `_get_active_ontology_classes`,
+> where an absent definition renders as nothing because filler teaches the model to match the filler.
+> The two BAML enum call sites now go through `_enum_description` and get the same answer.
+> (c) Measured, not assumed: reverting **one** arm reds 22 arms, because a one-sided change is a
+> parity difference; reverting **both** — the state this section described — reds exactly 4, and
+> parity stays silent. A defect sitting identically on both sides of an equality seal is invisible to
+> it. 12 mutants, 12 as expected.
+
 ### 2.4 The mesh arm is stricter about the collection marker
 
 `nominate` checks the embedding-model marker at open and refuses a mismatch; the incumbent has no

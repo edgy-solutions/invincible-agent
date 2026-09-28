@@ -644,6 +644,27 @@ async def _get_active_ontology_classes(domain: str = "MAINTENANCE") -> str:
     return "\n".join(lines)
 
 
+def _enum_description(label: str | None, definition: str | None) -> str:
+    """One class's line in a BAML enum, under the SAME RULING as the class list above.
+
+    An absent definition renders as NOTHING -- not a trailing `": "`, not a filler sentence. See
+    `_get_active_ontology_classes` for the reason, which is the fleet's and not this function's: a
+    filler repeated across hundreds of classes is pure token noise in the prompt and teaches the
+    model to pattern-match the filler instead of the names.
+
+    IT TAKES `str | None` ON PURPOSE. A stored-null property and a missing one are the same absence
+    here, and a helper that trusted its callers to have defaulted would put the burden back where
+    the defect was: `.get("definition", "")` defaults a MISSING key and passes a null value
+    straight through. The label is read with `.get` one line from where the definition is, so it
+    gets the same treatment -- it is the same defect one field over.
+    """
+    text = (definition or "").strip()
+    name = (label or "").strip()
+    if name and text:
+        return f"{name}: {text}"
+    return name or text
+
+
 async def _check_jena_populated():
     """Check if Apache Jena has data in the named graphs."""
     if not _JENA_ENDPOINT:
@@ -1187,7 +1208,7 @@ def _weaviate_hybrid_search_sync(
             {
                 "uri": obj.properties["uri"],
                 "label": obj.properties["label"],
-                "description": obj.properties.get("definition", ""),
+                "description": obj.properties.get("definition") or "",
                 # score may be None if Weaviate didn't populate it (e.g.
                 # a pure-BM25 path on a scoreless config); keep the key
                 # present so downstream capture is uniform.
@@ -1328,12 +1349,15 @@ def _class_pool_via_mesh_sync(
     # THE PROJECTION IS THE INCUMBENT'S, EXPRESSION FOR EXPRESSION, and the differences that
     # remain are deliberate and named:
     #
-    #   `.get("definition", "")` WITHOUT an `or ""`. The draft had one, and it silently made the
-    #   two arms disagree on a row whose `definition` is stored as null: the incumbent emits None
-    #   there, this arm would have emitted "". Row identity is the thing the flag's seal asserts,
-    #   so the arms must agree even where BOTH are arguably wrong — the incumbent's None reaching
-    #   an f-string and rendering "None: None" in a BAML enum description is a real defect, and it
-    #   is a defect of the pool builder, not of this fork. Reported, not smuggled into a migration.
+    #   `.get("definition") or ""`, which is now what the INCUMBENT writes too. Through the
+    #   migration this read was `.get("definition", "")` here because that is what the incumbent
+    #   wrote, null-passing included: row identity was the thing the flag's seal asserted, and a
+    #   repair smuggled into a migration that was supposed to change nothing is the one change no
+    #   arm could see. The repair landed separately, on BOTH arms in one commit, so the equality
+    #   arms stayed green and could not see it either -- which is why the arms that prove it assert
+    #   the VALUE (`test_a_STORED_NULL_definition_reaches_the_wire_as_a_STRING`). The consumer was
+    #   repaired with it: see `_enum_description`, because `"Stored Null: "` is the same defect one
+    #   character shorter.
     #
     #   `.get("uri")` where the incumbent writes `obj.properties["uri"]`. The incumbent RAISES on a
     #   row with no uri and that raise lands in its own except-clause, which turns it into the 503;
@@ -1345,7 +1369,7 @@ def _class_pool_via_mesh_sync(
         {
             "uri": r.get("uri"),
             "label": r.get("label"),
-            "description": r.get("definition", ""),
+            "description": r.get("definition") or "",
             "score": r.get("score"),
         }
         for r in (result.rows or ())
@@ -2863,7 +2887,9 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # Step 2: Build BAML TypeBuilder
     tb = TypeBuilder()
     for cls in candidates:
-        tb.OntologyClass.add_value(cls["uri"]).description(f"{cls['label']}: {cls['description']}")
+        tb.OntologyClass.add_value(cls["uri"]).description(
+            _enum_description(cls["label"], cls["description"])
+        )
 
     # Step 3: Call BAML function with strictly constrained enum
     try:
@@ -3411,7 +3437,9 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
     tb = TypeBuilder()
     for cls in candidates:
         # Use the URI as the enum value for zero-hallucination selection
-        tb.OntologyClass.add_value(cls["uri"]).description(f"{cls['label']}: {cls['description']}")
+        tb.OntologyClass.add_value(cls["uri"]).description(
+            _enum_description(cls["label"], cls["description"])
+        )
 
     # 3. Ask the LLM to reason over the dossier with strict constraints
     try:
