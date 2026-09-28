@@ -252,11 +252,45 @@ I could not name them, and did not guess:
 minutes apart against a cluster with port-forwards up. For a network-gated skip, the two runs are
 not a controlled comparison — the subject moved. The control that would settle it is to VARY
 NOTHING and re-run: if the skip set is not stable run-to-run at a fixed tree, the +/-2 is
-environmental and this change is not implicated. **That control is queued, not done**, so the delta
-stands as unexplained here rather than as harmless.
+environmental and this change is not implicated.
 
-What can be said without it: no identity that passed before is failing now, which is the property
-the commit is claiming.
+### The control RAN, and the counts are not stable
+
+Same tree, same command, nothing varied:
+
+| run | result | total outcomes |
+| --- | --- | --- |
+| after | 43 failed, 4902 passed, 199 skipped, 2 xfailed | 5146 |
+| **control, nothing varied** | 43 failed, **4903** passed, 199 skipped, 2 xfailed | **5147** |
+
+**The total moved by one between two identical runs.** Not the outcome of a test — the number of
+tests. So this suite's counts are not a stable instrument across runs, and **no count-to-count
+comparison between the before and after runs can support a conclusion**, including the +/-2 that
+prompted this section. The identity comparison is the only reading that means anything, and it is
+unambiguous: the two dispatched reds are gone and nothing else moved.
+
+The skip reasons name the mechanism. Several skips read **live substrate state** rather than an
+environment variable, so their number moves when the substrate does:
+
+- `test_the_walk_sheet_resolves_to_cost_lots.py` — `names no lot: 'what rates are we using in FY2021'`
+- `test_producer_declarations.py` — `every seeded project carries a requirement — nothing to discriminate`
+- `test_slot_coverage_matrix.py` — seven parametrised `plan_* declares no route-supplied slots`
+
+**A skip reason should be a DECLARED CONDITION, not a substrate read.** A skip that consults the
+cluster makes the suite's shape a function of the cluster's shape, which is how a count stops being
+reproducible at a fixed tree. That is a hygiene item in its own right, and it belongs beside the
+`sys.modules` harness rather than inside it.
+
+**This is "a count is not a census" arriving in a worse shape than the one I had written down.** I had
+recorded that a count must be replaced by identities because a count can hide a swap. Here the count
+is not reproducible at all, so a delta computed from two of them was never evidence in either
+direction — including on the occasions when it came out zero and I read that as agreement.
+
+⛔ **And the control run lost the comparison it existed to make.** I passed `-rs` to get skip reasons,
+which **overrides** pytest's default `-rfE` rather than adding to it, so that run printed 199 skip
+reasons and **not one failing identity** — on the run whose whole purpose was comparing identities.
+The count comparison above still answers the stability question, so the finding survives my instrument
+error, but it survives by luck. `-rsf` is what I meant.
 
 ---
 
@@ -266,6 +300,8 @@ the commit is claiming.
 | --- | --- |
 | full suite before (`d3944da8`) | 45 failed, 4876 passed, 201 skipped, 2 xfailed — 21m12s |
 | full suite after | 43 failed, 4902 passed, 199 skipped, 2 xfailed — 30m41s |
+| **stability control** (same tree, nothing varied) | 43 failed, **4903** passed, 199 skipped, 2 xfailed — 17m01s |
+| **are the counts a valid instrument?** | **NO** — total outcomes 5146 vs 5147 at a fixed tree |
 | new failing identities | **0**; the 2 dispatched reds GONE, by identity |
 | the adr0019 pairing | 8 passed (was 2 failed, 6 passed) |
 | harness seal | 22 arms, 3 fires in 3 DISTINCT orders, 22 passed each |
