@@ -3445,6 +3445,190 @@ that taught it cannot find the next one.**
 
 ---
 
+## R-082 — A REGISTRY READ VERIFIES THE READER'S CREDENTIALS, NOT THE CONSUMER'S
+
+Roll #6 fired with every gate satisfied and could not land: all 20 new pods took `403 Forbidden`
+from ghcr's token endpoint. The gate had required — correctly, and as roll #5 taught the
+fleet — that the payload image be confirmed by *reading the registry* rather than by trusting a
+green build. It was read with `docker manifest inspect`, which answers a question about **the
+reader's** credentials. The consumer is the kubelet, with a different identity that nothing in the
+gate ever asked about.
+
+**Image existence and image pullability are different properties**, and the gate had carefully
+verified only the first. The correction is not a better read; it is a read *from the consumer's
+position*: a pod on the payload image, scheduled on a node, with the cluster's own pull secret
+attached. Measured cost: **23 seconds**. Measured value: it is the only check that would have
+caught a ten-hour outage of the roll.
+
+The generalisation is not about registries. Whenever a gate verifies a resource on behalf of a
+consumer, **the gate must present the consumer's identity, not its own** — and where it cannot,
+it must say which identity it used. A verification performed as the wrong principal is not a
+weaker check, it is a check of a different subject that reports in the same words.
+
+Corollary measured the same night, and it is the half that bites twice: **the population of
+images a fire must prove is every image the render introduces that is not already running**, not
+the image the change was about. The frontend bump of 2026-09-28 proved its own image from a node
+and was still blocked — by `quay.io/minio/mc`, a hook image nobody had read, which the render diff
+had listed in plain sight and which was dismissed as "hooks, therefore not drift". The partition
+was right about the diff and wrong about the risk.
+
+Measured: `docs/measurements/2026-09-28-roll-6-fired-and-the-cluster-cannot-authenticate-to-a-registry-whose-packages-are-public.md`.
+
+---
+
+## R-083 — AN AGGREGATE THAT REPEATS IS NOT EVIDENCE THAT THE SYSTEM REPEATS
+
+The docs census was fired three times at a fixed tree and a uniform fleet. All three reported
+`0 pass, 5 fail, 0 blocked`. **Three of the five rows reported a different cause each time.** The
+route-miss diagnosis sat on `docs-how-do-i-add-an-engine` in fire 1, on
+`docs-how-do-i-add-a-canvas-template` in fire 3, and on neither in fire 2; an `infra_error` — a
+different failure class entirely — appeared in exactly one fire. Whichever single fire you ran,
+you would have named a different defect and had no way to know.
+
+The aggregate was the most stable number available and the least informative. It is stable
+*because* it is an aggregate: a count sums over exactly the dimension the variation lives in.
+
+Two consequences, and the second is the one that keeps biting:
+
+1. **Repetition must be checked at the grain of the claim.** Three fires agreeing on a total do
+   not license any sentence about a row.
+2. **Byte-identical output across fires is WEAKER evidence than differing output**, not stronger.
+   Identical rows cannot distinguish "the work was repeated and is deterministic" from "the work
+   was not repeated" — a cache, a short-circuit, a fixture read instead of a live call. The prior
+   census cited byte-identical output across three fires as its evidence of determinism; that
+   property is gone at this revision while its number is unchanged. In the 09-28 run the
+   *differences* are what prove three fires each did the work.
+
+Before concluding from a repeated figure, state which dimension the repetition covers and which
+it sums over. Same shape as item 4's suite totals — 5147 outcomes against 5146 at a fixed tree,
+reached by a different mechanism — where the count moved and the identities did not.
+
+Note that this ruling is R-080's inverse face. R-080 says a ratchet is blind whenever its register
+is accurate; R-083 says an aggregate is blind whenever its parts disagree. Both are the same
+defect of a summary standing in for its population.
+
+Measured: `docs/measurements/2026-09-28-morning-report-roll-6-landed-and-the-census-count-is-stable-while-its-causes-are-not.md`.
+
+---
+
+## R-084 — A BEFORE-READING NOT TAKEN CANNOT BE RECONSTRUCTED ONCE THE SUBJECT MOVES — REPORT IT NON-COMPUTABLE
+
+Item 3's dispatch asked for a recall delta across MAINTENANCE, before and after. The after-half
+was measured on three fires. The before-half had never been taken, and by the time the question
+was asked the pre-fix code was no longer deployed. Recovering it would have meant rolling the
+fleet backwards, which nothing authorised.
+
+**The delta was reported as NOT COMPUTABLE.** That is the ruling: where a comparison's first term
+was never measured, the answer is the absence, stated plainly, and not a substitute. Substituting
+one would have been easy and each candidate was wrong in a way that reads as right — a figure from
+a neighbouring domain, a figure from a different instrument, a figure re-derived from the same
+post-fix code and therefore guaranteed to agree.
+
+The discipline this imposes runs forwards, not backwards: **a dispatch that asks for a delta
+obliges the before-reading to be taken before the change is deployed.** The window closes at the
+roll, silently, and nothing in the request marks the moment it shuts.
+
+One legitimate before/after survived, and its shape is the test of whether a delta is real: a
+single instrument, a single population, measured on both sides — cold-start fallbacks on docs
+questions, engine-o stdout, 9/9 → 0/3. Where a report can produce that, the delta is a
+measurement. Where it cannot, no amount of arithmetic makes one.
+
+Measured: `docs/measurements/2026-09-28-item-3-measured-on-the-deployed-payload-and-the-delta-the-dispatch-asked-for-cannot-be-computed.md`.
+
+---
+
+## R-085 — A DECLARATION'S CONTENT AND ITS WIRING ARE TWO CLAIMS, AND ONLY THE WIRING DECIDES WHETHER IT FIRES
+
+`helm/invincible-agent/values-roll-frontend-digest.yaml` exists to carry a roll's cross-repo image
+digests. It is 170 lines and its verification is close to exemplary: a positive control on the tag
+instrument, both directions of the tag↔digest binding, a control proving a superseded digest still
+resolves, an explicit note that `imageID` is the repo digest and not the per-arch manifest digest.
+
+**None of its four digests was running.** `scripts/upgrade-sandbox.sh`'s `VALUES` array holds
+`values-sandbox.yaml` and `values-sandbox.secret.yaml` and nothing else, so the canonical roll
+command never reads the file. It was written for a hand-run `helm upgrade --reuse-values -f
+<overlay>`, and the script deliberately does not use `--reuse-values` at all. The file's purpose
+and the fleet's roll path stopped intersecting, and nothing said so — because every check anyone
+ran was a check of its *content*.
+
+**The defect was not inferred from reading the script; it was measured on the consequence**, which
+is the only reading that distinguishes "never passed" from "passed and overridden": the frontend
+ran `values-sandbox.yaml`'s pin and not the overlay's, and two dag-tools workloads matched neither
+file, having fallen through to `:latest` exactly as the overlay's own header predicts when no
+digest reaches the helper.
+
+So: for any file, seal, policy or values overlay, **the question "is its content right?" and the
+question "does anything read it?" are separate, and the second is answered at the consumer.** Cite
+the line that reads the file, or measure a consequence only that file could produce.
+
+⛔ The sting, and the reason this earns its own number beside R-076: **the overlay already records
+an inertness defect one layer down** — the image helper ignored `.digest` at three of its four
+cross-repo call sites, found and fixed, with the remark that an image-line diff would have passed
+it. Fixing that instance read as handling the class, so the same question was never asked of the
+layer above. A defence belongs to the class, not to the instance that bit you.
+
+Measured: commit `3809d5ab`.
+
+---
+
+## R-086 — A SUITE THAT COULD NOT RUN IS VOID, NOT RED
+
+A run that never reached its subject reports in the same vocabulary as one that reached it and
+found a defect. A crashed collection, an exhausted paging file, a missing fixture, a stubber that
+never restored — each produces a nonzero exit, and a nonzero exit reads as a finding.
+
+**A nonzero exit is not a red.** A red is a named arm asserting a named behaviour and failing on
+it. Anything else is VOID: no information about the subject, and it must be reported as no
+information rather than as a failure, because a void reported as red gets "fixed", and a void
+reported as green gets shipped.
+
+The operational form: before a suite's result is used as evidence, require the count of tests that
+*ran*, and require that a named arm appear in the failure list. Where the run produced neither,
+the suite has not spoken. This is also why `-rs` overriding pytest's default `-rfE` was a
+first-order instrument defect and not a formatting preference — the one run that existed to
+compare identities printed no failing names at all.
+
+Measured: `docs/measurements/2026-09-27-overnight-the-lineage-split-and-a-stub-harness-whose-dispatched-cause-was-wrong.md`.
+
+---
+
+## R-087 — `IfNotPresent` MAKES A REGISTRY FAILURE LATENT UNTIL A CACHE MISS — A CACHE IS NOT A DEPENDENCY
+
+The frontend bump of 2026-09-28 was blocked by a `pre-upgrade` hook, `iagent-minio-bucket-init`,
+whose image is `quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z` with `imagePullPolicy:
+IfNotPresent`. Measured that night, with controls: `quay.io/minio/mc` refuses anonymous reads
+**uniformly** — the failing tag, `latest`, and a tag that cannot exist all answer `401`, and a
+repository that was readable would have answered `404` for the third. And a pinned probe on every
+node, positive-controlled against an image known to be present, returned `ErrImagePull` **7 of
+7**: no node holds it.
+
+Roll #6 reached `deployed` ten hours earlier, so the same hook passed. Whether quay's access
+changed or the cached layers were evicted **could not be determined** — the event window is about
+an hour and the interval was ten, which makes the absence of a GC event vacuous rather than
+exculpatory. The conclusion does not need the discrimination, and that is the ruling:
+
+**Under `IfNotPresent`, a workload's success is evidence about a node's cache, not about the
+registry.** The dependency is real and unfetchable; the cache was load-bearing and nobody
+guaranteed it. The failure mode is the worst available — it fires on a scheduling accident,
+arbitrarily long after the cause, on an operation that changed nothing related to it.
+
+So: **every third-party image the chart depends on must be pullable, by the cluster, at the moment
+it is needed** — which means mirrored into a registry the fleet can authenticate to and pinned by
+digest. `IfNotPresent` is a bandwidth optimisation and must never be the reason a pull is not
+attempted. A green roll history is not evidence that the images it used can still be fetched.
+
+Two instrument notes that travel with it, both earned the same night:
+
+* `node.status.images` is **capped** (49 entries observed on two nodes), so "the image is not in
+  the node's image list" is vacuous for any small image. The cap is what made the probe necessary.
+* A bare `curl` to a registry's `/v2/` manifest endpoint 401s without the token dance, so a 401
+  there is not a finding. The positive control — an existing tag answering identically — is what
+  exposed that reading as empty before it was written down.
+
+Measured: `docs/measurements/2026-09-28-the-frontend-bump-is-blocked-by-a-hook-image-no-node-can-fetch.md`.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
