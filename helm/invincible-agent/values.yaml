@@ -69,6 +69,40 @@ global:
     labelKey: iagent.io/stateful-node
 
 # ==========================================================================
+# NetworkPolicy — the substrate-driver ban's INTENDED enforcement
+#
+# Renders templates/networkpolicy-engines.yaml (one egress policy per engine)
+# and templates/networkpolicy-stores.yaml (one ingress policy per store).
+#
+# ⛔ OFF BY DEFAULT, AND THE DEFAULT IS THE DECISION — NOT A PLACEHOLDER.
+# Turning this on is a TRAFFIC CHANGE, not a hardening no-op. Engines that
+# still open their own connections to Neo4j, Weaviate or Jena are exactly
+# what the policy exists to stop, so they break the moment it is enabled.
+# The population that may legitimately reach a store is recorded in
+# tests/test_substrate_allowlist_exceptions_expire.py and is what the store
+# policy admits; anything not on it loses its access when the gate opens.
+#
+# ⚠ AND THE KEY MUST EXIST EVEN WHEN FALSE. `{{ if .Values.networkPolicy.enabled }}`
+# against an ABSENT `networkPolicy:` is not a quiet skip — it is
+# "nil pointer evaluating interface {}.enabled", which fails the render of
+# the WHOLE chart, every template, not just these two. Measured 2026-09-28
+# when this block was missing: `helm template` exited 1 and emitted nothing.
+# So this is a required declaration, not documentation of a default.
+#
+# extraEgress: verbatim NetworkPolicyEgressRule list, appended to every
+# engine's egress. It exists because two dependencies are OUTSIDE this chart
+# — the S3-compatible object store (see templates/domain-broker.yaml and
+# templates/minio-bucket-init-job.yaml) and any external model endpoint — so
+# a default-deny egress cannot reach them through any rule the chart can
+# write. Their addresses are deployment detail and MUST NOT be committed
+# here; supply them in a local values file. Leaving this empty while
+# enabling the gate will cut the fleet off from both.
+# ==========================================================================
+networkPolicy:
+  enabled: false
+  extraEgress: []
+
+# ==========================================================================
 # PostgreSQL
 # Set postgresql.enabled=false + externalPostgresql if you BYO Postgres.
 # ==========================================================================
