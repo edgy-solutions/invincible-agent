@@ -51,7 +51,7 @@ today is what makes the pin cheap to check, never what makes it unnecessary.
 
 R-082, applied rather than quoted: this is a **different repository** from roll #6's payload, so the
 credential was re-proved for it. A pod on the new digest with `ghcr-pull-secret` attached reached
-`Succeeded` on `k3s-worker6`, exit 0, **pulled in 1.814s** — and its `imageID` equals the pinned
+`Succeeded` on a worker node, exit 0, **pulled in 1.814s** — and its `imageID` equals the pinned
 index digest exactly, which settles the repo-digest-versus-manifest-digest question the overlay had
 only argued.
 
@@ -104,7 +104,7 @@ nothing.
 
 Second instrument, which can answer: a pod pinned to each node, `IfNotPresent`, command `true`.
 **`ErrImagePull` 7 of 7.** Positive-controlled in the same breath — the same spec shape with an
-image known present on `k3s-worker6` reported *"already present on machine"* and `Succeeded`, so the
+image known present on one of those same nodes reported *"already present on machine"* and `Succeeded`, so the
 probe discriminates on exactly the thing it claims.
 
 ### How roll #6 passed ten hours ago is UNDETERMINED, and the conclusion does not need it
@@ -180,3 +180,120 @@ the kind the trap was written to catch.
   taken, because the release is not yet in a state that accepts an upgrade.
 - **`imageID` is therefore unverified.** The dispatch asked for it; the fire did not reach the
   frontend workload, so there is nothing to read and no figure is offered.
+
+## 9. ADDENDUM 23:20 — the void control from §6 is replaced by a working one, and the answer changed
+
+§6 above recorded a uniform `401` across an existing tag, the failing tag and an impossible tag, and
+was honest that this **voids the control**: `/v2/…/manifests/…` answers `401` without the
+bearer-token dance, so all three arms failed for a reason that had nothing to do with any of them.
+That left the conclusion resting on a signature rather than on a measurement. Redone properly, with
+the anonymous token the kubelet itself fetches from `/v2/auth`:
+
+| probe | anon token chars | result |
+| --- | --- | --- |
+| `quay.io/prometheus/busybox:latest` — **driver** control | 828 | **200** |
+| `quay.io/coreos/etcd:latest` — **absence** control | 809 | **404** |
+| `quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z` | 793 | **401** |
+| `quay.io/minio/mc:latest` | 793 | **401** |
+
+Now the instrument discriminates in both directions: the driver reaches a real manifest (`200`) and a
+genuinely absent target answers `404`, **not** `401`. So the `401` is **repository-scoped, not
+tag-scoped**. §6's conclusion survives its void control — but it is only now measured, and the
+sharper form is that **re-pinning the tag cannot fix this**, because the tag is not the variable.
+
+### ⛔ 9a. And the durable fix named in §8 does not exist as written
+
+`scripts/mirror-to-artifactory.ps1:390` carries the byte-identical tag as
+`src='minio/mc:RELEASE.2025-08-13T08-35-41Z'` — **no registry prefix, therefore docker.io** — while
+`values.yaml:2345-2347` pins `registry: "quay.io"`. Line 331 of that same script writes
+`src='quay.io/keycloak/keycloak:26.6.4'` explicitly, so it does spell a registry when it means one.
+
+That reads as a one-line defect with a one-line fix: point `utilImages.mc.registry` at `docker.io`,
+where the mirror evidently sources it. I probed it instead of shipping it.
+
+| probe | anon token chars | result |
+| --- | --- | --- |
+| `docker.io/library/alpine:latest` — driver control | 2698 | **200** |
+| `docker.io/library/busybox:latest` — driver control | 2700 | **200** |
+| `docker.io/prom/prometheus:latest` — driver control | 2700 | **200** |
+| `docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z` | **2488** | **401** |
+| `docker.io/minio/mc:latest` | 2488 | **401** |
+| `docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` | 2488 | **401** |
+
+Three driver controls at `200` through the identical code path. The `minio/*` repositories answer
+`401`, and their anonymous token comes back **~210 characters shorter** — the auth server declined to
+grant pull scope, rather than the registry rejecting a token it had granted.
+
+**MinIO has withdrawn anonymous pulls from both registries, for the client AND the server.** So:
+
+1. The registry is not the variable, and there is **no public source left to re-point at**. The
+   appealing one-line fix was a justification that fit by construction — it explained the `401` using
+   the one difference I happened to have noticed.
+2. **`scripts/mirror-to-artifactory.ps1` is itself broken for minio.** Lines 384 and 390 both name
+   `minio/*` sources that now require credentials, so the mirror cannot refill either image. Its next
+   run will report two failures as a surprise. Whoever owns that script needs this.
+3. §8's "vendor `mc` into a registry the fleet authenticates to" still holds, but it now needs
+   **authenticated access to MinIO's images from somewhere** as its first step, which is a larger ask
+   than a mirror push and still needs rights this seat does not have.
+
+### 9b. What this does NOT settle
+
+§6's "how roll #6 passed ten hours ago is UNDETERMINED" stays undetermined. A repository-scoped
+`401` today **does not date the change**, so cached-then-evicted layers and a recent policy change
+remain equally consistent with revision 155 succeeding. Nothing measured here distinguishes them, and
+the conclusion still does not need it.
+
+## 10. A live substrate risk this exposed, which nothing asked about
+
+```
+statefulset iagent-minio -> image=minio/minio:latest   pullPolicy=IfNotPresent
+pod iagent-minio-0       -> started 2026-09-10T12:54:46Z  (18 days, 1 restart)
+```
+
+1. **The running object store is `minio/minio:latest`** — not the `RELEASE.2025-09-07T16-13-09Z` that
+   both the chart's values and the mirror list name. The live tag and the declared tag differ, and
+   the declared one is the one everybody reads.
+2. **Its image now survives only as a cached layer set.** `IfNotPresent` is the sole reason the object
+   store is still serving, because by §9a that image can no longer be pulled from either registry.
+   The PV pinning keeps the pod on the node that holds the cache, which is what has hidden this — but
+   a node rebuild, a pod rescheduled elsewhere, or any change to `pullPolicy: Always` loses the
+   object store outright, and it would present as a scheduling or startup failure rather than as a
+   registry problem.
+
+**A cached image is not evidence that a registry is reachable.** The fleet has run 18 days on exactly
+that confusion. `minio-bucket-init` is the first thing that actually had to pull, which is the only
+reason this is visible tonight — the blocker and the risk are the same fact seen from two sides.
+
+## 11. The re-fire, and why `--no-hooks` is defensible for THIS fire specifically
+
+§7b named the path; this is the basis for taking it, rather than an assertion that skipping bootstrap
+is fine. It is not fine in general — folding state into bootstrap instead of hand-running it is the
+standing rule, and this weakens it for one revision.
+
+- The hook's whole job is `mc mb --ignore-existing` over `.Values.minioBucketInit.buckets`, which is
+  **one** bucket: `publog-lake`.
+- `git log -L` on that key shows it **unchanged since `1be65b22`**, the commit that introduced the
+  hook. Revision 155 (deployed) and this fire therefore declare an identical bucket set, so skipping
+  the hook **cannot** fail to create a bucket that the new revision needs and the old one did not.
+- `values.yaml:847-849` records `publog-lake` as historically created out-of-band anyway.
+
+That argument is from the diff, not from an inspection of the live store — I did not enumerate the
+buckets in minio, and the claim is deliberately the narrower one.
+
+## 12. Item 6 (roll #7): SKIPPED, with the reason
+
+The dispatch asked me to fire roll #7 if the gate is green and to say why if not. **It is skipped.**
+No upgrade can begin while revision 156 holds `pending-upgrade`, and the gate cannot be called green
+when the fire ahead of it has not landed — §1's `imageID` is still the old digest. Arming roll #7 on
+top of an un-landed bump would measure neither.
+
+## 13. The chart items, restated now that §9a has changed their shape
+
+1. **Both minio images need an authenticated source** — not just `mc`, and not just off quay.
+2. **A pre-flight manifest check on every image a render introduces.** The entire cost of tonight was
+   a 100-minute helm timeout to learn what one manifest `HEAD` answers in a second, and it surfaced
+   as an unrelated workload silently not rolling.
+3. **`utilImages.mc.registry` and the mirror list disagree about the registry for a byte-identical
+   tag.** Both are dead today, so the disagreement is currently invisible — it bites the moment
+   either is fixed alone.
+4. **The live-vs-declared minio server tag** (§10) needs reconciling, in whichever direction.
