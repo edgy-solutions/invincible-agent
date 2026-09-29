@@ -43,7 +43,7 @@ from agent_fleet.utils.mesh_writers.weaviate_vectors import (
     WeaviateVectorsWriter,
     _row_uuid,  # the writer's OWN id derivation: a test that recomputes it can diverge
 )
-from agent_fleet.utils.weaviate_utils import VECTOR_SPACE
+from agent_fleet.utils.weaviate_utils import VECTOR_SPACE, named_vector_config
 
 _PERSON = Initiator(subject="test-person", kind="person")
 _SERVICE = Initiator(subject="test-service", kind="service")
@@ -472,7 +472,21 @@ def test_a_relocate_before_any_write_falls_back_to_the_probe_rather_than_guessin
     client = _StubClient()
     embedder = _StubEmbedder()
     writer = WeaviateVectorsWriter(client=client, embedder=embedder)
-    client.collections.create(name="Scratch")
+    # `**named_vector_config()` ON A DOUBLE, WHERE IT CHANGES NO BEHAVIOUR, FOR TWO REASONS.
+    #
+    # (1) THE SEAL THIS COMMIT'S SIBLING WIDENED CAUGHT THIS LINE, and it was right to. That arm
+    # (`tests/routing/test_a_vector_is_written_where_the_search_looks.py`) sweeps every
+    # `collections.create` in the tree and refuses any that declares no vector configuration,
+    # deliberately WITHOUT an exemption list — because an allow-list's population is every name that
+    # could be added to it, and "it's only a test double" is exactly the excuse that would retire it.
+    # A static walk cannot tell a real client from a stub, and the field that would discriminate is
+    # the one nobody would keep accurate. So the call conforms instead of the seal excusing it.
+    #
+    # (2) INDEPENDENTLY, A DOUBLE FED A CALL PRODUCTION NEVER MAKES IS A WEAKER DOUBLE. The writer's
+    # own creates pass `**named_vector_config()` (weaviate_vectors.py:391, :424). A stub exercised
+    # with a bare create is being asked to accept a shape the real client is never handed, which is
+    # how a double comes to prove the writer against a store that would have refused it.
+    client.collections.create(name="Scratch", **named_vector_config())
     client.collections.by_name["Scratch"].rows[_row_uuid("Scratch", "row-1")] = ({}, None)
 
     assert embedder.touches() == (0, 0)

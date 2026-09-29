@@ -113,8 +113,15 @@ def test_the_fallback_form_is_reachable_on_the_pinned_range():
 # Both writers, both operations
 # ---------------------------------------------------------------------------
 
+#: Weaviate's mutation surface. `.data.<anything>` is already a mutation, so the ATTRIBUTE CHAIN is
+#: the load-bearing half of the discriminator and this set is the belt: it catches a write op reached
+#: without the `data` accessor spelled at the call site. A write op added to the client lands in the
+#: `.data` clause automatically, which is why the future-proofing lives there and not in this list.
+_STORE_WRITE_OPS = frozenset({"insert", "insert_many", "replace", "update"})
+
+
 def _vector_sources(tree: ast.AST) -> list[str]:
-    """Every expression this module writes as a vector, as source text.
+    """Every expression this module hands to the STORE as a vector, as source text.
 
     PARSED, NOT GREPPED, AND IT TOOK TWO GOES TO BE RIGHT — which is the reason for
     `test_the_extractors_find_what_they_are_looking_for` below.
@@ -124,20 +131,80 @@ def _vector_sources(tree: ast.AST) -> list[str]:
     (`write_kwargs["vector"] = ...` then `insert(**write_kwargs)`). **A matcher that returns
     zero reads exactly like a finding** — it reported two correctly-fixed files as writing no
     vector at all. Both forms are handled now, and the control proves the matcher can see them.
+
+    ⛔ NARROWED 2026-09-28, AND THE REASON IS NOT THE FILE THAT CAUGHT IT. Until now this collected
+    every `vector=` keyword on every call, and the tree-wide arm then required each to be
+    `named_vector(...)`. That rule is about a vector handed to WEAVIATE. Three things in this tree
+    pass `vector=` to something else:
+
+      * `mesh_vectors.py:314` — `query.hybrid(query=text, vector=vector, ...)`, a SEARCH. It escapes
+        today only because that file is not classified as a self-provided creator, so the false red
+        was LATENT: it fires the day that file gains a create, and it would have accused a read path.
+      * `MeshVectorsWriter.relocate(..., vector=[...])` — the SDK protocol's own parameter name, so
+        every legitimate caller of the mesh writers spells it. As shipped, the widened arm reddened
+        on any adoption of the very writers it was widened for.
+      * a test driving the writer's public API, which is how it was found.
+
+    THE DISCRIMINATOR IS THE CALLEE, NOT A LIST OF FORGIVEN FILES. `.data.<op>` or one of
+    `_STORE_WRITE_OPS` is a store write; `.query.<op>` is a read; anything else is a hand-off. **The
+    residue is COLLECT, not skip**: a bare-name callee (`_store(vector=...)`) cannot be resolved
+    statically and is therefore collected, so a new indirection fails rather than passes. That is
+    also why this writer names its internal parameter `embedding` and not `vector`.
+
+    **Skipping a hand-off is safe for one specific reason, and it is not "the callee looks fine".**
+    The sweep that consumes this is TREE-WIDE, so the file the vector is handed TO is swept by the
+    same rule. The property that makes the skip sound is the population, not the judgment — and if
+    the sweep is ever narrowed back to a path list, this must be narrowed with it.
     """
     out: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
+            if not any(kw.arg == "vector" for kw in node.keywords):
+                continue
+            if not _is_store_write(node.func):
+                continue
             for kw in node.keywords:
                 if kw.arg == "vector":
                     out.append(ast.unparse(kw.value))
         elif isinstance(node, ast.Assign):
+            # NO CALLEE TO JUDGE, SO NO NARROWING. This is production's real shape — the dict is
+            # built here and splatted into `.data.insert` possibly lines away — and a slot called
+            # "vector" in a kwargs dict has no other purpose. Collected unconditionally.
             for target in node.targets:
                 if (isinstance(target, ast.Subscript)
                         and isinstance(target.slice, ast.Constant)
                         and target.slice.value == "vector"):
                     out.append(ast.unparse(node.value))
     return out
+
+
+def _is_store_write(func: ast.expr) -> bool:
+    """Does this callee write to weaviate? UNRESOLVABLE COUNTS AS YES.
+
+    Returning True for what it cannot classify is the whole design: the alternative residue admits
+    exactly the indirections nobody has looked at, which is the state every instance of the
+    vector-slot defect was found in.
+    """
+    if isinstance(func, ast.Name):
+        return True  # bare call, unresolvable — fail closed
+    if not isinstance(func, ast.Attribute):
+        return True  # a call on a subscript or a call — also unresolvable
+    chain: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    if "data" in chain:
+        return True
+    # NO `query`/`aggregate` CLAUSE HERE, AND IT WAS WRITTEN AND THEN MEASURED AWAY. The first draft
+    # had `if "query" in chain or "aggregate" in chain: return False` to exempt reads. Mutating it to
+    # `if False:` changed nothing — 15 passed — because a read callee reaches the line below with
+    # `hybrid`/`bm25`/`near_vector` as its final attribute, none of which is a write op, so it is
+    # already excluded. The clause could only have fired for a callee whose chain says `query` AND
+    # whose final attribute is `insert`/`replace`/`update`, which the client does not have. It was a
+    # guard that could not fire, and a line that cannot fire is deleted with its measurement recorded
+    # rather than kept as reassurance: reads are excluded by the rule below, not by an exemption.
+    return func.attr in _STORE_WRITE_OPS
 
 
 def _creates_collections(tree: ast.AST) -> int:
@@ -280,6 +347,33 @@ def test_the_extractors_find_what_they_are_looking_for():
     # the control fail for a reason that says nothing about the code under test.
     assert sorted(_vector_sources(fixture)) == ["named_vector(v)", "named_vector(v2)"], (
         "the vector extractor misses one of the two forms the writers actually use"
+    )
+
+    # THE NARROWING'S OWN CONTROL, AND IT DIFFERS FROM THE FIXTURE ABOVE IN EXACTLY ONE THING: the
+    # CALLEE. Same keyword, same bare value, four receivers. Two must be collected and two must not,
+    # so a matcher that simply stopped matching cannot pass this — which is the failure mode a
+    # narrowing invites, and the one an "it no longer reds" check would bless.
+    callees = ast.parse(
+        "col.data.insert(properties=p, vector=[0.1])\n"          # store write   -> collected
+        "col.data.update(uuid=u, vector=[0.2])\n"                # store write   -> collected
+        "col.query.hybrid(query=t, vector=[0.3], limit=1)\n"     # SEARCH        -> skipped
+        "writer.relocate(collection=c, id=i, vector=[0.4])\n"    # hand-off      -> skipped
+    )
+    assert sorted(_vector_sources(callees)) == ["[0.1]", "[0.2]"], (
+        "the narrowed extractor no longer separates a store write from a read and a hand-off — "
+        f"got {sorted(_vector_sources(callees))}. Two of these four are the defect this whole file "
+        "exists to catch and two are legitimate; a matcher that collects all four reds on every "
+        "caller of the mesh writers, and one that collects none is blind to the defect."
+    )
+
+    # THE RESIDUE, ASSERTED AS ITS OWN CASE BECAUSE IT IS A DECISION AND NOT A CONSEQUENCE. An
+    # unresolvable callee is COLLECTED, so a bare value reached through a helper fails rather than
+    # slipping through. Flipping `_is_store_write`'s default to False would leave every other
+    # assertion in this file green.
+    indirect = ast.parse("_store(uuid=u, vector=[0.9])\n")
+    assert _vector_sources(indirect) == ["[0.9]"], (
+        "an unresolvable callee must be treated as a store write. The residue of this rule is "
+        "COLLECT: a helper named anything at all is exactly how a bare vector would re-enter."
     )
     assert _creates_collections(fixture) == 1, "the create counter miscounts"
     assert "embed_document" in _called_names(fixture)

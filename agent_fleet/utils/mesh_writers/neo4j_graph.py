@@ -10,7 +10,20 @@ premise does not hold. Enumerated 2026-09-28 over the tracked tree, five write p
                                                 sync_parameterised_by_edges         DELETE + MERGE
                                                 compensate_parameterised_by_edges   DELETE
                                                 compensate_neo4j_predicate_edge     DELETE
-    src/iagent/answer_artifact_writer.py         merge()/_tx_merge                   MERGE x6
+    src/iagent/answer_artifact_writer.py         write_sync()/_tx_merge              MERGE x16
+
+⛔ CORRECTED 2026-09-28, same day, by re-deriving the table instead of re-reading it: the last row
+said ``merge()/_tx_merge  MERGE x6``. ``merge()`` DOES NOT EXIST — the entry point is
+``write_sync()`` (``answer_artifact_writer.py:270``) — and the count inside ``_tx_merge`` is
+**16**, not 6
+(``awk 'NR>=445 && NR<=690 && /MERGE/' src/iagent/answer_artifact_writer.py | wc -l``). Both errors
+point the same way: the row UNDERSTATED the path it was citing, while the sentence it supports
+("the premise is false") was already true on the row's own weakest reading, so nothing here failed
+and nothing would have. That is the shape to distrust — a precise figure inside an argument that
+does not depend on it is the figure nobody re-checks. The path COUNT (five) is unchanged and was
+independently re-derived from the execution sites: 5 of 6 ``session.run`` calls in
+``v2_substrate.py`` carry MERGE or DELETE (the 6th, :866, undecided at this resolution), and
+``answer_artifact_writer.py`` has 7 execution sites.
 
 So the Protocol was shaped against an inventory of zero when the real inventory is five, and the
 shortfall that follows is recorded in :meth:`Neo4jGraphWriter.write_edge` rather than papered over
