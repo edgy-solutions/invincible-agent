@@ -71,6 +71,31 @@ TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
 # the topaz LOOKUP identifier.
 USER_ENTITLEMENT_CLAIM = os.getenv("USER_ENTITLEMENT_CLAIM", "email")
 
+# ── THE DELEGATE CLAIM: RECORDED, AND GATED ON BY NOTHING ────────────────────
+# Which token claim names the principal a DELEGATE is acting for. The name and
+# its default are READ FROM THE SDK's contract (iagent_mesh delegate_identity:
+# DELEGATE_ON_BEHALF_OF_CLAIM, default "on_behalf_of"), not invented here — the
+# two halves of one delegation have to agree on the claim name, and this
+# codebase has already paid for three providers independently inventing the
+# same constant and none of them being the fleet's.
+#
+# WHY THIS VALUE REACHES NO AUTHORIZATION DECISION, EVER. `on_behalf_of` is the
+# fleet's NAMED laundering shape: a subject a caller can name is not an
+# identity, it is a request field, and a gate keyed on it checks who the asker
+# CLAIMED asked (helm values.yaml on serviceClients; register-caller-
+# enumeration.md; lock 2 at 0555620). So this claim is recorded for AUDIT and
+# TRACE only. Every authorization decision continues to key on `authz_id`,
+# which for a delegate is the DELEGATE's own identity — the credential that was
+# actually authenticated — never the principal it names.
+#
+# That is also why the realm change accompanying this is a HARDCODED claim
+# mapper, one delegate client per principal: a mapper that let the client
+# choose `on_behalf_of` per token request would be the laundering shape with an
+# IdP signature wrapped around it. See docs/runbooks/delegate-credential.md.
+DELEGATE_ON_BEHALF_OF_CLAIM = os.getenv(
+    "DELEGATE_ON_BEHALF_OF_CLAIM", "on_behalf_of"
+)
+
 
 # Capture A per ADR-0025 § "Capture A — entitlement_source fidelity flag
 # on produced_for". Records WHERE the persona / entitlements came from,
@@ -110,6 +135,23 @@ class User(BaseModel):
     # per-site edits. In the sandbox authz_id == email, so the abstraction is
     # behaviourally transparent today.
     authz_id: str
+    # THE PRINCIPAL A DELEGATE CREDENTIAL SAYS IT IS ACTING FOR — AUDIT ONLY.
+    # `None` for every ordinary caller: a human login and a plain service
+    # credential both act as themselves, and the absence is meaningful rather
+    # than a missing value to fill in.
+    #
+    # NOTHING GATES ON THIS. Not the Topaz subject, not the entitlement lookup
+    # key, not can_act, not a projection filter. It exists so that a delegated
+    # write can be ATTRIBUTED in a trace — "svc:reporting-delegate, for
+    # alice@example.com" — while the authorization answer stays keyed on
+    # `authz_id`, which is the credential that was actually authenticated.
+    #
+    # The field is deliberately NOT called `user_email`, `originator` or
+    # `authz_id`-anything: tests/test_subject_derivation.py (lock 2) forbids the
+    # acting subject being nameable by a caller under any of those spellings,
+    # and a claim that LOOKS like the acting subject is how that guarantee gets
+    # inverted by someone reaching for the nearest identity-shaped field.
+    on_behalf_of: Optional[str] = None
     roles: List[str] = []
     # Per ADR-0009: caller-side persona. Post ADR-0026 step 6, sourced
     # SOLELY from the Topaz entitlement matrix (the default cell's
@@ -190,6 +232,38 @@ def resolve_token_identity(
     return sub, authz_id, payload.get("email")
 
 
+def resolve_on_behalf_of(payload: dict) -> Optional[str]:
+    """Read the delegate's `on_behalf_of` claim from an already-verified payload.
+
+    A SEPARATE FUNCTION, NOT A FOURTH RETURN VALUE from
+    `resolve_token_identity`, and that is on purpose twice over. Mechanically,
+    five call sites unpack that function's 3-tuple. Substantively, this value is
+    NOT part of the identity triple: `(sub, authz_id, email)` is who the caller
+    IS, and widening that tuple would put a self-described principal in the same
+    shape as two authenticated facts, next to the field every gate keys on.
+
+    Returns None when the claim is absent — the ordinary case for every human
+    login and every plain service credential.
+
+    Raises ValueError when the claim is PRESENT BUT BLANK. That is not a caller
+    acting for nobody, it is a misconfigured claim mapper, and the honest
+    outcome is a refusal rather than recording `""` — an empty string would read
+    as "delegated" in a trace while naming no principal, which is worse than
+    either true state. The SDK's half refuses the mirror case (a delegate minted
+    with no claim at all) for the same reason.
+    """
+    if DELEGATE_ON_BEHALF_OF_CLAIM not in payload:
+        return None
+    value = payload.get(DELEGATE_ON_BEHALF_OF_CLAIM)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"the {DELEGATE_ON_BEHALF_OF_CLAIM!r} claim is present but empty "
+            f"(got {value!r}) — a delegate credential that names no principal "
+            f"is a misconfigured claim mapper, not a caller acting for nobody"
+        )
+    return value.strip()
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     FastAPI dependency to validate the incoming OIDC token.
@@ -219,6 +293,12 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         # may be None. The only genuine failure is no identity resolving at all.
         try:
             user_id, authz_id, email = resolve_token_identity(payload)
+            # Read in the SAME try, so a malformed delegate claim is a 401 on the
+            # identical path as an unresolvable identity. A separate, later read
+            # would let a token with a broken claim mapper reach the entitlement
+            # lookup and be authorized as an ordinary caller, with the delegation
+            # silently dropped — a delegated write recorded as a direct one.
+            on_behalf_of = resolve_on_behalf_of(payload)
         except ValueError as ve:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -289,6 +369,12 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             id=user_id or authz_id,   # `sub` normally; authz_id if a token omits sub
             email=email,
             authz_id=authz_id,
+            # Recorded here and read by no gate. The entitlement matrix above was
+            # already fetched with lookup_key=authz_id, BEFORE this value was
+            # placed on the model — the ordering is not incidental: there is no
+            # point in the function where a delegate's principal could have
+            # influenced the authorization answer.
+            on_behalf_of=on_behalf_of,
             roles=roles,
             persona=persona,
             entitled_domains=entitled_domains,
