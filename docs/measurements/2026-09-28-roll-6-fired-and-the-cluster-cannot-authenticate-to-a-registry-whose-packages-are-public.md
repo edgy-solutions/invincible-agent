@@ -1,6 +1,6 @@
 # Lane 1, 2026-09-28 — roll #6 FIRED and is BLOCKED: the cluster cannot authenticate to ghcr, whose packages are public
 
-**Lane:** `invincible-agent/master` · **Item:** overnight dispatch 5 · **Status:** FIRED, **BLOCKED, NOT LANDED** · **fleet NOT degraded**
+**Lane:** `invincible-agent/master` · **Item:** overnight dispatch 5 · **Status:** blocked on a registry credential, then **LANDED** on the re-fire — revision 155, `deployed` · **fleet never degraded**. The blocked-state findings below are kept as written; the resolution is the last section.
 
 Roll #6 fired at 09:45:06 with the derived payload sha and every gate satisfied. It cannot land. The
 cause is not in the payload, the chart, or the roll — **every node in the sandbox is refused by ghcr,
@@ -220,3 +220,68 @@ that the anonymous path works from a node, which is all option 1 needs.
   `doc-tools`. Writing the caveat made the gap cheap to close, which is the argument for writing it.
 - **What `ghcr-pulltest` used.** Deleted before I read it.
 - **Items 1–3 on the cluster.** Nothing in this roll landed, so item 3's "after" half is still gated.
+
+---
+
+## ✅ RESOLVED — the credential was rotated and roll #6 landed on the re-fire
+
+| reading | result |
+| --- | --- |
+| secret data written | **20:27:03 CDT** (by a human; contents still never read) |
+| first fire | finalized **`failed`**, revision 154, at its own 100m timeout |
+| re-fire | 20:31:25, revision 155, **`STATUS: deployed`**, script's own `EXIT=0` |
+| `invincible-agent/*` containers on the payload sha | **31 of 31**, no exceptions |
+| workload identities pre vs post | **19 = 19**, both `comm` directions empty |
+| deployments below full ready count | **none** |
+
+**The decision to leave the blocked helm client alone is now measured, not argued.** The script warns
+that an outside kill leaves the release `pending-upgrade` so the next upgrade is refused; letting it
+reach its own timeout finalized it `failed`, and the re-fire proceeded from that state without
+complaint. The hazard note was a claim, and this run is the check it was owed.
+
+**And the leftover hook pod did not need deleting.** The classifier refused me
+`kubectl delete pod iagent-prime-substrate-xx2th`; helm's own hook delete policy replaced it with
+`iagent-prime-substrate-578p9`, which primed and completed. The refused action was **unnecessary**,
+which is worth recording in the same breath as the refusal: the reason I gave for wanting it — that the
+rollout might stall on it — was a prediction, and it was wrong.
+
+### ⛔ A relayed claim that a fresh pod still 403'd, falsified
+
+A relayed report said a brand-new `doc-tools` pod took a 403 on `ghcr-pull-secret` after the rotation,
+and offered two explanations: its attempt predated the rotation, or it reads a different secret than it
+thinks. **Neither. The claim's premise is false.**
+
+| reading | result |
+| --- | --- |
+| that pod's pull | **`Successfully pulled` in 458ms at 20:27:20 CDT** — 17s *after* the rotation |
+| its `imagePullSecrets` | **`ghcr-pull-secret`** — the same secret, same namespace |
+| pull failures anywhere after 01:27:03Z | **zero** |
+
+The absence in that last row is only worth stating because of *when* it was read: events expire, so
+"no failures since X" is a real measurement while X is inside the event window and a vacuous one once
+it is outside. X was 12 minutes old. **An absence assertion over an expiring log has a shelf life,
+and the reading has to say it was taken inside it.**
+
+### Leg 11a, with the filter defect repaired
+
+The pre-fire baseline filtered on `invincible-agent` in the image path and therefore read **19 of the
+54** running workload rows. The other 23 are served from other repositories and registries —
+`dag-tools/*`, `pub-tools`, two by digest, and eighteen third-party images — and were excluded **by
+construction**, not found absent. The repaired reading covers all 54.
+
+⛔ **And the corrected count immediately produced a surprise that was not one.** The fleet-wide read
+returned **31** `invincible-agent` rows against the baseline's 19. That looked like twelve arriving
+workloads; it was two pod generations of the same nineteen, both on the payload sha, mid-reap.
+**31 is pod rows and 19 is workloads — a count is not a census.** Only the identity comparison
+settled it, and it had to be run in *both* directions: the `PRE`-not-`POST` direction is the one that
+would have caught a workload disappearing, which no count of a growing number can see.
+
+### Two instrument slips on the way, both mine
+
+- **Sorting pods by the `AGE` column to pick the newest.** `AGE` is a string: `"12m" < "31s"`, so the
+  12-minute pod sorted as newest. It happened to be the pod the claim was about, so the read answered
+  the question anyway — the selector was still wrong, and selecting a match by position is the failure
+  I have a standing rule against.
+- **`MSYS_NO_PATHCONV=1`, set for the ghcr URLs, broke the manifest path handed to `kubectl`.** Same
+  boundary, two directions: the flag is required for a URL and fatal for a path in the same shell.
+  The error said the file did not exist, which is the accusation landing on the wrong party.
