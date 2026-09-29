@@ -297,3 +297,73 @@ top of an un-landed bump would measure neither.
    tag.** Both are dead today, so the disagreement is currently invisible — it bites the moment
    either is fixed alone.
 4. **The live-vs-declared minio server tag** (§10) needs reconciling, in whichever direction.
+
+## 14. ⛔ My own release watcher reported the transition that had not happened
+
+While waiting for revision 156 to finalise I had a background watcher polling the release status every
+30s and breaking out when it left `pending-upgrade`. At 23:30:11 it logged:
+
+```
+23:29:40 "status":"pending-upgrade"
+23:30:11
+LEFT pending-upgrade:
+```
+
+and exited. `helm list` at 23:30:22 — twelve seconds later — still reported `pending-upgrade`.
+
+**The status string came back EMPTY, and the watcher's `case` treated empty as "not
+pending-upgrade".** Its arms were `*pending-upgrade*) keep waiting ;; *) declare the transition ;;`,
+so the catch-all absorbed the one outcome that means *the instrument failed to read*. Note the log
+line at 23:30:11 is blank after the timestamp — the evidence that it was a failed read rather than a
+transition was right there in the output, and the watcher's own conclusion contradicted it.
+
+This is an absence assertion with no control: **the watcher had no arm distinguishing "left the state"
+from "could not read the state"**, and an unreadable status is the more likely of the two on a
+cluster reached through a port-forward on a busy box.
+
+Had I acted on it I would have re-fired into a release still holding `pending-upgrade` — which helm
+refuses with "another operation in progress" — or, worse, concluded something about the hook from a
+state the release was never in.
+
+**Watcher v2 distinguishes three states explicitly** and only ever breaks on the third: a non-zero
+`helm status` exit, an empty parse, or a successfully-read status that is not one of the three
+`pending-*` values. A read failure is logged as `READ-FAILED` with a consecutive-failure count and
+explicitly annotated `(NOT a transition)`. It was positive-controlled before launch — `helm status
+… -o json` was confirmed to exit 0, to contain **exactly one** `"status"` key (so the `head -1` is
+not selecting arbitrarily among several), and to parse to `pending-upgrade` — because a watcher that
+can only ever log `READ-FAILED` is useless in a quieter way than one that lies.
+
+## 15. Two things checked before the re-fire, both of which would have wasted the window
+
+**The fire must run from the MASTER tree, not from this branch.** `scripts/upgrade-sandbox.sh` deploys
+the chart beside it, so firing from `ia-np/chart/networkpolicy` would have pushed an **unmerged**
+chart — including the new `networkPolicy:` values key and two new templates — into the shared
+sandbox. The dispatch's own instruction for item 5 was "on a lane, unmerged". Verified before firing:
+the master tree is at `17bb2064` on `master` with `helm/` and `scripts/` clean.
+
+**The chart genuinely carries the bump, so the hook really is the only blocker.**
+`values-sandbox.yaml:619` in master pins
+`digest: "sha256:6f27766587108f5dc7fc9af623b7eae4ecac4a67fd218e7efbd3524918b1d1b4"` — the target. So
+the un-bumped `imageID` in §1 is not a second defect hiding behind the first; there is nothing wrong
+with the pin.
+
+### And the 100m timeout was never the thing to shorten
+
+`ARGS` in that script is only `-f <values file>` — **there is no `--wait`**. So helm was not waiting
+for 29 workloads to become ready; it was waiting on the pre-upgrade hook, which is the only thing
+helm blocks on regardless of `--wait`. With `--no-hooks` there is nothing left to block on, and the
+timeout is a **ceiling rather than a wait**: helm returns when the upgrade is done. The 100 minutes
+were not the budget being spent, they were the budget being exhausted by a hook that could never
+succeed.
+
+So a shorter `--timeout` buys nothing, and I did not pass one — which matters, because the script
+refuses any effective timeout under 75 minutes (`ALLOW_SHORT_HELM_TIMEOUT=1` to override) and its
+stated reason is that `primeSubstrate.ingestTimeout` blocks up to 60m. ⚠ Worth noting for whoever
+reads that guard next: **`--no-hooks` removes the guard's own stated premise**, since the prime hook
+does not run at all. The floor would be arguable in that combination. It stayed at the default here
+because there was no reason to argue it, and because a short budget marking a release `failed` while
+work continues is the measured failure the guard exists to prevent (release 100, 2026-09-06).
+
+A consequence for §1's verification: without `--wait`, helm returns before pods are ready, so
+`imageID` has to be read by polling the workload afterwards rather than inferred from a successful
+exit.
