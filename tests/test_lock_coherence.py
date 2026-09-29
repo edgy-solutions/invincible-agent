@@ -118,9 +118,43 @@ def test_domain_broker_sdk_version_matches_the_fleet_pin():
     same inbound dependency as the fleet — a skew means it authenticates by different rules
     than the services around it, which is precisely the divergence the one-implementation
     ruling forbids. Two files, one truth, checked.
+
+    ── 2026-09-28, lane/74: THIS CHECK COULD NOT SEE A LEGAL PIN FORM, AND THE BLINDNESS WAS
+    NOT THE LOUD KIND. `test_no_floating_git_dependencies.py` ratifies TWO immutable pin forms
+    in its own docstring — "A pin may be a semver TAG or a full 40-hex SHA" — and its
+    `_IMMUTABLE` is the declaration of that rule. Both regexes below were written
+    `v\\d+\\.\\d+\\.\\d+`, so a sha pin was not *rejected* here, it was INVISIBLE.
+
+    The dangerous case is therefore not the all-sha fleet (that trips `assert pins` and is
+    obvious) but the PARTIAL one: bump some pyprojects to a sha and leave the rest at the tag,
+    and `pins` collects only the tag — so `len(pins) == 1` passes and `chart_version ==
+    fleet_version` passes ON A SKEWED FLEET. `len(pins) == 1` is the assertion that caught
+    lane-28's one-engine bump (a fleet pin is a single value BY CONSTRUCTION); it could not
+    catch the sha-shaped spelling of that identical violation. A guard blind to a form its
+    ratified sibling permits has a hole exactly the width of the permission.
+
+    So the pin population is now read through the sibling's `_IMMUTABLE` — imported, not
+    restated, because a third copy of "what an immutable ref looks like" is the very drift the
+    paragraph above this one objects to.
+
+    ── AND THE CLAUSE NOBODY HAD WRITTEN: the broker cannot INSTALL every form the fleet may
+    PIN. `templates/domain-broker.yaml` builds its requirement from
+    `archive/refs/tags/{version}.tar.gz` — a tag-scoped path. A 40-hex commit sha is not a tag
+    ref, so a sha fleet pin leaves `meshSdkVersion` with no satisfiable value: equal to the
+    fleet pin and un-fetchable, or fetchable and skewed. That is buildable-but-not-rollable, and
+    it is a property of the TEMPLATE, not of the pin.
+
+    Derived from the template text rather than asserted from this belief, so the check is
+    SELF-RETIRING: whoever teaches the template a commit-capable URL retires this refusal by
+    that edit alone, with nothing to remember here. Scope of the claim: it is read off the
+    template's own path, and no request was made to GitHub to confirm what that URL returns.
     """
+    from tests.test_no_floating_git_dependencies import _IMMUTABLE
+
     values = (_ROOT / "helm" / "invincible-agent" / "values.yaml").read_text(encoding="utf-8")
-    m = re.search(r"^\s*meshSdkVersion:\s*[\"']?(?P<v>v\d+\.\d+\.\d+)[\"']?", values, re.M)
+    # SHAPE-FREE capture. Constraining it to a tag reported a PRESENT key as "missing" — a
+    # failure message that accuses the wrong file. What the value is gets decided below.
+    m = re.search(r"^\s*meshSdkVersion:\s*[\"']?(?P<v>[^\"'\s#]+)[\"']?", values, re.M)
     assert m, "domainBroker.meshSdkVersion is missing from values.yaml"
     chart_version = m.group("v")
 
@@ -130,12 +164,32 @@ def test_domain_broker_sdk_version_matches_the_fleet_pin():
     # from inside a test body. A rglob-then-filter that is correct about its RESULT is still
     # wrong about its TRAVERSAL, everywhere it appears.
     for pp in find_files(_ROOT, "pyproject.toml"):
-        for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<v>v\d+\.\d+\.\d+)"',
+        for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<v>[^"]+)"',
                               pp.read_text(encoding="utf-8")):
             pins.add(pm.group("v"))
     assert pins, "no iagent-mesh pyproject pin found — cannot check the broker against the fleet"
+    # Every pin must be immutable in its OWN right before they are compared to each other: a
+    # mutable ref that happened to be unanimous would otherwise read as a coherent fleet.
+    mutable = sorted(p for p in pins if not _IMMUTABLE.match(p))
+    assert not mutable, (
+        f"iagent-mesh is pinned at non-immutable ref(s) {mutable}. A pin may be a semver tag "
+        f"or a full 40-hex sha — see tests/test_no_floating_git_dependencies.py."
+    )
     assert len(pins) == 1, f"the fleet's own SDK pins disagree: {sorted(pins)}"
     fleet_version = pins.pop()
+
+    broker_tmpl = (_ROOT / "helm" / "invincible-agent" / "templates"
+                   / "domain-broker.yaml").read_text(encoding="utf-8")
+    broker_is_tag_only = "archive/refs/tags/" in broker_tmpl
+    if broker_is_tag_only and re.fullmatch(r"[0-9a-f]{40}", fleet_version):
+        pytest.fail(
+            f"the fleet pins iagent-mesh at the commit {fleet_version}, but the domain-broker "
+            f"template installs from `archive/refs/tags/{{version}}.tar.gz` — a tag-scoped path "
+            f"that cannot fetch a commit. This pin is BUILDABLE (uv resolves git+...@<sha>) and "
+            f"NOT ROLLABLE (the broker 404s at pod start). Either cut a tag and pin that, or "
+            f"teach helm/invincible-agent/templates/domain-broker.yaml a commit-capable URL; "
+            f"this check retires itself once that path is no longer tag-scoped."
+        )
     assert chart_version == fleet_version, (
         f"domain-broker installs iagent-mesh {chart_version} but the fleet pins {fleet_version}. "
         f"The broker would authenticate by a different SDK build than the services it sits "
