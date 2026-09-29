@@ -573,7 +573,50 @@ cortexUi:
     # The running pod is on NEITHER of the other two, and its pullPolicy is Always. So the
     # frontend currently serving the safety rows is one restart away from becoming whatever
     # :latest points at, with no chart change and no commit. That is what this line closes.
-    digest: "sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced"
+    #
+    # ⛔ BUMPED HERE, 2026-09-28, AND *HERE* IS THE FINDING. The frontend bump was ordered
+    # against `values-roll-frontend-digest.yaml`, whose whole purpose is to carry a roll's
+    # cross-repo digests. That file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array
+    # (29-33: values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
+    # canonical roll command never reads it. It was written for a hand-run
+    # `helm upgrade --reuse-values -f <overlay>`, which is no longer how rolls fire.
+    #
+    # NOT INFERRED FROM THE SCRIPT — MEASURED ON THE CONSEQUENCE. None of the overlay's four
+    # digests is running: the frontend was on `c8d6553f` (THIS line, not the overlay's
+    # `6e2fc31d`), and central-gateway `4531b7e2` / user-deployment `746e4937` match NEITHER
+    # pin, i.e. they fell through to `:latest` exactly as that file's own header predicts when
+    # no digest reaches the helper. The overlay is inert, and has been for every roll fired
+    # through the script. Its verification is impeccable and its WIRING IS ABSENT — and it
+    # already records an inertness defect one layer down (the helper ignoring `.digest` at
+    # three of four call sites), so fixing that instance read as handling the class.
+    #
+    # The reason the bump lands on this line instead: `c8d6553f` was the RUNNING digest, which
+    # proves values-sandbox.yaml → rendered reference → kubelet is a live path for cortexUi.
+    # The overlay is left alone deliberately: adding it to VALUES would also apply three
+    # cross-repo pins from 2026-09-23 that the running images have since moved PAST, so it
+    # would be a downgrade of two dag-tools workloads nobody re-verified. Filed, not fixed.
+    #
+    # DERIVED, NEVER TYPED — the order carried BOTH the digest and the tag abbreviated
+    # (`sha256:6f277665…`, tag `5b559765`), and this registry's tags are the full 40-char sha.
+    # Resolved 2026-09-28, five readings:
+    #   * cortex-ui `git rev-parse 5b559765` -> 5b559765d1cc539f47beabba1d54257811616ca0
+    #   * that full tag resolves to exactly the digest below — the tag↔digest binding in the
+    #     direction that matters, not merely "the digest exists"
+    #   * the digest is an `application/vnd.oci.image.index.v1+json` with linux/arm64 present
+    #     alongside linux/amd64; the nodes are arm64
+    #   * POSITIVE CONTROL: the ABBREVIATED tag `:5b559765` answers `not found`, so a `found`
+    #     from this instrument discriminates. Without it, the next reading is only an absence.
+    #   * so `60e245a` having no image is a REAL negative, checked at its FULL sha
+    #     (`60e245a136eaac4fe8f609cb98ab6d40ab5b25f7` -> `not found`), not an abbreviation
+    #     artifact. Head has also moved on again, to `46affb59`; neither is this pin.
+    #   * CONTROL: the superseded `6e2fc31d` STILL resolves. Nothing was deleted, it was
+    #     overtaken — an absence assertion would have been wrong here.
+    #
+    # ⚠ `:latest` resolves to THIS SAME DIGEST as of 2026-09-28, which is the inverse of what
+    # the overlay last measured — and it is a fact with a shelf life, not a reassurance. With
+    # `pullPolicy: Always`, latest agreeing today is what makes the digest pin cheap to verify,
+    # never what makes it unnecessary: the pin exists for the day latest moves.
+    digest: "sha256:6f27766587108f5dc7fc9af623b7eae4ecac4a67fd218e7efbd3524918b1d1b4"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
