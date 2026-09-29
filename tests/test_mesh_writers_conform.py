@@ -39,7 +39,10 @@ from iagent_mesh.interfaces import MESH_COLLECTION_META, Initiator, ServiceIdent
 from iagent_mesh.write_results import MeshWriteResult
 
 from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
-from agent_fleet.utils.mesh_writers.weaviate_vectors import WeaviateVectorsWriter
+from agent_fleet.utils.mesh_writers.weaviate_vectors import (
+    WeaviateVectorsWriter,
+    _row_uuid,  # the writer's OWN id derivation: a test that recomputes it can diverge
+)
 from agent_fleet.utils.weaviate_utils import VECTOR_SPACE
 
 _PERSON = Initiator(subject="test-person", kind="person")
@@ -59,6 +62,12 @@ class _StubEmbedder:
         self.fail = fail
         self.model = model
         self.embedded: list[str] = []
+        #: COUNTED SEPARATELY FROM `embedded`, and that separation is the point. A counter on
+        #: `embed()` alone cannot see an `identity()` call — and `identity()` is not free: on the
+        #: real `FleetEmbedder` it is a live request to the embed endpoint. An arm that proves
+        #: "relocate does not embed" while relocate calls `identity()` every time is an arm that
+        #: measures the cheaper half of the claim.
+        self.identity_calls = 0
 
     def embed(self, text: str) -> Sequence[float]:
         self.embedded.append(text)
@@ -67,7 +76,12 @@ class _StubEmbedder:
         return [0.5] * _STUB_DIM
 
     def identity(self) -> tuple[str, Optional[str], int]:
+        self.identity_calls += 1
         return (self.model, None, _STUB_DIM)
+
+    def touches(self) -> tuple[int, int]:
+        """Every way this embedder can be reached, as one comparable pair."""
+        return (len(self.embedded), self.identity_calls)
 
 
 # ── the weaviate double ─────────────────────────────────────────────────────────────────────────
@@ -405,6 +419,68 @@ def test_relocate_addresses_the_space_by_name():
     op, _uuid, _props, vector = client.collections.by_name["Scratch"].calls[-1]
     assert op == "update"
     assert vector == {VECTOR_SPACE: moved}
+
+
+def test_relocate_after_a_write_touches_the_embedder_zero_times():
+    """A relocate takes a PRECOMPUTED vector, so it has no business reaching the embed endpoint.
+
+    The first draft called ``identity()`` on every relocate for the dimension to check against,
+    which on ``FleetEmbedder`` is a live request: a relocate would then FAIL while the embed
+    endpoint was down, reporting ``unreachable`` about a service it did not need, and would spend a
+    round trip per call on a number that does not move. The writer now uses the dimension it
+    OBSERVED when it last stored a vector.
+
+    Asserted on ``touches()``, both channels, because the interesting call was never ``embed()``.
+    """
+    client = _StubClient()
+    embedder = _StubEmbedder()
+    writer = WeaviateVectorsWriter(client=client, embedder=embedder)
+    writer.write(_PERSON, collection="Scratch", id="row-1", text="hello")
+
+    before = embedder.touches()
+    assert writer.relocate(
+        _PERSON, collection="Scratch", id="row-1", vector=[0.9] * _STUB_DIM).outcome == "written"
+    assert embedder.touches() == before, (
+        f"relocate reached the embedder: (embed, identity) went {before} -> {embedder.touches()}"
+    )
+
+
+def test_the_observed_dimension_still_refuses_a_mismatch_without_asking_the_embedder():
+    """The guard must survive being made cheaper — the memo REPLACES the probe, it does not
+    replace the check. A relocate at the wrong dimension is still refused, and still without a
+    call, so the saving cannot have come from skipping the comparison."""
+    client = _StubClient()
+    embedder = _StubEmbedder()
+    writer = WeaviateVectorsWriter(client=client, embedder=embedder)
+    writer.write(_PERSON, collection="Scratch", id="row-1", text="hello")
+
+    before = embedder.touches()
+    result = writer.relocate(
+        _PERSON, collection="Scratch", id="row-1", vector=[0.1] * (_STUB_DIM + 1))
+    assert result.outcome == "refused", result
+    assert str(_STUB_DIM) in result.detail
+    assert embedder.touches() == before
+
+
+def test_a_relocate_before_any_write_falls_back_to_the_probe_rather_than_guessing():
+    """The fallback path is REACHABLE and is not a constant.
+
+    Nothing has been stored, so no dimension has been observed. The writer must ask rather than
+    assume a number — a dimension invented in this module would be the fleet's next locally
+    invented default — and the arm proves the ask happens by counting it.
+    """
+    client = _StubClient()
+    embedder = _StubEmbedder()
+    writer = WeaviateVectorsWriter(client=client, embedder=embedder)
+    client.collections.create(name="Scratch")
+    client.collections.by_name["Scratch"].rows[_row_uuid("Scratch", "row-1")] = ({}, None)
+
+    assert embedder.touches() == (0, 0)
+    result = writer.relocate(
+        _PERSON, collection="Scratch", id="row-1", vector=[0.1] * (_STUB_DIM + 1))
+    assert result.outcome == "refused", result
+    assert embedder.identity_calls == 1, "the dimension was not asked for — was it assumed?"
+    assert embedder.embedded == [], "a relocate embedded something"
 
 
 # ── the failure split ───────────────────────────────────────────────────────────────────────────

@@ -183,6 +183,12 @@ class WeaviateVectorsWriter:
         self._client = client
         self._embedder = embedder
         self._written_by = written_by
+        #: The dimension as OBSERVED from a vector this writer actually stored, not as CLAIMED by a
+        #: probe. Set from ``len(vector)`` after a successful embed, and read by :meth:`relocate` so
+        #: that moving a vector does not require the embed endpoint to be reachable. Starts unknown
+        #: rather than at a constant: a number invented here would become this fleet's next
+        #: independently-invented dimension, which is a defect already measured on this codebase.
+        self._observed_dimension: Optional[int] = None
 
     # ── the two doors ───────────────────────────────────────────────────────────────────────
 
@@ -243,6 +249,10 @@ class WeaviateVectorsWriter:
                 ),
             )
 
+        # Observed, not claimed: this is the length of a vector that is about to be stored in this
+        # collection, which is the only number a later relocate actually has to match.
+        self._observed_dimension = len(vector)
+
         return self._store(
             collection=collection, id=id, text=text, domains=domains, embedding=vector,
             degraded_detail=None,
@@ -268,13 +278,26 @@ class WeaviateVectorsWriter:
                 "should lose its vector needs a re-embed, which is write()'s job"
             )
 
-        try:
-            _model, _version, dimension = self._embedder.identity()
-        except Exception as exc:  # noqa: BLE001
-            return MeshWriteResult.unreachable(
-                f"cannot establish this writer's declared dimension, so a supplied vector cannot "
-                f"be checked against it: {type(exc).__name__}: {exc}"
-            )
+        # RELOCATE DOES NOT CALL THE EMBEDDER IF IT CAN AVOID IT, AND THAT IS NOT AN OPTIMISATION.
+        # The first draft always called `identity()` here, for the dimension to check against. On
+        # `FleetEmbedder` that method is a LIVE request to the embed endpoint, so a relocate — an
+        # operation that needs no embedding whatever, taking a precomputed vector — could not
+        # complete while the endpoint was down, and reported `unreachable` about a service it had no
+        # business needing. Worse, it is a round trip per relocate for a number that does not move.
+        #
+        # So: prefer the dimension this writer OBSERVED when it last stored a vector, and probe only
+        # when nothing has been stored yet and there is no other way to learn it. A relocate after a
+        # write now touches the embedder zero times.
+        dimension = self._observed_dimension
+        if dimension is None:
+            try:
+                _model, _version, dimension = self._embedder.identity()
+            except Exception as exc:  # noqa: BLE001
+                return MeshWriteResult.unreachable(
+                    f"this writer has stored no vector yet, so its dimension is not known from "
+                    f"observation, and the embedder could not be asked either — a supplied vector "
+                    f"cannot be checked against anything: {type(exc).__name__}: {exc}"
+                )
 
         if len(supplied) != dimension:
             return MeshWriteResult.refused(
