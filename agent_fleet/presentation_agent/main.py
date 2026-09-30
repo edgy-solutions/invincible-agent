@@ -319,28 +319,6 @@ def _render_document_deterministic(
         parts.append(str(summary_text))
     if structured is not None:
         parts.append("```json\n" + json.dumps(structured, indent=2) + "\n```")
-
-    # ── engine-docs' answer has neither `summary` nor `structured_data` ─────────────────
-    # It IS prose, carried as `pages[].body` (HIT) or a flat `body` (ABSTAIN) -- see
-    # capabilities.py's docs:DocExplanation row for the two shapes. Only reached when the
-    # summary/structured arms above found nothing, so an existing caller with a summary is
-    # byte-identical to before: summary wins, body is never appended alongside it. Keyed on
-    # the SHAPE (`pages[].body` / `body`), not on the docs IRI, so any future producer that
-    # answers this way is picked up the same way without a new special case here.
-    if not parts and agent_response is not None:
-        pages = agent_response.get("pages")
-        if isinstance(pages, list) and pages:
-            page_bodies = [
-                p["body"] for p in pages
-                if isinstance(p, dict) and isinstance(p.get("body"), str) and p["body"]
-            ]
-            if page_bodies:
-                parts.append("\n\n---\n\n".join(page_bodies))
-        if not parts:
-            flat_body = agent_response.get("body")
-            if isinstance(flat_body, str) and flat_body:
-                parts.append(flat_body)
-
     markdown_content = "\n\n".join(parts) if parts else "No content available."
 
     return {

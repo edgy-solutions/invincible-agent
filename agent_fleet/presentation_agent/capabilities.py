@@ -317,34 +317,6 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["query", "documents", "scores"],
         "description": "Renders mesh:KnowledgeRetrievalResponse as a KNOWLEDGE_DOCUMENT",
     },
-    # engine-docs (`mesh:explain`) — DocExplanation renders as a document.
-    #
-    # THE DEFECT (rev-157 census): this table had NO row for docs:DocExplanation, so the live
-    # fleet fell through to __system_default__'s KNOWLEDGE_DOCUMENT path with no binding at
-    # all -- the card drew "unrenderable" / "No content available". `docs:` is already in
-    # `_IRI_PREFIXES_FOR_LOOKUP` above (ADR-0037), so this row only had to be ADDED, not the
-    # prefix it depends on.
-    #
-    # engine-docs answers this verb with TWO shapes, and the composer
-    # (`_render_document_deterministic` in main.py) handles both:
-    #   HIT:     {"archetype": "KNOWLEDGE_DOCUMENT", "subject", "pages": [{...,"body"}, ...],
-    #             "page_count"} -- markdown is each page's `body`, in order, joined.
-    #   ABSTAIN: a FLAT {"archetype": "KNOWLEDGE_DOCUMENT", "page_iri": None, "subject",
-    #             "abstained": True, "reason", "body": <short str>} -- no `pages` at all, so
-    #             `expected_fields` below (the HIT shape) is what a healthy answer carries;
-    #             the abstain is a legitimate, differently-shaped answer to the same subject.
-    #
-    # THIS IS THE __system_default__ MENU ONLY. cortex's own menu (frontend_id
-    # cortex-ui-desktop) is a separate table on cortex's side, and the card CONTRACT
-    # (component props, not this dict) is cortex's to define -- see the "TWO MENUS" note on
-    # the Engine F block below for what "this table" does and does not cover.
-    {
-        "subject_uri": "docs:DocExplanation",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["subject", "pages", "page_count"],
-        "description": "Renders docs:DocExplanation (engine-docs, mesh:explain) as a KNOWLEDGE_DOCUMENT",
-    },
 
     # ── ENGINE F (FINANCE) — ADR-0045. Added 2026-09-01. ────────────────────────────────
     #
