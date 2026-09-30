@@ -2497,6 +2497,13 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+def _promotion_store():
+    """Where a promotion fact lands and what a rejection sweeps. NONE is configured: ADR-0041
+    Open §1 (graph triples or relational) is unruled, and `promotion.act` refuses 503 on None,
+    so a document_promotion task stays pending rather than resolving into nothing."""
+    return None
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -2588,6 +2595,43 @@ async def act_on_human_task(
             "allowed": _allowed_or_empty(match.get("kind") or ""),
             "message": str(exc),
         })
+
+    # FULFILLMENT (document_promotion, ADR-0041 §5/§6): the effect runs BEFORE the projection
+    # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
+    # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
+    # can_act itself. Every refusal carries its own status; none resolves the row.
+    if match.get("kind") == "document_promotion":
+        from . import promotion
+        from .decision_record_writer import DECISION_RECORD_ERA, graph_writer
+
+        try:
+            from .trust_table import load_trust_table
+            _tbl = load_trust_table().ref
+        except Exception:  # noqa: BLE001 — the sensor's floor, recorded rather than invented
+            _tbl = "trust@unavailable"
+        try:
+            done = await run_in_threadpool(lambda: promotion.act(
+                match.get("payload"), decision=req.decision, acted_by=current_user.authz_id,
+                audience=audience, comment=req.comment,
+                can_act=human_tasks.check_can_act, record_writer=graph_writer,
+                store=_promotion_store(),
+                governing={
+                    "ruleset_ref": promotion.ruleset_ref(
+                        human_tasks.declaration_for(promotion.KIND)),
+                    "trust_table_ref": _tbl,
+                },
+                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000)))
+        except promotion.PromotionRefused as exc:
+            raise HTTPException(status_code=exc.status, detail={
+                "error": exc.error, "task_id": task_id, "message": str(exc)})
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment))
+        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
+                    req.decision, task_id, done["ingest_id"], done["record_id"],
+                    current_user.authz_id)
+        return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
     # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
