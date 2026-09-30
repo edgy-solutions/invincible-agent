@@ -1,0 +1,12 @@
+# SEED — platform species. ADR-0041 §5/§6: a user-contributed document is ingested on arrival,
+# labelled unvouched, and vouched for LATER by a human on the approval plane. `promoted` appends
+# a decision record and a promotion fact; `rejected` appends a record and sweeps everything
+# carrying the document's ingest_id. The effect lives in src/iagent/promotion.py.
+kind: document_promotion
+renders_as:
+  badge: PROMOTE
+  title: Contributed document
+  archetype: APPROVAL_TASK
+accepts: [promoted, rejected]
+# "Why is this PCN not in the system?" must be answerable from the record (ADR-0041 §6).
+reason_required: [rejected]
