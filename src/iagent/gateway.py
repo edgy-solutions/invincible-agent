@@ -41,7 +41,7 @@ from typing import AsyncGenerator, Any, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -129,6 +129,17 @@ async def lifespan(application: FastAPI):
         logger.info("canvas persistence dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("user_canvas migration failed (persistence dormant): %s", exc)
+    # ADR-0041 §8 ingestion seam: ensure the ingest_status_projection table exists (same
+    # Postgres, same dormant-on-unset-DSN posture as human_task_projection / user_canvas above).
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import ingest_status
+        await run_in_threadpool(ingest_status.apply_migration)
+        logger.info("ingest_status_projection migration applied")
+    except ingest_status.IngestStatusConfigError as exc:
+        logger.info("ingestion seam dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("ingest_status migration failed (ingestion seam dormant): %s", exc)
     # ── THE BFF REGISTERS ITS ONE ORCHESTRATION INTENT ──────────────────────
     #
     # RULED 2026-08-28: the owner of the behaviour is the only honest source of
@@ -7676,6 +7687,196 @@ def federated_image(
 
 
 # ════════════════════════════════════════════════════════════════════
+# Ingestion seam (ADR-0041 §8, days 1-3) — POST /ingest, GET /ingest/{id}/status
+# ════════════════════════════════════════════════════════════════════
+#
+# HOSTED HERE, not on any fleet engine — an ADR-silent decision, recorded here because the
+# ADR names no host. `agent_fleet/docs_agent` was considered and ruled out: its entire
+# surface is `mesh:explain` over REVIEWED mesh:DocPage documentation, gated behind mesh
+# TRANSPORT auth (not end-user auth) on every route — semantically unrelated to a
+# non-technical user dropping a PCN/PDN, and the wrong auth plane besides. The actual
+# document-PROCESSING pipeline (classify/extract/review) is Dagster-side
+# (src/iagent/defs/extraction_review_sensor.py + the sibling doc-tools repo), triggered by
+# an S3 sensor on this SAME `processing-artifacts` bucket — not a FastAPI/Restate engine
+# either. cortex-bff already holds a direct MinIO client for this exact bucket
+# (_build_notice_prefix_index / _read_notice_provenance_from_store above, and
+# federated_image just above this block) — this reuses that pattern rather than adding a
+# proxy hop to a new engine that would own nothing but the hop.
+#
+# on_behalf_of, v1: MUST equal the authenticated caller's own authz_id. ADR-0041 §8 names
+# the field but not a delegation mechanism, and deny-by-default means the narrower reading
+# wins until one exists — a caller asserting an identity that is not their own is refused,
+# not merely unverified.
+#
+# authoritative_source, v1: ADR-0041 §2 says it "remains the vendor who issued the PCN" —
+# but that is only knowable once the document is CLASSIFIED (§4, Dagster-side, out of this
+# seam's days-1-3 scope). At the door we have bytes and a declared kind, not a read PDF.
+# Rather than leave the required field guessed or blank, this seam writes the sentinel
+# `_AUTHORITATIVE_SOURCE_UNCONFIRMED` — same discipline as provenance.py's own
+# `AS_OF_UNKNOWN`: an honest "not yet known", not a fabricated system name. The classifier
+# is expected to amend it once it reads the document (a follow-up, not built here).
+_AUTHORITATIVE_SOURCE_UNCONFIRMED = "unconfirmed-at-intake"
+
+
+def _build_s3_client():
+    """Factory seam for the ingestion seam's MinIO client — the ONE line tests monkeypatch
+    (`monkeypatch.setattr(gateway, "_build_s3_client", fake_factory)`) instead of faking
+    boto3 itself. No prior test precedent fakes gateway.py's inline boto3 pattern (it has
+    always been exercised live), so this factory exists purely to make the new routes
+    testable without a real MinIO."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=_MINIO_ENDPOINT_URL,
+        aws_access_key_id=_MINIO_ACCESS_KEY,
+        aws_secret_access_key=_MINIO_SECRET_KEY,
+        region_name=_MINIO_REGION,
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+    )
+
+
+def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict) -> None:
+    """Write the raw bytes + manifest.json (manifest + embedded provenance block, ADR-0041
+    §8) under `object_prefix` in the processing-artifacts bucket — the SAME bucket
+    extraction_review_sensor.py's S3 sensor watches, so a future classifier pass can pick
+    `ingress-user/` up the same way it already picks up `sustainment/`/`manufacturing/`.
+
+    Two objects, mirroring doc-tools' document_parser.py convention (sibling metadata +
+    manifest, read via the Grep tool against the sibling repo this session): the original
+    bytes under the uploaded filename, and `manifest.json` carrying
+    `metadata.content_kind` (the declared-kind channel ADR-0021's precedence reads) plus
+    the full provenance block, riding BESIDE the bytes rather than embedded inside them —
+    same "six fields ride beside" shape this repo already uses elsewhere (git log
+    ab9b2a4e).
+    """
+    s3 = _build_s3_client()
+    safe_name = os.path.basename(filename) or "upload"
+    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body)
+    s3.put_object(
+        Bucket=_ARTIFACT_BUCKET,
+        Key=f"{object_prefix}manifest.json",
+        Body=json.dumps(manifest, indent=2).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+@app.post("/ingest")
+async def ingest_document(
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    on_behalf_of: str = Form(...),
+    current_user: User = Depends(get_current_user),
+):
+    """POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.
+
+    Deny-by-default: requires an authenticated caller (Depends(get_current_user) — no
+    anonymous upload), and `on_behalf_of` must equal the caller's own authz_id (see the
+    module-level note above this route for why v1 does not accept delegation).
+
+    sha256 is computed AT THE DOOR (ADR-0041 §8's own phrase) — before any write, before
+    any classification. Level-1 dedupe keys on it alone (same bytes = same document,
+    full stop); it says nothing about document-IDENTITY dedupe across different bytes of
+    the same logical document (ADR-0041 §6's R3, `(issuer, document_number, revision)`) —
+    that is a classifier-time concern, downstream of this seam, and is NOT implemented
+    here.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, provenance
+
+    if kind not in ingest_status.KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"kind must be one of {ingest_status.KINDS}, got {kind!r}",
+        )
+    if on_behalf_of != current_user.authz_id:
+        raise HTTPException(
+            status_code=403,
+            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
+        )
+
+    body = await file.read()
+    sha256 = hashlib.sha256(body).hexdigest()
+
+    existing = await run_in_threadpool(ingest_status.find_primary_by_sha, sha256)
+    if existing is not None:
+        dup = await run_in_threadpool(
+            lambda: ingest_status.record_duplicate_arrival(
+                sha256=sha256,
+                kind=kind,
+                object_prefix=existing["object_prefix"],
+                submitted_by=current_user.authz_id,
+                on_behalf_of=on_behalf_of,
+                source=file.filename,
+                original=existing,
+            )
+        )
+        return {
+            "id": dup["id"],
+            "status": dup["status"],
+            "detail": dup["detail"],
+            "duplicate_of": dup["duplicate_of"],
+        }
+
+    object_prefix = f"ingress-user/{kind}/{sha256}/"
+    now_ms = int(time.time() * 1000)
+    provenance_block = provenance.make_provenance(
+        authoritative_source=_AUTHORITATIVE_SOURCE_UNCONFIRMED,
+        obtained_via=provenance.USER_DROP,
+        as_of=provenance.AS_OF_UNKNOWN,
+        ingested_at=now_ms,
+        ingest_run=f"user-drop:{sha256}",
+        standing="supervised",
+    )
+    manifest = {
+        "sha256": sha256,
+        "filename": file.filename,
+        "submitted_by": current_user.authz_id,
+        "on_behalf_of": on_behalf_of,
+        "ingested_at": now_ms,
+        "metadata": {"content_kind": kind},
+        "provenance": provenance_block,
+    }
+    await run_in_threadpool(
+        lambda: _write_ingest_object(
+            object_prefix=object_prefix, filename=file.filename or "upload",
+            body=body, manifest=manifest,
+        )
+    )
+    row = await run_in_threadpool(
+        lambda: ingest_status.record_received(
+            sha256=sha256, kind=kind, object_prefix=object_prefix,
+            submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
+            source=file.filename,
+        )
+    )
+    return {"id": row["id"], "status": row["status"], "object_prefix": object_prefix}
+
+
+@app.get("/ingest/{ingest_id}/status")
+async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
+
+    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
+    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
+    404, indistinguishable from "no such ingest" — same discipline as the human-task
+    resolution lookup (human_tasks.get_task_resolution).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+    return row
+
+
+# ════════════════════════════════════════════════════════════════════
 # Data-module figures endpoint (Phase B of the 2026-06-30 figure work)
 # ════════════════════════════════════════════════════════════════════
 #
@@ -7958,6 +8159,14 @@ async def electric_shape_proxy(
         # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
         # is a plain column (Electric's WHERE subset handles column = literal + AND).
         server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+    elif table == "ingest_status_projection":
+        # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
+        # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
+        # not sub/email) — a caller sees rows where they are EITHER the submitter or the
+        # on_behalf_of principal, mirroring ingest_status.get_status_for's REST scoping so
+        # the streamed shape and the REST snapshot agree on who can see what.
+        escaped_id = _escape_identity_literal(current_user.authz_id)
+        server_where = f"(submitted_by = '{escaped_id}' OR on_behalf_of = '{escaped_id}')"
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"

@@ -1557,6 +1557,46 @@ services:
           is 503 rather than 404, because "we could not look" is not "there is no such
           thing".
       - method: POST
+        path: /ingest
+        identity: keycloak-jwt
+        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id (no delegation in v1)"
+        exposes: object-store-write
+        consumers: [ingestion seam UI (ADR-0041 §8), non-technical document drop]
+        class: gated
+        justification: >-
+          ADR-0041 §8's ingestion seam, days 1-3. Deny-by-default: no anonymous upload
+          (Depends(get_current_user)), and `on_behalf_of` must equal the authenticated
+          caller — the ADR names the field but not a delegation mechanism, so the narrower
+          reading wins until one exists. `kind` is validated against the closed
+          ingest_status.KINDS set (pdf|cad) BEFORE any write, never LLM-classified
+          (ADR-0021's precedence). sha256 is computed at the door; a hit against
+          ingest_status.find_primary_by_sha is level-1 dedupe (same bytes, full stop) and
+          writes NOTHING to the object store — only a `duplicate` row recording the
+          re-arrival as its own provenance fact. A miss writes
+          `ingress-user/<kind>/<sha>/` (bytes + manifest.json carrying the embedded
+          provenance block, obtained_via=user-drop) to the SAME processing-artifacts
+          bucket extraction_review_sensor.py's S3 sensor already watches.
+          HOSTED HERE rather than on a fleet engine: `agent_fleet/docs_agent` was
+          considered and ruled out (its whole surface is `mesh:explain` over reviewed
+          documentation, gated by mesh TRANSPORT auth, not end-user auth — semantically
+          unrelated and the wrong auth plane). The real document-processing pipeline is
+          Dagster-side, not a FastAPI/Restate engine, so cortex-bff hosts the seam
+          directly and reuses its own existing inline-boto3 client pattern
+          (_build_notice_prefix_index / federated_image, this same file).
+      - method: GET
+        path: /ingest/{ingest_id}/status
+        identity: keycloak-jwt
+        gate: "get_current_user + ingest_status.get_status_for scopes to submitted_by OR on_behalf_of = caller"
+        exposes: gated-content
+        consumers: [ingestion seam UI (ADR-0041 §8)]
+        class: gated
+        justification: >-
+          Same existence-oracle-safe shape as /artifacts/{artifact_id} just above and
+          human_tasks.get_task_resolution: the scoping is IN THE QUERY
+          (ingest_status.get_status_for), and a caller who is neither the submitter nor
+          the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
+          ingest" — never a 403 that would confirm another caller's upload exists.
+      - method: POST
         path: /internal/identity/redeem
         identity: keycloak-jwt
         gate: "get_current_user + named-principal allowlist (VAULT_REDEEMER_AUTHZ_ID)"
@@ -1936,11 +1976,11 @@ services:
       - method: GET
         path: /electric/shape
         identity: "get_current_user -> authz_id + sub"
-        gate: "self-scoped WHERE injection (recipient_id=authz_id / produced_for_user_id=sub)"
+        gate: "self-scoped WHERE injection, per-table dispatch (recipient_id=authz_id / produced_for_user_id=sub for human_task_projection; submitted_by=authz_id OR on_behalf_of=authz_id for ingest_status_projection)"
         exposes: gated-content
-        consumers: [cortex-ui Electric subscription]
+        consumers: [cortex-ui Electric subscription, ingestion seam UI (ADR-0041 §8)]
         class: gated
-        justification: "strips client WHERE, server-injects a self-scoped filter; ownership isolation (interim, not full Topaz ACL)"
+        justification: "strips client WHERE, server-injects a self-scoped filter per table in the same if/elif dispatch; ownership isolation (interim, not full Topaz ACL). ingest_status_projection's branch added for ADR-0041 §8's ingestion seam."
       - method: GET
         path: /node_details/{node_id}
         identity: get_current_user
