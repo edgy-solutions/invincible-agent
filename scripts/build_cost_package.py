@@ -145,11 +145,50 @@ def _b64(p: pathlib.Path) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
+def select_sections(template: str, sections) -> str:
+    """Keep the page sections a package carries and cut the rest out of the markup.
+
+    Each section sits between `<!-- section:NAME -->` and `<!-- /section:NAME -->`. EVERY
+    marker must occur exactly once, carried or not: a marker that went missing in an edit
+    would otherwise leave its section on every page, or cut it from every page, and the
+    package would still build.
+    """
+    for name in X.SECTIONS:
+        open_m, close_m = f"<!-- section:{name} -->", f"<!-- /section:{name} -->"
+        counts = (template.count(open_m), template.count(close_m))
+        if counts != (1, 1):
+            raise SystemExit(
+                f"REFUSING TO BUILD: section {name!r} markers occur {counts} times in the "
+                "page template; each must occur exactly once")
+        if name not in sections:
+            start = template.index(open_m)
+            end = template.index(close_m) + len(close_m)
+            template = template[:start] + template[end:]
+    return template
+
+
 def build_html(recipient: str, runtime_dir: pathlib.Path,
-               duckdb_path: pathlib.Path | None = None) -> str:
-    state = build_state()
+               duckdb_path: pathlib.Path | None = None, *, state=None,
+               lots: tuple[int, ...] | None = None, sections: tuple[str, ...] | None = None,
+               canvas_answers: list[str] | None = None) -> str:
+    """Build the page. `state` is the engine's SERVED state when `package_export` calls this.
+
+    It used to call `build_state()` here unconditionally, so the verb's own state never
+    reached the page: the engine answered from one CostState and packaged a second one built
+    beside it. Identical today, because both come from the one seed; the first state that is
+    not the seed would have shipped figures the engine never served. The CLI still builds its
+    own, because it has no engine.
+    """
+    if state is None:
+        state = build_state()
     sha = algorithm_sha()
     if duckdb_path is None:
+        if sections is not None or lots is not None:
+            # The slice-1 page has no sections and no lot narrowing to honour. Refused rather
+            # than ignored, so a canvas can never come back as the whole program.
+            raise SystemExit(
+                "REFUSING TO BUILD: lots and sections narrow the slice-2 page only; the "
+                "slice-1 page carries neither")
         package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
     else:
         # SLICE 2. The .duckdb ships BESIDE this file; the page embeds the same rows and the
@@ -159,7 +198,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         # DECIMAL as an unscaled BigInt (measured: every value exactly 100x).
         package = X.build_dataset_package(
             state, recipient_scope=recipient, algorithm_sha=sha,
-            duckdb_path=str(duckdb_path), duckdb_hash=file_hash(duckdb_path))
+            duckdb_path=str(duckdb_path), duckdb_hash=file_hash(duckdb_path),
+            lots=lots, sections=sections, canvas_answers=canvas_answers)
         # FROM THE ENGINE, NOT A LITERAL. This read `"0.92"` and meant "the field's default",
         # while the page treated it as "the scenario's identity point" — two meanings for one
         # number, and the untouched scenario came out $732k below the baseline it sat next to.
@@ -240,6 +280,7 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
 
     tmpl = SLICE2_TEMPLATE if duckdb_path is not None else _TEMPLATE
     if duckdb_path is not None:
+        tmpl = select_sections(tmpl, package["sections"])
         page_src = (ROOT / "agent_fleet" / "cost_agent" / "page.py").read_text(encoding="utf-8")
         return tmpl.format(
             recipient=recipient, sha=sha, locator=package["locator"],

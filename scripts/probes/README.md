@@ -41,6 +41,7 @@ which makes it the more dangerous of the two. **Recover by allowlist; never by d
 | `count_spans.py` / `find_trace.py` | Count boundary spans / locate a trace. The replay-double instruments: **2 spans before the fix, 1 after.** |
 | `fire_invocation.py` | Drive one Restate invocation, for manufacturing a replay on purpose. |
 | `require_matrix.py` | The REQUIRE-posture matrix, run inside a throwaway pod: exempt `/health` → 200, gated route → 401 absent / 403 invalid, minted token admitted. |
+| `cost_canvas_pages_open.py` | Does a canvas-composed cost page still verify and render in a real browser when sections are cut? Opens the full page and one page per section in headless Edge. 7/7 green on 2026-09-30, and it caught all five pages broken when one `HAS` guard was removed. |
 
 ## Running them
 

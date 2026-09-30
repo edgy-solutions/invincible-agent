@@ -68,11 +68,23 @@ def file_hash(p: pathlib.Path) -> str:
     return "sha256:" + hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def build(recipient: str, out: pathlib.Path) -> pathlib.Path:
+def build(recipient: str, out: pathlib.Path, *, state=None,
+          lots: tuple[int, ...] | None = None) -> pathlib.Path:
+    """Write the recipient's .duckdb. `state` is the engine's served state when the verb
+    calls this; the CLI builds its own. `lots` narrows to a canvas's lots and never widens."""
     import duckdb
 
-    state = build_state()
-    lots = lots_for_recipient(recipient)      # ENTITLEMENT FILTER, at packaging time
+    if state is None:
+        state = build_state()
+    entitled = lots_for_recipient(recipient)  # ENTITLEMENT FILTER, at packaging time
+    if lots is None:
+        lots = entitled
+    elif set(lots) - set(entitled) or not lots:
+        raise SystemExit(
+            f"REFUSING TO BUILD: lots {sorted(lots)} are not a non-empty subset of "
+            f"{recipient!r}'s {list(entitled)}")
+    else:
+        lots = tuple(n for n in entitled if n in set(lots))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():

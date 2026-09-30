@@ -114,6 +114,7 @@ def _baked_algorithm_sha() -> Optional[str]:
     return baked if baked and baked != "unknown" else None
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import canvas as canvas_reader
     from entities import (
         COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
@@ -121,6 +122,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
     from seed import RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient
 except ImportError:
+    from agent_fleet.cost_agent import canvas as canvas_reader
     from agent_fleet.cost_agent.entities import (
         COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
@@ -1006,9 +1008,17 @@ def cost_supplier_concentration(
 
 
 def package_export(
-    state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None
+    state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None,
+    canvas: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Produce a customer-validation package for one recipient. A GOVERNED EMIT (ADR-0047).
+
+    A CANVAS SAYS WHAT THE PACKAGE CARRIES. `canvas` is the answers a person assembled
+    (`canvas.resolve` reads it): the lots they are about are the disclosure, and the questions
+    they ask are the page's sections. It is a HANDLE, handed in by the surface holding the
+    board, never spoken. Without one the verb exports the recipient's whole program, which is
+    what it did before canvases existed. A canvas builds the dataset page, because that is
+    the page whose sections can be selected; asking for a canvas without the dataset refuses.
 
     THIS IS WHY PACKAGING IS A VERB AND NOT A SCRIPT. A script leaves no trace: run twice, or
     run for the wrong party, and afterwards the two are indistinguishable from each other and
@@ -1039,7 +1049,17 @@ def package_export(
         # "we do not disclose to you" as "we have no data".
         raise Unentitled(f"{scope!r} is not an entitled disclosure recipient; known: {scopes}")
 
-    lots = lots_for_recipient(scope)
+    entitled = lots_for_recipient(scope)
+    composed = None
+    if canvas is not None:
+        # REFUSED BEFORE ANYTHING IS BUILT, and by name: an out-of-scope lot is Unentitled,
+        # an answer this engine cannot export is NotInModel. Nothing is dropped.
+        composed = canvas_reader.resolve(canvas, recipient_scope=scope, entitled_lots=entitled)
+        if include_dataset is False:
+            raise NotInModel(
+                "a canvas export is the dataset page, whose sections follow the canvas; "
+                "include_dataset=false asks for the fixed page, which cannot. Omit it.")
+    lots = composed["lots"] if composed else entitled
     # DEFAULTS OFF, and the reason is the engine's own invariant rather than convenience.
     # ADR-0048's slice-2 ruling: the database is the AUTHORING AND INTERCHANGE format, NOT the
     # runtime one — the HTML package verifies entirely on its own. This engine's dependency
@@ -1049,7 +1069,7 @@ def package_export(
     #
     # Asking for it explicitly still works wherever the dependency is present, and refuses BY
     # NAME where it is not.
-    with_dataset = bool(include_dataset)
+    with_dataset = bool(include_dataset) or composed is not None
 
     import sys as _sys
 
@@ -1113,16 +1133,22 @@ def package_export(
         except ImportError:
             raise SourceUnavailable(
                 "this deployment cannot build the .duckdb half: the `duckdb` package is not "
-                "installed, and it is not among engine-cost's declared dependencies. The HTML "
-                "package verifies on its own - call with include_dataset=false to produce it, "
-                "or install duckdb where the dataset is authored."
+                "installed, and it is not among engine-cost's declared dependencies. "
+                + ("A canvas export is the dataset page, so it needs duckdb; export where the "
+                   "dataset is authored." if composed else
+                   "The HTML package verifies on its own - call with include_dataset=false to "
+                   "produce it, or install duckdb where the dataset is authored.")
             ) from None
         import build_cost_dataset as dataset_builder
 
         dataset_path = root / "dist" / f"cost-{scope}.duckdb"
-        dataset_builder.build(scope, dataset_path)
+        dataset_builder.build(scope, dataset_path, state=state,
+                              lots=composed["lots"] if composed else None)
 
-    html = builder.build_html(scope, runtime, duckdb_path=dataset_path)
+    # THE SERVED STATE, threaded to the page. The builder used to seed its own.
+    narrowed = dict(lots=composed["lots"], sections=composed["sections"],
+                    canvas_answers=composed["answers"]) if composed else {}
+    html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state, **narrowed)
     problems = builder.check_javascript(html)
     if problems:
         # THE SAME GATE THE SCRIPT USES. A verb that skipped it could emit a package that is
@@ -1134,6 +1160,7 @@ def package_export(
     package = build_dataset_package(
         state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha(),
         duckdb_path=str(dataset_path), duckdb_hash=dataset_builder.file_hash(dataset_path),
+        **narrowed,
     ) if dataset_path else build_package(
         state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha())
 
@@ -1207,6 +1234,9 @@ def package_export(
         "as_of": package["as_of"],
         "audit": audit,
         "verified_lots": len(package["manifest"]["checks"]),
+        "sections": package["sections"],
+        # WHICH ANSWERS COMPOSED THIS DISCLOSURE, or None for the whole-program export.
+        "canvas_answers": package.get("canvas_answers"),
     }
 
 

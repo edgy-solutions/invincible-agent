@@ -795,7 +795,9 @@ _DESCRIPTIONS: dict[str, str] = {
         "so the recipient can reproduce every figure, and leaving an audit line naming what "
         "was released to whom under which version. The subject is the RECIPIENT, not a lot: "
         "this answers what may be released to a party. NOT a report of figures to someone who "
-        "may already see them, and NOT a cost, share, trend or rate question.",
+        "may already see them, and NOT a cost, share, trend or rate question. Given a canvas "
+        "of cost answers, the package carries exactly the lots and page sections those "
+        "answers are about.",
 }
 
 
