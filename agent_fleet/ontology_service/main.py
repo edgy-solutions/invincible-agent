@@ -636,7 +636,13 @@ async def execute_sparql(
     # For complex queries, we might need a more robust parser, but for our Agentic Mesh
     # standard patterns, this wrapping is effective.
     scoped_query = query
-    if "GRAPH" not in query.upper() and "SELECT" in query.upper():
+    # THE KEYWORD, NOT THE SUBSTRING. This was `"GRAPH" not in query.upper()`, so any query whose
+    # LITERAL contained the letters g-r-a-p-h skipped the scope and ran against the default graph,
+    # where nothing lives. `page_for_subject("…runbook-adding-a-graph")` returned [] for exactly
+    # that reason. A GRAPH clause is the keyword followed by an IRI or a variable.
+    import re as _re
+    if (not _re.search(r"\bGRAPH\s*[<?$]", query, _re.IGNORECASE)
+            and "SELECT" in query.upper()):
         # Simple injection: replace WHERE { with WHERE { VALUES ?g {vocab inst} GRAPH ?g {
         if "WHERE {" in query:
             scoped_query = query.replace("WHERE {", f"WHERE {{ {_graph_scope} {{", 1)
@@ -683,7 +689,9 @@ async def execute_sparql(
     # `_get_local_graph` returns a plain `rdflib.Graph`; the scoping wrap above injects
     # `GRAPH ?__mesh_g`; rdflib RAISES on a named-graph pattern against a single graph. Seven
     # callers pass a query the wrap scopes and the eighth already spells `GRAPH ?g` itself, so
-    # every one of them takes this path only to raise. The 44KB of real triples it parses is why
+    # every one of them takes this path only to raise. A ninth caller (the DOCS subject pool,
+    # 2026-09-29) passes a scoped query too; the call-site arm in
+    # `tests/test_an_outage_is_not_an_empty_answer.py` classifies it. The 44KB of real triples it parses is why
     # this reads as healthy from outside — the data is there and unreachable through the only
     # path that reads it.
     #
@@ -2137,13 +2145,19 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 
 try:
     from doc_pages import (  # type: ignore[no-redef]
+        DOCPAGE_CLASS as _DOCPAGE_CLASS,
+        build_all_pages_query as _build_all_pages_query,
         build_page_for_subject_query as _build_page_query,
+        match_pages as _match_doc_pages,
         order_pages as _order_doc_pages,
         rows_to_pages as _doc_rows_to_pages,
     )
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.doc_pages import (
+        DOCPAGE_CLASS as _DOCPAGE_CLASS,
+        build_all_pages_query as _build_all_pages_query,
         build_page_for_subject_query as _build_page_query,
+        match_pages as _match_doc_pages,
         order_pages as _order_doc_pages,
         rows_to_pages as _doc_rows_to_pages,
     )
@@ -2512,6 +2526,125 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     return {"outcome": "no_provider", "members": [], "count": 0, "detail": detail}
 
 
+# ---------------------------------------------------------------------------
+# THE DOCS SUBJECT POOL: a DOCS question's subject is a DocPage.
+#
+# "how do I add an engine" names no class: nothing is labelled engine or canvas template, and
+# ADR-0037 refuses minting one. `mesh:explain`'s `subject` declares the universal referent
+# `mesh:Thing`, so `/fill_slots` refused every class the fan-out found as `wrong_class`, and no
+# `mesh:resolveInstance` provider knows a page. Both census rows died at subject binding, before
+# any page lookup. The pool is the DocPage individuals in `internal/DOCS`, scored by
+# `doc_pages.match_pages`, and it is consulted ONLY when the caller acts in DOCS.
+#
+# EVERY FAILURE FALLS THROUGH to the path that existed before: a pool that cannot be read, a
+# question no page wins, a caller who may not see `mesh:DocPage`, or a DocPage no verb serves.
+# This branch can add a binding and can never remove one the old path would have made.
+# ---------------------------------------------------------------------------
+_DOCS_POOL_PROVIDER = "engine_o_docs_pool"
+
+
+def _acts_in_docs(domains) -> bool:
+    return any(str(d or "").strip().upper() == "DOCS" for d in (domains or []))
+
+
+def _docs_pool_accepts(referent) -> bool:
+    """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
+
+    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is refused
+    on every call today (`_POOL_READ_INITIATOR` is a service identity and `require_person` refuses
+    it), so it returns [] and this would never fire. The question here is a TYPE fact about the
+    declaration — `mesh:Thing` accepts anything — not the pool membership LEG 3 needs Jena to
+    confirm.
+    """
+    return bool(referent) and (
+        referent == _DOCPAGE_CLASS or referent in _CANDIDATE_UNIVERSAL_REFERENTS
+    )
+
+
+async def _bind_docs_slot(spoken: str, query: str) -> dict | None:
+    """The `/fill_slots` resolution record for a page bind, or None when no page wins.
+
+    The spoken words first, the whole question second: "an engine" is enough on its own, and a
+    spoken value too vague to win ("it") still has the question it came from.
+    """
+    for source, text in (("spoken", spoken), ("question", query)):
+        if not (text or "").strip():
+            continue
+        match = await _match_docs_subject(text)
+        page = match.get("page")
+        if page:
+            return {
+                "outcome": "fuzzy",
+                "spoken": spoken or "",
+                "instance_id": page["iri"],
+                "instance_label": page.get("title", ""),
+                "referent_disambiguated": False,
+                "instance_provider": _DOCS_POOL_PROVIDER,
+                "bound_from": source,
+                "candidates": list(match.get("candidates") or [])[:10],
+            }
+    return None
+
+
+async def _match_docs_subject(identifier: str) -> dict:
+    """Score `identifier` against every DocPage. NEVER RAISES; an unreadable pool binds nothing."""
+    try:
+        rows = await execute_sparql(_build_all_pages_query(), domain="DOCS")
+    except Exception as exc:  # noqa: BLE001 - the old path must still run
+        logging.warning("DOCS subject pool unreadable (%s: %s)", type(exc).__name__, exc)
+        return {"page": None, "candidates": [], "error": f"{type(exc).__name__}: {exc}"}
+    return _match_doc_pages(identifier, _doc_rows_to_pages(rows))
+
+
+def _docs_pool_provenance(match: dict) -> dict:
+    page = match.get("page") or {}
+    return {
+        "instance_id": page.get("iri", ""),
+        "instance_label": page.get("title", ""),
+        "instance_provider": _DOCS_POOL_PROVIDER,
+        "instance_match": "fuzzy",
+        "instance_resolved": bool(page),
+        "instance_class_uri": _DOCPAGE_CLASS,
+        "instance_score": match.get("score", 0.0),
+        "instance_coverage": match.get("coverage", 0.0),
+        "instance_runner_up": match.get("runner_up", 0.0),
+        "instance_top_candidates": list(match.get("candidates") or [])[:10],
+    }
+
+
+async def _resolve_docs_subject(request: ResolveRequest) -> SemanticResolutionResponse | None:
+    """Bind a DOCS question to `mesh:DocPage` with the winning page as its instance, or None."""
+    domains = request.domains or ([request.domain] if request.domain else [])
+    if not _acts_in_docs(domains):
+        return None
+    match = await _match_docs_subject(request.query)
+    if not match.get("page"):
+        print(f"[Engine O] DOCS subject pool bound nothing for {request.query!r} "
+              f"(score={match.get('score')}, coverage={match.get('coverage')}, "
+              f"runner_up={match.get('runner_up')}) - falling through to class recall")
+        return None
+    if not _can_view_class(request.user_email, _DOCPAGE_CLASS):
+        print(f"[Engine O] DOCS subject pool: {request.user_email!r} may not see "
+              f"{_DOCPAGE_CLASS} - falling through")
+        return None
+    if await _preempted_subject_is_unanswerable(_DOCPAGE_CLASS, domains):
+        print(f"[Engine O] DOCS subject pool: {_DOCPAGE_CLASS} carries no verb in "
+              f"domains={domains!r} - falling through")
+        return None
+    provenance = _docs_pool_provenance(match)
+    provenance["preemption_path"] = "docs_subject_pool"
+    return SemanticResolutionResponse(
+        resolved_uri=_DOCPAGE_CLASS,
+        confidence_score=0.9,
+        reasoning=(
+            f"DOCS subject pool: {request.query!r} names page {provenance['instance_id']} "
+            f"(score {match.get('score')}, runner-up {match.get('runner_up')}, "
+            f"coverage {match.get('coverage')})."
+        ),
+        provenance=provenance,
+    )
+
+
 @app.post("/resolve", response_model=SemanticResolutionResponse)
 async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     """Resolve a natural-language query to a canonical ontology URI using Late Binding.
@@ -2521,6 +2654,12 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
+    # Step 0: a DOCS caller's subject is a page. None means "not a DOCS question, or no page
+    # won", and the class contest below runs exactly as before.
+    _docs_bound = await _resolve_docs_subject(request)
+    if _docs_bound is not None:
+        return _docs_bound
+
     # Step 1: Hybrid Search for candidates in Weaviate. The `domains`
     # field (when non-empty) supersedes `domain` — the supervisor's
     # entitled_domains list spans the candidate pool query-driven,
@@ -3753,14 +3892,40 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     # has since before this endpoint existed — four providers, a fan-out and a scoring
     # gate. Engine P was simply not one of the providers until now.
     resolution: dict[str, Any] = {}
+
+    # THE DOCS SUBJECT POOL, for a slot the speaker did not name. "how do I add an engine" is
+    # ABOUT its subject, and a model that extracts nothing for `subject` would leave the one slot
+    # `mesh:explain` needs unfilled, so under DOCS the whole question is scored against the
+    # pages. A spoken value takes the loop below, which tries the spoken words first.
+    if _acts_in_docs(request.acting_domains):
+        for name, decl in by_name.items():
+            if name in accepted or not _docs_pool_accepts(decl.get("referent")):
+                continue
+            bound = await _bind_docs_slot("", request.query)
+            if bound is not None:
+                accepted[name] = bound["instance_id"]
+                resolution[name] = bound
+
     for name in list(accepted):
         decl = by_name.get(name) or {}
         referent = decl.get("referent")
         if not referent:
             continue
+        if name in resolution:
+            continue  # bound by the DOCS pool above, from the question
         spoken_value = accepted[name]
         if not isinstance(spoken_value, str):
             continue
+
+        # A SLOT THAT ACCEPTS A PAGE, ASKED IN DOCS, BINDS FROM THE PAGES. The fan-out below
+        # cannot serve it: no provider knows a DocPage, and a universal referent turns every
+        # class it does find into `wrong_class`. No page winning falls through to the fan-out.
+        if _acts_in_docs(request.acting_domains) and _docs_pool_accepts(referent):
+            bound = await _bind_docs_slot(spoken_value, request.query)
+            if bound is not None:
+                accepted[name] = bound["instance_id"]
+                resolution[name] = bound
+                continue
 
         # DELIBERATELY UNSCOPED. This path builds a MENU of what anything knows by that
         # name, and the comment below already rules that candidates are not filtered by the
