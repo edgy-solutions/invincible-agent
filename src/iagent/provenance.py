@@ -24,8 +24,16 @@ from typing import Any, Optional
 
 # HOW the claim was obtained — the degradation path, ordered nearest-to-truth. The ORDER is
 # meaningful (it is distance from the authoritative system), not cosmetic.
-DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT = "direct", "etl", "warehouse", "manual-export"
-OBTAINED_VIA = (DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT)
+#
+# `user-drop` is the FIFTH RUNG, ruled by ADR-0041 §2 (2026-08-17): a hand-carried document is
+# the farthest degradation path there is, so it extends the tuple at the far end. The SDK's copy
+# (iagent_mesh.provenance, lane/ca b68926a) carried it first; this reference copy had not, so a
+# consumer here could not rank what the SDK could stamp. Census when it landed (2026-09-30): no
+# reader in src/ or agent_fleet/ reasons over this tuple by position; the one exhaustive reader
+# is tests/test_provenance_block.py, which iterates it.
+DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP = (
+    "direct", "etl", "warehouse", "manual-export", "user-drop")
+OBTAINED_VIA = (DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP)
 
 # `as_of` when the truth-date is genuinely not knowable — e.g. an export with no recorded
 # date. A SENTINEL, NEVER A BLANK: empty would collapse "we could not know" into "we forgot to
