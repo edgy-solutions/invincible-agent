@@ -25,13 +25,16 @@ from typing import Any, Optional
 # HOW the claim was obtained — the degradation path, ordered nearest-to-truth. The ORDER is
 # meaningful (it is distance from the authoritative system), not cosmetic.
 #
-# FIFTH RUNG (2026-09-30, ADR-0041 §2): `user-drop` — a document hand-carried into the system
-# by a non-technical user (the ingestion seam, ADR-0041 §8). It is the FARTHEST rung we have:
-# `authoritative_source` is unchanged (the drop does not change who owns the truth, only how
-# far this copy travelled from it), `as_of` will often be AS_OF_UNKNOWN, and `standing` is
-# `supervised` — born-supervised, ADR-0034's default, arrived at without an exception. Appended
-# at the END of the tuple deliberately: the order is the degradation distance, and user-drop is
-# the least-trusted path that exists today.
+# FIFTH RUNG: `user-drop` — a document hand-carried into the system by a non-technical user
+# (ADR-0041 §2, decision recorded 2026-08-17; landed here 2026-09-30 with the ingestion seam,
+# ADR-0041 §8). It is the FARTHEST rung we have: `authoritative_source` is unchanged (the drop
+# does not change who owns the truth, only how far this copy travelled from it), `as_of` will
+# often be AS_OF_UNKNOWN, and `standing` is `supervised` — born-supervised, ADR-0034's default,
+# arrived at without an exception. Appended at the END of the tuple deliberately: the order is
+# the degradation distance, and user-drop is the least-trusted path that exists today. The
+# SDK's copy (iagent_mesh.provenance, lane/ca b68926a) carried it first. Census when it landed:
+# no reader in src/ or agent_fleet/ reasons over this tuple by position; the one exhaustive
+# reader is tests/test_provenance_block.py, which iterates it.
 DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP = (
     "direct", "etl", "warehouse", "manual-export", "user-drop")
 OBTAINED_VIA = (DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP)
