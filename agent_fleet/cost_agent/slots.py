@@ -30,11 +30,11 @@ has less to reconcile rather than more. **The extraction is on ADR-0046 §9 slic
 critical path and is filed, not fixed here**; adding a full third derivation would have made
 it strictly harder while this engine gained nothing from it.
 
-── ENGINE-COST HAS NO HANDLE SLOTS AND NO CEREMONY VERBS, and that is a FACT rather than
-an omission. Nothing here mutates state, so there is no ceremony to supply; and no verb
-takes a route-injected scenario handle, because cost reporting is governed READING over a
-fixed seed. Both kinds are declared below as empty rather than left out, so a reader who
-finds only two of the four kinds used can tell the other two were considered.
+── ONE HANDLE SLOT AND NO CEREMONY VERBS. Nothing here mutates state, so there is no
+ceremony to supply, and the ceremony kind is declared empty rather than left out so a reader
+can tell it was considered. The one handle is `package_export`'s `canvas`: the answers a
+person assembled on a board. Nobody SPEAKS a canvas; the surface that holds the board hands
+it in, so the slot filler must never be asked to invent one (engine-o skips handle kinds).
 """
 from __future__ import annotations
 
@@ -54,8 +54,8 @@ except ImportError:
 #: reading declarations from any engine sees one vocabulary rather than three that agree.
 SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
 
-#: Injected by the route, never spoken. EMPTY FOR THIS ENGINE — see the module docstring.
-HANDLE_SLOTS: Dict[str, set] = {}
+#: Injected by the route, never spoken. See the module docstring.
+HANDLE_SLOTS: Dict[str, set] = {"package_export": {"canvas"}}
 
 #: Verbs whose parameters arrive through a governed UI flow. EMPTY: nothing here mutates.
 CEREMONY_VERBS: set = set()
@@ -92,6 +92,8 @@ def _type_of(annotation: Any) -> str:
         return "number"
     if annotation in (bool,):
         return "boolean"
+    if annotation is dict or typing.get_origin(annotation) is dict:
+        return "object"
     return "string"
 
 
@@ -116,6 +118,7 @@ def slots_for(fn_name: str) -> List[dict]:
         if name in _NOT_A_SLOT or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
             continue
         mandatory = p.default is inspect.Parameter.empty
+        handle = name in HANDLE_SLOTS.get(fn_name, ())
         decl: dict = {
             "name": name,
             "type": _type_of(p.annotation),
@@ -130,7 +133,8 @@ def slots_for(fn_name: str) -> List[dict]:
             # Settled HERE, before that extraction, so it does not inherit a disagreement as
             # if it were a feature.
             "required": mandatory,
-            "kind": "spoken-mandatory" if mandatory else "spoken-optional",
+            "kind": ("handle" if handle
+                     else "spoken-mandatory" if mandatory else "spoken-optional"),
         }
         if not mandatory and p.default is not None:
             decl["default"] = p.default

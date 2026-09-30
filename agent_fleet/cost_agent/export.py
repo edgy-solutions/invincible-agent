@@ -43,7 +43,9 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         DEFAULT_COMPOSITION, StepSpec, compose_price, quantize_money, unit_price,
     )
     from seed import lots_for_recipient
+    from canvas import SECTIONS
 except ImportError:
+    from agent_fleet.cost_agent.canvas import SECTIONS
     from agent_fleet.cost_agent.entities import CostState, Unentitled
     from agent_fleet.cost_agent.pricing import (
         DEFAULT_COMPOSITION, StepSpec, compose_price, quantize_money, unit_price,
@@ -251,16 +253,39 @@ def build_package(
     scenario: Optional[str] = None,
     as_of: Optional[str] = None,
     rate_vintage: Optional[str] = None,
+    lots: Optional[tuple[int, ...]] = None,
+    sections: Optional[tuple[str, ...]] = None,
+    canvas_answers: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """The governed emit. Entitlement-filtered HERE, once, per ADR-0047 §5.
 
     `algorithm_sha` is passed IN rather than discovered, because a module cannot honestly
     report the commit it was built from — it would read whatever the working tree happens to
     say, which is the claim the pin exists to replace.
+
+    `lots` NARROWS, IT NEVER WIDENS. A canvas export passes the lots its answers are about;
+    they are re-checked here against the recipient's scope, so a caller that skipped
+    `canvas.resolve` still cannot disclose a lot outside it. Absent, the package carries every
+    entitled lot, which is the program export this verb produced before canvases.
     """
-    lots = lots_for_recipient(recipient_scope)   # raises Unentitled on an unknown scope
-    if not lots:  # pragma: no cover - the map has no empty scopes today
+    entitled = lots_for_recipient(recipient_scope)   # raises Unentitled on an unknown scope
+    if not entitled:  # pragma: no cover - the map has no empty scopes today
         raise Unentitled(f"{recipient_scope!r} is entitled to no lots; nothing to package")
+    if lots is None:
+        lots = entitled
+    else:
+        outside = sorted(set(lots) - set(entitled))
+        if outside:
+            raise Unentitled(
+                f"{recipient_scope!r} is not entitled to lot(s) {outside}; nothing packaged")
+        if not lots:
+            raise Unentitled("an empty lot set packages nothing; refusing an empty disclosure")
+        lots = tuple(n for n in entitled if n in set(lots))
+    if sections is None:
+        sections = SECTIONS
+    unknown = [s for s in sections if s not in SECTIONS]
+    if unknown or not sections:
+        raise ValueError(f"not page sections: {unknown or 'none given'}; known {SECTIONS}")
 
     manifest = build_manifest(state, lots=lots, rate_vintage=rate_vintage)
     body = {
@@ -274,7 +299,12 @@ def build_package(
         "lots": list(lots),
         "rate_vintages": sorted({c["rates"]["vintage"] for c in manifest["checks"]}),
         "manifest": manifest,
+        # WHAT THE PAGE SHOWS, and which answers asked for it. Inside the locator, so a
+        # package's hash names its presentation and its canvas as well as its data.
+        "sections": [s for s in SECTIONS if s in sections],
     }
+    if canvas_answers is not None:
+        body["canvas_answers"] = list(canvas_answers)
     body["locator"] = content_hash(body)
     return body
 
@@ -293,6 +323,9 @@ def audit_line(package: dict[str, Any], *, disclosed_by: str) -> dict[str, Any]:
         "locator": package["locator"],
         "lots_disclosed": package["lots"],
         "lot_count": len(package["lots"]),
+        # A CANVAS EXPORT NAMES THE ANSWERS IT WAS COMPOSED FROM, so the audit line says why
+        # these lots went, not only that they did.
+        **({"canvas_answers": package["canvas_answers"]} if "canvas_answers" in package else {}),
     }
 
 
@@ -478,10 +511,14 @@ def build_dataset_package(
     duckdb_hash: str,
     scenario: Optional[str] = None,
     as_of: Optional[str] = None,
+    lots: Optional[tuple[int, ...]] = None,
+    sections: Optional[tuple[str, ...]] = None,
+    canvas_answers: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """A slice-2 package: the slice-1 body, plus rows and BOTH dataset hashes."""
     pkg = build_package(state, recipient_scope=recipient_scope,
-                        algorithm_sha=algorithm_sha, scenario=scenario, as_of=as_of)
+                        algorithm_sha=algorithm_sha, scenario=scenario, as_of=as_of,
+                        lots=lots, sections=sections, canvas_answers=canvas_answers)
     rows = dataset_rows(state, lots=tuple(pkg["lots"]))
     pkg["dataset"] = {
         "rows": rows,
