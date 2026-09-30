@@ -99,6 +99,21 @@ consumer onto the full path would **not** be enough: the block would also have t
 engine to wherever the consumer reads it. I have **not** verified this. It is the census's reading,
 and this report does not re-measure it.
 
+**CORRECTION (2026-09-29, overnight, measured).** The engine does carry the block. Read-only from
+inside the bff pod, engine-safety's `/measure/draft_risk_assessment` for HAZ-1003 returns
+`review_request` in full: kind `risk_acceptance_medium`, audience
+`risk_acceptance_medium:SUSTAINMENT`.
+
+The census scores `drawn` because the artifact it searches is the one read back from the SSE
+stream, and Engine F's render drops the block before that. So `drawn` is true of the stream and
+false of the engine. The condition above ("the block would also have to survive") was the right
+one. The fix reads the block from the engine's own body, before the render: `execute_subtask`
+materializes `subtask_review_request`, and the gateway opens the acceptance from the run's
+materializations. That is `3ec5b3b0` on `lane/74-overnight-safety-docs`.
+
+The census row for HAZ-1003 stays `drawn` until an SSE event carries the block, and the SSE
+contract is cortex's.
+
 ### What this leaves as a decision (not mine)
 
 `engine-safety` asks on every drafted assessment (`measures.py:411`). The only consumer sits on a
@@ -171,7 +186,8 @@ code is 74's, per the order.
 
 ## What I did not check
 
-- The census's `drawn` reading (above): cited, not re-measured.
+- ~~The census's `drawn` reading (above): cited, not re-measured.~~ Re-measured overnight: the
+  engine carries the block, and the SSE stream does not (see the correction above).
 - ~~Whether `pre_resolved_route_allowed` has other conditions~~ checked:
   `lineage_claim.py:79` is `return answers_something`, and `gateway.py:5004` is its only caller.
 - Restate's `SafetyAcceptance` invocation history: not read. With zero dispatch lines and zero
