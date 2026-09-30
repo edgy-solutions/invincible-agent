@@ -616,7 +616,10 @@ cortexUi:
     # the overlay last measured — and it is a fact with a shelf life, not a reassurance. With
     # `pullPolicy: Always`, latest agreeing today is what makes the digest pin cheap to verify,
     # never what makes it unnecessary: the pin exists for the day latest moves.
-    digest: "sha256:6f27766587108f5dc7fc9af623b7eae4ecac4a67fd218e7efbd3524918b1d1b4"
+    # 2026-09-29 roll #7: cortex-ui 0427884 (chart 0.2.1) -> 79bcda2b. Measured before pinning: ghcr
+    # answers 200 with linux/arm64 + linux/amd64; the same digest with its last hex altered answers
+    # 404, and the superseded 6f277665 still answers 200, so the probe discriminates.
+    digest: "sha256:79bcda2bde06d72e35e6ceaeb96fe40a5749b19d6e992efce9663dac299e8eb4"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
