@@ -7797,7 +7797,26 @@ async def ingest_document(
             detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
         )
 
-    body = await file.read()
+    # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
+    # limit in values-sandbox), so one authenticated drop could take the BFF down for every
+    # user. ADR-0041 names no size; INGEST_MAX_BYTES is a LOCAL default (50 MiB), not a
+    # ruling -- raise it in values, not here. Read one chunk past the cap so "exactly at the
+    # cap" is accepted and "one byte over" is refused with 413 before anything is written.
+    _cap = int(os.getenv("INGEST_MAX_BYTES", str(50 * 1024 * 1024)))
+    _chunks: list[bytes] = []
+    _seen = 0
+    while True:
+        _chunk = await file.read(1024 * 1024)
+        if not _chunk:
+            break
+        _seen += len(_chunk)
+        if _seen > _cap:
+            raise HTTPException(
+                status_code=413,
+                detail=f"upload exceeds INGEST_MAX_BYTES ({_cap} bytes)",
+            )
+        _chunks.append(_chunk)
+    body = b"".join(_chunks)
     sha256 = hashlib.sha256(body).hexdigest()
 
     existing = await run_in_threadpool(ingest_status.find_primary_by_sha, sha256)

@@ -148,6 +148,30 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_
     assert received["submitted_by"] == "alice@example.com"
 
 
+def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client, fake_s3, monkeypatch):
+    """The door buffers in the BFF pod, so its size is bounded: one byte over INGEST_MAX_BYTES
+    is 413 before dedupe is consulted or the store is touched; exactly AT the cap is accepted
+    (the control that shows the refusal is the cap, not the fixture)."""
+    monkeypatch.setenv("INGEST_MAX_BYTES", "16")
+    looked = {"n": 0}
+    def _find(sha):
+        looked["n"] += 1
+        return None
+    monkeypatch.setattr(ist, "find_primary_by_sha", _find)
+    monkeypatch.setattr(ist, "record_received", lambda **kw: {"id": kw["sha256"], "status": "received"})
+
+    over = client.post("/ingest", files={"file": ("big.pdf", b"x" * 17, "application/pdf")},
+                       data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert over.status_code == 413, over.text
+    assert looked["n"] == 0 and fake_s3 == [], "an oversize drop must be refused before any lookup or write"
+
+    at = client.post("/ingest", files={"file": ("ok.pdf", b"x" * 16, "application/pdf")},
+                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert at.status_code == 200, at.text
+    assert looked["n"] == 1
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /ingest/{id}/status — existence-oracle-safe
 # ─────────────────────────────────────────────────────────────────────────────
