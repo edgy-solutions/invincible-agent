@@ -292,7 +292,7 @@ def _explain_decls():
     return decls
 
 
-def _fill(eo, monkeypatch, query, slots_json, acting):
+def _fill(eo, monkeypatch, query, slots_json, acting, subject_uri=""):
     class _Filled:
         slots_json = ""
         confidence = 0.9
@@ -306,7 +306,8 @@ def _fill(eo, monkeypatch, query, slots_json, acting):
 
     monkeypatch.setattr(eo.b, "FillVerbSlots", _fake)
     req = eo.FillSlotsRequest(query=query, verb_iri="mesh:explain",
-                              declarations=json.dumps(_explain_decls()), acting_domains=acting)
+                              declarations=json.dumps(_explain_decls()), acting_domains=acting,
+                              subject_uri=subject_uri)
     return asyncio.run(eo.fill_slots(req))
 
 
@@ -348,6 +349,46 @@ def test_outside_DOCS_the_fan_out_still_decides(eo, monkeypatch):
     monkeypatch.setattr(eo, "_resolve_instance", _fanout)
     r = _fill(eo, monkeypatch, ENGINE_Q, json.dumps({"subject": "an engine"}), ["MAINTENANCE"])
     assert called == ["an engine"]
+    assert "subject" not in r.slots
+    assert eo._test_posted == []
+
+
+# ── THE ROUTE'S OWN CLASS: MESH ends up at the pool too, when /resolve chose mesh:DocPage ──────
+#
+# MEASURED 2026-09-30: cortex hides DOCS from the picker, so the UI sends domains=['MESH']. The
+# old gate (`_acts_in_docs`) never sees DOCS on that call, however confidently /resolve routed
+# the question to mesh:DocPage — the subject pool never ran, the fan-out found nothing called
+# "engine", and the supervisor abstained. `_docs_pool_applies` adds the route's own class as a
+# second door into the pool; the CONTROL below shows the door stays shut for every other class.
+
+_NON_DOCPAGE_CLASS = "http://invincible-agent/mesh#Dataset"
+
+
+def test_the_screenshot_question_binds_its_page_under_MESH_when_the_route_chose_DocPage(eo, monkeypatch):
+    r = _fill(eo, monkeypatch, ENGINE_Q, json.dumps({"subject": "engine"}), ["MESH"],
+              subject_uri=DOCPAGE_CLASS)
+    assert r.slots == {"subject": ENGINE_PAGE}, (r.slots, r.refused)
+
+
+def test_the_screenshot_question_binds_an_unspoken_subject_under_MESH_when_the_route_chose_DocPage(eo, monkeypatch):
+    r = _fill(eo, monkeypatch, ENGINE_Q, "{}", ["MESH"], subject_uri=DOCPAGE_CLASS)
+    assert r.slots == {"subject": ENGINE_PAGE}, (r.slots, r.refused)
+
+
+def test_a_route_to_any_other_class_under_MESH_still_leaves_the_pool_shut(eo, monkeypatch):
+    """CONTROL: differs from the two arms above in exactly one thing, `subject_uri`. A route to
+    a class that is not mesh:DocPage must not open the pool — the old, unscoped fan-out decides,
+    same as `test_outside_DOCS_the_fan_out_still_decides`."""
+    called = []
+
+    async def _fanout(identifier, query, asked_domains=None):
+        called.append(identifier)
+        return None, {"instance_match": "empty"}
+
+    monkeypatch.setattr(eo, "_resolve_instance", _fanout)
+    r = _fill(eo, monkeypatch, ENGINE_Q, json.dumps({"subject": "engine"}), ["MESH"],
+              subject_uri=_NON_DOCPAGE_CLASS)
+    assert called == ["engine"]
     assert "subject" not in r.slots
     assert eo._test_posted == []
 

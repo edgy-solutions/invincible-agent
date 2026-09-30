@@ -2547,6 +2547,20 @@ def _acts_in_docs(domains) -> bool:
     return any(str(d or "").strip().upper() == "DOCS" for d in (domains or []))
 
 
+def _docs_pool_applies(domains, subject_uri) -> bool:
+    """May `/fill_slots` score a slot against the DOCS page pool?
+
+    Yes under the old gate (the caller is acting in DOCS), and ALSO when `/resolve` already
+    routed the question to `mesh:DocPage` — the route has already decided the question is
+    ABOUT a page whatever domain the picker sent. MEASURED 2026-09-30: the UI sent
+    domains=['MESH'] (cortex hides DOCS from the picker), /resolve scored subject=mesh:DocPage
+    at 0.97, and `/fill_slots` still gated on `_acts_in_docs(['MESH'])` — false — so the
+    subject pool never ran and the supervisor abstained on "how do I add an engine". A route to
+    any other class leaves the old gate exactly as it was.
+    """
+    return _acts_in_docs(domains) or subject_uri == _DOCPAGE_CLASS
+
+
 def _docs_pool_accepts(referent) -> bool:
     """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
 
@@ -3691,6 +3705,11 @@ class FillSlotsRequest(BaseModel):
     #: inventing one — the demote logic, its `demoted` reporting and its comment all predate
     #: this line.
     acting_domains: list = []
+    #: THE CLASS `/resolve` ROUTED THIS QUESTION TO, forwarded by the supervisor from the same
+    #: `telemetry["subject_uri"]` it already logs. `str = ""`, not `Optional[str]` — see the
+    #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
+    #: falls back to `_acts_in_docs` alone.
+    subject_uri: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -3897,7 +3916,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     # ABOUT its subject, and a model that extracts nothing for `subject` would leave the one slot
     # `mesh:explain` needs unfilled, so under DOCS the whole question is scored against the
     # pages. A spoken value takes the loop below, which tries the spoken words first.
-    if _acts_in_docs(request.acting_domains):
+    if _docs_pool_applies(request.acting_domains, request.subject_uri):
         for name, decl in by_name.items():
             if name in accepted or not _docs_pool_accepts(decl.get("referent")):
                 continue
@@ -3920,7 +3939,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # A SLOT THAT ACCEPTS A PAGE, ASKED IN DOCS, BINDS FROM THE PAGES. The fan-out below
         # cannot serve it: no provider knows a DocPage, and a universal referent turns every
         # class it does find into `wrong_class`. No page winning falls through to the fan-out.
-        if _acts_in_docs(request.acting_domains) and _docs_pool_accepts(referent):
+        if _docs_pool_applies(request.acting_domains, request.subject_uri) and _docs_pool_accepts(referent):
             bound = await _bind_docs_slot(spoken_value, request.query)
             if bound is not None:
                 accepted[name] = bound["instance_id"]

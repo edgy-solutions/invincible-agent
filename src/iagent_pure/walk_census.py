@@ -85,7 +85,9 @@ ROW_KEY = {
     "MULTI_SERIES": "rows",
     "DELTA_SET": "effects",
     "STEP_LADDER": "steps",
-    "KNOWLEDGE_DOCUMENT": "sections",
+    # Only the DOCS rows carry this archetype (confirmed against walk-census.yaml). Engine-docs'
+    # card carries `pages`, not `sections` — presentation passthrough, ab9b2a4e.
+    "KNOWLEDGE_DOCUMENT": "pages",
     # ── ENGINE F (FINANCE). Keys confirmed twice over: against the live post-projector
     # payloads, and against the projector's own `_PROJECTED_ARCHETYPES`, which is the
     # authority on which key a projected card carries.

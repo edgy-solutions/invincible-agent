@@ -408,7 +408,16 @@ class _FakeCompatDriver:
 
 def _mesh_explain_row() -> dict:
     """A LEG-3-shaped row: no real hop count (the sentinel), `compatibility: universal`, and
-    `mesh:DocPage` as its OWN subject rather than whatever `start` the caller asked about."""
+    `mesh:DocPage` as its OWN subject rather than whatever `start` the caller asked about.
+
+    `domains: []`, matching the REAL registration (agent_fleet/docs_agent/main.py ~241,
+    "DECLARED AGNOSTIC, never reached by leaving the argument off"). `["DOCS"]` here used to
+    agree with every census row by coincidence — they all asked with domains=[DOCS] — until
+    the MESH-domain row (the UI's own path; cortex hides DOCS from the picker) asked with
+    entitled_domains=['MESH'] and the stale fixture value excluded mesh:explain that this
+    endpoint's own filter (`if entitled and verb_domains: ...intersection`, ~line 5118) would
+    never exclude for an agnostic verb in production.
+    """
     return {
         "verb_iri": "mesh:explain",
         "verb_local": "explains",
@@ -416,7 +425,7 @@ def _mesh_explain_row() -> dict:
         "output_uri": "http://invincible-agent/mesh#DocPage",
         "endpoint_url": "http://engine-docs.mesh.svc:8080/explain",
         "owner_persona": None,
-        "domains": ["DOCS"],
+        "domains": [],
         "cost_class": "fast",
         "requires_human_approval": False,
         "arity": None,
@@ -457,7 +466,7 @@ _DOCS_CENSUS_ROWS = load_rows(_CENSUS)
 _DOCS_ROWS = [r for r in _DOCS_CENSUS_ROWS if r.id.startswith("docs-")]
 
 
-def test_the_docs_census_still_has_exactly_four_rows_EXPECTING_A_PRODUCIBLE_SPELLING():
+def test_the_docs_census_still_has_exactly_five_rows_EXPECTING_A_PRODUCIBLE_SPELLING():
     """Read from the source, not restated as a count - if the census grows or shrinks this
     file's own list below must be re-derived, and this arm is what catches the drift.
 
@@ -473,7 +482,9 @@ def test_the_docs_census_still_has_exactly_four_rows_EXPECTING_A_PRODUCIBLE_SPEL
     So the spelling is now DERIVED from the verb the four rows actually route to. A seal on a
     value must call the producer of that value, or it is a second copy of the thing it guards.
     """
-    assert len(_DOCS_ROWS) == 4, sorted(r.id for r in _DOCS_ROWS)
+    # Five since docs-how-do-i-add-an-engine-under-mesh joined the census: the UI's own path
+    # (domains=[MESH]; cortex hides DOCS from the picker), added beside the DOCS-caller control.
+    assert len(_DOCS_ROWS) == 5, sorted(r.id for r in _DOCS_ROWS)
     producible = verb_names({"action": {"iri": "mesh:explain"}})
     assert producible, "verb_names offered no spelling at all - this arm is asserting nothing"
     for row in _DOCS_ROWS:

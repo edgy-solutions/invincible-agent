@@ -2150,6 +2150,7 @@ def _fill_slots_from_query(
     verb_iri: str,
     declarations,
     acting_domains: "List[str] | None" = None,
+    subject_uri: str = "",
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2192,6 +2193,10 @@ def _fill_slots_from_query(
                 "verb_iri": verb_iri,
                 "declarations": declarations,
                 "acting_domains": list(acting_domains or []),
+                # THE ROUTE'S OWN CLASS, forwarded so engine-o's DOCS pool gate can fire when
+                # /resolve already chose mesh:DocPage even though the caller's domain picker
+                # sent something else (MESH hides DOCS). See _docs_pool_applies in engine-o.
+                "subject_uri": subject_uri,
             },
             timeout=_fill_slots_budget(declarations),
         )
@@ -2722,6 +2727,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             verb_iri=predicate.get("verb_iri") or "",
             declarations=declared,
             acting_domains=list(config.entitled_domains or []),
+            # THE ROUTED SUBJECT CLASS, same `telemetry["subject_uri"]` logged a few lines
+            # above as `predicate_routing_score ... subject_uri=%s`; "" when /resolve found
+            # nothing (subject_uri == "UNKNOWN" reads as absent to engine-o's gate too).
+            subject_uri=str(telemetry.get("subject_uri") or ""),
         )
         spoken, resolution = filled.slots, filled.resolution
         # Extracted from the question by the slot filler, which resolves against the graph.
