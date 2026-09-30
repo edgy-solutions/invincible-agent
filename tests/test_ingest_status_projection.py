@@ -74,21 +74,42 @@ def test_find_primary_by_sha_rejects_empty_input_without_touching_the_db():
 # ===========================================================================
 # record_received -- kind must be declared and in the closed set (never LLM-classified)
 # ===========================================================================
+_INGEST_ID = "sha256:" + "ab" * 32
+
+
 def test_record_received_rejects_an_undeclared_kind_before_any_db_touch():
     with mock.patch.object(ist, "_pg_connect") as pg:
         with pytest.raises(ValueError):
-            ist.record_received(sha256="x", kind="docx", object_prefix="p",
+            ist.record_received(ingest_id=_INGEST_ID, sha256="x", kind="docx", object_prefix="p",
                                  submitted_by="alice@example.com", on_behalf_of="alice@example.com")
         pg.assert_not_called()
 
 
-def test_record_received_writes_a_received_row_at_the_sha_as_id():
+@pytest.mark.parametrize("bad_id", [
+    "abc123",                      # bare hex, the OLD spelling this seam used to mint
+    "sha256:" + "AB" * 32,          # upper case
+    "sha256:" + "ab" * 31 + "a",    # 63 hex
+])
+def test_record_received_rejects_a_misspelled_ingest_id_before_any_db_touch(bad_id):
+    """The seam mints ids with promotion.ingest_id_for; an id in the old bare-hex spelling (or
+    any other mis-spelling) would make a later document_promotion sweep delete nothing."""
+    with mock.patch.object(ist, "_pg_connect") as pg:
+        with pytest.raises(ValueError):
+            ist.record_received(ingest_id=bad_id, sha256="abc123", kind="pdf",
+                                 object_prefix="ingress-user/pdf/abc123/",
+                                 submitted_by="alice@example.com", on_behalf_of="alice@example.com")
+        pg.assert_not_called()
+
+
+def test_record_received_writes_a_received_row_at_the_ingest_id_as_id():
     cm, conn, _ = _fake_conn()
     with mock.patch.object(ist, "_pg_connect", return_value=cm):
-        row = ist.record_received(sha256="abc123", kind="pdf", object_prefix="ingress-user/pdf/abc123/",
+        row = ist.record_received(ingest_id=_INGEST_ID, sha256="abc123", kind="pdf",
+                                   object_prefix="ingress-user/pdf/abc123/",
                                    submitted_by="alice@example.com", on_behalf_of="alice@example.com",
                                    source="notice.pdf")
-    assert row["id"] == "abc123", "a primary row is content-addressed: id == sha256"
+    assert row["id"] == _INGEST_ID, "a primary row is content-addressed: id == promotion.ingest_id_for"
+    assert row["sha256"] == "abc123", "sha256 keeps its OWN column, the bare-hex dedupe key"
     assert row["status"] == ist.RECEIVED
     conn.commit.assert_called_once()
 
@@ -121,6 +142,58 @@ def test_duplicate_arrival_message_handles_a_missing_source():
             submitted_by="bob@example.com", on_behalf_of="bob@example.com",
             source=None, original=original)
     assert row["detail"] == "already processed on 2026-01-01 from unknown source"
+
+
+# ===========================================================================
+# The stage vocabulary -- mirrors iagent_mesh.ingest.INGEST_STAGES (ca b68926a); the OLD
+# rungs (classified/extracted/review) are gone, and nothing in this repo consumed them (grep
+# census at implementation time: no import of ingest_status.CLASSIFIED/EXTRACTED/REVIEW/
+# STATUSES anywhere in src/ or tests/ besides this module's own definition).
+# ===========================================================================
+def test_the_stage_vocabulary_is_cas_six_stages_in_order():
+    assert ist.STAGES == ("received", "extracting", "awaiting_disposition", "promoted",
+                          "rejected", "failed")
+    assert not hasattr(ist, "CLASSIFIED")
+    assert not hasattr(ist, "EXTRACTED")
+    assert not hasattr(ist, "REVIEW")
+    assert not hasattr(ist, "STATUSES"), "nothing in-repo imports the old alias; dropped, not kept"
+
+
+def test_duplicate_stays_out_of_band():
+    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE,)
+
+
+# ===========================================================================
+# update_status -- rejected/failed require a non-blank detail (ca's IngestStatus rule)
+# ===========================================================================
+def test_update_status_writes_a_promoted_row_with_no_detail_required():
+    cm, conn, _ = _fake_conn()
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        ist.update_status(_INGEST_ID, ist.PROMOTED, detail="record abc")
+    conn.commit.assert_called_once()
+
+
+@pytest.mark.parametrize("stage", [ist.REJECTED, ist.FAILED])
+def test_update_status_refuses_rejected_or_failed_without_a_detail(stage):
+    with mock.patch.object(ist, "_pg_connect") as pg:
+        with pytest.raises(ValueError):
+            ist.update_status(_INGEST_ID, stage)
+        pg.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", [ist.REJECTED, ist.FAILED])
+def test_update_status_refuses_rejected_or_failed_with_a_blank_detail(stage):
+    with mock.patch.object(ist, "_pg_connect") as pg:
+        with pytest.raises(ValueError):
+            ist.update_status(_INGEST_ID, stage, detail="   ")
+        pg.assert_not_called()
+
+
+def test_update_status_refuses_an_unknown_stage():
+    with mock.patch.object(ist, "_pg_connect") as pg:
+        with pytest.raises(ValueError):
+            ist.update_status(_INGEST_ID, "classified", detail="x")
+        pg.assert_not_called()
 
 
 # ===========================================================================

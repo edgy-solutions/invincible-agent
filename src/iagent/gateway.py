@@ -2889,7 +2889,7 @@ async def act_on_human_task(
     # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
     # can_act itself. Every refusal carries its own status; none resolves the row.
     if match.get("kind") == "document_promotion":
-        from . import promotion
+        from . import ingest_status, promotion
         from .decision_record_writer import DECISION_RECORD_ERA, graph_writer
 
         try:
@@ -2919,6 +2919,31 @@ async def act_on_human_task(
         logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
                     current_user.authz_id)
+
+        # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
+        # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
+        # a READ MODEL of it. So a failure here is LOGGED, never raised: the decision already
+        # stands (mark_task_resolved above already succeeded), and re-resolving or unresolving
+        # the task over a projection write would make a read model's availability gate a
+        # decision that already happened. (`promotion.act` refuses 503 today because
+        # `_promotion_store()` returns None — this path is UNREACHABLE in production until
+        # ADR-0041 Open §1 is ruled; logged so the day it becomes reachable, a failure here is
+        # visible rather than silently swallowed forever.)
+        _stage = (ingest_status.PROMOTED if req.decision == promotion.PROMOTED
+                 else ingest_status.REJECTED)
+        # `rejected` always carries a non-blank comment here: the document_promotion kind
+        # declaration refuses a bare rejection with 422 before this branch runs (sealed by
+        # test_ROUTE_a_rejection_WITHOUT_a_reason_is_refused_before_the_projection), which is
+        # what satisfies update_status's detail-required rule.
+        _detail = (req.comment if req.decision == promotion.REJECTED
+                  else f"record {done['record_id']}")
+        try:
+            await run_in_threadpool(
+                lambda: ingest_status.update_status(done["ingest_id"], _stage, detail=_detail))
+        except Exception as exc:  # noqa: BLE001 — see the comment above: never fail the request
+            logger.warning("ingest_status.update_status failed for ingest_id=%s (decision=%s): %s",
+                           done["ingest_id"], req.decision, exc)
+
         return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
@@ -8077,11 +8102,15 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
 
     Two objects, mirroring doc-tools' document_parser.py convention (sibling metadata +
     manifest, read via the Grep tool against the sibling repo this session): the original
-    bytes under the uploaded filename, and `manifest.json` carrying
-    `metadata.content_kind` (the declared-kind channel ADR-0021's precedence reads) plus
-    the full provenance block, riding BESIDE the bytes rather than embedded inside them —
-    same "six fields ride beside" shape this repo already uses elsewhere (git log
-    ab9b2a4e).
+    bytes under the uploaded filename, and `manifest.json`, now IngestRequest-shaped
+    (`object_ref`, `content_kind`, `domain_type`, `provenance`, `initiator`) with
+    `metadata.content_kind` present ONLY when the caller declared a registered content kind
+    (ADR-0021's precedence rule 1 / ADR-0041 §4) — never the route's own `kind` (file FORMAT,
+    pdf|cad), which rides separately as `media_kind`. Writing the file format into
+    `metadata.content_kind` was the prior defect: every user drop would HALT downstream as
+    ContentKindUnregistered("pdf"). The provenance block rides BESIDE the bytes rather than
+    embedded inside them — same "six fields ride beside" shape this repo already uses
+    elsewhere (git log ab9b2a4e).
     """
     s3 = _build_s3_client()
     safe_name = os.path.basename(filename) or "upload"
@@ -8099,6 +8128,7 @@ async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
     on_behalf_of: str = Form(...),
+    content_kind: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.
@@ -8113,10 +8143,24 @@ async def ingest_document(
     the same logical document (ADR-0041 §6's R3, `(issuer, document_number, revision)`) —
     that is a classifier-time concern, downstream of this seam, and is NOT implemented
     here.
+
+    FORMAT IS NOT KIND. `kind` (pdf|cad) is the FILE FORMAT — the `ingress-user/{kind}/`
+    path segment and the projection's `kind` column — never a registered content kind.
+    `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
+    kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
+    lives in doc-tools; the driver resolves and HALTs on an unregistered value — ca's
+    `resolve_content_kind`), it only refuses a value that is blank-after-strip or malformed.
+    Writing a bare file format into `manifest.metadata.content_kind` (the old behaviour) made
+    every user drop HALT as ContentKindUnregistered("pdf") — ADR-0021 rule 1 / ADR-0041 §4
+    reserve that key for a REGISTERED kind. Leaving `metadata.content_kind` absent when
+    undeclared is deliberate: absence is rule 1 not firing, and ADR-0021's 2026-09-30
+    amendment disables rule 2 under `ingress-user/` (that path segment is a format), so an
+    undeclared drop HALTs at the driver -- stage `failed` with a detail -- rather than being
+    resolved from a fabricated value.
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import ingest_status, provenance
+    from . import ingest_status, promotion, provenance
 
     if kind not in ingest_status.KINDS:
         raise HTTPException(
@@ -8128,6 +8172,19 @@ async def ingest_document(
             status_code=403,
             detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
         )
+    declared_content_kind = content_kind
+    if declared_content_kind is not None:
+        declared_content_kind = declared_content_kind.strip()
+        if not declared_content_kind:
+            raise HTTPException(
+                status_code=422,
+                detail="content_kind must not be blank (omit the field to mean 'not declared')",
+            )
+        if len(declared_content_kind) > 128 or "/" in declared_content_kind:
+            raise HTTPException(
+                status_code=422,
+                detail="content_kind must be <=128 chars and must not contain '/'",
+            )
 
     # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
     # limit in values-sandbox), so one authenticated drop could take the BFF down for every
@@ -8150,6 +8207,9 @@ async def ingest_document(
         _chunks.append(_chunk)
     body = b"".join(_chunks)
     sha256 = hashlib.sha256(body).hexdigest()
+    # THE SAME DERIVATION `document_promotion` requires (promotion.INGEST_ID_RE): minting the
+    # id any other way would refuse every seam-minted document's later promotion.
+    ingest_id = promotion.ingest_id_for(body)
 
     existing = await run_in_threadpool(ingest_status.find_primary_by_sha, sha256)
     if existing is not None:
@@ -8165,31 +8225,48 @@ async def ingest_document(
             )
         )
         return {
-            "id": dup["id"],
-            "status": dup["status"],
+            "ingest_id": dup["id"],
+            "stage": existing["status"],
             "detail": dup["detail"],
-            "duplicate_of": dup["duplicate_of"],
+            "duplicate": {"of_ingest_id": existing["id"], "message": dup["detail"]},
         }
 
     object_prefix = f"ingress-user/{kind}/{sha256}/"
-    now_ms = int(time.time() * 1000)
+    safe_name = os.path.basename(file.filename or "upload") or "upload"
+    # ISO-8601 UTC string — the shape `iagent_mesh.provenance.ProvenanceBlock.ingested_at: str`
+    # requires. `provenance.py`'s own validator only checks truthiness (it accepts an int, see
+    # test_provenance_block.py's `_blk(ingested_at=1)`), so nothing here enforces the format —
+    # this is written to match the SDK's contract, not because this repo's copy demands it.
+    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     provenance_block = provenance.make_provenance(
         authoritative_source=_AUTHORITATIVE_SOURCE_UNCONFIRMED,
         obtained_via=provenance.USER_DROP,
         as_of=provenance.AS_OF_UNKNOWN,
-        ingested_at=now_ms,
-        ingest_run=f"user-drop:{sha256}",
+        ingested_at=ingested_at,
+        ingest_run=f"user-drop:{ingest_id}",
         standing="supervised",
     )
     manifest = {
+        "ingest_id": ingest_id,
+        "object_ref": object_prefix + safe_name,
+        "content_kind": declared_content_kind,
+        "domain_type": None,
+        "provenance": provenance_block,
+        # kind="person" is correct: the route above refuses any on_behalf_of other than the
+        # caller's own authz_id, so this is never a delegate or service identity.
+        "initiator": {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None},
+        "media_kind": kind,
         "sha256": sha256,
         "filename": file.filename,
         "submitted_by": current_user.authz_id,
         "on_behalf_of": on_behalf_of,
-        "ingested_at": now_ms,
-        "metadata": {"content_kind": kind},
-        "provenance": provenance_block,
+        "ingested_at": ingested_at,
     }
+    if declared_content_kind is not None:
+        # Present ONLY when declared — absence is rule 1 not firing (see the route docstring);
+        # ADR-0021-amendment says rule 2 must not fire under `ingress-user/`, so an undeclared
+        # drop HALTs at the driver rather than guessing a kind here.
+        manifest["metadata"] = {"content_kind": declared_content_kind}
     await run_in_threadpool(
         lambda: _write_ingest_object(
             object_prefix=object_prefix, filename=file.filename or "upload",
@@ -8198,12 +8275,15 @@ async def ingest_document(
     )
     row = await run_in_threadpool(
         lambda: ingest_status.record_received(
-            sha256=sha256, kind=kind, object_prefix=object_prefix,
+            ingest_id=ingest_id, sha256=sha256, kind=kind, object_prefix=object_prefix,
             submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
             source=file.filename,
         )
     )
-    return {"id": row["id"], "status": row["status"], "object_prefix": object_prefix}
+    return {
+        "ingest_id": row["id"], "stage": row["status"], "detail": None,
+        "object_prefix": object_prefix, "duplicate": None,
+    }
 
 
 @app.get("/ingest/{ingest_id}/status")
@@ -8214,6 +8294,11 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
     404, indistinguishable from "no such ingest" — same discipline as the human-task
     resolution lookup (human_tasks.get_task_resolution).
+
+    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
+    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
+    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
+    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -8224,7 +8309,33 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     )
     if row is None:
         raise HTTPException(status_code=404, detail="ingest not found")
-    return row
+
+    stage = row["status"]
+    duplicate = None
+    if row.get("duplicate_of"):
+        # This row IS a duplicate-arrival row (status == ingest_status.DUPLICATE, which is not
+        # one of ca's six INGEST_STAGES) — `stage` reports the ORIGINAL's current stage instead.
+        original = await run_in_threadpool(
+            lambda: ingest_status.get_status_for(row["duplicate_of"], caller_id=current_user.authz_id)
+        )
+        # EXISTENCE-ORACLE: if this caller cannot see the original through the SAME caller
+        # scoping get_status_for already applies (e.g. a duplicate row this caller owns pointing
+        # at an original neither submitted_by nor on_behalf_of makes visible to them), `stage`
+        # is None — not the tempting "received" default, which would FABRICATE a fact about a
+        # row this caller is not scoped to see.
+        stage = original["status"] if original is not None else None
+        duplicate = {"of_ingest_id": row["duplicate_of"], "message": row.get("detail")}
+
+    return {
+        "ingest_id": row["id"],
+        "stage": stage,
+        "detail": row.get("detail"),
+        "duplicate": duplicate,
+        "kind": row.get("kind"),
+        "sha256": row.get("sha256"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════

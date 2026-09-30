@@ -22,7 +22,7 @@ import hashlib
 
 import pytest
 
-from src.iagent import decision_record, decision_record_writer, human_tasks, promotion
+from src.iagent import decision_record, decision_record_writer, human_tasks, ingest_status, promotion
 
 INGEST_ID = "sha256:" + "ab" * 32
 PAYLOAD = {
@@ -283,6 +283,68 @@ def test_ROUTE_a_record_write_failure_leaves_the_task_PENDING(route):
     r = _post(c, "rejected", comment="superseded")
     assert r.status_code == 503, r.text
     assert store.log == [] and calls["resolved"] == []
+
+
+# ── AFTER mark_task_resolved: the ingest_status_projection is updated, best-effort ───────────
+
+def test_ROUTE_promotion_updates_the_ingest_status_projection(route):
+    c, calls, mp = route
+    mp.setattr(gateway, "_promotion_store", lambda: Recorder())
+    updates: list = []
+    mp.setattr(ingest_status, "update_status",
+              lambda ingest_id, stage, *, detail=None: updates.append((ingest_id, stage, detail)))
+    r = _post(c, "promoted")
+    assert r.status_code == 200, r.text
+    record_id = calls["records"][0]["record_id"]
+    assert len(updates) == 1
+    got_id, got_stage, got_detail = updates[0]
+    assert got_id == INGEST_ID and got_stage == "promoted"
+    assert got_detail.startswith("record "), got_detail
+    assert record_id in got_detail
+
+
+def test_ROUTE_rejection_updates_the_ingest_status_projection_with_the_comment(route):
+    c, calls, mp = route
+    mp.setattr(gateway, "_promotion_store", lambda: Recorder())
+    updates: list = []
+    mp.setattr(ingest_status, "update_status",
+              lambda ingest_id, stage, *, detail=None: updates.append((ingest_id, stage, detail)))
+    r = _post(c, "rejected", comment="superseded revision")
+    assert r.status_code == 200, r.text
+    assert updates == [(INGEST_ID, "rejected", "superseded revision")]
+
+
+@pytest.mark.parametrize("comment", ["", "   "])
+def test_ROUTE_a_rejection_WITHOUT_a_reason_is_refused_before_the_projection(route, comment):
+    """update_status refuses `rejected` without a detail, and the act branch passes the comment
+    as that detail. What makes that safe is the kind declaration refusing a bare rejection
+    first (422), so the projection is never asked. If the declaration ever stops requiring a
+    reason, this goes red instead of a row silently stranding at awaiting_disposition."""
+    c, calls, mp = route
+    mp.setattr(gateway, "_promotion_store", lambda: Recorder())
+    updates: list = []
+    mp.setattr(ingest_status, "update_status",
+              lambda ingest_id, stage, *, detail=None: updates.append((ingest_id, stage, detail)))
+    r = _post(c, "rejected", comment=comment)
+    assert r.status_code == 422, r.text
+    assert "REQUIRES a reason" in r.text
+    assert updates == [] and calls["resolved"] == []
+
+
+def test_ROUTE_a_failed_projection_update_is_LOGGED_and_the_request_still_succeeds(route):
+    """The decision record is the grant (ADR-0041 §5); the projection is a read model. A
+    failure updating it must not fail a request whose decision already stands."""
+    c, calls, mp = route
+    mp.setattr(gateway, "_promotion_store", lambda: Recorder())
+
+    def _boom(ingest_id, stage, *, detail=None):
+        raise RuntimeError("projector db down")
+
+    mp.setattr(ingest_status, "update_status", _boom)
+    r = _post(c, "promoted")
+    assert r.status_code == 200, r.text
+    assert r.json()["decision"] == "promoted"
+    assert calls["resolved"] != [], "mark_task_resolved must still have run"
 
 
 def test_ROUTE_can_act_no_is_403_before_any_write(route):

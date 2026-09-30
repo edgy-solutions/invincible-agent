@@ -52,9 +52,11 @@ CREATE TABLE IF NOT EXISTS ingest_status_projection (
     -- construction — a filename, never document content.
     source TEXT,
 
-    -- Lifecycle (ADR-0041 §8): 'received' -> 'classified' -> 'extracting' -> 'extracted' ->
-    -- 'review' -> 'promoted' | 'rejected'. Plus the out-of-band terminal 'duplicate' for a
-    -- repeat arrival (see header note). NO DEFAULT (the writer knows the value).
+    -- Lifecycle (ADR-0041 §8), mirroring `iagent_mesh.ingest.INGEST_STAGES` (ca b68926a):
+    -- 'received' -> 'extracting' -> 'awaiting_disposition' -> 'promoted' | 'rejected' |
+    -- 'failed'. Plus the out-of-band terminal 'duplicate' for a repeat arrival (see header
+    -- note). The column keeps the name `status` (Electric subscribers already read it); only
+    -- the vocabulary changed. NO DEFAULT (the writer knows the value).
     status TEXT NOT NULL,
 
     -- 'extracted n/m' — populated once extraction starts; NULL before then and on a duplicate

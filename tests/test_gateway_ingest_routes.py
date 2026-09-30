@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
+from src.iagent import promotion  # noqa: E402
 
 
 @pytest.fixture
@@ -100,7 +101,7 @@ def test_ingest_dedupe_hit_returns_the_message_and_never_writes(client, fake_s3,
     message and RECORDS the arrival as its own row -- but never touches the object store and
     never calls record_received (that would be a second primary row for the same sha)."""
     original = {"id": "deadbeef", "sha256": "deadbeef", "object_prefix": "ingress-user/pdf/deadbeef/",
-                "source": "first-drop.pdf", "created_at": 1767225600000}
+                "source": "first-drop.pdf", "created_at": 1767225600000, "status": "received"}
     dup_row = {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
                "detail": "already processed on 2026-01-01 from first-drop.pdf"}
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: original)
@@ -112,9 +113,12 @@ def test_ingest_dedupe_hit_returns_the_message_and_never_writes(client, fake_s3,
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "duplicate"
+    assert body["ingest_id"] == "new-uuid"
+    # stage is the ORIGINAL row's current status, not the duplicate row's own "duplicate" status
+    assert body["stage"] == "received"
     assert body["detail"] == "already processed on 2026-01-01 from first-drop.pdf"
-    assert body["duplicate_of"] == "deadbeef"
+    assert body["duplicate"] == {"of_ingest_id": "deadbeef",
+                                 "message": "already processed on 2026-01-01 from first-drop.pdf"}
     assert fake_s3 == [], "a duplicate arrival must never write the object store"
     assert received_called["v"] is False, "a duplicate arrival must never call record_received"
 
@@ -124,14 +128,22 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_
     received = {}
     def _record_received(**kw):
         received.update(kw)
-        return {"id": kw["sha256"], "status": "received"}
+        return {"id": kw["ingest_id"], "status": "received"}
     monkeypatch.setattr(ist, "record_received", _record_received)
 
-    r = client.post("/ingest", files={"file": ("notice.pdf", b"brand new bytes", "application/pdf")},
+    body_bytes = b"brand new bytes"
+    r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
     assert r.status_code == 200
     body = r.json()
-    assert body["status"] == "received"
+    expected_ingest_id = promotion.ingest_id_for(body_bytes)
+    # THE SAME DERIVATION document_promotion requires (promotion.ingest_id_for), so a
+    # seam-minted document is never refused promotion for a spelling mismatch.
+    assert body["ingest_id"] == expected_ingest_id
+    assert promotion.INGEST_ID_RE.match(body["ingest_id"])
+    assert body["stage"] == "received"
+    assert body["detail"] is None
+    assert body["duplicate"] is None
     assert body["object_prefix"].startswith("ingress-user/pdf/")
     assert body["object_prefix"].endswith("/")
     # two objects written: the bytes + manifest.json (manifest + provenance block)
@@ -141,11 +153,60 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_
     manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
     import json as _json
     manifest = _json.loads(manifest_call["Body"])
-    assert manifest["metadata"]["content_kind"] == "pdf"
+    # FORMAT IS NOT KIND: undeclared content_kind -> manifest.content_kind is None and no
+    # metadata.content_kind at all (never the route's own file-format `kind`).
+    assert manifest["content_kind"] is None
+    assert "metadata" not in manifest
+    assert manifest["media_kind"] == "pdf"
+    assert manifest["ingest_id"] == expected_ingest_id
+    assert manifest["initiator"] == {"subject": "alice@example.com", "kind": "person",
+                                     "on_behalf_of": None}
     assert manifest["provenance"]["obtained_via"] == "user-drop"
     assert manifest["provenance"]["authoritative_source"], "authoritative_source must be non-empty"
     assert received["kind"] == "pdf"
+    assert received["ingest_id"] == expected_ingest_id
     assert received["submitted_by"] == "alice@example.com"
+
+
+def test_ingest_declared_content_kind_lands_in_manifest_and_metadata(client, fake_s3, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"declared kind bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "work-instruction"})
+    assert r.status_code == 200, r.text
+    manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
+    import json as _json
+    manifest = _json.loads(manifest_call["Body"])
+    assert manifest["content_kind"] == "work-instruction"
+    assert manifest["metadata"]["content_kind"] == "work-instruction"
+    assert manifest["media_kind"] == "pdf"
+
+
+@pytest.mark.parametrize("bad_content_kind", ["a/b", "   "])
+def test_ingest_refuses_a_malformed_content_kind_before_any_write(
+        client, fake_s3, monkeypatch, bad_content_kind):
+    looked = {"n": 0}
+    def _find(sha):
+        looked["n"] += 1
+        return None
+    monkeypatch.setattr(ist, "find_primary_by_sha", _find)
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"stub", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": bad_content_kind})
+    assert r.status_code == 422, r.text
+    assert looked["n"] == 0 and fake_s3 == [], "a malformed content_kind must be refused before any lookup or write"
+
+
+def test_ingest_refuses_a_content_kind_over_128_chars(client, fake_s3, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"stub", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "x" * 129})
+    assert r.status_code == 422, r.text
+    assert fake_s3 == []
 
 
 def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client, fake_s3, monkeypatch):
@@ -177,11 +238,51 @@ def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_status_owner_gets_the_row(client, monkeypatch):
-    monkeypatch.setattr(ist, "get_status_for",
-                        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "review"})
+    monkeypatch.setattr(
+        ist, "get_status_for",
+        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "awaiting_disposition",
+                                        "kind": "pdf", "sha256": "deadbeef",
+                                        "created_at": 1, "updated_at": 2})
     r = client.get("/ingest/deadbeef/status")
     assert r.status_code == 200
-    assert r.json()["status"] == "review"
+    body = r.json()
+    assert body["ingest_id"] == "deadbeef"
+    assert body["stage"] == "awaiting_disposition"
+    assert body["duplicate"] is None
+    assert "id" not in body and "status" not in body, "one name per field: id/status are dropped"
+
+
+def test_status_of_a_duplicate_row_reports_the_ORIGINALS_current_stage(client, monkeypatch):
+    rows = {
+        "new-uuid": {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
+                    "detail": "already processed on 2026-01-01 from first-drop.pdf",
+                    "kind": "pdf", "sha256": "deadbeef", "created_at": 1, "updated_at": 1},
+        "deadbeef": {"id": "deadbeef", "status": "promoted", "kind": "pdf", "sha256": "deadbeef",
+                    "created_at": 1, "updated_at": 2},
+    }
+    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: rows.get(ingest_id))
+    r = client.get("/ingest/new-uuid/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ingest_id"] == "new-uuid"
+    assert body["stage"] == "promoted", "the ORIGINAL's current stage, not the row's own 'duplicate'"
+    assert body["duplicate"] == {"of_ingest_id": "deadbeef",
+                                 "message": "already processed on 2026-01-01 from first-drop.pdf"}
+
+
+def test_status_of_a_duplicate_row_whose_original_is_not_visible_reports_None_not_received(
+        client, monkeypatch):
+    """EXISTENCE-ORACLE: a stage of None, never the tempting 'received' default, when the
+    caller-scoped lookup of the original comes back empty."""
+    rows = {
+        "new-uuid": {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
+                    "detail": "already processed on 2026-01-01 from first-drop.pdf",
+                    "kind": "pdf", "sha256": "deadbeef", "created_at": 1, "updated_at": 1},
+    }
+    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: rows.get(ingest_id))
+    r = client.get("/ingest/new-uuid/status")
+    assert r.status_code == 200
+    assert r.json()["stage"] is None
 
 
 def test_status_non_owner_gets_404_not_another_users_row(client, monkeypatch):
