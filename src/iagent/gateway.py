@@ -143,6 +143,17 @@ async def lifespan(application: FastAPI):
         logger.info("ingestion seam dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("ingest_status migration failed (ingestion seam dormant): %s", exc)
+    # ADR-0041 Open §1 (ruled 2026-09-30): the document_promotion decision record lives in the
+    # same Postgres. Dormant on an unset DSN; `promotion.act` then refuses 503 naming the ledger.
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import promotion_stores
+        await run_in_threadpool(promotion_stores.apply_migration)
+        logger.info("document_decision_record migration applied")
+    except promotion_stores.DecisionLedgerConfigError as exc:
+        logger.info("promotion ledger dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("document_decision_record migration failed (ledger dormant): %s", exc)
     # ── THE BFF REGISTERS ITS ONE ORCHESTRATION INTENT ──────────────────────
     #
     # RULED 2026-08-28: the owner of the behaviour is the only honest source of
@@ -2785,11 +2796,22 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
-def _promotion_store():
-    """Where a promotion fact lands and what a rejection sweeps. NONE is configured: ADR-0041
-    Open §1 (graph triples or relational) is unruled, and `promotion.act` refuses 503 on None,
-    so a document_promotion task stays pending rather than resolving into nothing."""
-    return None
+def _promotion_stores():
+    """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
+
+    The ledger (Postgres, beside human_task_projection) and the objects (the seam's bucket) are
+    built here. The GRAPH and the INDEXES are None: no concrete graph or vectors writer exists
+    in this repo or at the fleet's SDK pin, so `promotion.act` refuses 503 naming them, before
+    anything is written. Both verbs need the graph, so the act is still 503 in production until
+    a graph writer is wired here."""
+    from . import promotion, promotion_stores
+
+    return promotion.PromotionStores(
+        ledger=promotion_stores.PgDecisionLedger() if promotion_stores.configured() else None,
+        graph=None,
+        indexes=None,
+        objects=promotion_stores.S3Quarantine(_build_s3_client, _ARTIFACT_BUCKET),
+    )
 
 
 @app.post("/human_tasks/{task_id}/act")
@@ -2890,7 +2912,7 @@ async def act_on_human_task(
     # can_act itself. Every refusal carries its own status; none resolves the row.
     if match.get("kind") == "document_promotion":
         from . import ingest_status, promotion
-        from .decision_record_writer import DECISION_RECORD_ERA, graph_writer
+        from .decision_record_writer import DECISION_RECORD_ERA
 
         try:
             from .trust_table import load_trust_table
@@ -2901,8 +2923,7 @@ async def act_on_human_task(
             done = await run_in_threadpool(lambda: promotion.act(
                 match.get("payload"), decision=req.decision, acted_by=current_user.authz_id,
                 audience=audience, comment=req.comment,
-                can_act=human_tasks.check_can_act, record_writer=graph_writer,
-                store=_promotion_store(),
+                can_act=human_tasks.check_can_act, stores=_promotion_stores(),
                 governing={
                     "ruleset_ref": promotion.ruleset_ref(
                         human_tasks.declaration_for(promotion.KIND)),
@@ -2926,8 +2947,8 @@ async def act_on_human_task(
         # stands (mark_task_resolved above already succeeded), and re-resolving or unresolving
         # the task over a projection write would make a read model's availability gate a
         # decision that already happened. (`promotion.act` refuses 503 today because
-        # `_promotion_store()` returns None — this path is UNREACHABLE in production until
-        # ADR-0041 Open §1 is ruled; logged so the day it becomes reachable, a failure here is
+        # `_promotion_stores()` has no graph writer — this path is UNREACHABLE in production
+        # until one is wired; logged so the day it becomes reachable, a failure here is
         # visible rather than silently swallowed forever.)
         _stage = (ingest_status.PROMOTED if req.decision == promotion.PROMOTED
                  else ingest_status.REJECTED)

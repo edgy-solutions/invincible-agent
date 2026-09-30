@@ -3,15 +3,16 @@
 ADR-0041 §5, §6 and §8; decision records per ADR-0034; the single decider per ADR-0027.
 
 WHAT A PROMOTION IS. A decision record plus a promotion fact — `promoted_by` (`human:<id>`),
-`promoted_at`, `promotion_ref` → the record's id — keyed on the document's `ingest_id`. The
-provenance block is NEVER touched: `standing` is frozen at write, and flipping it would let a
+`promoted_at`, `promotion_ref` → the record's id — written as triples on the document's ingest
+artifact node, whose subject is the `ingest_id`. The provenance block is NEVER touched: `standing` is frozen at write, and flipping it would let a
 later promotion upgrade evidence gathered under weaker standing (ADR-0034's regime-mixing). So
 nothing in this module accepts a provenance block, and the fact it builds has no key a store
 could mistake for one.
 
-WHAT A REJECTION IS. A decision record plus a keyed sweep: everything carrying the document's
-`ingest_id` is deleted by the store. The record is what answers "why is this PCN not in the
-system?" without a re-run.
+WHAT A REJECTION IS. A decision record plus a keyed sweep. Everything carrying the document's
+`ingest_id` is deleted from the graph and from the indexes, and the document's S3 objects are
+MOVED to `rejected/<ingest_id>/`, not deleted. The record stays: it is what answers "why is
+this PCN not in the system?" without a re-run.
 
 THE PLANE. Both verbs are the species `document_promotion`, resolved through
 `/human_tasks/{id}/act` like every other task: `can_act` on the task's audience, the verb
@@ -19,26 +20,29 @@ checked against the species' declaration, `acted_by` = the caller. `act` re-asks
 itself, because the route's check is one caller's discipline and this function is the effect.
 Any doubt is a refusal: an empty identity, a False, or a raise from the check.
 
-ORDER, AND WHICH PARTIAL STATE IS SAFE. The record is written first, and the fact or sweep only
-after the writer says `ok`. If the second step then fails, a record says "promoted" while the
-data still reads unvouched. That is the safe residue: the answer stays labelled. The reverse
+ORDER, AND WHICH PARTIAL STATE IS SAFE. Every store the verb needs is checked present BEFORE
+anything is written, and a promotion checks that the ingest artifact node exists, so a refusal
+that can be known up front leaves nothing behind. Then the record is written, and the fact or
+sweep only after the ledger says `ok`. If an effect then fails, a record says "promoted" while
+the data still reads unvouched. That is the safe residue: the answer stays labelled. The reverse
 order would leave truth granted with no evidence, which is the one state ADR-0041 §5 forbids.
-The decision record writer fails SOFT for extraction records (an audit outage must not become a
-review outage). Here the record IS the grant, so a soft failure refuses the act, and the route
-leaves the task pending.
+The act refuses 503 and the task stays pending.
 
-ONE DECISION PER DOCUMENT. `record_id` is derived from `request_key`, which is the `ingest_id`.
-engine-o refuses a different record under an existing id, so a promote after a reject, or a
-second promote, comes back `immutable_conflict` and is refused as already decided.
+A RETRY FINISHES THE JOB. `record_id` is derived from `request_key`, which is the `ingest_id`,
+and the ledger refuses a second record under it (`immutable_conflict`, returning the stored
+decision, actor and time). A conflict with the SAME decision re-applies the effect with the
+STORED actor and time, so a retry after a failed effect completes it rather than stranding the
+task. Every effect is keyed, so re-applying it is idempotent. A conflict with a DIFFERENT
+decision is refused 409: one document takes one decision.
 
-WHAT IS NOT DECIDED HERE, and is refused rather than defaulted:
-  * WHERE THE PROMOTION FACT LIVES (ADR-0041 Open §1: graph triples or relational). The store
-    is a Protocol. With none configured, the verb refuses 503, so the task stays pending
-    rather than resolving into a promotion nothing recorded.
-  * HOW AN ASSERTION CARRIES `ingest_id`. The provenance block has `ingest_run` and an
-    optional `derived_from`, but no `ingest_id`, in both this repo's copy and the SDK's. The
-    sweep is keyed on `ingest_id` and HOW the store finds what carries it is the store's. The
-    verbs are indifferent to the answer; the answer is the architect's.
+WHERE EACH PART LIVES (ADR-0041 Open §1, ruled 2026-09-30):
+  * the decision record: the approval plane's Postgres, beside `human_task_projection`
+    (`promotion_stores.PgDecisionLedger`);
+  * the fact: triples on the ingest artifact's graph node, through the graph writer. Lane 1's
+    `/ingest` seam creates that node, keyed by `ingest_id` and carrying the ProvenanceBlock;
+  * what carries a document: the block's own `ingest_id` field. The sweep keys on it.
+A store is a Protocol here. Whichever the verb needs and is not configured refuses 503 BY NAME,
+before anything is written.
 
 `ingest_id` is spelled `sha256:<64 lowercase hex>` over the document's bytes (7f's definition,
 doc-tools 2026-09-30). This module refuses any other spelling, because a sweep keyed on a
@@ -76,12 +80,45 @@ class PromotionRefused(RuntimeError):
         self.status = status
 
 
-class PromotionStore(Protocol):
-    """Where the fact lands and what the sweep deletes. Undecided by ADR-0041 Open §1."""
+class DecisionLedger(Protocol):
+    """The decision record's home. `append` answers `{"ok": True}`, or `{"ok": False,
+    "reason": ...}`, and on `immutable_conflict` also `"existing": {"decision", "acted_by",
+    "acted_at"}`."""
 
-    def append_promotion(self, fact: dict) -> None: ...
+    def append(self, record: dict, *, acted_by: str, acted_at: int) -> dict: ...
 
-    def sweep(self, ingest_id: str) -> int: ...
+
+class IngestGraph(Protocol):
+    """The graph, through the graph writer. `write_fact` adds triples on the ingest artifact
+    node and nothing else; `delete_carrying` removes everything whose block carries the id."""
+
+    def node_exists(self, ingest_id: str) -> bool: ...
+
+    def write_fact(self, ingest_id: str, fact: dict) -> None: ...
+
+    def delete_carrying(self, ingest_id: str) -> int: ...
+
+
+class IngestIndexes(Protocol):
+    def delete_carrying(self, ingest_id: str) -> int: ...
+
+
+class IngestObjects(Protocol):
+    """Moves the document's objects to `rejected/<ingest_id>/`; returns the keys moved to."""
+
+    def quarantine(self, ingest_id: str, object_ref: str) -> list: ...
+
+
+@dataclass(frozen=True)
+class PromotionStores:
+    ledger: Optional[DecisionLedger] = None
+    graph: Optional[IngestGraph] = None
+    indexes: Optional[IngestIndexes] = None
+    objects: Optional[IngestObjects] = None
+
+
+#: What each verb needs. A rejection touches every store; a promotion writes no index or object.
+REQUIRES = {PROMOTED: ("ledger", "graph"), REJECTED: ("ledger", "graph", "indexes", "objects")}
 
 
 @dataclass(frozen=True)
@@ -118,8 +155,25 @@ def subject_from_payload(payload: Any) -> PromotionSubject:
             "promotion_payload_invalid",
             f"ingest_id {payload['ingest_id']!r} is not sha256:<64 lowercase hex>; a sweep "
             f"keyed on a mis-spelled id deletes nothing and reports success", status=422)
+    if object_prefix_for(payload["ingest_id"], payload["object_ref"]) is None:
+        raise PromotionRefused(
+            "promotion_payload_invalid",
+            f"object_ref {payload['object_ref']!r} is not `ingress-user/<kind>/<hex of the "
+            f"ingest_id>/<name>`; a rejection moves that directory, so it must be the "
+            f"document's own", status=422)
     return PromotionSubject(**{f: payload[f] for f in PAYLOAD_FIELDS},
                             notice_id=str(payload.get("notice_id") or ""))
+
+
+def object_prefix_for(ingest_id: str, object_ref: str) -> Optional[str]:
+    """The directory the `/ingest` seam wrote the document under, or None when `object_ref`
+    is not one of the seam's own keys for THIS document. Everything under it is the
+    document's, which is what makes moving it whole safe."""
+    parts = object_ref.split("/")
+    if (len(parts) == 4 and parts[0] == "ingress-user" and parts[1] and parts[3]
+            and parts[2] == ingest_id.split(":", 1)[-1]):
+        return "/".join(parts[:3]) + "/"
+    return None
 
 
 def ruleset_ref(declaration: dict) -> str:
@@ -152,11 +206,10 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
     )
 
 
-def promotion_fact(subject: PromotionSubject, *, acted_by: str, record_id: str,
-                   promoted_at: int) -> dict:
-    """The NEW fact. Deliberately no provenance key: the block it sits beside is unchanged."""
+def promotion_fact(*, acted_by: str, record_id: str, promoted_at: int) -> dict:
+    """The NEW triples' predicates and objects; the subject is the node's `ingest_id`. No key
+    here is a ProvenanceBlock field, so no store can merge it over the block."""
     return {
-        "ingest_id": subject.ingest_id,
         "promoted_by": f"human:{acted_by}",
         "promoted_at": promoted_at,
         "promotion_ref": record_id,
@@ -172,10 +225,36 @@ def _may_act(can_act: Callable[[str, str], bool], audience: str, acted_by: str) 
         return False
 
 
+def _missing(stores: Optional[PromotionStores], decision: str) -> list:
+    return [n for n in REQUIRES[decision] if getattr(stores, n, None) is None]
+
+
+def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
+           acted_by: str, acted_at: int, record_id: str) -> dict:
+    """The effect. Every step is keyed, so running it again after a partial failure converges."""
+    step = "graph"
+    try:
+        if decision == PROMOTED:
+            fact = promotion_fact(acted_by=acted_by, record_id=record_id, promoted_at=acted_at)
+            stores.graph.write_fact(subject.ingest_id, dict(fact))
+            return {"fact": fact}
+        swept = {"graph": stores.graph.delete_carrying(subject.ingest_id)}
+        step = "indexes"
+        swept["indexes"] = stores.indexes.delete_carrying(subject.ingest_id)
+        step = "objects"
+        swept["objects"] = stores.objects.quarantine(subject.ingest_id, subject.object_ref)
+        return {"swept": swept}
+    except Exception as exc:  # noqa: BLE001 — the record stands; the act is refused, retryable
+        raise PromotionRefused(
+            "promotion_effect_incomplete",
+            f"the decision record for {subject.ingest_id} is written but the {step} step of "
+            f"{decision!r} failed ({type(exc).__name__}: {exc}); the task stays pending and "
+            f"acting again completes it", status=503) from exc
+
+
 def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: str = "",
         can_act: Callable[[str, str], bool],
-        record_writer: Callable[[dict], Any],
-        store: Optional[PromotionStore],
+        stores: Optional[PromotionStores],
         governing: dict, era: str, now_ms: int) -> dict:
     """Promote or reject one document. Returns what happened; raises `PromotionRefused` for
     everything that did not."""
@@ -186,34 +265,54 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         raise PromotionRefused("not_authorized_to_act",
                                "can_act on the task's audience did not answer yes", status=403)
     subject = subject_from_payload(payload)
-    if store is None:
+    missing = _missing(stores, decision)
+    if missing:
         raise PromotionRefused(
             "promotion_store_unconfigured",
-            "no promotion store is configured (ADR-0041 Open §1 is unruled); the task stays "
-            "pending rather than resolving into a decision nothing recorded", status=503)
+            f"{decision!r} needs {list(REQUIRES[decision])} and {missing} is not configured; "
+            f"the task stays pending rather than resolving into a decision nothing carried "
+            f"out", status=503)
+    if decision == PROMOTED:
+        try:
+            present = stores.graph.node_exists(subject.ingest_id) is True
+        except Exception as exc:  # noqa: BLE001 — unknown is not present
+            raise PromotionRefused(
+                "promotion_store_unavailable",
+                f"could not ask the graph whether {subject.ingest_id} has an ingest node "
+                f"({type(exc).__name__}); nothing was written", status=503) from exc
+        if not present:
+            raise PromotionRefused(
+                "ingest_node_absent",
+                f"no ingest artifact node exists for {subject.ingest_id}; the fact has nothing "
+                f"to be a fact about. Nothing was written", status=409)
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
                           comment=comment, governing=governing, era=era)
-    written = record_writer(record)
+    try:
+        written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
+    except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok
+        written = {"ok": False, "reason": type(exc).__name__}
+    effect_by, effect_at, replayed = acted_by, now_ms, False
     if not (isinstance(written, dict) and written.get("ok") is True):
         reason = written.get("reason") if isinstance(written, dict) else None
-        if reason == "immutable_conflict":
+        if reason != "immutable_conflict":
+            raise PromotionRefused(
+                "decision_record_not_written",
+                f"the decision record was not written ({reason or written!r}); a promotion or "
+                f"rejection without its record is not performed", status=503)
+        existing = written.get("existing")
+        if not (isinstance(existing, dict) and existing.get("decision") == decision
+                and isinstance(existing.get("acted_by"), str) and existing["acted_by"]
+                and isinstance(existing.get("acted_at"), int)):
+            prior = existing.get("decision") if isinstance(existing, dict) else None
             raise PromotionRefused(
                 "promotion_already_decided",
-                f"a decision record already exists for {subject.ingest_id}; one document "
-                f"takes one decision", status=409)
-        raise PromotionRefused(
-            "decision_record_not_written",
-            f"the decision record was not written ({reason or written!r}); a promotion or "
-            f"rejection without its record is not performed", status=503)
+                f"{subject.ingest_id} was already decided ({prior!r}); one document takes one "
+                f"decision", status=409)
+        effect_by, effect_at, replayed = existing["acted_by"], existing["acted_at"], True
 
     out = {"decision": decision, "ingest_id": subject.ingest_id,
-           "record_id": record["record_id"]}
-    if decision == PROMOTED:
-        fact = promotion_fact(subject, acted_by=acted_by, record_id=record["record_id"],
-                              promoted_at=now_ms)
-        store.append_promotion(fact)
-        out["fact"] = fact
-    else:
-        out["swept"] = store.sweep(subject.ingest_id)
+           "record_id": record["record_id"], "replayed": replayed}
+    out.update(_apply(decision, subject, stores, acted_by=effect_by, acted_at=effect_at,
+                      record_id=record["record_id"]))
     return out
