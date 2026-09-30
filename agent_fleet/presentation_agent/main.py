@@ -283,6 +283,40 @@ def _wrapper_field(raw_data: Any, key: str) -> Any:
     return None
 
 
+# engine-docs' own KNOWLEDGE_DOCUMENT payload shape -- passed BESIDE the markdown, not
+# through it. See `_docs_explanation_passthrough` just below for why these live outside
+# `_render_document_deterministic`.
+_DOCS_PASSTHROUGH_KEYS = ("subject", "pages", "page_count", "abstained", "reason", "body")
+
+
+def _docs_explanation_passthrough(agent_response: Any) -> Dict[str, Any]:
+    """Carry engine-docs' own fields onto the component, BESIDE the markdown the composer
+    builds -- never through it.
+
+    THE SEAL THIS RESPECTS: `tests/routing/test_slot_disposition.py
+    ::test_the_fallback_renders_the_ask_rather_than_silence` AST-walks
+    `_render_document_deterministic` (the function whose dump contains "No content
+    available.") and treats every `agent_response.get(<literal>)` found INSIDE IT as a key the
+    MARKDOWN reads, then requires an ask card to carry each one so the fallback never renders
+    silence. These six keys do not feed the markdown -- with or without them the composed text
+    is byte-identical -- so they are not members of that population, and reading them inside
+    the composer would misstate what it reads. `tests/docs/test_the_doc_explanation_passes_its
+    _structure_through.py` pins the composer's read-set so the two stay separate.
+
+    THE DISCRIMINATOR mirrors cortex-ui's `knowledgeDocumentView.ts` (contract owner, commit
+    a425186) exactly: cortex draws structure when `pages` is a non-empty list, or when
+    `abstained` is literally `True`; anything else falls back to `markdown_content`. This is a
+    separation of what feeds the markdown from what rides beside it -- not a way around the
+    seal above.
+    """
+    if not isinstance(agent_response, dict):
+        return {}
+    pages = agent_response.get("pages")
+    if not (isinstance(pages, list) and pages) and agent_response.get("abstained") is not True:
+        return {}
+    return {k: agent_response[k] for k in _DOCS_PASSTHROUGH_KEYS if k in agent_response}
+
+
 def _render_document_deterministic(
     raw_data: Any,
     persona: str,
@@ -321,16 +355,16 @@ def _render_document_deterministic(
         parts.append("```json\n" + json.dumps(structured, indent=2) + "\n```")
     markdown_content = "\n\n".join(parts) if parts else "No content available."
 
-    return {
-        "components": [
-            {
-                "archetype": "KNOWLEDGE_DOCUMENT",
-                "source_persona": persona,
-                "subject_concept": subject_concept,
-                "markdown_content": markdown_content,
-            }
-        ]
+    component = {
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "source_persona": persona,
+        "subject_concept": subject_concept,
+        "markdown_content": markdown_content,
     }
+    if agent_response is not None:
+        component.update(_docs_explanation_passthrough(agent_response))
+
+    return {"components": [component]}
 
 
 def _degrade_edgeless_topology_to_document(
