@@ -1997,6 +1997,8 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.primary_selection import pick_primary
+# The R-076 reader, shared with the gateway so both paths agree on what a request is.
+from iagent_pure import acceptance_request
 from iagent_pure.slot_acceptance import (
     SLOT_SOURCE_FILLED,
     SLOT_SOURCE_PICKED,
@@ -2321,6 +2323,46 @@ def _log_subtask_access_denied_asset(
             },
         )
     )
+
+
+def _log_subtask_review_request_asset(
+    context,
+    *,
+    engine_response: Dict[str, Any],
+    sub_query: str,
+) -> bool:
+    """Materialize a `subtask_review_request` asset when the engine's answer asks for a human
+    review (R-076). Returns whether one was emitted.
+
+    THIS IS THE ORDINARY PATH'S ONLY CARRIER FOR THE REQUEST. Engine F renders a card from the
+    results and the block does not survive into it (measured 2026-09-19 and again 2026-09-29 on
+    fleet `ec055c49`: engine-safety's `/measure/draft_risk_assessment` answer for HAZ-1003
+    carries `review_request` in full; the rendered turn carries none of it). The gateway reads
+    this materialization after the run and opens the acceptance through the same body the
+    direct path uses (`gateway._open_acceptances_from_run`).
+
+    Emitted HERE, from the engine's own body and before the render, for the reason the direct
+    path's consumer sits before its render: downstream of Engine F there is nothing to find.
+    The block is read by `acceptance_request.review_request_of`, the gateway's own reader, so
+    what counts as a request cannot differ between the two paths.
+    """
+    rr = acceptance_request.review_request_of(engine_response)
+    if not rr:
+        return False
+    context.log_event(
+        AssetMaterialization(
+            asset_key=["subtask_review_request"],
+            metadata={
+                "review_request_json": MetadataValue.text(
+                    json.dumps(rr, sort_keys=True, default=str)
+                ),
+                "kind": MetadataValue.text(str(rr.get("kind") or "")),
+                "subject_ref": MetadataValue.text(str(rr.get("subject_ref") or "")),
+                "sub_query": MetadataValue.text(sub_query or ""),
+            },
+        )
+    )
+    return True
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
@@ -3279,6 +3321,19 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         context.log.warning(
             "Failed to log subtask_access_denied materialization "
             "(non-fatal): %s", ad_err,
+        )
+
+    # R-076: the engine asked for a human review — carry the request past the render, which
+    # drops it. NOT FATAL TO THE ANSWER, AND LOGGED AT ERROR, because a failure here means a
+    # drafted hazard whose accepting authority is never asked.
+    try:
+        _log_subtask_review_request_asset(
+            context, engine_response=data, sub_query=sub_query,
+        )
+    except Exception as rr_err:  # pragma: no cover — best-effort
+        context.log.error(
+            "Failed to log subtask_review_request materialization — the acceptance this "
+            "answer asked for will NOT be opened: %s", rr_err,
         )
 
     _inject_predicate_output_uri(data, predicate)

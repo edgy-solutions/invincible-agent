@@ -5876,7 +5876,12 @@ async def _generate_dagster_stream_inner(
                         detail={"step_key": "create_task_plan_dispatch"},
                     )
                     emitted_steps.add("retrieving_pre_started")
-                
+
+    # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
+    # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
+    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle):
+        yield _acc_err
+
     if is_success:
         # Composing was already marked started by generate_ui_payload's
         # RUNNING transition above; the actual fetch of the final
@@ -5951,6 +5956,165 @@ def _mark_answer_complete(bundle: dict, payload: Any) -> None:
     bundle["rendered_output"] = payload
     bundle["status"] = "complete"
     bundle["duration_ms"] = max(0, int(time.time() * 1000) - bundle["valid_as_of"])
+
+
+# ── THE `review_request` CONSUMER, ONE BODY FOR BOTH PATHS (R-076) ─────────────────────────
+#
+# Until 2026-09-29 this body lived inline in `_stream_direct_outcome`, and the direct path runs
+# ONLY for a turn that answers an ask with bound slots or a spoken answer
+# (`lineage_claim.pre_resolved_route_allowed`). "draft a risk assessment for HAZ-1003" names its
+# hazard, never asks, and so could never reach it: measured on fleet `ec055c49`, 34 turns in a
+# pod's life, zero on the direct path, zero `human_task_projection` rows of any risk kind — while
+# the engine's own `/measure/draft_risk_assessment` answer carried the block in full. A consumer
+# on one of two paths is a consumer the ordinary question never meets.
+#
+# ONE BODY, because two copies of a safety dispatch are two places for the idempotency key, the
+# `/send` and the failure record to drift apart — the drift this fleet has already paid for
+# three times on the card-selection rule.
+
+
+def _project_review_request(mat: dict) -> dict:
+    """The `review_request` a `subtask_review_request` materialization carries, or {}.
+
+    Read back through `acceptance_request.review_request_of`, the same reader the direct path
+    uses on the raw engine body — so the two paths cannot disagree about what counts as a
+    request. A malformed or empty entry yields {} and opens nothing.
+    """
+    raw = _metadata_dict(mat).get("review_request_json")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:  # noqa: BLE001 — a malformed entry is "no request", logged by the caller
+        return {}
+    return acceptance_request.review_request_of({"review_request": parsed})
+
+
+async def _open_safety_acceptance(
+    bundle: dict, rr: dict, *, path: str, stage_kind: str,
+) -> str | None:
+    """Open the SafetyAcceptance workflow for one `review_request`. Returns an error SSE on
+    failure, None on success — and records WHICH on the artifact either way.
+
+    NOT SILENT IN EITHER DIRECTION. The success record exists because the absence of a row was
+    once only attributable by reading a rotated pod log; the artifact now says, per turn, which
+    path opened which workflow.
+    """
+    try:
+        _trigger = acceptance_request.acceptance_trigger(rr)
+        _wf_key = acceptance_request.acceptance_workflow_id(
+            _trigger["hazard_id"], _trigger["level_slug"],
+        )
+        async with httpx.AsyncClient(timeout=30.0) as _client:
+            _ar = await _client.post(
+                f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
+                f"{_restate_key(_wf_key)}/run/send",
+                json=_trigger,
+                # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked question
+                # must attach to the acceptance already open rather than register a second
+                # task against the same authority — and the key carries the LEVEL because a
+                # redraft that moves the hazard to another level is a different acceptance by
+                # a different authority, which keying on the hazard alone would swallow.
+                headers={"idempotency-key": _wf_key},
+            )
+        _ar.raise_for_status()
+        logger.info(
+            "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s path=%s",
+            _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"], path,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"].setdefault("acceptance_dispatched", []).append({
+            "workflow": _wf_key,
+            "kind": _trigger["kind"],
+            "audience": _trigger["audience"],
+            "subject_ref": rr.get("subject_ref"),
+            "path": path,
+        })
+        return None
+    except Exception as exc:  # noqa: BLE001 — the draft still renders; see the call sites
+        _body = ""
+        _resp = getattr(exc, "response", None)
+        if _resp is not None:
+            try:
+                _body = _resp.text[:800]
+            except Exception:  # noqa: BLE001
+                _body = "<unreadable>"
+        logger.error(
+            "safety acceptance NOT opened for %s (%s: %s) path=%s body=%s",
+            rr.get("subject_ref"), type(exc).__name__, exc, path, _body,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"]["acceptance_not_opened"] = {
+            "exception": type(exc).__name__,
+            "message": str(exc)[:600],
+            # WHAT WAS ASKED FOR, beside what came back — a refusal naming a field is only
+            # actionable against the request that omitted it.
+            "kind": rr.get("kind"),
+            "audience": rr.get("audience"),
+            "subject_ref": rr.get("subject_ref"),
+            "body": _body,
+            "where": f"{path}/review_request_consumer",
+        }
+        return _perror(
+            "The risk assessment was drafted, but its acceptance review could not be "
+            "opened — no task has been created for the accepting authority.",
+            kind=stage_kind,
+            retryable=True,
+            cause="acceptance_not_opened",
+        )
+
+
+async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
+    """The ordinary (Dagster) path's consumer: every `subtask_review_request` the run
+    materialized, opened once each. Returns the error SSEs to yield.
+
+    READ ONCE, AFTER THE POLL LOOP, NOT INSIDE IT. The loop breaks on SUCCESS before pulling
+    that iteration's materializations, so a request materialized after the last poll would be
+    seen by nothing — a consumer that works whenever the render is slow and never when it is
+    fast.
+
+    KEYED ON THE REQUEST BEING PRESENT, NOT ON THE RENDER SUCCEEDING. The materialization is
+    emitted by `execute_subtask` from the engine's own body, BEFORE Engine F renders — the same
+    position the direct path's consumer holds, for the same reason: the render drops the block,
+    and a hazard that was drafted was drafted whether or not its card drew.
+
+    AN EMPTY READ IS NOT "NO REQUEST". `_get_run_events` returns [] on any GraphQL failure, and
+    every run materializes `active_agent_roster`, so zero materializations means the read
+    failed. That is recorded on the artifact rather than read as absence.
+    """
+    mats = await _get_run_events(run_id)
+    if not mats:
+        logger.warning(
+            "acceptance check for run %s read ZERO materializations — the read failed, "
+            "so whether the engine asked for an acceptance is UNKNOWN, not no", run_id,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"]["acceptance_check"] = {"materializations_read": 0}
+        return []
+    # ONE MATERIALIZATION CAN ARRIVE TWICE: `_get_run_events` merges `eventConnection` with
+    # `stepStats`. Restate's idempotency key would absorb the second send, but a second
+    # `acceptance_dispatched` entry on the artifact would claim two acceptances were opened.
+    seen: set[str] = set()
+    errors: list[str] = []
+    for mat in mats:
+        if (mat.get("assetKey") or {}).get("path") != ["subtask_review_request"]:
+            continue
+        rr = _project_review_request(mat)
+        if not rr:
+            logger.warning(
+                "run %s materialized subtask_review_request with no readable request", run_id,
+            )
+            continue
+        ident = json.dumps(rr, sort_keys=True, default=str)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        err = await _open_safety_acceptance(
+            bundle, rr, path="run", stage_kind="retrieving",
+        )
+        if err:
+            errors.append(err)
+    return errors
 
 
 async def _stream_direct_outcome(
@@ -6111,60 +6275,11 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
-            try:
-                _trigger = acceptance_request.acceptance_trigger(_rr)
-                _wf_key = acceptance_request.acceptance_workflow_id(
-                    _trigger["hazard_id"], _trigger["level_slug"],
-                )
-                async with httpx.AsyncClient(timeout=30.0) as _client:
-                    _ar = await _client.post(
-                        f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
-                        f"{_restate_key(_wf_key)}/run/send",
-                        json=_trigger,
-                        # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked
-                        # question must attach to the acceptance already open rather than
-                        # register a second task against the same authority — and the key
-                        # carries the LEVEL because a redraft that moves the hazard to another
-                        # level is a different acceptance by a different authority, which
-                        # keying on the hazard alone would swallow.
-                        headers={"idempotency-key": _wf_key},
-                    )
-                _ar.raise_for_status()
-                logger.info(
-                    "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s",
-                    _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"],
-                )
-            except Exception as exc:  # noqa: BLE001 — the draft still renders; see above
-                _body = ""
-                _resp = getattr(exc, "response", None)
-                if _resp is not None:
-                    try:
-                        _body = _resp.text[:800]
-                    except Exception:  # noqa: BLE001
-                        _body = "<unreadable>"
-                logger.error(
-                    "safety acceptance NOT opened for %s (%s: %s) body=%s",
-                    _rr.get("subject_ref"), type(exc).__name__, exc, _body,
-                )
-                bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
-                bundle["resolved_intent"]["acceptance_not_opened"] = {
-                    "exception": type(exc).__name__,
-                    "message": str(exc)[:600],
-                    # WHAT WAS ASKED FOR, beside what came back — a refusal naming a field is
-                    # only actionable against the request that omitted it.
-                    "kind": _rr.get("kind"),
-                    "audience": _rr.get("audience"),
-                    "subject_ref": _rr.get("subject_ref"),
-                    "body": _body,
-                    "where": "_dispatch_answer_artifact/review_request_consumer",
-                }
-                yield _perror(
-                    "The risk assessment was drafted, but its acceptance review could not be "
-                    "opened — no task has been created for the accepting authority.",
-                    kind=direct_dispatch.STAGE_CALLING,
-                    retryable=True,
-                    cause="acceptance_not_opened",
-                )
+            _err = await _open_safety_acceptance(
+                bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
+            )
+            if _err:
+                yield _err
 
     _predicate = outcome.predicate or {}
     _results = [{
