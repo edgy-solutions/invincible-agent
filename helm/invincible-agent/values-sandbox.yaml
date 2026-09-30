@@ -619,7 +619,11 @@ cortexUi:
     # 2026-09-29 roll #7: cortex-ui 0427884 (chart 0.2.1) -> 79bcda2b. Measured before pinning: ghcr
     # answers 200 with linux/arm64 + linux/amd64; the same digest with its last hex altered answers
     # 404, and the superseded 6f277665 still answers 200, so the probe discriminates.
-    digest: "sha256:79bcda2bde06d72e35e6ceaeb96fe40a5749b19d6e992efce9663dac299e8eb4"
+    # 2026-09-30 frontend-only roll: cortex-ui b66ac48 (carries a425186, the docs card and its
+    # capability row) -> 66887e68. CI run 36668932087 green. Measured before pinning: ghcr answers
+    # 200 with linux/arm64 + linux/amd64; last hex altered answers 404; superseded 79bcda2b still
+    # answers 200. cortex-ui changed only src/ + sessions/ since 0427884, so its chart is unchanged.
+    digest: "sha256:66887e682b33e4b9ea2f4a6fc0e7a53eb6e943ba1f288e4f3add7860b6cfdec7"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
