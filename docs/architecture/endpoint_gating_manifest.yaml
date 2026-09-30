@@ -1596,6 +1596,58 @@ services:
           (ingest_status.get_status_for), and a caller who is neither the submitter nor
           the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
           ingest" — never a 403 that would confirm another caller's upload exists.
+      - method: GET
+        path: /export/package/recipients
+        identity: keycloak-jwt
+        gate: "get_current_user + entitlement filter via seed.readers_for_recipient keyed on authz_id"
+        exposes: gated-content
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          The recipient picker's option list. Every scope returned is one the caller's
+          authz_id reads (agent_fleet.cost_agent.seed.readers_for_recipient) — the SAME
+          claim and the SAME function the production and download routes below gate on,
+          so the menu a caller sees cannot promise more than the other two routes allow.
+      - method: POST
+        path: /export/package
+        identity: keycloak-jwt
+        gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); answers refused-not-dropped via the artifact store's own ownership query"
+        exposes: object-store-write
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          THE PRODUCTION HALF OF A GOVERNED EMIT (ADR-0047). No default recipient
+          (ADR-0047 §1): a blank recipient_scope is refused (409) rather than guessed.
+          The recipient gate is on authz_id via seed.readers_for_recipient, and
+          PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD — every recipient's package
+          shares one directory and a canvas narrows what the file carries, so an
+          unentitled producer could overwrite a recipient's package with a different
+          canvas. The engine call forwards THE PERSON's bearer, never a service
+          identity (seed.py's RECIPIENT_READERS comment names no svc: reader —
+          the confused-deputy argument). Every canvas answer id is resolved through the
+          same ownership query /artifacts/{artifact_id} uses; one that does not resolve
+          is a 404, refused rather than silently dropped. artifact_uri on the response
+          is always the GATEWAY path (/export/package/artifact/{filename}), never the
+          engine's own out["artifact_uri"], so a caller cannot be handed a link that
+          bypasses this file's own download gate.
+      - method: GET
+        path: /export/package/artifact/{filename}
+        identity: keycloak-jwt
+        gate: "get_current_user + filename resolved to a recipient scope via seed.scope_of_artifact (closed set) + that scope must be one authz_id reads (seed.readers_for_recipient)"
+        exposes: gated-content
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          THE DOWNLOAD HALF, and the GATEWAY-SIDE CHECK the relay asks for. A filename
+          outside the closed set derived from seed.artifact_filenames is a 404 before
+          any call to the engine — the same structural traversal defence as the
+          engine's own /artifact route. recipient gate on authz_id via
+          seed.readers_for_recipient, same claim and same function the engine's route
+          reads, so the two checks agree by construction. The person's bearer is
+          forwarded to the engine (no service identity), so the engine repeats the
+          identical check on the identical token — belt AND braces on one disclosure,
+          not a redundant no-op, since the engine is not itself reachable from a
+          browser.
       - method: POST
         path: /internal/identity/redeem
         identity: keycloak-jwt

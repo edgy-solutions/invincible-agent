@@ -126,7 +126,9 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     )
     from export import audit_line, build_dataset_package, build_package
     from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
-    from seed import RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient
+    from seed import (
+        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient, readers_for_recipient,
+    )
 except ImportError:
     from agent_fleet.cost_agent import canvas as canvas_reader
     from agent_fleet.cost_agent.entities import (
@@ -139,7 +141,7 @@ except ImportError:
         DEFAULT_COMPOSITION, compose_price, rates_for, unit_price,
     )
     from agent_fleet.cost_agent.seed import (
-        RECIPIENT_SCOPES, lots_for_recipient, readers_for_recipient,
+        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient, readers_for_recipient,
     )
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the
@@ -1147,7 +1149,7 @@ def package_export(
             ) from None
         import build_cost_dataset as dataset_builder
 
-        dataset_path = _dist_dir(root) / f"cost-{scope}.duckdb"
+        dataset_path = _dist_dir(root) / artifact_filenames(scope)[1]
         dataset_builder.build(scope, dataset_path, state=state,
                               lots=composed["lots"] if composed else None)
 
@@ -1170,7 +1172,7 @@ def package_export(
     ) if dataset_path else build_package(
         state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha())
 
-    dest = _dist_dir(root) / f"cost-validation-{scope}.html"
+    dest = _dist_dir(root) / artifact_filenames(scope)[0]
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     # ⚠ WRITE_BYTES, NOT WRITE_TEXT, AND THE ROUND-TRIP BELOW IS WHAT FOUND IT.

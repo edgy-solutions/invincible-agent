@@ -42,6 +42,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     )
     from pricing import CompositionError
     from seed import build_state, check_consistency
+    import seed
     from utils.subject_coverage import assert_subject_coverage as _assert_coverage
 except ImportError:
     from agent_fleet.cost_agent import instances
@@ -52,6 +53,7 @@ except ImportError:
     )
     from agent_fleet.cost_agent.pricing import CompositionError
     from agent_fleet.cost_agent.seed import build_state, check_consistency
+    from agent_fleet.cost_agent import seed
     from agent_fleet.utils.subject_coverage import assert_subject_coverage as _assert_coverage
 
 # TRANSPORT AUTH (OBSERVE). One implementation, from the mesh membership package: validate
@@ -634,10 +636,7 @@ def _scope_of_artifact(filename: str) -> Optional[str]:
     rule, and the two would drift the first time a filename changed — with the authorization
     check reading the stale one, which is the direction that fails open.
     """
-    for scope in measures.RECIPIENT_SCOPES:
-        if filename in (f"cost-validation-{scope}.html", f"cost-{scope}.duckdb"):
-            return scope
-    return None
+    return seed.scope_of_artifact(filename)
 
 
 def _producible_artifact_names() -> set[str]:
@@ -653,8 +652,7 @@ def _producible_artifact_names() -> set[str]:
     """
     names = set()
     for scope in measures.RECIPIENT_SCOPES:
-        names.add(f"cost-validation-{scope}.html")
-        names.add(f"cost-{scope}.duckdb")
+        names.update(seed.artifact_filenames(scope))
     return names
 
 

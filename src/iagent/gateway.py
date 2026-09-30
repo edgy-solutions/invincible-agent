@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -41,7 +42,9 @@ from typing import AsyncGenerator, Any, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import (
+    Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -1639,6 +1642,291 @@ async def plan_state_version(
 
     out = rr.json()
     return {"state_ref": out.get("state_ref", state_ref), "state_version": out.get("version")}
+
+
+# -- Cost export packages (relay item 3) — the disclosure download seam -------
+#
+# THE SAME VARIABLE THE ENGINE REGISTERS WITH (measures.py's `_PUBLIC_BASE_ENV`), deliberately
+# not a second name: the chart's configmap already sets it for every pod, and a route reading
+# a name nobody sets is the ENGINE_P_URL mistake (two lines up) happening a second time.
+_ENGINE_COST_URL = os.getenv("ENGINE_COST_PUBLIC_URL", "http://iagent-engine-cost:8097")
+
+# The engine's own sha256-locator shape (`measures.package_export`'s `artifact_sha256`):
+# "sha256:" + 64 lowercase hex digits. A response missing this, or carrying something that
+# merely looks like it, is not a verifiable artifact and must not be reported as one.
+_SHA256_LOCATOR_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _export_recipients_for(user: "User") -> list[str]:
+    """Every recipient scope `user` may export to or download from, keyed on `authz_id` — the
+    SAME claim the engine's own /artifact route keys its authorization on (main.py's
+    `_scope_of_artifact` + `measures.readers_for_recipient`), never `user.id`. The two checks
+    agree because both read `seed.readers_for_recipient`.
+    """
+    from agent_fleet.cost_agent import seed as _cost_seed
+    return sorted(
+        s for s in _cost_seed.RECIPIENT_SCOPES
+        if user.authz_id and user.authz_id in _cost_seed.readers_for_recipient(s)
+    )
+
+
+def _user_bearer(request: Request) -> str:
+    """The caller's raw bearer, exactly as the disposition route reads it above."""
+    return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+
+
+class ExportAnswer(_BaseModel):
+    artifact_id: str
+
+
+class ExportPackageRequest(_BaseModel):
+    answers: list[ExportAnswer] = []
+    # ADR-0047 §1: no default recipient. A disclosure verb that can be invoked without naming
+    # its recipient is one keystroke from disclosing the wrong program to the wrong party.
+    recipient_scope: Optional[str] = None
+    # Accepted and echoed back on the response; NOT used to select a template or to shape the
+    # engine call. No template surface exists yet on either side of this hop.
+    template_id: Optional[str] = None
+
+
+def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
+    """Resolve each canvas answer id through the SAME artifact-store query `get_artifact`
+    uses, keyed the same way (`PRODUCED_FOR` against `user_id`, the writer's key — see
+    `get_artifact`'s own comment on why `id` and not `authz_id` is correct here).
+
+    REFUSED, NEVER DROPPED (canvas.py's rule): an id that does not resolve raises 404 rather
+    than being silently omitted from the canvas — an export quietly missing an answer nobody
+    asked to drop would look complete while disclosing less than the caller intended.
+    """
+    resolved: list[dict] = []
+    for artifact_id in artifact_ids:
+        try:
+            with neo4j_driver.session() as session:
+                rec = session.run(
+                    _ARTIFACT_BY_ID_CYPHER, artifact_id=artifact_id, user_id=user_id
+                ).single()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("export answer read failed for %s: %s", artifact_id, exc)
+            raise HTTPException(status_code=503, detail="artifact store unavailable") from exc
+
+        if not rec or not rec.get("is_owner"):
+            raise HTTPException(
+                status_code=404,
+                detail={"reason": "answer_not_found", "artifact_id": artifact_id},
+            )
+
+        intent: dict = {}
+        if rec.get("resolved_intent"):
+            try:
+                intent = json.loads(rec["resolved_intent"]) or {}
+            except (ValueError, TypeError):
+                intent = {}
+
+        def _or_none(v):
+            v = str(v or "").strip()
+            return None if not v or v == "UNKNOWN" else v
+
+        resolved.append({
+            "id": str(rec["id"]),
+            "verb_iri": _or_none(intent.get("verb_iri")),
+            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        })
+    return resolved
+
+
+@app.get("/export/package/recipients")
+async def export_package_recipients(current_user: User = Depends(get_current_user)):
+    """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
+    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
+    return {
+        "recipients": [
+            {"value": s, "label": s} for s in _export_recipients_for(current_user)
+        ]
+    }
+
+
+@app.post("/export/package")
+async def export_package(
+    body: ExportPackageRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Produce a recipient's disclosure package — THE GOVERNED EMIT, run synchronously.
+
+    Production never returns `"status": "producing"`: `measures.package_export` runs and
+    writes to disk inline, in the same request, so there is no async job to poll. A caller
+    gets `"exists"` or `"failed"` in the same response that asked for the build.
+
+    Four hard stops, in order, each refusing before the next is even attempted:
+      1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
+      2. `recipient_scope` the caller may not export to -> 403 (see below)
+      3. any canvas answer id that does not resolve -> 404, refused rather than dropped
+      4. the engine unreachable, or the engine's own refusal, forwarded verbatim
+    """
+    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+
+    recipient_scope = (body.recipient_scope or "").strip()
+    if not recipient_scope:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason": "recipient_required", "options": options},
+        )
+
+    if recipient_scope not in _export_recipients_for(current_user):
+        # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
+        # shares one directory (seed.py's RECIPIENT_READERS comment) and a canvas narrows
+        # what the file carries, so an unentitled producer could OVERWRITE a recipient's
+        # package with a different canvas — a write-side confused-deputy, not just a read.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": "not_a_recipient_you_may_export_to",
+                "recipient_scope": recipient_scope,
+            },
+        )
+
+    canvas = None
+    if body.answers:
+        resolved = _resolve_export_answers(
+            [a.artifact_id for a in body.answers], current_user.id
+        )
+        canvas = {"answers": resolved}
+    # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
+    # program, same as it did before canvases existed.
+
+    params: dict = {"recipient_scope": recipient_scope}
+    if canvas is not None:
+        params["canvas"] = canvas
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/measure/package_export",
+                json={"params": params},
+                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
+                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # applied here — a service calling on the caller's behalf must carry THAT
+                # caller's identity or refuse).
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+
+    if out.get("refused"):
+        return {
+            "export_id": None,
+            "status": "failed",
+            "recipient_scope": recipient_scope,
+            "reason": out.get("reason"),
+            "outcome": out.get("outcome"),
+        }
+
+    sha = out.get("artifact_sha256")
+    filename = out.get("artifact_filename")
+    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
+    export_status = "exists" if exists else "failed"
+    reason = None if exists else "engine returned no verifiable artifact hash"
+
+    return {
+        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
+        # with the same inputs reports the same export_id.
+        "export_id": sha if exists else None,
+        "status": export_status,
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
+        # the engine directly, which this route's own authorization check would then be
+        # bypassable around.
+        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
+        "artifact_sha256": sha,
+        "artifact_bytes": out.get("artifact_bytes"),
+        "artifact_filename": filename,
+        "algorithm_sha": out.get("algorithm_sha"),
+        "lots_disclosed": out.get("lots_disclosed"),
+        "sections": out.get("sections"),
+        "template_id": body.template_id,
+    }
+
+
+@app.get("/export/package/artifact/{filename}")
+async def export_package_artifact(
+    filename: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks
+    for: the engine repeats the same check on the same person's token (main.py's /artifact,
+    ~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not
+    redundant — it is the ONLY check between an unentitled browser and the engine's bytes,
+    since the engine sits behind the mesh and is not itself reachable from a browser.
+    """
+    from agent_fleet.cost_agent import seed as _cost_seed
+
+    scope = _cost_seed.scope_of_artifact(filename)
+    if scope is None:
+        # THE CLOSED SET. Same structural traversal defence as the engine's own route: a
+        # filename this engine could not have produced is refused outright rather than
+        # sanitized and forwarded.
+        raise HTTPException(
+            status_code=404,
+            detail=f"{filename!r} is not an export artifact this gateway serves",
+        )
+
+    if scope not in _export_recipients_for(current_user):
+        # NAMES THE PACKAGE, NOT ITS READERS — same wording and reasoning as the engine's own
+        # /artifact 403 (cost_agent/main.py ~700-716).
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"caller {current_user.authz_id or 'unidentified'!r} is not entitled to the "
+                f"package for {scope!r}. This artifact is a customer disclosure and is "
+                f"served only to the recipient it was produced for."
+            ),
+        )
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rr = await client.get(
+                f"{_ENGINE_COST_URL}/artifact/{filename}",
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    etag = rr.headers.get("etag") or rr.headers.get("ETag")
+    if etag:
+        headers["ETag"] = etag
+
+    return Response(
+        content=rr.content,
+        media_type=rr.headers.get("content-type", "application/octet-stream"),
+        headers=headers,
+    )
 
 
 # -- The plan WRITE seam (ADR-0042 section 3) ---------------------------------
