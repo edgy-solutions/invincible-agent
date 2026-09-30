@@ -185,7 +185,11 @@ async def test_the_emitted_request_opens_exactly_one_acceptance(draft, monkeypat
     wf = ar.acceptance_workflow_id(trigger["hazard_id"], trigger["level_slug"])
     post = fake.posts[0]
     assert post["url"] == f"{gw._RESTATE_INGRESS_URL}/SafetyAcceptance/{gw._restate_key(wf)}/run/send"
-    assert post["headers"] == {"idempotency-key": wf}
+    # NO INGRESS IDEMPOTENCY KEY ON A WORKFLOW HANDLER. Restate 1.6 refuses it with 400 "cannot use
+    # the idempotency key with workflow handlers" -- the workflow key already is the idempotency.
+    # This line asserted the header's PRESENCE, so it was green on the one request the live
+    # fleet refused on every turn (measured 2026-09-30, rev 159: 0 HAZ-1003 tasks, 4 fires).
+    assert "idempotency-key" not in {k.lower() for k in (post["headers"] or {})}, post["headers"]
     assert post["json"] == trigger
     assert trigger["kind"] == "risk_acceptance_medium"
 
@@ -309,3 +313,85 @@ def test_execute_subtask_feeds_the_emitter_the_engine_body():
     # At body level, so no branch between the answer and the carrier decides to skip it.
     top = [s for s in fn.body if calls[0] in list(ast.walk(s))]
     assert len(top) == 1 and isinstance(top[0], ast.Try), "the emitter is nested under a branch"
+
+
+# ── THE CLASS: no gateway send to ANY Restate Workflow carries an ingress idempotency key ───────
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _workflow_names() -> set:
+    """Every `Workflow("<Name>")` the fleet registers, DERIVED from the engine sources."""
+    names = set()
+    for src in (_REPO / "agent_fleet").rglob("*.py"):
+        if "__pycache__" in src.parts or ".venv" in "/".join(src.parts):
+            continue
+        try:
+            tree = ast.parse(src.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "Workflow" and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                names.add(node.args[0].value)
+    return names
+
+
+def _posts_to(tree, name: str):
+    """Every `.post(...)` call in the gateway whose URL spells `/<name>/`."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "post" and node.args):
+            continue
+        consts = [c.value for c in ast.walk(node.args[0])
+                  if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+        if any(f"/{name}/" in c or c.startswith(f"{name}/") for c in consts):
+            yield node
+
+
+def _enclosing(tree, call):
+    """The innermost function whose body holds `call`."""
+    best = None
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(n is call for n in ast.walk(fn)):
+            if best is None or fn.lineno >= best.lineno:
+                best = fn
+    return best
+
+
+def _names_idempotency_key(tree, call) -> bool:
+    """Does the send carry the header? Read over the ENCLOSING FUNCTION, not the call's own
+    `headers=` literal: the ReviewStarter send builds its headers in a variable first, and a
+    matcher reading only the literal would be blind to that form (the positive control below)."""
+    scope = _enclosing(tree, call) or call
+    return any(isinstance(c, ast.Constant) and isinstance(c.value, str)
+               and c.value.lower() == "idempotency-key" for c in ast.walk(scope))
+
+
+def test_the_workflow_population_is_real():
+    names = _workflow_names()
+    assert "SafetyAcceptance" in names, names
+
+
+def test_no_gateway_send_to_a_workflow_carries_an_idempotency_key():
+    tree = ast.parse(Path(gw.__file__).read_text(encoding="utf-8"))
+    names = _workflow_names()
+    reached = {n for n in names if any(True for _ in _posts_to(tree, n))}
+    # THE MATCHER POINTS AT SOMETHING: the one workflow the gateway is known to send to.
+    assert "SafetyAcceptance" in reached, (names, reached)
+    offenders = sorted(n for n in reached
+                       if any(_names_idempotency_key(tree, c) for c in _posts_to(tree, n)))
+    assert offenders == [], (
+        f"gateway sends an idempotency-key to workflow(s) {offenders}; Restate refuses it (400)")
+
+
+def test_the_matcher_sees_a_header_on_a_service_send():
+    """Positive control: ReviewStarter is a SERVICE and legitimately carries the header, built
+    in a variable. The matcher must see it there, or the offender arm above cannot fire."""
+    tree = ast.parse(Path(gw.__file__).read_text(encoding="utf-8"))
+    assert "ReviewStarter" not in _workflow_names()
+    sends = list(_posts_to(tree, "ReviewStarter"))
+    assert sends, "the matcher found no ReviewStarter send"
+    assert all(_names_idempotency_key(tree, c) for c in sends)

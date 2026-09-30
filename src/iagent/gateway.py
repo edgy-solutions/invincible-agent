@@ -6015,7 +6015,12 @@ async def _open_safety_acceptance(
                 # task against the same authority — and the key carries the LEVEL because a
                 # redraft that moves the hazard to another level is a different acceptance by
                 # a different authority, which keying on the hazard alone would swallow.
-                headers={"idempotency-key": _wf_key},
+                #
+                # THE WORKFLOW KEY IN THE URL IS THAT IDEMPOTENCY, and it is the only one. An
+                # ingress idempotency header here made Restate 1.6 refuse EVERY send with 400
+                # "cannot use the idempotency key with workflow handlers" (measured 2026-09-30,
+                # rev 159: HAZ-1003 fired four times, zero tasks). A second `run/send` on the
+                # same key is answered as previously accepted, not run twice.
             )
         _ar.raise_for_status()
         logger.info(
