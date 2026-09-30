@@ -48,6 +48,12 @@ def _repo_root() -> Optional[pathlib.Path]:
     return None
 
 
+def _dist_dir(root: pathlib.Path) -> pathlib.Path:
+    """The artifact directory for a given repo root. THE ONE PLACE IT IS NAMED, so a test can
+    redirect every writer and reader at once by monkeypatching this function alone."""
+    return root / "dist"
+
+
 #: Where the engine is reachable from, for building artifact URIs. SAME ENV VAR THE
 #: REGISTRATION USES (`main.py` passes it as `endpoint_url`'s base), so a caller that can reach
 #: a verb can reach the artifact that verb produced. Naming a second variable here would let
@@ -1119,7 +1125,7 @@ def package_export(
             ) from None
         import build_cost_dataset as dataset_builder
 
-        dataset_path = root / "dist" / f"cost-{scope}.duckdb"
+        dataset_path = _dist_dir(root) / f"cost-{scope}.duckdb"
         dataset_builder.build(scope, dataset_path)
 
     html = builder.build_html(scope, runtime, duckdb_path=dataset_path)
@@ -1137,7 +1143,7 @@ def package_export(
     ) if dataset_path else build_package(
         state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha())
 
-    dest = root / "dist" / f"cost-validation-{scope}.html"
+    dest = _dist_dir(root) / f"cost-validation-{scope}.html"
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     # ⚠ WRITE_BYTES, NOT WRITE_TEXT, AND THE ROUND-TRIP BELOW IS WHAT FOUND IT.

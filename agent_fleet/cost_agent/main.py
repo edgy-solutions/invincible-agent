@@ -719,7 +719,7 @@ async def artifact(filename: str) -> Any:
             detail=("this deployment holds no artifacts: the package builder and the pinned "
                     "runtime live in the repository checkout and are not in this image"),
         )
-    path = root / "dist" / filename
+    path = measures._dist_dir(root) / filename
     if not path.is_file():
         raise HTTPException(
             status_code=404,
