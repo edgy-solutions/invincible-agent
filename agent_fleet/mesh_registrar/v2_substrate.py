@@ -1,6 +1,14 @@
 """Gateway v0.2 substrate writers.
 
-Direct Neo4j + Weaviate writers for the v0.2 atomic-registration saga.
+Neo4j + Weaviate writers for the v0.2 atomic-registration saga.
+
+THE GRAPH HALF GOES THROUGH THE SDK WRITER (iagent-mesh v0.9.5). The four edge paths --
+predicate merge and compensation, PARAMETERISED_BY sync and compensation -- hand an
+EdgeIdentity / EdgeIdentityFilter to ``Neo4jGraphWriter`` (agent_fleet/utils/mesh_writers),
+configured by ``PREDICATE_EDGE_FAMILY`` or ``PARAMETERISED_BY_FAMILY``, as the registrar's
+DELEGATE (``registrar_initiator``). No edge-writing Cypher remains in this module; the read
+probe is the only statement here. The Weaviate half is still direct.
+
 Lifted from ``doc_tools/assets/aitool_linker.py`` per ADR-0006 §Addendum
 (2026-06-13). Behavioral difference from the lifted versions:
 **exceptions PROPAGATE here.** The sensor's path could swallow Weaviate
@@ -9,8 +17,8 @@ saga can't swallow them — it has to know the substrate truth in order
 to compensate. The conjunctive-read invariant the rollback decision
 rests on is broken the moment a substrate write fails silently.
 
-Each function returns ``None`` on success and raises on failure.
-``compensate_*`` mirrors handle "the write succeeded but we now need
+Each write raises on failure; the edge paths turn a writer result that is not applied
+back into a raise. ``compensate_*`` mirrors handle "the write succeeded but we now need
 to undo it" — they MUST be idempotent so the Restate saga can replay
 a compensation step that already partially ran.
 """
@@ -22,6 +30,14 @@ import os
 import re
 from typing import Any, Optional
 from uuid import UUID
+
+from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
+from iagent_mesh.write_results import MeshWriteResult
+
+try:  # package first: one module object per exception and class (the image copies utils/)
+    from agent_fleet.utils.mesh_writers.neo4j_graph import ENDPOINT_ABSENT, Neo4jGraphWriter
+except ImportError:  # pragma: no cover - container layout
+    from utils.mesh_writers.neo4j_graph import ENDPOINT_ABSENT, Neo4jGraphWriter  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -98,41 +114,92 @@ def _deterministic_predicate_uuid(
 
 
 # ---------------------------------------------------------------------------
-# Neo4j writer — MERGE the predicate edge
+# Neo4j writes — through the SDK's MeshGraphWriter, never a local Cypher string
 # ---------------------------------------------------------------------------
-
-# Identity for the relationship is `(verb_iri, _tool_urn)` per doc-tools
-# a44b9fb. Without _tool_urn in the match-key, N providers offering the
-# same predicate collapse into one edge with last-write-wins. The
-# substrate-invariant test
+#
+# EVERY GRAPH WRITE THIS MODULE MAKES GOES THROUGH `Neo4jGraphWriter` (agent_fleet/utils/
+# mesh_writers/neo4j_graph.py), configured by one of the two FAMILIES below. The four
+# functions keep their names, arguments and return values, so the saga is unchanged; what is
+# gone is the Cypher they used to carry. A family is the whole difference between them:
+#
+#   family             relationship type                     verb prop   key prop
+#   predicate edge     the verb's local name (DERIVED)       iri         _tool_urn
+#   PARAMETERISED_BY   PARAMETERISED_BY (FIXED)              verb_iri    _tool_urn
+#
+# IDENTITY IS `(verb, key)` AND THE KEY IS `_tool_urn`, per doc-tools a44b9fb. Without
+# `_tool_urn` in the match-key, N providers offering the same predicate collapse into one edge
+# with last-write-wins. The substrate-invariant test
 # `tests/routing/test_substrate_invariants.py::test_mesh_resolve_instance_has_one_edge_per_provider`
 # pins this property; the saga MUST preserve it.
-_MERGE_CYPHER = """
-MATCH (s:OntologyClass {uri: $input_uri})
-MATCH (o:OntologyClass {uri: $output_uri})
-WITH s, o
-CALL apoc.merge.relationship(
-    s,
-    $verb_local,
-    $match_key,
-    $props,
-    o,
-    $props
-) YIELD rel
-RETURN type(rel) AS rel_type, rel.iri AS iri
-"""
+#
+# A WRITE IS ATTRIBUTED TO A PERSON, OR TO A DELEGATE ACTING FOR ONE. The registrar is a service,
+# and the writer RAISES for a bare service identity. Who the registrar acts on behalf of is not
+# derivable from a manifest, so it is configuration, and an unset value is an error at the write
+# rather than a default invented here.
+
+#: The two edge families this module writes. Exported so a test can construct the SAME writer
+#: against a scratch label (tests/test_mesh_writers_conform.py) rather than restate the config.
+PREDICATE_EDGE_FAMILY = {
+    "node_label": "OntologyClass",
+    "node_key": "uri",
+    "relationship_type": _get_verb_local_name,
+    "verb_property": "iri",
+    "key_property": "_tool_urn",
+}
+PARAMETERISED_BY_FAMILY = {
+    "node_label": "OntologyClass",
+    "node_key": "uri",
+    "relationship_type": "PARAMETERISED_BY",
+    "verb_property": "verb_iri",
+    "key_property": "_tool_urn",
+}
+
+REGISTRAR_ON_BEHALF_OF_ENV = "MESH_REGISTRAR_ON_BEHALF_OF"
+_REGISTRAR_SUBJECT = "mesh-registrar"
 
 
-# Compensation: DELETE the predicate edge for this exact identity.
-# Critically: filters on BOTH the verb_iri AND the _tool_urn so a
-# concurrent registration that already committed for a different
-# provider is NOT collaterally deleted.
-_COMPENSATE_CYPHER = """
-MATCH (s:OntologyClass {uri: $input_uri})-[r]->(o:OntologyClass {uri: $output_uri})
-WHERE r.iri = $verb_iri AND r._tool_urn = $tool_urn
-DELETE r
-RETURN count(r) AS deleted
-"""
+class RegistrarIdentityUnset(RuntimeError):
+    """The registrar was asked to write without knowing whom it writes for."""
+
+
+def registrar_initiator() -> Initiator:
+    """The registrar as a DELEGATE, from configuration. Raises when unset.
+
+    NOT a service identity with the check skipped, and not a person invented to satisfy it:
+    either would be an attribution no one can be asked about, which is what the gate refuses.
+    """
+    on_behalf_of = os.getenv(REGISTRAR_ON_BEHALF_OF_ENV, "").strip()
+    if not on_behalf_of:
+        raise RegistrarIdentityUnset(
+            f"{REGISTRAR_ON_BEHALF_OF_ENV} is unset: the registrar writes graph edges as a "
+            f"delegate and must name the person it acts for. No edge was written."
+        )
+    return Initiator(subject=_REGISTRAR_SUBJECT, kind="delegate", on_behalf_of=on_behalf_of)
+
+
+def _writer(driver: Any, family: dict) -> Neo4jGraphWriter:
+    return Neo4jGraphWriter(driver=driver, **family)
+
+
+def _raise_unless_applied(what: str, result: MeshWriteResult, **context: Any) -> None:
+    """Exceptions PROPAGATE here (module docstring) — a write result is turned back into one."""
+    if not result.applied:
+        raise RuntimeError(f"{what}: {result.outcome}: {result.detail} {context}")
+
+
+def _count(driver: Any, family: dict, initiator: Initiator, f: EdgeIdentityFilter) -> int:
+    """How many edges a filter matches, BEFORE a delete removes them.
+
+    `delete_edges` answers written-or-not and never a count; the saga logs the count and a
+    test asserts it, so it is read first. A failed read RAISES rather than counting zero: a zero
+    from an unreachable store is the confident-empty answer `MeshResult` exists to prevent.
+    """
+    seen = _writer(driver, family).has_edges(initiator, identity_filter=f)
+    if seen.outcome == "empty":
+        return 0
+    if seen.outcome != "answered":
+        raise RuntimeError(f"edge count failed: {seen.outcome}: {seen.detail}")
+    return len(seen.rows)
 
 
 def merge_neo4j_predicate_edge(
@@ -143,48 +210,43 @@ def merge_neo4j_predicate_edge(
     output_uri: str,
     tool_urn: str,
     rel_props: dict,
+    initiator: Optional[Initiator] = None,
 ) -> None:
     """MERGE the predicate edge from input to output. Raises on failure.
 
-    ``rel_props`` is the full property bag the relationship should carry
-    — everything the discovery Cypher reads (provider, timeout_s,
-    endpoint_url, owner_persona, ...) plus the `_tool_urn` and `iri`
-    that form the identity. Caller is responsible for assembling the
-    bag; this function only writes it.
+    ``rel_props`` is the full property bag the relationship should carry — everything the
+    discovery Cypher reads (provider, timeout_s, endpoint_url, owner_persona, ...). It may carry
+    `iri` and `_tool_urn` (main.py's builder does); they MUST equal the identity, because the
+    writer sets them from it and refuses a payload that names them.
 
-    Idempotency: apoc.merge.relationship UPDATES the relationship with
-    the new $props if the match-key already matched. So re-running this
-    after the saga replayed past it is safe — the same write happens.
+    A `None` VALUE IS OMITTED, NOT WRITTEN. The writer refuses `None` (refuse-not-strip), and
+    the old Cypher stored it as "no property" anyway. The only value in main.py's bag that can be
+    `None` is `endpoint_url`, which its validator requires for an Engine and forbids for a
+    Presentation; `arity` and `timeout_s` are already omitted when unset.
+
+    Idempotency: the writer MERGEs on `(iri, _tool_urn)` and updates the props on a match, so
+    re-running this after the saga replayed past it is safe — the same write happens.
     """
-    verb_local = _get_verb_local_name(verb_iri)
-    # The match-key is the identity that distinguishes registrations.
-    # Anything not in the match-key is part of $props (set on every
-    # merge).
-    match_key = {"iri": verb_iri, "_tool_urn": tool_urn}
-    # Ensure the identity fields are also in $props so a CREATE has them.
-    full_props = dict(rel_props)
-    full_props["iri"] = verb_iri
-    full_props["_tool_urn"] = tool_urn
-    full_props["_input_uri"] = input_uri
-    full_props["_output_uri"] = output_uri
-
-    with driver.session() as session:
-        rec = session.run(
-            _MERGE_CYPHER,
-            input_uri=input_uri,
-            output_uri=output_uri,
-            verb_local=verb_local,
-            match_key=match_key,
-            props=full_props,
-        ).single()
-    if rec is None:
-        raise RuntimeError(
-            f"merge_neo4j_predicate_edge: MATCH returned no record. "
-            f"Input or output OntologyClass missing? "
-            f"input_uri={input_uri!r}, output_uri={output_uri!r}. "
-            f"This is a Contract D violation that should have been "
-            f"caught upstream of the saga."
-        )
+    for prop, expected in (("iri", verb_iri), ("_tool_urn", tool_urn)):
+        if prop in rel_props and rel_props[prop] != expected:
+            raise ValueError(
+                f"merge_neo4j_predicate_edge: rel_props[{prop!r}]={rel_props[prop]!r} disagrees "
+                f"with the identity {expected!r}"
+            )
+    payload = {
+        k: v for k, v in rel_props.items() if k not in ("iri", "_tool_urn") and v is not None
+    }
+    payload["_input_uri"] = input_uri
+    payload["_output_uri"] = output_uri
+    result = _writer(driver, PREDICATE_EDGE_FAMILY).write_edge(
+        initiator or registrar_initiator(),
+        identity=EdgeIdentity(subject=input_uri, verb=verb_iri, object=output_uri, key=tool_urn),
+        payload=payload,
+    )
+    # An absent endpoint is a Contract D violation that should have been caught upstream of the
+    # saga; the writer names it ENDPOINT_ABSENT and this raises with both URIs.
+    _raise_unless_applied(
+        "merge_neo4j_predicate_edge", result, input_uri=input_uri, output_uri=output_uri)
 
 
 # ── PARAMETERISED_BY: the verb is reachable from a class it TAKES, not only one it is ABOUT ──
@@ -212,31 +274,21 @@ def merge_neo4j_predicate_edge(
 # several providers from DIFFERENT subject classes, so `_tool_urn` says whose parameterisation an
 # edge is — exactly as it does on the verb relationship itself. The pool joins on both halves.
 #
+# ONE EDGE PER REFERENT, NOT PER SLOT. The SDK writer keys an edge on its endpoints plus
+# `(verb, key)`, so two slots naming the SAME referent class are one edge. The old Cypher put
+# `slot` in the match-key and wrote two. Nothing reads `p.slot` (the pool reads `required`,
+# `verb_iri` and `_tool_urn`), so the edge carries every declaring slot's name, sorted and
+# comma-joined, and `required` is true when ANY of them is — the one reading under which the
+# pool admits the verb exactly when the per-slot edges would have.
+#
 # ONLY SPOKEN SLOTS CARRY A REFERENT, so only spoken slots can parameterise. A handle is
 # resolved by the dispatcher and was never something a speaker names. Nothing is filtered on
 # `kind` here — the absence of `referent` already encodes it, and a second gate would be a
 # second implementation of that rule.
-_PARAMETERISED_SYNC_DELETE = """
-MATCH (vsubj:OntologyClass {uri: $input_uri})-[p:PARAMETERISED_BY]->(:OntologyClass)
-WHERE p.verb_iri = $verb_iri AND p._tool_urn = $tool_urn
-DELETE p
-RETURN count(p) AS deleted
-"""
 
-_PARAMETERISED_MERGE = """
-MATCH (vsubj:OntologyClass {uri: $input_uri})
-MATCH (ref:OntologyClass {uri: $referent_uri})
-WITH vsubj, ref
-CALL apoc.merge.relationship(
-    vsubj,
-    'PARAMETERISED_BY',
-    {verb_iri: $verb_iri, _tool_urn: $tool_urn, slot: $slot},
-    $props,
-    ref,
-    $props
-) YIELD rel
-RETURN rel.slot AS slot
-"""
+
+def _parameterised_filter(*, verb_iri: str, input_uri: str, tool_urn: str) -> EdgeIdentityFilter:
+    return EdgeIdentityFilter(subject=input_uri, verb=verb_iri, key=tool_urn)
 
 
 def sync_parameterised_by_edges(
@@ -246,6 +298,7 @@ def sync_parameterised_by_edges(
     input_uri: str,
     tool_urn: str,
     slots: Any,
+    initiator: Optional[Initiator] = None,
 ) -> dict:
     """Make this verb's PARAMETERISED_BY edges EXACTLY match its current declaration.
 
@@ -261,13 +314,14 @@ def sync_parameterised_by_edges(
     and by `engine_fin_finance_by_subject` from `fin#ControlAccount`, both declaring
     `program_id`. Under a verb-only sync the SECOND provider to register would DELETE the first's
     parameterisation and write only its own — the first silently loses its widening until it
-    happens to re-register, and nothing errors anywhere. This module already states the rule four
-    lines above `_COMPENSATE_CYPHER`: filter on BOTH "so a concurrent registration that already
-    committed for a different provider is NOT collaterally deleted". The parameterisation edge
-    inherits that identity or it inherits that bug.
+    happens to re-register, and nothing errors anywhere. The predicate compensation below filters
+    on BOTH "so a concurrent registration that already committed for a different provider is NOT
+    collaterally deleted". The parameterisation edge inherits that identity or it inherits that
+    bug.
 
-    Returns ``{"written": [...], "unresolved": [...], "deleted": n}``. `unresolved` names slots
-    whose referent class has no OntologyClass node — REPORTED, never silently dropped.
+    Returns ``{"written": [...], "unresolved": [...], "deleted": n}``. `written` names SLOTS
+    (every slot whose referent's edge was written); `unresolved` names slots whose referent class
+    has no OntologyClass node — REPORTED, never silently dropped.
 
     WHY UNRESOLVED IS NOT AN EXCEPTION. `merge_neo4j_predicate_edge` raises when the input or
     output class is missing, because without them the verb cannot be reached at all. A missing
@@ -275,48 +329,48 @@ def sync_parameterised_by_edges(
     coverage leg, so raising here would turn a working registration into an outage over a
     widening it never had. Silence is the other error — that is the silent-shortfall shape, a
     pool that is correct and short at once — so the caller is handed the names and logs them.
+    ONLY an absent endpoint is unresolved; any other failed or unreachable write RAISES, and the
+    saga logs it as a failed sync.
     """
-    declarations = [d for d in (slots or []) if isinstance(d, dict) and d.get("referent")]
+    who = initiator or registrar_initiator()
+    writer = _writer(driver, PARAMETERISED_BY_FAMILY)
+    scope = _parameterised_filter(verb_iri=verb_iri, input_uri=input_uri, tool_urn=tool_urn)
 
-    with driver.session() as session:
-        rec = session.run(
-            _PARAMETERISED_SYNC_DELETE,
-            input_uri=input_uri, verb_iri=verb_iri, tool_urn=tool_urn,
-        ).single()
-        deleted = int(rec["deleted"]) if rec else 0
+    deleted = _count(driver, PARAMETERISED_BY_FAMILY, who, scope)
+    _raise_unless_applied(
+        "sync_parameterised_by_edges(delete)", writer.delete_edges(who, identity_filter=scope),
+        verb_iri=verb_iri, tool_urn=tool_urn)
 
-        written: list = []
-        unresolved: list = []
-        for decl in declarations:
-            slot_name = str(decl.get("name") or "")
-            if not slot_name:
-                continue
-            row = session.run(
-                _PARAMETERISED_MERGE,
-                input_uri=input_uri,
-                referent_uri=str(decl["referent"]),
-                verb_iri=verb_iri,
-                tool_urn=tool_urn,
-                slot=slot_name,
-                # THE IDENTITY FIELDS GO IN $props TOO, mirroring
-                # merge_neo4j_predicate_edge's "Ensure the identity fields are also in $props
-                # so a CREATE has them". The pool filters on verb_iri/_tool_urn being present,
-                # so an edge created without them is one the query silently ignores — a
-                # shortfall no recording double can see, because the double never CREATEs.
-                props={
-                    "verb_iri": verb_iri,
-                    "_tool_urn": tool_urn,
-                    "slot": slot_name,
-                    # bool() is deliberate: a manifest carrying required="false" (a STRING)
-                    # would otherwise be written truthy, and the pool's `= true` would admit an
-                    # optional slot — the unconstrained enum ADR-0018 exists to prevent.
-                    "required": bool(decl.get("required", False)),
-                },
-            ).single()
-            if row is None:
-                unresolved.append({"slot": slot_name, "referent": str(decl["referent"])})
-            else:
-                written.append(slot_name)
+    # referent -> (slot names, required-by-any), in declaration order of first appearance.
+    by_referent: dict = {}
+    for decl in (slots or []):
+        if not (isinstance(decl, dict) and decl.get("referent")):
+            continue
+        slot_name = str(decl.get("name") or "")
+        if not slot_name:
+            continue
+        names, required = by_referent.get(str(decl["referent"]), ([], False))
+        # bool() is deliberate: a manifest carrying required="false" (a STRING) would otherwise
+        # be written truthy, and the pool's `= true` would admit an optional slot — the
+        # unconstrained enum ADR-0018 exists to prevent.
+        by_referent[str(decl["referent"])] = (
+            names + [slot_name], required or bool(decl.get("required", False)))
+
+    written: list = []
+    unresolved: list = []
+    for referent, (names, required) in by_referent.items():
+        result = writer.write_edge(
+            who,
+            identity=EdgeIdentity(subject=input_uri, verb=verb_iri, object=referent, key=tool_urn),
+            payload={"slot": ",".join(sorted(names)), "required": required},
+        )
+        if result.applied:
+            written += names
+        elif result.outcome == "failed" and (result.detail or "").startswith(ENDPOINT_ABSENT):
+            unresolved += [{"slot": n, "referent": referent} for n in names]
+        else:
+            _raise_unless_applied(
+                "sync_parameterised_by_edges", result, verb_iri=verb_iri, referent=referent)
 
     if unresolved:
         logger.warning(
@@ -335,14 +389,17 @@ def compensate_parameterised_by_edges(
     verb_iri: str,
     input_uri: str,
     tool_urn: str,
+    initiator: Optional[Initiator] = None,
 ) -> int:
     """DELETE this PROVIDER's PARAMETERISED_BY edges for this verb. Idempotent."""
-    with driver.session() as session:
-        rec = session.run(
-            _PARAMETERISED_SYNC_DELETE,
-            input_uri=input_uri, verb_iri=verb_iri, tool_urn=tool_urn,
-        ).single()
-    return int(rec["deleted"]) if rec else 0
+    who = initiator or registrar_initiator()
+    scope = _parameterised_filter(verb_iri=verb_iri, input_uri=input_uri, tool_urn=tool_urn)
+    deleted = _count(driver, PARAMETERISED_BY_FAMILY, who, scope)
+    _raise_unless_applied(
+        "compensate_parameterised_by_edges",
+        _writer(driver, PARAMETERISED_BY_FAMILY).delete_edges(who, identity_filter=scope),
+        verb_iri=verb_iri, tool_urn=tool_urn)
+    return deleted
 
 
 def compensate_neo4j_predicate_edge(
@@ -352,23 +409,23 @@ def compensate_neo4j_predicate_edge(
     input_uri: str,
     output_uri: str,
     tool_urn: str,
+    initiator: Optional[Initiator] = None,
 ) -> int:
     """DELETE the predicate edge for this registration's identity.
 
     Returns the count of edges deleted (0 if no edge matched — the saga
     is replaying a compensation step that already ran, which is fine).
-    Idempotent by construction: the WHERE clause filters on the exact
-    identity; concurrent registrations for other providers survive.
+    Idempotent by construction: the filter binds the exact identity, so
+    concurrent registrations for other providers survive.
     """
-    with driver.session() as session:
-        rec = session.run(
-            _COMPENSATE_CYPHER,
-            input_uri=input_uri,
-            output_uri=output_uri,
-            verb_iri=verb_iri,
-            tool_urn=tool_urn,
-        ).single()
-    return int(rec["deleted"]) if rec else 0
+    who = initiator or registrar_initiator()
+    scope = EdgeIdentityFilter(subject=input_uri, verb=verb_iri, object=output_uri, key=tool_urn)
+    deleted = _count(driver, PREDICATE_EDGE_FAMILY, who, scope)
+    _raise_unless_applied(
+        "compensate_neo4j_predicate_edge",
+        _writer(driver, PREDICATE_EDGE_FAMILY).delete_edges(who, identity_filter=scope),
+        verb_iri=verb_iri, tool_urn=tool_urn)
+    return deleted
 
 
 # ---------------------------------------------------------------------------

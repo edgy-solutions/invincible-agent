@@ -1093,8 +1093,9 @@ def _build_rel_props_for_saga(
     drift bug class (doc-tools 540fbd5 family).
     """
     return {
-        # Identity is also set inside merge_neo4j_predicate_edge via
-        # the match_key; we duplicate it here so a CREATE has the props.
+        # The identity pair. merge_neo4j_predicate_edge CHECKS these two against the
+        # EdgeIdentity it builds and then drops them from the payload: the SDK writer sets
+        # both on MATCH and CREATE from the identity, and refuses a payload that names them.
         "iri": manifest.verb_iri,
         "_tool_urn": tool_urn,
         # Discoverable properties Engine O reads.
