@@ -1530,12 +1530,21 @@ def _predicate_hybrid_search_sync(
                     raw_syn = parsed if isinstance(parsed, list) else []
                 except (ValueError, TypeError):
                     raw_syn = []
+            # A PRESENT KEY HOLDING NULL IS NOT AN ABSENT KEY. Weaviate returns every
+            # schema property on every row, null where the row never set it, so a
+            # `.get(k, "")` default never fires for it. The 77 `mesh:rendersAs` rows
+            # are frontend renderers with a `frontend_id` and no `endpoint_url`, and
+            # their None reached `PredicateCandidate.endpoint: str` -- one such row
+            # anywhere in the window 500ed the whole /search_predicates response
+            # (measured 2026-10-01, 3 of 3). Coerced HERE, for every string field a
+            # consumer types `str`, rather than at one consumer: the two sibling
+            # builders already did `or ""` and this one was the odd one out.
             out.append({
-                "verb_iri": p.get("verb_iri", ""),
-                "verb_type": p.get("verb_local", ""),
-                "input_uri": p.get("input_uri", ""),
-                "output_uri": p.get("output_uri", ""),
-                "endpoint": p.get("endpoint_url", ""),
+                "verb_iri": p.get("verb_iri") or "",
+                "verb_type": p.get("verb_local") or "",
+                "input_uri": p.get("input_uri") or "",
+                "output_uri": p.get("output_uri") or "",
+                "endpoint": p.get("endpoint_url") or "",
                 "owner_persona": p.get("owner_persona") or None,
                 "domains": list(p.get("domains") or []),
                 "cost_class": p.get("cost_class") or None,
