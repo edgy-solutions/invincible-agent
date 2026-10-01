@@ -633,7 +633,12 @@ cortexUi:
     # localStorage flags) -> 6fb15fae. Measured before pinning: the tag resolves to this digest
     # (200, linux/arm64 + linux/amd64); an invented tag answers 404. cortex-ui changed only src/,
     # sessions/ and its CI producer ref since b66ac48, so its chart is unchanged.
-    digest: "sha256:6fb15fae89f8f8f1d5d9cf221e320cc6063716add6dc50f1872b5ba381a27733"
+    # 2026-10-01 roll #11: cortex-ui adf44b5 (the ingest adapter on the deployed wire, plus
+    # everything 497f45a2 carried -- 497f45a2 is superseded and must not be rolled) -> 38dca3a7.
+    # Measured before pinning: the FULL tag resolves to this digest (200, linux/arm64 +
+    # linux/amd64); the abbreviated tag and the full tag with its last hex altered both answer
+    # 404; the superseded 6fb15fae still answers 200.
+    digest: "sha256:38dca3a745e166ba6bea5b788967f665c6ee0805c6bad59997c6826c6aabb6e8"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -674,6 +679,9 @@ cortexUi:
     # is empty, cortex-ui's electric.ts logs "subscription skipped"
     # and the canvas falls back to SSE-only (no refresh resilience).
     VITE_ELECTRIC_URL: "https://electric.edgy-solutions.com"
+    # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
+    # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
+    VITE_FEATURES: "canvasExport,ingest"
 
 cortexBff:
   enabled: true
