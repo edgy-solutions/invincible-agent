@@ -170,9 +170,9 @@ except ImportError:
 # Same dance as the `engine_mint` import lower down, hoisted here because the outbound-header
 # helper is needed by handlers, not only at registration.
 try:  # pragma: no cover - import path differs by runtime
-    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+    from utils.service_identity import mint_service_token, outbound_auth_headers  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover
-    from agent_fleet.utils.service_identity import outbound_auth_headers
+    from agent_fleet.utils.service_identity import mint_service_token, outbound_auth_headers
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1617,7 +1617,7 @@ def _audience_key(promise_name: str) -> str:
     return audience_key(promise_name)
 
 
-def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
+def _register_human_task(workflow_id: str, task: dict) -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
     authorized actors from Topaz and materializes one queue row per actor; the
@@ -1645,7 +1645,16 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
         "requested_by": task.get("requested_by", ""),
         "subject_ref": task.get("subject_ref"),
     }
-    headers = {"Authorization": f"Bearer {user_jwt}"} if user_jwt else {}
+    # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
+    # applied to the register it named as its sibling. This used to send the trigger's stored
+    # `user_jwt`, which failed two ways: a definition that suspends for human latency outlives
+    # the token (600s), and a trigger that never carried one sent NO header at all.
+    # SafetyAcceptance is the second case BY CONSTRUCTION -- `acceptance_trigger` is flat
+    # scalars with no token -- so every risk acceptance died 401 -> fail-and-release, measured on
+    # HAZ-1003 at rev 161 (2026-09-30). The token authorizes the EFFECT; `requested_by` in the
+    # body records WHO asked. A ServiceTokenError propagates RETRYABLE: a Keycloak blip is
+    # infra, not a denial.
+    headers = {"Authorization": f"Bearer {mint_service_token()}"}
     resp = requests.post(
         f"{CORTEX_BFF_URL}/internal/human_tasks/register",
         json=body, headers=headers, timeout=AGENT_HTTP_TIMEOUT,
@@ -1951,7 +1960,7 @@ async def _run_definition(
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
             await ctx.run(
                 f"register_{step.id}",
-                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+                lambda t=task: _register_human_task(workflow_id, t),
             )
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
@@ -2246,7 +2255,7 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
             # KeyError fails the workflow loudly rather than suspending invisibly).
             await ctx.run(
                 f"register_{task_id}",
-                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+                lambda t=task: _register_human_task(workflow_id, t),
             )
             # The workflow suspends here indefinitely. No polling, no CPU, no
             # memory. Restate holds a few bytes of journal state until an

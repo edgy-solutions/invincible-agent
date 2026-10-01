@@ -353,6 +353,17 @@ def _render_document_deterministic(
         parts.append(str(summary_text))
     if structured is not None:
         parts.append("```json\n" + json.dumps(structured, indent=2) + "\n```")
+    if not parts and agent_response and not _docs_explanation_passthrough(agent_response):
+        # A FLAT MEASURE REPLY IS THE CONTENT. `/measure/{fn}` engines (safety, cost, finance)
+        # return their answer as top-level fields with no `summary`/`structured_data` envelope,
+        # and the gateway hands that dict over as `expert_response` unchanged. Reading only the
+        # two envelope keys dropped every such answer and wrote the placeholder -- measured on
+        # HAZ-1003's RiskAssessmentDraft at rev 161, whose binding's `expected_fields` were all
+        # present one level up. The whole reply is fenced, as structured_data would be.
+        # NOT for a docs answer: its structure rides BESIDE the markdown via the passthrough
+        # (`tests/docs/...passes_its_structure_through.py`), and the read-set above stays the
+        # three envelope keys, which `test_slot_disposition` extracts from this function.
+        parts.append("```json\n" + json.dumps(agent_response, indent=2, default=str) + "\n```")
     markdown_content = "\n\n".join(parts) if parts else "No content available."
 
     component = {
