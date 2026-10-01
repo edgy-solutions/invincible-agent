@@ -23,14 +23,19 @@ report: `docs/measurements/2026-10-01-lane-1-roll-11.md`
   kubectl -n sandbox exec deploy/iagent-cortex-bff -- sh -c 'cd /app && python policy/sync/task_grant_sync.py'
   ```
 
-- After it runs, the parked invocation should register on its next Restate retry (see item 2). If it does not, re-fire the census row; Lane 1 will re-read `human_task_projection`.
+- **DONE, and CORRECTED.** The sync ran at 18:44Z: +8 relations, −0 revoked, readback 14 checked with 0 failures.
+- The invocation did NOT self-heal. Restate had **paused** it once its retries ran out, and a paused invocation never retries on its own.
+- A human resume at 19:17Z registered it: 200, `recipients=1`. `human_task_projection` holds exactly 1 pending row for bob (`workflow_id=risk-acceptance-HAZ-1003-medium`).
+- Item 2 is therefore worse than first written: a terminal 422 parks the workflow until a human acts.
+
+**Item 1b, owner needed:** that row's `kind` is `workflow_ack`, because `register_acceptance` hard-codes it. Nothing keyed on `risk_acceptance_medium` (the task-kind overlay, the census row's expectation) sees it as a risk acceptance. The UI's rendering of it is unmeasured.
 - **Decision needed:** should the sandbox keep relying on a hand-run sync, or should task grants join a bootstrap step? The next fresh directory loses them otherwise.
 
-## 2. Owner needed: engine-a retries a terminal 422 forever
+## 2. Owner needed: engine-a retries a terminal 422 until Restate pauses the workflow
 
-- `register_acceptance` (`agent_fleet/restate_analyst/main.py`) makes only 401/403 terminal. A 422 goes through `raise_for_status()` and so is retried indefinitely.
+- `register_acceptance` (`agent_fleet/restate_analyst/main.py`) makes only 401/403 terminal. A 422 goes through `raise_for_status()` and so is retried until Restate pauses the invocation.
 - That contradicts the register route's own contract: "TERMINAL 4xx … fail-and-release (never park or retry-forever)".
-- Today it happens to be convenient, because it will self-heal after item 1. But a zero-recipient audience that nobody seeds parks a workflow forever, which is the exact DoS surface the route was written to refuse.
+- CORRECTED: it does not self-heal. After the retry policy runs out, Restate **pauses** the invocation, and it then sits parked until a human resumes it (measured on HAZ-1003, item 1). That is the exact park the route was written to refuse.
 - `dispatch_driver._mint_dispatch_task` is the sibling; its 4xx handling was not read.
 
 ## 3. Owner needed: dag-tools `datahub_sensor` (leg 11b)
