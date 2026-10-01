@@ -163,6 +163,8 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_
                                      "on_behalf_of": None}
     assert manifest["provenance"]["obtained_via"] == "user-drop"
     assert manifest["provenance"]["authoritative_source"], "authoritative_source must be non-empty"
+    # ONE id for the document across manifest, block and status row -- not a second derivation.
+    assert manifest["provenance"]["ingest_id"] == expected_ingest_id == manifest["ingest_id"]
     assert received["kind"] == "pdf"
     assert received["ingest_id"] == expected_ingest_id
     assert received["submitted_by"] == "alice@example.com"

@@ -8266,6 +8266,10 @@ async def ingest_document(
         ingested_at=ingested_at,
         ingest_run=f"user-drop:{ingest_id}",
         standing="supervised",
+        # THE BLOCK CARRIES ITS DOCUMENT'S ID (provenance floor, ead2f80d): the same
+        # `promotion.ingest_id_for` value the manifest, the status row and the promotion task
+        # key on, so a claim derived from this drop can be traced back without the manifest.
+        ingest_id=ingest_id,
     )
     manifest = {
         "ingest_id": ingest_id,
