@@ -36,10 +36,12 @@ anchor-counted, so a change to the reader breaks this arm loudly instead of drif
 
 from __future__ import annotations
 
+import datetime
 import inspect
 import os
 import re
 import uuid
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import pytest
@@ -920,6 +922,25 @@ _LIVE_VECTORS = _LIVE and bool(os.environ.get("WEAVIATE_HTTP_HOST"))
 _SCRATCH_URIS = [f"urn:mesh-writer-scratch:{n}" for n in ("s1", "o1", "s2", "o2")]
 
 
+def _scratch_prefix(toplevel: Path | None = None, today: datetime.date | None = None) -> str:
+    """`MeshWriterScratch_<lane>_<yyyymmdd>_`: every scratch name the live arms create carries the
+    lane that wrote it and the day, so a census of either store can attribute a residue without
+    this file's help. DERIVED, never typed: the lane is the worktree directory's `ia-NN` suffix
+    (the charter's worktree<->lane mapping), the date is the run's own."""
+    top = toplevel or Path(__file__).resolve().parents[1]
+    m = re.fullmatch(r"ia-([0-9a-z]+)", top.name)
+    lane = m.group(1) if m else "master"
+    return f"MeshWriterScratch_{lane}_{(today or datetime.date.today()):%Y%m%d}_"
+
+
+def test_the_scratch_prefix_names_the_lane_and_the_day():
+    day = datetime.date(2026, 9, 30)
+    assert _scratch_prefix(Path("/x/ia-74"), day) == "MeshWriterScratch_74_20260930_"
+    assert _scratch_prefix(Path("/x/invincible-agent"), day) == "MeshWriterScratch_master_20260930_"
+    # a Neo4j label and a Weaviate collection name both accept it unquoted
+    assert re.fullmatch(r"[A-Z][A-Za-z0-9_]*", _scratch_prefix(Path("/x/ia-5f"), day) + "ab12")
+
+
 def _scratch_edge_reader(driver: Any, label: str):
     """``Neo4jGraph.edge()``'s own query with exactly two substitutions, each anchor-counted —
     see the module docstring for why each is a finding and not a fixture choice."""
@@ -945,7 +966,7 @@ def scratch_graph():
     driver = GraphDatabase.driver(
         os.environ["NEO4J_URI"],
         auth=(os.environ.get("NEO4J_USERNAME", "neo4j"), os.environ["NEO4J_PASSWORD"]))
-    label = f"MeshWriterScratch{uuid.uuid4().hex[:12]}"
+    label = f"{_scratch_prefix()}{uuid.uuid4().hex[:12]}"
     with driver.session() as s:
         assert s.run(f"MATCH (n:{label}) RETURN count(n) AS n").single()["n"] == 0
         s.run(f"UNWIND $uris AS u CREATE (:{label} {{uri: u}})", uris=_SCRATCH_URIS)
@@ -1073,7 +1094,7 @@ def test_LIVE_the_sdk_vectors_arms_hold_and_a_written_row_is_retrievable_by_name
 
     client = create_weaviate_client()
     tag = uuid.uuid4().hex[:10]
-    collection, meta = f"MeshWriterScratch{tag}", f"MeshWriterScratchMeta{tag}"
+    collection, meta = f"{_scratch_prefix()}{tag}", f"{_scratch_prefix()}{tag}_meta"
     before = set(client.collections.list_all())
     assert collection not in before and meta not in before
     try:
