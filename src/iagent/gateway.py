@@ -2804,9 +2804,13 @@ def _promotion_stores(acted_by: str):
     declared ingest-carrying collections. The graph writes as the PERSON acting -- `acted_by`,
     the caller `can_act` is asked about -- so it is built per act, never once at startup.
 
-    What this does NOT lift: a promotion still needs the ingest node, which nothing creates yet,
-    so it answers 409 `ingest_node_absent` rather than 503. A store that cannot be built is None,
-    and the act refuses 503 naming it before anything is written."""
+    What this does NOT lift: a promotion still needs the ingest node. `/ingest` now creates one
+    for a new arrival, best-effort, through this same home's `create_node` (see
+    `_create_ingest_node`, ruled 2026-09-30) -- but that call is logged and swallowed on
+    failure, never raised, so a document can still arrive at `promotion.act` with no node. The
+    409 `ingest_node_absent` answer below is that honest, still-live case, not a historical one.
+    A store that cannot be built is None, and the act refuses 503 naming it before anything is
+    written."""
     from iagent_mesh.interfaces import Initiator
 
     from . import promotion, promotion_stores
@@ -8154,6 +8158,36 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
     )
 
 
+def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: str,
+                        ingested_at: str, subject: str) -> None:
+    """Create the ingest node for a NEW /ingest arrival, through the worker's graph HOME
+    (`promotion_stores.Neo4jIngestGraph.create_node`) -- never through the SDK graph writer,
+    which is MATCH-NEVER-CREATE by design and has no node-creating call on its surface (ruling
+    2026-09-30, `src/iagent/promotion_stores.py`'s own module docstring). A module-level
+    function, not inlined in the route, so tests can monkeypatch it
+    (`monkeypatch.setattr(gateway, "_create_ingest_node", ...)`) the same way `_build_s3_client`
+    is faked above.
+
+    `kind="person"` on the Initiator is correct here for the same reason the manifest's own
+    `initiator` field is: the route above refuses any `on_behalf_of` other than the caller's own
+    authz_id, so this is never a delegate or service identity.
+
+    Raises on any failure -- the CALLER (the route, below) is the one that logs and swallows it.
+    The bytes, manifest and status row are already durable by the time this runs, so a graph
+    outage here must never fail an otherwise-successful upload; a promotion of a document with
+    no node answers 409 `ingest_node_absent`, the honest downstream refusal, rather than this
+    best-effort create blocking anything.
+    """
+    from iagent_mesh.interfaces import Initiator
+
+    from . import promotion_stores
+
+    graph = promotion_stores.Neo4jIngestGraph(
+        driver=neo4j_driver, initiator=Initiator(subject=subject, kind="person"))
+    graph.create_node(ingest_id, kind=kind, sha256=sha256, object_ref=object_ref,
+                      ingested_at=ingested_at)
+
+
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
@@ -8315,6 +8349,21 @@ async def ingest_document(
             source=file.filename,
         )
     )
+    # BEST-EFFORT node creation (ruled 2026-09-30): the bytes, manifest and status row above are
+    # already durable, so a graph outage here is LOGGED, not raised -- failing an otherwise-
+    # successful upload on the graph store would be the wrong trade. A promotion of a document
+    # whose node is absent (because this failed, or hasn't run yet) answers 409
+    # `ingest_node_absent`, the honest downstream refusal.
+    try:
+        await run_in_threadpool(
+            lambda: _create_ingest_node(
+                ingest_id=ingest_id, kind=kind, sha256=sha256,
+                object_ref=manifest["object_ref"], ingested_at=ingested_at,
+                subject=current_user.authz_id,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
+        logger.warning("ingest node creation failed for %s: %s", ingest_id, exc)
     return {
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
         "object_prefix": object_prefix, "duplicate": None,

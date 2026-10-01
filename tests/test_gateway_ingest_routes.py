@@ -20,6 +20,10 @@ WHAT THESE DEFEND:
     on_behalf_of gets 404, not another user's row.
   * /electric/shape?table=ingest_status_projection injects the caller-scoped WHERE the same
     way human_task_projection's branch does, mirrored in the dispatch's SAME if/elif chain.
+  * a NEW arrival calls `_create_ingest_node` exactly once, with the minted ingest_id, the
+    route's own kind, the sha256, the manifest's object_ref and the caller's authz_id as
+    subject -- a DUPLICATE arrival never calls it, and a raise from the helper is logged and
+    swallowed: the route still answers 200 with the same body (ruled 2026-09-30).
 """
 from __future__ import annotations
 
@@ -60,6 +64,15 @@ def fake_s3(monkeypatch):
     return calls
 
 
+@pytest.fixture
+def fake_create_node(monkeypatch):
+    """Captures every _create_ingest_node call instead of touching Neo4j -- the module-level
+    helper exists for exactly this seam (gateway._create_ingest_node's own docstring)."""
+    calls: list[dict] = []
+    monkeypatch.setattr(gateway, "_create_ingest_node", lambda **kw: calls.append(kw))
+    return calls
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # POST /ingest — auth, validation, dedupe, write
 # ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +109,8 @@ def test_ingest_refuses_an_on_behalf_of_that_is_not_the_caller(client, fake_s3, 
     assert fake_s3 == [], "an on_behalf_of mismatch reached the object store"
 
 
-def test_ingest_dedupe_hit_returns_the_message_and_never_writes(client, fake_s3, monkeypatch):
+def test_ingest_dedupe_hit_returns_the_message_and_never_writes(
+        client, fake_s3, fake_create_node, monkeypatch):
     """Level-1 dedupe (ADR-0041 §8): a sha256 already on file returns the 'already processed'
     message and RECORDS the arrival as its own row -- but never touches the object store and
     never calls record_received (that would be a second primary row for the same sha)."""
@@ -121,9 +135,11 @@ def test_ingest_dedupe_hit_returns_the_message_and_never_writes(client, fake_s3,
                                  "message": "already processed on 2026-01-01 from first-drop.pdf"}
     assert fake_s3 == [], "a duplicate arrival must never write the object store"
     assert received_called["v"] is False, "a duplicate arrival must never call record_received"
+    assert fake_create_node == [], "a duplicate arrival must never call _create_ingest_node"
 
 
-def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_s3, monkeypatch):
+def test_ingest_new_arrival_writes_the_object_and_records_received(
+        client, fake_s3, fake_create_node, monkeypatch):
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
     received = {}
     def _record_received(**kw):
@@ -168,6 +184,42 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(client, fake_
     assert received["kind"] == "pdf"
     assert received["ingest_id"] == expected_ingest_id
     assert received["submitted_by"] == "alice@example.com"
+    # _create_ingest_node runs for a NEW arrival exactly once, with the minted ingest_id, the
+    # route's own (file-format) kind, the sha256, the manifest's object_ref and the caller's
+    # authz_id as subject (ruled 2026-09-30).
+    assert len(fake_create_node) == 1, fake_create_node
+    call = fake_create_node[0]
+    assert call["ingest_id"] == expected_ingest_id
+    assert call["kind"] == "pdf"
+    assert call["sha256"] == gateway.hashlib.sha256(body_bytes).hexdigest()
+    assert call["object_ref"] == manifest["object_ref"]
+    assert call["subject"] == "alice@example.com"
+    assert call["ingested_at"] == manifest["provenance"]["ingested_at"]
+
+
+def test_ingest_new_arrival_still_returns_200_when_create_ingest_node_raises(
+        client, fake_s3, monkeypatch):
+    """BEST-EFFORT (ruled 2026-09-30): the bytes, manifest and status row are already durable by
+    the time this runs, so a graph outage must be logged, never fail an otherwise-successful
+    upload -- the route answers 200 with the same body it would have without the failure."""
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+
+    def _boom(**kw):
+        raise RuntimeError("neo4j unreachable")
+    monkeypatch.setattr(gateway, "_create_ingest_node", _boom)
+
+    body_bytes = b"node creation fails but the upload must not"
+    r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    expected_ingest_id = promotion.ingest_id_for(body_bytes)
+    assert body["ingest_id"] == expected_ingest_id
+    assert body["stage"] == "received"
+    assert body["detail"] is None
+    assert body["duplicate"] is None
 
 
 def test_ingest_declared_content_kind_lands_in_manifest_and_metadata(client, fake_s3, monkeypatch):

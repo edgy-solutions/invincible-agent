@@ -6,6 +6,13 @@ What is pinned here:
     read: an unreadable count, a sweep that did not apply, and a node that survives its sweep
     all RAISE;
   * the node-exists read is built FROM the family and binds the id as a parameter;
+  * `create_node` MERGEs a node built FROM the same family, is idempotent (a second call answers
+    False and writes nothing), refuses a malformed ingest_id before any read or write, and the
+    `submitted_by` prop is the HOME's own initiator subject, never a caller-supplied value --
+    this lives here, not on the SDK writer, because the writer is MATCH-NEVER-CREATE by design
+    (ruled 2026-09-30) and its write surface is edges-only;
+  * the rejection sweep now also deletes the node itself, but ONLY IF bare (no relationship of
+    any type survives on it) -- a node another family's edge still anchors must survive;
   * the index adapter sweeps the declared collections, which are EMPTY, and refuses rather than
     answering zero the day one is declared;
   * THE CENSUS that keeps the empty declaration true: no module in this repo both names an
@@ -49,7 +56,12 @@ class _Session:
 
     def run(self, cypher, **params):
         self._d.reads.append((cypher, params))
-        self._d.log.append("node_read")
+        if cypher == promotion_stores._CREATE_NODE_CYPHER:
+            self._d.log.append("node_create")
+        elif cypher == promotion_stores._DELETE_BARE_NODE_CYPHER:
+            self._d.log.append("node_delete_bare")
+        else:
+            self._d.log.append("node_read")
         row = None if self._d.node_count is None else {"n": self._d.node_count}
         return type("R", (), {"single": lambda _self: row})()
 
@@ -186,22 +198,81 @@ def test_a_fact_that_did_not_APPLY_raises_naming_the_outcome(home, result):
         graph.write_fact(INGEST_ID, FACT)
 
 
+# ── THE GRAPH: node creation ──────────────────────────────────────────────────────────────────
+
+CREATE_KW = dict(kind="pdf", sha256="deadbeef", object_ref="ingress-user/pdf/x/file.pdf",
+                 ingested_at="2026-09-30T20:27:00Z")
+
+
+def test_create_node_MERGES_FROM_the_family_and_sets_the_scalar_props(home):
+    graph, _, driver, _, log = home
+    created = graph.create_node(INGEST_ID, **CREATE_KW)
+    assert created is True
+    assert log == ["node_read", "node_create"]
+    cypher, params = driver.reads[-1]
+    assert cypher == promotion_stores._CREATE_NODE_CYPHER
+    assert params["ingest_id"] == INGEST_ID
+    assert params["props"] == {
+        "kind": "pdf", "sha256": "deadbeef", "object_ref": "ingress-user/pdf/x/file.pdf",
+        "submitted_by": "bob", "ingested_at": "2026-09-30T20:27:00Z",
+    }
+    label, key = INGEST_FACT_FAMILY["node_label"], INGEST_FACT_FAMILY["node_key"]
+    assert re.match(
+        rf"MERGE \(n:{label} \{{{key}: \$ingest_id\}}\)\s+ON CREATE SET n \+= \$props$",
+        cypher), cypher
+
+
+def test_create_node_is_idempotent_the_SECOND_call_answers_False_and_writes_nothing(home):
+    graph, _, driver, _, log = home
+    driver.node_count = 1  # already exists
+    created = graph.create_node(INGEST_ID, **CREATE_KW)
+    assert created is False
+    assert log == ["node_read"], "an existing node must never reach the MERGE"
+
+
+def test_create_node_refuses_a_MALFORMED_ingest_id_before_any_read_or_write(home):
+    graph, _, driver, _, log = home
+    with pytest.raises(ValueError, match="INGEST_ID_RE"):
+        graph.create_node("not-an-ingest-id", **CREATE_KW)
+    assert log == [] and driver.reads == []
+
+
+def test_create_node_props_carry_the_INITIATORS_subject_not_a_caller_supplied_one(home):
+    graph, _, driver, _, _ = home
+    graph.create_node(INGEST_ID, **CREATE_KW)
+    assert driver.reads[-1][1]["props"]["submitted_by"] == graph._initiator.subject == "bob"
+
+
 # ── THE GRAPH: the rejection sweep ────────────────────────────────────────────────────────────
 
-def test_the_sweep_COUNTS_then_DELETES_then_REREADS_the_node_in_ONE_scope(home):
+def test_the_sweep_COUNTS_then_DELETES_then_BARE_NODE_DELETES_then_REREADS(home):
     graph, writer, driver, _, log = home
     writer.has_result = MeshResult.answered([{"k": 1}, {"k": 2}, {"k": 3}])
     assert graph.delete_carrying(INGEST_ID) == 3
-    assert log == ["has", "delete", "node_read"]
+    assert log == ["has", "delete", "node_delete_bare", "node_read"]
     assert [c[2] for c in writer.calls] == [EdgeIdentityFilter(key=INGEST_ID)] * 2
     assert all(c[1] is BOB for c in writer.calls)
     assert driver.reads[0][1] == {"ingest_id": INGEST_ID}
+    assert driver.reads[1][1] == {"ingest_id": INGEST_ID}
 
 
 def test_an_EMPTY_count_is_zero_and_the_delete_STILL_runs(home):
     graph, _, _, _, log = home
     assert graph.delete_carrying(INGEST_ID) == 0
-    assert log == ["has", "delete", "node_read"]
+    assert log == ["has", "delete", "node_delete_bare", "node_read"]
+
+
+def test_the_bare_node_delete_is_BUILT_FROM_the_family_and_runs_BEFORE_the_final_reread(home):
+    graph, writer, driver, _, _ = home
+    writer.has_result = MeshResult.answered([{"k": 1}])
+    graph.delete_carrying(INGEST_ID)
+    cypher, params = driver.reads[0]
+    assert cypher == promotion_stores._DELETE_BARE_NODE_CYPHER
+    assert params == {"ingest_id": INGEST_ID}
+    label, key = INGEST_FACT_FAMILY["node_label"], INGEST_FACT_FAMILY["node_key"]
+    assert re.match(
+        rf"MATCH \(n:{label} \{{{key}: \$ingest_id\}}\)\s+WHERE NOT \(n\)--\(\)\s+DELETE n$",
+        cypher), cypher
 
 
 @pytest.mark.parametrize("seen", [MeshResult.failed("boom"), MeshResult.unreachable("down")],

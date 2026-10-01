@@ -24,10 +24,15 @@ ingest artifact node to itself, carrying the three fact properties; its identity
 merges onto the same edge. The node-exists check is a parameterised READ, because `has_edges`
 cannot see a node that has no edges yet. The sweep is the writer's key-only delete, which by the
 family's fixed type and identity properties reaches no other family's edges.
-WHAT IT CANNOT DO: delete a NODE. The writer matches endpoints and never creates or removes them,
-so nothing in the fleet creates the ingest node either (`/ingest` writes none today). The sweep
-therefore re-reads the node after deleting its edges and RAISES if it still exists: a rejection
-that left the document's node in the graph would report a sweep that did not happen.
+THE WRITER STILL CANNOT CREATE OR DELETE A NODE (ruled 2026-09-30: `Neo4jGraphWriter` is
+MATCH-NEVER-CREATE by design and the SDK write surface is edges-only), so node creation lives on
+this HOME instead, in `Neo4jIngestGraph.create_node` -- `/ingest` calls it, best-effort, for a
+new arrival (a failure is logged, never raised; promotion of a document with no node still
+answers 409 `ingest_node_absent` rather than 503). `delete_carrying` now deletes the bare node
+itself after its edge sweep, but ONLY IF no relationship of ANY type remains on it
+(`_DELETE_BARE_NODE_CYPHER`) -- a node another family's edge still anchors must survive
+untouched. The re-read after that conditional delete still RAISES if the node persists: a
+rejection that left the document's node in the graph would report a sweep that did not finish.
 
 THE INDEXES sweep `INGEST_INDEXED_COLLECTIONS`, which is EMPTY, and the emptiness is measured
 rather than assumed: no module in this repo writes a row carrying an `ingest_id` into Weaviate
@@ -46,7 +51,7 @@ import psycopg2
 from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
-from .promotion import object_prefix_for
+from .promotion import INGEST_ID_RE, object_prefix_for
 
 try:  # the package layout first; the container's flattened `utils` second (v2_substrate's idiom)
     from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
@@ -191,9 +196,38 @@ _NODE_EXISTS_CYPHER = (
     f"RETURN count(n) AS n"
 )
 
+#: Built FROM the family, like `_NODE_EXISTS_CYPHER` -- the label and key are never retyped.
+#: MERGE, not CREATE: `create_node` already re-reads with `node_exists` before running this, but
+#: the read-then-write pair is not atomic, so MERGE is what makes a race (or a retried /ingest)
+#: idempotent rather than a duplicate-node or constraint error.
+_CREATE_NODE_CYPHER = (
+    f"MERGE (n:{INGEST_FACT_FAMILY['node_label']} "
+    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+    f"ON CREATE SET n += $props"
+)
+
+#: Built FROM the family. Deletes the node ONLY IF it carries no relationship of any type --
+#: `WHERE NOT (n)--()` is untyped and undirected on purpose, so an edge from ANY other family
+#: (not just PROMOTION) still anchors the node and this never fires against it.
+_DELETE_BARE_NODE_CYPHER = (
+    f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+    f"WHERE NOT (n)--()\n"
+    f"DELETE n"
+)
+
 
 class Neo4jIngestGraph:
-    """`promotion.IngestGraph` over the property graph. Every write is the acting person's."""
+    """`promotion.IngestGraph` over the property graph. Every write is the acting person's.
+
+    Also owns NODE CREATION (`create_node`, below) and the bare-node delete inside
+    `delete_carrying`, even though neither is a `promotion.IngestGraph` protocol member: the SDK
+    graph writer (`Neo4jGraphWriter`) is MATCH-NEVER-CREATE by design and its write surface is
+    edges-only (ruled 2026-09-30), so neither call can go through it. This class already owns the
+    family (`INGEST_FACT_FAMILY`) and the node read (`_NODE_EXISTS_CYPHER`), and is already
+    constructed with the acting PERSON's `Initiator` (`require_person_or_delegate`, enforced
+    below) -- so the node's own writes belong here, not on the writer.
+    """
 
     def __init__(self, *, driver: Any, initiator: Initiator,
                  writer_factory: Callable[..., Any] = Neo4jGraphWriter):
@@ -206,6 +240,35 @@ class Neo4jIngestGraph:
         with self._driver.session() as session:
             row = session.run(_NODE_EXISTS_CYPHER, ingest_id=ingest_id).single()
         return row is not None and int(row["n"]) > 0
+
+    def create_node(self, ingest_id: str, *, kind: str, sha256: str, object_ref: str,
+                     ingested_at: str) -> bool:
+        """Create the ingest node for a NEW arrival. Returns True if this call created it, False
+        if it already existed (idempotent: a retried /ingest, or a concurrent one, must not
+        double-create or raise).
+
+        Design chosen over the MERGE-and-report-a-flag alternative (`_CREATE_NODE_CYPHER`'s own
+        comment): re-read with `node_exists` first, then MERGE only if absent -- simpler to
+        reason about and test than inspecting which branch of an `ON CREATE`/`ON MATCH` fired.
+
+        Props are deliberately narrow and all scalar: `kind`, `sha256`, `object_ref`,
+        `submitted_by` (THIS home's own `initiator.subject` -- the acting person, never a
+        caller-supplied value), `ingested_at`.
+        """
+        if not INGEST_ID_RE.match(ingest_id):
+            raise ValueError(f"ingest_id {ingest_id!r} does not match promotion.INGEST_ID_RE")
+        if self.node_exists(ingest_id):
+            return False
+        props = {
+            "kind": kind,
+            "sha256": sha256,
+            "object_ref": object_ref,
+            "submitted_by": self._initiator.subject,
+            "ingested_at": ingested_at,
+        }
+        with self._driver.session() as session:
+            session.run(_CREATE_NODE_CYPHER, ingest_id=ingest_id, props=props)
+        return True
 
     def write_fact(self, ingest_id: str, fact: dict) -> None:
         result = self._writer.write_edge(
@@ -228,11 +291,19 @@ class Neo4jIngestGraph:
         result = self._writer.delete_edges(self._initiator, identity_filter=scope)
         if not result.applied:
             raise RuntimeError(f"graph sweep for {ingest_id}: {result.outcome}: {result.detail}")
+        # Lane 74's B2: now that `create_node` (above) puts nodes in the graph, every rejection
+        # would otherwise leave an orphan node behind -- and every later promotion attempt on
+        # ANY document would then answer 503 promotion_effect_incomplete instead of the honest
+        # 409 ingest_node_absent. Delete the node ONLY IF it carries no relationship of any type;
+        # one from another family must still anchor it (`_DELETE_BARE_NODE_CYPHER`'s own
+        # comment).
+        with self._driver.session() as session:
+            session.run(_DELETE_BARE_NODE_CYPHER, ingest_id=ingest_id)
         if self.node_exists(ingest_id):
             raise RuntimeError(
                 f"the ingest node for {ingest_id} still exists after its {count} edge(s) were "
-                f"swept: no writer deletes a node, so the graph half of this rejection cannot "
-                f"finish")
+                f"swept and the bare-node delete ran against it: a node survives only if it "
+                f"still carries an edge of another family, which this sweep must not cross")
         return count
 
 
