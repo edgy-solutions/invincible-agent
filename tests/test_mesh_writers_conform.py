@@ -37,6 +37,7 @@ anchor-counted, so a change to the reader breaks this arm loudly instead of drif
 from __future__ import annotations
 
 import datetime
+import importlib
 import inspect
 import os
 import re
@@ -894,17 +895,28 @@ def test_a_delegate_is_admitted_where_a_service_is_not():
         writer.write(_SERVICE, collection="S", id="r", text="t")
 
 
-def test_every_transport_name_the_writers_match_on_is_a_real_exception():
-    """A NAME-MATCHED SET IS A SET OF STRINGS, AND A TYPO IN ONE IS A GUARD THAT CANNOT FIRE."""
-    import neo4j.exceptions
-    import weaviate.exceptions
+def _the_transport_modules():
+    """Each driver's exception module beside the name set its writer matches on.
 
+    THE MODULE COMES FROM `sys.modules`, NEVER FROM AN ATTRIBUTE OF ITS PACKAGE. `import
+    neo4j.exceptions` binds `neo4j` and then reads `.exceptions` off it, and a package that was
+    re-imported while its submodule stayed cached has no such attribute. Measured 2026-10-01:
+    `tests/routing/test_adr0019_pipeline_integrity.py` pops `sys.modules["neo4j"]` at import and
+    re-imports the driver, so this seal went red in the full suite and green alone, with
+    `AttributeError: module neo4j has no attribute exceptions`. `importlib.import_module` returns
+    the cached entry and does not read the package's attribute.
+    """
     from agent_fleet.utils.mesh_writers import neo4j_graph, weaviate_vectors
 
-    for module, names in (
-        (neo4j.exceptions, neo4j_graph._TRANSPORT),          # noqa: SLF001
-        (weaviate.exceptions, weaviate_vectors._TRANSPORT),  # noqa: SLF001
-    ):
+    return (
+        (importlib.import_module("neo4j.exceptions"), neo4j_graph._TRANSPORT),          # noqa: SLF001
+        (importlib.import_module("weaviate.exceptions"), weaviate_vectors._TRANSPORT),  # noqa: SLF001
+    )
+
+
+def test_every_transport_name_the_writers_match_on_is_a_real_exception():
+    """A NAME-MATCHED SET IS A SET OF STRINGS, AND A TYPO IN ONE IS A GUARD THAT CANNOT FIRE."""
+    for module, names in _the_transport_modules():
         assert names, f"{module.__name__}: the transport set is empty"
         for name in names:
             resolved = getattr(module, name, None)
@@ -912,6 +924,17 @@ def test_every_transport_name_the_writers_match_on_is_a_real_exception():
                 f"{module.__name__}.{name} is not an exception class — a transport failure will "
                 f"be reported as a store failure for as long as the name is wrong")
 
+
+
+@pytest.mark.parametrize("package", ["neo4j", "weaviate"])
+def test_the_transport_seal_survives_a_package_without_its_submodule_attribute(monkeypatch, package):
+    """The state the full suite leaves, made in-process: the submodule cached in `sys.modules`,
+    the package object without the attribute. The seal must still read the names it checks."""
+    import sys
+
+    importlib.import_module(f"{package}.exceptions")
+    monkeypatch.delattr(sys.modules[package], "exceptions", raising=False)
+    test_every_transport_name_the_writers_match_on_is_a_real_exception()
 
 # ── the live half: scratch only, torn down ──────────────────────────────────────────────────────
 
