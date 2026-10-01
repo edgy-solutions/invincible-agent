@@ -773,3 +773,28 @@ graphHost:
 # --------------------------------------------------------------------------
 engineSafety:
   enabled: true
+
+# --------------------------------------------------------------------------
+# `mc` for the minio-bucket-init hook — built by us, because upstream's is no
+# longer pullable. `minio/mc` answers 401 to an anonymous pull on BOTH quay.io
+# and docker.io (measured 2026-09-30), so the hook at weight -5 blocked every
+# `helm upgrade` until the helm timeout and rolls had to go out `--no-hooks`,
+# which also skips the reregister and ontology-seed hooks.
+#
+# .github/workflows/mirror-util-images.yml builds this from the SAME upstream
+# release tag values.yaml pins. Keep the two tags equal; the workflow's input
+# must be this tag. The repository is outside `global.imagePrefix` on purpose,
+# so the image helper does not float its tag to Chart.Version.
+#
+# SANDBOX ONLY. values.yaml keeps quay.io/minio/mc because it is also what
+# scripts/mirror-to-artifactory.ps1 reads for the work deployment; that
+# deployment has the same unpullable source and needs its own decision.
+#
+# ORDER: dispatch the workflow and see the tag in ghcr BEFORE the first roll
+# that carries this file, or the hook fails on ImagePullBackOff instead.
+# --------------------------------------------------------------------------
+utilImages:
+  mc:
+    registry: "ghcr.io"
+    repository: "edgy-solutions/mirror/mc"
+    tag: "RELEASE.2025-08-13T08-35-41Z"
