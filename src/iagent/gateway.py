@@ -2796,20 +2796,31 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
-def _promotion_stores():
+def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
-    The ledger (Postgres, beside human_task_projection) and the objects (the seam's bucket) are
-    built here. The GRAPH and the INDEXES are None: no concrete graph or vectors writer exists
-    in this repo or at the fleet's SDK pin, so `promotion.act` refuses 503 naming them, before
-    anything is written. Both verbs need the graph, so the act is still 503 in production until
-    a graph writer is wired here."""
+    All four are built here: the ledger (Postgres, beside human_task_projection), the objects
+    (the seam's bucket), the GRAPH through the SDK graph writer, and the INDEXES over the
+    declared ingest-carrying collections. The graph writes as the PERSON acting -- `acted_by`,
+    the caller `can_act` is asked about -- so it is built per act, never once at startup.
+
+    What this does NOT lift: a promotion still needs the ingest node, which nothing creates yet,
+    so it answers 409 `ingest_node_absent` rather than 503. A store that cannot be built is None,
+    and the act refuses 503 naming it before anything is written."""
+    from iagent_mesh.interfaces import Initiator
+
     from . import promotion, promotion_stores
 
+    try:
+        graph = promotion_stores.Neo4jIngestGraph(
+            driver=neo4j_driver, initiator=Initiator(subject=acted_by, kind="person"))
+    except Exception as exc:  # noqa: BLE001 — refused by name downstream, never a 500 here
+        logger.warning("promotion graph store unavailable for %r: %s", acted_by, exc)
+        graph = None
     return promotion.PromotionStores(
         ledger=promotion_stores.PgDecisionLedger() if promotion_stores.configured() else None,
-        graph=None,
-        indexes=None,
+        graph=graph,
+        indexes=promotion_stores.DeclaredIngestIndexes(),
         objects=promotion_stores.S3Quarantine(_build_s3_client, _ARTIFACT_BUCKET),
     )
 
@@ -2923,7 +2934,7 @@ async def act_on_human_task(
             done = await run_in_threadpool(lambda: promotion.act(
                 match.get("payload"), decision=req.decision, acted_by=current_user.authz_id,
                 audience=audience, comment=req.comment,
-                can_act=human_tasks.check_can_act, stores=_promotion_stores(),
+                can_act=human_tasks.check_can_act, stores=_promotion_stores(current_user.authz_id),
                 governing={
                     "ruleset_ref": promotion.ruleset_ref(
                         human_tasks.declaration_for(promotion.KIND)),
@@ -2946,10 +2957,9 @@ async def act_on_human_task(
         # a READ MODEL of it. So a failure here is LOGGED, never raised: the decision already
         # stands (mark_task_resolved above already succeeded), and re-resolving or unresolving
         # the task over a projection write would make a read model's availability gate a
-        # decision that already happened. (`promotion.act` refuses 503 today because
-        # `_promotion_stores()` has no graph writer — this path is UNREACHABLE in production
-        # until one is wired; logged so the day it becomes reachable, a failure here is
-        # visible rather than silently swallowed forever.)
+        # decision that already happened. (Reachable since the graph writer was wired: a
+        # REJECTION reaches here; a promotion does once the ingest node has a producer. Logged
+        # so a failure here is visible rather than silently swallowed.)
         _stage = (ingest_status.PROMOTED if req.decision == promotion.PROMOTED
                  else ingest_status.REJECTED)
         # `rejected` always carries a non-blank comment here: the document_promotion kind

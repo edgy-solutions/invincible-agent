@@ -1,9 +1,9 @@
 """The concrete stores behind `promotion.act` (ADR-0041 Open §1, ruled 2026-09-30).
 
-TWO OF FOUR EXIST. `promotion.PromotionStores` names four: the decision ledger, the graph, the
-indexes and the objects. This module implements the ledger and the objects. The graph and the
-indexes are left unconfigured, because no concrete writer for either exists in this repo or at
-the fleet's SDK pin; `promotion.act` refuses 503 naming them, before anything is written.
+ALL FOUR EXIST. `promotion.PromotionStores` names four: the decision ledger, the graph, the
+indexes and the objects. Two of them could not be built before the fleet's SDK v0.9.5 writers;
+what each one can and cannot reach is stated beside it, because two of the four answer for less
+than their names promise (THE GRAPH and THE INDEXES, below).
 
 THE LEDGER is the approval plane's Postgres, beside `human_task_projection` (same DSN, same
 psycopg2 discipline as human_tasks.py; the async gateway wraps calls in run_in_threadpool). One
@@ -16,6 +16,25 @@ THE OBJECTS are the `/ingest` seam's S3 directory for the document. A rejection 
 `rejected/<ingest_id>/`, keeping each key's path below the directory. Every object is copied
 before any is deleted, so a failure part-way leaves the originals in place, and a retry copies
 again over the same keys and finishes the deletes.
+
+THE GRAPH goes through the SDK graph writer (`Neo4jGraphWriter`, `INGEST_FACT_FAMILY`), as the
+PERSON who acted -- never a service identity. The promotion fact is ONE keyed edge from the
+ingest artifact node to itself, carrying the three fact properties; its identity is
+`(ingest_id, "promotion", ingest_id, key=ingest_id)`, so a replay with the stored actor and time
+merges onto the same edge. The node-exists check is a parameterised READ, because `has_edges`
+cannot see a node that has no edges yet. The sweep is the writer's key-only delete, which by the
+family's fixed type and identity properties reaches no other family's edges.
+WHAT IT CANNOT DO: delete a NODE. The writer matches endpoints and never creates or removes them,
+so nothing in the fleet creates the ingest node either (`/ingest` writes none today). The sweep
+therefore re-reads the node after deleting its edges and RAISES if it still exists: a rejection
+that left the document's node in the graph would report a sweep that did not happen.
+
+THE INDEXES sweep `INGEST_INDEXED_COLLECTIONS`, which is EMPTY, and the emptiness is measured
+rather than assumed: no module in this repo writes a row carrying an `ingest_id` into Weaviate
+(census: tests/test_the_promotion_graph_and_index_homes.py). The day a producer appears, the
+census goes red and names it. A declared collection cannot be swept yet -- the vectors writer
+deletes by caller-supplied id, and no producer has said which ids a document's rows carry -- so a
+non-empty declaration RAISES rather than answering a zero it did not measure.
 """
 from __future__ import annotations
 
@@ -24,9 +43,15 @@ import os
 from typing import Any, Callable
 
 import psycopg2
+from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
 from .promotion import object_prefix_for
+
+try:  # the package layout first; the container's flattened `utils` second (v2_substrate's idiom)
+    from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
+except ImportError:  # pragma: no cover — runtime-dependent import path
+    from utils.mesh_writers.neo4j_graph import Neo4jGraphWriter  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -144,3 +169,91 @@ class S3Quarantine:
         for key in keys:
             s3.delete_object(Bucket=self._bucket, Key=key)
         return moved
+
+
+# ── THE GRAPH ─────────────────────────────────────────────────────────────────────────────────
+
+#: The promotion family. Its node label and key are what the ingest node will be created under;
+#: the relationship type is FIXED, so a key-only sweep cannot cross into another family's edges.
+INGEST_FACT_FAMILY = {
+    "node_label": "IngestArtifact",
+    "node_key": "ingest_id",
+    "relationship_type": "PROMOTION",
+    "verb_property": "verb",
+    "key_property": "ingest_id",
+}
+PROMOTION_VERB = "promotion"
+
+#: Built FROM the family, so the read and the writer cannot name two different nodes.
+_NODE_EXISTS_CYPHER = (
+    f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+    f"RETURN count(n) AS n"
+)
+
+
+class Neo4jIngestGraph:
+    """`promotion.IngestGraph` over the property graph. Every write is the acting person's."""
+
+    def __init__(self, *, driver: Any, initiator: Initiator,
+                 writer_factory: Callable[..., Any] = Neo4jGraphWriter):
+        initiator.require_person_or_delegate("promotion.graph")
+        self._driver = driver
+        self._initiator = initiator
+        self._writer = writer_factory(driver=driver, **INGEST_FACT_FAMILY)
+
+    def node_exists(self, ingest_id: str) -> bool:
+        with self._driver.session() as session:
+            row = session.run(_NODE_EXISTS_CYPHER, ingest_id=ingest_id).single()
+        return row is not None and int(row["n"]) > 0
+
+    def write_fact(self, ingest_id: str, fact: dict) -> None:
+        result = self._writer.write_edge(
+            self._initiator,
+            identity=EdgeIdentity(subject=ingest_id, verb=PROMOTION_VERB, object=ingest_id,
+                                  key=ingest_id),
+            payload=dict(fact))
+        if not result.applied:
+            raise RuntimeError(f"promotion fact for {ingest_id}: {result.outcome}: {result.detail}")
+
+    def delete_carrying(self, ingest_id: str) -> int:
+        scope = EdgeIdentityFilter(key=ingest_id)
+        seen = self._writer.has_edges(self._initiator, identity_filter=scope)
+        if seen.outcome == "empty":
+            count = 0
+        elif seen.outcome == "answered":
+            count = len(seen.rows)
+        else:  # a count nobody could read is not a zero
+            raise RuntimeError(f"graph sweep count for {ingest_id}: {seen.outcome}: {seen.detail}")
+        result = self._writer.delete_edges(self._initiator, identity_filter=scope)
+        if not result.applied:
+            raise RuntimeError(f"graph sweep for {ingest_id}: {result.outcome}: {result.detail}")
+        if self.node_exists(ingest_id):
+            raise RuntimeError(
+                f"the ingest node for {ingest_id} still exists after its {count} edge(s) were "
+                f"swept: no writer deletes a node, so the graph half of this rejection cannot "
+                f"finish")
+        return count
+
+
+# ── THE INDEXES ───────────────────────────────────────────────────────────────────────────────
+
+#: Collections holding rows that carry a user-drop document's `ingest_id`. EMPTY BY MEASUREMENT
+#: (module docstring); the census in tests/test_the_promotion_graph_and_index_homes.py is what
+#: keeps this line true.
+INGEST_INDEXED_COLLECTIONS: tuple = ()
+
+
+class DeclaredIngestIndexes:
+    """`promotion.IngestIndexes` over the collections declared to carry an `ingest_id`."""
+
+    def __init__(self, collections: tuple = INGEST_INDEXED_COLLECTIONS):
+        self._collections = tuple(collections)
+
+    def delete_carrying(self, ingest_id: str) -> int:
+        if self._collections:
+            raise RuntimeError(
+                f"{list(self._collections)} are declared to carry {ingest_id}, and the vectors "
+                f"writer deletes only by a caller-supplied id that no producer has declared; "
+                f"the index sweep cannot be done, so it is refused rather than counted as zero")
+        return 0

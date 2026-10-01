@@ -467,7 +467,9 @@ def route(monkeypatch, fresh_declarations):
 def _wired(route, **over):
     c, calls, mp = route
     stores = _stores(calls["log"], **over)
-    mp.setattr(gateway, "_promotion_stores", lambda: stores)
+    calls["stores_for"] = []
+    mp.setattr(gateway, "_promotion_stores",
+               lambda acted_by: calls["stores_for"].append(acted_by) or stores)
     return c, calls, mp, stores
 
 
@@ -475,16 +477,48 @@ def _post(c, decision, comment=""):
     return c.post("/human_tasks/t-1/act", json={"decision": decision, "comment": comment})
 
 
+def test_TODAYS_stores_build_the_graph_AS_THE_ACTOR_and_the_declared_indexes():
+    """The real `_promotion_stores`: the graph and the indexes are no longer None. The graph is
+    built per act with the acting PERSON as its initiator -- never a service, never shared."""
+    from src.iagent import promotion_stores
+
+    stores = gateway._promotion_stores("bob")
+    assert isinstance(stores.graph, promotion_stores.Neo4jIngestGraph)
+    assert stores.graph._initiator.subject == "bob"
+    assert stores.graph._initiator.kind == "person"
+    assert isinstance(stores.indexes, promotion_stores.DeclaredIngestIndexes)
+    carol = gateway._promotion_stores("carol").graph
+    assert carol is not stores.graph and carol._initiator.subject == "carol"
+
+
 @pytest.mark.parametrize("decision", promotion.VERBS)
-def test_ROUTE_with_TODAYS_stores_is_503_naming_the_graph_and_the_task_STAYS_PENDING(
+def test_ROUTE_with_TODAYS_stores_and_NO_LEDGER_is_503_naming_ONLY_the_ledger_and_STAYS_PENDING(
         route, decision):
-    """The real `_promotion_stores()`: no graph writer exists, and both verbs need one."""
-    c, calls, _ = route
+    """With the graph wired, the only store the real `_promotion_stores` can leave unbuilt
+    without configuration is the ledger; the refusal names it and nothing else."""
+    from src.iagent import promotion_stores
+
+    c, calls, mp = route
+    mp.setattr(promotion_stores, "_PG_DSN", "")
     r = _post(c, decision, comment="why")
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "promotion_store_unconfigured"
-    assert "'graph'" in r.json()["detail"]["message"]
+    message = r.json()["detail"]["message"]
+    # the message also lists what the verb NEEDS; the refusal is the unconfigured bracket
+    assert "and ['ledger'] is not configured" in message, message
     assert calls["resolved"] == [] and calls["log"] == []
+
+
+def test_ROUTE_builds_the_stores_for_the_CALLER_who_acts(route):
+    """The stores are built for `authz_id` -- the identity `can_act` was asked about -- so the
+    user here carries a DIFFERENT `sub`, or the two could not be told apart."""
+    c, calls, _, _ = _wired(route)
+    user = gateway.app.dependency_overrides[gateway.get_current_user]()
+    split = type("U", (), {**{k: v for k, v in vars(type(user)).items() if not k.startswith("__")},
+                           "sub": "kc-0b7e"})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: split
+    assert _post(c, "promoted").status_code == 200
+    assert calls["stores_for"] == ["bob"]
 
 
 def test_ROUTE_promotes_then_resolves_the_projection(route):
