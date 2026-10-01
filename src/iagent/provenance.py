@@ -60,7 +60,8 @@ class ProvenanceIncomplete(ValueError):
 
 def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Optional[str],
                     ingested_at: Any, ingest_run: str, standing: str,
-                    derived_from: Optional[str] = None) -> dict:
+                    derived_from: Optional[str] = None,
+                    ingest_id: Optional[str] = None) -> dict:
     """Build the block. Every field is required; there are no convenient defaults.
 
     `standing` is FROZEN AT WRITE — the source's trust rung *at the moment this claim was
@@ -72,7 +73,18 @@ def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Opti
     `ingest_run` chains this claim into PIPELINE provenance for free: claim → run → sensor →
     source object → ETag. Every link already exists; naming the run here is what assembles
     them into one lineage instead of four disconnected facts.
+
+    `ingest_id` names the DOCUMENT the claim came from (ruled 2026-09-30: a field on the block,
+    not `derived_from`; the SDK's ProvenanceBlock gains `ingest_id: str | None`). It is what a
+    rejection's sweep keys on and what the answer's provenance floor names. Optional, because
+    only a hand-carried document has one; present in the block only when given, like
+    `derived_from`. A blank one is refused: a sweep keyed on "" finds nothing and reports
+    success.
     """
+    if ingest_id is not None and not (isinstance(ingest_id, str) and ingest_id.strip()):
+        raise ProvenanceIncomplete(
+            f"ingest_id, when given, must be a non-blank string, got {ingest_id!r}; omit it "
+            f"for a claim that did not come from an ingested document")
     if not authoritative_source:
         raise ProvenanceIncomplete(
             "authoritative_source is required — it names WHO OWNS THE TRUTH, and it is the "
@@ -103,6 +115,8 @@ def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Opti
     }
     if derived_from:
         block["derived_from"] = derived_from      # -> prov:wasDerivedFrom on serialization
+    if ingest_id is not None:
+        block["ingest_id"] = ingest_id
     return block
 
 
