@@ -57,6 +57,8 @@ def _install_stubs():
             @staticmethod
             def any_of(parts): return ("any_of", parts)
             @staticmethod
+            def all_of(parts): return ("all_of", parts)
+            @staticmethod
             def by_property(name, length=False):
                 # length kwarg matches the Weaviate v4 API: a length
                 # filter projects to the array's len before .equal()
