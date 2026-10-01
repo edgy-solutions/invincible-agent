@@ -54,6 +54,8 @@ engineW:
 # cluster needs the same flip in its values file (separate ops decision).
 meshRegistrar:
   enabled: true
+  # A1, ruled 2026-09-30: the registrar's delegate owner.
+  onBehalfOfUser: platform-registrar
 
 # --------------------------------------------------------------------------
 # Agent fleet env overrides.
@@ -443,6 +445,10 @@ ontologySeed:
 
 keycloak:
   enabled: true
+  # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
+  nonInteractiveUsers:
+    - username: platform-registrar
+      email: platform-registrar@example.com
   # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
   #
   # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that

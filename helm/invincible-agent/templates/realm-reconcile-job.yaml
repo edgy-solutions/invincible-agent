@@ -194,8 +194,34 @@ spec:
               fi
               {{- end }}
 
+              # ── NON-INTERACTIVE USERS (A1) — additive, created WITHOUT credentials ──
+              {{- range $u := .Values.keycloak.nonInteractiveUsers }}
+              UN={{ $u.username | quote }}
+              echo "-- user $UN"
+              if curl -sf -H "$AUTH" "$API/users?username=$UN&exact=true" | grep -q '"id"'; then
+                echo "   present"
+              else
+                echo "   absent -> creating (no credentials: cannot sign in)"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/users" \
+                  -d {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "firstName" "Non-interactive" "lastName" $u.username | toJson | squote }}
+                echo "   created"
+              fi
+              {{- end }}
+
               # ── READBACK GATE — the claim is not "we applied it", it is "it is there" ──
               echo "== readback =="
+              {{- range $u := .Values.keycloak.nonInteractiveUsers }}
+              UN={{ $u.username | quote }}
+              UID_=$(curl -sf -H "$AUTH" "$API/users?username=$UN&exact=true" \
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$UID_" ]; then
+                echo "   FAIL user $UN: absent after reconcile"; rc=1
+              elif [ "$(curl -sf -H "$AUTH" "$API/users/$UID_/credentials" | tr -d ' \n')" != "[]" ]; then
+                echo "   FAIL user $UN: carries a credential -- it must not be able to sign in"; rc=1
+              else
+                echo "   ok   user $UN (no credentials)"
+              fi
+              {{- end }}
               {{- range $c := .Values.keycloak.serviceClients }}
               CID={{ $c.clientId | quote }}
               UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \

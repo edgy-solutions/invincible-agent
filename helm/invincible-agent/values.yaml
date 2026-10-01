@@ -1029,6 +1029,12 @@ meshRegistrar:
   # this if forward-retry exhaustion becomes non-rare without an
   # underlying-blip root cause being available.
   registerSagaBudgetSeconds: 15
+  # A1 (ruled 2026-09-30): the registrar writes graph edges as
+  # Initiator(subject="mesh-registrar", kind="delegate", on_behalf_of=<this user's authz_id>).
+  # Names a `keycloak.nonInteractiveUsers` entry BY USERNAME; the template derives the authz_id
+  # from that entry, so the person is spelled once. Unset or unlisted fails the RENDER --
+  # otherwise the registrar starts and refuses every write (RegistrarIdentityUnset).
+  onBehalfOfUser: ""
   resources:
     requests:
       cpu: 100m
@@ -1774,6 +1780,14 @@ keycloak:
   # sandbox; set to the employee-id claim at work so service authz_ids land in the same
   # slot human ones do.
   authzClaim: "email"
+  # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
+  # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
+  # one; it exists so the name a delegate's writes carry is an identity the realm can be asked
+  # about, not a string. Additive only, like the clients. `email` is the authz_id under
+  # authzClaim "email"; set it to the employee-id value at work.
+  #   - username: platform-registrar
+  #     email: platform-registrar@example.com
+  nonInteractiveUsers: []
   # Realm reconcile (realm-reconcile-job.yaml) — converges the serviceClients list below
   # into the LIVE realm on every install/upgrade, because a realm import only applies at
   # first boot. ADDITIVE ONLY: creates missing clients, repairs a missing authz-id mapper,
