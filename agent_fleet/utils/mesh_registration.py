@@ -272,7 +272,7 @@ def _emit_to_registrar(
     slots: Optional[list] = None,
     arity: Optional[str] = None,
     required_args: Optional[Iterable[str]] = None,
-) -> None:
+) -> "RegistrationResult":
     """POST a structured manifest to the mesh-registrar gateway.
 
     The gateway validates Contract D (input_uri/output_uri must resolve
@@ -381,7 +381,7 @@ def _emit_to_registrar(
     if result.registered:
         logger.info("✅ %s", result.announcement(urn or name))
         _record(urn or name, _REG_OK)
-        return
+        return RegistrationResult(verb, True)
 
     # LOUD UNREGISTERED, WITH THE CAUSE NAMED. "mint failed" and "registrar refused" produce
     # ONE symptom — the engine's verbs absent from routing — so the message is the only thing
@@ -408,6 +408,12 @@ def _emit_to_registrar(
             registrar_url, manifest, component=(urn or name), mint=mint, timeout=30.0,
         ).registered,
     )
+    # REPORTED, NOT RAISED, AND NOT `None`. This was a bare return on BOTH outcomes of the live
+    # path, so every caller that counted its calls counted this one as a registration. Measured
+    # 2026-10-01: after the 03:33Z roll every engine logged UNREGISTERED here, and engine-docs
+    # still printed `registered 1/1 verbs`. The retry above may land it later; the caller learns
+    # that from `registration_status()`, which the retry updates.
+    return RegistrationResult(verb, False, result.reason or "unregistered")
 
 
 class RegistrationResult:
@@ -500,7 +506,7 @@ def register_engine_to_mesh(
     # below is only used when the gateway isn't configured.
     registrar_url = os.getenv("MESH_REGISTRAR_URL", "").rstrip("/")
     if registrar_url:
-        _emit_to_registrar(
+        return _emit_to_registrar(
             mint=mint,
             registrar_url=registrar_url,
             name=name, description=description,
@@ -523,7 +529,6 @@ def register_engine_to_mesh(
             arity=arity,
             required_args=required_args,
         )
-        return
 
     gms_url = os.getenv("DATAHUB_GMS_URL")
     token = os.getenv("DATAHUB_TOKEN", "")
@@ -536,7 +541,7 @@ def register_engine_to_mesh(
             "/find_tool.",
             name,
         )
-        return
+        return RegistrationResult(verb, False, "neither MESH_REGISTRAR_URL nor DATAHUB_GMS_URL set")
 
     try:
         from datahub.emitter.mcp import MetadataChangeProposalWrapper
@@ -548,7 +553,7 @@ def register_engine_to_mesh(
             "engine %s. Install acryl-datahub in the image to enable.",
             name,
         )
-        return
+        return RegistrationResult(verb, False, "acryl-datahub is not installed")
 
     # URN scheme matches iagent-mesh-sdk MeshTool exactly; doc-tools'
     # aitool_registration_sensor treats them identically.

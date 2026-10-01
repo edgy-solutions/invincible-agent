@@ -180,10 +180,12 @@ async def lifespan(app: FastAPI):
     register_engine_to_mesh = None
     engine_mint = None
     try:  # FLAT FIRST — see the module header.
-        from utils.mesh_registration import engine_mint, register_engine_to_mesh
+        from utils.mesh_registration import (engine_mint, register_engine_to_mesh,
+                                             registration_status)
     except ImportError:
         try:
-            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
+            from agent_fleet.utils.mesh_registration import (engine_mint, register_engine_to_mesh,
+                                                             registration_status)
         except ImportError:  # pragma: no cover — local runs without the fleet extra
             register_engine_to_mesh = None
 
@@ -200,7 +202,7 @@ async def lifespan(app: FastAPI):
     # and the env var holding its secret are both named HERE, at the call site.
     _mint = engine_mint(client_id="iagent-docs-agent", secret_env="ENGINE_DOCS_CLIENT_SECRET")
 
-    registered, failed = [], []
+    registered, failed, pending = [], [], {}
     for v in VERBS:
         try:
             # THE KEYWORD NAMES ARE THE HELPER'S, CHECKED AGAINST ITS SIGNATURE RATHER THAN COPIED
@@ -208,7 +210,7 @@ async def lifespan(app: FastAPI):
             # engine on master passes `endpoint`, `synonyms`, `anti_synonyms`, which raises
             # TypeError on every verb and registers none of them. Copying the newest engine is
             # how a defect propagates by being exemplary.
-            register_engine_to_mesh(
+            result = register_engine_to_mesh(
                 name=f"engine_docs_{v['fn']}",
                 verb=v["verb"],
                 input_uri=v["input_uri"],
@@ -242,15 +244,28 @@ async def lifespan(app: FastAPI):
                 slots=slots_mod.slots_for(v["fn"]),
                 mint=_mint,
             )
-            registered.append(v["verb"])
         except Exception as exc:  # noqa: BLE001
             # NO SUCCESS LINE THAT DOES NOT CHECK SUCCESS (runbook §8).
             failed.append((v["verb"], str(exc)))
             print(f"[{COMPONENT}] REGISTRATION FAILED {v['verb']}: {exc}")
+            continue
+        # A CALL THAT RETURNED IS NOT A VERB THAT REGISTERED. The helper reports an
+        # unregistered outcome rather than raising (ADR-0006), so the `except` above never sees
+        # the failure that matters. Measured 2026-10-01: after the 03:33Z roll the helper logged
+        # UNREGISTERED and this line still printed `registered 1/1 verbs`. Count the RESULT; a
+        # helper that reports nothing (`None`) has not said it landed, so it counts as not landed.
+        if result:
+            registered.append(v["verb"])
+        else:
+            pending[v["verb"]] = f"urn:li:mlModel:(urn:li:dataPlatform:mesh,engine_docs_{v['fn']},PROD)"
+            reason = getattr(result, "reason", None) or "the helper reported no outcome"
+            print(f"[{COMPONENT}] NOT REGISTERED {v['verb']}: {reason} "
+                  "-- the helper keeps retrying; /health says when it lands")
 
     print(f"[{COMPONENT}] registered {len(registered)}/{len(VERBS)} verbs")
-    if failed:
-        app.state.registration_incomplete = [v for v, _ in failed]
+    app.state.registration_failed = [v for v, _ in failed]
+    app.state.registration_pending = pending
+    app.state.registration_status = registration_status
     yield
 
 
@@ -283,6 +298,22 @@ class ExplainRequest(BaseModel):
     params: Dict[str, Any] = {}
 
 
+def _registration_incomplete() -> Optional[List[str]]:
+    """The verbs that are not registered NOW, or None.
+
+    READ LIVE, NOT FROZEN AT STARTUP. An unregistered verb is retried in the background by the
+    helper, which records the outcome in `registration_status()` under the verb's URN. A
+    snapshot taken at startup would keep reporting a verb incomplete after it landed, which is
+    the startup lie turned around. A call that RAISED is not retried, so it stays incomplete.
+    """
+    failed = list(getattr(app.state, "registration_failed", None) or [])
+    pending = getattr(app.state, "registration_pending", None) or {}
+    status = getattr(app.state, "registration_status", None)
+    components = status()["components"] if (pending and status) else {}
+    still = [verb for verb, urn in pending.items() if components.get(urn) != "registered"]
+    return (failed + still) or None
+
+
 @app.get("/health", tags=["ops"])
 def health() -> Dict[str, Any]:
     """Liveness, and it reports the read path's absence rather than hiding it.
@@ -291,7 +322,7 @@ def health() -> Dict[str, Any]:
     answer would be discovered by a user, and the whole point of carrying this state as a field
     is that an operator finds it first.
     """
-    incomplete = getattr(app.state, "registration_incomplete", None)
+    incomplete = _registration_incomplete()
     return {
         "status": "ok",
         "component": COMPONENT,
