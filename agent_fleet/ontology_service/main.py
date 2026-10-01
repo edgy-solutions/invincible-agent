@@ -1372,10 +1372,20 @@ def _anti_synonym_overlap(query: str, anti_synonyms: list[str]) -> float:
     return len(inter) / len(union) if union else 0.0
 
 
+#: THE CEILING ON A RECALL THE GRAPH HAS ALREADY BOUNDED. When the caller hands in the verbs
+#: Neo4j says are compatible, the query is filtered to them, so what comes back is every admitted
+#: registration of those verbs: a set the graph sized, not a ranking window. The limit is then
+#: only a guard against an unbounded read. One verb can hold many rows (MEASURED 2026-09-30:
+#: `mesh:rendersAs` is 77 rows, 35 of them admitted for a DOCS caller), so a ranking-sized limit
+#: here is exactly the defect this replaced.
+_COMPAT_RECALL_CEILING = 1000
+
+
 def _predicate_hybrid_search_sync(
     query: str,
     entitled_domains: list[str],
     limit: int,
+    verb_iris: list[str] | None = None,
 ) -> list[dict]:
     """Blocking Weaviate hybrid search over the Predicate collection.
 
@@ -1413,6 +1423,30 @@ def _predicate_hybrid_search_sync(
                 # is not supported") — use length filter instead.
                 wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
+
+        # THE COMPAT SET IS APPLIED BEFORE THE LIMIT, NOT AFTER IT.
+        #
+        # MEASURED 2026-09-30 (rev 159): "how do I add a canvas template" resolved its DocPage and
+        # Neo4j named `mesh:explain` compatible, yet `/classify_predicate` answered UNKNOWN without
+        # calling the LLM. The limit (25) applied to ROWS across every verb the caller may see, and
+        # the 35 domain-agnostic `mesh:rendersAs` rows outranked the one `mesh:explain` row on the
+        # vector half, so the window held 25 rendersAs rows and the intersection taken AFTERWARDS
+        # was empty. "How do I add an engine" ranks explain first, which is why it passed: the
+        # outcome depended on a rival verb's row count and the question's wording.
+        #
+        # `verb_iri` is WORD-tokenized, so `.equal(v)` matches a row whose tokens contain v's
+        # tokens: it can over-admit, and it never under-admits a row spelled v. The caller keeps
+        # its EXACT intersection, so over-admission costs nothing, and dedup/ranking still happen
+        # downstream.
+        if verb_iris:
+            compat_filter = wvc.query.Filter.any_of([
+                wvc.query.Filter.by_property("verb_iri").equal(v) for v in verb_iris
+            ])
+            filters = (
+                compat_filter if filters is None
+                else wvc.query.Filter.all_of([filters, compat_filter])
+            )
+            limit = max(limit, _COMPAT_RECALL_CEILING)
 
         # Hybrid: compute the query vector via embed_query() and hand it to
         # Weaviate explicitly. No text2vec module on the cluster — code owns
@@ -1545,11 +1579,12 @@ def _predicate_hybrid_search_sync(
 
 
 async def predicate_hybrid_search(
-    query: str, entitled_domains: list[str], limit: int = 10
+    query: str, entitled_domains: list[str], limit: int = 10,
+    verb_iris: list[str] | None = None,
 ) -> list[dict]:
     """Async wrapper for the predicate hybrid search."""
     return await asyncio.to_thread(
-        _predicate_hybrid_search_sync, query, entitled_domains, limit
+        _predicate_hybrid_search_sync, query, entitled_domains, limit, verb_iris
     )
 
 
@@ -5338,6 +5373,9 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         query=request.query,
         entitled_domains=entitled,
         limit=max(request.candidate_limit, 25),  # widen so the filter survives
+        # The compat set goes INTO the query, so the limit cannot crowd a compatible verb out
+        # (see `_predicate_hybrid_search_sync`). Sorted for a stable filter.
+        verb_iris=sorted(compatible) or None,
     )
 
     # ADR-0018 addendum + ADR-0006 §Addendum conjunctive-read invariant
@@ -5367,6 +5405,8 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     # treats the verb as unregistered until the substrate is
     # reconciled — which is the truthful state.
     if compatible:
+        # EXACT, and kept although the query is already filtered: the Weaviate filter is a
+        # token match on a WORD-tokenized property and may over-admit.
         candidates = [c for c in candidates if c.get("verb_iri") in compatible]
 
         # ADR-0019 Contract A — cardinality is not fit. The previous
@@ -5406,9 +5446,11 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
                 f"Conjunctive-read invariant: Neo4j marks "
                 f"{list(compatible)} as compatible with the resolved "
                 f"subject, but none of those verbs survived the "
-                f"Weaviate intersection (registered in Cypher but not "
-                f"in the predicate search index). Routes to generalist "
-                f"until the substrate is reconciled."
+                f"Weaviate intersection (registered in Cypher but with "
+                f"no predicate search row this caller's domains admit; "
+                f"the search is filtered to those verbs, so this is "
+                f"absence, not ranking). Routes to generalist until the "
+                f"substrate is reconciled."
             )
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
