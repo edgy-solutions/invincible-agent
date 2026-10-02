@@ -45,6 +45,9 @@ steps:
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
             source_site: here
         spares: "{trigger.picture.spare}"
+        # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
+        # basis {rule, observed_at}, so the card shows why a supervisor is or is not asked.
+        battle_condition: "{trigger.picture.battle_condition}"
       - verb: replace_after_resupply
         label: "Replace after resupply"
         readiness: PMC

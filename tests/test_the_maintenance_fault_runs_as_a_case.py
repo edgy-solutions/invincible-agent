@@ -54,18 +54,20 @@ def registered(monkeypatch):
 
 
 def _event(event_id="EV-1", me=False, kind="cm_discrepancy"):
-    """A MaintenanceEvent in the week-1 bridge contract's shape, plus `picture.mission_essential`,
-    which the contract does not carry yet and the trigger requires."""
+    """A MaintenanceEvent in the week-1 bridge contract's shape, with `battle_condition` in the
+    shape OpenDDIL answered on 2026-10-02: a boolean `mission_essential` and its `basis`."""
     return {
         "event_id": event_id, "kind": kind, "asset_id": "AST-7", "owning_tier": "ORG",
         "fault": {"item": "fuel-pump", "fault_code": "F-0417",
                   "observed_at": "2026-10-02T00:00:00Z"},
         "sources": [{"system": "bit"}],
         "picture": {"readiness": "PMC", "factors": ["fuel"], "lifecycle": "in_service",
-                    "mission_essential": me,
                     "spare": {"on_hand_here": 0, "nearest_site_with_stock": "SITE-B",
                               "as_of": "2026-10-01T00:00:00Z"},
-                    "battle_condition": None},
+                    "battle_condition": {
+                        "mission_essential": me,
+                        "basis": {"rule": "readiness-rollup:ORG",
+                                  "observed_at": "2026-10-01T06:00:00Z"}}},
         "label": {"originator_nation": "AA", "releasable_to": ["AA", "BB"]},
         "provenance": [],
     }
@@ -125,12 +127,32 @@ def test_THE_TRIGGER_IS_DECLARED_AND_ONLY_A_DISCREPANCY_OPENS_A_PROPOSAL():
 
 
 @pytest.mark.asyncio
-async def test_AN_EVENT_WITHOUT_MISSION_ESSENTIAL_IS_REFUSED_AT_INTAKE(registered):
-    """The bridge contract does not carry it yet. Absent is not `false`: a default would skip the
-    supervisor for exactly the assets the rule protects."""
+@pytest.mark.parametrize("path", [("mission_essential",), ("basis", "rule"),
+                                  ("basis", "observed_at")])
+async def test_AN_EVENT_WITHOUT_MISSION_ESSENTIAL_OR_ITS_BASIS_IS_REFUSED_AT_INTAKE(registered,
+                                                                                 path):
+    """Absent is not `false`: a default would skip the supervisor for exactly the assets the rule
+    protects. A verdict without the rule and time it was decided under is refused the same way."""
     ev = _event()
-    del ev["picture"]["mission_essential"]
-    with pytest.raises(AssertionError, match=r"picture\.mission_essential"):
+    node = ev["picture"]["battle_condition"]
+    for seg in path[:-1]:
+        node = node[seg]
+    del node[path[-1]]
+    dotted = r"picture\.battle_condition\." + r"\.".join(path)
+    with pytest.raises(AssertionError, match=dotted):
+        await _run(ev, [])
+    assert registered == [], registered
+
+
+@pytest.mark.asyncio
+async def test_THE_PRE_ANSWER_SPELLING_AT_THE_PICTURE_ROOT_IS_NOT_READ(registered):
+    """CONTROL ON THE PATH. An event carrying `picture.mission_essential` (the field asked for
+    before OpenDDIL placed it) and no `battle_condition` must not open a proposal: the rule reads
+    only the answered path, so the old spelling would otherwise be honoured by nothing."""
+    ev = _event()
+    ev["picture"]["mission_essential"] = True
+    del ev["picture"]["battle_condition"]
+    with pytest.raises(AssertionError, match=r"picture\.battle_condition\.mission_essential"):
         await _run(ev, [])
     assert registered == [], registered
 
@@ -150,6 +172,9 @@ async def test_EXACTLY_FOUR_OPTIONS_IN_ORDER_EACH_CITING_THE_MANUAL_AND_THE_SPAR
     # THE WALK IS A STUB AND ITS CODES ARE NULL: an invented DMC would be cited on a work order.
     assert {r["data_module_code"] for o in opts for r in o["task_refs"]} == {None}, opts
     assert opts[1]["parts"][0]["source_site"] == "SITE-B", opts[1]
+    # THE SUPERVISOR-DEPENDENT OPTION CITES THE VERDICT AND ITS BASIS, raw, not a restatement.
+    assert opts[0].get("battle_condition") == ev["picture"]["battle_condition"], opts[0]
+    assert opts[0]["battle_condition"]["basis"]["rule"] == "readiness-rollup:ORG", opts[0]
 
 
 # ── THE PATHS ───────────────────────────────────────────────────────────────────────────────
@@ -286,7 +311,7 @@ def test_THE_SUPERVISOR_ROWS_AGREE_WITH_THE_OPTION_TEMPLATE():
         for me in (True, False):
             want = opt["readiness"] == "NMC" or (opt["takes_offline"] and me)
             got = R._dt.decide(table, {"outcome": opt["verb"],
-                                       "picture.mission_essential": me}).then
+                                       "picture.battle_condition.mission_essential": me}).then
             seen.append((opt["verb"], me, got))
             assert (got == "maint_supervisor_review") is want, (opt["verb"], me, got)
             assert got in {"maint_supervisor_review", "maint_release"}, (opt["verb"], me, got)

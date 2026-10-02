@@ -16,17 +16,20 @@ episode: [asset_id, fault.item, fault.fault_code]
 # EVERY FACT A LATER TABLE OR TEMPLATE READS, refused at intake rather than after a maintainer
 # has already chosen an option.
 #
-# `picture.mission_essential` IS NOT IN THE WEEK-1 BRIDGE CONTRACT. The supervisor rule needs it
-# ("takes a mission-essential asset offline"), and an absent fact is not a wildcard, so until the
-# bridge carries it this trigger REFUSES every event -- visibly, naming the field. Asked of
-# OpenDDIL by packet; not defaulted here, because a default of `false` would skip the supervisor
-# for exactly the assets the rule exists to protect.
+# MISSION-ESSENTIAL IS A BOOLEAN INSIDE `picture.battle_condition`, with the rule and the time it
+# was decided under `basis` (OpenDDIL's answer, 2026-10-02). The supervisor rule reads it ("takes a
+# mission-essential asset offline"), and the option cites its basis. An absent fact is not a
+# wildcard and is never defaulted: a default of `false` would skip the supervisor for exactly the
+# assets the rule exists to protect. So an event without it, or without the basis that justifies
+# it, is refused at intake, naming the field.
 requires:
   - kind
   - asset_id
   - owning_tier
   - fault.item
   - fault.fault_code
-  - picture.mission_essential
+  - picture.battle_condition.mission_essential
+  - picture.battle_condition.basis.rule
+  - picture.battle_condition.basis.observed_at
   - picture.spare.on_hand_here
   - label.originator_nation

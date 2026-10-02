@@ -17,18 +17,18 @@ decision: maint_fault_propose_chaining
 
 after: maint_fault_propose
 
-matches: [outcome, picture.mission_essential]
+matches: [outcome, picture.battle_condition.mission_essential]
 
 # `outcome`: the accepts of `maint_fault_approval`, plus `timed_out` from the deadline.
 domain:
   outcome: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot,
             rejected, deferred, timed_out]
-  picture.mission_essential: [true, false]
+  picture.battle_condition.mission_essential: [true, false]
 
 rows:
-  - when: {outcome: replace_now, picture.mission_essential: true}
+  - when: {outcome: replace_now, picture.battle_condition.mission_essential: true}
     then: maint_supervisor_review
-  - when: {outcome: replace_now, picture.mission_essential: false}
+  - when: {outcome: replace_now, picture.battle_condition.mission_essential: false}
     then: maint_release
   - when: {outcome: replace_after_resupply}
     then: maint_release
