@@ -143,8 +143,11 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
         chain: list = []
         for n in range(1, MAX_INSTANCES + 1):
             instance = _child_key(case_id, n)
+            # THE CASE'S OWN IDENTITY travels with every instance, so a record an instance emits
+            # can name the case it belongs to as well as the definition that emitted it.
             ctx.set(f"instance:{n}", {"definition_id": definition_id, "trigger": facts,
-                                      "outputs": outputs, "approval_chain": chain})
+                                      "outputs": outputs, "approval_chain": chain,
+                                      "case": {"case_id": case_id, "trigger": name}})
             case["instances"].append({"n": n, "instance_id": instance,
                                       "definition_id": definition_id})
             ctx.set("case", case)
@@ -228,7 +231,7 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
     return await _main()._run_definition(
         ctx, ctx.key(), definition, spec["trigger"],
         workflow_service="WorkflowRunner", from_registry=True,
-        outputs=spec["outputs"], approval_chain=spec["approval_chain"])
+        outputs=spec["outputs"], approval_chain=spec["approval_chain"], case=spec.get("case"))
 
 
 # ── HANDLERS ────────────────────────────────────────────────────────────────────────────────

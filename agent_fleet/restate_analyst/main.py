@@ -1986,6 +1986,7 @@ async def _run_definition(
     from_registry: bool = False,
     outputs: Optional[dict] = None,
     approval_chain: Optional[list] = None,
+    case: Optional[dict] = None,
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -2059,7 +2060,10 @@ async def _run_definition(
     context = {
         "trigger": request,
         "outputs": outputs,
-        "case": {"approval_chain": chain, "instance_id": workflow_id},
+        # `case_id` and `trigger` come from the case runner (absent on a standalone run, so a
+        # template reading them refuses there). The chain and the instance id are this run's
+        # and are set LAST: nothing the caller supplies can overwrite them.
+        "case": {**(case or {}), "approval_chain": chain, "instance_id": workflow_id},
         "definition": {"id": wf.id, "version": version},
     }
     user_jwt = request.get("user_jwt", "")

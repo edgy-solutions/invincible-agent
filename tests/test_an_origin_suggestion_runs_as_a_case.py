@@ -160,8 +160,10 @@ async def test_A_STEWARD_ACCEPTS_AND_THE_CONFIRMED_ORIGIN_GOES_TO_ITS_WRITER(reg
     assert rec["suggestion_id"] == "SG-1", rec
     assert [(e["role"], e["approver_sub"]) for e in rec["approval_chain"]] == [
         ("steward", STEWARD)], rec["approval_chain"]
-    assert rec["provenance"]["workflow_definition_id"] == "origin_record", rec["provenance"]
-    assert rec["provenance"]["instance_id"] == rec["resolution_id"] == "SG-1~2", rec
+    prov = rec["provenance"]
+    assert prov.get("case_definition") == "origin_suggestion" and prov.get("case_id") == "SG-1", prov
+    assert prov.get("emitted_by") == prov.get("workflow_definition_id") == "origin_record", prov
+    assert prov.get("workflow_instance_id") == rec["resolution_id"] == "SG-1~2", rec
 
 
 @pytest.mark.asyncio

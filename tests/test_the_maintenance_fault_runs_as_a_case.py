@@ -195,8 +195,14 @@ async def test_A_RESUPPLY_IS_RELEASED_AND_CLOSED_ON_THE_TIER_ACK(registered):
     assert rec["label"] == ev["label"] and rec["event_id"] == "EV-1", rec
     assert [(e["role"], e["approver_sub"]) for e in rec["approval_chain"]] == [
         ("maintainer", "m@x")], rec["approval_chain"]
-    assert rec["provenance"]["workflow_definition_id"] == "maint_release", rec["provenance"]
-    assert rec["provenance"]["instance_id"] == rec["action_id"] == "EV-1~2", rec
+    prov = rec["provenance"]
+    # RULED: the case definition AND the emitter, both fields; the workflow_* spellings are the
+    # week-1 contract's, which named `workflow_definition_version` / `workflow_instance_id`.
+    assert prov.get("case_definition") == TRIGGER and prov.get("case_id") == "EV-1", prov
+    assert prov.get("emitted_by") == prov.get("workflow_definition_id") == "maint_release", prov
+    assert prov.get("workflow_instance_id") == rec["action_id"] == "EV-1~2", rec
+    assert len(prov.get("workflow_definition_version") or "") == 16, prov
+    assert not {"version", "instance_id"} & set(prov), prov
 
 
 @pytest.mark.asyncio
