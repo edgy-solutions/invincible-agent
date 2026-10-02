@@ -214,6 +214,37 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         return False  # fail-closed
 
 
+def check_can_view_program(program: str, caller_id: str) -> bool:
+    """Application-layer gate for the origin-entitlement ruling's audience half
+    (architect, 2026-10-02): Topaz ``can_view_program(caller, program)`` on the
+    ``program`` namespace (the seventh; git-asserted in
+    ``policy/program_members.yaml``).
+
+    Unlike :func:`check_can_act` / :func:`check_can_invoke`, this does NOT swallow
+    a transport/HTTP failure to False. The read route that calls this must tell
+    "Topaz is unreachable" (503 — fail closed on the SERVICE, report loudly) apart
+    from "Topaz answered: not a member" (a deny the route turns into its own
+    existence-oracle-safe 404) — collapsing both to False here would make a Topaz
+    outage silently read as "no origin grant" instead of "service down". Missing
+    arguments or an unconfigured TOPAZ_DIRECTORY_URL are still a deny (False),
+    same as the other two checks: that is a deployment that has declared no
+    directory, not a request that attempted one and failed.
+    """
+    if not program or not caller_id or not _TOPAZ_DIRECTORY_URL:
+        return False
+    payload = {
+        "object_type": "program",
+        "object_id": program,
+        "relation": "can_view_program",
+        "subject_type": "user",
+        "subject_id": caller_id,
+    }
+    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        r = c.post("/api/v3/directory/check", json=payload)
+        r.raise_for_status()
+        return bool(r.json().get("check"))
+
+
 def task_exists(task_id: str) -> bool:
     """Has a logical task with this id already been registered (any recipient, any
     status)?

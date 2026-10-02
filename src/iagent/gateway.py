@@ -4605,17 +4605,83 @@ _ARTIFACT_BY_ID_CYPHER = """
 MATCH (a:AnswerArtifact {id: $artifact_id})
 OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
 OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
-RETURN a.id                AS id,
-       a.status            AS status,
-       a.summary           AS summary,
-       a.question_text     AS question_text,
-       a.valid_as_of       AS valid_as_of,
-       a.duration_ms       AS duration_ms,
-       a.resolved_intent   AS resolved_intent,
-       a.routing_inline    AS routing_inline,
-       parent.id           AS derived_from,
-       owner IS NOT NULL   AS is_owner
+RETURN a.id                    AS id,
+       a.status                AS status,
+       a.summary               AS summary,
+       a.question_text         AS question_text,
+       a.valid_as_of           AS valid_as_of,
+       a.duration_ms           AS duration_ms,
+       a.resolved_intent       AS resolved_intent,
+       a.routing_inline        AS routing_inline,
+       parent.id               AS derived_from,
+       owner IS NOT NULL       AS is_owner,
+       a.origin_owner_domain   AS origin_owner_domain,
+       a.origin_program        AS origin_program
 """
+
+# ── Origin entitlement (architect ruling, 2026-10-02) ──────────────────────────────
+#
+# Mirrors human_tasks.py's `_ASSET_GRANTS_FILE` pattern: an env-overridable
+# `/app/policy/<file>.yaml` path, so an overlay deployment's policy mount is read the
+# same way every other policy file here is. FAIL CLOSED on a missing or unparsable
+# file — `{}` from `iagent.origin.load_domain_consumption` makes `can_consume` False
+# for everyone, which is deny-by-default, not a crash.
+_DOMAIN_CONSUMPTION_FILE = os.getenv("DOMAIN_CONSUMPTION_FILE", "/app/policy/domain_consumption.yaml")
+
+
+def _load_domain_consumption_table() -> dict:
+    from . import origin as origin_mod
+
+    try:
+        import yaml  # noqa: PLC0415
+        with open(_DOMAIN_CONSUMPTION_FILE) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as exc:  # noqa: BLE001 — fail closed (missing/unparsable file), never 500
+        logger.warning(
+            "domain_consumption.yaml unreadable at %s (%s) — origin-by-consumption reads "
+            "deny for everyone until this is fixed; dropper/owner-only path is unaffected",
+            _DOMAIN_CONSUMPTION_FILE, exc,
+        )
+        return {}
+    return origin_mod.load_domain_consumption(raw)
+
+
+async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
+    """Non-owner read path (ruling: "ORIGIN, not audience"). False (never raises) when
+    the artifact carries no recorded origin — that artifact stays on the
+    dropper/owner-only path, unchanged. Raises HTTPException(503) when Topaz cannot
+    answer the program-membership question — "could not tell" must not collapse into
+    the same 404 a real deny produces, the same distinction `get_current_user` already
+    draws for the entitlement matrix itself.
+    """
+    owner_domain = (rec.get("origin_owner_domain") or "").strip() if rec.get("origin_owner_domain") else ""
+    program = (rec.get("origin_program") or "").strip() if rec.get("origin_program") else ""
+    if not owner_domain or not program:
+        return False
+
+    from . import human_tasks, origin as origin_mod
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        is_member = await run_in_threadpool(
+            lambda: human_tasks.check_can_view_program(program, current_user.authz_id)
+        )
+    except Exception as exc:  # noqa: BLE001 — Topaz unreachable: fail closed, report loudly
+        logger.warning("program membership check unavailable for %s: %s", program, exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "authorization_unavailable", "message": "could not verify program membership"},
+        ) from exc
+
+    viewer_domains = {c.domain for c in current_user.entitlements.cells}
+    table = _load_domain_consumption_table()
+    origin_obj = origin_mod.Origin(owner_domain=owner_domain, program=program, obtained_via="recorded")
+    return origin_mod.origin_visible(
+        viewer_domains=viewer_domains,
+        is_program_member=is_member,
+        origin=origin_obj,
+        table=table,
+    )
 
 
 class ArtifactResponse(_BaseModel):
@@ -4711,14 +4777,27 @@ async def get_artifact(
     # else. That asymmetry is the whole point: the distinction is valuable to us and
     # dangerous to them.
     if not rec or not rec.get("is_owner"):
+        # ── ORIGIN ENTITLEMENT (architect ruling, 2026-10-02: "ORIGIN, not audience") ──
+        #
+        # A non-owner may still read this artifact if it carries a RECORDED origin
+        # (origin_owner_domain + origin_program — set by evidence, by a resolver out of
+        # scope here) and this caller can_consume that origin domain AND is a program
+        # member. An artifact with NO recorded origin is unaffected: `_origin_visible_to_
+        # caller` returns False without a Topaz call, and the dropper/owner-only 404
+        # below is exactly today's behaviour. Raises straight through (503) if Topaz
+        # cannot answer — that is reported, never swallowed into this 404.
+        _origin_ok = False
         if rec is not None:
-            logger.warning(
-                "artifact %s EXISTS but is not PRODUCED_FOR caller %r — an ownership miss, "
-                "not an absence. If this fires for a caller who did produce it, the read key "
-                "and the write key have diverged again.",
-                artifact_id, _uid,
-            )
-        raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
+            _origin_ok = await _origin_visible_to_caller(rec, current_user)
+        if not _origin_ok:
+            if rec is not None:
+                logger.warning(
+                    "artifact %s EXISTS but is not PRODUCED_FOR caller %r — an ownership miss, "
+                    "not an absence. If this fires for a caller who did produce it, the read key "
+                    "and the write key have diverged again.",
+                    artifact_id, _uid,
+                )
+            raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
 
     intent: dict = {}
     if rec.get("resolved_intent"):
