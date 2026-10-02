@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.22 — 2026-10-02
+
+Minor bump. The Topaz manifest gains a seventh namespace for the origin-entitlement
+ruling (architect, 2026-10-02): program membership.
+
+### Added
+
+- **`program` object type** (`relations: member: user | group#member`,
+  `permissions: can_view_program: member`). A viewer may read an artifact by its
+  recorded ORIGIN — never by audience — iff their domain role can_consume the
+  origin's owner_domain (`policy/domain_consumption.yaml`, evaluated in-process) AND
+  they can_view_program the origin's recorded program (this new relation,
+  git-asserted in `policy/program_members.yaml`, synced by
+  `policy/sync/program_member_sync.py`). The resolver that SETS an artifact's origin
+  is a separate, not-yet-shipped piece; an artifact with no recorded origin is
+  unaffected and stays visible to its dropper/owner only, today's behaviour.
+
 ## 0.3.22 — 2026-07-20
 
 Patch bump. In-cluster service URLs default to the FQDN form so a

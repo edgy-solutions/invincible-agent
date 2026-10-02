@@ -242,6 +242,21 @@ data:
         permissions:
           can_invoke: invoker
 
+      # PROGRAM membership — the origin-entitlement ruling's audience half (architect,
+      # 2026-10-02: "ORIGIN, not audience"). A viewer may read an artifact by its
+      # ORIGIN iff their domain role can_consume the origin's owner_domain (per
+      # policy/domain_consumption.yaml, evaluated in-process by src/iagent/origin.py)
+      # AND they can_view_program the origin's recorded program — never by AUDIENCE
+      # (who a kind's task_grants.yaml entry targets). Its own relation, deliberately
+      # not folded into `capability` (an INVOKE is an effect; this is disclosure) or
+      # `task_audience` (acting authority, not read visibility): membership here answers
+      # a different question than either.
+      program:
+        relations:
+          member: user | group#member
+        permissions:
+          can_view_program: member
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #

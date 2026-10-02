@@ -1,0 +1,111 @@
+# DOMAIN CONSUMPTION — who may read an artifact ORIGINATING in domain X (architect ruling,
+# 2026-10-02: "ORIGIN, not audience"). A viewer's entitled domain (one of their (persona,
+# domain) cells' domains) may consume an artifact whose recorded `origin.owner_domain` is
+# one of the domains listed under that viewer domain's OWN key below.
+#
+# KEY = consumer domain (a domain the viewer holds via groups.yaml). `allowed_origins` =
+# the origin.owner_domain values that domain's holders may read. Same required-field
+# style as policy/capability_grants.yaml: `granted_by` (accountable human) + `reason` are
+# REQUIRED per row; a row missing either (or with an empty `allowed_origins`) is REFUSED
+# by validate_policy.py, not silently dropped.
+#
+# NO IMPLICIT IDENTITY. A domain does NOT automatically consume its own origin — AVIATION
+# holders reading an AVIATION-origin artifact needs its own explicit row below, exactly
+# like any cross-domain pair would. An artifact's origin existing is not the same fact as
+# anyone being entitled to read it; this table IS the entitlement decision. Leaving a
+# domain out of this file means nobody holding only that domain may read ANY
+# origin-carrying artifact via this path — the deny-by-default default.
+#
+# THIS IS THE ENTITLEMENT HALF ONLY. The resolver that SETS origin_owner_domain /
+# origin_program on an artifact is a separate, not-yet-built piece (it waits on a
+# systems_of_record schema from another team) — this file does not invent one, and an
+# artifact with no recorded origin is unaffected by this table (it stays visible to its
+# dropper/owner only, today's behaviour).
+#
+# SANDBOX ROWS: one identity row per domain that currently appears in any group grant
+# cell in policy/groups.yaml (derived from policy/domains.yaml + policy/groups.yaml,
+# 2026-10-02) — every domain a sandbox user can hold, explicitly granted to consume its
+# OWN origin and nothing else. No cross-domain row is asserted here; that is a future,
+# separately-reviewed grant.
+domain_consumption:
+  PORTFOLIO_PLANNING:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: portfolio-leads holders (PORTFOLIO_PLANNING) may read an
+      artifact whose origin is PORTFOLIO_PLANNING. No implicit identity — this row is
+      the explicit grant, not a consequence of the domain existing.
+    allowed_origins:
+      - PORTFOLIO_PLANNING
+
+  PROGRAM_FINANCE:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: finance-analysts holders (PROGRAM_FINANCE) may read an
+      artifact whose origin is PROGRAM_FINANCE.
+    allowed_origins:
+      - PROGRAM_FINANCE
+
+  PRODUCTION_COST:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: cost-analysts holders (PRODUCTION_COST) may read an
+      artifact whose origin is PRODUCTION_COST.
+    allowed_origins:
+      - PRODUCTION_COST
+
+  AVIATION:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: aviation-stewards / aviation-engineers / aviation-mechanics /
+      enterprise-architects holders (AVIATION) may read an artifact whose origin is
+      AVIATION.
+    allowed_origins:
+      - AVIATION
+
+  DEFENSE:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: defense-engineers / enterprise-architects holders (DEFENSE)
+      may read an artifact whose origin is DEFENSE.
+    allowed_origins:
+      - DEFENSE
+
+  MAINTENANCE:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: maintenance-mechanics holders (MAINTENANCE) may read an
+      artifact whose origin is MAINTENANCE.
+    allowed_origins:
+      - MAINTENANCE
+
+  MANUFACTURING:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: maintenance-mechanics holders (MANUFACTURING, granted beside
+      MAINTENANCE per groups.yaml) may read an artifact whose origin is MANUFACTURING.
+    allowed_origins:
+      - MANUFACTURING
+
+  ENTERPRISE:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: enterprise-architects holders (ENTERPRISE) may read an
+      artifact whose origin is ENTERPRISE.
+    allowed_origins:
+      - ENTERPRISE
+
+  DATA_ENGINEERING:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: data-engineers holders (DATA_ENGINEERING) may read an
+      artifact whose origin is DATA_ENGINEERING.
+    allowed_origins:
+      - DATA_ENGINEERING
+
+  SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox identity row: safety-engineers holders (SUSTAINMENT) may read an artifact
+      whose origin is SUSTAINMENT.
+    allowed_origins:
+      - SUSTAINMENT

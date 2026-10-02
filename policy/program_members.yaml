@@ -1,0 +1,33 @@
+# PROGRAM membership — the origin-entitlement ruling's PROGRAM half (architect,
+# 2026-10-02): a viewer may read an artifact by its origin only if they ALSO hold
+# can_view_program membership in the origin's recorded program (in addition to
+# domain_consumption.yaml's can_consume leg — both must hold; see src/iagent/origin.py
+# origin_visible). Mirrors capability_grants.yaml's shape exactly: KEY = program key
+# (the Topaz `program` object_id), `grant_to` = entitlement keys (emails, matching
+# seeded `user` objects in policy/users.yaml). `granted_by` / `reason` are REQUIRED per
+# program — an unexplained or targetless program grant is refused by
+# validate_policy.py / program_member_sync.py, never silently dropped.
+#
+# PER ADR-0047 §5.1: a `svc:` principal must NEVER be a program member — program
+# membership is DISCLOSURE (who may see the program's origin-carrying artifacts), and a
+# service identity serves every caller, so granting one here would entitle all of them —
+# the same confused-deputy shape `service_identity_recipients` already refuses on the
+# other disclosure namespaces.
+#
+# USERS ONLY, same posture as every other grant family: a group name is NOT resolved
+# here (grant_to is user entitlement keys only).
+#
+# Sandbox: one fixture program, granted to the two demo users who exist in
+# policy/users.yaml, so the can_view_program leg of origin_visible has positive members
+# to exercise.
+programs:
+  SANDBOX_PROGRAM_ALPHA:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox fixture program for the origin-entitlement ruling (architect, 2026-10-02):
+      alice and bob are both seeded sandbox users, so a program-membership check has a
+      real grantee to resolve true for and a real non-member (carol) to resolve false
+      for. Not a claim about any real program's membership.
+    grant_to:
+      - alice@example.com
+      - bob@example.com

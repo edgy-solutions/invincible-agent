@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Network-free validation of ALL SIX git-asserted policy files.
+"""Network-free validation of ALL EIGHT git-asserted policy files.
 
-WHY THIS EXISTS. The six syncs each validate their own file — but only
+WHY THIS EXISTS. The seven syncs each validate their own file — but only
 at apply time, one sync at a time. topaz_sync failing stops the seed
 chain, yet a malformed task_grants.yaml would only surface AFTER four
 other syncs had already applied. This tool front-loads every pure
@@ -16,6 +16,10 @@ definition of "valid", never a parallel re-implementation):
   - asset_grants.yaml             → grant_sync.load_grants
   - task_grants.yaml              → task_grant_sync.load_audiences
   - ontology_compartments.yaml    → ontology_compartment_sync.load_compartments
+  - capability_grants.yaml        → capability_grant_sync.load_capabilities
+  - program_members.yaml          → program_member_sync.load_programs
+  - domain_consumption.yaml       → domain_consumption_required_fields (this file;
+    no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
     valid assertion; an absent file is not. In overlay deployments a
     missing file must never fall back to the image's sandbox copy.
@@ -57,8 +61,13 @@ from grant_sync import load_grants
 from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
 from capability_grant_sync import load_capabilities
+from program_member_sync import load_programs
 
-# The six DATA files a deployment asserts (enums excluded — product-owned).
+# The eight DATA files a deployment asserts (enums excluded — product-owned).
+# domain_consumption.yaml added 2026-10-02 (origin-entitlement ruling): it has no
+# Topaz sync of its own (can_consume is evaluated in-process, src/iagent/origin.py) —
+# validated here anyway because an unexplained or out-of-vocabulary row is exactly
+# the author-bug class this gate exists to catch before review.
 DATA_FILES = (
     "users.yaml",
     "groups.yaml",
@@ -66,6 +75,8 @@ DATA_FILES = (
     "task_grants.yaml",
     "ontology_compartments.yaml",
     "capability_grants.yaml",
+    "domain_consumption.yaml",
+    "program_members.yaml",
 )
 
 
@@ -163,12 +174,55 @@ def unknown_user_subjects(file_label: str, pairs, known_users: set[str]) -> list
     return out
 
 
+def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> list[str]:
+    """PROVE-THE-NEGATIVE on domain_consumption.yaml, same posture as
+    load_capabilities/load_programs: every consumer-domain row must name
+    `granted_by`, `reason`, and a non-empty `allowed_origins` — the identity-row
+    discipline the file's own header requires (NO IMPLICIT IDENTITY: a domain
+    consuming its own origin needs an explicit row, so a row silently losing its
+    fields is a domain silently losing its own read-back, not a no-op).
+
+    ALSO refuses any consumer key or `allowed_origins` entry that names a domain
+    not in `known_domains` (domains.yaml, platform domains included) — a row
+    naming a domain policy doesn't recognize is the "registration is not
+    entitlement" shape domains.yaml itself warns about: it reads as granted and
+    authorizes nothing, because the domain cannot appear in anyone's entitled
+    cells either.
+
+    PURE — no filesystem. `raw` is the already-parsed domain_consumption.yaml dict.
+    """
+    out: list[str] = []
+    table = (raw or {}).get("domain_consumption") or {}
+    if not isinstance(table, dict):
+        return [f"domain_consumption.yaml: top-level `domain_consumption` must be a mapping"]
+    for consumer, entry in table.items():
+        entry = entry or {}
+        granted_by = str((entry or {}).get("granted_by") or "").strip()
+        reason = (entry or {}).get("reason")
+        allowed = [str(o).strip() for o in ((entry or {}).get("allowed_origins") or [])
+                   if str(o).strip()]
+        missing = [k for k, v in (("granted_by", granted_by), ("reason", reason),
+                                  ("allowed_origins", allowed)) if not v]
+        if missing:
+            out.append(f"domain_consumption.yaml: {consumer!r} MALFORMED: missing "
+                        f"{', '.join(missing)}")
+            continue
+        if consumer not in known_domains:
+            out.append(f"domain_consumption.yaml: consumer domain {consumer!r} is not in "
+                        f"domains.yaml")
+        for origin_domain in allowed:
+            if origin_domain not in known_domains:
+                out.append(f"domain_consumption.yaml: {consumer!r} allows origin domain "
+                            f"{origin_domain!r}, which is not in domains.yaml")
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
     overlay_enums: list[str] | None = None,
 ) -> list[str]:
-    """PURE (filesystem-only): validate all six data files against the
+    """PURE (filesystem-only): validate all eight data files against the
     enums. `overlay_enums` names the enum files the OVERLAY asserts
     (read from policy_dir instead of enums_dir). Returns the full error
     list — empty means valid."""
@@ -201,6 +255,8 @@ def validate(
     tasks_raw = _read_yaml(policy_dir / "task_grants.yaml", errors)
     comps_raw = _read_yaml(policy_dir / "ontology_compartments.yaml", errors)
     caps_raw = _read_yaml(policy_dir / "capability_grants.yaml", errors)
+    dc_raw = _read_yaml(policy_dir / "domain_consumption.yaml", errors)
+    progs_raw = _read_yaml(policy_dir / "program_members.yaml", errors)
 
     # Entitlement matrix — the PolicyBundle cross-validation is the
     # same one topaz_sync runs before any write.
@@ -240,6 +296,19 @@ def validate(
     caps, cap_errors = load_capabilities(caps_raw)
     errors.extend(f"capability_grants.yaml: {e}" for e in cap_errors)
     print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
+
+    # ORIGIN ENTITLEMENT (architect ruling, 2026-10-02): domain_consumption.yaml's rows
+    # and program_members.yaml's grants, validated against the SAME expanded domain set
+    # the entitlement matrix above checks against — a domain named here that domains.yaml
+    # does not know is the same mirror-class error as an unknown persona/domain cell.
+    dc_known_domains = set(domains)
+    errors.extend(domain_consumption_required_fields(dc_raw, dc_known_domains))
+    n_dc_rows = len((dc_raw or {}).get("domain_consumption") or {})
+    print(f"  domain_consumption.yaml: {n_dc_rows} row(s)")
+
+    programs, program_errors = load_programs(progs_raw)
+    errors.extend(f"program_members.yaml: {e}" for e in program_errors)
+    print(f"  program_members.yaml: {len(programs)} program(s)")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
@@ -308,6 +377,8 @@ def validate(
             [(comp.name, gt) for comp in comps for gt in comp.grant_to], known_users))
         errors.extend(unknown_user_subjects("capability_grants.yaml",
             [(c.key, gt) for c in caps for gt in c.grant_to], known_users))
+        errors.extend(unknown_user_subjects("program_members.yaml",
+            [(p.key, gt) for p in programs for gt in p.grant_to], known_users))
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #
@@ -321,13 +392,17 @@ def validate(
         [(a.key, gt) for a in audiences for gt in a.grant_to]))
     errors.extend(service_identity_recipients("ontology_compartments.yaml",
         [(comp.name, gt) for comp in comps for gt in comp.grant_to]))
+    # ADR-0047 §5.1: program membership is DISCLOSURE (origin-entitlement ruling,
+    # 2026-10-02) — a `svc:` principal must never be a program member.
+    errors.extend(service_identity_recipients("program_members.yaml",
+        [(p.key, gt) for p in programs for gt in p.grant_to]))
 
     return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate all six policy data files (no network).",
+        description="Validate all eight policy data files (no network).",
     )
     parser.add_argument(
         "--policy-dir",
