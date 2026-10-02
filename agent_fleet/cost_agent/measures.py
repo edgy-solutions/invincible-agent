@@ -1126,26 +1126,24 @@ def package_export(
 
     dataset_path = None
     if with_dataset:
-        # DUCKDB IS NOT AN ENGINE DEPENDENCY, and that is deliberate rather than an oversight
-        # to correct here. This engine's own dependency list says it is "DELIBERATELY THIN ...
-        # computes over an in-process notional model and speaks to nobody", and ADR-0048's
-        # slice-2 ruling says the database is the AUTHORING AND INTERCHANGE format, not the
-        # runtime one. I added this call without reading either.
-        #
-        # So the absence is REFUSED BY NAME rather than raised as an ImportError from three
-        # frames down. The deployed image has no duckdb today, `include_dataset` defaults to
-        # True, and an ImportError on a verb's DEFAULT path is the worst available failure:
-        # untyped, unattributable, and nothing in the response says which dependency.
+        # DUCKDB IS NOW A DECLARED ENGINE DEPENDENCY (architect ruling 2026-10-02, amending
+        # ADR-0048 slice 2's thin list) and the image build has an import-in-image smoke step
+        # for exactly this module. This guard stays as a defence in depth, not as evidence
+        # that the package is undeclared: a deployment can still be built from a stale image,
+        # a partial sync, or a flattened checkout that dropped it, and `include_dataset`
+        # defaults to True, so an ImportError on a verb's DEFAULT path would still be the
+        # worst available failure — untyped, unattributable, and nothing in the response
+        # says which dependency. Refuse BY NAME instead.
         try:
             import duckdb  # noqa: F401
         except ImportError:
             raise SourceUnavailable(
                 "this deployment cannot build the .duckdb half: the `duckdb` package is not "
-                "installed, and it is not among engine-cost's declared dependencies. "
+                "importable in this deployment. "
                 + ("A canvas export is the dataset page, so it needs duckdb; export where the "
                    "dataset is authored." if composed else
                    "The HTML package verifies on its own - call with include_dataset=false to "
-                   "produce it, or install duckdb where the dataset is authored.")
+                   "produce it, or export where duckdb is importable.")
             ) from None
         import build_cost_dataset as dataset_builder
 

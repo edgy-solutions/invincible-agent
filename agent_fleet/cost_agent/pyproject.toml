@@ -19,12 +19,23 @@ dependencies = [
     "pydantic",
     "httpx",
     "python-dotenv",
+    # Pinned to the version data_analyst's lock already resolves (`uv tree` there), so the
+    # two engines that both build a `.duckdb` artifact do not drift to different releases.
+    # Needed for canvas export / the dataset half of the export package: ADR-0048 ruled the
+    # database the AUTHORING AND INTERCHANGE format, and the architect's 2026-10-02 ruling
+    # amends slice 2's thin list to declare it rather than leave it an undeclared import
+    # that only worked because it was incidentally installed (see measures.py's history and
+    # tests/cost/test_engine_cost_contracts.py). The `measures.py` guard stays as a defence
+    # in depth for a deployment that somehow lacks it, not as evidence it is undeclared.
+    "duckdb==1.5.2",
 ]
 
-# DELIBERATELY THIN, copied from Engine F's list. engine-cost computes over an in-process
-# notional model and speaks to nobody: no LLM client, no smolagents, no DataHub, no restate,
-# no database driver. `pricing.py` deliberately depends on NOTHING beyond the standard
-# library, because ADR-0047 ships it to a recipient byte-identical — every dependency it
-# gained would become a dependency the export bundle has to carry and the customer has to
-# trust. Every addition here should have to explain itself; an addition to pricing.py has to
-# explain itself twice.
+# THIN, not EMPTY: no LLM client, no smolagents, no DataHub, no restate — engine-cost still
+# computes over an in-process notional model and speaks to nobody over the network. Originally
+# copied from Engine F's list with no database driver at all; `pricing.py` itself still depends
+# on NOTHING beyond the standard library, because ADR-0047 ships it to a recipient
+# byte-identical and every dependency it gained would become one the export bundle has to
+# carry and the customer has to trust. `duckdb` is declared here, not in pricing.py, because
+# only `build_cost_dataset`/`package_export` need it — the canvas-export / dataset half, not
+# the notional model. Every OTHER addition here should have to explain itself; an addition to
+# pricing.py has to explain itself twice.

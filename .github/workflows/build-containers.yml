@@ -85,6 +85,11 @@ jobs:
             # inferred from the service name, so adding a second exporting engine is a
             # decision somebody makes in this table.
             package_runtime: ".pyodide-cache"
+            # IMPORT-IN-IMAGE SEAL for a dependency that only matters at runtime, inside the
+            # built image: declaring duckdb in pyproject.toml proves uv resolved it, not that
+            # the image on the registry can import it. Space-separated module names; a row
+            # with no imports to smoke-test simply omits this key.
+            smoke_imports: "duckdb"
           # engine-safety, sustainment safety assessment (ADR-0051). Image name is safety-agent;
           # the SERVICE it runs as is engine-safety; the values key is engineSafety. Port must
           # match the chart's engineSafety.port, or the readiness probe hits a closed port.
@@ -225,6 +230,23 @@ jobs:
               $TAGS \
               --push .
           fi
+
+      # IMPORT-IN-IMAGE, not import-on-the-runner: a pinned pyproject.toml entry proves uv
+      # resolved the wheel, not that the pushed image can import it (a stale cache layer, a
+      # platform-specific wheel resolution, or a build-arg typo could all still leave it
+      # missing). `docker buildx build --push` above never loads the image into this runner's
+      # daemon — multi-platform output has no single-daemon form to load — so this step pulls
+      # the tag it just pushed (the registry serves the runner's own linux/amd64 manifest from
+      # the list) and runs the real image's interpreter against it.
+      - name: Smoke-test runtime imports in the pushed image
+        if: matrix.smoke_imports != ''
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}"
+          docker pull "$IMAGE"
+          for mod in ${{ matrix.smoke_imports }}; do
+            echo "Importing $mod inside $IMAGE ..."
+            docker run --rm --entrypoint python "$IMAGE" -c "import $mod; print($mod.__version__)"
+          done
 
 
   # ------------------------------------------------------------------

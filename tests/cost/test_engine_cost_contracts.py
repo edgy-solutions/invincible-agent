@@ -584,12 +584,12 @@ def test_EVERY_MODULE_THE_ENGINE_IMPORTS_IS_A_DECLARED_DEPENDENCY():
              | {"build_cost_package", "build_cost_dataset", "utils"})
     stdlib = set(sys.stdlib_module_names)
 
-    #: AN EXEMPTION IS A CLAIM. duckdb is imported only on the dataset path, which
-    #: `package_export` now defaults OFF and refuses by name where the package is absent —
-    #: ADR-0048 ruled the database an authoring format, not a runtime one, and this engine's
-    #: dependency list is deliberately thin. If that path ever becomes reachable by default,
-    #: delete this entry rather than widening it.
-    exempt = {"duckdb": "dataset path only; defaults off and refuses by name (ADR-0048)"}
+    #: AN EXEMPTION IS A CLAIM, so this is empty rather than deleted: duckdb was the entry
+    #: that motivated the mechanism and is now declared in pyproject.toml (architect ruling
+    #: 2026-10-02, amending ADR-0048 slice 2's thin list), so `declared` already covers it.
+    #: Add an entry here only for a module that is genuinely optional by design — imported
+    #: behind a guard and deliberately absent from the image — never to silence this check.
+    exempt: dict[str, str] = {}
 
     undeclared = {}
     for src in sorted(agent.glob("*.py")):
