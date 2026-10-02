@@ -149,3 +149,80 @@ capabilities:
       mesh:startReview, which only begins a review and causes no outward effect.
     grant_to:
       - svc:review-starter
+
+  # ── DOCS PAGE GATE: the verbs a docs page explains ─────────────────────────────────────────
+  # A SECOND READER of this namespace. engine-docs' page gate (dark until ENABLE_AGENTIC_AUTH)
+  # withholds a page unless the asker holds `can_invoke` on every verb the page explains, so a
+  # grant below means BOTH "may invoke" and "may read the page about it". These are the verbs
+  # `setup/ontologies/docs_corpus.ttl` names in `mesh:explains`.
+  #
+  # The grantees are DERIVED from the entitlement model as it stands, not chosen: each verb's
+  # owning persona·domain cell (cited per entry), the group that grants that cell
+  # (groups.yaml), and that group's members (users.yaml). Today that is alice on all six,
+  # bob on the two multi-provider verbs (through the safety cell), and agent-user on one. alice's
+  # cost/finance/portfolio memberships are themselves FIXTURE grants (users.yaml says so).
+  # A verb with SEVERAL providers (resolveInstance, enumerateInstances) is granted to the members
+  # of ANY provider's cell. A provider whose owner persona is not in policy/personas.yaml
+  # (engine-o's OPS_OPERATOR, engine-e's AUDITOR and TECH_WRITER) has no cell, so it contributes
+  # nobody. The docs census asker (agent@example.com) appears once, on resolveInstance, through
+  # data-engineers -> DATA_STEWARD/DATA_ENGINEERING (datahub_wrapper's provider). It holds no other
+  # cell below, so after the flip it is withheld the pages explaining those verbs. That is the gate
+  # working, not a gap in this file.
+  #
+  # Sealed by tests/docs/test_every_explained_verb_has_a_derived_invoker.py: every explained verb
+  # is granted here, and each grant_to equals the derived membership exactly.
+  mesh:seedCanvas:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Owner cell PORTFOLIO_LEAD in PORTFOLIO_PLANNING (gateway's
+      seed verb registration), granted by portfolio-leads; alice is its member.
+    grant_to:
+      - alice@example.com
+
+  mesh:seedPortfolioCanvas:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Same owner cell as mesh:seedCanvas, which supersedes it
+      without removing it (ADR-0050 §4); granted by portfolio-leads; alice is its member.
+    grant_to:
+      - alice@example.com
+
+  mesh:finProgramBrief:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Owner cell PROGRAM_FINANCE_ANALYST in PROGRAM_FINANCE
+      (policy/graphs/fin_program_brief.yaml), granted by finance-analysts; alice is its member.
+    grant_to:
+      - alice@example.com
+
+  mesh:costLotCostingReview:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Owner cell COST_ANALYST in PRODUCTION_COST
+      (policy/graphs/cost_lot_costing_review.yaml), granted by cost-analysts; alice is its member.
+    grant_to:
+      - alice@example.com
+
+  mesh:enumerateInstances:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Three providers: PORTFOLIO_LEAD/PORTFOLIO_PLANNING (engine-p),
+      PROGRAM_FINANCE_ANALYST/PROGRAM_FINANCE (engine-fin), COST_ANALYST/PRODUCTION_COST
+      (engine-cost), SAFETY_ENGINEER/SUSTAINMENT (engine-s). alice holds the first three; bob
+      holds the safety cell.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+
+  mesh:resolveInstance:
+    granted_by: cnogradi
+    reason: >-
+      Docs page gate prerequisite. Providers with a cell: PORTFOLIO_LEAD/PORTFOLIO_PLANNING
+      (engine-p), PROGRAM_FINANCE_ANALYST/PROGRAM_FINANCE (engine-fin), COST_ANALYST/PRODUCTION_COST
+      (engine-cost), DATA_STEWARD/DATA_ENGINEERING (datahub_wrapper, granted by data-engineers),
+      SAFETY_ENGINEER/SUSTAINMENT (engine-s, which bob holds). engine-o's and engine-e's
+      providers name personas not in personas.yaml and grant nobody.
+    grant_to:
+      - agent@example.com
+      - alice@example.com
+      - bob@example.com

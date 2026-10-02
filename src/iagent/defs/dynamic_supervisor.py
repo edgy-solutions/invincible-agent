@@ -1530,7 +1530,13 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # are listed: the older verb is superseded, not removed, because cortex calls its route
 # today and a live surface must not break for a rename. A successor added here without
 # its predecessor would silently drop caller identity on every phrase still in use.
-_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas"})
+#
+# `explain` (engine-docs) joins because its page gate decides on the ASKER: a page is withheld
+# unless the asker may invoke every verb it explains. Dispatched as svc:supervisor, the asker
+# is the service, so the gate would decide about the wrong subject: it would grant or deny
+# for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
+# the identity has to be right on the day the gate starts to read it.
+_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas", "explain"})
 
 
 class CallerIdentityUnavailable(Exception):
