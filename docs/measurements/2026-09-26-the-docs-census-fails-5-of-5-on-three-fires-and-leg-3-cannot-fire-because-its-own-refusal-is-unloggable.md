@@ -93,6 +93,12 @@ So LEG 3 contributes zero rows on **every** call, always, and will until
 `{subject_uri, max_hops, entitled_domains}` (`main.py:4384`) — there is no caller field to thread one
 through, which is why `main.py:4484-4488` flags the gap in a comment rather than filling it.
 
+> **Superseded 2026-10-02 (`lane/74-explain-identity`).** The route now carries `user_email`, as
+> `/resolve` does; `_universal_referent_iris` mints the caller as a person, and
+> `_POOL_READ_INITIATOR` is only the refused fallback for a request that names nobody. The gateway's
+> supervisor and direct paths both thread it. Sealed in
+> `tests/routing/test_the_explain_leg_reads_as_the_caller.py`. Not yet measured live.
+
 **The leg's own control already says all of this, and says it louder.**
 `tests/routing/test_the_pool_reaches_the_universal_referent.py` (22 tests, all green, run at this
 sha) contains `test_the_REAL_pool_initiator_is_refused_today`, whose docstring calls itself "THE

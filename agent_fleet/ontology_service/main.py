@@ -3032,9 +3032,9 @@ def _docs_pool_applies(domains, subject_uri) -> bool:
 def _docs_pool_accepts(referent) -> bool:
     """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
 
-    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is refused
-    on every call today (`_POOL_READ_INITIATOR` is a service identity and `require_person` refuses
-    it), so it returns [] and this would never fire. The question here is a TYPE fact about the
+    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is
+    attributed to a person and is refused for a caller that names nobody, so it would make this
+    TYPE question depend on who is asking. The question here is a TYPE fact about the
     declaration — `mesh:Thing` accepts anything — not the pool membership LEG 3 needs Jena to
     confirm.
     """
@@ -5205,6 +5205,10 @@ class FindCompatibleVerbsRequest(BaseModel):
     # (or are domain-agnostic). Mirrors the entitled_domains filter on
     # /search_predicates.
     entitled_domains: list[str] = Field(default_factory=list)
+    # THE CALLER, named the way `/resolve` names it (the gateway's verified authz_id). LEG 3's
+    # Jena read is attributed to this person; blank means nobody to attribute it to, and the
+    # read is not made — the pool degrades to LEGs 1+2 rather than refusing the request.
+    user_email: str = ""
 
 
 class CompatibleVerb(BaseModel):
@@ -5295,19 +5299,21 @@ _RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 _OWL_CLASS_IRI = "http://www.w3.org/2002/07/owl#Class"
 _UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
 
-# WHO THIS READ IS ATTRIBUTED TO, AND A GAP FLAGGED RATHER THAN PAPERED OVER. `Initiator` is a
-# required argument on every `MeshOntology` operation, and `require_person` refuses a "service"
-# identity at the boundary — by design, so a read is never attributed to nobody a person can be
-# asked about. `find_compatible_verbs` carries no caller identity today: its request is exactly
-# `{subject_uri, max_hops, entitled_domains}`, and this endpoint has no real person to attribute
-# a Jena read to. Declaring `kind="person"` here to get past the refusal would be fabricating an
-# identity, which is precisely what the boundary check exists to prevent — so this is declared
-# `kind="service"` HONESTLY, which means `.construct()` below is refused EVERY TIME by
-# `require_person` until this route carries a real caller identity to attribute the read to (the
-# same undeliverable-today gap `agent_fleet/docs_agent/reads.py` documents for `audience_hint`).
-# That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
-# it is exercised here rather than worked around — threading a real identity through this route
-# is a design decision for a person, not a substitute this pool should invent.
+# WHO THIS READ IS ATTRIBUTED TO WHEN THE CALLER NAMES NOBODY. `Initiator` is a required
+# argument on every `MeshOntology` operation, and every READ calls `require_person` — by design,
+# so a read is never attributed to nobody a person can be asked about. The route reads as the
+# CALLER: `FindCompatibleVerbsRequest.user_email` (the gateway's verified authz_id, the same
+# field `/resolve` reads) is handed to `_universal_referent_iris`, which mints
+# `Initiator(kind="person")` from it. This constant is only the fallback for a request that names nobody
+# (the workflow engine's structural checks, operator scripts): declaring it `kind="person"` to
+# get past the refusal would be fabricating an identity, so it is `kind="service"` HONESTLY and
+# `.construct()` refuses it before anything is sent. That refusal is the branch
+# `_universal_referent_iris` must survive without raising — LEG 3 contributes nothing for an
+# anonymous caller and the pool degrades to LEGs 1+2.
+#
+# NOT THE REGISTRAR'S DELEGATE FORM (`kind="delegate", on_behalf_of=...`): that passes the WRITE
+# boundary only (`require_person_or_delegate`); a read refuses it exactly as it refuses a service.
+# Sealed by tests/routing/test_the_explain_leg_reads_as_the_caller.py.
 _POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
 
 
@@ -5344,8 +5350,13 @@ def _confirms_universal_referent(rows, subject: str) -> bool:
     return is_class and carries_flag
 
 
-def _universal_referent_iris() -> list[str]:
+def _universal_referent_iris(user_email: str = "") -> list[str]:
     """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
+
+    Read as the caller — `user_email`, threaded from the route — or as `_POOL_READ_INITIATOR`
+    when the caller named nobody. A blank is nobody: the SDK's `Initiator` refuses a blank
+    subject outright, so minting one would raise here instead of degrading. The fallback is
+    resolved at call time, not bound as a default.
 
     NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
     documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
@@ -5353,11 +5364,13 @@ def _universal_referent_iris() -> list[str]:
     pool degrades to LEGs 1+2. Logged AT MOST ONCE per call, not once per candidate, so an empty
     result reads as one line rather than a burst.
     """
+    user_email = (user_email or "").strip()
+    reader = Initiator(subject=user_email, kind="person") if user_email else _POOL_READ_INITIATOR
     confirmed: list[str] = []
     refusal_detail: str | None = None
     for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
         try:
-            result = _JENA_ONTOLOGY.construct(_POOL_READ_INITIATOR, subject=candidate)
+            result = _JENA_ONTOLOGY.construct(reader, subject=candidate)
         except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
             refusal_detail = f"{type(exc).__name__}: {exc}"
             continue
@@ -5571,10 +5584,14 @@ async def find_compatible_verbs(
         .replace("$MAXHOPS$", str(max_hops))
         .replace("$UNREACHABLE$", str(UNREACHABLE))
     )
-    # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
-    # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
-    # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
-    universal_referents = await asyncio.to_thread(_universal_referent_iris)
+    # LEG 3's confirmed set, read AS THE CALLER. A blank `user_email` names nobody, so the read
+    # falls back to the service identity and is refused before it is sent. `_universal_referent_iris`
+    # never raises — an unreachable Jena, a refused read, or zero confirmed candidates all come
+    # back as `[]`, which makes LEG 3 contribute zero rows and the pool degrade to LEGs 1+2
+    # exactly as if the leg were absent.
+    universal_referents = await asyncio.to_thread(
+        _universal_referent_iris, user_email=request.user_email,
+    )
 
     def _run() -> list[dict]:
         with _NEO4J_DRIVER.session() as session:

@@ -29,16 +29,17 @@ returns canned rows regardless of the query text, so the join conditions
 checked STATICALLY (declaration arms) and never EXECUTED here. That is a real gap, named rather
 than papered over: only a live Neo4j run closes it.
 
-── THE IDENTITY GAP, AND WHY ONE ARM DELIBERATELY DOCUMENTS TODAY'S BEHAVIOUR AS BROKEN ───────
-`_POOL_READ_INITIATOR` is declared `kind="service"`, honestly, because `find_compatible_verbs`
-carries no caller identity to attribute a Jena read to. `Initiator.require_person` refuses a
-service kind before any query is sent. That means, AS WIRED TODAY, `_universal_referent_iris()`
-is refused on every call regardless of what Jena would have said - LEG 3 always degrades to
-LEGs 1+2 against a live cluster, until this route carries a real caller identity.
-`test_the_REAL_pool_initiator_is_refused_today` asserts exactly that, so the gap is a checked
-fact rather than a comment nobody re-reads. The other behavioural arms monkeypatch
-`_POOL_READ_INITIATOR` to a person-kind identity to exercise the CONFIRM logic in isolation -
-each says in its own docstring that it is testing tomorrow's wiring, not today's.
+── THE IDENTITY: THE CALLER, AND A REFUSED FALLBACK WHEN THERE IS NONE ───────────────────────
+Until 2026-10-02 `find_compatible_verbs` carried no caller identity, so the read ran as
+`_POOL_READ_INITIATOR` (`kind="service"`, honestly) and `require_person` refused it on every
+call: LEG 3 degraded to LEGs 1+2 against a live cluster, always. The route now carries the
+caller as `user_email` (the same field `/resolve` reads) and `_universal_referent_iris` mints a
+person from it; that pass-through is sealed in `test_the_explain_leg_reads_as_the_caller.py`.
+`_POOL_READ_INITIATOR` remains the FALLBACK for a request that names nobody, and
+`test_the_REAL_pool_initiator_is_refused_today` still asserts that fallback is refused before any
+query is sent. The other behavioural arms here monkeypatch `_POOL_READ_INITIATOR` to a person-kind
+identity — the same reader a named caller now gets — to exercise the CONFIRM logic in isolation
+from the route.
 
 Run: uv run --frozen --extra agent-fleet pytest tests/routing/test_the_pool_reaches_the_universal_referent.py -v
 """
@@ -274,17 +275,17 @@ def _turtle(is_class: bool, flagged: bool) -> str:
 
 
 def test_the_REAL_pool_initiator_is_refused_today(engine_o_module):
-    """THE FINDING THIS FILE MOST WANTS SURFACED. As wired, `_POOL_READ_INITIATOR` is
-    `kind="service"`, so `require_person` refuses the read BEFORE any query is sent - even
-    against a Jena double primed to confirm `mesh:Thing` cleanly. Against a live cluster this
-    means LEG 3 contributes zero rows today, always, until `find_compatible_verbs` carries a
-    real caller identity to attribute the read to. That is a design decision for a person, not a
-    substitute this pool should invent - so this arm checks that the CURRENT code degrades
-    exactly the way its own comment says, rather than silently working around the gap."""
+    """THE FALLBACK IS REFUSED. `_POOL_READ_INITIATOR` is `kind="service"`, so `require_person`
+    refuses the read BEFORE any query is sent - even against a Jena double primed to confirm
+    `mesh:Thing` cleanly. Until 2026-10-02 this was every call, because the route carried no
+    caller; it is now only a request that names nobody (the named caller's read is sealed in
+    `test_the_explain_leg_reads_as_the_caller.py`). The name of this arm is kept for the
+    citations that point at it. Declaring the fallback `kind="person"` would fabricate an
+    identity, so it must stay refused and degrade to `[]` without raising."""
     mod = engine_o_module
     assert mod._POOL_READ_INITIATOR.kind == "service", (
-        "the initiator is no longer service-kind; this arm (and its comment in main.py) is "
-        "stale and the identity gap this file documents may already be resolved"
+        "the no-caller fallback is no longer service-kind: an anonymous request would now read "
+        "Jena as a person nobody named"
     )
 
     post = _Post(text=_turtle(is_class=True, flagged=True))
@@ -307,8 +308,7 @@ def test_the_REAL_pool_initiator_is_refused_today(engine_o_module):
 def person_initiator(engine_o_module):
     """Monkeypatches `_POOL_READ_INITIATOR` to a person-kind identity for the duration of one
     test, to exercise the CONFIRM logic in isolation from the identity refusal proven above.
-    This represents the route's state ONCE a real caller identity is threaded through - not
-    today's wiring."""
+    The reader is the same kind a named caller now gets from the route."""
     original = engine_o_module._POOL_READ_INITIATOR
     engine_o_module._POOL_READ_INITIATOR = PERSON
     try:
@@ -509,10 +509,10 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     endpoint). So this asserts mesh:explain is a CANDIDATE for all four, which is exactly as far
     as `/find_compatible_verbs` can honestly speak, and never asserts which ones draw.
 
-    Uses `person_initiator`-equivalent wiring (a person-kind Jena read) because the endpoint's
-    REAL initiator is service-kind and always refused (proven above) - this arm is checking that
-    ONCE that gap closes, entitled_domains filtering does not accidentally exclude mesh:explain
-    for any of the four personas/domains the census actually asks with.
+    Uses `person_initiator`-equivalent wiring (a person-kind Jena read) - the reader a named
+    caller gets since 2026-10-02 - to check that entitled_domains filtering does not
+    accidentally exclude mesh:explain for any of the four personas/domains the census actually
+    asks with.
     """
     original_initiator = engine_o_module._POOL_READ_INITIATOR
     engine_o_module._POOL_READ_INITIATOR = PERSON

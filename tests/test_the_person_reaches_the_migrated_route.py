@@ -40,6 +40,8 @@ _REPO = Path(__file__).resolve().parents[1]
 GATEWAY = "src/iagent/gateway.py"
 SUPERVISOR = "src/iagent/defs/dynamic_supervisor.py"
 ENGINE_O = "agent_fleet/ontology_service/main.py"
+VERB_LOOKUP = "src/iagent/verb_lookup.py"
+DIRECT_DISPATCH = "src/iagent/direct_dispatch.py"
 
 #: The name every hop carries the identity under. Named once: the comment at the gateway hop says
 #: this parameter CARRIES an authz_id and that the rename is an honesty follow-up, so the day that
@@ -89,6 +91,26 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "_classify_route", "<dict>", (FIELD,)),
     ("12 · into the Initiator the second migrated route mints",
      ENGINE_O, "_predicate_pool_via_mesh_sync", "Initiator", (FIELD,)),
+    # Hops 13-19: the THIRD destination, the verb pool's universal-referent leg. LEG 3 of
+    # `/find_compatible_verbs` confirms `mesh:Thing` by a Jena read, which `require_person`
+    # refused on every call while the route carried nobody. It leaves on TWO paths, both found by
+    # the census arm below rather than by reading: the supervisor's routing (from a function hop 6
+    # already visits, three call sites), and the gateway's direct re-ask, which never touches
+    # Dagster and so crosses no run config. Both meet in the one client, `verb_lookup`.
+    ("13 · into the supervisor's verb-pool wrapper (all three call sites)",
+     SUPERVISOR, "_classify_route", "_find_compatible_verbs", (FIELD,)),
+    ("14 · into the shared verb-pool client, from the supervisor",
+     SUPERVISOR, "_find_compatible_verbs", "_lookup_compatible_verbs", (FIELD,)),
+    ("15 · into the direct path, from the stream generator",
+     GATEWAY, "_generate_dagster_stream_inner", "partial", (FIELD,)),
+    ("16 · into the shared verb-pool client, from the direct path",
+     DIRECT_DISPATCH, "dispatch_pre_resolved", "find_compatible_verbs", (FIELD,)),
+    ("17 · onto the wire to /find_compatible_verbs",
+     VERB_LOOKUP, "find_compatible_verbs", "<dict>", (FIELD,)),
+    ("18 · off the request into the universal-referent read",
+     ENGINE_O, "find_compatible_verbs", "to_thread", ("request." + FIELD,)),
+    ("19 · into the Initiator the universal-referent read mints",
+     ENGINE_O, "_universal_referent_iris", "Initiator", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
@@ -160,7 +182,7 @@ def _annotate_subscript_assignments(tree: ast.Module) -> None:
                     target._assigned_value = ast.unparse(node.value)  # type: ignore[attr-defined]
 
 
-for _rel in (GATEWAY, SUPERVISOR, ENGINE_O):
+for _rel in (GATEWAY, SUPERVISOR, ENGINE_O, VERB_LOOKUP, DIRECT_DISPATCH):
     _annotate_subscript_assignments(_tree(_rel))
 
 
@@ -438,14 +460,18 @@ def test_HOP_11_lands_in_the_POST_PAYLOAD_and_not_in_one_of_the_seven_other_dict
 #:
 #: This set is also the population of the mint arm just below, so naming a route here buys it both
 #: the subject assertion and the kind assertion rather than only the one the hop table covers.
-EXPECTED_MINTS: set[str] = {"_class_pool_via_mesh_sync", "_predicate_pool_via_mesh_sync"}
+EXPECTED_MINTS: set[str] = {
+    "_class_pool_via_mesh_sync", "_predicate_pool_via_mesh_sync", "_universal_referent_iris",
+}
 
 #: Mints OUTSIDE the chain, each one admitted only because it declares ``kind="service"`` as a
 #: literal, so the SDK's ``require_person`` refuses every read made with it. Arrived with master's
-#: universal-referent leg (``_POOL_READ_INITIATOR``, module level, a Jena CONSTRUCT whose route
-#: carries no caller identity -- its comment says so and calls the refusal the designed branch).
-#: Lane 1's 09-29 merge census named this mint as red (c). It is not a hop: no identity reaches
-#: it. An entry here is a refused read, never an anonymous one; the arm below checks the kind.
+#: universal-referent leg (``_POOL_READ_INITIATOR``, module level). Lane 1's 09-29 merge census
+#: named this mint as red (c). Since hops 13-19 it is the FALLBACK only: the read is minted from
+#: the threaded caller in ``_universal_referent_iris``, and this constant is used when the request
+#: names nobody (the workflow engine's structural checks, operator scripts). It is not a hop: no
+#: identity reaches it. An entry here is a refused read, never an anonymous one; the arm below
+#: checks the kind.
 REFUSED_MINTS: dict[str, str] = {"<module>": "_POOL_READ_INITIATOR"}
 
 

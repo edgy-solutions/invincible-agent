@@ -5833,6 +5833,8 @@ async def _generate_dagster_stream_inner(
                     acting_persona=user_persona,
                     ontology_url=_DAGSONTOLOGY_SVC_URL,
                     accept_slots=accept_slots,
+                    # The caller's authz_id, so the verifier's explain leg reads as them.
+                    user_email=user_email,
                     # THE CALLER'S OWN TOKEN, not a minted service identity. On the run path
                     # this is what the identity vault exists to carry INTO Dagster; here the
                     # browser's credential is already in hand, so the engine sees the same

@@ -50,6 +50,7 @@ def find_compatible_verbs(
     ontology_url: str,
     max_hops: int = DEFAULT_MAX_HOPS,
     timeout: float = DEFAULT_TIMEOUT_S,
+    user_email: str = "",
 ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """Ask Engine O which predicates can operate on this subject, per Neo4j.
 
@@ -60,14 +61,19 @@ def find_compatible_verbs(
     """
     if not subject_uri or subject_uri == "UNKNOWN":
         return [], None
+    body: Dict[str, Any] = {
+        "subject_uri": subject_uri,
+        "max_hops": max_hops,
+        "entitled_domains": list(entitled_domains or []),
+    }
+    # THE CALLER, so Engine O's universal-referent leg reads Jena as this person. Sent only
+    # when it names someone: a blank is nobody, and the route already treats absence as that.
+    if user_email.strip():
+        body["user_email"] = user_email
     try:
         resp = requests.post(
             f"{ontology_url}/find_compatible_verbs",
-            json={
-                "subject_uri": subject_uri,
-                "max_hops": max_hops,
-                "entitled_domains": list(entitled_domains or []),
-            },
+            json=body,
             timeout=timeout,
         )
         resp.raise_for_status()
