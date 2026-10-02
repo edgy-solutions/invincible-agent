@@ -1,0 +1,84 @@
+name: Mirror electric
+
+# WHY THIS EXISTS. The chart pins `electricsql/electric:1.0.13` (values.yaml `electric.image`).
+# Upstream withdrew the Docker Hub repository: the anonymous pull answers "pull access denied", and
+# the repository endpoint `hub.docker.com/v2/repositories/electricsql/electric/` answers 404
+# (measured 2026-10-01; an alpine pull from the same machine succeeded, so it is not our network).
+# `iagent-electric` has had no ready pod since the ReplicaSet that lost its node's cached copy.
+# Same class as minio/mc (see mirror-util-images.yml).
+#
+# SO WE BUILD IT, NOT COPY IT. The source is public: this checks out upstream's own release tag for
+# the sync service (`@core/sync-service@<version>`) and builds it with upstream's own Dockerfile,
+# unmodified, then pushes it under the same version to a repository we own.
+#
+# NATIVE ARM, NOT QEMU. The cluster is arm64 and the build compiles an Erlang/OTP release; the BEAM
+# JIT is unreliable under qemu-user emulation, so this runs on a native arm64 runner and builds
+# linux/arm64 only.
+#
+# OUTSIDE `global.imagePrefix` ON PURPOSE, like mirror/mc: not an image this repo builds from its
+# own source, so the chart helper must not float its tag and the release retag must not touch it.
+#
+# Manual trigger only: it runs when the pinned version changes, never on push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      electric_version:
+        description: 'Upstream sync-service version to build (must match electric.image.tag)'
+        required: true
+        default: '1.0.13'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mirror/electric
+
+jobs:
+  electric:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - name: Refuse a version that is not an upstream sync-service release
+        env:
+          ELECTRIC_VERSION: ${{ inputs.electric_version }}
+        run: |
+          [[ "$ELECTRIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "not a version: $ELECTRIC_VERSION"; exit 1; }
+          git ls-remote --exit-code https://github.com/electric-sql/electric \
+            "refs/tags/@core/sync-service@$ELECTRIC_VERSION"
+
+      - name: Check out upstream at that tag
+        env:
+          ELECTRIC_VERSION: ${{ inputs.electric_version }}
+        run: |
+          git clone --depth 1 --branch "@core/sync-service@$ELECTRIC_VERSION" \
+            https://github.com/electric-sql/electric src
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+        id: buildx
+        continue-on-error: true
+      # Same one-retry as build-containers.yml: buildx setup pulls from docker.io and times out
+      # transiently.
+      - uses: docker/setup-buildx-action@v3
+        if: steps.buildx.outcome == 'failure'
+
+      - name: Build and push (linux/arm64)
+        env:
+          ELECTRIC_VERSION: ${{ inputs.electric_version }}
+        run: |
+          docker buildx build src/packages/sync-service \
+            --platform linux/arm64 \
+            --build-arg ELECTRIC_VERSION="$ELECTRIC_VERSION" \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --label org.opencontainers.image.description="electric sync-service built from upstream @core/sync-service@$ELECTRIC_VERSION" \
+            -t "$IMAGE:$ELECTRIC_VERSION" \
+            --push
+          docker buildx imagetools inspect "$IMAGE:$ELECTRIC_VERSION" | head -20
