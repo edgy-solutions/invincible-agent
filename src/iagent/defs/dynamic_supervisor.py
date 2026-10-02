@@ -1155,6 +1155,12 @@ def _classify_route(
                 # which is exactly the pre-widening behaviour, so an engine-o that has
                 # not yet learned the field keeps working and reads the old story.
                 "verb_compatibility": verb_compatibility,
+                # The person the read is attributed to. Engine-o's predicate search is the
+                # second route behind ONTOLOGY_CLASS_POOL_VIA_MESH, and with that flag on the
+                # mesh arm refuses a blank subject rather than minting an anonymous person --
+                # so an unthreaded identity here is a 400 from engine-o, not a quiet
+                # attribution loss. Threaded the same way /resolve already receives it.
+                "user_email": user_email,
             },
             timeout=30,  # LLM call inside; longer than /search_predicates.
         )
@@ -2003,6 +2009,7 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.primary_selection import pick_primary
+from iagent_pure.engine_abstain import route_status_for
 # The R-076 reader, shared with the gateway so both paths agree on what a request is.
 from iagent_pure import acceptance_request
 from iagent_pure.slot_acceptance import (
@@ -3353,6 +3360,33 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
 
     _inject_predicate_output_uri(data, predicate)
 
+    # THE SPECIALIST WAS REACHED AND REPLIED — BUT REPLYING IS NOT ANSWERING, and the line below
+    # said "matched" for both until 2026-09-26.
+    #
+    # docs_agent's `explain` returns `abstained: True` when no page in the corpus explains the
+    # subject. Measured: that field had ZERO readers in `src/` or `agent_fleet/`, so an honest
+    # refusal arrived here, was stamped `matched`, and rendered as an ordinary KNOWLEDGE_DOCUMENT
+    # card with no sections. The walk census scored it `drawn` — the exact word its own sheet row
+    # calls "the defect here".
+    #
+    # THIS IS THE ONLY SITE THAT NEEDS IT, and that is a census rather than a guess: the three
+    # other subtask returns stamping `matched` (the ask card, `caller_identity_unavailable`,
+    # `engine_unreachable`) each BUILD their own payload with an explicit `status`, so none can
+    # carry a foreign engine's `abstained`. This is the one place a specialist's dict is passed
+    # through unexamined.
+    #
+    # The rule is imported, never restated, so this and `walk_census.judge` cannot drift into two
+    # rules that merely agree in a docstring — the failure `pick_primary` was extracted to prevent.
+    # NOTE the knock-on, which is wanted: `pick_primary` selects the first MATCHED subtask, so an
+    # abstaining subtask now yields primacy to a sibling that answered. A single-subtask turn is
+    # unchanged, since with nothing matched the fallback returns that same item.
+    #
+    # Computed ABOVE the dict deliberately: `test_every_subtask_result_carries_a_routing_status`
+    # finds a site by searching back 1400 characters from `"expert_response"` for its `return {`,
+    # so a long comment INSIDE the literal pushes the site out of that window and the seal skips
+    # it silently. Writing this paragraph in the dict did exactly that, and the seal stayed green.
+    route_status = route_status_for(data)
+
     return {
         "persona": answerer_persona,
         "user_persona": config.user_persona,
@@ -3360,8 +3394,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         "predicate_verb_iri": predicate.get("verb_iri"),
         "sub_query": sub_query,
         # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
-        # does. the specialist answered
-        "route_status": "matched",
+        # does. `matched` unless the specialist said it abstained — see above the return.
+        "route_status": route_status,
         "expert_response": data,
     }
 

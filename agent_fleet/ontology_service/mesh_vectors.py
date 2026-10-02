@@ -1,9 +1,9 @@
 """Engine-o's `MeshVectors` implementation — the reader half of the marker contract.
 
-**THIS MODULE IMPORTS NO DRIVER.** The Weaviate client and the filter factory are INJECTED, the
-same shape `state_sparql` and `sustainment_instance_provider` already use here — which is why this
-file can be exercised by a test where `main.py` needs a stub harness. The driver stays in
-`main.py`, which is the one place engine-o is entitled to hold one.
+**THIS MODULE IMPORTS NO DRIVER.** The Weaviate client, the filter factory and the metadata-query
+factory are INJECTED, the same shape `state_sparql` and `sustainment_instance_provider` already use
+here — which is why this file can be exercised by a test where `main.py` needs a stub harness. The
+driver stays in `main.py`, which is the one place engine-o is entitled to hold one.
 
 WHAT THE CONTRACT ASKS FOR, and where each part lives:
 
@@ -39,7 +39,6 @@ from iagent_mesh.interfaces import (  # noqa: F401 — CollectionMarker is part 
     CorruptCollectionMarker,
     Initiator,
     MESH_COLLECTION_META,
-    ServiceIdentityRefused,
     marker_predates_collection,
     read_collection_marker,
 )
@@ -70,13 +69,22 @@ class WeaviateVectors:
         client: Any,
         embed: Callable[[str], Any],
         filters: Any,
+        metadata: Callable[..., Any],
         fetch_marker: Optional[Callable[[str], Optional[dict]]] = None,
         oldest_object_unix_ms: Optional[Callable[[str], Optional[int]]] = None,
         report: Optional[Callable[[str], None]] = None,
     ) -> None:
+        #: `metadata` IS REQUIRED AND DELIBERATELY HAS NO DEFAULT — the driver's
+        #: `MetadataQuery`-alike, injected like `filters` so this module still imports no driver.
+        #: A default of None would let a caller omit it and get rows that look complete and carry
+        #: no ranking: the omission would be invisible at construction, invisible in the row shape
+        #: (the `score` key is present either way), and visible only as an empty column in a
+        #: decision-path panel nobody is reading at the time. Required makes it a TypeError at the
+        #: construction site instead — the one place that can still fix it.
         self._client = client
         self._embed = embed
         self._filters = filters
+        self._metadata = metadata
         self._fetch_marker = fetch_marker
         self._oldest = oldest_object_unix_ms
         self._report = report or (lambda _m: None)
@@ -87,17 +95,18 @@ class WeaviateVectors:
 
     @staticmethod
     def _require_person(initiator: Initiator, operation: str) -> None:
-        """A service identity is refused at the boundary.
+        """Refuse every kind that is not a person: the SDK's allowlist, called once.
 
-        Not sniffed from the subject's spelling — `kind` is declared at the edge that minted the
-        token, and parsing a subject is the rule this one exists beside, not a cheaper version
-        of it.
+        Until 2026-10-01 this was a fleet COPY of the guard, flipped from ``== "service"`` to
+        ``!= "person"`` on 2026-09-27 because a comparison that names what it refuses admits a
+        kind nobody named (``delegate``). The copy existed only because the pin
+        (``iagent-mesh @ v0.9.3``) still shipped the denylist. At v0.9.5 the SDK's
+        ``Initiator.require_person`` is the allowlist and raises ``DelegateIdentityRefused`` for a
+        delegate, so this is now that one call (ca's packet of 2026-09-27), and the allowlist is
+        written once. Kept as a static so the call sites and the seal keep one name to drive:
+        ``tests/test_the_person_guard_is_an_allowlist_everywhere.py``.
         """
-        if initiator.kind == "service":
-            raise ServiceIdentityRefused(
-                f"{operation}: a read attributed to a service records provenance no person can "
-                f"be asked about (subject={initiator.subject!r})"
-            )
+        initiator.require_person(operation)
 
     # ── the embedding contract ──────────────────────────────────────────────────────────────
 
@@ -266,8 +275,49 @@ class WeaviateVectors:
     ) -> list[dict]:
         handle = self._client.collections.get(collection)
         filters = self._domain_filter(collection, domains)
+        # THE SCORE IS ASKED FOR, or it does not arrive. Weaviate returns no ranking metadata
+        # unless the query requests it, and this method used to return `o.properties` alone — so
+        # every row came back scoreless while looking complete. The interface docstring calls the
+        # two incumbent call sites "same fields, SAME SCORE KEY", so a scoreless row is not a
+        # thinner row, it is a row that does not meet the contract it was written against.
+        #
+        # WHAT THE LOSS ACTUALLY COSTS, since a missing key reads as a missing nicety: the losers'
+        # scores are the PROV-contamination diagnosis (prov#Bundle at 0.66 beating idp#Pipeline),
+        # which had to be fished out of a hand-written Weaviate query because the pipeline threw
+        # them away. `/resolve` carries the whole pool for exactly that reason.
+        meta = self._metadata(score=True)
         if vector is None:
-            resp = handle.query.bm25(query=text, limit=limit, filters=filters)
+            resp = handle.query.bm25(
+                query=text, limit=limit, filters=filters, return_metadata=meta
+            )
         else:
-            resp = handle.query.hybrid(query=text, vector=vector, limit=limit, filters=filters)
-        return [dict(getattr(o, "properties", {}) or {}) for o in getattr(resp, "objects", [])]
+            resp = handle.query.hybrid(
+                query=text, vector=vector, limit=limit, filters=filters, return_metadata=meta
+            )
+        rows: list[dict] = []
+        for o in getattr(resp, "objects", []):
+            row = dict(getattr(o, "properties", {}) or {})
+            md = getattr(o, "metadata", None)
+            retrieved = getattr(md, "score", None) if md is not None else None
+            if "score" in row:
+                # A STORED PROPERTY WINS, AND THE COLLISION IS REPORTED. `score` is a name a
+                # collection is free to own, and overwriting it would replace the store's own
+                # datum with a ranking artifact of this one query — silently, in a field whose
+                # name gives the reader no way to tell which of the two they are holding.
+                #
+                # REPORTED RATHER THAN RAISED, because refusing would take routing down over a
+                # schema this reader does not control, and the ranking is still available to the
+                # caller that wants it. The two branches are sealed separately: an
+                # accepting-side-only seal is the defect class this file's own pairs exist for.
+                self._report(
+                    f"_search({collection}): row carries its own 'score' property "
+                    f"({row['score']!r}); the retrieval score ({retrieved!r}) is DROPPED "
+                    f"rather than overwriting it"
+                )
+            else:
+                # The key is present even when None — a pure-BM25 path on a scoreless config
+                # populates no metadata, and a missing key would make "not ranked" and "not
+                # asked for" the same shape to every consumer downstream.
+                row["score"] = float(retrieved) if retrieved is not None else None
+            rows.append(row)
+        return rows

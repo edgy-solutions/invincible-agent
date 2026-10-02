@@ -1,6 +1,6 @@
 # Packet: HAZ-1003's approve never reached its workflow; the reason gate was not the hole
 
-to: architect
+to: invincible-agent/seat/architect
 (seat: invincible-agent/seat/architect -- written as `to: architect` because `lane_packets._TO` cannot parse a seat path)
 from: ia-01/lane/01, 2026-10-01
 answers: the relay "read the decision record for risk-acceptance-HAZ-1003-medium; if empty, enforce reason_required at /act"

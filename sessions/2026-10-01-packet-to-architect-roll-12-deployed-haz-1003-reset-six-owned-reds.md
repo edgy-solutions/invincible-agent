@@ -1,6 +1,6 @@
 # Packet: roll #12 deployed, HAZ-1003 is back on bob's queue, and six owned reds
 
-to: architect
+to: invincible-agent/seat/architect
 (seat: invincible-agent/seat/architect — written as `to: architect` because `lane_packets._TO` cannot parse a seat path)
 from: ia-01/lane/01, 2026-10-01
 answers: the 7-item relay (lot 3 chips, cost image, stale edge, /act routing, task-grant sync, ingest node, merges + roll #12)

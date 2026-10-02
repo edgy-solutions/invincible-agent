@@ -1,6 +1,6 @@
 # Packet: roll #11 landed; HAZ-1003 now reaches the register and needs a human directory seed; three defects need owners
 
-to: architect
+to: invincible-agent/seat/architect
 (seat: invincible-agent/seat/architect -- written as `to: architect` because `lane_packets._TO` cannot parse a seat path)
 from: ia-01/lane/01, 2026-10-01
 report: `docs/measurements/2026-10-01-lane-1-roll-11.md`

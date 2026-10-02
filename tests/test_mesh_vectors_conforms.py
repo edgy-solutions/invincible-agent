@@ -53,13 +53,34 @@ class _Obs:
 
 
 class _Query:
-    def __init__(self, rows):
+    def __init__(self, rows, scores=None):
         self._rows = rows
+        # THE SCORES LIVE BESIDE THE PROPERTIES, because that is where the driver puts them: a
+        # Weaviate object carries `properties` and `metadata` as separate attributes, and a double
+        # that folded the score into the properties dict would make the implementation's own
+        # property-collision branch unreachable — the seal would be measuring the double.
+        # `None` means "this object has no metadata at all", the scoreless-config shape.
+        self._scores = list(scores) if scores is not None else None
         self.last = None
 
     def _resp(self, **kw):
         self.last = kw
-        return type("R", (), {"objects": [type("O", (), {"properties": r}) for r in self._rows]})
+        # THE DOUBLE WITHHOLDS WHAT WAS NOT ASKED FOR, and this line is load-bearing. It did not,
+        # at first: it attached metadata unconditionally, and the two mutants that DELETE
+        # `return_metadata=` from the implementation's queries both stayed GREEN — the double was
+        # the only thing supplying the property under test, so the whole set of score arms was
+        # measuring the fixture. A double that answers a question the driver would have refused
+        # turns every arm above it into a decoration.
+        asked = kw.get("return_metadata") is not None
+        objs = []
+        for i, r in enumerate(self._rows):
+            if self._scores is None or not asked:
+                md = None
+            else:
+                s = self._scores[i] if i < len(self._scores) else None
+                md = type("M", (), {"score": s})
+            objs.append(type("O", (), {"properties": r, "metadata": md}))
+        return type("R", (), {"objects": objs})
 
     def hybrid(self, **kw):
         return self._resp(kind="hybrid", **kw)
@@ -68,9 +89,19 @@ class _Query:
         return self._resp(kind="bm25", **kw)
 
 
+class _Meta:
+    """The injected `MetadataQuery`-alike. Records that it was asked for, and for WHAT."""
+
+    calls: list = []
+
+    def __init__(self, **kw):
+        type(self).calls.append(kw)
+        self.kw = kw
+
+
 class _Collections:
-    def __init__(self, rows, present=True):
-        self._q, self._present = _Query(rows), present
+    def __init__(self, rows, present=True, scores=None):
+        self._q, self._present = _Query(rows, scores), present
 
     def exists(self, _name):
         return self._present
@@ -80,8 +111,8 @@ class _Collections:
 
 
 class _Client:
-    def __init__(self, rows=(), present=True):
-        self.collections = _Collections(list(rows), present)
+    def __init__(self, rows=(), present=True, scores=None):
+        self.collections = _Collections(list(rows), present, scores)
 
 
 class _Filters:
@@ -105,11 +136,13 @@ class _Filters:
         return ("any_of", tuple(parts))
 
 
-def _impl(*, rows=(), present=True, marker=None, embed=None, oldest=None, report=None):
+def _impl(*, rows=(), present=True, marker=None, embed=None, oldest=None, report=None,
+          scores=None):
     return WeaviateVectors(
-        client=_Client(rows, present),
+        client=_Client(rows, present, scores),
         embed=embed or (lambda _t: _Obs()),
         filters=_Filters,
+        metadata=_Meta,
         fetch_marker=(lambda _c: marker),
         oldest_object_unix_ms=(lambda _c: oldest),
         report=report,
@@ -161,7 +194,8 @@ def test_an_empty_result_and_a_FAILURE_are_different_outcomes():
             self.collections.get = lambda _n: (_ for _ in ()).throw(RuntimeError("weaviate down"))
 
     failing = WeaviateVectors(
-        client=_Boom(), embed=lambda _t: _Obs(), filters=_Filters, fetch_marker=lambda _c: None
+        client=_Boom(), embed=lambda _t: _Obs(), filters=_Filters, metadata=_Meta,
+        fetch_marker=lambda _c: None
     )
     out = failing.nominate(PERSON, collection="OntologyClass", text="q")
     assert out.outcome == "failed"
@@ -352,3 +386,132 @@ def test_the_predicate_this_module_COMPILES_AGAINST_exists():
         "this module is back on the deprecated alias — the SDK cannot contract it while a caller "
         "remains, and this lane is the caller the interval was opened for"
     )
+
+
+# ── the retrieval score: asked for, attached, and never overwriting the store's own ─────────
+
+
+def test_the_retrieval_metadata_IS_REQUESTED_and_not_merely_read():
+    """A score that was never asked for arrives as None from a perfectly healthy cluster.
+
+    Weaviate returns no ranking metadata unless the query requests it, so this arm asserts the
+    REQUEST, not the row. Without it every other score arm below could pass against a double that
+    volunteers metadata the real driver would have withheld — the double would be the only thing
+    supplying the property under test.
+    """
+    _Meta.calls.clear()
+    impl = _impl(rows=[{"uri": "x"}], scores=[0.7])
+    impl.nominate(PERSON, collection="OntologyClass", text="q")
+    assert _Meta.calls == [{"score": True}], (
+        f"the metadata factory was called {_Meta.calls!r}; the implementation must ask for "
+        f"score=True on every search or the score it returns is always None"
+    )
+    # BUILDING THE REQUEST IS NOT MAKING IT. Asserting only on `_Meta.calls` left both
+    # delete-the-kwarg mutants green: the factory is called ABOVE the branch, so it stays called
+    # when neither query passes its result on. What the driver reads is the kwarg.
+    sent = impl._client.collections._q.last
+    assert isinstance(sent.get("return_metadata"), _Meta), (
+        f"the query was issued without the metadata it had just built: {sent!r}"
+    )
+
+
+def test_BOTH_query_shapes_request_the_metadata_not_only_the_hybrid_one():
+    """The degraded path is the one that gets forgotten, and it is the one that needs it most.
+
+    A bm25-only search still ranks, and this is the branch a caller reaches while the embedding
+    gateway is down — precisely when someone is reading scores to find out what happened.
+    """
+    def _explode(_t):
+        raise RuntimeError("embedding gateway down")
+
+    for label, embed in (("hybrid", None), ("bm25", _explode)):
+        _Meta.calls.clear()
+        impl = _impl(rows=[{"uri": "x"}], scores=[0.7], embed=embed)
+        out = impl.nominate(PERSON, collection="OntologyClass", text="q")
+        assert out.mode == label, f"fixture did not reach the {label} branch (mode={out.mode})"
+        assert _Meta.calls == [{"score": True}], (
+            f"the {label} branch did not request score metadata: {_Meta.calls!r}"
+        )
+        assert (out.rows or [{}])[0].get("score") == 0.7, (
+            f"the {label} branch dropped the score it asked for"
+        )
+
+
+def test_the_metadata_score_LANDS_ON_THE_ROW_under_the_key_the_incumbent_uses():
+    """`score`, a float, one per row, in order. The incumbent pool builder spells it exactly this
+    way, and the flag-parity seal compares the two pools row for row."""
+    out = _impl(
+        rows=[{"uri": "a", "label": "A"}, {"uri": "b", "label": "B"}],
+        scores=[0.66, 0.41],
+    ).nominate(PERSON, collection="OntologyClass", text="q")
+    assert out.outcome == "answered"
+    assert [r["score"] for r in out.rows] == [0.66, 0.41]
+    assert all(isinstance(r["score"], float) for r in out.rows)
+
+
+def test_a_SCORELESS_response_still_carries_the_key_as_None():
+    """The control for the arm above, differing in exactly what the guard decides on: the object
+    has NO metadata at all, which is the pure-BM25-on-a-scoreless-config shape.
+
+    The key must still be present. A missing key makes "not ranked" and "never asked" the same
+    shape downstream, which is the three-states-collapsed-to-two defect one field over.
+    """
+    out = _impl(rows=[{"uri": "a"}], scores=None).nominate(
+        PERSON, collection="OntologyClass", text="q"
+    )
+    row = out.rows[0]
+    assert "score" in row, "the key was dropped when the response carried no metadata"
+    assert row["score"] is None
+
+
+def test_a_STORED_score_property_WINS_and_the_collision_is_reported():
+    """The refusing side. A collection may own a property called `score`, and overwriting it would
+    replace the store's datum with a ranking artifact of one query, under a name that gives the
+    reader no way to tell which they hold."""
+    said: list[str] = []
+    out = _impl(
+        rows=[{"uri": "a", "score": 3}],
+        scores=[0.9],
+        report=said.append,
+    ).nominate(PERSON, collection="OntologyClass", text="q")
+    assert out.rows[0]["score"] == 3, "the retrieval score overwrote the stored property"
+    # THE CHANNEL IS SHARED AND THE FIRST MESSAGE IS NOT THIS ONE. `report` also carries the
+    # marker-gap warning, which fires first on every fixture without a marker — asserting on
+    # `said[0]` passed here for the wrong reason and reds the companion arm below for the wrong
+    # reason too. The subset is selected by its PRODUCER, not by its position.
+    collisions = [m for m in said if "_search(" in m and "DROPPED" in m]
+    assert collisions, (
+        f"the collision was silent — a dropped datum that says nothing is the defect class "
+        f"(channel carried: {said!r})"
+    )
+    assert "score" in collisions[0], collisions
+
+
+def test_the_NON_COLLIDING_row_is_the_companion_that_keeps_that_arm_honest():
+    """Its pair. If the implementation simply never wrote the score, the arm above would pass —
+    so this one differs in exactly one thing: the row carries no `score` property, and nothing is
+    reported.
+    """
+    said: list[str] = []
+    out = _impl(rows=[{"uri": "a"}], scores=[0.9], report=said.append).nominate(
+        PERSON, collection="OntologyClass", text="q"
+    )
+    assert out.rows[0]["score"] == 0.9
+    collisions = [m for m in said if "_search(" in m and "DROPPED" in m]
+    assert collisions == [], (
+        f"a row with no score property reported a collision anyway: {collisions!r}"
+    )
+
+
+def test_the_metadata_factory_IS_REQUIRED_at_construction():
+    """Measured, because a claim about what would go wrong is a mutant owed a run.
+
+    The parameter has no default ON PURPOSE. A default of None would let a caller omit it and get
+    rows that look complete and carry no ranking: invisible at construction, invisible in the row
+    shape (the key is present either way), and visible only as an empty column in a panel nobody
+    is reading at the time. This asserts the omission is a TypeError at the one site that can
+    still fix it.
+    """
+    with pytest.raises(TypeError) as exc:
+        WeaviateVectors(client=_Client(), embed=lambda _t: _Obs(), filters=_Filters)
+    assert "metadata" in str(exc.value), str(exc.value)

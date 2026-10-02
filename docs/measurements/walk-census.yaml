@@ -34,7 +34,22 @@
 #   drawn          a card with a payload meeting `min_rows`
 #   slot_required  the system asked for a mandatory slot instead of answering — a PASS where the
 #                  sheet says so, because refusing to guess a required input is the behaviour
-#   task_created   the answer is a row in `human_tasks`, not a 200 (see HAZ-1003)
+#   task_requested the engine's payload carries a `review_request` — the engine ASKING for a task
+#                  (see HAZ-1003). NOT `task_created`: the row in `human_tasks` is a different act
+#                  by a different component, and this runner reads the artifact, so it can see the
+#                  request and cannot see the row. This legend said `task_created` until
+#                  2026-09-26, naming the one thing the vocabulary's own docstring says it is not.
+#   abstained      the engine was reached and declined — no page explains the subject, no rows
+#                  exist to return. A WORDED refusal naming the subject, not a menu: an abstain
+#                  that CAN offer verbs is drawn as one and scores `slot_required` instead.
+#   fallback       the GENERALIST answered, because nothing in the registry matched. Correct
+#                  routing per ADR-0008 and not a failure of it — but it is not `drawn`, which is
+#                  what this runner scored until 2026-09-26. The generalist draws a card, so
+#                  `drawn` was TRUE, passing, and silent: three of the four docs rows reported as
+#                  passing on disposition while being answered from the maintenance ontology. A
+#                  row accepting `fallback` accepts a DISCLOSED one — the answer must say on the
+#                  wire that it came from the generalist and why, or the row fails whatever it
+#                  accepts (`iagent_pure.generalist_fallback`).
 # `dispositions` lists what this row ACCEPTS. A row accepting everything asserts nothing, so the
 # seal refuses an empty list and refuses a row that accepts every value in the vocabulary.
 

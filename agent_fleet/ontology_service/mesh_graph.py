@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Sequence
 
-from iagent_mesh.interfaces import Initiator, ServiceIdentityRefused
+from iagent_mesh.interfaces import Initiator
 from iagent_mesh.results import MeshResult
 
 #: The hop bound for `path`, which the Protocol signature does not carry — so the implementation
@@ -157,16 +157,18 @@ class Neo4jGraph:
 
     @staticmethod
     def _require_person(initiator: Initiator, operation: str) -> None:
-        """A service identity is refused at the boundary.
+        """Refuse every kind that is not a person: the SDK's allowlist, called once.
 
-        Not sniffed from the subject's spelling — `kind` is declared at the edge that minted the
-        token, and parsing a subject is the rule this one exists beside, not a cheaper version.
+        Until 2026-10-01 this was a fleet COPY of the guard, flipped from ``== "service"`` to
+        ``!= "person"`` on 2026-09-27 because a comparison that names what it refuses admits a
+        kind nobody named (``delegate``). The copy existed only because the pin
+        (``iagent-mesh @ v0.9.3``) still shipped the denylist. At v0.9.5 the SDK's
+        ``Initiator.require_person`` is the allowlist and raises ``DelegateIdentityRefused`` for a
+        delegate, so this is now that one call (ca's packet of 2026-09-27), and the allowlist is
+        written once. Kept as a static so the call sites and the seal keep one name to drive:
+        ``tests/test_the_person_guard_is_an_allowlist_everywhere.py``.
         """
-        if initiator.kind == "service":
-            raise ServiceIdentityRefused(
-                f"{operation}: a read attributed to a service records provenance no person can "
-                f"be asked about (subject={initiator.subject!r})"
-            )
+        initiator.require_person(operation)
 
     # ── the one place a query meets the driver ──────────────────────────────────────────────
 

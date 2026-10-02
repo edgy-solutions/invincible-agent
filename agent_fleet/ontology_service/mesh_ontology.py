@@ -248,11 +248,49 @@ class JenaMeshOntology:
     def construct(
         self, initiator: Initiator, *, subject: str, graph: Optional[str] = None
     ) -> MeshResult:
-        """A typed subgraph as parsed triples, term types intact.
+        """A typed subgraph as Turtle TEXT, term types intact.
 
-        Rows are rdflib triples, not Turtle text: the Protocol's reason for CONSTRUCT over SELECT
-        is that the SELECT executor drops term types, and handing back text moves the parse to
-        every consumer and loses the types at the first one that calls `str()`.
+        MEASURED 2026-09-26, AND THIS IS THE REVERSE OF WHAT THIS METHOD FIRST DID. It returned
+        rdflib triples, and the docstring that stood here argued for them: that Turtle text "moves
+        the parse to every consumer and loses the types at the first one that calls `str()`". That
+        argument was never run. ca's conformance arm red on the row type, I went to overrule it,
+        and built the control instead — two fixtures with IDENTICAL lexical forms (`42`, `hello`)
+        differing only in whether those forms were typed:
+
+            triples, typed:   {"rows":[[...,"instanceCount","42"],[...,"label","hello"]]}
+            triples, untyped: {"rows":[[...,"instanceCount","42"],[...,"label","hello"]]}
+            byte-identical:   True
+
+        `MeshResult` is a pydantic model returned by a FastAPI service, so every real consumer reads
+        it after `model_dump_json`, and pydantic serializes an `rdflib.term.Literal` by its lexical
+        form. `"42"^^xsd:integer` and `"hello"@en` arrive as `"42"` and `"hello"`. The types were
+        intact in process and GONE on the wire — unconditionally, with no consumer needed and no
+        `str()` called by anyone. The defect the Protocol chose CONSTRUCT over SELECT to avoid was
+        reintroduced one layer below the fix, and the docstring arguing for it is why nobody looked:
+        a justification nobody tested outlives what it justified.
+
+        Turtle text carries it across the same hop — the two fixtures serialize DIFFERENTLY, and
+        `"hello"@en` survives a full round trip through `model_validate_json`. There is no consumer
+        to derive the reading from, since the only callers of this method are its own tests, so the
+        wire is the deciding argument and it decides for ca.
+
+        AND THE FLEET HAD ALREADY DECIDED IT, one file over. `main.py`'s shipping `/policy_rules`
+        (`_run_construct_turtle`, main.py:4273) returns `resp.text` — the store's Turtle, verbatim,
+        no re-serialization — and its comment gives this same reason in almost these words: *"it
+        CONSTRUCTs the rule subgraph and returns Turtle (types intact — CONSTRUCT, not SELECT,
+        because the SELECT path stringifies RDF terms and `bool("false")` is truthy)"*. That is a
+        live consumer contract (restate_analyst's loader parses that Turtle) that this Protocol
+        implementation was silently disagreeing with. Two declarations of one contract in one
+        service, and nothing asserted the join — which is why the divergence survived being written
+        by the same hand that wrote the comment.
+
+        THE STORE'S OWN TURTLE, VERBATIM, not a re-serialization. The graph is still parsed, and the
+        parse is still what distinguishes `failed` from `empty` from `answered`; only the parsed
+        form is now discarded instead of the text. Re-serializing was the obvious version and it
+        subtracts: rdflib's Turtle writer emits the four types Turtle has native syntax for —
+        `xsd:integer`, `xsd:decimal`, `xsd:double`, `xsd:boolean` — as bare `42`, `1.5`, `1e+03`,
+        `true`, with no `^^` left for a reader to match on. Still valid Turtle and still typed to a
+        parser, but a serializer nobody asked for can only lose spellings, never add them.
         """
         initiator.require_person("construct")
         iri = _checked_iri(subject, argument="subject")
@@ -274,8 +312,13 @@ class JenaMeshOntology:
             except Exception as exc:  # rdflib raises several unrelated types for bad Turtle
                 return MeshResult.failed(detail=f"CONSTRUCT returned unparseable Turtle: {exc}")
 
-            triples = tuple(parsed)
-            return MeshResult.answered(rows=triples) if triples else MeshResult.empty()
+            # PARSED TO DECIDE, RETURNED AS TEXT. `len(parsed) == 0` is what separates "the store
+            # answered with a prefix block and nothing else" from a subgraph, and it is a decision
+            # this method must make rather than push to a consumer. The rows are `body.text` and not
+            # `parsed.serialize(...)` — see the docstring's fourth paragraph.
+            if len(parsed) == 0:
+                return MeshResult.empty()
+            return MeshResult.answered(rows=(body.text,))
 
         return self._read(
             "construct",

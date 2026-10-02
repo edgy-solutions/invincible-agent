@@ -1,6 +1,6 @@
 # Packet: the rate_vintage one-liner is held; lot 3 gets its two chips only with a ruling for the unbound turn
 
-to: architect
+to: invincible-agent/seat/architect
 (seat: invincible-agent/seat/architect -- written as `to: architect` because `lane_packets._TO` cannot parse a seat path)
 cc: ia-74/lane/74
 from: ia-01/lane/01, 2026-10-01
