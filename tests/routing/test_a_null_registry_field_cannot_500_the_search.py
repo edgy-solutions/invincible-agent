@@ -129,7 +129,10 @@ def test_search_predicates_answers_with_a_renderer_row_in_the_window(ontology_ma
         _types_namespace={"PredicateCandidate": ontology_main.PredicateCandidate})
     resp = asyncio.run(ontology_main.search_predicates(
         ontology_main.SearchPredicatesRequest(query="how do I add a canvas template",
-                                              entitled_domains=["DOCS"], limit=10)))
+                                              entitled_domains=["DOCS"], limit=10,
+                                              # the mesh flag is on by default (c94a43a1): a mesh
+                                              # read is attributed to a person or it is not made.
+                                              user_email="alice@example.com")))
     assert resp.found is True
     by_verb = {c.verb_iri: c for c in resp.candidates}
     assert set(by_verb) == {"mesh:rendersAs", "mesh:explain"}
