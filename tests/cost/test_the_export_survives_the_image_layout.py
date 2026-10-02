@@ -30,8 +30,13 @@ rendering does not. That is the seam a card action should be built on.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import shutil
+import subprocess
+import sys
+import textwrap
 from unittest import mock
 
 import pytest
@@ -41,6 +46,9 @@ from agent_fleet.cost_agent.entities import SourceUnavailable
 from agent_fleet.cost_agent.seed import build_state
 
 STATE = build_state()
+
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_DOCKERFILE = _ROOT / ".github" / "docker" / "Dockerfile.agent"
 
 
 def test_a_flattened_layout_gets_a_NAMED_REFUSAL_and_not_an_IndexError():
@@ -173,3 +181,174 @@ def test_a_baked_sha_is_available_without_git_and_is_NOT_invented():
             assert m._baked_algorithm_sha() is None, (
                 f"{absent!r} must not be reported as a real sha"
             )
+
+
+# ── THE IMAGE LAYOUT, NOT JUST THE SEARCH ─────────────────────────────────────────────────
+#
+# Every test above runs from the repo checkout, where `agent_fleet` is a real package and
+# `scripts.build_cost_dataset` is one `import` away -- so a packaged-only spelling in
+# `scripts/build_cost_package.py` is green here and in CI FOREVER, and fails only where
+# nobody runs pytest: inside the deployed image. The tests above found `_repo_root()`
+# returning None and stopped there -- a real fix for a real crash -- but "a root is found"
+# and "the builder at that root is importable" are different claims, and nothing exercised
+# the second one.
+#
+# MEASURED on iagent-engine-cost, built from this Dockerfile with AGENT_DIR=agent_fleet/cost_agent:
+#
+#     cd /app/scripts && python -c "import build_cost_package"
+#     ModuleNotFoundError: No module named 'agent_fleet'
+#
+# `build_cost_package.py` imports `agent_fleet.cost_agent.export` and `scripts.build_cost_dataset`
+# (which imports `agent_fleet.cost_agent.pricing` and `.seed`), and reads
+# `agent_fleet/cost_agent/pricing.py` and `page.py` off disk by that same path. The image
+# flattens `agent_fleet/cost_agent/` onto `/app` (`COPY ${AGENT_DIR}/ /app/`) and nothing else
+# put an `agent_fleet` package there, so every one of those imports failed -- the
+# `SourceUnavailable` guards two frames further down in `package_export` never ran.
+#
+# WHY NO EXISTING TEST COULD SEE IT. `test_a_flattened_layout_gets_a_NAMED_REFUSAL...` above
+# patches `_repo_root` to return None and asserts the refusal fires at THAT seam, in-process,
+# with `agent_fleet` already imported (packaged) by this very test module. It proves the
+# arithmetic no longer throws; it cannot prove the builder loads, because the only process
+# that ever ran this test already has the packaged spelling satisfied before the test starts.
+# The pattern copied here is `tests/graph_host/test_the_image_layout_can_import_it.py`: stage
+# a faithful copy of what the Dockerfile COPYs, with no repo root on sys.path, and run the
+# REAL import in a subprocess.
+_DOCKERFILE_SRC = _DOCKERFILE.read_text(encoding="utf-8")
+
+#: The exact COPY lines this engine's image layout depends on for the builder to import.
+#: Read LIVE from the Dockerfile at stage time (not just asserted by a separate control), so
+#: reverting any one of them stages the layout without it -- the same way reverting it in the
+#: real Dockerfile ships an image without it.
+_COST_COPY_LINES = {
+    "agent_dir": "COPY ${AGENT_DIR}/ /app/",
+    "builder": "COPY scripts/build_cost_package.py /app/scripts/build_cost_package.py",
+    "build_cost_dataset": "COPY scripts/build_cost_dataset.py /app/scripts/build_cost_dataset.py",
+    "labor_tab_template": "COPY scripts/labor_tab_template.py /app/scripts/labor_tab_template.py",
+    "agent_fleet_init": "COPY agent_fleet/__init__.py /app/agent_fleet/__init__.py",
+    "cost_agent_pkg": "COPY agent_fleet/cost_agent/ /app/agent_fleet/cost_agent/",
+    "runtime_arg": "ARG PACKAGE_RUNTIME_SRC=.docker-empty",
+    "runtime_copy": "COPY ${PACKAGE_RUNTIME_SRC}/ /app/.pyodide-cache/",
+}
+
+
+def test_the_cost_staging_list_still_matches_the_DOCKERFILE():
+    """THE SIMULATION'S OWN CONTROL, same reason as graph_host's: without it, the import test
+    below could drift into testing a layout the image does not have -- and would keep passing
+    while the real one broke, which is strictly worse than not testing it."""
+    for name, line in _COST_COPY_LINES.items():
+        assert line in _DOCKERFILE_SRC, f"{name}: {line!r} is no longer in the Dockerfile"
+
+
+def _stage_cost_image(app: pathlib.Path) -> None:
+    """Build a tmp tree matching exactly what the Dockerfile COPYs for
+    AGENT_DIR=agent_fleet/cost_agent -- reading the Dockerfile LIVE (see above), so a reverted
+    COPY line stages a layout without it."""
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+
+    def _copy_dir(src: pathlib.Path, dest: pathlib.Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dest, dirs_exist_ok=True, ignore=ignore)
+
+    def _copy_file(src: pathlib.Path, dest: pathlib.Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
+    # COPY ${AGENT_DIR}/ /app/ -- unconditional; this is the flatten the defect was found in.
+    assert _COST_COPY_LINES["agent_dir"] in _DOCKERFILE_SRC
+    _copy_dir(_ROOT / "agent_fleet" / "cost_agent", app)
+
+    # COPY scripts/build_cost_package.py /app/scripts/build_cost_package.py -- unconditional.
+    assert _COST_COPY_LINES["builder"] in _DOCKERFILE_SRC
+    _copy_file(_ROOT / "scripts" / "build_cost_package.py",
+               app / "scripts" / "build_cost_package.py")
+
+    # Everything below is the FIX -- staged only if the Dockerfile still says so.
+    if _COST_COPY_LINES["build_cost_dataset"] in _DOCKERFILE_SRC:
+        _copy_file(_ROOT / "scripts" / "build_cost_dataset.py",
+                   app / "scripts" / "build_cost_dataset.py")
+    if _COST_COPY_LINES["labor_tab_template"] in _DOCKERFILE_SRC:
+        _copy_file(_ROOT / "scripts" / "labor_tab_template.py",
+                   app / "scripts" / "labor_tab_template.py")
+    if _COST_COPY_LINES["agent_fleet_init"] in _DOCKERFILE_SRC:
+        _copy_file(_ROOT / "agent_fleet" / "__init__.py", app / "agent_fleet" / "__init__.py")
+    if _COST_COPY_LINES["cost_agent_pkg"] in _DOCKERFILE_SRC:
+        _copy_dir(_ROOT / "agent_fleet" / "cost_agent", app / "agent_fleet" / "cost_agent")
+
+    # ${PACKAGE_RUNTIME_SRC}/ /app/.pyodide-cache/ -- left EMPTY on purpose. CI fetches the
+    # runtime only for engine-cost and the fetched files are gitignored, so a checkout (and
+    # this stage) can never reproduce them faithfully. Leaving `.pyodide-cache` absent is the
+    # FAITHFUL simulation of the `.docker-empty` default and lets the probe below reach the
+    # named "runtime missing" refusal instead of silently fabricating a fake one.
+
+
+def _run_in_staged_layout(app: pathlib.Path, probe: str) -> subprocess.CompletedProcess:
+    """A SUBPROCESS, because `agent_fleet` is already imported (packaged) by this test module
+    itself -- asserting the flat layout from inside a session that has the packaged one on
+    sys.path would prove nothing, which is the shape of a fixture supplying the thing under
+    test. cwd and PYTHONPATH match what the Dockerfile's final stage sets
+    (`WORKDIR /app` + `PYTHONPATH=/app/src:/app:...`), translated onto the staged tree, with
+    NO REPO ROOT anywhere in that path."""
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(app / "src"), str(app)])}
+    return subprocess.run(
+        [sys.executable, "-c", probe], cwd=app / "scripts",
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_the_builder_IMPORTS_under_the_flattened_image_layout(tmp_path):
+    """The exact command measured live in the pod, reproduced in a staged copy:
+
+        cd /app/scripts && python -c "import build_cost_package"
+        ModuleNotFoundError: No module named 'agent_fleet'
+    """
+    app = tmp_path / "app"
+    app.mkdir()
+    _stage_cost_image(app)
+
+    assert (app / "agent_fleet" / "cost_agent" / "export.py").exists(), (
+        "the fix's own COPY lines did not land in the staged tree -- the control test above "
+        "should have caught a Dockerfile drift before this one ran"
+    )
+
+    r = _run_in_staged_layout(app, "import build_cost_package\nprint('IMPORTED_OK')")
+    assert r.returncode == 0, (
+        f"the builder does not import under the image's layout:\n{r.stderr[-1500:]}"
+    )
+    assert "IMPORTED_OK" in r.stdout, r.stdout
+
+
+def test_the_builder_REFUSES_BY_NAME_rather_than_crashing_without_the_runtime(tmp_path):
+    """The furthest the export can go in this layout without the 14 MB Pyodide runtime
+    (gitignored, fetched only in CI): past every import this defect broke, into the GOVERNED
+    half (`X.build_package`, entitlement scope and manifest), and only THEN a named refusal
+    listing the runtime files that are missing -- never an ImportError and never a crash.
+    """
+    app = tmp_path / "app"
+    app.mkdir()
+    _stage_cost_image(app)
+    assert not (app / ".pyodide-cache").exists(), (
+        "the runtime must be absent for this probe to test the no-runtime path"
+    )
+
+    probe = textwrap.dedent("""
+        import build_cost_package as builder
+        import pathlib
+        try:
+            builder.build_html("notional-customer-alpha", builder.ROOT / ".pyodide-cache")
+        except SystemExit as exc:
+            print("REFUSED:", exc)
+        else:
+            print("DID NOT REFUSE")
+        """)
+    r = _run_in_staged_layout(app, probe)
+    assert r.returncode == 0, (
+        f"the builder raised instead of refusing by name:\n{r.stderr[-1500:]}"
+    )
+    assert "DID NOT REFUSE" not in r.stdout, r.stdout
+    assert "REFUSED:" in r.stdout, r.stdout
+    assert "missing" in r.stdout.lower(), r.stdout
+    for runtime_file in ("pyodide.asm.wasm", "pyodide.asm.js", "python_stdlib.zip",
+                         "pyodide-lock.json", "pyodide.js"):
+        assert runtime_file in r.stdout, (
+            f"the refusal did not name {runtime_file!r} among the missing files:\n{r.stdout}"
+        )
