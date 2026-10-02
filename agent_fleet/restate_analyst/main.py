@@ -1957,6 +1957,16 @@ async def _run_definition(
                     status_code=501,
                 )
 
+            # A grouped await has no deadline race. Declaring one would wait forever with no
+            # error — an "unanswered escalates" that never escalates — so refuse it as n_of_m is
+            # refused: declarable, not implemented, said out loud.
+            if step.completion.mode == "grouped" and step.deadline_seconds:
+                raise restate.TerminalError(
+                    f"step {step.id}: deadline_seconds on a grouped await is declarable but NOT "
+                    "implemented by this runner — refusing rather than waiting forever",
+                    status_code=501,
+                )
+
             if step.completion.mode == "grouped":
                 results.append(await _run_grouped_human_await(
                     ctx, workflow_id, step, promise_name, request, bindings, user_jwt,
@@ -2018,11 +2028,13 @@ async def _run_definition(
             # records, and manufacturing `rejected` on expiry would put a decision in the archive
             # that no human made — worse than an absent one, because it is attributable.
             #
-            # It therefore contributes NO `outcome`: the terminal-outcome filter below selects
-            # steps whose approval carries a status, so a timed-out step leaves `outcome` to the
-            # last step a human actually disposed. What happens next is a CHAINING ROW matching
-            # the declared terminal `timed_out` — escalate, widen the audience, or abandon. That
-            # choice is policy and belongs in a row, not here.
+            # Its `outcome` is the TERMINAL `timed_out`, never a verb — and never the verb of an
+            # EARLIER step. The first version left `outcome` to "the last step a human actually
+            # disposed", which made a lone expiry None (so no row on `timed_out` could fire) and
+            # a concurrence-then-expiry `concurred` (an unanswered acceptance auto-approved).
+            # What happens next is a CHAINING ROW matching `timed_out` — escalate, widen the
+            # audience, or abandon. That choice is policy and belongs in a row, not here.
+            # Sealed by tests/test_an_unanswered_await_never_reads_as_approved.py.
             _promise = ctx.promise(promise_name, type_hint=dict)
             if getattr(step, "deadline_seconds", None):
                 _timer = ctx.sleep(timedelta(seconds=step.deadline_seconds))
@@ -2213,6 +2225,12 @@ async def _run_definition(
         r for r in results
         if r.get("kind") == "human_await" and (r.get("approval") or {}).get("status")
     ]
+    _outcome = (_disposing[-1].get("approval") or {}).get("status") if _disposing else None
+    _outcome_step_id = _disposing[-1].get("step_id") if _disposing else None
+    # AN EXPIRY ENDS THE DEFINITION, so when one happened it is the last record and the run's
+    # outcome is its terminal — whatever an earlier human said. See the deadline race above.
+    if results and results[-1].get("terminal") == "timed_out":
+        _outcome, _outcome_step_id = "timed_out", results[-1].get("step_id")
     return {
         "workflow_id": workflow_id,
         "definition_id": wf.id,
@@ -2220,8 +2238,8 @@ async def _run_definition(
         # None when a definition disposes nothing — honest, and distinguishable from a
         # disposition that happened to be absent. A chaining table matching on `outcome` then
         # fails to find a row rather than silently matching a default.
-        "outcome": (_disposing[-1].get("approval") or {}).get("status") if _disposing else None,
-        "outcome_step_id": _disposing[-1].get("step_id") if _disposing else None,
+        "outcome": _outcome,
+        "outcome_step_id": _outcome_step_id,
         "step_results": results,
     }
 
