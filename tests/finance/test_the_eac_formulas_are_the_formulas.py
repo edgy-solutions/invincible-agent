@@ -156,7 +156,7 @@ def test_the_method_and_its_formula_ride_on_every_row(rows):
     method slot exists to refuse.
     """
     for method, row in rows.items():
-        assert row["method"] == method
+        assert row["method_label"] == method
         assert row["formula"] == m.EAC_FORMULA[method]
         assert row["formula"], "an empty formula string is worse than an absent one"
 

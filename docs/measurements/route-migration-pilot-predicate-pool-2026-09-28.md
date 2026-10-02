@@ -146,6 +146,9 @@ decided form. Zero new reds, zero fixed, nothing swapped.
 
 * **The flag default is not settled**, and this route does not change that. It is blocked on a gated
   merge, an image build and a roll — not on a measurement.
+  *Correction, 2026-10-01 (Lane 74):* at this file's sha the flag is DEFAULT OFF (literal
+  `"false"`). "Not settled" meant the decision to flip it was still pending, never that the
+  default was unknown. Lane 1's 09-29 merge census read the sentence as an undecided claim.
 * **The flag's name is now narrower than its scope.** `ONTOLOGY_CLASS_POOL_VIA_MESH` gates two pools.
   The order asked for the same flag and the reason holds — one switch rolls both routes back, and one
   switch is what an operator can use under load. The cost is recorded here and not paid unilaterally:

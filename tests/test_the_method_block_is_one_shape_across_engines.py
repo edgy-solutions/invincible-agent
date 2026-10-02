@@ -254,12 +254,21 @@ def test_no_ranking_puts_METHOD_on_a_ROW(producers):
 
     `_PROJECTED_ARCHETYPES`'s loop reads the envelope, and where the field is absent it takes
     `rows[0].get(field)` instead. Adding `method` to the CONTRIBUTION_RANKING allowlist therefore
-    made any row-level `method` a candidate for the block's slot — and engine-finance already uses
-    `method` as a row field on its EAC producers, holding a formula's NAME as a bare string.
+    made any row-level `method` a candidate for the block's slot.
 
-    Those producers render as other archetypes, so this reds on nothing today. That is the point:
-    a hazard found while it is still latent costs an assertion, and the same hazard found later
-    costs a card that says "method not supplied" with nothing going red anywhere.
+    THE OFFENDER THIS DOCSTRING NAMED IS FIXED, 2026-09-26 (ruling 5). It read: "engine-finance
+    already uses `method` as a row field on its EAC producers, holding a formula's NAME as a bare
+    string." Both of those producers — `fin_eac_calculation` and `fin_eac_comparison` — now emit
+    `method_label`, which is the remediation this arm's own failure message asks for ("Rename the
+    row field"). The claim is corrected here rather than left standing, because a docstring that
+    names a live offender reads as a live offender long after it was dealt with.
+
+    THIS ARM DOES NOT WEAKEN AS A RESULT, and that is the reason to keep it. It was always scoped
+    to the RANKING producers, which is why the finance offender it described "reds on nothing
+    today" — those verbs render as other archetypes and never entered this fixture. What the arm
+    guards is the NEXT producer to put `method` on a row, and its population is every producer in
+    `producers`, not the one instance that prompted it. A hazard found while latent costs an
+    assertion; found later it costs a card that says "method not supplied" with nothing red.
     """
     offenders = {
         subject: [r["method"] for r in _rows_of(_run(spec))[:1]]

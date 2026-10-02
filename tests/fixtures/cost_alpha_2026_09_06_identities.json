@@ -1,0 +1,50 @@
+{
+  "identities": {
+    "learning_slope": "0.92",
+    "lots": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "manifest_checks": "sha256:be1a65f4ad57ad720c9f2c84ba89c829cb461d6449c3b83845ef3e62a621216d",
+    "manifest_composition": "sha256:4f7017abb03a229b372406a7814485b5ab22be46bd297911ad5640db018666d1",
+    "manifest_modules": {
+      "pricing.py": "sha256:9bad9d607e31c1137f9bd66a19de460a5bc3ec233be3dbd1796df15e50d6ed30"
+    },
+    "manifest_schema": "cost-export/1",
+    "program": "Notional Production Program Vermilion",
+    "rate_vintages": [
+      "2019-02-01",
+      "2020-02-01",
+      "2021-02-01",
+      "2022-02-01",
+      "2023-02-01"
+    ],
+    "row_counts": {
+      "lots": 5,
+      "rates": 48,
+      "results": 155
+    },
+    "rows_sha256": "sha256:1ddcbddfbc59bd940e4cb38db56f8448b87ae03c303506092e677fa93581f416",
+    "unit1_hours": "4151.688528689907420940501402"
+  },
+  "provenance": {
+    "algorithm_sha": "b8ef5df7e5a7a530d7e9645229bdf1e005ec819a",
+    "as_of": "2026-09-06",
+    "extracted_by": "scripts/cost_package_identities.py",
+    "locator": "sha256:aeee62c5a725b3f3a46728b6b14cc3cc55b1c66f37808186a7025314a0c08a7d",
+    "recipient_scope": "notional-customer-alpha",
+    "source_file": "cost-validation-notional-customer-alpha.html",
+    "source_file_sha256": "sha256:63b58d9a3d672238d6d82bd66216d33221c759c2079f1acb2f2472f5409c5123"
+  },
+  "sections": [
+    "labor",
+    "program",
+    "composition",
+    "sepm",
+    "material",
+    "scenario"
+  ]
+}

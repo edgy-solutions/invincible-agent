@@ -28,6 +28,21 @@
           "title": "Name",
           "type": "string"
         },
+        "narrowed_by": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Narrowed By"
+        },
         "referent": {
           "anyOf": [
             {

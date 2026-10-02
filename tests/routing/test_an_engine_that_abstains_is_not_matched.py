@@ -35,6 +35,8 @@ import re
 import sys
 from pathlib import Path
 
+import dataclasses
+
 import pytest
 import yaml
 
@@ -63,11 +65,32 @@ _SUP = _SUP_PATH.read_text(encoding="utf-8")
 _CENSUS_PATH = _REPO / "docs" / "measurements" / "walk-census.yaml"
 
 _ROW_ID = "docs-how-do-i-roll-a-service-abstains"
+#: The sheet row this seal's abstaining row was built from. Its premise changed on master
+#: (`rolling-a-service` answers since roll #8, ab9b2a4e), so the sheet row now expects a draw.
+_SHEET_ROW_ID = "docs-how-do-i-roll-a-service"
 
 
 @pytest.fixture(scope="module")
 def rows():
     return load_rows(_CENSUS_PATH)
+
+
+@pytest.fixture(scope="module")
+def abstain_row(rows):
+    """THE ROW THIS SEAL'S SUBJECT NEEDS, built rather than read, because the sheet stopped
+    holding one.
+
+    The seal's subject is the JUDGE scoring a designed refusal, and a refusal is still a row the
+    census must be able to express. The sheet's own abstain row went away when its page started
+    answering, so the row is the sheet's row-4 with the refusal's expectations put back. Built
+    from the live sheet row (same question, user, persona, domains), so only the expectation is
+    the fixture's. `test_the_sheet_no_longer_needs_the_abstain_row` pins why it is not read.
+    """
+    sheet_row = next(r for r in rows if r.id == _SHEET_ROW_ID)
+    return dataclasses.replace(
+        sheet_row, id=_ROW_ID, expect_verb="mesh_explain", expect_archetype=None, min_rows=0,
+        dispositions=(ABSTAINED,),
+    )
 
 
 # ── the rule, driven by the REAL producer ────────────────────────────────────
@@ -206,21 +229,21 @@ def _doc_card(payload):
     return {"archetype": "KNOWLEDGE_DOCUMENT", "payload": payload}
 
 
-def test_judge_scores_the_real_abstain_as_abstained(rows):
+def test_judge_scores_the_real_abstain_as_abstained(abstain_row):
     """End to end through the instrument, on the SHEET'S OWN ROW and the ENGINE'S OWN payload."""
-    row = next(r for r in rows if r.id == _ROW_ID)
+    row = abstain_row
     state, why = judge(row, _result(ABSTAINED, [_doc_card(_real_abstain())], row))
     assert state == PASS, f"the designed refusal still fails the census: {why}"
 
 
-def test_the_same_answer_stamped_matched_is_the_defect_this_fixes(rows):
+def test_the_same_answer_stamped_matched_is_the_defect_this_fixes(abstain_row):
     """THE PROOF THAT THE FIX IS THE SUPERVISOR'S, not the sheet's.
 
     Identical card, identical payload, only `route_status` reverted to `matched` — and the row
     fails as `drawn`. This is the measured 2026-09-26 behaviour, preserved as a fixture so the
     defect cannot come back quietly.
     """
-    row = next(r for r in rows if r.id == _ROW_ID)
+    row = abstain_row
     state, why = judge(row, _result(MATCHED, [_doc_card(_real_abstain())], row))
     assert state == FAIL
     assert "drawn" in " ".join(why), why
@@ -243,13 +266,13 @@ def test_the_ruling_still_has_rows_depending_on_it(rows):
     )
 
 
-def test_an_abstain_WITH_candidates_still_scores_slot_required(rows):
+def test_an_abstain_WITH_candidates_still_scores_slot_required(abstain_row):
     """THE LIVE RULING, 2026-09-17: an abstain that can offer verbs is drawn as a MENU.
 
     Four sheet rows accept `slot_required` on exactly this path, so the new arm sits BELOW `asked`
     in `judge`. Moving it up would turn all four red, and this is the arm that says so.
     """
-    row = next(r for r in rows if r.id == _ROW_ID)
+    row = abstain_row
     elicitation = {"archetype": "ELICITATION", "slot": "verb", "option_source": "candidates",
                    "options": [{"verb": "mesh:explain"}, {"verb": "mesh:describeAsset"}]}
     state, why = judge(row, _result(ABSTAINED, [elicitation], row))
@@ -276,10 +299,10 @@ def test_a_row_expecting_drawn_still_FAILS_on_an_abstain(rows):
     )
 
 
-def test_an_unknown_route_status_is_still_reported(rows):
+def test_an_unknown_route_status_is_still_reported(abstain_row):
     """NON-VACUITY FOR THE ARM ABOVE: the unexpected-status line still fires for other values,
     so adding `abstained` to its accepted set widened one word and not the check."""
-    row = next(r for r in rows if r.id == _ROW_ID)
+    row = abstain_row
     _, why = judge(row, _result("infra_error", [_doc_card({})], row))
     assert "route_status='infra_error'" in " ".join(why), why
 
@@ -290,13 +313,18 @@ def test_abstained_is_in_the_census_vocabulary():
     assert ABSTAINED in DISPOSITIONS
 
 
-def test_the_sheet_row_asserts_the_claim_and_not_its_neighbour():
-    """Row 4 said `[slot_required]`, which was UNREACHABLE for it: its subject is a doc-corpus
-    gap, there are no comparable verbs to offer, and `presentation_agent` refuses to draw an empty
-    menu. A row whose accepted disposition cannot occur is a row asserting a neighbour."""
+def test_the_sheet_no_longer_needs_the_abstain_row():
+    """WHY `abstain_row` IS BUILT AND NOT READ, as a check rather than a comment.
+
+    This arm used to assert the sheet's row 4 expected `[abstained]`. Master changed the premise:
+    the page answers, so the row expects `[drawn]` and the abstain id is gone. If the sheet ever
+    holds the abstain id again, read it instead of building it, and this arm reds to say so.
+    """
     doc = yaml.safe_load(_CENSUS_PATH.read_text(encoding="utf-8"))
-    row = next(r for r in doc["rows"] if r["id"] == _ROW_ID)
-    assert row["dispositions"] == [ABSTAINED]
+    ids = {r["id"] for r in doc["rows"]}
+    assert _ROW_ID not in ids, "the sheet holds the abstain row again: read it, do not build it"
+    sheet_row = next(r for r in doc["rows"] if r["id"] == _SHEET_ROW_ID)
+    assert sheet_row["dispositions"] == ["drawn"], sheet_row
 
 
 def test_the_legend_no_longer_documents_a_name_the_code_rejects():

@@ -149,6 +149,25 @@ sites:
     disposition: excluded
     reason: Same as above — matches an inbound task's kind to find its batch; no mint.
 
+  - site: src/iagent/gateway.py
+    pattern: kind:document_promotion
+    disposition: excluded
+    reason: >-
+      Same as extraction_refusal above — the /human_tasks/{id}/act handler matches an inbound
+      task's kind to route it to promotion.act; it does not MINT one. Landed with the
+      lane/74-promotion merge (2026-09-30); the audit caught it at the merge gate, as
+      designed.
+
+  - site: src/iagent/promotion.py
+    pattern: kind:document_promotion
+    disposition: excluded
+    reason: >-
+      The fulfilment module names the ONE species it fulfils, and every use reads the
+      declaration rather than standing in for it — `human_tasks.declaration_for(KIND)` (via the
+      gateway), the decision-record id prefix, and a refusal's wording. No task is minted with
+      it. Checkable: `grep -n '\bKIND\b' src/iagent/promotion.py`; a use that CREATES a task
+      would make this an access_request-style selection_row and this reason false.
+
   - site: scripts/migrate_pcn_grouped_review_rows.py
     pattern: kind:grouped_review
     disposition: excluded

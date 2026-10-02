@@ -41,7 +41,7 @@ SCOPE = "notional-customer-alpha"
 
 
 @pytest.fixture(scope="module")
-def exported():
+def exported(isolated_dist):
     if m._repo_root() is None:  # pragma: no cover - not reachable from a checkout
         pytest.skip("no checkout; the artifact half cannot be produced here")
     return m.package_export(STATE, recipient_scope=SCOPE)
@@ -87,7 +87,7 @@ def test_the_manifest_hash_is_of_the_FILE_ON_DISK(exported):
     — the same defect as hashing the string in memory, one layer out.
     """
     root = m._repo_root()
-    path = root / "dist" / exported["artifact_filename"]
+    path = m._dist_dir(root) / exported["artifact_filename"]
     on_disk = path.read_bytes()
 
     assert exported["artifact_sha256"] == "sha256:" + hashlib.sha256(on_disk).hexdigest(), (
@@ -104,14 +104,14 @@ def test_the_artifact_is_written_in_BINARY_so_it_is_not_platform_dependent(expor
     it rather than of the algorithm that produced it.
     """
     root = m._repo_root()
-    on_disk = (root / "dist" / exported["artifact_filename"]).read_bytes()
+    on_disk = (m._dist_dir(root) / exported["artifact_filename"]).read_bytes()
     assert b"\r\n" not in on_disk, (
         "the artifact contains CRLF; it was written in text mode and its hash is now a "
         "property of the build machine rather than of the algorithm"
     )
 
 
-def test_a_TRUNCATED_write_is_REFUSED_and_not_reported_as_success(monkeypatch):
+def test_a_TRUNCATED_write_is_REFUSED_and_not_reported_as_success(monkeypatch, isolated_dist):
     """The failure the round-trip exists for, forced.
 
     Truncating the write must produce a REFUSAL, not a package. A manifest describing bytes
@@ -141,7 +141,7 @@ def test_a_TRUNCATED_write_is_REFUSED_and_not_reported_as_success(monkeypatch):
     # later developer's `ls dist/`. A truncated artifact on disk with no manifest beside it is
     # exactly the artefact this whole seal exists to make impossible.
     monkeypatch.undo()
-    damaged = m._repo_root() / "dist" / f"cost-validation-{other}.html"
+    damaged = m._dist_dir(m._repo_root()) / f"cost-validation-{other}.html"
     if damaged.exists():
         damaged.unlink()
 
@@ -176,7 +176,7 @@ def test_ANOTHER_RECIPIENTS_CALLER_IS_REFUSED(exported, client, as_caller):
     )
 
 
-def test_EACH_RECIPIENTS_READER_GETS_THEIR_OWN_PACKAGE(client, as_caller):
+def test_EACH_RECIPIENTS_READER_GETS_THEIR_OWN_PACKAGE(client, as_caller, isolated_dist):
     """THE POSITIVE CONTROL THE REFUSALS ARE WORTHLESS WITHOUT.
 
     The seals around this one prove alpha's reader is served and beta's reader is refused
@@ -271,7 +271,8 @@ def test_the_route_serves_ONLY_names_this_engine_can_produce(client, as_caller, 
     assert client.get("/artifact/" + name).status_code == 404
 
 
-def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client, as_caller):
+def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client, as_caller,
+                                                                     isolated_dist):
     """⚠ THE SEAL ABOVE WAS VACUOUS AND A MUTATION PROVED IT.
 
     Deleting the allow-list entirely left all thirteen tests green: `../../etc/passwd` never
@@ -286,7 +287,7 @@ def test_a_file_that_EXISTS_but_is_not_producible_is_STILL_refused(client, as_ca
     root = m._repo_root()
     if root is None:  # pragma: no cover
         pytest.skip("no checkout")
-    planted = root / "dist" / "not-a-package.html"
+    planted = m._dist_dir(root) / "not-a-package.html"
     planted.parent.mkdir(parents=True, exist_ok=True)
     planted.write_bytes(b"<html>secrets</html>")
     as_caller(ALPHA_READER)

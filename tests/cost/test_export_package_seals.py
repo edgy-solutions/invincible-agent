@@ -153,23 +153,39 @@ def test_the_locator_is_a_content_hash_that_changes_with_content(state):
 
 
 # ── SEAL 3 — no CDN (STRUCTURAL half; the render half needs a human) ────────
-DIST = ROOT / "dist" / "cost-validation-notional-customer-alpha.html"
+@pytest.fixture(scope="module")
+def built_html(state, isolated_dist):
+    """Build the plain (no-dataset) HTML package once for this module's structural seals.
+
+    REPLACES a module-level `DIST = ROOT / "dist" / "..."` plus `skipif(not DIST.exists())` on
+    each test below. That pattern depended on a FILE ALREADY BEING THERE — which in practice
+    meant a leftover from someone else's earlier run, not this one: the seals reported "the
+    package has no external URL" etc. about an artifact this test session never built, and
+    would keep reporting it about a stale one even if this build were broken. SKIPPING FOR THE
+    SAME NAMED REASON `package_export` itself refuses (the pinned runtime absent) means a
+    fresh checkout with no leftover `dist/` exercises these seals instead of silently skipping
+    them forever.
+    """
+    from agent_fleet.cost_agent.measures import package_export
+
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("VOID: the pinned runtime is absent - no package can be produced here")
+    pkg = package_export(state, recipient_scope="notional-customer-alpha")
+    return isolated_dist / pkg["artifact_filename"]
 
 
-@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
-def test_the_built_artifact_contains_NO_external_url():
-    html = DIST.read_text(encoding="utf-8")
+def test_the_built_artifact_contains_NO_external_url(built_html):
+    html = built_html.read_text(encoding="utf-8")
     urls = {u for u in re.findall(r"https?://[^\s\"'<>`)]+", html)
             if not u.startswith("http://www.w3.org")}
     assert not urls, f"the artifact would reach out to: {sorted(urls)}"
 
 
-@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
-def test_the_artifact_embeds_every_runtime_file_it_asks_for():
+def test_the_artifact_embeds_every_runtime_file_it_asks_for(built_html):
     """Structural no-CDN: the shim can only answer from what is actually embedded."""
     import scripts.build_cost_package as B
 
-    html = DIST.read_text(encoding="utf-8")
+    html = built_html.read_text(encoding="utf-8")
     blob = re.search(r'id="embedded-runtime" type="application/json">(.*?)</script>',
                      html, re.S).group(1)
     embedded = json.loads(blob)
@@ -177,18 +193,16 @@ def test_the_artifact_embeds_every_runtime_file_it_asks_for():
         assert f in embedded and len(embedded[f]) > 1000, f"{f} is not embedded"
 
 
-@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
-def test_the_embedded_pricing_source_is_BYTE_IDENTICAL_to_the_pinned_file():
+def test_the_embedded_pricing_source_is_BYTE_IDENTICAL_to_the_pinned_file(built_html):
     """§3's whole claim. If this drifts, 'same algorithm' is false and the manifest is theatre."""
-    html = DIST.read_text(encoding="utf-8")
+    html = built_html.read_text(encoding="utf-8")
     src = json.loads(re.search(r'id="pricing-src" type="application/json">(.*?)</script>',
                                html, re.S).group(1))
     assert src == (ROOT / "agent_fleet" / "cost_agent" / "pricing.py").read_text(
         encoding="utf-8")
 
 
-@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
-def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT():
+def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT(built_html):
     """The seal that was missing when the first build shipped un-openable.
 
     THE DEFECT THIS EXISTS FOR: a `fetch` shim cannot intercept `import()`. The browser's
@@ -202,7 +216,7 @@ def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT():
     check now asserts the mechanism (every dynamic import resolves through the embedded
     resolver) rather than the symptom.
     """
-    html = DIST.read_text(encoding="utf-8")
+    html = built_html.read_text(encoding="utf-8")
     bare = re.findall(r"await import\(/\* webpackIgnore \*/e\)", html)
     assert not bare, (
         f"{len(bare)} dynamic import(s) still take the loader's raw argument. A fetch shim "
@@ -213,8 +227,7 @@ def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT():
     assert "createObjectURL" in html, "nothing publishes embedded JS as a blob URL"
 
 
-@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
-def test_the_shim_declares_a_MIME_TYPE_for_every_embedded_file():
+def test_the_shim_declares_a_MIME_TYPE_for_every_embedded_file(built_html):
     """Third layer of the same onion, and the third only visible by opening the file.
 
     WebAssembly's streaming instantiation REFUSES a response whose Content-Type is not
@@ -230,7 +243,7 @@ def test_the_shim_declares_a_MIME_TYPE_for_every_embedded_file():
     """
     import scripts.build_cost_package as B
 
-    html = DIST.read_text(encoding="utf-8")
+    html = built_html.read_text(encoding="utf-8")
     assert "'application/wasm'" in html, "the wasm has no declared MIME type; it cannot instantiate"
     # Every embedded file needs a type, not just the one that failed loudest.
     for f in B.RUNTIME_FILES:
@@ -246,12 +259,22 @@ from agent_fleet.cost_agent import page as PAGE
 
 
 @pytest.fixture(scope="module")
-def slice2(state):
+def slice2(state, isolated_dist):
+    """Build the slice-2 (.duckdb-backed) package fresh, into the isolated directory.
+
+    THIS USED TO ASSUME THE FILE WAS ALREADY THERE: `if not db.exists(): skip`. That is the
+    same pre-existing-file dependency the html seals above had, just reached via a directory
+    listing this repo's `dist/` was never supposed to answer for a live test run — a leftover
+    `.duckdb` from someone else's earlier build let every seal below report on an artifact
+    this session never produced. Building it here, gated on `duckdb` BY NAME exactly the way
+    `package_export` gates it, means the ~48 seals under this fixture are either genuinely
+    exercised or honestly skipped — never a pass borrowed from a stale file.
+    """
+    pytest.importorskip("duckdb")
     import scripts.build_cost_dataset as D
 
-    db = ROOT / "dist" / "cost-notional-customer-alpha.duckdb"
-    if not db.exists():
-        pytest.skip("build the slice-2 dataset first")
+    db = isolated_dist / "cost-notional-customer-alpha.duckdb"
+    D.build("notional-customer-alpha", db)
     pkg = X.build_dataset_package(
         state, recipient_scope="notional-customer-alpha", algorithm_sha=SHA,
         duckdb_path=str(db), duckdb_hash=D.file_hash(db))
@@ -765,18 +788,21 @@ def test_the_evaluator_and_entry_points_resolve(in_module_dir):
     assert src[sl["entry"] - 1].startswith("def compose_price")
 
 
-def test_the_artifact_EMITS_NO_REQUEST_for_a_file_it_does_not_carry(slice2):
+def test_the_artifact_EMITS_NO_REQUEST_for_a_file_it_does_not_carry(emitted, isolated_dist):
     """Wider than the no-CDN seal, which matches `https?://` and never saw this.
 
     Pyodide ships `//# sourceMappingURL=pyodide.js.map`, which is not embedded. The browser
     resolves it against the page and issues a fetch that fails. Not a CDN call, costs nothing —
     and still a reference to something the package does not contain, in an artifact whose whole
     claim is that everything it needs is inside it.
+
+    TAKES `emitted`, not `slice2` — this reads the built HTML, which only `emitted` (via
+    `package_export`) ever produces; `slice2` never writes one and the html it used to read
+    here was always someone else's leftover build, in the real repo's `dist/`.
     """
     import base64
 
-    html = (ROOT / "dist" / "cost-validation-notional-customer-alpha.html").read_text(
-        encoding="utf-8")
+    html = (isolated_dist / emitted["artifact_filename"]).read_text(encoding="utf-8")
     assert not re.findall(r"source(?:Mapping)?URL=", html), "a source-map reference survived"
     emb = json.loads(re.search(
         r'<script id="embedded-runtime" type="application/json">(.*?)</script>',
@@ -787,7 +813,7 @@ def test_the_artifact_EMITS_NO_REQUEST_for_a_file_it_does_not_carry(slice2):
             assert not re.findall(r"source(?:Mapping)?URL=", decoded), f"{name} still points out"
 
 
-def test_the_SHIPPED_PAGES_JAVASCRIPT_PARSES(slice2):
+def test_the_SHIPPED_PAGES_JAVASCRIPT_PARSES(emitted, isolated_dist):
     """The failure mode that defeats every other seal at once.
 
     A JS syntax error takes the whole page down — no verification banner, no refusal, no
@@ -802,21 +828,24 @@ def test_the_SHIPPED_PAGES_JAVASCRIPT_PARSES(slice2):
     splitting the comment across two lines and leaving a lone backtick running as code, which
     opened a template literal that swallowed the next 120 lines. Diagnosed only because the
     build gate refused to write.
+
+    TAKES `emitted`, not `slice2` — see the note on the previous seal.
     """
     import shutil
-    import subprocess
 
     if not shutil.which("node"):
         pytest.skip("node is required to parse the page's JavaScript")
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_cost_package as B
 
-    html = (ROOT / "dist" / "cost-validation-notional-customer-alpha.html").read_text(
-        encoding="utf-8")
+    html = (isolated_dist / emitted["artifact_filename"]).read_text(encoding="utf-8")
     assert B.check_javascript(html) == []
 
 
-def test_the_js_gate_BITES_on_an_unterminated_string(slice2):
+def test_the_js_gate_BITES_on_an_unterminated_string():
+    """No `slice2` dependency — this never reads a built artifact, only a literal string, and
+    tying it to the (now real-build) dataset fixture would skip it for a dependency it does
+    not use."""
     import shutil
 
     if not shutil.which("node"):
@@ -836,8 +865,9 @@ def test_the_js_gate_BITES_on_an_unterminated_string(slice2):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture(scope="module")
-def emitted(state):
-    """One real emission, reused. It writes a 17 MB artifact; once is enough."""
+def emitted(state, isolated_dist):
+    """One real emission, reused. It writes a 17 MB artifact; once is enough — and it lands in
+    `isolated_dist`, never the real repo's `dist/`."""
     from agent_fleet.cost_agent.measures import package_export
 
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
@@ -966,8 +996,8 @@ def test_the_response_carries_EVERY_IDENTIFIER_without_reopening_the_artifact(em
     assert emitted["duckdb_sha256"] != emitted["rows_sha256"]
 
 
-def test_the_written_artifact_IS_the_one_the_response_describes(emitted):
-    dest = ROOT / "dist" / emitted["artifact_filename"]
+def test_the_written_artifact_IS_the_one_the_response_describes(emitted, isolated_dist):
+    dest = isolated_dist / emitted["artifact_filename"]
     assert dest.exists() and dest.stat().st_size == emitted["artifact_bytes"]
     sibling = dest.parent / emitted["dataset_filename"]
     assert sibling.exists(), "the .duckdb the page names does not sit beside it"
@@ -1278,11 +1308,17 @@ def test_the_spelling_seal_LOOKS_AT_THE_RIGHT_WORDS():
         assert hits(safe) == [], f"{safe!r} tripped the detector"
 
 
-def test_the_rendered_page_says_PROGRAM_and_LABOR():
-    """The built artifact, checked on the words the room actually sees."""
+def test_the_rendered_page_says_PROGRAM_and_LABOR(emitted, isolated_dist):
+    """The built artifact, checked on the words the room actually sees.
+
+    TAKES `emitted`, not a bare `ROOT / "dist"` read — `emitted` always builds WITH the
+    dataset (`include_dataset=True`), so the "was this built without the dataset" void below
+    is now unreachable in practice; left in place because it costs nothing and still correctly
+    describes what would make the assertion meaningless if that ever changed.
+    """
     import re
 
-    dest = ROOT / "dist" / "cost-validation-notional-customer-alpha.html"
+    dest = isolated_dist / emitted["artifact_filename"]
     if not dest.exists():
         pytest.skip("VOID: no artifact on disk to read")
     html = dest.read_text(encoding="utf-8")
@@ -1335,3 +1371,42 @@ def test_the_agreement_is_INDEPENDENT_OF_INSERTION_ORDER(slice2):
     assert X.datasets_agree(reordered, str(db)) == [], (
         "the same rows in a different order were reported as differences - the comparison "
         "depends on insertion order, so it cannot distinguish a reordering from a corruption")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# dist ISOLATION — building an export must never touch the real repo's dist/
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_building_a_package_never_touches_the_REAL_repo_dist(state, isolated_dist):
+    """THE LEAK THIS GUARDS: every seal above this point used to build straight into
+    ROOT/dist — the real repository's artifact directory — so a full-suite run left
+    megabyte HTML/duckdb packages sitting in a SHARED checkout with no cleanup, long after
+    the run that produced them ended (measured: alpha and beta builds, mtimes
+    2026-09-30 00:51:12-15, still there days later; several seals then silently depended on
+    those leftovers instead of on anything this run built).
+
+    Snapshots the real ROOT/dist by name and mtime, builds a package, and asserts nothing in
+    that directory changed — no new file, no touched mtime. `isolated_dist` is what makes
+    this true: it is the ONE thing standing between `package_export` and the real directory.
+    """
+    from agent_fleet.cost_agent.measures import package_export
+
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("VOID: the pinned runtime is absent - no package can be produced here")
+
+    real_dist = ROOT / "dist"
+
+    def snapshot():
+        if not real_dist.exists():
+            return {}
+        return {p.name: p.stat().st_mtime_ns for p in real_dist.iterdir()}
+
+    before = snapshot()
+    package_export(state, recipient_scope="notional-customer-alpha")
+    after = snapshot()
+
+    changed = sorted(name for name in after if after[name] != before.get(name))
+    assert not changed, (
+        f"building a package touched the REAL repo dist/: {changed} — this must land only "
+        f"in the isolated_dist redirection, never the shared checkout"
+    )

@@ -39,7 +39,6 @@ from iagent_mesh.interfaces import (  # noqa: F401 — CollectionMarker is part 
     CorruptCollectionMarker,
     Initiator,
     MESH_COLLECTION_META,
-    ServiceIdentityRefused,
     marker_predates_collection,
     read_collection_marker,
 )
@@ -96,36 +95,18 @@ class WeaviateVectors:
 
     @staticmethod
     def _require_person(initiator: Initiator, operation: str) -> None:
-        """Refuse every kind that is not a person. AN ALLOWLIST, and that is the whole point.
+        """Refuse every kind that is not a person: the SDK's allowlist, called once.
 
-        This body read ``if initiator.kind == "service"`` until 2026-09-27. A comparison that
-        names what it REFUSES admits everything it does not name, so when the SDK widened
-        ``Initiator.kind`` with a third value (``delegate``, landed in iagent-mesh-sdk at
-        ``7e429d5``), this line would have passed a delegate straight through the boundary it
-        exists to gate -- silently, which is the one failure a boundary check must not have.
-        ``!= "person"`` refuses a fourth kind by construction instead of by whoever remembers
-        that this line is here.
-
-        Not sniffed from the subject's spelling -- ``kind`` is declared at the edge that minted
-        the token, and parsing a subject is the rule this one exists beside, not a cheaper
-        version of it.
-
-        **INTERIM, AND ITS RETIREMENT IS SEALED RATHER THAN PROMISED.**
-        ``Initiator.require_person`` is this same allowlist in the SDK, and ca's packet of
-        2026-09-27 asks for this copy to become that one call. It cannot yet: the pin is
-        ``iagent-mesh @ v0.9.3``, whose installed ``require_person`` is still the DENYLIST, so
-        importing it today would be a step backwards rather than a de-duplication.
-        ``DelegateIdentityRefused`` does not exist at that pin either, which is why the raise
-        below names the refused kind in its MESSAGE and not in its type. Both conditions are
-        arms in ``tests/test_the_person_guard_is_an_allowlist_everywhere.py``: they go red when
-        the pin moves, and they name what to do then.
+        Until 2026-10-01 this was a fleet COPY of the guard, flipped from ``== "service"`` to
+        ``!= "person"`` on 2026-09-27 because a comparison that names what it refuses admits a
+        kind nobody named (``delegate``). The copy existed only because the pin
+        (``iagent-mesh @ v0.9.3``) still shipped the denylist. At v0.9.5 the SDK's
+        ``Initiator.require_person`` is the allowlist and raises ``DelegateIdentityRefused`` for a
+        delegate, so this is now that one call (ca's packet of 2026-09-27), and the allowlist is
+        written once. Kept as a static so the call sites and the seal keep one name to drive:
+        ``tests/test_the_person_guard_is_an_allowlist_everywhere.py``.
         """
-        if initiator.kind != "person":
-            raise ServiceIdentityRefused(
-                f"{operation}: refused an initiator of kind {initiator.kind!r} "
-                f"(subject={initiator.subject!r}) -- only a person may be asked about a read "
-                f"made in their name, and this kind is not one"
-            )
+        initiator.require_person(operation)
 
     # ── the embedding contract ──────────────────────────────────────────────────────────────
 

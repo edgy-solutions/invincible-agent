@@ -82,3 +82,16 @@ CREATE INDEX IF NOT EXISTS idx_htp_task_id
     ON human_task_projection (task_id);
 CREATE INDEX IF NOT EXISTS idx_htp_status
     ON human_task_projection (status);
+
+-- 2026-10-01: which Restate service owns the suspended workflow, and the promise name that
+-- service's run() is awaiting (HAZ-1003). Before this, `/act` hardcoded
+-- `/BPMNWorkflowRunner/{key}/approve` for EVERY workflow-backed task, so a SafetyAcceptance
+-- resume posted to a workflow instance that was never running there — the acceptance stayed
+-- suspended forever while the task row showed resolved. Both NULLABLE and honest-absent: a row
+-- registered before this column existed, or one from the inline (non-definition-driven)
+-- BPMNWorkflowRunner `user_task` loop, carries neither — `/act` falls back to the legacy
+-- BPMNWorkflowRunner behaviour for those rather than guessing. IDEMPOTENT via IF NOT EXISTS.
+ALTER TABLE human_task_projection
+    ADD COLUMN IF NOT EXISTS workflow_service TEXT;
+ALTER TABLE human_task_projection
+    ADD COLUMN IF NOT EXISTS promise_name TEXT;

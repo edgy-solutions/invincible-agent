@@ -356,6 +356,32 @@ _JENA = _jena_posture(os.environ)
 _JENA_ENDPOINT = _JENA.endpoint
 _JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
 
+# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena, for LEG 3 of
+# `_FIND_COMPAT_VERBS_CYPHER` (the universal-referent leg). Flatten-aware import, same shape as
+# `substrate_posture` above.
+try:
+    from mesh_ontology import JenaMeshOntology as _JenaMeshOntology  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.mesh_ontology import JenaMeshOntology as _JenaMeshOntology
+
+
+def _jena_ontology_post(url: str, *, data: dict, headers: dict):
+    """Sync POST for `JenaMeshOntology`, carrying the SAME credential `_jena_client()` uses.
+
+    `_jena_client()` returns an `httpx.AsyncClient`; `JenaMeshOntology`'s two operations are
+    SYNC — measured, not assumed, in its own module docstring — so its default transport (no
+    `post` supplied) is a bare `httpx.Client()` with no credential at all. Posting through this
+    function instead keeps `_JENA.auth` the ONE place the Fuseki credential is derived, rather
+    than growing a second copy of it beside a second client.
+    """
+    with httpx.Client(timeout=5.0, auth=_JENA.auth) as client:
+        return client.post(url, data=data, headers=headers)
+
+
+# One instance, reused across requests — `JenaMeshOntology` holds only a bounded provenance
+# ring (see its own docstring), so there is nothing per-request to isolate.
+_JENA_ONTOLOGY = _JenaMeshOntology(endpoint=_JENA_ENDPOINT, post=_jena_ontology_post)
+
 
 def _jena_client() -> httpx.AsyncClient:
     """THE ONE PLACE a Jena connection is constructed.
@@ -449,8 +475,52 @@ async def get_baml_persona_string() -> str:
 async def get_baml_domain_string() -> str:
     return await _domain_string_with_driver(_NEO4J_DRIVER)
 
+#: The classes a resolver must never OFFER as a subject. Derived from what a class
+#: IS (`rdfs:subClassOf+` one of these roots), never from its namespace.
+#: THIS ENGINE IS THE MASTER. doc-tools' `_RESPONSE_SHAPE_ROOTS`
+#: (doc_tools/assets/ontology_assets.py) applies the same rule when it builds the
+#: Weaviate index; tests/routing/test_response_shapes_are_not_groundable.py
+#: cross-checks the two so a third copy cannot drift in silently.
+_RESPONSE_SHAPE_ROOTS: tuple[str, ...] = (
+    "http://invincible-agent/mesh#Response",
+    "http://invincible-agent/mesh#Archetype",
+)
+
+
+def cold_start_fallback_domains(
+    domains: list[str] | None, domain: str | None
+) -> list[str]:
+    """The domains `/resolve`'s cold-start fallback reads: the caller's own, plus MESH.
+
+    A MODULE-LEVEL FUNCTION SO THE SEAL CAN CALL THE REAL ONE. This was three inline lines in
+    the `/resolve` handler, which left the seal no choice but to MIRROR it — and a mirror is
+    not a seal: with the mirror in place, disabling the MESH append here left
+    `test_the_fallback_query_RUN_yields_DocPage_and_NO_response_shape` GREEN (measured
+    2026-09-26, mutant B survived). The MESH half of the fix was uncovered by construction.
+    Anything that changes which domains the fallback spans must change THIS function.
+
+    MESH is unconditional because the archetype/system classes every domain's verbs declare as
+    their `input_uri` — `mesh:DocPage`, the registered subject of `mesh:explain`, among them —
+    are declared only in `mesh_system.ttl` and therefore live only in the MESH graph. A
+    domain-scoped read structurally cannot offer them, however completely that domain's own
+    ontology is indexed, which is why a DOCS caller saw a one-class pool holding the wrong class.
+    """
+    out = list(domains or ([domain] if domain else []))
+    if "MESH" not in {d.upper() for d in out}:
+        out.append("MESH")
+    return out
+
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
+#
+# THE COLD-START FALLBACK APPLIES THE SAME EXCLUSION THE WEAVIATE INDEX APPLIES. Before the
+# `FILTER NOT EXISTS` below existed, the two disagreed: doc-tools' ontology_assets.py excludes
+# response shapes (classes under `_RESPONSE_SHAPE_ROOTS`) when it builds the Weaviate
+# OntologyClass index, but this fallback query — taken only when Weaviate has nothing for the
+# domain — read the raw RDF graph with no such exclusion, so it happily handed back the one
+# class the index had refused. That disagreement is what produced the DOCS dead end:
+# `docs:DocExplanation` (DOCS's only class) IS `rdfs:subClassOf mesh:Response`, so the index
+# correctly holds zero rows for DOCS and the cold-start fallback then offered it right back.
 _SPARQL_MAINTENANCE_CLASSES = """
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -458,15 +528,19 @@ PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX iof-ann: <https://spec.industrialontologies.org/ontology/annotation/>
 
 SELECT ?cls ?label ?definition ?example
-WHERE {
+WHERE {{
     ?cls a owl:Class ;
          rdfs:label ?label .
     FILTER (isURI(?cls))
-    OPTIONAL { ?cls iof-ann:naturalLanguageDefinition ?definition . }
-    OPTIONAL { ?cls skos:example ?example . }
-}
+    FILTER NOT EXISTS {{
+        ?cls rdfs:subClassOf+ ?__shape_root .
+        VALUES ?__shape_root {{ {shape_roots} }}
+    }}
+    OPTIONAL {{ ?cls iof-ann:naturalLanguageDefinition ?definition . }}
+    OPTIONAL {{ ?cls skos:example ?example . }}
+}}
 ORDER BY ?label
-"""
+""".format(shape_roots=" ".join(f"<{_r}>" for _r in _RESPONSE_SHAPE_ROOTS))
 
 
 # THE OUTCOME DECISION IS A PURE MODULE, so the rule separating "nothing matched" from "could not
@@ -511,11 +585,18 @@ def _get_local_graph() -> rdflib.Graph:
     return _LOCAL_GRAPH
 
 
-async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
+async def execute_sparql(
+    query: str, domain: str = "MAINTENANCE", *, domains: list[str] | None = None
+) -> list[dict]:
     """
     Execute SPARQL query using the Hybrid Strategy:
     1. Try Apache Jena Fuseki (Fast/Enterprise)
     2. Fallback to local rdflib (Safe/Development)
+
+    `domains`, WHEN NON-EMPTY, SUPERSEDES `domain` — it scopes the query to the UNION of every
+    listed domain's two graphs (vocabulary + instances) rather than one domain's pair. Passing
+    only `domain` (the pre-existing call shape) is untouched byte-for-byte: `domains=None`/`[]`
+    falls straight back to the single-domain path below.
     """
     # Scope to the named graph the reproducible ingest actually writes:
     # doc-tools ontology_assets.py PUTs each domain's ontology to
@@ -533,7 +614,6 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # to the LAST file (MAINTENANCE = mil_extension alone, IOF core/MRO destroyed), so
     # {domain} points at a real-but-THIN graph until the producer switches to
     # append/merge. Shipping the name fix alone yields a thin menu, not a full one.
-    _dom = "".join(c for c in (domain or "") if c.isalnum() or c == "_") or "MAINTENANCE"
     # READ-SIDE UNION mirroring the write-side split (2026-07-23). A domain's triples live in TWO
     # graphs: its manifest-reproducible VOCABULARY graph <http://internal/{DOMAIN}> and its
     # non-reproducible runtime INSTANCE graph <http://internal/{DOMAIN}_INSTANCES> (doc-tools writes
@@ -544,15 +624,33 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # A domain with no instance graph (e.g. MAINTENANCE_INSTANCES absent) simply contributes nothing.
     # NOTE: this is why the split did NOT re-hide instances the way the default graph did — the
     # domain-scoped read now spans both graphs by construction.
-    _graph_scope = (f"VALUES ?__mesh_g {{ <http://internal/{_dom}> "
-                    f"<http://internal/{_dom}_INSTANCES> }} GRAPH ?__mesh_g")
+    #
+    # `domains` extends this same union across MULTIPLE domains in one query (e.g. the caller's
+    # domain plus MESH) — each domain sanitised the SAME way `domain` always was, so a caller
+    # passing one name via either parameter gets byte-identical graph scoping.
+    _dom_list = [d for d in (domains or []) if d] or [domain or "MAINTENANCE"]
+    _sanitised_doms = [
+        "".join(c for c in (d or "") if c.isalnum() or c == "_") or "MAINTENANCE"
+        for d in _dom_list
+    ]
+    _graph_uris: list[str] = []
+    for _d in _sanitised_doms:
+        _graph_uris.append(f"<http://internal/{_d}>")
+        _graph_uris.append(f"<http://internal/{_d}_INSTANCES>")
+    _graph_scope = f"VALUES ?__mesh_g {{ {' '.join(_graph_uris)} }} GRAPH ?__mesh_g"
 
     # 🛑 Strictly enforce data segregation by wrapping the query in the graph context.
     # This assumes the input query uses standard triple patterns that we want to scope.
     # For complex queries, we might need a more robust parser, but for our Agentic Mesh
     # standard patterns, this wrapping is effective.
     scoped_query = query
-    if "GRAPH" not in query.upper() and "SELECT" in query.upper():
+    # THE KEYWORD, NOT THE SUBSTRING. This was `"GRAPH" not in query.upper()`, so any query whose
+    # LITERAL contained the letters g-r-a-p-h skipped the scope and ran against the default graph,
+    # where nothing lives. `page_for_subject("…runbook-adding-a-graph")` returned [] for exactly
+    # that reason. A GRAPH clause is the keyword followed by an IRI or a variable.
+    import re as _re
+    if (not _re.search(r"\bGRAPH\s*[<?$]", query, _re.IGNORECASE)
+            and "SELECT" in query.upper()):
         # Simple injection: replace WHERE { with WHERE { VALUES ?g {vocab inst} GRAPH ?g {
         if "WHERE {" in query:
             scoped_query = query.replace("WHERE {", f"WHERE {{ {_graph_scope} {{", 1)
@@ -599,7 +697,9 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # `_get_local_graph` returns a plain `rdflib.Graph`; the scoping wrap above injects
     # `GRAPH ?__mesh_g`; rdflib RAISES on a named-graph pattern against a single graph. Seven
     # callers pass a query the wrap scopes and the eighth already spells `GRAPH ?g` itself, so
-    # every one of them takes this path only to raise. The 44KB of real triples it parses is why
+    # every one of them takes this path only to raise. A ninth caller (the DOCS subject pool,
+    # 2026-09-29) passes a scoped query too; the call-site arm in
+    # `tests/test_an_outage_is_not_an_empty_answer.py` classifies it. The 44KB of real triples it parses is why
     # this reads as healthy from outside — the data is there and unreachable through the only
     # path that reads it.
     #
@@ -769,6 +869,7 @@ except ImportError:
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+from iagent_mesh import Initiator
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -1121,6 +1222,43 @@ class FindPathResponse(BaseModel):
     reason: str | None = None
 
 
+def class_scan_scope_domains(
+    domains: list[str] | None, domain: str | None
+) -> list[str]:
+    """The domains the OntologyClass scan's filter spans: the caller's own, plus MESH.
+
+    A MODULE-LEVEL FUNCTION FOR THE SAME REASON `cold_start_fallback_domains` IS ONE — so the
+    seal can call the REAL one. That docstring records what a mirror cost: with the rule inlined
+    in the handler, disabling the MESH append left the seal green (mutant B survived, measured
+    2026-09-26). Anything that changes which domains this scan spans must change THIS function.
+
+    WHY MESH, AND WHY THIS IS THE SAME RULE AS THE FALLBACK'S: the archetype and system classes
+    every domain's verbs declare as their `input_uri` — `mesh:DocPage`, the registered subject of
+    `mesh:explain`, among them — are declared only in `mesh_system.ttl` and so carry `domain ==
+    "MESH"` in the index. A read filtered to `domain == "DOCS"` structurally cannot return them,
+    however completely DOCS is indexed. So `cold_start_fallback_domains` is CALLED here rather
+    than restated: one rule, one site, and a change to it cannot land in one path only.
+
+    WHAT IT COST, measured 2026-09-27 (roll #5, revision 153): `docs-what-is-an-archetype`
+    routed, drew, and produced 0 rows under `sections` — an EMPTY document, not a missing verb.
+    The DOCS-scoped scan returned nothing, so `/resolve` took the cold-start fallback every time;
+    the fallback is what makes the verb resolvable and is not what fills a document.
+
+    ⚠ AN UNSCOPED CALLER STAYS UNSCOPED. `cold_start_fallback_domains(None, None)` returns
+    `["MESH"]`, and passing that through would NARROW a whole-index read to MESH alone — a
+    regression wearing the fix's clothes. Empty in, empty out: the caller who scoped to nothing
+    is asking for everything, and MESH is already inside everything.
+    """
+    scope: list[str] = []
+    if domains:
+        scope = [d.upper() for d in domains if d]
+    elif domain:
+        scope = [domain.upper()]
+    if not scope:
+        return []
+    return [d.upper() for d in cold_start_fallback_domains(scope, None)]
+
+
 def _weaviate_hybrid_search_sync(
     query: str,
     domain: str | None = None,
@@ -1172,12 +1310,10 @@ def _weaviate_hybrid_search_sync(
     try:
         collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
         # Resolve which domains the filter spans. List supersedes
-        # single-string per the routing_domain lock fix (2026-06-28).
-        scope_domains: list[str] = []
-        if domains:
-            scope_domains = [d.upper() for d in domains if d]
-        elif domain:
-            scope_domains = [domain.upper()]
+        # single-string per the routing_domain lock fix (2026-06-28), and MESH rides along
+        # whenever the caller scoped at all — see `class_scan_scope_domains`, which is where
+        # that rule lives so a seal can call it instead of mirroring it.
+        scope_domains: list[str] = class_scan_scope_domains(domains, domain)
 
         if len(scope_domains) == 0:
             filters = None
@@ -1334,7 +1470,11 @@ def _class_pool_via_mesh_sync(
         report=lambda m: logging.warning("[Engine O] mesh class pool: %s", m),
     )
 
-    scope: list[str] = [d for d in (domains or []) if d] or ([domain] if domain else [])
+    # THE SAME SCOPE RULE AS THE INCUMBENT, CALLED AND NOT RESTATED: `class_scan_scope_domains`
+    # adds MESH whenever the caller scoped at all. This arm used to build its own scope from the
+    # caller's domains alone, so with the flag on a DOCS caller lost `mesh:DocPage` from the pool
+    # (Lane 1 measured the two arms sending different queries, 2026-09-29).
+    scope: list[str] = class_scan_scope_domains(domains, domain)
     result = impl.nominate(
         Initiator(subject=user_email, kind="person"),
         collection="OntologyClass",
@@ -1537,12 +1677,18 @@ def _predicate_row(query: str, props: dict, score: float | None) -> dict:
             raw_syn = parsed if isinstance(parsed, list) else []
         except (ValueError, TypeError):
             raw_syn = []
+    # A PRESENT KEY HOLDING NULL IS NOT AN ABSENT KEY. Weaviate returns every schema property on
+    # every row, null where the row never set it, so a `.get(k, "")` default never fires for it.
+    # The 77 `mesh:rendersAs` rows are frontend renderers with a `frontend_id` and no
+    # `endpoint_url`, and their None reached `PredicateCandidate.endpoint: str` -- one such row
+    # anywhere in the window 500ed the whole /search_predicates response (measured 2026-10-01, 3 of
+    # 3). Coerced HERE, for every string field a consumer types `str`, so both arms get it.
     return {
-        "verb_iri": props.get("verb_iri", ""),
-        "verb_type": props.get("verb_local", ""),
-        "input_uri": props.get("input_uri", ""),
-        "output_uri": props.get("output_uri", ""),
-        "endpoint": props.get("endpoint_url", ""),
+        "verb_iri": props.get("verb_iri") or "",
+        "verb_type": props.get("verb_local") or "",
+        "input_uri": props.get("input_uri") or "",
+        "output_uri": props.get("output_uri") or "",
+        "endpoint": props.get("endpoint_url") or "",
         "owner_persona": props.get("owner_persona") or None,
         "domains": list(props.get("domains") or []),
         "cost_class": props.get("cost_class") or None,
@@ -1577,10 +1723,20 @@ def _predicate_ranked(rows: list[dict]) -> list[dict]:
     )
 
 
+#: THE CEILING ON A RECALL THE GRAPH HAS ALREADY BOUNDED. When the caller hands in the verbs
+#: Neo4j says are compatible, the query is filtered to them, so what comes back is every admitted
+#: registration of those verbs: a set the graph sized, not a ranking window. The limit is then
+#: only a guard against an unbounded read. One verb can hold many rows (MEASURED 2026-09-30:
+#: `mesh:rendersAs` is 77 rows, 35 of them admitted for a DOCS caller), so a ranking-sized limit
+#: here is exactly the defect this replaced.
+_COMPAT_RECALL_CEILING = 1000
+
+
 def _predicate_hybrid_search_sync(
     query: str,
     entitled_domains: list[str],
     limit: int,
+    verb_iris: list[str] | None = None,
 ) -> list[dict]:
     """Blocking Weaviate hybrid search over the Predicate collection.
 
@@ -1618,6 +1774,30 @@ def _predicate_hybrid_search_sync(
                 # is not supported") — use length filter instead.
                 wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
+
+        # THE COMPAT SET IS APPLIED BEFORE THE LIMIT, NOT AFTER IT.
+        #
+        # MEASURED 2026-09-30 (rev 159): "how do I add a canvas template" resolved its DocPage and
+        # Neo4j named `mesh:explain` compatible, yet `/classify_predicate` answered UNKNOWN without
+        # calling the LLM. The limit (25) applied to ROWS across every verb the caller may see, and
+        # the 35 domain-agnostic `mesh:rendersAs` rows outranked the one `mesh:explain` row on the
+        # vector half, so the window held 25 rendersAs rows and the intersection taken AFTERWARDS
+        # was empty. "How do I add an engine" ranks explain first, which is why it passed: the
+        # outcome depended on a rival verb's row count and the question's wording.
+        #
+        # `verb_iri` is WORD-tokenized, so `.equal(v)` matches a row whose tokens contain v's
+        # tokens: it can over-admit, and it never under-admits a row spelled v. The caller keeps
+        # its EXACT intersection, so over-admission costs nothing, and dedup/ranking still happen
+        # downstream.
+        if verb_iris:
+            compat_filter = wvc.query.Filter.any_of([
+                wvc.query.Filter.by_property("verb_iri").equal(v) for v in verb_iris
+            ])
+            filters = (
+                compat_filter if filters is None
+                else wvc.query.Filter.all_of([filters, compat_filter])
+            )
+            limit = max(limit, _COMPAT_RECALL_CEILING)
 
         # Hybrid: compute the query vector via embed_query() and hand it to
         # Weaviate explicitly. No text2vec module on the cluster — code owns
@@ -1805,7 +1985,8 @@ def _predicate_pool_via_mesh_sync(
 
 
 async def predicate_hybrid_search(
-    query: str, entitled_domains: list[str], limit: int = 10, user_email: str = ""
+    query: str, entitled_domains: list[str], limit: int = 10, user_email: str = "",
+    verb_iris: list[str] | None = None,
 ) -> list[dict]:
     """Async wrapper for the predicate hybrid search — and the second migrated route's FORK.
 
@@ -1824,12 +2005,18 @@ async def predicate_hybrid_search(
     would sit above both sync bodies and re-swallow the 503 they raise, and every arm asserting that
     a substrate failure is not an empty result would still pass.
     """
-    if ONTOLOGY_CLASS_POOL_VIA_MESH:
+    # A COMPAT-SCOPED CALL STAYS ON THE INCUMBENT, WHATEVER THE FLAG SAYS. `verb_iris` puts the
+    # compatible verbs INTO the query so the limit cannot crowd them out (measured 2026-09-30, see
+    # `_predicate_hybrid_search_sync`), and `MeshVectors.nominate` (SDK v0.9.5) has no parameter
+    # that restricts a field to a set. Sending the call to the mesh arm anyway would re-open that
+    # defect with the flag on; forking it here keeps the fix and leaves the gap with the SDK, which
+    # is where it was reported. The mesh arm serves the unscoped call only.
+    if ONTOLOGY_CLASS_POOL_VIA_MESH and not verb_iris:
         return await asyncio.to_thread(
             _predicate_pool_via_mesh_sync, query, entitled_domains, limit, user_email
         )
     return await asyncio.to_thread(
-        _predicate_hybrid_search_sync, query, entitled_domains, limit
+        _predicate_hybrid_search_sync, query, entitled_domains, limit, verb_iris
     )
 
 
@@ -2425,13 +2612,19 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 
 try:
     from doc_pages import (  # type: ignore[no-redef]
+        DOCPAGE_CLASS as _DOCPAGE_CLASS,
+        build_all_pages_query as _build_all_pages_query,
         build_page_for_subject_query as _build_page_query,
+        match_pages as _match_doc_pages,
         order_pages as _order_doc_pages,
         rows_to_pages as _doc_rows_to_pages,
     )
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.doc_pages import (
+        DOCPAGE_CLASS as _DOCPAGE_CLASS,
+        build_all_pages_query as _build_all_pages_query,
         build_page_for_subject_query as _build_page_query,
+        match_pages as _match_doc_pages,
         order_pages as _order_doc_pages,
         rows_to_pages as _doc_rows_to_pages,
     )
@@ -2800,6 +2993,139 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     return {"outcome": "no_provider", "members": [], "count": 0, "detail": detail}
 
 
+# ---------------------------------------------------------------------------
+# THE DOCS SUBJECT POOL: a DOCS question's subject is a DocPage.
+#
+# "how do I add an engine" names no class: nothing is labelled engine or canvas template, and
+# ADR-0037 refuses minting one. `mesh:explain`'s `subject` declares the universal referent
+# `mesh:Thing`, so `/fill_slots` refused every class the fan-out found as `wrong_class`, and no
+# `mesh:resolveInstance` provider knows a page. Both census rows died at subject binding, before
+# any page lookup. The pool is the DocPage individuals in `internal/DOCS`, scored by
+# `doc_pages.match_pages`, and it is consulted ONLY when the caller acts in DOCS.
+#
+# EVERY FAILURE FALLS THROUGH to the path that existed before: a pool that cannot be read, a
+# question no page wins, a caller who may not see `mesh:DocPage`, or a DocPage no verb serves.
+# This branch can add a binding and can never remove one the old path would have made.
+# ---------------------------------------------------------------------------
+_DOCS_POOL_PROVIDER = "engine_o_docs_pool"
+
+
+def _acts_in_docs(domains) -> bool:
+    return any(str(d or "").strip().upper() == "DOCS" for d in (domains or []))
+
+
+def _docs_pool_applies(domains, subject_uri) -> bool:
+    """May `/fill_slots` score a slot against the DOCS page pool?
+
+    Yes under the old gate (the caller is acting in DOCS), and ALSO when `/resolve` already
+    routed the question to `mesh:DocPage` — the route has already decided the question is
+    ABOUT a page whatever domain the picker sent. MEASURED 2026-09-30: the UI sent
+    domains=['MESH'] (cortex hides DOCS from the picker), /resolve scored subject=mesh:DocPage
+    at 0.97, and `/fill_slots` still gated on `_acts_in_docs(['MESH'])` — false — so the
+    subject pool never ran and the supervisor abstained on "how do I add an engine". A route to
+    any other class leaves the old gate exactly as it was.
+    """
+    return _acts_in_docs(domains) or subject_uri == _DOCPAGE_CLASS
+
+
+def _docs_pool_accepts(referent) -> bool:
+    """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
+
+    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is refused
+    on every call today (`_POOL_READ_INITIATOR` is a service identity and `require_person` refuses
+    it), so it returns [] and this would never fire. The question here is a TYPE fact about the
+    declaration — `mesh:Thing` accepts anything — not the pool membership LEG 3 needs Jena to
+    confirm.
+    """
+    return bool(referent) and (
+        referent == _DOCPAGE_CLASS or referent in _CANDIDATE_UNIVERSAL_REFERENTS
+    )
+
+
+async def _bind_docs_slot(spoken: str, query: str) -> dict | None:
+    """The `/fill_slots` resolution record for a page bind, or None when no page wins.
+
+    The spoken words first, the whole question second: "an engine" is enough on its own, and a
+    spoken value too vague to win ("it") still has the question it came from.
+    """
+    for source, text in (("spoken", spoken), ("question", query)):
+        if not (text or "").strip():
+            continue
+        match = await _match_docs_subject(text)
+        page = match.get("page")
+        if page:
+            return {
+                "outcome": "fuzzy",
+                "spoken": spoken or "",
+                "instance_id": page["iri"],
+                "instance_label": page.get("title", ""),
+                "referent_disambiguated": False,
+                "instance_provider": _DOCS_POOL_PROVIDER,
+                "bound_from": source,
+                "candidates": list(match.get("candidates") or [])[:10],
+            }
+    return None
+
+
+async def _match_docs_subject(identifier: str) -> dict:
+    """Score `identifier` against every DocPage. NEVER RAISES; an unreadable pool binds nothing."""
+    try:
+        rows = await execute_sparql(_build_all_pages_query(), domain="DOCS")
+    except Exception as exc:  # noqa: BLE001 - the old path must still run
+        logging.warning("DOCS subject pool unreadable (%s: %s)", type(exc).__name__, exc)
+        return {"page": None, "candidates": [], "error": f"{type(exc).__name__}: {exc}"}
+    return _match_doc_pages(identifier, _doc_rows_to_pages(rows))
+
+
+def _docs_pool_provenance(match: dict) -> dict:
+    page = match.get("page") or {}
+    return {
+        "instance_id": page.get("iri", ""),
+        "instance_label": page.get("title", ""),
+        "instance_provider": _DOCS_POOL_PROVIDER,
+        "instance_match": "fuzzy",
+        "instance_resolved": bool(page),
+        "instance_class_uri": _DOCPAGE_CLASS,
+        "instance_score": match.get("score", 0.0),
+        "instance_coverage": match.get("coverage", 0.0),
+        "instance_runner_up": match.get("runner_up", 0.0),
+        "instance_top_candidates": list(match.get("candidates") or [])[:10],
+    }
+
+
+async def _resolve_docs_subject(request: ResolveRequest) -> SemanticResolutionResponse | None:
+    """Bind a DOCS question to `mesh:DocPage` with the winning page as its instance, or None."""
+    domains = request.domains or ([request.domain] if request.domain else [])
+    if not _acts_in_docs(domains):
+        return None
+    match = await _match_docs_subject(request.query)
+    if not match.get("page"):
+        print(f"[Engine O] DOCS subject pool bound nothing for {request.query!r} "
+              f"(score={match.get('score')}, coverage={match.get('coverage')}, "
+              f"runner_up={match.get('runner_up')}) - falling through to class recall")
+        return None
+    if not _can_view_class(request.user_email, _DOCPAGE_CLASS):
+        print(f"[Engine O] DOCS subject pool: {request.user_email!r} may not see "
+              f"{_DOCPAGE_CLASS} - falling through")
+        return None
+    if await _preempted_subject_is_unanswerable(_DOCPAGE_CLASS, domains):
+        print(f"[Engine O] DOCS subject pool: {_DOCPAGE_CLASS} carries no verb in "
+              f"domains={domains!r} - falling through")
+        return None
+    provenance = _docs_pool_provenance(match)
+    provenance["preemption_path"] = "docs_subject_pool"
+    return SemanticResolutionResponse(
+        resolved_uri=_DOCPAGE_CLASS,
+        confidence_score=0.9,
+        reasoning=(
+            f"DOCS subject pool: {request.query!r} names page {provenance['instance_id']} "
+            f"(score {match.get('score')}, runner-up {match.get('runner_up')}, "
+            f"coverage {match.get('coverage')})."
+        ),
+        provenance=provenance,
+    )
+
+
 @app.post("/resolve", response_model=SemanticResolutionResponse)
 async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     """Resolve a natural-language query to a canonical ontology URI using Late Binding.
@@ -2809,6 +3135,12 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
+    # Step 0: a DOCS caller's subject is a page. None means "not a DOCS question, or no page
+    # won", and the class contest below runs exactly as before.
+    _docs_bound = await _resolve_docs_subject(request)
+    if _docs_bound is not None:
+        return _docs_bound
+
     # Step 1: Hybrid Search for candidates in Weaviate. The `domains`
     # field (when non-empty) supersedes `domain` — the supervisor's
     # entitled_domains list spans the candidate pool query-driven,
@@ -2837,7 +3169,18 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         print("⚠️ Action Required: doc-tools pipeline must sync ontologies into Weaviate.")
         print("="*60)
 
-        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
+        # THE FALLBACK PREVIOUSLY READ THE SINGULAR `domain` WHILE THE SUPERVISOR SENDS BOTH — a
+        # DOCS-scoped caller (request.domains == ["DOCS"], request.domain unset/stale) silently
+        # answered from MAINTENANCE instead of DOCS, because only `request.domain` reached
+        # `execute_sparql`. Span every domain the caller actually sent.
+        #
+        # MESH MUST ALWAYS BE SPANNED TOO: the archetype/system classes every domain's verbs
+        # declare as their `input_uri` (e.g. `mesh:DocPage`, the registered subject of
+        # `mesh:explain`) live in the MESH system graph, not in any single domain's graph — a
+        # domain-scoped pool structurally cannot contain them, however completely that domain's
+        # own ontology is indexed.
+        _fallback_domains = cold_start_fallback_domains(request.domains, request.domain)
+        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domains=_fallback_domains)
         for row in rows:
             candidates.append({
                 "uri": row.get("cls"),
@@ -2920,6 +3263,20 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 print("[Engine O] productive-option gate would have emptied the pool "
                       f"({len(candidates)} candidate(s), 0 served) — NOT filtering. "
                       "Suspect a served-set computed against the wrong domains.")
+                # A GATE THAT DEGRADES OPEN SILENTLY IS A GUARD THAT CANNOT FIRE. The branch
+                # above records what it REMOVES; this branch removes nothing, but a reader of
+                # the artifact still needs to see that the gate stood down rather than never
+                # having run — so every candidate it declined to filter is recorded too.
+                _gate_excluded = [
+                    {
+                        "kind": "class",
+                        "uri": str(c.get("uri") or ""),
+                        "gate": "productive_option",
+                        "disposal": "retained",
+                        "reason": "no_verb_in_scope_but_pool_would_empty",
+                    }
+                    for c in candidates
+                ]
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
@@ -3850,6 +4207,11 @@ class FillSlotsRequest(BaseModel):
     #: inventing one — the demote logic, its `demoted` reporting and its comment all predate
     #: this line.
     acting_domains: list = []
+    #: THE CLASS `/resolve` ROUTED THIS QUESTION TO, forwarded by the supervisor from the same
+    #: `telemetry["subject_uri"]` it already logs. `str = ""`, not `Optional[str]` — see the
+    #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
+    #: falls back to `_acts_in_docs` alone.
+    subject_uri: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -4051,14 +4413,40 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     # has since before this endpoint existed — four providers, a fan-out and a scoring
     # gate. Engine P was simply not one of the providers until now.
     resolution: dict[str, Any] = {}
+
+    # THE DOCS SUBJECT POOL, for a slot the speaker did not name. "how do I add an engine" is
+    # ABOUT its subject, and a model that extracts nothing for `subject` would leave the one slot
+    # `mesh:explain` needs unfilled, so under DOCS the whole question is scored against the
+    # pages. A spoken value takes the loop below, which tries the spoken words first.
+    if _docs_pool_applies(request.acting_domains, request.subject_uri):
+        for name, decl in by_name.items():
+            if name in accepted or not _docs_pool_accepts(decl.get("referent")):
+                continue
+            bound = await _bind_docs_slot("", request.query)
+            if bound is not None:
+                accepted[name] = bound["instance_id"]
+                resolution[name] = bound
+
     for name in list(accepted):
         decl = by_name.get(name) or {}
         referent = decl.get("referent")
         if not referent:
             continue
+        if name in resolution:
+            continue  # bound by the DOCS pool above, from the question
         spoken_value = accepted[name]
         if not isinstance(spoken_value, str):
             continue
+
+        # A SLOT THAT ACCEPTS A PAGE, ASKED IN DOCS, BINDS FROM THE PAGES. The fan-out below
+        # cannot serve it: no provider knows a DocPage, and a universal referent turns every
+        # class it does find into `wrong_class`. No page winning falls through to the fan-out.
+        if _docs_pool_applies(request.acting_domains, request.subject_uri) and _docs_pool_accepts(referent):
+            bound = await _bind_docs_slot(spoken_value, request.query)
+            if bound is not None:
+                accepted[name] = bound["instance_id"]
+                resolution[name] = bound
+                continue
 
         # DELIBERATELY UNSCOPED. This path builds a MENU of what anything knows by that
         # name, and the comment below already rules that candidates are not filtered by the
@@ -4879,6 +5267,116 @@ class FindCompatibleVerbsResponse(BaseModel):
     cypher_executed: str | None = None
 
 
+# THE SENTINEL FOR "NOT IN THE SUBJECT'S ANCESTOR CHAIN". Module-level so it has exactly ONE
+# declaration: `_pick_best_per_verb` (below, inside `classify_predicate`) reads ancestor distance
+# against it, and LEG 3 of `_FIND_COMPAT_VERBS_CYPHER` is substituted with it the same way
+# `$MAXHOPS$` is — a second `10**6` written into the Cypher would be a second declaration of one
+# sentinel, free to drift the day either changes. LEG 3 admits a verb with no real hop count (the
+# referent's FLAG admits it, not a walk from `start`), and this is the value that tells
+# `_pick_best_per_verb` "treat this exactly as unreachable", same as a LEG 1/2 candidate that
+# never returned.
+UNREACHABLE = 10**6
+
+# THE CANDIDATE UNIVERSAL REFERENTS LEG 3 ASKS JENA TO CONFIRM. `MeshOntology.ask`/`.construct`
+# are IRI-keyed — the Protocol declares NAMED OPERATIONS ONLY, deliberately, so there is no "list
+# every class where P" query to discover this set with. The pool can only CONFIRM a candidate,
+# never discover one, so a second universal referent needs its IRI added here the same way it
+# needs adding to `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
+# declared today (`setup/ontologies/mesh_system.ttl:736`) — engines are independently deployed
+# with no shared import path between them, so this is not a second copy of a Python constant, it
+# is the SAME IRI read out of the SAME ttl by two engines that cannot import one another.
+_CANDIDATE_UNIVERSAL_REFERENTS: tuple[str, ...] = (
+    "http://invincible-agent/mesh#Thing",
+)
+
+_RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+_OWL_CLASS_IRI = "http://www.w3.org/2002/07/owl#Class"
+_UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
+
+# WHO THIS READ IS ATTRIBUTED TO, AND A GAP FLAGGED RATHER THAN PAPERED OVER. `Initiator` is a
+# required argument on every `MeshOntology` operation, and `require_person` refuses a "service"
+# identity at the boundary — by design, so a read is never attributed to nobody a person can be
+# asked about. `find_compatible_verbs` carries no caller identity today: its request is exactly
+# `{subject_uri, max_hops, entitled_domains}`, and this endpoint has no real person to attribute
+# a Jena read to. Declaring `kind="person"` here to get past the refusal would be fabricating an
+# identity, which is precisely what the boundary check exists to prevent — so this is declared
+# `kind="service"` HONESTLY, which means `.construct()` below is refused EVERY TIME by
+# `require_person` until this route carries a real caller identity to attribute the read to (the
+# same undeliverable-today gap `agent_fleet/docs_agent/reads.py` documents for `audience_hint`).
+# That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
+# it is exercised here rather than worked around — threading a real identity through this route
+# is a design decision for a person, not a substitute this pool should invent.
+_POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
+
+
+def _confirms_universal_referent(rows, subject: str) -> bool:
+    """Does this CONSTRUCT result say `subject` is BOTH an `owl:Class` AND flagged universal?
+
+    Pure and offline-checkable on purpose: `rows` is whatever `MeshResult.rows` holds, and the
+    two facts are read off the SAME subgraph rather than assumed from the candidate list — the
+    pool trusts what Jena answered, not the Python literal that named the candidate.
+
+    `rows` IS TURTLE TEXT, ONE DOCUMENT PER ROW. `JenaMeshOntology.construct` returns the store's
+    own Turtle rather than rdflib triples, because triples lose every term type once a
+    `MeshResult` is serialized (see its docstring). This function was written against the
+    triples and iterated each row as `(s, p, o)`; on the Turtle contract that raised for every
+    candidate and folded into "not confirmed", so LEG 3 contributed nothing. Each document is
+    parsed here, which is the consumer's half of that contract.
+    """
+    from rdflib import Graph  # local, as in mesh_ontology.py: rdflib stays off the import path
+
+    triples = []
+    for document in rows:
+        graph = Graph()
+        graph.parse(data=document, format="turtle")
+        triples.extend(graph)
+    is_class = False
+    carries_flag = False
+    for s, p, o in triples:
+        if str(s) != subject:
+            continue
+        if str(p) == _RDF_TYPE_IRI and str(o) == _OWL_CLASS_IRI:
+            is_class = True
+        elif str(p) == _UNIVERSAL_REFERENT_PROP_IRI and str(o).strip().lower() == "true":
+            carries_flag = True
+    return is_class and carries_flag
+
+
+def _universal_referent_iris() -> list[str]:
+    """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
+
+    NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
+    documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
+    into "not confirmed" — the caller gets an empty list, LEG 3 contributes zero rows, and the
+    pool degrades to LEGs 1+2. Logged AT MOST ONCE per call, not once per candidate, so an empty
+    result reads as one line rather than a burst.
+    """
+    confirmed: list[str] = []
+    refusal_detail: str | None = None
+    for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
+        try:
+            result = _JENA_ONTOLOGY.construct(_POOL_READ_INITIATOR, subject=candidate)
+        except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
+            refusal_detail = f"{type(exc).__name__}: {exc}"
+            continue
+        if not result.answered_ok:
+            refusal_detail = f"{result.outcome}: {result.detail}"
+            continue
+        try:
+            confirms = _confirms_universal_referent(result.rows, candidate)
+        except Exception as exc:  # noqa: BLE001 - an unreadable answer is "not confirmed"
+            refusal_detail = f"unreadable CONSTRUCT rows, {type(exc).__name__}: {exc}"
+            continue
+        if confirms:
+            confirmed.append(candidate)
+    if not confirmed and refusal_detail:
+        logging.info(
+            "LEG 3 universal-referent read produced nothing (%s) — pool degrades to LEGs 1+2",
+            refusal_detail,
+        )
+    return confirmed
+
+
 # NB on the shape of this query: the `*0..N` form is the trick that
 # unifies "the subject's own class" with "any registered ancestor"
 # under a single MATCH — at hop=0, `scope` rebinds to `start`. We
@@ -4976,6 +5474,68 @@ RETURN DISTINCT
     coalesce(r.slots, '[]')       AS slots,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(ref))) AS hops,
     'referent'                    AS compatibility
+
+UNION ALL
+
+// LEG 3 - UNIVERSAL REFERENT. A verb whose REQUIRED slot's referent is flagged UNIVERSAL is
+// compatible with EVERY class subject - not because the referent covers the subject's ancestor
+// chain (LEG 2's rule), but because the referent declares itself unconstrained. `mesh:explain`
+// is the first verb this reaches: its subject is "every class in the graph", so no single domain
+// class is an honest referent for it.
+//
+// NOTHING IS `subClassOf` `mesh:Thing`, BY DESIGN (setup/ontologies/mesh_system.ttl:736).
+// Asserting a hierarchy - every routable class a subclass of `mesh:Thing` - would be a ratified
+// superclass over ~24,000 nodes for one verb's benefit, and it would widen every class-chain
+// query in the system. So the universality is a DECLARED FLAG on the referent class, never a
+// position in the class tree, and this leg admits on the flag rather than on coverage - which is
+// exactly why LEG 2's `subClassOf*` walk can never reach `mesh:Thing` and why that is correct.
+//
+// THE FLAG IS READ FROM JENA, NOT FROM A NEO4J PROPERTY, AND NOT BY PARSING `r.slots` HERE - the
+// same reason LEG 2 reads an edge instead of parsing a declaration: two readers of one fact go
+// out of agreement at the first edit nobody mirrored. `mesh:universalReferent` is primed into
+// Jena, not Neo4j, so `find_compatible_verbs` asks Jena which candidate classes carry it and
+// hands the CONFIRMED set in as `$universal_referents` - a plain IRI list, never a class name
+// baked into this query. An empty list (Jena unreachable, the read refused, or a candidate Jena
+// does not confirm) makes this leg contribute zero rows; degrading to LEGs 1+2 is the point, not
+// a bug to route around.
+//
+// SCOPED TO CLASSES ON BOTH ENDS. `start` must already be a registered `:OntologyClass` - never
+// a bare string that happens to match `$subject_uri` - and the referent match requires
+// `ref:OntologyClass`, so a universal-referent IRI that is not a graph class admits nothing.
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH (ref:OntologyClass)
+WHERE ref.uri IN $universal_referents
+MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
+WHERE coalesce(p.required, false) = true
+  AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
+// IDENTITY IS (verb_iri, _tool_urn), THE SAME PAIR LEG 2 JOINS ON. Joining on verb_iri alone
+// would let one provider's parameterisation admit ANOTHER provider's verb - LEG 2's comment
+// above records the measurement (13 verbs registered by more than one provider) and the same
+// arithmetic applies here.
+MATCH (vsubj)-[r]->(o:OntologyClass)
+WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    // THE VERB'S OWN SUBJECT, exactly as LEG 2 returns it - `mesh:explain`'s answer is about
+    // `mesh:DocPage`, never about `start`, whatever class actually asked the question.
+    vsubj.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
+    r.required_args               AS required_args,
+    coalesce(r.slots, '[]')       AS slots,
+    // NO REAL HOP COUNT EXISTS - `start` was never walked to `ref`, only checked for existing as
+    // a class. The sentinel says "not in the subject's ancestor chain", exactly as it does
+    // inside `_pick_best_per_verb`'s ranking below: this verb is admitted by the referent's
+    // FLAG, not by any distance from `start`, and substituted the same way `$MAXHOPS$` is so
+    // there is exactly one declaration of the sentinel, not a literal re-typed into the Cypher.
+    $UNREACHABLE$                 AS hops,
+    'universal'                   AS compatibility
 """
 
 
@@ -5004,7 +5564,15 @@ async def find_compatible_verbs(
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
     max_hops = max(0, min(10, int(request.max_hops or 5)))
-    cypher = _FIND_COMPAT_VERBS_CYPHER.replace("$MAXHOPS$", str(max_hops))
+    cypher = (
+        _FIND_COMPAT_VERBS_CYPHER
+        .replace("$MAXHOPS$", str(max_hops))
+        .replace("$UNREACHABLE$", str(UNREACHABLE))
+    )
+    # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
+    # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
+    # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
+    universal_referents = await asyncio.to_thread(_universal_referent_iris)
 
     def _run() -> list[dict]:
         with _NEO4J_DRIVER.session() as session:
@@ -5013,6 +5581,7 @@ async def find_compatible_verbs(
                 for r in session.run(
                     cypher,
                     subject_uri=request.subject_uri,
+                    universal_referents=universal_referents,
                 )
             ]
 
@@ -5297,6 +5866,9 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         entitled_domains=entitled,
         limit=max(request.candidate_limit, 25),  # widen so the filter survives
         user_email=request.user_email,
+        # The compat set goes INTO the query, so the limit cannot crowd a compatible verb out
+        # (see `_predicate_hybrid_search_sync`). Sorted for a stable filter.
+        verb_iris=sorted(compatible) or None,
     )
 
     # ADR-0018 addendum + ADR-0006 §Addendum conjunctive-read invariant
@@ -5326,6 +5898,8 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     # treats the verb as unregistered until the substrate is
     # reconciled — which is the truthful state.
     if compatible:
+        # EXACT, and kept although the query is already filtered: the Weaviate filter is a
+        # token match on a WORD-tokenized property and may over-admit.
         candidates = [c for c in candidates if c.get("verb_iri") in compatible]
 
         # ADR-0019 Contract A — cardinality is not fit. The previous
@@ -5365,9 +5939,11 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
                 f"Conjunctive-read invariant: Neo4j marks "
                 f"{list(compatible)} as compatible with the resolved "
                 f"subject, but none of those verbs survived the "
-                f"Weaviate intersection (registered in Cypher but not "
-                f"in the predicate search index). Routes to generalist "
-                f"until the substrate is reconciled."
+                f"Weaviate intersection (registered in Cypher but with "
+                f"no predicate search row this caller's domains admit; "
+                f"the search is filtered to those verbs, so this is "
+                f"absence, not ranking). Routes to generalist until the "
+                f"substrate is reconciled."
             )
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
@@ -5438,7 +6014,10 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         best: dict[str, dict] = {}
         best_hops: dict[str, int] = {}
         first_seen_index: dict[str, int] = {}
-        UNREACHABLE = 10**6
+        # Module-level constant (declared once, above `_FIND_COMPAT_VERBS_CYPHER`) — LEG 3 of
+        # that query is substituted with the SAME value, so a candidate it admits with no real
+        # hop count reads here exactly as unreachable, the same as a LEG 1/2 candidate that
+        # never returned.
         for i, cand in enumerate(rows):
             v = cand.get("verb_iri") or ""
             if not v:

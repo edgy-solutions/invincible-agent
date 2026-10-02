@@ -91,6 +91,7 @@ TEMPLATE = """<!doctype html>
    <span class="note" style="margin:0">Changing the lot recomputes every figure below.</span>
   </div>
 
+  <!-- section:labor -->
   <h2>Labor <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
@@ -100,7 +101,9 @@ TEMPLATE = """<!doctype html>
     <table class="metrics"><tbody id="metrics"></tbody></table>
    </div>
   </div>
+  <!-- /section:labor -->
 
+  <!-- section:program -->
   <h2>Across the program <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
@@ -112,10 +115,14 @@ TEMPLATE = """<!doctype html>
     <div id="curve-chart"></div>
    </div>
   </div>
+  <!-- /section:program -->
 
+  <!-- section:composition -->
   <h2>Price composition <span class="baseline-tag">BASELINE</span></h2>
   <table id="composition"></table>
+  <!-- /section:composition -->
 
+  <!-- section:sepm -->
   <h2>Program management effort <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
@@ -126,7 +133,9 @@ TEMPLATE = """<!doctype html>
     <table class="metrics"><tbody id="sepm-metrics"></tbody></table>
    </div>
   </div>
+  <!-- /section:sepm -->
 
+  <!-- section:material -->
   <h2>Material <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
@@ -144,6 +153,7 @@ TEMPLATE = """<!doctype html>
    </div>
   </div>
   <table id="material-table"></table>
+  <!-- /section:material -->
 
   <details id="algorithm">
    <summary>The pricing modules this page ran &mdash; read or download the source</summary>
@@ -162,6 +172,7 @@ TEMPLATE = """<!doctype html>
    </div>
   </details>
 
+  <!-- section:scenario -->
   <div class="scenario">
    <h2 style="margin-top:2px">Your scenario <span class="scenario-tag">NOT VERIFIED</span></h2>
    <p class="note">These inputs are yours. They compute <strong>beside</strong> the verified
@@ -175,6 +186,7 @@ TEMPLATE = """<!doctype html>
    </div>
    <table class="metrics"><tbody id="scenario-metrics"></tbody></table>
   </div>
+  <!-- /section:scenario -->
  </div>
 
  <div id="divergence" hidden>
@@ -235,6 +247,10 @@ TEMPLATE = """<!doctype html>
 <script>{loader_js}</script>
 <script>
 const PKG = JSON.parse(document.getElementById('package-data').textContent);
+// THE SECTIONS THE CANVAS ASKED FOR. The builder cut the others out of the markup, so a
+// block that ran anyway would write into an element that is not there. Verification does
+// not consult this: every disclosed lot is repriced whichever sections show.
+const HAS = new Set(PKG.sections);
 let PY = null;
 
 // ── SVG stacked bar, hand-drawn. See the module docstring: no chart library. ──
@@ -536,6 +552,7 @@ function metricRows(rows) {{
 }}
 
 function renderLot(lot) {{
+  if (HAS.has('labor')) {{
   const j = JSON.parse(PY.runPython(
     'import json, page; json.dumps(page.labor_view(' + lot + '))'));
   const cf = JSON.parse(PY.runPython(
@@ -555,8 +572,10 @@ function renderLot(lot) {{
                                ' <span style="color:#6b7280">(' + cf.note + ')</span>'],
     ['Cumulative units through this lot', cf.cumulative_units],
   ]);
+  }}
   // FORMATTED BY PYTHON, like every other figure on this page. Rendering the manifest's raw
   // strings here is what put two money formats on one screen.
+  if (HAS.has('composition')) {{
   const comp = JSON.parse(PY.runPython(
     'import json, page; json.dumps(page.composition_view(' + lot + '))'));
   document.getElementById('composition').innerHTML =
@@ -567,9 +586,11 @@ function renderLot(lot) {{
         : s.name) + '</td><td>' + s.rate +
       '</td><td>' + s.basis + '</td><td>' + s.amount + '</td><td>' + s.running_total +
       '</td></tr>').join('');
+  }}
   // THE ACROSS-LOTS CHARTS FOLLOW THE SELECTOR TOO. They show every lot, but they highlight
   // the selected one — so "changing the lot recomputes every figure below" stays true of the
   // whole page rather than of the top half.
+  if (HAS.has('sepm')) {{
   const sv = JSON.parse(PY.runPython(
     'import json, page; json.dumps(page.sepm_monthly_view(' + lot + '))'));
   document.getElementById('sepm-chart').innerHTML = monthlyChart(sv, 560, 240);
@@ -583,7 +604,9 @@ function renderLot(lot) {{
     ['Reconciles to the annual figure', sv.reconciles
       ? 'yes &mdash; ' + sv.annual_total : 'NO &mdash; annual says ' + sv.annual_total],
   ]);
+  }}
 
+  if (HAS.has('material')) {{
   const mv = JSON.parse(PY.runPython('import json, page; json.dumps(page.material_view())'));
   document.getElementById('material-chart').innerHTML = materialChart(mv, lot, 560, 240);
   document.getElementById('material-table').innerHTML =
@@ -594,9 +617,12 @@ function renderLot(lot) {{
       '</td><td>' + r.difference + '</td><td style="color:#6b7280">' + r.note +
       '</td></tr>').join('');
   renderConcentration(lot);
+  }}
 
+  if (HAS.has('program')) {{
   const pv = JSON.parse(PY.runPython('import json, page; json.dumps(page.program_view())'));
   document.getElementById('program-chart').innerHTML = stackedColumns(pv, lot, 560, 260);
+  }}
   renderScenario(lot);
 }}
 
@@ -619,9 +645,22 @@ function renderConcentration(lot) {{
     ' &middot; purchased value ' + cv.purchased + ' &middot; largest share ' + cv.largest_share;
 }}
 
+// THE LEARNING CURVE LIVES IN THE PROGRAM SECTION AND READS THE SCENARIO'S SLOPE. Without a
+// scenario section there is no input to read, and the curve draws at the package's own slope.
+function currentSlope() {{
+  const el = document.getElementById('slope');
+  return el ? el.value : (PKG.dataset.learning_slope || '0.92');
+}}
+
 function renderScenario(lot) {{
+  const slope = currentSlope();
+  const lc = JSON.parse(PY.runPython(
+    'import json, page; json.dumps(page.learning_curve_view(' +
+    JSON.stringify(String(slope)) + '))'));
+  if (HAS.has('program'))
+    document.getElementById('curve-chart').innerHTML = learningCurve(lc, lot, 560, 260);
+  if (!HAS.has('scenario')) return;
   const rates = currentRates();
-  const slope = document.getElementById('slope').value;
   const j = JSON.parse(PY.runPython(
     'import json, page; json.dumps(page.scenario_view(' + lot + ', ' +
     JSON.stringify(JSON.stringify(rates)) + ', ' + JSON.stringify(String(slope)) + '))'));
@@ -629,10 +668,6 @@ function renderScenario(lot) {{
     const cls = d.startsWith('-') ? 'diff-down' : (d === '0.00' ? '' : 'diff-up');
     return '<span class="' + cls + '">' + d + '</span>';
   }};
-  const lc = JSON.parse(PY.runPython(
-    'import json, page; json.dumps(page.learning_curve_view(' +
-    JSON.stringify(String(slope)) + '))'));
-  document.getElementById('curve-chart').innerHTML = learningCurve(lc, lot, 560, 260);
   document.getElementById('scenario-metrics').innerHTML = metricRows([
     ['Baseline price', j.baseline_price],
     ['Your scenario price', j.scenario_price],
@@ -705,6 +740,7 @@ function renderScenario(lot) {{
       'click', () => gotoLine(STEP_LINES.evaluator));
     document.getElementById('algo-entry').addEventListener(
       'click', () => gotoLine(STEP_LINES.entry));
+    if (HAS.has('composition'))
     document.getElementById('composition').addEventListener('click', (e) => {{
       const el = e.target.closest('.steplink');
       if (el) gotoLine(Number(el.dataset.line));
@@ -713,16 +749,13 @@ function renderScenario(lot) {{
     const sel = document.getElementById('lot');
     sel.innerHTML = PKG.lots.map(n => '<option value="' + n + '">Lot ' + n + '</option>').join('');
     const baseRates = PKG.manifest.checks[0].rates;
+    sel.addEventListener('change', () => renderLot(Number(sel.value)));
+    if (HAS.has('scenario')) {{
     document.getElementById('rate-inputs').innerHTML =
       ['fringe', 'overhead', 'g_and_a', 'cost_of_money', 'profit'].map(k =>
         '<label>' + k + ' <input type="number" step="0.001" data-key="' + k +
         '" value="' + baseRates[k] + '"></label>').join('');
     document.getElementById('slope').value = PKG.dataset.learning_slope || '0.92';
-    document.getElementById('threshold').value = '0.25';
-    document.getElementById('threshold').addEventListener(
-      'input', () => renderConcentration(Number(document.getElementById('lot').value)));
-
-    sel.addEventListener('change', () => renderLot(Number(sel.value)));
     document.getElementById('rate-inputs').addEventListener('input',
       () => renderScenario(Number(sel.value)));
     document.getElementById('slope').addEventListener('input',
@@ -733,6 +766,12 @@ function renderScenario(lot) {{
       document.getElementById('slope').value = PKG.dataset.learning_slope || '0.92';
       renderScenario(Number(sel.value));
     }});
+    }}
+    if (HAS.has('material')) {{
+    document.getElementById('threshold').value = '0.25';
+    document.getElementById('threshold').addEventListener(
+      'input', () => renderConcentration(Number(document.getElementById('lot').value)));
+    }}
 
     renderLot(PKG.lots[0]);
     document.getElementById('body').hidden = false;

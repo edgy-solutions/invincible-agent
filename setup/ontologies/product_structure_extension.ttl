@@ -154,7 +154,7 @@ ps:qualificationStatus a owl:DatatypeProperty ; rdfs:domain ps:ApprovedSourceRel
 ps:authoritativeSource a owl:DatatypeProperty ;
     rdfs:comment "Who OWNS the truth — the same value for every path to it." .
 ps:obtainedVia a owl:DatatypeProperty ;
-    rdfs:comment "The degradation path: direct | etl | warehouse | manual-export." .
+    rdfs:comment "The degradation path: direct | etl | warehouse | manual-export | user-drop (ADR-0041 §2)." .
 ps:asOf a owl:DatatypeProperty ;
     rdfs:comment "Truth-date. 'unknown' is a SENTINEL, never a blank." ;
     mesh:derivedFrom prov:generatedAtTime .

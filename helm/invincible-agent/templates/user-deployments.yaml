@@ -84,7 +84,10 @@ spec:
       {{- end }}
       containers:
         - name: code-location
-          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "root" $) }}
+          {{- /* `digest` or the pin is inert — see the note at `engines.yaml`. Both user-deployment
+               images are CROSS-REPO (`pub-tools`, `dag-tools/user-deployment`), so `latest` is
+               their floor and a digest is the only pin available to them. */}}
+          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "digest" $deploy.image.digest "root" $) }}
           imagePullPolicy: {{ default "Always" $deploy.imagePullPolicy }}
           command:
             - python
@@ -220,7 +223,10 @@ spec:
       {{- end }}
       containers:
         - name: broker
-          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "root" $) }}
+          {{- /* `digest` or the pin is inert — see the note at `engines.yaml`. Both user-deployment
+               images are CROSS-REPO (`pub-tools`, `dag-tools/user-deployment`), so `latest` is
+               their floor and a digest is the only pin available to them. */}}
+          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "digest" $deploy.image.digest "root" $) }}
           imagePullPolicy: {{ default "Always" $deploy.imagePullPolicy }}
           command:
             - hypercorn

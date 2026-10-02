@@ -28,7 +28,7 @@ def test_ALL_THREE_METHODS_ARE_PRESENT(state, program_id):
     """One row per recognised method, and the population is EAC_METHODS rather than a literal
     three — a fourth method added to the enum must appear here without editing this test."""
     rows = measures.fin_eac_comparison(state, program_id=program_id)
-    assert [r["method"] for r in rows] == list(EAC_METHODS)
+    assert [r["method_label"] for r in rows] == list(EAC_METHODS)
     assert all(r["formula"] for r in rows), "a method without its formula is an uninterpretable number"
 
 
@@ -98,7 +98,7 @@ def test_AN_UNDEFINED_METHOD_KEEPS_ITS_ROW(state, program_id, monkeypatch):
     blank = [r for r in rows if r["eac"] is None]
     assert blank, "this seal proves nothing unless at least one method is undefined here"
     for r in blank:
-        assert r["unavailable_reason"], f"{r['method']} is blank and does not say why"
+        assert r["unavailable_reason"], f"{r['method_label']} is blank and does not say why"
         assert r["vac"] is None and r["etc"] is None, "derived figures on an absent forecast"
     assert SUMMARY["fin_eac_comparison"](rows)["all_methods_answered"] is False
 
@@ -114,7 +114,7 @@ def test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY(state, program_id, monkeypatch):
     monkeypatch.setattr(measures, "_totals", lambda *a, **k: (0.0, 0.0, 0.0))
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     answered = [r for r in rows if r["eac"] is not None]
-    assert [r["method"] for r in answered] == ["REMAINING_AT_BUDGET"], (
+    assert [r["method_label"] for r in answered] == ["REMAINING_AT_BUDGET"], (
         "with every index zeroed, exactly the index-free method should still answer")
     s = SUMMARY["fin_eac_comparison"](rows)
     assert s["all_methods_answered"] is False
@@ -194,7 +194,7 @@ def test_STRUCTURAL_NAMES_RIDE_BESIDE_THE_DOMAIN_ONES(state, program_id):
     """
     rows = measures.fin_eac_comparison(state, program_id=program_id)
     for r in rows:
-        assert r["value"] == r["eac"], f"{r['method']}: the two names disagree"
+        assert r["value"] == r["eac"], f"{r['method_label']}: the two names disagree"
     s = SUMMARY["fin_eac_comparison"](rows)
     assert s["lowest_value"] == s["lowest_eac"] and s["highest_value"] == s["highest_eac"]
 
@@ -207,7 +207,7 @@ def test_AN_UNDEFINED_METHOD_IS_NULL_UNDER_BOTH_NAMES(state, program_id, monkeyp
     blank = [r for r in rows if r["eac"] is None]
     assert blank, "no method is undefined here - this seal proves nothing"
     for r in blank:
-        assert r["value"] is None, f"{r['method']}: `value` survived a null `eac`"
+        assert r["value"] is None, f"{r['method_label']}: `value` survived a null `eac`"
 
 
 def test_THE_SPREAD_IS_COMPUTED_IN_DECIMAL_NOT_FLOAT(state, program_id):
@@ -256,10 +256,10 @@ def test_EXACT_AND_FLOAT_AGREE_TO_THE_CENT_ON_EVERY_ROW(state, program_id):
         for exact_key, float_key in (("eac_exact", "eac"), ("vac_exact", "vac"),
                                      ("etc_exact", "etc")):
             if r[exact_key] is None:
-                assert r[float_key] is None, f"{r['method']}: {float_key} survived a null exact"
+                assert r[float_key] is None, f"{r['method_label']}: {float_key} survived a null exact"
                 continue
             assert Decimal(r[exact_key]) == Decimal(str(r[float_key])), (
-                f"{r['method']}: {exact_key} and {float_key} disagree")
+                f"{r['method_label']}: {exact_key} and {float_key} disagree")
 
 
 def test_THE_SEED_IS_STILL_EXACTLY_REPRESENTABLE(state):

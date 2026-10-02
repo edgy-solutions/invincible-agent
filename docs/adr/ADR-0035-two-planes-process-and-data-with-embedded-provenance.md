@@ -91,7 +91,7 @@ The block (see `src/iagent/provenance.py`, and the conventions entry):
 | field | meaning |
 |---|---|
 | `authoritative_source` | who owns the truth (for BOM: the PDM system, **always**) |
-| `obtained_via` | the path travelled: `direct` \| `etl` \| `snowflake` \| `manual-export` |
+| `obtained_via` | the path travelled: `direct` \| `etl` \| `snowflake` \| `manual-export` \| `user-drop` (ADR-0041 §2, added 2026-09-30 — the ingestion seam's rung, farthest from truth; ordered LAST, not cosmetic) |
 | `as_of` | the truth-date where knowable; **`unknown` is a sentinel, never a blank** |
 | `ingested_at` | when we wrote it |
 | `ingest_run` | the pipeline run id — chains claim → run → sensor → source object → ETag for free |

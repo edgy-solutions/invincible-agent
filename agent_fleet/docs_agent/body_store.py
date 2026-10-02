@@ -56,11 +56,20 @@ class MinioBodyStore:
         # MinIO rejects. Pinned to the pre-1.36 behaviour, the same way the prime's uploader is —
         # an engine that read with different settings than the writer used would fail on exactly
         # the objects the prime wrote, which is every object it will ever be asked for.
+        #
+        # `MINIO_*` FIRST, because those are the names this pod has: engines get the shared
+        # `iagent-config` via `envFrom`, and it carries `MINIO_ENDPOINT_URL` / `MINIO_ACCESS_KEY` /
+        # `MINIO_SECRET_KEY`. Reading only the `AWS_*` spelling — which the prime Job alone maps
+        # onto — let the writer land every page while this reader fetched none: every resolved
+        # subject answered `502 … Unable to locate credentials` on rev 157 (2026-09-29). The
+        # `AWS_*` names stay as the fallback. Same order as `utils/artifact_provenance.py`.
         self._client = boto3.client(
             "s3",
-            endpoint_url=os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL"),
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            endpoint_url=(os.environ.get("MINIO_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL")
+                          or os.environ.get("MINIO_URL")),
+            aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=(os.environ.get("MINIO_SECRET_KEY")
+                                   or os.environ.get("AWS_SECRET_ACCESS_KEY")),
             config=Config(request_checksum_calculation="when_required",
                           response_checksum_validation="when_required"),
         )

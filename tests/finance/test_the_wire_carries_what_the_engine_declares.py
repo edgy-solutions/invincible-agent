@@ -22,6 +22,7 @@ broke, and is derived from the engine's own declaration tables rather than a rem
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -55,8 +56,11 @@ def _envelope(fn: str) -> dict:
 def test_the_measure_response_BODY_carries_every_declared_envelope_field():
     """Asserted on the real HTTP body, not on the measure function's return value.
 
-    The declaration tables are the population, so a seventh verb that declares a reference
-    inherits this without an edit here.
+    SERIES, REFERENCE and VERDICT are this arm's population -- THREE of the tables the
+    envelope builder reads, not all of them, and the earlier wording here said "the
+    declaration tables are the population" while covering three of eight. A seventh verb
+    entering one of these three inherits this arm without an edit; a new TABLE does not, and
+    that axis is `test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire`.
     """
     for fn, decl in measures.SERIES.items():
         body = _envelope(fn)
@@ -92,6 +96,988 @@ def test_series_entries_keep_their_unit_and_dashed_on_the_wire():
     assert all("unit" not in s for s in idx), (
         "a dimensionless index gained a unit -- absence is the assertion, per the contract"
     )
+
+
+def test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES():
+    """SEAL 1 covered SERIES, REFERENCE and VERDICT and NOT `SUMMARY` -- the table that
+    produces the completeness counts. Every existing assertion on those counts calls
+    `SUMMARY[fn](rows)` directly, so the one field whose whole job is to SURVIVE to the
+    consumer was verified before it travelled and nowhere after. cortex's fixtures start after
+    the wire and this suite stopped before it, which is a join asserted on neither side.
+
+    ASSERTED ON THE VALUE, NOT THE KEY, and that distinction is measured rather than assumed:
+    cortex-60 had a mutant survive the key-presence form of this arm, because a member written
+    `methods_compared: undefined` keeps its key, satisfies `in`, and still sends their card
+    down `?? rows.length`. Presence of a key is not availability of a figure.
+
+    `main.py:651` is the hinge this arm guards: `SUMMARY[fn](rows) or {}` turns a None summary
+    into an ABSENT key rather than a null one, which is precisely the state a consumer then
+    invents a value for. The counts cannot currently be absent -- see
+    test_eac_comparison.test_THE_PANEL_CAN_NEVER_COME_BACK_EMPTY -- but nothing between the
+    two repos asserted that, and it holds for one arithmetic reason in one method.
+    """
+    for fn, summary_of in measures.SUMMARY.items():
+        body = _envelope(fn)
+        rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+        expected = summary_of(rows)
+        assert expected is not None, (
+            f"{fn}: the summary returned None, so `or {{}}` at main.py:651 dropped every "
+            f"envelope key and a consumer reading the absence will invent them"
+        )
+        for key, value in expected.items():
+            assert key in body, f"{fn}: declared summary field `{key}` never reached the wire"
+            if value is None:
+                continue
+            assert body[key] == value, (
+                f"{fn}: `{key}` on the wire is {body[key]!r}, the engine computed {value!r}"
+            )
+            assert isinstance(body[key], (int, float, str, bool)), (
+                f"{fn}: `{key}` arrived as {type(body[key]).__name__}, not a usable figure"
+            )
+
+    # THE COMPLETENESS COUNTS BY NAME, because the loop above would still pass if the table
+    # stopped declaring them. These three are the truncation detector: a consumer that counts
+    # its own rows instead cannot tell a full set from a truncated one.
+    eac = _envelope("fin_eac_comparison")
+    for key, kind in (("methods_compared", int), ("methods_answered", int),
+                      ("all_methods_answered", bool)):
+        assert isinstance(eac.get(key), kind), (
+            f"`{key}` is the completeness detector and arrived as {eac.get(key)!r}; absent or "
+            f"untyped, the card falls back to counting the rows it was given"
+        )
+
+
+# -- THE POPULATION, DERIVED FROM ITS CONSUMER ------------------------------------------
+#
+# SEAL 1 named three tables and the SUMMARY arm above a fourth. I wrote in the 2026-09-26
+# packet that closing this partition needed an exclusion REASON per table and was therefore
+# not mine to invent in a shared tree. That was wrong, and cheaply so: the envelope builder
+# decides which tables reach the wire, so the population AND every exclusion are derivable
+# from the consumer. `EAC_FORMULA` and `EAC_METHODS` fall out because the builder never names
+# them -- they are read inside the measure functions -- and that is a derivation, not a
+# judgment. The reason I declined to invent was sitting in the file I had already read.
+
+
+def _strip_prose(src: str) -> str:
+    """Docstrings and `#` comments removed BEFORE any token search, because a name in prose
+    ABOUT a mechanism reads exactly like the mechanism -- and the builder's comments discuss
+    the very tables being counted. Controlled both directions below."""
+    src = re.sub(r'""".*?"""', "", src, flags=re.S)
+    return re.sub(r"#.*$", "", src, flags=re.M)
+
+
+# The builder is addressed by the route it serves. A block that merely RESEMBLES the envelope
+# cannot be the thing FastAPI dispatches.
+_MEASURE_ROUTE = "/measure/"
+# Asserted on the block found by route, as a cross-check that it is the block this file was
+# written against -- NOT as the selector. Cutting these from three to one was measured QUIET.
+_BUILDER_LANDMARKS = frozenset({"measure", "rows", "data_provenance"})
+
+
+def _main_src() -> str:
+    return (_ROOT / "agent_fleet" / "finance_agent" / "main.py").read_text(encoding="utf-8")
+
+
+def _measures_bindings(src: str | None = None) -> tuple[frozenset[str], dict[str, str]]:
+    """Every name in main.py that leads to a declaration table, DERIVED FROM ITS IMPORTS rather
+    than typed here.
+
+    cortex-60 sent this as a defect in the seal that produced their own correction to me: they
+    told me to partition the CALL rather than the literal, and then matched the call with a text
+    pattern, so a module doing `const ls = window.localStorage` wrote two durable keys with all
+    18 green. `"measures"` was typed into this file exactly that way. MEASURED 2026-09-26, and
+    the distinction matters more than the exit code: `import measures as m` DOES red today --
+    but the ratchet reds saying VALUE_UNIT "no longer reaches the /measure envelope" about a
+    table that still reaches it under another name. A red that sends you looking for a deleted
+    line that was never deleted is barely better than a green.
+
+    Returns (names bound to the module, {bare name: table}). main.py's try/except already binds
+    the module two ways, and a third spelling must not need an edit here.
+    """
+    aliases: set[str] = set()
+    direct: dict[str, str] = {}
+    for node in ast.walk(ast.parse(src if src is not None else _main_src())):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "measures" or a.name.endswith(".measures"):
+                    aliases.add(a.asname or a.name.split(".")[-1])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "measures":
+                    aliases.add(a.asname or "measures")
+            if (node.module or "").split(".")[-1] == "measures":
+                for a in node.names:
+                    if a.name.isupper():
+                        direct[a.asname or a.name] = a.name
+    assert aliases or direct, (
+        "main.py binds no name to the measures module -- this file cannot find the tables at all"
+    )
+    return frozenset(aliases), direct
+
+
+def _table_refs(node: ast.AST, bindings=None) -> set[str]:
+    """Declaration tables referenced anywhere under `node`, by any spelling main.py can use:
+    `<alias>.NAME`, `getattr(<alias>, "NAME")`, and a bare name imported directly.
+
+    TOTAL OVER SPELLING, NOT OVER INDIRECTION -- a table reached through a local variable
+    (`t = measures.VALUE_UNIT` then `t[fn]`) or returned by a helper is invisible here, and no
+    partition of this one call site can see it. cortex-60 named the same tail on their side (a
+    member name held in a variable, and a dependency writing storage on our behalf).
+
+    AND STATING IT WAS NOT ENOUGH, WHICH IS THE POINT. I wrote that limit down and left it, and
+    on 2026-09-26 fired it: a table MERGED through a local inside the accounted spread, and the
+    same through a helper returning the table, both put every verb's labels on the wire with
+    EXIT 0 and every arm green. A limit stated in prose reads as diligence and stops
+    re-examination exactly as well as a wrong answer does. What closes the merge half is
+    `_unrecognised_spread_operands`, which does not try to see through the local at all -- it
+    changes the subject and refuses any operand shape it does not recognise. What remains is
+    narrower and named there: a table read through a local into a LITERAL-keyed value, which
+    reds via the ratchet but says the table stopped reaching the wire rather than that it
+    arrived by a form nothing reads."""
+    aliases, direct = bindings if bindings is not None else _measures_bindings()
+    found: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+            if n.value.id in aliases and n.attr.isupper():
+                found.add(n.attr)
+        elif isinstance(n, ast.Name) and n.id in direct:
+            found.add(direct[n.id])
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr":
+            if len(n.args) >= 2:
+                target, name = n.args[0], n.args[1]
+                if (isinstance(target, ast.Name) and target.id in aliases
+                        and isinstance(name, ast.Constant) and isinstance(name.value, str)):
+                    found.add(name.value)
+    return found
+
+
+def _table_read_anchor(expr: ast.expr, bindings=None) -> str | None:
+    """The table this expression IS a read of, or None if it merely CONTAINS one.
+
+    CONTAINMENT IS NOT SHAPE -- cortex-60's J5, and the third generation of the round-8 defect on
+    my side. `_table_refs` collects by `ast.walk`, so `refs <= ALLOWANCE` is bought by an allowed
+    reference sitting ANYWHERE inside an arbitrary expression. Round 8 refused a helper RETURNING
+    the table (`**_grab()`, refs empty) and nobody wrote the case for a helper WRAPPING it.
+
+    MEASURED 2026-09-26: `**_fold_summary(measures.SUMMARY[fn](rows) or {})`, where the helper
+    merges `measures.VALUE_LABEL`, was QUIET -- and the endpoint then put six foreign keys on the
+    wire (`fin_burn_rate`, `fin_eac_calculation`, `fin_funding_status`, `fin_performance_indices`,
+    `fin_variance_analysis`, `fin_variance_drivers`) with all 29 arms green. The QUIET was
+    positive-controlled against the unmutated envelope before this was written, because a quiet
+    mutant that changed nothing is not a hole.
+
+    So the anchor is peeled rather than searched: `Call.func` and `Subscript.value`, repeatedly,
+    and what is left must BE the table. Arguments are deliberately NOT peeled -- an argument is
+    where a laundering helper hides. A `getattr(measures, "SUMMARY")[fn](rows)` spread would be
+    refused by this even though `_table_refs` can read that spelling; the builder does not use it,
+    and refusing a shape nothing writes is the safe direction of wrong."""
+    aliases, direct = bindings if bindings is not None else _measures_bindings()
+    node = expr
+    while True:
+        if isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        else:
+            break
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if node.value.id in aliases and node.attr.isupper():
+            return node.attr
+    if isinstance(node, ast.Name) and node.id in direct:
+        return direct[node.id]
+    return None
+
+
+def _literal_string_set(node: ast.expr) -> frozenset[str] | None:
+    """The set of strings this node IS, or None if it is anything computed.
+
+    One optional `frozenset(...)`/`set(...)` wrapper is unwrapped and NOTHING else, then
+    `ast.literal_eval` decides. This replaced a whitelist of permitted AST node types, which
+    cortex-60's S2 retired with one appended name: an exemption list is a list of names, and a
+    property has nothing to append to. Used for the member registers, for the spread allowance,
+    and wherever else this file has to know that a declaration was WRITTEN rather than DERIVED."""
+    inner = node
+    if (
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Name)
+        and inner.func.id in {"frozenset", "set"}
+        and len(inner.args) == 1
+        and not inner.keywords
+    ):
+        inner = inner.args[0]
+    try:
+        value = ast.literal_eval(inner)
+    except (ValueError, SyntaxError, TypeError):
+        return None
+    if isinstance(value, (set, frozenset)) and value and all(isinstance(m, str) for m in value):
+        return frozenset(value)
+    return None
+
+
+def _spread_operands(node: ast.AST) -> list[ast.expr]:
+    """Every `**` operand at any depth under `node`, not only the envelope's top level. The leak
+    this exists for was nested one level in."""
+    out: list[ast.expr] = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Dict):
+            out.extend(v for k, v in zip(n.keys, n.values) if k is None)
+    return out
+
+
+def _operand_leaves(expr: ast.expr) -> list[ast.expr]:
+    """An operand written as a conditional or an `or` contributes each branch, so each branch is
+    judged on its own. `a if c else b` and `x or {}` are the two forms the builder uses."""
+    if isinstance(expr, ast.IfExp):
+        return _operand_leaves(expr.body) + _operand_leaves(expr.orelse)
+    if isinstance(expr, ast.BoolOp):
+        return [leaf for value in expr.values for leaf in _operand_leaves(value)]
+    return [expr]
+
+
+def _unrecognised_spread_operands(builder: ast.Dict) -> list[str]:
+    """Merged operands this file cannot account for, by ENUMERATING WHAT IS RECOGNISED.
+
+    THE SUBJECT CHANGED, and cortex-60 made the same move on their side for the same reason.
+    Enumerating the dangerous forms can only ever be total over their SPELLING: `_table_refs`
+    reads `measures.NAME`, `getattr(measures, "NAME")` and a direct-name import, and I wrote the
+    rest down as "the irreducible tail -- a table reached through a local or returned by a helper
+    is invisible". MEASURED 2026-09-26, and it was not irreducible, it was live:
+
+        held = measures.VALUE_LABEL
+        ... **({**(measures.SUMMARY[fn](rows) or {}), **held} if fn in measures.SUMMARY else {})
+
+    put every verb's label on the wire for every verb, EXIT 0, all 25 arms green. So did the same
+    thing through a helper returning the table. A limit stated in prose reads as diligence and
+    stops re-examination exactly as well as a wrong answer -- which is my own §8 deferral in a
+    third shape, and it was sitting in a docstring I wrote the day before.
+
+    So: only two operand shapes are recognised -- a dict LITERAL, whose keys are partitioned
+    elsewhere, and an expression that IS a read of an allowed table and reads nothing else.
+    Every other shape counts by default, whatever it is spelled as, including a bare local and
+    a call.
+
+    AND "IS" IS NOT "CONTAINS", which took a third round to get right. `refs <=` alone was
+    bought by CONTAINMENT: `**_fold(measures.SUMMARY[fn](rows) or {})` has refs == {'SUMMARY'},
+    so a helper wrapping the accounted read was accepted, and measured 2026-09-26 it put six
+    keys from another declaration table on the wire with all 29 arms green. Round 8 refused a
+    helper RETURNING the table and that refusal hid the class -- the neighbour that worked. So
+    the leaf's own form is now anchored by `_table_read_anchor` as well as its references
+    counted, and the two conditions refuse different things: the anchor refuses a laundering
+    wrapper, the refs refuse a foreign table in the ARGUMENTS of a well-anchored read."""
+    unrecognised: list[str] = []
+    for operand in _spread_operands(builder):
+        for leaf in _operand_leaves(operand):
+            if isinstance(leaf, ast.Dict):
+                continue
+            refs = _table_refs(leaf)
+            anchor = _table_read_anchor(leaf)
+            if (
+                anchor is None
+                or anchor not in _ACCOUNTED_OPAQUE_SPREAD_TABLES
+                or not refs
+                or not refs <= _ACCOUNTED_OPAQUE_SPREAD_TABLES
+            ):
+                unrecognised.append(ast.unparse(leaf))
+    return unrecognised
+
+
+def _builder_block() -> str:
+    """The `/measure/<fn>` envelope builder's own source, prose stripped.
+
+    THE ANCHOR IS ASSERTED, NOT CONSUMED. The first form of this helper matched
+    `return {\\n"measure": fn,` and returned everything AFTER it, which silently held the
+    `measure` key out of the block -- and the checked excuse list below reported it as "excused
+    but the builder no longer emits it". A pattern that consumes its anchor shortens the
+    population by exactly the line it anchored on."""
+    src = _main_src()
+    # SELECTED BY ITS ANCHOR, not by position: main.py has five `return {` blocks at this
+    # indent and the envelope builder is the third. A `re.search` takes the first, so the
+    # pattern must carry a predicate rather than an assumption about order.
+    bodies = [
+        _strip_prose(m.group(1))
+        for m in re.finditer(r"^    return \{\n(.*?)^    \}", src, re.S | re.M)
+    ]
+    matching = [b for b in bodies if '"measure": fn' in b]
+    assert len(matching) == 1, (
+        f"expected exactly one `return {{` block carrying the `measure` key, found "
+        f"{len(matching)} of {len(bodies)} -- the envelope builder's shape moved"
+    )
+    return matching[0]
+
+
+def _builder_dict(src: str | None = None) -> ast.Dict:
+    """The `/measure/<fn>` envelope builder's return dict, selected by the ROUTE IT SERVES.
+
+    A REGEX CANNOT SEE A COMPUTED KEY, which is why this is an AST at all: `f"extra_{fn}": ...`
+    put a key on the wire from a real declaration table with all 22 arms green. cortex-60's
+    correction -- PARTITION THE CALL, NOT THE LITERAL.
+
+    AND THE SELECTOR CHANGED SUBJECT, because my answer to their next question was weaker than I
+    told them. I said three landmark keys plus exactly-one-asserted answered "can the predicate
+    match two". MEASURED 2026-09-26: cutting the landmark set from three keys to one is QUIET --
+    nothing in this file notices, so two of the three landmarks were buying nothing, and the
+    strength I claimed was unearned. Selection is now the handler decorated with the route, which
+    a lookalike block elsewhere in main.py cannot be; the landmark keys are asserted afterwards as
+    a cross-check on the block that was found. Controlled by
+    test_the_BUILDER_SELECTOR_and_the_BINDING_RESOLVER_can_actually_FAIL, which drives this with a
+    doctored source carrying a decoy dict outside the route.
+    """
+    tree = ast.parse(src if src is not None else _main_src())
+    handlers = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+            and any(
+                isinstance(a, ast.Constant) and isinstance(a.value, str)
+                and a.value.startswith(_MEASURE_ROUTE)
+                for a in d.args
+            )
+            for d in node.decorator_list
+        )
+    ]
+    assert len(handlers) == 1, (
+        f"expected exactly one handler routed at {_MEASURE_ROUTE!r}, found {len(handlers)} -- "
+        f"the envelope builder is no longer addressable by its route"
+    )
+    dicts = [
+        n.value for n in ast.walk(handlers[0])
+        if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict)
+    ]
+    assert len(dicts) == 1, (
+        f"the {_MEASURE_ROUTE!r} handler returns {len(dicts)} dict literals -- this file asserts "
+        f"one envelope, and a second exit would reach the wire unasserted"
+    )
+    literals = {
+        k.value for k in dicts[0].keys
+        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+    }
+    assert _BUILDER_LANDMARKS <= literals, (
+        f"the {_MEASURE_ROUTE!r} handler's envelope no longer carries "
+        f"{sorted(_BUILDER_LANDMARKS - literals)} -- the block found by route is not the one this "
+        f"file was written against"
+    )
+    return dicts[0]
+
+
+def _classify_key(key: ast.expr, literal: set[str], computed: list[str]) -> None:
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        literal.add(key.value)
+    else:
+        computed.append(ast.unparse(key))
+
+
+def _builder_key_forms() -> tuple[set[str], list[ast.expr], list[str]]:
+    """Every key-producing element of the envelope, partitioned into (literal names, opaque
+    `**` spreads, key forms this arm cannot account for). Total over the call: a literal key, a
+    computed key and a spread are the only three things a dict display can contain."""
+    literal: set[str] = set()
+    computed: list[str] = []
+    opaque: list[ast.expr] = []
+    builder = _builder_dict()
+    for key, value in zip(builder.keys, builder.values):
+        if key is not None:
+            _classify_key(key, literal, computed)
+            continue
+        # A `**expr` element. Any dict literal inside it contributes its own keys; an
+        # expression carrying no keyed dict at all is opaque and must be accounted by name.
+        contributes = False
+        for node in ast.walk(value):
+            if not isinstance(node, ast.Dict):
+                continue
+            for inner in node.keys:
+                if inner is None:
+                    continue
+                contributes = True
+                _classify_key(inner, literal, computed)
+        if not contributes:
+            opaque.append(value)
+    return literal, opaque, computed
+
+
+def _envelope_tables() -> set[str]:
+    """The tables whose values reach the response body, read from the builder's AST through the
+    DERIVED bindings -- `getattr(measures, "NAME")` is a Call and not an Attribute, and an
+    aliased import is neither."""
+    found = _table_refs(_builder_dict())
+    assert found, "found no declaration tables in the envelope builder -- its shape moved"
+    return found
+
+
+def _wire_gap(table: str, fn: str, expected, body: dict) -> str | None:
+    """PURE, so the control can drive it with a doctored body. Returns why the declared value
+    did not reach `body`, or None when it did. ON THE VALUE, NOT THE KEY."""
+    if table == "SUMMARY":
+        for key, value in expected.items():
+            if key not in body:
+                return f"{fn}: declared summary field `{key}` never reached the wire"
+            if body[key] != value:
+                return f"{fn}: `{key}` is {body[key]!r} on the wire, {value!r} in the engine"
+        return None
+    key = table.lower()
+    if key not in body:
+        return f"{fn}: {table} declares {expected!r} and the body carries no `{key}`"
+    if body[key] != expected:
+        return f"{fn}: `{key}` is {body[key]!r} on the wire, {expected!r} in {table}"
+    return None
+
+
+def test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire():
+    """TOTAL BY CONSTRUCTION rather than by a coverage register: the population is the
+    builder's own source, so a ninth table added there arrives under this arm with no edit
+    here, and there is no hand-written excuse list to go stale against a table that later
+    starts travelling. OUTPUT_URI, VALUE_UNIT and VALUE_LABEL reach the wire and were
+    asserted nowhere before this arm.
+    """
+    gaps: list[str] = []
+    for table in sorted(_envelope_tables()):
+        decl = getattr(measures, table)
+        for fn in sorted(decl):
+            expected = decl[fn]
+            body = _envelope(fn)
+            if callable(expected):
+                rows = getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+                expected = expected(rows)
+                if expected is None:
+                    if table == "SUMMARY":
+                        # NOT a silent continue: `or {}` at main.py:651 drops every key this
+                        # table declares, and "summary" is never a body key, so the generic
+                        # comparison below could not see it. Stated as the failure it is.
+                        gaps.append(
+                            f"{fn}: SUMMARY returned None, so `or {{}}` dropped every envelope "
+                            f"key it declares and a consumer will invent them"
+                        )
+                        continue
+                    # ABSENT-MEANS-SILENT, the rule main.py states at both :626 and :645:
+                    # nothing to say emits no key. Asserted as an absence, not skipped.
+                    if table.lower() in body:
+                        gaps.append(
+                            f"{fn}: {table} computed None yet `{table.lower()}` is on the wire"
+                        )
+                    continue
+            gap = _wire_gap(table, fn, expected, body)
+            if gap:
+                gaps.append(gap)
+    assert not gaps, "declared by the engine, and did not arrive:\n  " + "\n  ".join(gaps)
+
+
+def test_every_envelope_table_emits_UNDER_ITS_OWN_LOWERCASED_NAME():
+    """THE ASSUMPTION THE ARM ABOVE RESTS ON, sealed instead of trusted. `table.lower()` is
+    how that arm knows which body key to compare, so a table emitting under some other key
+    would be checked against a key that is absent for an unrelated reason -- a red for the
+    wrong cause, or with the `in` test inverted, a green. SUMMARY is the one exception and is
+    named, because it spreads its members into the envelope and owns no key of its own."""
+    block = _builder_block()
+    wrong = []
+    for table in sorted(_envelope_tables() - {"SUMMARY"}):
+        if not re.search(rf'"{table.lower()}"\s*:', block):
+            wrong.append(table)
+    assert not wrong, (
+        f"these tables reach the envelope under some key other than their own name: {wrong} -- "
+        f"the generic wire arm's `table.lower()` cannot address them"
+    )
+
+
+_TRAVELS_TODAY = frozenset(
+    {"OUTPUT_URI", "VALUE_UNIT", "VALUE_LABEL", "SERIES", "REFERENCE", "VERDICT", "SUMMARY"}
+)
+
+
+def test_the_envelope_POPULATION_ONLY_GROWS():
+    """THE RATCHET, and it exists because deriving a population from its consumer has one
+    blind spot: a table DELETED from the builder leaves the population, and the arm above then
+    iterates a smaller set and passes. The derivation cannot see its own subject being
+    removed. So the seven names that travel today are written down once -- the register may
+    grow without an edit here and may never shrink silently.
+
+    MEASURED 2026-09-26, AND THEN RE-MEASURED THE SAME DAY WITH A MUTANT THAT ACTUALLY TESTS IT.
+    First pass: unwiring each of the seven in turn, this ratchet was the only cover at two sites
+    (OUTPUT_URI, VALUE_LABEL); both now have a declaration-side arm, and re-running those same
+    single-edit mutations gives nothing covered by this ratchet alone. I wrote that up as
+    "a BACKSTOP, not load-bearing -- it would catch an unwiring only if a declaration-side arm
+    were deleted in the same change", and invited deleting the ratchet if that stayed true.
+
+    THAT CONCLUSION WAS DRAWN FROM THE NEAREST MUTANT TO HAND, which is cortex-60's correction
+    against their own deleted arm: they planned an arm forbidding a re-export, fired a ONE-FILE
+    mutant at it, saw it red elsewhere, deleted the arm as uncovered -- and the arm was a TWO-FILE
+    arm. An arm's cover has to be searched with the mutant that MATTERS, and the sentence above
+    names a two-edit change while every mutant behind it edited one thing.
+
+    Fired, two edits at once. Emptying the element (`"output_uri": {}`) while its declaration-side
+    arm is disabled reds HERE and at the reach arm, because the key is still emitted and therefore
+    still unaccounted -- so even that is not sole cover. REMOVING the element reds HERE AND NOWHERE
+    ELSE, with the lowercased-name arm disabled as well. **This ratchet is load-bearing**, and the
+    change it alone catches is: a table unwired outright in the same commit that drops its
+    declaration-side arm. Do not delete it. The general form, for the next reader: a claim that an
+    arm covers nothing is a claim about the mutants that were run, and a two-part arm needs a
+    two-part mutant.
+
+    AND THE MEASUREMENT IS SCOPED TO ITS MUTATION, which is the correction cortex-60 drew out of
+    my own: the sentence above was measured by DELETING each wired element. It says nothing
+    about a table RENAMED at the read site. That was measured separately: before the bindings
+    were derived, `import measures as m` made this arm red claiming VALUE_UNIT "no longer
+    reaches the envelope" while it plainly did. An alias is a renaming and not a leak, so the
+    right behaviour is silence, and this arm is silent on it now -- a false red removed, not
+    cover lost. The value-level arms stayed green throughout, which is what says the wire did
+    not move."""
+    missing = _TRAVELS_TODAY - _envelope_tables()
+    assert not missing, (
+        f"these tables are not READ at the /measure envelope by any form this file resolves: "
+        f"{sorted(missing)}. Either the table was unwired -- then remove the name from "
+        f"_TRAVELS_TODAY in the same commit and say why, since an unwired table is invisible to "
+        f"a population derived from the wiring -- or it is still on the wire and now arrives "
+        f"through a local or a helper, which `_table_refs` cannot see. CHECK WHICH before "
+        f"editing the register: a red here named a deleted line that was never deleted once."
+    )
+
+
+# Keys the builder composes itself rather than reading from a declaration table. Named, and
+# the arm below CHECKS the reason rather than trusting it.
+_NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
+
+# The tables an opaque `**` spread may draw from. Each name here MUST appear in
+# _MEMBER_REGISTERS below -- written-down members plus the producer mapping to compare them
+# against -- and the registers are asserted in BOTH DIRECTIONS by
+# test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree.
+#
+# THE NAME IS NOT THE EXCUSE. This set was defended at exactly ONE name until 2026-09-26, and
+# only by accident: adding a second table reddened an arm whose MESSAGE showed the red came
+# from a control fixture that happens to name `measures.VALUE_LABEL`. Generalised to the
+# class, REFERENCE, VERDICT and SERIES were each QUIET on their own. cortex-60's S2 -- an
+# allow-list keyed on a NAME excuses whatever is given that name; a declarative exemption is a
+# comment -- and my own rule that a defence belongs to the CLASS, not to the instance that bit
+# you. The register requirement is what makes the excuse checkable.
+#
+# THAT DELEGATION USED TO NAME test_the_SUMMARY_table_reaches_the_wire_WITH_TYPED_VALUES, and
+# cortex-60's lesson is what broke it: a prediction written into a comment is a mutant nobody
+# has run yet, and if a sentence names a shape precisely enough to argue it is safe, it is
+# precise enough to fire. Fired 2026-09-26 -- the summary producer emitting a key lifted from
+# another declaration table (`VALUE_LABEL["fin_burn_rate"]`) was QUIET, and emitting a key it
+# invented outright was QUIET, while the control (dropping a completeness count) went red at
+# two arms. The named arm computes `expected = summary_of(rows)` and compares the wire to
+# THAT: both halves of the comparison come from one producer call, so it asserts the VALUES of
+# whatever members the producer names and can never refuse a member it did not expect. The
+# reach arm then subtracted the same call. An exclusion computed from its own subject widens
+# when its subject does.
+#
+# BY CONTENT, NOT BY NAME. This was a text marker, `"measures.SUMMARY" in src`, and cortex-60
+# flagged the boundary while fixing the same class on their side: an accounted spread is
+# accounted by NAME and not by CONTENT. Fired 2026-09-26, and it was QUIET -- merging a second
+# table into that element (`{**(measures.SUMMARY[fn](rows) or {}), **measures.VALUE_LABEL}`)
+# put every verb's label on the wire for every verb, with all 23 arms green, because the
+# element still contained the marker. An excuse keyed on a substring excuses whatever else
+# shares the line with it.
+_ACCOUNTED_OPAQUE_SPREAD_TABLES = frozenset({"SUMMARY"})
+
+# Every dict the engine declares, read from the module rather than listed. The control arm holds
+# the allowance to a PROPER subset of these: widening it to all of them was measured QUIET.
+_DECLARED_TABLES = frozenset(
+    n for n in dir(measures) if n.isupper() and isinstance(getattr(measures, n), dict)
+)
+
+# What SUMMARY's producers emit, written down per verb. This is the whole content of the
+# allowance above: the envelope merges this table opaquely, so the only thing standing between
+# a producer and the wire is a register that does not move when the producer does.
+_SUMMARY_MEMBERS: dict[str, frozenset[str]] = {
+    "fin_eac_comparison": frozenset(
+        {
+            "methods_compared",
+            "methods_answered",
+            "all_methods_answered",
+            "spread_exact",
+            "spread",
+            "spread_percent_of_bac",
+            "lowest_eac",
+            "highest_eac",
+            "lowest_exact",
+            "highest_exact",
+            "lowest_value",
+            "highest_value",
+            "reference_value",
+        }
+    ),
+}
+
+# WHAT THE ALLOWANCE OWES, PER TABLE: the written-down register, and the producer mapping the
+# envelope actually merges. Both halves are needed for the excuse to be checkable -- members
+# with nothing to compare them to is a list of hopes, and a producer with no register is the
+# call-against-itself this file spent round 10 removing.
+#
+# Spelled out rather than derived from the allowance, and the allowance spelled out rather than
+# derived from this -- the control arm asserts they are EQUAL. Deriving either direction would
+# make that equality vacuous, which is the same defect as a register derived from its producer.
+_MEMBER_REGISTERS: dict[str, tuple[dict[str, frozenset[str]], object]] = {
+    "SUMMARY": (_SUMMARY_MEMBERS, measures.SUMMARY),
+}
+
+
+def _rows_for(fn: str):
+    return getattr(measures, fn)(_STATE, program_id="NP-MERIDIAN", **_KW.get(fn, {}))
+
+
+def _summary_register_disagreements(producers, register, rows_for) -> list[str]:
+    """Every way the register and the producers can disagree, as complaints rather than as an
+    assertion -- so the arm that uses it and the arm that CONTROLS it drive the same code.
+
+    `or {}` mirrors main.py: a None summary contributes no members, which must read as every
+    registered member having stopped travelling.
+    """
+    out: list[str] = []
+    for fn in sorted(set(register) - set(producers)):
+        out.append(
+            f"{fn}: the register holds members for it and measures.SUMMARY declares no summary "
+            f"for it, so nothing merges them onto the wire"
+        )
+    for fn in sorted(set(producers) - set(register)):
+        out.append(
+            f"{fn}: a summary is merged into the /measure envelope for it and the register holds "
+            f"nothing, so every key it emits reaches the wire unasserted"
+        )
+    for fn in sorted(set(producers) & set(register)):
+        produced = set(producers[fn](rows_for(fn)) or {})
+        for key in sorted(produced - register[fn]):
+            out.append(
+                f"{fn}: emits {key!r}, which the register does not hold -- it is merged by an "
+                f"opaque `**` spread, so it reaches the wire with nothing asserting where its "
+                f"content came from. Add it and say what declares it; do NOT widen the register "
+                f"to whatever the producer happens to emit, which is the comparison this exists "
+                f"to break."
+            )
+        for key in sorted(register[fn] - produced):
+            out.append(
+                f"{fn}: the register holds {key!r} and the summary no longer emits it, so that "
+                f"field stopped reaching the wire. The typed-values arm cannot see this: it "
+                f"iterates the producer's own keys."
+            )
+    return out
+
+
+def test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree():
+    """A NUMBER CANNOT REFUSE ITS OWN RE-STATEMENT; A NAME CAN. That is cortex-60's line, and
+    this arm is what it buys: the allowance above waves SUMMARY's content onto the wire, and
+    until this existed nothing in the file could say what that content was supposed to BE.
+    Both arms that touched it computed the member set by CALLING the producer, which is the
+    seventh kind on my own list of guards that cannot fire -- both halves of the comparison
+    share an upstream.
+
+    Asserted in BOTH DIRECTIONS, and each direction catches a different change:
+
+    * a member the producer emits and the register does not know -> a key reached the wire
+      whose source no arm in this file asserts. Measured: a producer emitting
+      `VALUE_LABEL["fin_burn_rate"]` and a producer emitting an invented literal were BOTH
+      quiet before this arm.
+    * a member the register holds and the producer no longer emits -> the field stopped
+      travelling. The typed-values arm is blind to this by construction, because it iterates
+      the producer's own keys.
+    * a verb gaining or losing a summary at all -> the key sets must match, or a new verb's
+      summary would merge onto the wire with nothing written down for it.
+
+    The register is CONTENT, not shape, so it is spelled out rather than derived. Deriving it
+    from `summary_of(rows)` would reproduce exactly the defect it exists to close.
+    """
+    assert _MEMBER_REGISTERS, "no table has a register, so this arm asserts nothing"
+    for table, (register, producers) in sorted(_MEMBER_REGISTERS.items()):
+        complaints = _summary_register_disagreements(producers, register, _rows_for)
+        assert not complaints, (
+            f"the {table} register and its producer disagree:\n  " + "\n  ".join(complaints)
+        )
+
+
+# The doctored producers the control arm drives the comparison with. A fake summary needs no
+# rows, so each ignores its argument -- the point is the member SET, and doctoring measures.py
+# to exercise this would put the subject and the instrument in the same file.
+_REGISTER_MUST_REPORT = (
+    ("a producer emitting a key the register does not hold",
+     {"fin_x": lambda _r: {"kept": 1, "smuggled": 2}}, {"fin_x": frozenset({"kept"})},
+     "smuggled"),
+    ("a producer that stopped emitting a registered key",
+     {"fin_x": lambda _r: {"kept": 1}}, {"fin_x": frozenset({"kept", "dropped"})},
+     "dropped"),
+    ("a verb whose summary is merged with nothing written down for it",
+     {"fin_x": lambda _r: {"kept": 1}, "fin_y": lambda _r: {"also": 2}},
+     {"fin_x": frozenset({"kept"})}, "fin_y"),
+    ("a registered verb measures.py no longer declares a summary for",
+     {"fin_x": lambda _r: {"kept": 1}},
+     {"fin_x": frozenset({"kept"}), "fin_gone": frozenset({"kept"})}, "fin_gone"),
+    ("a producer returning None, which `or {}` turns into an empty member set",
+     {"fin_x": lambda _r: None}, {"fin_x": frozenset({"kept"})}, "kept"),
+)
+
+
+def test_the_SUMMARY_REGISTER_COMPARISON_can_actually_REPORT():
+    """THE CONTROL FOR THE ARM ABOVE, and it exists because that arm's whole content is a
+    comparison the real tree satisfies -- so on this tree it is green whether it compares
+    anything or not. Both defects it was written to close (a producer emitting another
+    declaration table's content, a producer inventing a key) were QUIET before it existed, and
+    a green arm is not evidence that they are covered now.
+
+    Five doctored producers, each with the disagreement it must be able to name. The last one
+    is the shape the envelope actually depends on: `SUMMARY[fn](rows) or {}` turns a None
+    summary into an ABSENT key rather than a null one, so a producer that starts returning None
+    must read as every registered member having stopped travelling, not as a clean pass.
+    """
+    for label, producers, register, fragment in _REGISTER_MUST_REPORT:
+        found = _summary_register_disagreements(producers, register, lambda _fn: None)
+        assert found, f"{label}: the comparison reported nothing"
+        assert any(fragment in c for c in found), (
+            f"{label}: the comparison reported {found}, and none of it names {fragment!r} -- "
+            f"a complaint that does not name its subject sends the next reader to the wrong "
+            f"half of the pair."
+        )
+
+
+def test_the_SUMMARY_REGISTER_is_SPELLED_OUT_and_not_DERIVED():
+    """THE ONE THING THE MUTATION PASS CANNOT REACH. A register closes the leak only while it is
+    written down: replace those literals with anything computed from `summary_of(rows)` and the
+    comparison becomes a call against itself again, which is exactly the state that let a producer
+    put another table's content on the wire with every arm green. That edit looks like a tidy-up,
+    and no mutant of the register's CONTENT can object to it, because a derived register agrees
+    with the producer by construction.
+
+    NO WHITELIST. This arm used to filter the entry's AST against a tuple of permitted node types,
+    and cortex-60's S2 caught it: one more name in that tuple and the derived register is legal
+    again -- measured QUIET on 2026-09-26, the escape hatch from every other arm here being itself
+    unguarded. `ast.Tuple` and `ast.List` in that tuple were measured as doing nothing at all
+    (removing them: QUIET), so they are gone with the measurement recorded rather than defended
+    with a new case: a quiet branch that is REDUNDANT is not the same object as a hole.
+
+    In its place `_literal_string_set`, a property with nothing to append a name to, applied to
+    THREE declarations rather than one -- and the other two are why: measured 2026-09-26, deriving
+    `_MEMBER_REGISTERS` from the allowance was QUIET, and deriving the allowance from
+    `_MEMBER_REGISTERS` was QUIET. I had named that exact vacuous repair in this file's own comment
+    the round before and measured it in neither direction. A warning in prose is not a check.
+
+    Read from the file rather than from the imported object, because by the time the object exists
+    a comprehension has already produced a perfectly ordinary frozenset.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    assert _MEMBER_REGISTERS, "no table has a register, so this arm asserts nothing"
+
+    def _sole(name: str) -> ast.expr:
+        found = [
+            n.value
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(t, ast.Name) and t.id == name
+                for t in ([n.target] if isinstance(n, ast.AnnAssign) else n.targets)
+            )
+        ]
+        assert len(found) == 1, (
+            f"{name} is assigned {len(found)} times in this file, and this arm reads the wrong "
+            f"one unless there is exactly one. A table in the allowance is required to keep its "
+            f"register under that name."
+        )
+        return found[0]
+
+    # THE ALLOWANCE ITSELF. `frozenset(_MEMBER_REGISTERS)` makes the equality that guards it
+    # vacuous -- a derived register one layer up -- and was QUIET before this line existed.
+    allowance = _literal_string_set(_sole("_ACCOUNTED_OPAQUE_SPREAD_TABLES"))
+    assert allowance == frozenset(_ACCOUNTED_OPAQUE_SPREAD_TABLES), (
+        f"the opaque-spread allowance is not a written-down set of string literals: the source "
+        f"reads {allowance!r} against the object's {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)}. "
+        f"Deriving it from the registers makes the equality that guards it assert nothing."
+    )
+
+    # AND THE REGISTER MAP. A comprehension over the allowance auto-creates an entry for every
+    # name added to it, which is the same vacuous repair pointing the other way.
+    regmap = _sole("_MEMBER_REGISTERS")
+    assert isinstance(regmap, ast.Dict) and regmap.keys and all(
+        isinstance(k, ast.Constant) and isinstance(k.value, str) for k in regmap.keys
+    ), (
+        f"_MEMBER_REGISTERS is written as {type(regmap).__name__} rather than a dict literal with "
+        f"literal table names. Derived from the allowance it grants every name its own excuse."
+    )
+    assert {k.value for k in regmap.keys} == set(_MEMBER_REGISTERS), (
+        f"the _MEMBER_REGISTERS literal names {sorted(k.value for k in regmap.keys)} and the "
+        f"object the other arms drive holds {sorted(_MEMBER_REGISTERS)}"
+    )
+
+    for table, (register, _producers) in sorted(_MEMBER_REGISTERS.items()):
+        name = f"_{table}_MEMBERS"
+        value = _sole(name)
+        assert isinstance(value, ast.Dict) and value.keys and all(
+            isinstance(k, ast.Constant) for k in value.keys
+        ), (
+            f"{name} is written as {type(value).__name__} rather than a non-empty dict "
+            f"literal with literal verb names. A computed register cannot refuse a producer."
+        )
+        from_source = {}
+        for k, v in zip(value.keys, value.values):
+            members = _literal_string_set(v)
+            assert members is not None, (
+                f"the {name} entry for {k.value!r} is not a written-down set of string literals. "
+                f"Anything computed agrees with whatever the producer emits, which is the defect "
+                f"this register exists to close: measured 2026-09-26, a summary emitting "
+                f"`VALUE_LABEL[\"fin_burn_rate\"]` was QUIET."
+            )
+            from_source[k.value] = members
+        assert from_source == {k: frozenset(v) for k, v in register.items()}, (
+            f"the {name} literal in this file and the register the other arms DRIVE are not the "
+            f"same thing: source has {sorted(from_source)}, driven object has "
+            f"{sorted(register)}. Asserting the shape of a literal nothing reads is decoration."
+        )
+
+
+def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
+    """THE DIRECTION TEST'S OWN CONCLUSION, ACTED ON. Unwiring each of the seven travelling
+    tables showed these two are the only ones whose loss nothing but the ratchet notices -- and
+    a ratchet catches SHRINKAGE only, so cortex-60's read is right: they want a declaration-side
+    arm, not a better ratchet.
+
+    Iterating the TABLE is what makes an unwiring red, because the two derivation directions
+    have opposite blind spots: an arm over the declaration reds when the builder stops reading
+    it and is blind to a table the builder reads that measures.py never declared; an arm over
+    the builder is total on contents and blind to unwiring. This is the cheap half of that pair.
+
+    THE SENTENCE THAT USED TO END THIS DOCSTRING IS WITHDRAWN -- "after it the ratchet covers
+    nothing alone, which is the point at which a ratchet is honest rather than load-bearing".
+    It was the same claim the ratchet's own docstring made, measured with the same single-edit
+    mutants, and when that claim was re-measured with a two-edit mutant and struck at the
+    source, it survived HERE. A correction has as many homes as the claim had. Removing a wired
+    element outright while its declaration-side arm is disabled reds at the ratchet ALONE, so
+    the ratchet is load-bearing and this arm does not retire it; see its docstring for the
+    mutant that establishes the boundary.
+    """
+    for table, key in (("OUTPUT_URI", "output_uri"), ("VALUE_LABEL", "value_label")):
+        decl = getattr(measures, table)
+        for fn in sorted(decl):
+            body = _envelope(fn)
+            assert body.get(key) == decl[fn], (
+                f"{fn}: {table} declares {decl[fn]!r} and the body carries "
+                f"{body.get(key)!r} under `{key}`"
+            )
+
+
+def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
+    """THE REACH ARM, and cortex-60's criterion is what it is built against: the defect is not
+    that a population is derived, it is that PRODUCTION'S REACH IS WIDER THAN THE TEST'S.
+    `_envelope_tables` once matched ONE literal form, `measures.NAME`, while main.py can read a
+    table any way Python allows. It now resolves the module's bindings from main.py's own
+    imports (`_measures_bindings`), so an alias is not a blind spot -- but the reason that
+    helper exists is measured, not assumed. Measured on this file: a table wired in as
+    `getattr(measures, "VALUE_UNIT").get(fn, "x")` put `new_thing` on the wire, sourced from a
+    declaration table, and every arm stayed GREEN -- it is absent from the population, so it
+    is absent from the generic arm, so it is absent from `undecided`. The gap detector cannot
+    report a gap it is not looking at.
+
+    So this arm partitions what production CANNOT hide: the keys the builder literally emits.
+    Every one is the lowercased name of a table in the population, a member SUMMARY spreads, or
+    one of the composed keys named above -- and an unaccounted key reds whatever access form
+    put it there."""
+    block = _builder_block()
+    emitted, opaque, computed = _builder_key_forms()
+    assert emitted, "found no keys in the envelope builder -- its shape moved"
+
+    # THE CALL, NOT THE LITERAL. cortex-60's correction: their own `useComposerDraft` computes
+    # its storage key, so a literal-key partition would have missed a module already present.
+    # My nine keys are literals TODAY; a key that becomes f-string composed must red here
+    # rather than travel unasserted, which is exactly what it did when this was a regex.
+    assert not computed, (
+        f"the envelope emits {len(computed)} key(s) this file cannot account for by name: "
+        f"{computed} -- a computed key reaches the wire and no arm can assert it. Give it a "
+        f"literal name, or assert it where it is composed."
+    )
+    # AN OPAQUE SPREAD IS ACCOUNTED BY WHAT IT READS, NOT BY WHAT IT SPELLS. A spread drawing
+    # on no declaration table at all is unaccounted; one drawing on a table outside the
+    # allowance carries that table's keys to the wire with nothing asserting them.
+    for element in opaque:
+        refs = _table_refs(element)
+        src = ast.unparse(element)
+        assert refs, (
+            f"the envelope spreads a mapping from an unaccounted source: {src!r} -- whatever "
+            f"keys it carries reach the wire unasserted"
+        )
+        extra = refs - _ACCOUNTED_OPAQUE_SPREAD_TABLES
+        assert not extra, (
+            f"the envelope spreads {sorted(extra)} inside an element accounted for "
+            f"{sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)}: {src!r} -- every key those tables "
+            f"carry reaches the wire, and no arm in this file addresses them"
+        )
+
+    # AND EVERY MERGED OPERAND MUST BE A SHAPE THIS FILE RECOGNISES, at any depth. The two
+    # assertions above account a spread by what `_table_refs` can READ in it, which made the
+    # resolver's documented tail exploitable rather than merely narrow: `**held`, one level
+    # inside the accounted SUMMARY element, was QUIET. This rule is the other way round -- a
+    # dict literal or an allowed-table expression, and everything else counts.
+    unrecognised = _unrecognised_spread_operands(_builder_dict())
+    assert not unrecognised, (
+        f"the envelope merges {len(unrecognised)} operand(s) of a shape this file cannot "
+        f"account for: {unrecognised} -- whatever keys they carry reach the wire unasserted. A "
+        f"local or a helper return is exactly how the resolver's tail becomes a leak; give the "
+        f"value literal keys, or read the table at the merge and add it to "
+        f"_ACCOUNTED_OPAQUE_SPREAD_TABLES **and** a spelled-out register in _MEMBER_REGISTERS "
+        f"-- the name alone excuses nothing."
+    )
+
+    from_tables = {t.lower() for t in _envelope_tables()}
+
+    # A TERM IN THE WRONG LAYER, REMOVED. This subtracted `- spread_by_summary`, the member
+    # names SUMMARY contributes, first computed as `set(summary_of(rows) or {})` and then --
+    # after that was caught as an exclusion derived from its own subject -- from the register.
+    # Both were BORN DEAD. `emitted` is a STATIC read of the builder's literal keys; a summary
+    # member reaches the wire at RUNTIME through an opaque `**` and is never a member of
+    # `emitted` at all. Measured 2026-09-26: the intersection is empty, and the nine literal
+    # keys are exactly six table-sourced plus three excused, leaving the term nothing to
+    # remove. Fixing the tautology did not make it cover anything -- N9, a widened producer
+    # with the register arm disabled, was QUIET with the term as shipped.
+    #
+    # AND HAD IT EVER FIRED IT WOULD HAVE BEEN WRONG. The only state in which it removes
+    # something is a builder spelling a literal key that shares a name with a summary member,
+    # and excusing that is exactly the excuse-by-NAME the operand rule above exists to refuse.
+    # So the collision it would have hidden is asserted instead -- in the layer where it lives.
+    # What accounts for the spread is not a subtraction here; it is
+    # test_the_SUMMARY_MEMBERS_REGISTER_and_the_PRODUCER_agree, over the spread's own content.
+    collides = emitted & {k for members in _SUMMARY_MEMBERS.values() for k in members}
+    assert not collides, (
+        f"the envelope spells {sorted(collides)} as a literal key AND merges a SUMMARY member "
+        f"of the same name through the opaque `**` spread, so one key has two sources and "
+        f"whichever element comes last in the builder silently wins. Rename one, or drop the "
+        f"literal -- do not leave the wire deciding it by element order."
+    )
+
+    unaccounted = emitted - from_tables - _NOT_FROM_A_TABLE
+    assert not unaccounted, (
+        f"these keys reach the /measure envelope and no arm in this file asserts them: "
+        f"{sorted(unaccounted)}. If one reads a declaration table by a form "
+        f"`measures.NAME` does not match, the population cannot see it."
+    )
+
+    # THE EXCUSE LIST, CHECKED. Otherwise it can quietly absorb a table-sourced key and this
+    # arm becomes the thing it was written to prevent.
+    builder = _builder_dict()
+    for key in sorted(_NOT_FROM_A_TABLE):
+        values = [
+            v for k, v in zip(builder.keys, builder.values)
+            if isinstance(k, ast.Constant) and k.value == key
+        ]
+        assert len(values) == 1, (
+            f"`{key}` is excused and the builder emits it {len(values)} times -- zero means the "
+            f"excuse list has gone stale, and more than one means the excuse covers a key it "
+            f"was never read against"
+        )
+        # ON THE AST, not on the line's text: `"measures." not in source` was a second typed-in
+        # module name, so an aliased read would have been excused as a composed key.
+        reads = _table_refs(values[0])
+        assert not reads, (
+            f"`{key}` is excused as a composed key, but its value reads {sorted(reads)}: "
+            f"{ast.unparse(values[0])!r} -- it belongs in the population, not the excuse list"
+        )
+
+
+def test_the_wire_gap_detector_and_its_prose_stripper_can_actually_FAIL():
+    """THE CONTROL, on data this file owns. A detector returning None for everything reads
+    exactly like a clean wire, and a stripper that strips nothing reads exactly like one that
+    works -- this file has already paid once for a token matched in prose about itself."""
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {"value_unit": "USD"}) is None
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {}), "an absent key read as present"
+    assert _wire_gap("VALUE_UNIT", "f", "USD", {"value_unit": "EUR"}), "a wrong value read as right"
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {"n": 3}) is None
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {"n": 2}), "a wrong count read as right"
+    assert _wire_gap("SUMMARY", "f", {"n": 3}, {}), "a dropped summary read as delivered"
+    assert "HIDDEN" not in _strip_prose("# measures.HIDDEN_TABLE[fn]\n")
+    assert "HIDDEN" not in _strip_prose('"""measures.HIDDEN_TABLE[fn]"""\n')
+    assert "HIDDEN" in _strip_prose("x = measures.HIDDEN_TABLE[fn]\n"), "the stripper ate code"
 
 
 # -- SEAL 2 -- the seam that actually broke ---------------------------------------------
@@ -871,3 +1857,286 @@ def test_every_prefix_EITHER_mirror_USES_can_actually_be_EXPANDED():
         f"_IRI_PREFIXES_FOR_LOOKUP; see tests/planning/test_lookup_prefixes_are_derived.py, "
         f"which has been reporting `docs:` missing from that very map."
     )
+
+
+# A source this file never ships, written to drive the two derivations. The decoy function carries
+# every landmark key and is NOT routed; the decoy module `other` is not measures.
+_DOCTORED_MAIN = """
+import measures as m
+from agent_fleet.finance_agent.measures import VALUE_UNIT as VU
+import entities as other
+
+
+def not_the_route():
+    return {"measure": 1, "rows": 2, "data_provenance": 3, "decoy": other.DECOY}
+
+
+@app.post("/measure/{fn}")
+def run_measure(fn):
+    held = m.VALUE_LABEL
+    return {
+        "measure": fn,
+        "rows": rows,
+        "data_provenance": prov,
+        "by_alias": m.VALUE_UNIT[fn],
+        "by_getattr": getattr(m, "SERIES")[fn],
+        "by_direct_name": VU[fn],
+        "from_another_module": other.NOT_A_TABLE,
+        "through_a_local": held[fn],
+    }
+"""
+
+
+def test_the_BUILDER_SELECTOR_and_the_BINDING_RESOLVER_can_actually_FAIL():
+    """THE CONTROL cortex-60's mutation showed was missing, and it was missing for everything I
+    added the day before.
+
+    Their suggestion was not "does the control red when the subject breaks" but "does it red when
+    the DERIVATION quietly widens" -- their own control passed under the drift it was named for.
+    Run against this file on 2026-09-26, mutating the SEAL and leaving main.py pristine:
+
+    | widening of the derivation                            | before this arm |
+    | ----------------------------------------------------- | --------------- |
+    | the alias resolver reverted to the typed-in "measures" | **QUIET**       |
+    | direct `from ...measures import NAME` bindings dropped | **QUIET**       |
+    | the alias guard dropped, so any `X.UPPER` counts       | **QUIET**       |
+    | the opaque-spread allowance widened to every table     | **QUIET**       |
+    | the three landmark keys cut to one                     | **QUIET**       |
+
+    Five of the six mutations I could think of. Only removing the landmark filter entirely reded,
+    through the exactly-one assertion -- which is why the selector now keys on the ROUTE and the
+    landmarks are a cross-check.
+
+    Everything below is driven by a doctored source, so it holds whatever main.py happens to
+    spell today."""
+    aliases, direct = _measures_bindings(_DOCTORED_MAIN)
+
+    # DERIVED, NOT TYPED. Reverting to `frozenset({"measures"})` reds here.
+    assert "m" in aliases, (
+        f"the resolver did not bind the alias in `import measures as m`: {sorted(aliases)} -- it is "
+        f"reading a name from somewhere other than the subject's imports"
+    )
+    assert "measures" not in aliases, (
+        "the resolver bound the name `measures` against a source that never imports it under that "
+        "name -- the module name is typed in somewhere"
+    )
+    assert direct == {"VU": "VALUE_UNIT"}, (
+        f"the resolver did not bind `from ...measures import VALUE_UNIT as VU`: {direct} -- a table "
+        f"imported by name reads as a bare local and is invisible to the population"
+    )
+
+    # SELECTED BY ROUTE. A landmark-keyed selector matches the decoy too and reds on count.
+    builder = _builder_dict(_DOCTORED_MAIN)
+    keys = {k.value for k in builder.keys if isinstance(k, ast.Constant)}
+    assert "by_alias" in keys and "decoy" not in keys, (
+        f"the selector picked a block that is not the routed handler: {sorted(keys)}"
+    )
+
+    # EVERY SPELLING, AND NOTHING FROM ANOTHER MODULE. Dropping the alias guard admits
+    # `other.NOT_A_TABLE` and `DECOY` and reds here.
+    refs = _table_refs(builder, (aliases, direct))
+    assert refs == {"VALUE_UNIT", "SERIES"}, (
+        f"the resolver read {sorted(refs)} from the doctored builder, expected "
+        f"['SERIES', 'VALUE_UNIT'] -- alias, getattr and direct-name spellings must all count, and "
+        f"an uppercase attribute on another module must not"
+    )
+
+    # THE TAIL, ASSERTED AS THE TAIL RATHER THAN STATED IN PROSE. cortex-60 wrote their
+    # equivalent limit into a comment as "⚠ THE IRREDUCIBLE TAIL", then found it was not
+    # irreducible -- a limit stated in prose reads as diligence and stops re-examination as
+    # effectively as a wrong answer does. So the blind spot is a live assertion: `held[fn]`,
+    # where `held = m.VALUE_LABEL`, contributes NOTHING. If that ever changes this arm reds and
+    # says so, which is the only way a shrinking tail gets noticed. The MERGE consequence of
+    # this tail is closed elsewhere and not by widening this function -- see
+    # `_unrecognised_spread_operands` and the operand cases below.
+    assert "VALUE_LABEL" not in refs, (
+        "the resolver now sees a table reached through a local variable. That is an improvement, "
+        "and it means the documented tail has shrunk: update `_table_refs`'s docstring and this "
+        "assertion together, because the tail is what tells a reader what is NOT covered"
+    )
+
+    # AND THE ALLOWANCE MUST STAY A CHOICE. Widening it to every declared table was QUIET: an
+    # allowance that admits everything is not an allowance, and the arm keyed on it then asserts
+    # nothing. Checked here rather than at module scope, because a collection error gives no
+    # failing arm NAME -- cortex-60's correction against their own marker grep this round.
+    assert _ACCOUNTED_OPAQUE_SPREAD_TABLES, (
+        "the opaque-spread allowance is empty -- no spread can be accounted at all"
+    )
+    assert _ACCOUNTED_OPAQUE_SPREAD_TABLES < _DECLARED_TABLES, (
+        f"the opaque-spread allowance {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)} is not a PROPER "
+        f"subset of the declared tables {sorted(_DECLARED_TABLES)} -- it excuses every spread"
+    )
+
+    # AND EVERY NAME IN IT MUST HAVE PAID FOR ITS PLACE. Adding REFERENCE, VERDICT or SERIES to
+    # the allowance was QUIET all three times on 2026-09-26: the set was defended at one name,
+    # and only by a control fixture's accident. A name with no register is a declarative
+    # exemption, which is a comment. Both sides are spelled out on purpose -- deriving one from
+    # the other makes this equality vacuous the same way a derived register is vacuous.
+    assert _ACCOUNTED_OPAQUE_SPREAD_TABLES == frozenset(_MEMBER_REGISTERS), (
+        f"the allowance {sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES)} and the member registers "
+        f"{sorted(_MEMBER_REGISTERS)} name different tables -- "
+        f"{sorted(_ACCOUNTED_OPAQUE_SPREAD_TABLES ^ frozenset(_MEMBER_REGISTERS))} appears in "
+        f"one and not the other. An opaque spread may be excused only by a table whose members "
+        f"are written down and compared against a producer."
+    )
+
+
+# Sources whose selection MUST fail, one per assertion in `_builder_dict`. The landmark
+# cross-check was measured QUIET under its own removal -- a guard no mutation can red is dead
+# weight described as a check, so each assertion now has a source that fires it.
+_SELECTOR_MUST_REJECT = {
+    "no routed handler at all": (
+        "\ndef run_measure(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n',
+        "addressable by its route",
+    ),
+    "two handlers on the route": (
+        '\n@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n\n\n'
+        '@app.get("/measure/{fn}/raw")\n'
+        "def run_measure_raw(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n',
+        "addressable by its route",
+    ),
+    "two envelopes out of the one handler": (
+        '\n@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    if fn:\n"
+        '        return {"measure": fn, "rows": rows, "data_provenance": prov}\n'
+        '    return {"measure": fn, "rows": [], "data_provenance": None}\n',
+        "asserts one envelope",
+    ),
+    "routed handler that is not the envelope": (
+        '\n@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        '    return {"measure": fn, "rows": rows}\n',
+        "no longer carries",
+    ),
+}
+
+
+# Builders whose merged operands the file must accept, and ones it must refuse. Written as
+# single-line pieces because a doctored source is CONTENT, and content that carries escapes or
+# quotes through a second layer of the same language is how I lost an afternoon: the nested
+# triple-quote terminated its own container and the decoys were parsed as live code.
+_ROUTED = '@app.post("/measure/{fn}")\ndef run_measure(fn):\n'
+_HEAD = '    return {\n        "measure": fn,\n        "rows": rows,\n        "data_provenance": prov,\n'
+_TAIL = "    }\n"
+
+
+def _doctored_builder(*lines: str) -> str:
+    return _ROUTED + _HEAD + "".join(f"        {l}\n" for l in lines) + _TAIL
+
+
+_OPERANDS_ACCEPTED = {
+    "no merge at all": _doctored_builder('"value_unit": measures.VALUE_UNIT[fn],'),
+    "a dict literal, merged conditionally": _doctored_builder(
+        '**({"value_unit": measures.VALUE_UNIT[fn]} if fn in measures.VALUE_UNIT else {}),'
+    ),
+    "the accounted table, called, or-ed and merged": _doctored_builder(
+        "**(measures.SUMMARY[fn](rows) or {} if fn in measures.SUMMARY else {}),"
+    ),
+}
+
+_OPERANDS_REFUSED = {
+    "a bare local": (_doctored_builder("**held,"), "held"),
+    "a helper's return": (_doctored_builder("**_grab(),"), "_grab()"),
+    "a local merged INSIDE the accounted element": (
+        _doctored_builder("**({**(measures.SUMMARY[fn](rows) or {}), **held} if fn else {}),"),
+        "held",
+    ),
+    # THE `or` BRANCH, WHICH HAD A CONSEQUENCE AND NOTHING EXERCISED IT. cortex-60 sent back
+    # the variant that found it: not only a guard kept after its subject was replaced, but a
+    # BRANCH WHOSE ACCEPTING SIDE NOTHING EVER RUNS. Dropping `_operand_leaves`'s BoolOp arm is a
+    # no-op on the tree as it stands -- the whole `call or {}` reads SUMMARY either way -- so the
+    # obvious mutation was QUIET and read as "no cover needed". Put a table on the OTHER side of
+    # the same `or` and it is a silent leak. A branch is exercised by the case that distinguishes
+    # it, not by the case that happens to run through it.
+    "a table on the far side of an `or`": (
+        _doctored_builder("**(measures.SUMMARY[fn](rows) or held),"),
+        "held",
+    ),
+    "a helper's return, one level in": (
+        _doctored_builder("**({**(measures.SUMMARY[fn](rows) or {}), **_grab()} if fn else {}),"),
+        "_grab()",
+    ),
+    "a table outside the allowance, one level in": (
+        _doctored_builder(
+            "**({**(measures.SUMMARY[fn](rows) or {}), **measures.VALUE_LABEL} if fn else {}),"
+        ),
+        "measures.VALUE_LABEL",
+    ),
+    "something from outside the engine entirely": (
+        _doctored_builder("**request.query_params,"),
+        "request.query_params",
+    ),
+    "a local merged beside literal keys, so the element CONTRIBUTES": (
+        _doctored_builder('**{"note": 1, **held},'),
+        "held",
+    ),
+    # CONTAINMENT IS NOT SHAPE -- cortex-60's J5, and the third generation of the defect above.
+    # `**_grab()` was refused because its refs are EMPTY, and that refusal hid the class: wrap
+    # the accounted read instead of replacing it and `refs <= ALLOWANCE` is satisfied by what
+    # the argument contains. Measured 2026-09-26: QUIET, with six keys from another declaration
+    # table on the wire and all 29 arms green.
+    "the accounted read LAUNDERED through a helper": (
+        _doctored_builder("**_fold(measures.SUMMARY[fn](rows) or {}),"),
+        "_fold(measures.SUMMARY[fn](rows) or {})",
+    ),
+    "laundered, then or-ed, so the leaf walker sees a well-formed branch": (
+        _doctored_builder("**(_fold(measures.SUMMARY[fn](rows)) or {}),"),
+        "_fold(measures.SUMMARY[fn](rows))",
+    ),
+    "a helper SUBSCRIPTED past the table, so the anchor is peeled to a local": (
+        _doctored_builder("**_fold(measures.SUMMARY)[fn],"),
+        "_fold(measures.SUMMARY)[fn]",
+    ),
+}
+
+
+def test_the_OPERAND_RULE_accepts_only_the_shapes_it_recognises():
+    """The control for the change of subject, in both directions.
+
+    A rule that refuses everything is as useless as one that refuses nothing, and only the
+    accepted half can tell them apart -- so today's three real operand shapes are asserted to
+    pass, and seven forms of indirection are asserted to be NAMED, not merely counted. The last
+    case is the one the previous accounting could not have caught at all: an element carrying a
+    literal key was never classified opaque, so nothing looked inside it.
+
+    The refusals assert the reported SOURCE TEXT rather than just a non-empty list, because a
+    refusal for the wrong reason credits a rule that never looked at the operand in question --
+    and the two `**held` cases differ only in depth, so a list that is merely non-empty cannot
+    distinguish them."""
+    for label, src in _OPERANDS_ACCEPTED.items():
+        assert _unrecognised_spread_operands(_builder_dict(src)) == [], (
+            f"{label}: the operand rule refuses a shape the builder uses today -- it would red "
+            f"on main.py as it stands, which makes it noise rather than a seal"
+        )
+    for label, (src, expected) in _OPERANDS_REFUSED.items():
+        refused = _unrecognised_spread_operands(_builder_dict(src))
+        assert expected in refused, (
+            f"{label}: the operand rule reported {refused} and not {expected!r} -- a merge this "
+            f"file cannot read reaches the wire, which is the shape that was QUIET on "
+            f"2026-09-26 while every arm was green"
+        )
+
+
+def test_the_BUILDER_SELECTOR_REJECTS_what_it_must():
+    """Each assertion in `_builder_dict` fired by a source written for it.
+
+    MEASURED 2026-09-26: before this arm existed, deleting the landmark cross-check outright was
+    QUIET. The cross-check had BEEN the selector until the route replaced it, and once it stopped
+    selecting, nothing was left that could tell whether it still did anything. A guard whose
+    removal changes no result is dead weight described as a check -- it gets a control or it goes.
+
+    Each case asserts the MESSAGE, not just the raise: a rejection for the wrong reason credits an
+    assertion that never fired. That is cortex-60's correction against their own wrong-reason
+    detector, applied one level in."""
+    for label, (src, fragment) in _SELECTOR_MUST_REJECT.items():
+        with pytest.raises(AssertionError) as caught:
+            _builder_dict(src)
+        assert fragment in str(caught.value), (
+            f"{label}: the selector rejected this source for the wrong reason -- expected a "
+            f"message carrying {fragment!r}, got {str(caught.value)[:160]!r}"
+        )

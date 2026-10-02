@@ -194,22 +194,36 @@ def test_no_cypher_literal_uses_SQL_COMMENT_SYNTAX():
 
     Nothing in Python's syntax objects to it, no test covered it, and the endpoint's own
     error log showed only the 500. Scanned across the Cypher-bearing modules rather than
-    the one that broke, because the next one will be somewhere else."""
+    the one that broke, because the next one will be somewhere else.
+
+    THE MODULES ARE DERIVED, NOT LISTED. The list this replaced named four files: one
+    (`dynamic_supervisor.py`) carried no Cypher at all, and the registrar's statements had just
+    moved out of another (`v2_substrate.py`) into the SDK writer, which it did not name. A
+    Cypher-bearing file is one with a triple-quoted literal containing a line that OPENS with a
+    clause; a docstring that merely mentions MERGE does not open a line with it."""
     import pathlib
     import re
 
     root = pathlib.Path(__file__).resolve().parents[2]
-    offenders = []
-    for rel in ("agent_fleet/ontology_service/main.py",
-                "agent_fleet/mesh_registrar/v2_substrate.py",
-                "src/iagent/defs/dynamic_supervisor.py"):
-        text = (root / rel).read_text(encoding="utf-8")
-        for lit in re.findall(r'"""(.*?)"""', text, re.S):
-            if not re.search(r"\b(MATCH|MERGE|RETURN|CALL)\b", lit):
-                continue  # a docstring, not a query
-            for line in lit.split("\n"):
-                if line.lstrip().startswith("--"):
-                    offenders.append(f"{rel}: {line.strip()[:60]}")
+    clause = re.compile(r"^\s*(MATCH|MERGE|CALL|RETURN)[\s(]", re.M)
+    bearing: dict = {}
+    for top in ("agent_fleet", "src", "scripts"):
+        for path in (root / top).rglob("*.py"):
+            if {".venv", "__pycache__", "baml_client"} & set(path.parts):
+                continue
+            lits = [lit for lit in re.findall(r'"""(.*?)"""', path.read_text(encoding="utf-8"),
+                                              re.S) if clause.search(lit)]
+            if lits:
+                bearing[path.relative_to(root).as_posix()] = lits
+    # The floor. A derived population is blind to its subject being deleted or moved out of
+    # reach, so the two modules that MUST hold Cypher are named: the reader the 500 came from
+    # and the writer every registrar edge now goes through.
+    for must in ("agent_fleet/ontology_service/main.py",
+                 "agent_fleet/utils/mesh_writers/neo4j_graph.py"):
+        assert must in bearing, f"{must} no longer carries a Cypher statement the scan can see"
+    offenders = [f"{rel}: {line.strip()[:60]}"
+                 for rel, lits in bearing.items() for lit in lits
+                 for line in lit.split("\n") if line.lstrip().startswith("--")]
     assert not offenders, (
         "SQL-style `--` comment inside a Cypher literal; Neo4j rejects the whole query:\n  "
         + "\n  ".join(offenders)

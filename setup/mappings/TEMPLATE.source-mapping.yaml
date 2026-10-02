@@ -36,7 +36,7 @@ source:
   # WHO OWNS THE TRUTH. The SAME value for every path, always — this is lineage,
   # not source identity. Every degradation path mirrors ONE authoritative system.
   authoritative_source: "windchill"
-  # THE DEGRADATION PATH — direct | etl | warehouse | manual-export.
+  # THE DEGRADATION PATH — direct | etl | warehouse | manual-export | user-drop (ADR-0041 §2).
   # This is the field the acceptance queries group by, so it must be honest:
   # a manual export declared as `etl` erases the distance it exists to record.
   obtained_via: ""

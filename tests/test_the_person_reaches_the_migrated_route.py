@@ -440,6 +440,14 @@ def test_HOP_11_lands_in_the_POST_PAYLOAD_and_not_in_one_of_the_seven_other_dict
 #: the subject assertion and the kind assertion rather than only the one the hop table covers.
 EXPECTED_MINTS: set[str] = {"_class_pool_via_mesh_sync", "_predicate_pool_via_mesh_sync"}
 
+#: Mints OUTSIDE the chain, each one admitted only because it declares ``kind="service"`` as a
+#: literal, so the SDK's ``require_person`` refuses every read made with it. Arrived with master's
+#: universal-referent leg (``_POOL_READ_INITIATOR``, module level, a Jena CONSTRUCT whose route
+#: carries no caller identity -- its comment says so and calls the refusal the designed branch).
+#: Lane 1's 09-29 merge census named this mint as red (c). It is not a hop: no identity reaches
+#: it. An entry here is a refused read, never an anonymous one; the arm below checks the kind.
+REFUSED_MINTS: dict[str, str] = {"<module>": "_POOL_READ_INITIATOR"}
+
 
 # -- the terminal: what the identity is FOR ----------------------------------------------------
 
@@ -496,10 +504,31 @@ def test_the_ENGINE_mints_an_Initiator_only_where_this_file_seals_the_chain() ->
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "Initiator":
             minters.setdefault(enclosing.get(id(node), "<module>"), []).append(node.lineno)
-    assert set(minters) == EXPECTED_MINTS, (
+    assert set(minters) == EXPECTED_MINTS | set(REFUSED_MINTS), (
         f"the set of Initiator mints in {ENGINE_O} changed: { {k: v for k, v in minters.items()} }\n"
-        f"  expected exactly: {sorted(EXPECTED_MINTS)}\n"
+        f"  expected exactly: {sorted(EXPECTED_MINTS | set(REFUSED_MINTS))}\n"
         "A new mint is a new identity boundary. Add its chain to HOPS and name it here; do not "
         "widen this set on its own, because a mint nothing threads is an anonymous read that every "
         "other arm in this file reports as healthy."
+    )
+
+
+@pytest.mark.parametrize("where", sorted(REFUSED_MINTS))
+def test_a_mint_OUTSIDE_the_chain_is_a_SERVICE_and_so_is_refused_every_time(where: str) -> None:
+    """The partition's other half. A mint no chain reaches is admitted by the arm above ONLY as a
+    refused read: its ``kind`` must be the literal ``"service"``, assigned to the name recorded
+    here. Flip it to ``"person"`` and the read is attributed to a subject nobody threaded, which is
+    the anonymous read this file exists to catch -- so that flip reds here, by name."""
+    name = REFUSED_MINTS[where]
+    tree = _tree(ENGINE_O)
+    found = [
+        n.value for n in tree.body
+        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)
+        and isinstance(n.value, ast.Call) and ast.unparse(n.value.func).split(".")[-1] == "Initiator"
+    ] if where == "<module>" else []
+    assert len(found) == 1, f"expected one module-level `{name} = Initiator(...)`, found {len(found)}"
+    kinds = [k.value for k in found[0].keywords if k.arg == "kind"]
+    assert len(kinds) == 1 and isinstance(kinds[0], ast.Constant) and kinds[0].value == "service", (
+        f"{name} is minted outside the chain with kind={[ast.unparse(k) for k in kinds]}: only a "
+        "literal 'service' makes an unthreaded mint a refused read rather than an anonymous one"
     )

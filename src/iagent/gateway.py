@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -41,7 +42,9 @@ from typing import AsyncGenerator, Any, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import (
+    Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -129,6 +132,28 @@ async def lifespan(application: FastAPI):
         logger.info("canvas persistence dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("user_canvas migration failed (persistence dormant): %s", exc)
+    # ADR-0041 §8 ingestion seam: ensure the ingest_status_projection table exists (same
+    # Postgres, same dormant-on-unset-DSN posture as human_task_projection / user_canvas above).
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import ingest_status
+        await run_in_threadpool(ingest_status.apply_migration)
+        logger.info("ingest_status_projection migration applied")
+    except ingest_status.IngestStatusConfigError as exc:
+        logger.info("ingestion seam dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("ingest_status migration failed (ingestion seam dormant): %s", exc)
+    # ADR-0041 Open §1 (ruled 2026-09-30): the document_promotion decision record lives in the
+    # same Postgres. Dormant on an unset DSN; `promotion.act` then refuses 503 naming the ledger.
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import promotion_stores
+        await run_in_threadpool(promotion_stores.apply_migration)
+        logger.info("document_decision_record migration applied")
+    except promotion_stores.DecisionLedgerConfigError as exc:
+        logger.info("promotion ledger dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("document_decision_record migration failed (ledger dormant): %s", exc)
     # ── THE BFF REGISTERS ITS ONE ORCHESTRATION INTENT ──────────────────────
     #
     # RULED 2026-08-28: the owner of the behaviour is the only honest source of
@@ -606,6 +631,12 @@ class HumanTaskRegisterRequest(_BaseModel):
     workflow_id: Optional[str] = None
     subject_ref: Optional[str] = None
     payload: Optional[dict] = None
+    # NEW (HAZ-1003): which Restate service owns the run, and the promise name it awaits.
+    # Validated against human_tasks.ALLOWED_WORKFLOW_SERVICES at register time — a name outside
+    # it is refused HERE (422) rather than trusted through to `/act`, which would otherwise
+    # interpolate an unvetted string into a Restate ingress URL.
+    workflow_service: Optional[str] = None
+    promise_name: Optional[str] = None
 
 
 class HumanTaskActRequest(_BaseModel):
@@ -645,7 +676,8 @@ async def register_human_task(
                 kind=req.kind, task_id=req.task_id, audience=req.audience,
                 title=req.title, summary=req.summary, requested_by=req.requested_by,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
-                payload=req.payload,
+                payload=req.payload, workflow_service=req.workflow_service,
+                promise_name=req.promise_name,
             )
         )
     except human_tasks.HumanTaskConfigError as exc:
@@ -654,6 +686,12 @@ async def register_human_task(
         # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
         # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.UnknownWorkflowService as exc:
+        # Same TERMINAL-4xx discipline as NoEntitledRecipients: an unvetted service name is a
+        # permanent misconfiguration (a typo, or a caller naming a service that was never meant
+        # to be resumable), not a transient failure — refuse rather than register a row `/act`
+        # could later be tricked into resuming against.
+        raise HTTPException(status_code=422, detail={"error": "unknown_workflow_service", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -1630,6 +1668,291 @@ async def plan_state_version(
     return {"state_ref": out.get("state_ref", state_ref), "state_version": out.get("version")}
 
 
+# -- Cost export packages (relay item 3) — the disclosure download seam -------
+#
+# THE SAME VARIABLE THE ENGINE REGISTERS WITH (measures.py's `_PUBLIC_BASE_ENV`), deliberately
+# not a second name: the chart's configmap already sets it for every pod, and a route reading
+# a name nobody sets is the ENGINE_P_URL mistake (two lines up) happening a second time.
+_ENGINE_COST_URL = os.getenv("ENGINE_COST_PUBLIC_URL", "http://iagent-engine-cost:8097")
+
+# The engine's own sha256-locator shape (`measures.package_export`'s `artifact_sha256`):
+# "sha256:" + 64 lowercase hex digits. A response missing this, or carrying something that
+# merely looks like it, is not a verifiable artifact and must not be reported as one.
+_SHA256_LOCATOR_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _export_recipients_for(user: "User") -> list[str]:
+    """Every recipient scope `user` may export to or download from, keyed on `authz_id` — the
+    SAME claim the engine's own /artifact route keys its authorization on (main.py's
+    `_scope_of_artifact` + `measures.readers_for_recipient`), never `user.id`. The two checks
+    agree because both read `seed.readers_for_recipient`.
+    """
+    from agent_fleet.cost_agent import seed as _cost_seed
+    return sorted(
+        s for s in _cost_seed.RECIPIENT_SCOPES
+        if user.authz_id and user.authz_id in _cost_seed.readers_for_recipient(s)
+    )
+
+
+def _user_bearer(request: Request) -> str:
+    """The caller's raw bearer, exactly as the disposition route reads it above."""
+    return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+
+
+class ExportAnswer(_BaseModel):
+    artifact_id: str
+
+
+class ExportPackageRequest(_BaseModel):
+    answers: list[ExportAnswer] = []
+    # ADR-0047 §1: no default recipient. A disclosure verb that can be invoked without naming
+    # its recipient is one keystroke from disclosing the wrong program to the wrong party.
+    recipient_scope: Optional[str] = None
+    # Accepted and echoed back on the response; NOT used to select a template or to shape the
+    # engine call. No template surface exists yet on either side of this hop.
+    template_id: Optional[str] = None
+
+
+def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
+    """Resolve each canvas answer id through the SAME artifact-store query `get_artifact`
+    uses, keyed the same way (`PRODUCED_FOR` against `user_id`, the writer's key — see
+    `get_artifact`'s own comment on why `id` and not `authz_id` is correct here).
+
+    REFUSED, NEVER DROPPED (canvas.py's rule): an id that does not resolve raises 404 rather
+    than being silently omitted from the canvas — an export quietly missing an answer nobody
+    asked to drop would look complete while disclosing less than the caller intended.
+    """
+    resolved: list[dict] = []
+    for artifact_id in artifact_ids:
+        try:
+            with neo4j_driver.session() as session:
+                rec = session.run(
+                    _ARTIFACT_BY_ID_CYPHER, artifact_id=artifact_id, user_id=user_id
+                ).single()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("export answer read failed for %s: %s", artifact_id, exc)
+            raise HTTPException(status_code=503, detail="artifact store unavailable") from exc
+
+        if not rec or not rec.get("is_owner"):
+            raise HTTPException(
+                status_code=404,
+                detail={"reason": "answer_not_found", "artifact_id": artifact_id},
+            )
+
+        intent: dict = {}
+        if rec.get("resolved_intent"):
+            try:
+                intent = json.loads(rec["resolved_intent"]) or {}
+            except (ValueError, TypeError):
+                intent = {}
+
+        def _or_none(v):
+            v = str(v or "").strip()
+            return None if not v or v == "UNKNOWN" else v
+
+        resolved.append({
+            "id": str(rec["id"]),
+            "verb_iri": _or_none(intent.get("verb_iri")),
+            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        })
+    return resolved
+
+
+@app.get("/export/package/recipients")
+async def export_package_recipients(current_user: User = Depends(get_current_user)):
+    """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
+    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
+    return {
+        "recipients": [
+            {"value": s, "label": s} for s in _export_recipients_for(current_user)
+        ]
+    }
+
+
+@app.post("/export/package")
+async def export_package(
+    body: ExportPackageRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Produce a recipient's disclosure package — THE GOVERNED EMIT, run synchronously.
+
+    Production never returns `"status": "producing"`: `measures.package_export` runs and
+    writes to disk inline, in the same request, so there is no async job to poll. A caller
+    gets `"exists"` or `"failed"` in the same response that asked for the build.
+
+    Four hard stops, in order, each refusing before the next is even attempted:
+      1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
+      2. `recipient_scope` the caller may not export to -> 403 (see below)
+      3. any canvas answer id that does not resolve -> 404, refused rather than dropped
+      4. the engine unreachable, or the engine's own refusal, forwarded verbatim
+    """
+    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+
+    recipient_scope = (body.recipient_scope or "").strip()
+    if not recipient_scope:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason": "recipient_required", "options": options},
+        )
+
+    if recipient_scope not in _export_recipients_for(current_user):
+        # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
+        # shares one directory (seed.py's RECIPIENT_READERS comment) and a canvas narrows
+        # what the file carries, so an unentitled producer could OVERWRITE a recipient's
+        # package with a different canvas — a write-side confused-deputy, not just a read.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": "not_a_recipient_you_may_export_to",
+                "recipient_scope": recipient_scope,
+            },
+        )
+
+    canvas = None
+    if body.answers:
+        resolved = _resolve_export_answers(
+            [a.artifact_id for a in body.answers], current_user.id
+        )
+        canvas = {"answers": resolved}
+    # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
+    # program, same as it did before canvases existed.
+
+    params: dict = {"recipient_scope": recipient_scope}
+    if canvas is not None:
+        params["canvas"] = canvas
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/measure/package_export",
+                json={"params": params},
+                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
+                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # applied here — a service calling on the caller's behalf must carry THAT
+                # caller's identity or refuse).
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+
+    if out.get("refused"):
+        return {
+            "export_id": None,
+            "status": "failed",
+            "recipient_scope": recipient_scope,
+            "reason": out.get("reason"),
+            "outcome": out.get("outcome"),
+        }
+
+    sha = out.get("artifact_sha256")
+    filename = out.get("artifact_filename")
+    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
+    export_status = "exists" if exists else "failed"
+    reason = None if exists else "engine returned no verifiable artifact hash"
+
+    return {
+        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
+        # with the same inputs reports the same export_id.
+        "export_id": sha if exists else None,
+        "status": export_status,
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
+        # the engine directly, which this route's own authorization check would then be
+        # bypassable around.
+        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
+        "artifact_sha256": sha,
+        "artifact_bytes": out.get("artifact_bytes"),
+        "artifact_filename": filename,
+        "algorithm_sha": out.get("algorithm_sha"),
+        "lots_disclosed": out.get("lots_disclosed"),
+        "sections": out.get("sections"),
+        "template_id": body.template_id,
+    }
+
+
+@app.get("/export/package/artifact/{filename}")
+async def export_package_artifact(
+    filename: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks
+    for: the engine repeats the same check on the same person's token (main.py's /artifact,
+    ~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not
+    redundant — it is the ONLY check between an unentitled browser and the engine's bytes,
+    since the engine sits behind the mesh and is not itself reachable from a browser.
+    """
+    from agent_fleet.cost_agent import seed as _cost_seed
+
+    scope = _cost_seed.scope_of_artifact(filename)
+    if scope is None:
+        # THE CLOSED SET. Same structural traversal defence as the engine's own route: a
+        # filename this engine could not have produced is refused outright rather than
+        # sanitized and forwarded.
+        raise HTTPException(
+            status_code=404,
+            detail=f"{filename!r} is not an export artifact this gateway serves",
+        )
+
+    if scope not in _export_recipients_for(current_user):
+        # NAMES THE PACKAGE, NOT ITS READERS — same wording and reasoning as the engine's own
+        # /artifact 403 (cost_agent/main.py ~700-716).
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"caller {current_user.authz_id or 'unidentified'!r} is not entitled to the "
+                f"package for {scope!r}. This artifact is a customer disclosure and is "
+                f"served only to the recipient it was produced for."
+            ),
+        )
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rr = await client.get(
+                f"{_ENGINE_COST_URL}/artifact/{filename}",
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    etag = rr.headers.get("etag") or rr.headers.get("ETag")
+    if etag:
+        headers["ETag"] = etag
+
+    return Response(
+        content=rr.content,
+        media_type=rr.headers.get("content-type", "application/octet-stream"),
+        headers=headers,
+    )
+
+
 # -- The plan WRITE seam (ADR-0042 section 3) ---------------------------------
 #
 # Engine P has had a complete write surface since Phase 1 -- fork, append op, baseline op,
@@ -2486,6 +2809,39 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+def _promotion_stores(acted_by: str):
+    """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
+
+    All four are built here: the ledger (Postgres, beside human_task_projection), the objects
+    (the seam's bucket), the GRAPH through the SDK graph writer, and the INDEXES over the
+    declared ingest-carrying collections. The graph writes as the PERSON acting -- `acted_by`,
+    the caller `can_act` is asked about -- so it is built per act, never once at startup.
+
+    What this does NOT lift: a promotion still needs the ingest node. `/ingest` now creates one
+    for a new arrival, best-effort, through this same home's `create_node` (see
+    `_create_ingest_node`, ruled 2026-09-30) -- but that call is logged and swallowed on
+    failure, never raised, so a document can still arrive at `promotion.act` with no node. The
+    409 `ingest_node_absent` answer below is that honest, still-live case, not a historical one.
+    A store that cannot be built is None, and the act refuses 503 naming it before anything is
+    written."""
+    from iagent_mesh.interfaces import Initiator
+
+    from . import promotion, promotion_stores
+
+    try:
+        graph = promotion_stores.Neo4jIngestGraph(
+            driver=neo4j_driver, initiator=Initiator(subject=acted_by, kind="person"))
+    except Exception as exc:  # noqa: BLE001 — refused by name downstream, never a 500 here
+        logger.warning("promotion graph store unavailable for %r: %s", acted_by, exc)
+        graph = None
+    return promotion.PromotionStores(
+        ledger=promotion_stores.PgDecisionLedger() if promotion_stores.configured() else None,
+        graph=graph,
+        indexes=promotion_stores.DeclaredIngestIndexes(),
+        objects=promotion_stores.S3Quarantine(_build_s3_client, _ARTIFACT_BUCKET),
+    )
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -2577,6 +2933,66 @@ async def act_on_human_task(
             "allowed": _allowed_or_empty(match.get("kind") or ""),
             "message": str(exc),
         })
+
+    # FULFILLMENT (document_promotion, ADR-0041 §5/§6): the effect runs BEFORE the projection
+    # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
+    # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
+    # can_act itself. Every refusal carries its own status; none resolves the row.
+    if match.get("kind") == "document_promotion":
+        from . import ingest_status, promotion
+        from .decision_record_writer import DECISION_RECORD_ERA
+
+        try:
+            from .trust_table import load_trust_table
+            _tbl = load_trust_table().ref
+        except Exception:  # noqa: BLE001 — the sensor's floor, recorded rather than invented
+            _tbl = "trust@unavailable"
+        try:
+            done = await run_in_threadpool(lambda: promotion.act(
+                match.get("payload"), decision=req.decision, acted_by=current_user.authz_id,
+                audience=audience, comment=req.comment,
+                can_act=human_tasks.check_can_act, stores=_promotion_stores(current_user.authz_id),
+                governing={
+                    "ruleset_ref": promotion.ruleset_ref(
+                        human_tasks.declaration_for(promotion.KIND)),
+                    "trust_table_ref": _tbl,
+                },
+                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000)))
+        except promotion.PromotionRefused as exc:
+            raise HTTPException(status_code=exc.status, detail={
+                "error": exc.error, "task_id": task_id, "message": str(exc)})
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment))
+        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
+                    req.decision, task_id, done["ingest_id"], done["record_id"],
+                    current_user.authz_id)
+
+        # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
+        # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
+        # a READ MODEL of it. So a failure here is LOGGED, never raised: the decision already
+        # stands (mark_task_resolved above already succeeded), and re-resolving or unresolving
+        # the task over a projection write would make a read model's availability gate a
+        # decision that already happened. (Reachable since the graph writer was wired: a
+        # REJECTION reaches here; a promotion does once the ingest node has a producer. Logged
+        # so a failure here is visible rather than silently swallowed.)
+        _stage = (ingest_status.PROMOTED if req.decision == promotion.PROMOTED
+                 else ingest_status.REJECTED)
+        # `rejected` always carries a non-blank comment here: the document_promotion kind
+        # declaration refuses a bare rejection with 422 before this branch runs (sealed by
+        # test_ROUTE_a_rejection_WITHOUT_a_reason_is_refused_before_the_projection), which is
+        # what satisfies update_status's detail-required rule.
+        _detail = (req.comment if req.decision == promotion.REJECTED
+                  else f"record {done['record_id']}")
+        try:
+            await run_in_threadpool(
+                lambda: ingest_status.update_status(done["ingest_id"], _stage, detail=_detail))
+        except Exception as exc:  # noqa: BLE001 — see the comment above: never fail the request
+            logger.warning("ingest_status.update_status failed for ingest_id=%s (decision=%s): %s",
+                           done["ingest_id"], req.decision, exc)
+
+        return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
     # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
@@ -2679,9 +3095,16 @@ async def act_on_human_task(
             return {"task_id": task_id, "decision": req.decision, "accepted": False,
                     "status": "still_pending", "reason": sub.get("reason", "")}
         # Accepted -> the workflow resumed + fanned out; NOW resolve the projection.
+        #
+        # `workflow_id=wf` ADDED (HAZ-1003 scoping): `mark_task_resolved`'s UPDATE now carries
+        # `AND workflow_id IS NOT DISTINCT FROM %s` so a cross-instance task_id collision can't
+        # resolve the wrong run's row. Omitting it here would ask for `workflow_id IS NULL`
+        # against a row that HAS one (`wf`, just posted to above) and silently resolve ZERO
+        # rows — the request would appear to succeed while the task stayed pending forever.
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment, workflow_id=wf,
             )
         )
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
@@ -2690,21 +3113,14 @@ async def act_on_human_task(
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
 
-    n = await run_in_threadpool(
-        lambda: human_tasks.mark_task_resolved(
-            task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
-        )
-    )
-    logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
-                task_id, current_user.authz_id, req.decision, n)
-
-    # FULFILLMENT (workflow_ack): resolve the Restate promise the suspended
-    # workflow is awaiting -> it RESUMES from exactly where it paused. Only an
-    # AUTHORIZED caller reaches here (can_act passed above), so an unauthorized
-    # /act NEVER resolves the promise — the workflow stays suspended, waiting for
-    # the right approver (Situation B: unauthorized-act is a denied action, not a
-    # teardown). Best-effort: the projection is already resolved; a resume failure
-    # is logged, not surfaced as an act failure.
+    # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
+    # way around. The old order resolved the projection FIRST and treated the Restate resume as
+    # best-effort afterwards — so a 403 from the handler, or cortex-bff's own hardcoded
+    # `/BPMNWorkflowRunner/.../approve` posted at a SafetyAcceptance instance that was never
+    # running there, left the task showing resolved while the definition stayed suspended
+    # FOREVER, UNSEEN (the two halves disagreeing, and neither reporting it). Now the projection
+    # is written ONLY after the resume call confirms 200; a row with no workflow_id has no
+    # suspended definition and keeps today's direct-resolve behaviour (the `else` branch below).
     resumed = False
     # ── GAP 1: ANY workflow-backed task resumes, not only `workflow_ack` ───────────────────────
     #
@@ -2737,26 +3153,98 @@ async def act_on_human_task(
         # surface that was already gated. The gate is the declaration; this was a second,
         # undeclared gate that only knew two words.
         status = req.decision
+
+        # WHICH SERVICE OWNS THIS RUN, RE-CHECKED HERE — a row-sourced name is never
+        # interpolated into a Restate ingress URL on trust alone, even though `register_task`
+        # already validated it once at write time. A row with no `workflow_service` is the
+        # LEGACY shape (the inline BPMNWorkflowRunner `user_task` loop predates this column)
+        # and falls back to the one service that loop could ever mean.
+        service = match.get("workflow_service") or "BPMNWorkflowRunner"
+        if service not in human_tasks.ALLOWED_WORKFLOW_SERVICES:
+            # NO WRITE BELOW THIS POINT — an unresumable row stays PENDING rather than being
+            # marked resolved against a service this gateway cannot safely reach.
+            raise HTTPException(status_code=409, detail={
+                "error": "task_unresumable",
+                "task_id": task_id,
+                "workflow_id": match["workflow_id"],
+                "workflow_service": service,
+                "message": f"workflow_service {service!r} is not a resumable Restate service; "
+                           "the task stays pending rather than being resolved against it",
+            })
+
+        rr = None
+        resume_exc: Exception | None = None
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 rr = await client.post(
-                    f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{_restate_key(match['workflow_id'])}/approve",
+                    f"{_RESTATE_INGRESS_URL}/{service}/{_restate_key(match['workflow_id'])}/approve",
                     # `acted_by` is REQUIRED by the handler as of approval-bypass-bpmn-runner:
                     # it re-checks can_act itself rather than trusting that this gate ran.
                     # Threaded from `current_user.authz_id` — the identity can_act was just
                     # checked against above — so the handler re-asks the same question about
                     # the same subject and must reach the same answer. Omitting it here would
                     # turn the ONE correctly-gated path into the only refused one.
+                    #
+                    # `promise_name` rides the row (set by `_register_human_task` for a
+                    # definition-driven step) so the handler resolves the promise THIS run is
+                    # actually awaiting rather than guessing `approval_{task_id}` — None for
+                    # legacy rows, which is the handler's own documented default.
                     json={"task_id": task_id, "status": status, "comments": req.comment,
-                          "acted_by": current_user.authz_id},
+                          "acted_by": current_user.authz_id,
+                          "promise_name": match.get("promise_name")},
                 )
-                resumed = rr.status_code == 200
-                if not resumed:
-                    logger.warning("workflow resume non-200: task_id=%s wf=%s code=%s",
-                                   task_id, match["workflow_id"], rr.status_code)
-        except Exception as exc:
-            logger.warning("workflow resume failed: task_id=%s wf=%s err=%s",
-                           task_id, match["workflow_id"], exc)
+            resumed = rr.status_code == 200
+        except Exception as exc:  # noqa: BLE001 — network/timeout; reported below, not swallowed
+            resume_exc = exc
+
+        if not resumed:
+            # CONFIRM-BEFORE-RESOLVE'S OTHER HALF: a refused or unreachable resume must NOT mark
+            # the task resolved — the definition is still suspended and the row must keep saying
+            # so. Check for a teammate's settle first (the same multiplayer race the pre-lookup
+            # 409 above already accounts for) before reporting a resume failure.
+            settled = await run_in_threadpool(
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+            )
+            if settled and settled.get("status") != "pending":
+                raise HTTPException(status_code=409, detail={
+                    "error": "task_already_resolved",
+                    "task_id": task_id,
+                    "status": settled.get("status"),
+                    "decision": settled.get("decision"),
+                    "acted_by": settled.get("acted_by"),
+                    "acted_at": settled.get("acted_at"),
+                    "message": "This task was already resolved by a member of its audience.",
+                })
+            raise HTTPException(status_code=502, detail={
+                "error": "workflow_resume_failed",
+                "task_id": task_id,
+                "workflow_id": match["workflow_id"],
+                "workflow_service": service,
+                "status_code": getattr(rr, "status_code", None),
+                "reason": None if rr is not None else str(resume_exc),
+                "message": "the workflow did not confirm the resume; the task stays pending "
+                           "rather than being resolved against a definition that is still "
+                           "suspended",
+            })
+
+        # ONLY ON A CONFIRMED 200 — scoped by workflow_id so this cannot resolve a different
+        # workflow instance's row sharing the same step id (the cross-instance collision that
+        # `_register_human_task`'s composite task_id now closes at the write end too).
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment, workflow_id=match["workflow_id"],
+            )
+        )
+    else:
+        # NO WORKFLOW_ID -> NO SUSPENDED DEFINITION. Today's direct-resolve behaviour, unchanged.
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+            )
+        )
+    logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
+                task_id, current_user.authz_id, req.decision, n)
 
     # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
     # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
@@ -3100,6 +3588,10 @@ def _stage(
 
 # ONE rule for "which subtask did the answer come from", shared with the supervisor's card
 # selector. See iagent_pure/primary_selection.py for why this is not two local functions.
+from iagent_pure.lineage_claim import (  # noqa: E402
+    lineage_is_honoured,
+    pre_resolved_route_allowed,
+)
 from iagent_pure.primary_selection import pick_primary  # noqa: E402
 from iagent_pure.slot_acceptance import accept_slots  # noqa: E402
 
@@ -3977,6 +4469,41 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
         # above, which exists to stop an undispatchable route.
         "owner_persona": str(intent.get("owner_persona") or ""),
     }
+
+
+def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
+    """Does this artifact EXIST and belong to this caller? Existence, never routability.
+
+    WHY NOT JUST CALL `_pre_resolved_from_ask` AND TEST IT. That function answers a different
+    question and answers `{}` to three states at once: an unknown id, another caller's
+    artifact, and a REAL artifact of the caller's own whose ask predates subject capture. The
+    third is a perfectly good lineage parent, so reusing that emptiness here would refuse the
+    exact turns this check exists to admit — a guard borrowed from a neighbour, deciding on a
+    premise that is not the one it was written for.
+
+    IT RUNS THE SAME CYPHER CONSTANT, deliberately. The ownership EDGE is the rule (see
+    `_PRE_RESOLVED_CYPHER`'s comment for why the edge and not the id is what authorizes), and
+    a second spelling of that rule is a second thing to keep correct. Only the READING
+    differs: this one asks whether a row came back at all and ignores what is on it.
+
+    FALSE ON EVERY UNCERTAINTY, an unreachable graph included. A refused lineage claim costs
+    one card that does not fold; an accepted claim on an id nobody can vouch for costs a
+    `MERGE` that fabricates the ancestor it claims to have found.
+    """
+    if not artifact_id or not user_id:
+        return False
+    try:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _PRE_RESOLVED_CYPHER, artifact_id=artifact_id, user_id=user_id
+            ).single()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "artifact ownership check failed for %s: %s — refusing the lineage claim",
+            artifact_id, exc,
+        )
+        return False
+    return rec is not None
 
 
 #: How a slot's value came to be known. THE SOURCE IS CARRIED, NOT JUST THE VALUE, and the
@@ -4866,15 +5393,56 @@ async def _generate_dagster_stream_inner(
     # naming it, and the rail would then fold two cards together on a lineage nobody produced.
     # Refusing is cheap; a phantom in the provenance graph is not.
     _answers_something = bool(request.bound_slots) or bool(request.spoken_answer)
-    _answering_artifact_id = (
-        (request.answering_artifact_id or None) if _answers_something else None
+    _names_an_ask = bool(request.answering_artifact_id)
+    _carries_prose = bool((request.message or "").strip())
+
+    # ── WHY PROSE BUYS LINEAGE AND DOES NOT BUY THE ROUTE ────────────────────────────────
+    #
+    # THE TURN THAT WAS BEING DROPPED (HAZ-1003): the person reads a drawn card and types a
+    # sentence about it. That turn descends from the card on any honest reading — it is the
+    # next step of one conversation — and it carries neither a pick nor a typed slot answer.
+    # One predicate gated BOTH the lineage claim and the pre-resolved route, so honouring the
+    # first meant granting the second, and the composer turn rendered as an orphan card.
+    #
+    # THE TWO GATES REST ON DIFFERENT EVIDENCE, which is why they come apart here rather than
+    # being widened together. `bound_slots` and `spoken_answer` are shapes only a client that
+    # was SHOWN this ask's menu can produce, so their presence is itself weak evidence that
+    # the named ask is real. Prose is not evidence of anything: every ordinary question
+    # carries prose, so `named + prose` is satisfiable by any caller typing any sentence at
+    # any id they care to invent.
+    #
+    # SO THE WIDENED ARM PAYS FOR ITSELF WITH A GRAPH READ — existence AND ownership, under
+    # the same edge and through the same Cypher constant the route lookup uses. Without it
+    # this arm would be reachable with nothing but prose and a guessed id, and the writer's
+    # `MERGE (parent:AnswerArtifact {id: $parent_id})` CREATES the node, so that is precisely
+    # how a phantom ancestor gets conjured. The check is ordered last on purpose: two free
+    # predicates first, the round-trip only for the turns that could actually widen anything.
+    #
+    # ⚠ WHAT THIS DELIBERATELY DOES **NOT** DO. The answering arm is still honoured WITHOUT
+    # that read, exactly as before today. That is a pre-existing hole in the same guard and I
+    # am NAMING it, not closing it: adding the check there would refuse valid lineage in any
+    # window where the ask's own write has not landed by the time the answer turn arrives, and
+    # whether that race exists on this path is UNMEASURED. Measure it, then close it.
+    # THE RULE IS CALLED, NOT RESTATED. `iagent_pure.lineage_claim` holds it at module level so
+    # its seal exercises the real decision; a copy of the branching here would be the mirror
+    # `cold_start_fallback_domains` records a surviving mutant for.
+    _lineage_honoured, _lineage_refused_because = lineage_is_honoured(
+        names_an_ask=_names_an_ask,
+        answers_something=_answers_something,
+        carries_prose=_carries_prose,
+        # LAZY, so the round trip is paid only on the arm that needs it.
+        ownership_ok=lambda: _artifact_is_the_callers(
+            request.answering_artifact_id or "", user_id
+        ),
     )
-    if request.answering_artifact_id and not _answers_something:
+
+    _answering_artifact_id = (
+        (request.answering_artifact_id or None) if _lineage_honoured else None
+    )
+    if _names_an_ask and not _lineage_honoured:
         logger.warning(
-            "lineage claim REFUSED for run %s: answering_artifact_id=%r was sent on a turn "
-            "carrying neither a pick nor a typed answer. An ordinary question does not "
-            "descend from an ask.",
-            session_id, request.answering_artifact_id,
+            "lineage claim REFUSED for run %s: answering_artifact_id=%r — %s",
+            session_id, request.answering_artifact_id, _lineage_refused_because,
         )
     # THE OTHER TWO OUTCOMES, BECAUSE ONLY THE REFUSAL WAS AUDIBLE.
     #
@@ -4889,9 +5457,14 @@ async def _generate_dagster_stream_inner(
     # layer below this line, and it is the shape that produced two cards where the fold
     # was fully built on both sides and merely had nothing to fold.
     elif _answering_artifact_id:
+        # WHICH ARM HONOURED IT, because the two carry different guarantees and a reader
+        # diagnosing a fold needs to know which one they are looking at: the answering arm
+        # took the id on the turn's shape, the prose arm took it on a verified ownership edge.
         logger.info(
-            "lineage claim ACCEPTED for run %s: this turn answers %s",
+            "lineage claim ACCEPTED for run %s: this turn answers %s (%s)",
             session_id, _answering_artifact_id,
+            "turn carries an answer" if _answers_something
+            else "prose turn, artifact existence and ownership verified",
         )
     elif _answers_something:
         # GUARDED ON `_answers_something`, and the first version was NOT — it would have
@@ -4907,7 +5480,18 @@ async def _generate_dagster_stream_inner(
     # THE SKIP, DECIDED WHERE THE ID HAS ALREADY BEEN JUDGED. Only an ACCEPTED claim gets
     # here: `_answering_artifact_id` is None for a refused one and for an ordinary question,
     # and the lookup is scoped to this caller's own ownership edge on top of that.
-    _pre_resolved = _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+    #
+    # ⛔ AND IT KEEPS THE STRICTER PREMISE, which is the point of the split above. An accepted
+    # lineage claim draws an arrow; a pre-resolved route DISPATCHES A VERB AGAINST A SUBJECT
+    # nobody re-confirmed on this turn. The prose arm was widened for the first and must not
+    # leak into the second, so `_answers_something` is named again here rather than inherited
+    # through `_answering_artifact_id` — the two gates now differ, and relying on the id alone
+    # would silently re-join them the day anyone widened the lineage arm again.
+    _pre_resolved = (
+        _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+        if pre_resolved_route_allowed(answers_something=_answers_something)
+        else {}
+    )
     if _pre_resolved:
         logger.info(
             "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
@@ -4915,13 +5499,23 @@ async def _generate_dagster_stream_inner(
             session_id, _answering_artifact_id,
             _pre_resolved["subject_uri"], _pre_resolved["verb_iri"],
         )
-    elif _answering_artifact_id:
+    elif _answering_artifact_id and _answers_something:
         # AUDIBLE, because this is the branch that silently costs the user 40 seconds. An
         # accepted lineage claim that yields no route means the ask predates the subject
         # capture, or the artifact is not this caller's. Both route the ordinary way; only
         # one of them is worth investigating, and a log line is how anyone tells them apart.
         logger.info(
             "no pre-resolved route on ask %s for run %s — routing the full path",
+            _answering_artifact_id, session_id,
+        )
+    elif _answering_artifact_id:
+        # THE PROSE ARM, AND IT NEEDS ITS OWN LINE RATHER THAN THE ONE ABOVE. That line says
+        # "no pre-resolved route", which reads as a lookup that came back empty — and here the
+        # lookup never ran, by design. Reporting a result for a query nobody issued is how a
+        # correct refusal gets diagnosed as a broken one.
+        logger.info(
+            "lineage only on ask %s for run %s: a prose turn keeps the arrow and takes the "
+            "full routing path by design — a pre-resolved route needs a pick or a typed answer",
             _answering_artifact_id, session_id,
         )
 
@@ -5770,7 +6364,12 @@ async def _generate_dagster_stream_inner(
                         detail={"step_key": "create_task_plan_dispatch"},
                     )
                     emitted_steps.add("retrieving_pre_started")
-                
+
+    # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
+    # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
+    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle):
+        yield _acc_err
+
     if is_success:
         # Composing was already marked started by generate_ui_payload's
         # RUNNING transition above; the actual fetch of the final
@@ -5845,6 +6444,170 @@ def _mark_answer_complete(bundle: dict, payload: Any) -> None:
     bundle["rendered_output"] = payload
     bundle["status"] = "complete"
     bundle["duration_ms"] = max(0, int(time.time() * 1000) - bundle["valid_as_of"])
+
+
+# ── THE `review_request` CONSUMER, ONE BODY FOR BOTH PATHS (R-076) ─────────────────────────
+#
+# Until 2026-09-29 this body lived inline in `_stream_direct_outcome`, and the direct path runs
+# ONLY for a turn that answers an ask with bound slots or a spoken answer
+# (`lineage_claim.pre_resolved_route_allowed`). "draft a risk assessment for HAZ-1003" names its
+# hazard, never asks, and so could never reach it: measured on fleet `ec055c49`, 34 turns in a
+# pod's life, zero on the direct path, zero `human_task_projection` rows of any risk kind — while
+# the engine's own `/measure/draft_risk_assessment` answer carried the block in full. A consumer
+# on one of two paths is a consumer the ordinary question never meets.
+#
+# ONE BODY, because two copies of a safety dispatch are two places for the idempotency key, the
+# `/send` and the failure record to drift apart — the drift this fleet has already paid for
+# three times on the card-selection rule.
+
+
+def _project_review_request(mat: dict) -> dict:
+    """The `review_request` a `subtask_review_request` materialization carries, or {}.
+
+    Read back through `acceptance_request.review_request_of`, the same reader the direct path
+    uses on the raw engine body — so the two paths cannot disagree about what counts as a
+    request. A malformed or empty entry yields {} and opens nothing.
+    """
+    raw = _metadata_dict(mat).get("review_request_json")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:  # noqa: BLE001 — a malformed entry is "no request", logged by the caller
+        return {}
+    return acceptance_request.review_request_of({"review_request": parsed})
+
+
+async def _open_safety_acceptance(
+    bundle: dict, rr: dict, *, path: str, stage_kind: str,
+) -> str | None:
+    """Open the SafetyAcceptance workflow for one `review_request`. Returns an error SSE on
+    failure, None on success — and records WHICH on the artifact either way.
+
+    NOT SILENT IN EITHER DIRECTION. The success record exists because the absence of a row was
+    once only attributable by reading a rotated pod log; the artifact now says, per turn, which
+    path opened which workflow.
+    """
+    try:
+        _trigger = acceptance_request.acceptance_trigger(rr)
+        _wf_key = acceptance_request.acceptance_workflow_id(
+            _trigger["hazard_id"], _trigger["level_slug"],
+        )
+        async with httpx.AsyncClient(timeout=30.0) as _client:
+            _ar = await _client.post(
+                f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
+                f"{_restate_key(_wf_key)}/run/send",
+                json=_trigger,
+                # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked question
+                # must attach to the acceptance already open rather than register a second
+                # task against the same authority — and the key carries the LEVEL because a
+                # redraft that moves the hazard to another level is a different acceptance by
+                # a different authority, which keying on the hazard alone would swallow.
+                #
+                # THE WORKFLOW KEY IN THE URL IS THAT IDEMPOTENCY, and it is the only one. An
+                # ingress idempotency header here made Restate 1.6 refuse EVERY send with 400
+                # "cannot use the idempotency key with workflow handlers" (measured 2026-09-30,
+                # rev 159: HAZ-1003 fired four times, zero tasks). A second `run/send` on the
+                # same key is answered as previously accepted, not run twice.
+            )
+        _ar.raise_for_status()
+        logger.info(
+            "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s path=%s",
+            _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"], path,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"].setdefault("acceptance_dispatched", []).append({
+            "workflow": _wf_key,
+            "kind": _trigger["kind"],
+            "audience": _trigger["audience"],
+            "subject_ref": rr.get("subject_ref"),
+            "path": path,
+        })
+        return None
+    except Exception as exc:  # noqa: BLE001 — the draft still renders; see the call sites
+        _body = ""
+        _resp = getattr(exc, "response", None)
+        if _resp is not None:
+            try:
+                _body = _resp.text[:800]
+            except Exception:  # noqa: BLE001
+                _body = "<unreadable>"
+        logger.error(
+            "safety acceptance NOT opened for %s (%s: %s) path=%s body=%s",
+            rr.get("subject_ref"), type(exc).__name__, exc, path, _body,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"]["acceptance_not_opened"] = {
+            "exception": type(exc).__name__,
+            "message": str(exc)[:600],
+            # WHAT WAS ASKED FOR, beside what came back — a refusal naming a field is only
+            # actionable against the request that omitted it.
+            "kind": rr.get("kind"),
+            "audience": rr.get("audience"),
+            "subject_ref": rr.get("subject_ref"),
+            "body": _body,
+            "where": f"{path}/review_request_consumer",
+        }
+        return _perror(
+            "The risk assessment was drafted, but its acceptance review could not be "
+            "opened — no task has been created for the accepting authority.",
+            kind=stage_kind,
+            retryable=True,
+            cause="acceptance_not_opened",
+        )
+
+
+async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
+    """The ordinary (Dagster) path's consumer: every `subtask_review_request` the run
+    materialized, opened once each. Returns the error SSEs to yield.
+
+    READ ONCE, AFTER THE POLL LOOP, NOT INSIDE IT. The loop breaks on SUCCESS before pulling
+    that iteration's materializations, so a request materialized after the last poll would be
+    seen by nothing — a consumer that works whenever the render is slow and never when it is
+    fast.
+
+    KEYED ON THE REQUEST BEING PRESENT, NOT ON THE RENDER SUCCEEDING. The materialization is
+    emitted by `execute_subtask` from the engine's own body, BEFORE Engine F renders — the same
+    position the direct path's consumer holds, for the same reason: the render drops the block,
+    and a hazard that was drafted was drafted whether or not its card drew.
+
+    AN EMPTY READ IS NOT "NO REQUEST". `_get_run_events` returns [] on any GraphQL failure, and
+    every run materializes `active_agent_roster`, so zero materializations means the read
+    failed. That is recorded on the artifact rather than read as absence.
+    """
+    mats = await _get_run_events(run_id)
+    if not mats:
+        logger.warning(
+            "acceptance check for run %s read ZERO materializations — the read failed, "
+            "so whether the engine asked for an acceptance is UNKNOWN, not no", run_id,
+        )
+        bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
+        bundle["resolved_intent"]["acceptance_check"] = {"materializations_read": 0}
+        return []
+    # ONE MATERIALIZATION CAN ARRIVE TWICE: `_get_run_events` merges `eventConnection` with
+    # `stepStats`. Restate's idempotency key would absorb the second send, but a second
+    # `acceptance_dispatched` entry on the artifact would claim two acceptances were opened.
+    seen: set[str] = set()
+    errors: list[str] = []
+    for mat in mats:
+        if (mat.get("assetKey") or {}).get("path") != ["subtask_review_request"]:
+            continue
+        rr = _project_review_request(mat)
+        if not rr:
+            logger.warning(
+                "run %s materialized subtask_review_request with no readable request", run_id,
+            )
+            continue
+        ident = json.dumps(rr, sort_keys=True, default=str)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        err = await _open_safety_acceptance(
+            bundle, rr, path="run", stage_kind="retrieving",
+        )
+        if err:
+            errors.append(err)
+    return errors
 
 
 async def _stream_direct_outcome(
@@ -6005,60 +6768,11 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
-            try:
-                _trigger = acceptance_request.acceptance_trigger(_rr)
-                _wf_key = acceptance_request.acceptance_workflow_id(
-                    _trigger["hazard_id"], _trigger["level_slug"],
-                )
-                async with httpx.AsyncClient(timeout=30.0) as _client:
-                    _ar = await _client.post(
-                        f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
-                        f"{_restate_key(_wf_key)}/run/send",
-                        json=_trigger,
-                        # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked
-                        # question must attach to the acceptance already open rather than
-                        # register a second task against the same authority — and the key
-                        # carries the LEVEL because a redraft that moves the hazard to another
-                        # level is a different acceptance by a different authority, which
-                        # keying on the hazard alone would swallow.
-                        headers={"idempotency-key": _wf_key},
-                    )
-                _ar.raise_for_status()
-                logger.info(
-                    "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s",
-                    _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"],
-                )
-            except Exception as exc:  # noqa: BLE001 — the draft still renders; see above
-                _body = ""
-                _resp = getattr(exc, "response", None)
-                if _resp is not None:
-                    try:
-                        _body = _resp.text[:800]
-                    except Exception:  # noqa: BLE001
-                        _body = "<unreadable>"
-                logger.error(
-                    "safety acceptance NOT opened for %s (%s: %s) body=%s",
-                    _rr.get("subject_ref"), type(exc).__name__, exc, _body,
-                )
-                bundle["resolved_intent"] = dict(bundle.get("resolved_intent") or {})
-                bundle["resolved_intent"]["acceptance_not_opened"] = {
-                    "exception": type(exc).__name__,
-                    "message": str(exc)[:600],
-                    # WHAT WAS ASKED FOR, beside what came back — a refusal naming a field is
-                    # only actionable against the request that omitted it.
-                    "kind": _rr.get("kind"),
-                    "audience": _rr.get("audience"),
-                    "subject_ref": _rr.get("subject_ref"),
-                    "body": _body,
-                    "where": "_dispatch_answer_artifact/review_request_consumer",
-                }
-                yield _perror(
-                    "The risk assessment was drafted, but its acceptance review could not be "
-                    "opened — no task has been created for the accepting authority.",
-                    kind=direct_dispatch.STAGE_CALLING,
-                    retryable=True,
-                    cause="acceptance_not_opened",
-                )
+            _err = await _open_safety_acceptance(
+                bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
+            )
+            if _err:
+                yield _err
 
     _predicate = outcome.predicate or {}
     _results = [{
@@ -7450,6 +8164,351 @@ def federated_image(
 
 
 # ════════════════════════════════════════════════════════════════════
+# Ingestion seam (ADR-0041 §8, days 1-3) — POST /ingest, GET /ingest/{id}/status
+# ════════════════════════════════════════════════════════════════════
+#
+# HOSTED HERE, not on any fleet engine — an ADR-silent decision, recorded here because the
+# ADR names no host. `agent_fleet/docs_agent` was considered and ruled out: its entire
+# surface is `mesh:explain` over REVIEWED mesh:DocPage documentation, gated behind mesh
+# TRANSPORT auth (not end-user auth) on every route — semantically unrelated to a
+# non-technical user dropping a PCN/PDN, and the wrong auth plane besides. The actual
+# document-PROCESSING pipeline (classify/extract/review) is Dagster-side
+# (src/iagent/defs/extraction_review_sensor.py + the sibling doc-tools repo), triggered by
+# an S3 sensor on this SAME `processing-artifacts` bucket — not a FastAPI/Restate engine
+# either. cortex-bff already holds a direct MinIO client for this exact bucket
+# (_build_notice_prefix_index / _read_notice_provenance_from_store above, and
+# federated_image just above this block) — this reuses that pattern rather than adding a
+# proxy hop to a new engine that would own nothing but the hop.
+#
+# on_behalf_of, v1: MUST equal the authenticated caller's own authz_id. ADR-0041 §8 names
+# the field but not a delegation mechanism, and deny-by-default means the narrower reading
+# wins until one exists — a caller asserting an identity that is not their own is refused,
+# not merely unverified.
+#
+# authoritative_source, v1: ADR-0041 §2 says it "remains the vendor who issued the PCN" —
+# but that is only knowable once the document is CLASSIFIED (§4, Dagster-side, out of this
+# seam's days-1-3 scope). At the door we have bytes and a declared kind, not a read PDF.
+# Rather than leave the required field guessed or blank, this seam writes the sentinel
+# `_AUTHORITATIVE_SOURCE_UNCONFIRMED` — same discipline as provenance.py's own
+# `AS_OF_UNKNOWN`: an honest "not yet known", not a fabricated system name. The classifier
+# is expected to amend it once it reads the document (a follow-up, not built here).
+_AUTHORITATIVE_SOURCE_UNCONFIRMED = "unconfirmed-at-intake"
+
+
+def _build_s3_client():
+    """Factory seam for the ingestion seam's MinIO client — the ONE line tests monkeypatch
+    (`monkeypatch.setattr(gateway, "_build_s3_client", fake_factory)`) instead of faking
+    boto3 itself. No prior test precedent fakes gateway.py's inline boto3 pattern (it has
+    always been exercised live), so this factory exists purely to make the new routes
+    testable without a real MinIO."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=_MINIO_ENDPOINT_URL,
+        aws_access_key_id=_MINIO_ACCESS_KEY,
+        aws_secret_access_key=_MINIO_SECRET_KEY,
+        region_name=_MINIO_REGION,
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+    )
+
+
+def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict) -> None:
+    """Write the raw bytes + manifest.json (manifest + embedded provenance block, ADR-0041
+    §8) under `object_prefix` in the processing-artifacts bucket — the SAME bucket
+    extraction_review_sensor.py's S3 sensor watches, so a future classifier pass can pick
+    `ingress-user/` up the same way it already picks up `sustainment/`/`manufacturing/`.
+
+    Two objects, mirroring doc-tools' document_parser.py convention (sibling metadata +
+    manifest, read via the Grep tool against the sibling repo this session): the original
+    bytes under the uploaded filename, and `manifest.json`, now IngestRequest-shaped
+    (`object_ref`, `content_kind`, `domain_type`, `provenance`, `initiator`) with
+    `metadata.content_kind` present ONLY when the caller declared a registered content kind
+    (ADR-0021's precedence rule 1 / ADR-0041 §4) — never the route's own `kind` (file FORMAT,
+    pdf|cad), which rides separately as `media_kind`. Writing the file format into
+    `metadata.content_kind` was the prior defect: every user drop would HALT downstream as
+    ContentKindUnregistered("pdf"). The provenance block rides BESIDE the bytes rather than
+    embedded inside them — same "six fields ride beside" shape this repo already uses
+    elsewhere (git log ab9b2a4e).
+    """
+    s3 = _build_s3_client()
+    safe_name = os.path.basename(filename) or "upload"
+    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body)
+    s3.put_object(
+        Bucket=_ARTIFACT_BUCKET,
+        Key=f"{object_prefix}manifest.json",
+        Body=json.dumps(manifest, indent=2).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: str,
+                        ingested_at: str, subject: str) -> None:
+    """Create the ingest node for a NEW /ingest arrival, through the worker's graph HOME
+    (`promotion_stores.Neo4jIngestGraph.create_node`) -- which itself now goes through the SDK
+    graph writer's `write_node` (v0.9.6), but the idempotence (created vs already-existed) and
+    the narrow prop shape stay on that HOME, not here (see its own docstring,
+    `src/iagent/promotion_stores.py`). A module-level function, not inlined in the route, so
+    tests can monkeypatch it
+    (`monkeypatch.setattr(gateway, "_create_ingest_node", ...)`) the same way `_build_s3_client`
+    is faked above.
+
+    `kind="person"` on the Initiator is correct here for the same reason the manifest's own
+    `initiator` field is: the route above refuses any `on_behalf_of` other than the caller's own
+    authz_id, so this is never a delegate or service identity.
+
+    Raises on any failure -- the CALLER (the route, below) is the one that logs and swallows it.
+    The bytes, manifest and status row are already durable by the time this runs, so a graph
+    outage here must never fail an otherwise-successful upload; a promotion of a document with
+    no node answers 409 `ingest_node_absent`, the honest downstream refusal, rather than this
+    best-effort create blocking anything.
+    """
+    from iagent_mesh.interfaces import Initiator
+
+    from . import promotion_stores
+
+    graph = promotion_stores.Neo4jIngestGraph(
+        driver=neo4j_driver, initiator=Initiator(subject=subject, kind="person"))
+    graph.create_node(ingest_id, kind=kind, sha256=sha256, object_ref=object_ref,
+                      ingested_at=ingested_at)
+
+
+@app.post("/ingest")
+async def ingest_document(
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    on_behalf_of: str = Form(...),
+    content_kind: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+):
+    """POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.
+
+    Deny-by-default: requires an authenticated caller (Depends(get_current_user) — no
+    anonymous upload), and `on_behalf_of` must equal the caller's own authz_id (see the
+    module-level note above this route for why v1 does not accept delegation).
+
+    sha256 is computed AT THE DOOR (ADR-0041 §8's own phrase) — before any write, before
+    any classification. Level-1 dedupe keys on it alone (same bytes = same document,
+    full stop); it says nothing about document-IDENTITY dedupe across different bytes of
+    the same logical document (ADR-0041 §6's R3, `(issuer, document_number, revision)`) —
+    that is a classifier-time concern, downstream of this seam, and is NOT implemented
+    here.
+
+    FORMAT IS NOT KIND. `kind` (pdf|cad) is the FILE FORMAT — the `ingress-user/{kind}/`
+    path segment and the projection's `kind` column — never a registered content kind.
+    `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
+    kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
+    lives in doc-tools; the driver resolves and HALTs on an unregistered value — ca's
+    `resolve_content_kind`), it only refuses a value that is blank-after-strip or malformed.
+    Writing a bare file format into `manifest.metadata.content_kind` (the old behaviour) made
+    every user drop HALT as ContentKindUnregistered("pdf") — ADR-0021 rule 1 / ADR-0041 §4
+    reserve that key for a REGISTERED kind. Leaving `metadata.content_kind` absent when
+    undeclared is deliberate: absence is rule 1 not firing, and ADR-0021's 2026-09-30
+    amendment disables rule 2 under `ingress-user/` (that path segment is a format), so an
+    undeclared drop HALTs at the driver -- stage `failed` with a detail -- rather than being
+    resolved from a fabricated value.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion, provenance
+
+    if kind not in ingest_status.KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"kind must be one of {ingest_status.KINDS}, got {kind!r}",
+        )
+    if on_behalf_of != current_user.authz_id:
+        raise HTTPException(
+            status_code=403,
+            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
+        )
+    declared_content_kind = content_kind
+    if declared_content_kind is not None:
+        declared_content_kind = declared_content_kind.strip()
+        if not declared_content_kind:
+            raise HTTPException(
+                status_code=422,
+                detail="content_kind must not be blank (omit the field to mean 'not declared')",
+            )
+        if len(declared_content_kind) > 128 or "/" in declared_content_kind:
+            raise HTTPException(
+                status_code=422,
+                detail="content_kind must be <=128 chars and must not contain '/'",
+            )
+
+    # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
+    # limit in values-sandbox), so one authenticated drop could take the BFF down for every
+    # user. ADR-0041 names no size; INGEST_MAX_BYTES is a LOCAL default (50 MiB), not a
+    # ruling -- raise it in values, not here. Read one chunk past the cap so "exactly at the
+    # cap" is accepted and "one byte over" is refused with 413 before anything is written.
+    _cap = int(os.getenv("INGEST_MAX_BYTES", str(50 * 1024 * 1024)))
+    _chunks: list[bytes] = []
+    _seen = 0
+    while True:
+        _chunk = await file.read(1024 * 1024)
+        if not _chunk:
+            break
+        _seen += len(_chunk)
+        if _seen > _cap:
+            raise HTTPException(
+                status_code=413,
+                detail=f"upload exceeds INGEST_MAX_BYTES ({_cap} bytes)",
+            )
+        _chunks.append(_chunk)
+    body = b"".join(_chunks)
+    sha256 = hashlib.sha256(body).hexdigest()
+    # THE SAME DERIVATION `document_promotion` requires (promotion.INGEST_ID_RE): minting the
+    # id any other way would refuse every seam-minted document's later promotion.
+    ingest_id = promotion.ingest_id_for(body)
+
+    existing = await run_in_threadpool(ingest_status.find_primary_by_sha, sha256)
+    if existing is not None:
+        dup = await run_in_threadpool(
+            lambda: ingest_status.record_duplicate_arrival(
+                sha256=sha256,
+                kind=kind,
+                object_prefix=existing["object_prefix"],
+                submitted_by=current_user.authz_id,
+                on_behalf_of=on_behalf_of,
+                source=file.filename,
+                original=existing,
+            )
+        )
+        return {
+            "ingest_id": dup["id"],
+            "stage": existing["status"],
+            "detail": dup["detail"],
+            "duplicate": {"of_ingest_id": existing["id"], "message": dup["detail"]},
+        }
+
+    object_prefix = f"ingress-user/{kind}/{sha256}/"
+    safe_name = os.path.basename(file.filename or "upload") or "upload"
+    # ISO-8601 UTC string — the shape `iagent_mesh.provenance.ProvenanceBlock.ingested_at: str`
+    # requires. `provenance.py`'s own validator only checks truthiness (it accepts an int, see
+    # test_provenance_block.py's `_blk(ingested_at=1)`), so nothing here enforces the format —
+    # this is written to match the SDK's contract, not because this repo's copy demands it.
+    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    provenance_block = provenance.make_provenance(
+        authoritative_source=_AUTHORITATIVE_SOURCE_UNCONFIRMED,
+        obtained_via=provenance.USER_DROP,
+        as_of=provenance.AS_OF_UNKNOWN,
+        ingested_at=ingested_at,
+        ingest_run=f"user-drop:{ingest_id}",
+        standing="supervised",
+        # THE BLOCK CARRIES ITS DOCUMENT'S ID (provenance floor, ead2f80d): the same
+        # `promotion.ingest_id_for` value the manifest, the status row and the promotion task
+        # key on, so a claim derived from this drop can be traced back without the manifest.
+        ingest_id=ingest_id,
+    )
+    manifest = {
+        "ingest_id": ingest_id,
+        "object_ref": object_prefix + safe_name,
+        "content_kind": declared_content_kind,
+        "domain_type": None,
+        "provenance": provenance_block,
+        # kind="person" is correct: the route above refuses any on_behalf_of other than the
+        # caller's own authz_id, so this is never a delegate or service identity.
+        "initiator": {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None},
+        "media_kind": kind,
+        "sha256": sha256,
+        "filename": file.filename,
+        "submitted_by": current_user.authz_id,
+        "on_behalf_of": on_behalf_of,
+        "ingested_at": ingested_at,
+    }
+    if declared_content_kind is not None:
+        # Present ONLY when declared — absence is rule 1 not firing (see the route docstring);
+        # ADR-0021-amendment says rule 2 must not fire under `ingress-user/`, so an undeclared
+        # drop HALTs at the driver rather than guessing a kind here.
+        manifest["metadata"] = {"content_kind": declared_content_kind}
+    await run_in_threadpool(
+        lambda: _write_ingest_object(
+            object_prefix=object_prefix, filename=file.filename or "upload",
+            body=body, manifest=manifest,
+        )
+    )
+    row = await run_in_threadpool(
+        lambda: ingest_status.record_received(
+            ingest_id=ingest_id, sha256=sha256, kind=kind, object_prefix=object_prefix,
+            submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
+            source=file.filename,
+        )
+    )
+    # BEST-EFFORT node creation (ruled 2026-09-30): the bytes, manifest and status row above are
+    # already durable, so a graph outage here is LOGGED, not raised -- failing an otherwise-
+    # successful upload on the graph store would be the wrong trade. A promotion of a document
+    # whose node is absent (because this failed, or hasn't run yet) answers 409
+    # `ingest_node_absent`, the honest downstream refusal.
+    try:
+        await run_in_threadpool(
+            lambda: _create_ingest_node(
+                ingest_id=ingest_id, kind=kind, sha256=sha256,
+                object_ref=manifest["object_ref"], ingested_at=ingested_at,
+                subject=current_user.authz_id,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
+        logger.warning("ingest node creation failed for %s: %s", ingest_id, exc)
+    return {
+        "ingest_id": row["id"], "stage": row["status"], "detail": None,
+        "object_prefix": object_prefix, "duplicate": None,
+    }
+
+
+@app.get("/ingest/{ingest_id}/status")
+async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
+
+    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
+    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
+    404, indistinguishable from "no such ingest" — same discipline as the human-task
+    resolution lookup (human_tasks.get_task_resolution).
+
+    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
+    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
+    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
+    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+
+    stage = row["status"]
+    duplicate = None
+    if row.get("duplicate_of"):
+        # This row IS a duplicate-arrival row (status == ingest_status.DUPLICATE, which is not
+        # one of ca's six INGEST_STAGES) — `stage` reports the ORIGINAL's current stage instead.
+        original = await run_in_threadpool(
+            lambda: ingest_status.get_status_for(row["duplicate_of"], caller_id=current_user.authz_id)
+        )
+        # EXISTENCE-ORACLE: if this caller cannot see the original through the SAME caller
+        # scoping get_status_for already applies (e.g. a duplicate row this caller owns pointing
+        # at an original neither submitted_by nor on_behalf_of makes visible to them), `stage`
+        # is None — not the tempting "received" default, which would FABRICATE a fact about a
+        # row this caller is not scoped to see.
+        stage = original["status"] if original is not None else None
+        duplicate = {"of_ingest_id": row["duplicate_of"], "message": row.get("detail")}
+
+    return {
+        "ingest_id": row["id"],
+        "stage": stage,
+        "detail": row.get("detail"),
+        "duplicate": duplicate,
+        "kind": row.get("kind"),
+        "sha256": row.get("sha256"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+# ════════════════════════════════════════════════════════════════════
 # Data-module figures endpoint (Phase B of the 2026-06-30 figure work)
 # ════════════════════════════════════════════════════════════════════
 #
@@ -7732,6 +8791,14 @@ async def electric_shape_proxy(
         # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
         # is a plain column (Electric's WHERE subset handles column = literal + AND).
         server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+    elif table == "ingest_status_projection":
+        # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
+        # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
+        # not sub/email) — a caller sees rows where they are EITHER the submitter or the
+        # on_behalf_of principal, mirroring ingest_status.get_status_for's REST scoping so
+        # the streamed shape and the REST snapshot agree on who can see what.
+        escaped_id = _escape_identity_literal(current_user.authz_id)
+        server_where = f"(submitted_by = '{escaped_id}' OR on_behalf_of = '{escaped_id}')"
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"

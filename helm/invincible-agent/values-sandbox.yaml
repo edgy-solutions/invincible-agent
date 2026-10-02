@@ -54,6 +54,8 @@ engineW:
 # cluster needs the same flip in its values file (separate ops decision).
 meshRegistrar:
   enabled: true
+  # A1, ruled 2026-09-30: the registrar's delegate owner.
+  onBehalfOfUser: platform-registrar
 
 # --------------------------------------------------------------------------
 # Agent fleet env overrides.
@@ -443,6 +445,10 @@ ontologySeed:
 
 keycloak:
   enabled: true
+  # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
+  nonInteractiveUsers:
+    - username: platform-registrar
+      email: platform-registrar@example.com
   # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
   #
   # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that
@@ -478,6 +484,11 @@ keycloak:
         secretName: edgy-wildcard-tls
 
 topaz:
+  enabled: true
+
+# Task grants must exist without a human hand-running policy/sync/task_grant_sync.py — see
+# values.yaml's taskGrantSync comment and templates/task-grant-sync-job.yaml.
+taskGrantSync:
   enabled: true
 
 # Dagster — webserver and daemon use our own thin multi-arch
@@ -573,7 +584,71 @@ cortexUi:
     # The running pod is on NEITHER of the other two, and its pullPolicy is Always. So the
     # frontend currently serving the safety rows is one restart away from becoming whatever
     # :latest points at, with no chart change and no commit. That is what this line closes.
-    digest: "sha256:c8d6553f142ebb70024bf09f4b7f93c77c2ad62ebe4e0cc009465461b3824ced"
+    #
+    # ⛔ BUMPED HERE, 2026-09-28, AND *HERE* IS THE FINDING. The frontend bump was ordered
+    # against `values-roll-frontend-digest.yaml`, whose whole purpose is to carry a roll's
+    # cross-repo digests. That file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array
+    # (29-33: values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
+    # canonical roll command never reads it. It was written for a hand-run
+    # `helm upgrade --reuse-values -f <overlay>`, which is no longer how rolls fire.
+    #
+    # NOT INFERRED FROM THE SCRIPT — MEASURED ON THE CONSEQUENCE. None of the overlay's four
+    # digests is running: the frontend was on `c8d6553f` (THIS line, not the overlay's
+    # `6e2fc31d`), and central-gateway `4531b7e2` / user-deployment `746e4937` match NEITHER
+    # pin, i.e. they fell through to `:latest` exactly as that file's own header predicts when
+    # no digest reaches the helper. The overlay is inert, and has been for every roll fired
+    # through the script. Its verification is impeccable and its WIRING IS ABSENT — and it
+    # already records an inertness defect one layer down (the helper ignoring `.digest` at
+    # three of four call sites), so fixing that instance read as handling the class.
+    #
+    # The reason the bump lands on this line instead: `c8d6553f` was the RUNNING digest, which
+    # proves values-sandbox.yaml → rendered reference → kubelet is a live path for cortexUi.
+    # The overlay is left alone deliberately: adding it to VALUES would also apply three
+    # cross-repo pins from 2026-09-23 that the running images have since moved PAST, so it
+    # would be a downgrade of two dag-tools workloads nobody re-verified. Filed, not fixed.
+    #
+    # DERIVED, NEVER TYPED — the order carried BOTH the digest and the tag abbreviated
+    # (`sha256:6f277665…`, tag `5b559765`), and this registry's tags are the full 40-char sha.
+    # Resolved 2026-09-28, five readings:
+    #   * cortex-ui `git rev-parse 5b559765` -> 5b559765d1cc539f47beabba1d54257811616ca0
+    #   * that full tag resolves to exactly the digest below — the tag↔digest binding in the
+    #     direction that matters, not merely "the digest exists"
+    #   * the digest is an `application/vnd.oci.image.index.v1+json` with linux/arm64 present
+    #     alongside linux/amd64; the nodes are arm64
+    #   * POSITIVE CONTROL: the ABBREVIATED tag `:5b559765` answers `not found`, so a `found`
+    #     from this instrument discriminates. Without it, the next reading is only an absence.
+    #   * so `60e245a` having no image is a REAL negative, checked at its FULL sha
+    #     (`60e245a136eaac4fe8f609cb98ab6d40ab5b25f7` -> `not found`), not an abbreviation
+    #     artifact. Head has also moved on again, to `46affb59`; neither is this pin.
+    #   * CONTROL: the superseded `6e2fc31d` STILL resolves. Nothing was deleted, it was
+    #     overtaken — an absence assertion would have been wrong here.
+    #
+    # ⚠ `:latest` resolves to THIS SAME DIGEST as of 2026-09-28, which is the inverse of what
+    # the overlay last measured — and it is a fact with a shelf life, not a reassurance. With
+    # `pullPolicy: Always`, latest agreeing today is what makes the digest pin cheap to verify,
+    # never what makes it unnecessary: the pin exists for the day latest moves.
+    # 2026-09-29 roll #7: cortex-ui 0427884 (chart 0.2.1) -> 79bcda2b. Measured before pinning: ghcr
+    # answers 200 with linux/arm64 + linux/amd64; the same digest with its last hex altered answers
+    # 404, and the superseded 6f277665 still answers 200, so the probe discriminates.
+    # 2026-09-30 frontend-only roll: cortex-ui b66ac48 (carries a425186, the docs card and its
+    # capability row) -> 66887e68. CI run 36668932087 green. Measured before pinning: ghcr answers
+    # 200 with linux/arm64 + linux/amd64; last hex altered answers 404; superseded 79bcda2b still
+    # answers 200. cortex-ui changed only src/ + sessions/ since 0427884, so its chart is unchanged.
+    # 2026-09-30 roll #10: cortex-ui 7cf9e9c6 (canvas export + ingest client, both behind
+    # localStorage flags) -> 6fb15fae. Measured before pinning: the tag resolves to this digest
+    # (200, linux/arm64 + linux/amd64); an invented tag answers 404. cortex-ui changed only src/,
+    # sessions/ and its CI producer ref since b66ac48, so its chart is unchanged.
+    # 2026-10-01 roll #11: cortex-ui adf44b5 (the ingest adapter on the deployed wire, plus
+    # everything 497f45a2 carried -- 497f45a2 is superseded and must not be rolled) -> 38dca3a7.
+    # Measured before pinning: the FULL tag resolves to this digest (200, linux/arm64 +
+    # linux/amd64); the abbreviated tag and the full tag with its last hex altered both answer
+    # 404; the superseded 6fb15fae still answers 200.
+    # 2026-10-01 roll #12: cortex-ui b97b9d58 (live ingest wire readable: a duplicate's id is opaque,
+    # timestamps are epoch-ms numbers; export draws its refusal outcome) -> d2e56047. Measured before
+    # pinning: the FULL tag resolves to this digest (200, linux/amd64 + linux/arm64 + 2 attestations);
+    # the abbreviated tag and the full tag with its last hex altered both answer 404; the superseded
+    # 38dca3a7 still answers 200. VITE_FEATURES unchanged.
+    digest: "sha256:d2e56047cfe90960102b9b09fba2728cc29939b820a42903b4465138583446c9"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -614,6 +689,9 @@ cortexUi:
     # is empty, cortex-ui's electric.ts logs "subscription skipped"
     # and the canvas falls back to SSE-only (no refresh resilience).
     VITE_ELECTRIC_URL: "https://electric.edgy-solutions.com"
+    # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
+    # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
+    VITE_FEATURES: "canvasExport,ingest"
 
 cortexBff:
   enabled: true
@@ -723,3 +801,111 @@ graphHost:
 # --------------------------------------------------------------------------
 engineSafety:
   enabled: true
+
+# --------------------------------------------------------------------------
+# `mc` for the minio-bucket-init hook — built by us, because upstream's is no
+# longer pullable. `minio/mc` answers 401 to an anonymous pull on BOTH quay.io
+# and docker.io (measured 2026-09-30), so the hook at weight -5 blocked every
+# `helm upgrade` until the helm timeout and rolls had to go out `--no-hooks`,
+# which also skips the reregister and ontology-seed hooks.
+#
+# .github/workflows/mirror-util-images.yml builds this from the SAME upstream
+# release tag values.yaml pins. Keep the two tags equal; the workflow's input
+# must be this tag. The repository is outside `global.imagePrefix` on purpose,
+# so the image helper does not float its tag to Chart.Version.
+#
+# SANDBOX ONLY. values.yaml keeps quay.io/minio/mc because it is also what
+# scripts/mirror-to-artifactory.ps1 reads for the work deployment; that
+# deployment has the same unpullable source and needs its own decision.
+#
+# ORDER: dispatch the workflow and see the tag in ghcr BEFORE the first roll
+# that carries this file, or the hook fails on ImagePullBackOff instead.
+# --------------------------------------------------------------------------
+utilImages:
+  mc:
+    registry: "ghcr.io"
+    repository: "edgy-solutions/mirror/mc"
+    tag: "RELEASE.2025-08-13T08-35-41Z"
+
+# --------------------------------------------------------------------------
+# User deployments — dag-tools code location, PINNED BY DIGEST
+# --------------------------------------------------------------------------
+# WHY THIS KEY EXISTS AT ALL: this file had no `userDeployments:` before
+# 2026-10-01. Both user-deployment images are CROSS-REPO, so `$ours` is false
+# in `invincible-agent.image`, `$floor` is `latest`, and the pod has been
+# running whatever the last push to dag-tools master produced. Measured, not
+# assumed: the running pod's imageID was `sha256:746e4937…`, which matches
+# NEITHER digest in `values-roll-frontend-digest.yaml` — it fell through to
+# `:latest`, exactly as that file's header predicts when no digest reaches the
+# helper.
+#
+# ⛔ THE PIN GOES HERE AND NOT IN `values-roll-frontend-digest.yaml`, which is
+# the file whose stated purpose is carrying a roll's cross-repo digests. That
+# file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array (lines 29-33:
+# values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
+# canonical roll command never reads it and it is inert. See the long note at
+# `cortexUi.image.tag` above, which records the same finding and the same
+# resolution for the frontend.
+#
+# WHAT THIS PIN IS FOR — the dag-tools code location could not tick a sensor.
+# Every sensor in `iagent-dag-tools` was failing, 224 failures in 30 minutes,
+# with `ModuleNotFoundError: No module named 'psycopg'` out of
+# `dagster_postgres.utils.create_pg_engine`. SQLAlchemy 2.1 changed which DBAPI
+# a bare `postgresql://` URL selects, measured on the two live pods on
+# 2026-10-01:
+#
+#     iagent-dagster-daemon   sqlalchemy 2.0.54  ->  postgresql.psycopg2
+#     iagent-dag-tools        sqlalchemy 2.1.0   ->  postgresql.psycopg
+#
+# `dagster-postgres` declares and ships `psycopg2-binary` and never `psycopg`.
+# The failure lands while the DagsterInstance is being BUILT, before any sensor
+# body runs, so it takes out every sensor in the code location including ones
+# that touch no database — which is why it read as a sensor bug.
+#
+# dag-tools PR #2 (`6609fe6` on master) caps `sqlalchemy>=2.0.0,<2.1` in main
+# `dependencies`. THE CAP IS INERT UNTIL A BUILD CARRIES IT, and inert again
+# unless this cluster pulls that build: the user-deployment Dockerfile installs
+# with `uv pip install --system`, which RE-RESOLVES and does not read
+# `uv.lock`, so only the committed `pyproject.toml` ceiling binds the image —
+# and only a digest binds which image runs.
+#
+# DIGEST PROVENANCE, run `36947653296` (push event on dag-tools master,
+# `6609fe67c77a6bf4118a81daadb9fcbf44c4b982`; all three Docker jobs success).
+# A green build on a PR proves nothing — that workflow's push step is gated
+# `github.event_name != 'pull_request'`, so PR runs compile both architectures
+# and publish nothing. Two tags were read and they AGREE, which is the binding
+# that matters rather than mere existence:
+#
+#     :sha-6609fe6  -> sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61
+#     :latest       -> the same digest
+#
+# POSITIVE CONTROL: `:master` and `:6609fe6` both answer 404, so a 200 from
+# this instrument discriminates and is not an artifact of the registry
+# accepting any string.
+#
+# Index verified as `application/vnd.oci.image.index.v1+json`, children fetched
+# BY THEIR OWN DIGEST rather than read out of the index:
+#
+#     linux/amd64  sha256:a75f9c551adcadcf1039b678805b4272df00c62dc15c524ed8dc96426424a6d0  200
+#     linux/arm64  sha256:6b79fc60e64313b24244f5121bad634edd7b12a6709c880774678f65c4c32b1c  200
+#
+# arm64 is the one that matters — the sandbox nodes are arm64. (Two
+# `unknown/unknown` children are buildx provenance/SBOM attestations, also 200.)
+#
+# WHAT THIS PIN DOES NOT PROVE. The digest names bytes; it does not show what
+# those bytes resolved. The resolution was proved separately, by compiling the
+# image's own install line (`.[broker]` plus dagster, dagster-aws,
+# dagster-postgres, acryl-datahub, acryl-datahub-dagster-plugin, pandas, boto3,
+# s3fs) against the capped `pyproject.toml`: `sqlalchemy==2.0.54`,
+# `psycopg2-binary==2.9.13`, and no `psycopg` in the resolution at all — the
+# daemon's working combination. The acceptance test for this roll is still a
+# reading off the POD (`sqlalchemy.__version__` and the dialect the URL
+# selects) plus a sensor tick that does not raise, not this comment.
+#
+# ROLLBACK: delete the `digest` line. The image reference falls back through
+# `tag: ""` to `latest`, which is where this deployment was before — not to
+# `746e4937`, which no longer has a name pointing at it.
+userDeployments:
+  dag-tools:
+    image:
+      digest: "sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61"

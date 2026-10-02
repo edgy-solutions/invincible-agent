@@ -102,8 +102,11 @@ def _stub_service_mint(monkeypatch):
     import importlib  # noqa: PLC0415
 
     _bound = 0
+    # `main` too: since 71211c2b `_register_human_task` mints at use, and `main` binds the
+    # name at import (`from utils.service_identity import mint_service_token`), so patching
+    # the source module alone leaves main's copy pointing at the real minter.
     for _name in ("agent_fleet.utils.service_identity", "utils.service_identity",
-                  "dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver"):
+                  "dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver", "main"):
         try:
             _mod = importlib.import_module(_name)
         except ImportError:

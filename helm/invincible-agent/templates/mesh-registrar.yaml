@@ -46,6 +46,18 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            # A1 (2026-09-30): whom the registrar's graph writes are on behalf of. Derived from
+            # the declared non-interactive user, never typed twice.
+            {{- $owner := required "meshRegistrar.onBehalfOfUser is required: the registrar refuses every graph write without a named owner (A1)" .Values.meshRegistrar.onBehalfOfUser }}
+            {{- $ownerId := "" }}
+            {{- range $u := .Values.keycloak.nonInteractiveUsers }}
+            {{- if eq $u.username $owner }}{{- $ownerId = $u.email }}{{- end }}
+            {{- end }}
+            {{- if not $ownerId }}
+            {{- fail (printf "meshRegistrar.onBehalfOfUser %q is not a keycloak.nonInteractiveUsers entry with an email" $owner) }}
+            {{- end }}
+            - name: MESH_REGISTRAR_ON_BEHALF_OF
+              value: {{ $ownerId | quote }}
             # This service probes /v1/healthz, which is NOT in the SDK's default exempt set
             # ("/health", "/healthz", "/livez", "/readyz"). Measured after the v0.2.2 roll: of
             # 51 gauge lines fleet-wide, 29 were this service's own probes — 57% of the entire

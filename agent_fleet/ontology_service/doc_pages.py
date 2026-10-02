@@ -57,12 +57,43 @@ def _local_name(subject: str) -> str:
 def build_page_for_subject_query(subject: str, *, graph: Optional[str] = None) -> str:
     """Pages whose `mesh:explains` includes `subject`, with every field the row carries.
 
-    THE SECOND `mesh:explains` PATTERN IS NOT A DUPLICATE. The first selects the page by the
-    target that MATCHED; the second collects ALL of that page's targets, because `PageRow.explains`
-    is the page's full claim rather than the fragment of it that answered this question.
+    THE `EXISTS` AND THE `OPTIONAL` ARE NOT A DUPLICATE. The `EXISTS` selects the page by the
+    target that MATCHED; the `OPTIONAL` collects ALL of that page's targets, because
+    `PageRow.explains` is the page's full claim rather than the fragment of it that answered.
+
+    **A PAGE IS ALSO ITS OWN SUBJECT.** Since the DOCS subject pool binds `subject` to a DocPage
+    IRI (`match_pages` below), the subject may name the page itself rather than something it
+    explains. That arm matches the FULL IRI only, never a local name, so a subject whose local name
+    happens to equal a page's cannot select it. It is also why `explains` is OPTIONAL: a page
+    that declares no `explains:` (four of the nine in the 2026-09-29 corpus) is still servable by
+    its IRI.
     """
     literal = sparql_lit(subject)
     local = sparql_lit(_local_name(subject))
+    return _page_select(
+        graph,
+        f"""    FILTER (
+      STR(?iri) = "{literal}"
+      || EXISTS {{
+        ?iri mesh:explains ?matched .
+        FILTER (
+          STR(?matched) = "{literal}"
+          || STRENDS(STR(?matched), "#{local}")
+          || STRENDS(STR(?matched), "/{local}")
+        )
+      }}
+    )
+""",
+    )
+
+
+def build_all_pages_query(*, graph: Optional[str] = None) -> str:
+    """Every DocPage with every field. The DOCS subject POOL, which `match_pages` scores."""
+    return _page_select(graph, "")
+
+
+def _page_select(graph: Optional[str], filter_block: str) -> str:
+    """The one SELECT both builders share, so the pool and the lookup return the same row shape."""
     # WHO SCOPES THE GRAPH IS THE CALLER'S TO SAY, AND GETTING IT WRONG IS SILENT.
     # engine-o's `execute_sparql` WRAPS every query in
     # `VALUES ?__mesh_g { <internal/{DOM}> <internal/{DOM}_INSTANCES> } GRAPH ?__mesh_g { ... }`
@@ -77,21 +108,15 @@ def build_page_for_subject_query(subject: str, *, graph: Optional[str] = None) -
 SELECT ?iri ?title ?doc_kind ?audience_hint ?source ?body_sha ?committed ?ex
 WHERE {{
 {opening}
-    ?iri a mesh:DocPage ;
-         mesh:explains ?matched ;
-         mesh:explains ?ex .
+    ?iri a mesh:DocPage .
+    OPTIONAL {{ ?iri mesh:explains ?ex }}
     OPTIONAL {{ ?iri rdfs:label ?title }}
     OPTIONAL {{ ?iri mesh:doc_kind ?doc_kind }}
     OPTIONAL {{ ?iri mesh:audience_hint ?audience_hint }}
     OPTIONAL {{ ?iri mesh:source ?source }}
     OPTIONAL {{ ?iri mesh:body_sha ?body_sha }}
     OPTIONAL {{ ?iri mesh:source_committed_at ?committed }}
-    FILTER (
-      STR(?matched) = "{literal}"
-      || STRENDS(STR(?matched), "#{local}")
-      || STRENDS(STR(?matched), "/{local}")
-    )
-{closing}
+{filter_block}{closing}
 }}"""
 
 
@@ -192,3 +217,134 @@ def page_for_subject(
     return order_pages(
         rows_to_pages(run(build_page_for_subject_query(subject, graph=graph))), audience
     )
+
+
+# ── THE DOCS SUBJECT POOL ─────────────────────────────────────────────────────────────────────
+#
+# "how do I add an engine" names no class. No OntologyClass is labelled engine or canvas
+# template, ADR-0037 refuses minting one, and `mesh:explain`'s `subject` slot declares the
+# universal referent `mesh:Thing`, so the class contest has nothing to bind and the instance
+# fan-out has no provider that knows a page. The subject a DOCS question names IS a page, so
+# the DOCS pool is the DocPage individuals themselves, scored here and bound by engine-o's
+# `/resolve` and `/fill_slots`.
+#
+# PURE AND OFFLINE, like the builders above: the pool arrives as `rows_to_pages` output, so the
+# scorer is sealed over `docs_corpus.ttl` with no store.
+
+DOCS_NS = "http://invincible-agent/docs#"
+DOCPAGE_CLASS = "http://invincible-agent/mesh#DocPage"
+
+#: THE TWO GATES, and each refuses a different wrong bind.
+#:   COVERAGE — the share of the question's IDF mass the winner's tokens cover, with a token no
+#:              page carries weighted as the rarest. "what is the status of HAZ-1003" covers
+#:              nothing and binds nothing, so a non-docs question falls through unchanged.
+#:   MARGIN   — the runner-up must score at most this fraction of the winner. "how do I add
+#:              something" matches six `adding-*` pages alike and binds none of them, and a
+#:              near-tie is an ASK the caller owns, never a coin toss this function makes.
+#: Measured over the 9-page corpus on 2026-09-29: the engine question wins 0.94 over the graph
+#: page's 0.57 (ratio 0.61); the canvas question wins 0.97 over 0.20; "runbook" ties at 0.90.
+MATCH_COVERAGE_FLOOR = 0.5
+MATCH_MARGIN = 0.75
+
+_STOPWORDS = frozenset(
+    "how do does did i a an the to of for in on at by what which is are was my me we you our "
+    "your and or with can could should would please show tell about this that it its into from "
+    "be".split()
+)
+
+
+def _stem(tok: str) -> str:
+    """A deliberately small stemmer: -ing, plural -s/-es, then a final doubled consonant.
+
+    **THE UNDOUBLING RUNS ON EVERY TOKEN, NOT ONLY AFTER -ing**, because it must map both
+    spellings to one form: "adding" -> "add" -> "ad" and "add" -> "ad". Undoubling only the -ing
+    form left "adding" as "ad" and the question's "add" as "add", and every page lost its verb.
+    """
+    if len(tok) > 5 and tok.endswith("ing"):
+        tok = tok[:-3]
+    elif len(tok) > 4 and tok.endswith(("ses", "xes", "zes", "ches", "shes")):
+        tok = tok[:-2]
+    elif len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is", "as")):
+        tok = tok[:-1]
+    if len(tok) > 2 and tok[-1] == tok[-2] and tok[-1] not in "aeiou":
+        tok = tok[:-1]
+    return tok
+
+
+def _tokens(text: str) -> frozenset:
+    words = "".join(c if c.isalnum() else " " for c in (text or "").lower()).split()
+    return frozenset(_stem(w) for w in words if w not in _STOPWORDS)
+
+
+def _page_tokens(page: dict) -> frozenset:
+    """Title, source file stem and IRI local name: the three places a page states its topic."""
+    source = str(page.get("source") or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return (
+        _tokens(str(page.get("title") or ""))
+        | _tokens(source)
+        | _tokens(_local_name(str(page.get("iri") or "")))
+    )
+
+
+def match_pages(identifier: str, pages: Sequence[dict]) -> dict:
+    """Score `identifier` against the DocPage pool; bind ONE page or none.
+
+    Returns `{"page", "score", "coverage", "runner_up", "candidates"}`. `page` is None unless
+    the winner clears BOTH gates above. `candidates` is every page with a nonzero score, ranked
+    and in the `instance_top_candidates` shape (`instance_id`, `class_uri`, `label`, `score`),
+    so a refused near-tie still carries the menu a disambiguation ask needs.
+
+    IDF-weighted cosine over binary token sets. The IDF is what separates the engine page from
+    the graph page ("Runbook — adding a graph to engine-lg"), whose label also says engine: both
+    cover the question, and the shorter claim wins on its norm. The graph page is the control
+    that makes this a discrimination and not a keyword hit.
+    """
+    import math
+
+    empty = {"page": None, "score": 0.0, "coverage": 0.0, "runner_up": 0.0, "candidates": []}
+    query = _tokens(identifier)
+    pool = [(p, _page_tokens(p)) for p in pages if p.get("iri")]
+    if not query or not pool:
+        return empty
+    n = len(pool)
+    df: dict[str, int] = {}
+    for _, toks in pool:
+        for t in toks:
+            df[t] = df.get(t, 0) + 1
+
+    def idf(t: str) -> float:
+        return math.log((n + 1) / (df.get(t, 0) + 1)) + 1.0
+
+    q_norm = math.sqrt(sum(idf(t) ** 2 for t in query))
+    q_mass = sum(idf(t) for t in query)
+    scored = []
+    for page, toks in pool:
+        shared = query & toks
+        if not shared:
+            continue
+        d_norm = math.sqrt(sum(idf(t) ** 2 for t in toks))
+        score = sum(idf(t) ** 2 for t in shared) / (q_norm * d_norm)
+        coverage = sum(idf(t) for t in shared) / q_mass
+        scored.append((score, coverage, page))
+    scored.sort(key=lambda s: s[0], reverse=True)
+    if not scored:
+        return empty
+    candidates = [
+        {
+            "instance_id": p["iri"],
+            "class_uri": DOCPAGE_CLASS,
+            "label": p.get("title") or _local_name(p["iri"]),
+            "score": round(s, 4),
+        }
+        for s, _, p in scored
+    ]
+    best, coverage, page = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else 0.0
+    won = coverage >= MATCH_COVERAGE_FLOOR and runner_up <= MATCH_MARGIN * best
+    return {
+        "page": page if won else None,
+        "score": round(best, 4),
+        "coverage": round(coverage, 4),
+        "runner_up": round(runner_up, 4),
+        "candidates": candidates,
+    }

@@ -486,7 +486,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.3" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.5" },
     { name = "langchain-core" },
     { name = "langfuse" },
     { name = "langgraph" },
@@ -612,8 +612,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.3"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.3#b6d597f0aecf030dcd2fff814c59b467593a12ee" }
+version = "0.9.5"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.5#ceab07ace3d10603ed06d771cf929b8150bf3158" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },

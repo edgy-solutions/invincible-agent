@@ -170,9 +170,9 @@ except ImportError:
 # Same dance as the `engine_mint` import lower down, hoisted here because the outbound-header
 # helper is needed by handlers, not only at registration.
 try:  # pragma: no cover - import path differs by runtime
-    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+    from utils.service_identity import mint_service_token, outbound_auth_headers  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover
-    from agent_fleet.utils.service_identity import outbound_auth_headers
+    from agent_fleet.utils.service_identity import mint_service_token, outbound_auth_headers
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1617,14 +1617,23 @@ def _audience_key(promise_name: str) -> str:
     return audience_key(promise_name)
 
 
-def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
+def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack") -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
     authorized actors from Topaz and materializes one queue row per actor; the
     workflow then suspends on the promise until one of them acts. Runs inside
     ctx.run() (durable, replay-safe). The task def MUST declare `audience`
     (e.g. 'promotion:DATA_ENGINEERING'). Payload is CLEARANCE-SAFE (reference +
-    summary, never compartmented content)."""
+    summary, never compartmented content).
+
+    `kind` IS AN ARGUMENT, NEVER A FIELD OF `task`. The row's kind is what `/act` keys its
+    decision vocabulary and its reason requirement on (`human_tasks.validate_decision`), so the
+    kind decides which gate a decision must pass. A task dict is built from a definition and a
+    caller's trigger, so a kind read out of it would let the caller choose the gate. Only a
+    workflow that owns the process passes a kind (SafetyAcceptance passes the kind its
+    review_request names); every other register stays `workflow_ack`. Until 2026-10-01 this was
+    hard-coded, so HAZ-1003's acceptance registered as `workflow_ack` and its approval passed
+    with no reason, through the gate that requires one for `risk_acceptance_medium`."""
     task_id = task["id"]
     audience = task.get("audience")
     if not audience:
@@ -1636,7 +1645,7 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
             status_code=400,
         )
     body = {
-        "kind": "workflow_ack",
+        "kind": kind,
         "task_id": task_id,
         "workflow_id": workflow_id,
         "audience": audience,
@@ -1644,8 +1653,24 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
         "summary": task.get("summary") or f"Approve workflow step {task_id}",
         "requested_by": task.get("requested_by", ""),
         "subject_ref": task.get("subject_ref"),
+        # NEW — the owning service and the promise this step awaits, carried so cortex-bff's
+        # `/act` can resume the RIGHT workflow by the RIGHT name instead of hardcoding
+        # BPMNWorkflowRunner's `approve`. `.get` because the inline (non-definition-driven)
+        # `user_task` loop below never sets either — both are honest-absent there, and the
+        # register route and `/act` fall back to the legacy BPMNWorkflowRunner behaviour.
+        "workflow_service": task.get("workflow_service"),
+        "promise_name": task.get("promise_name"),
     }
-    headers = {"Authorization": f"Bearer {user_jwt}"} if user_jwt else {}
+    # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
+    # applied to the register it named as its sibling. This used to send the trigger's stored
+    # `user_jwt`, which failed two ways: a definition that suspends for human latency outlives
+    # the token (600s), and a trigger that never carried one sent NO header at all.
+    # SafetyAcceptance is the second case BY CONSTRUCTION -- `acceptance_trigger` is flat
+    # scalars with no token -- so every risk acceptance died 401 -> fail-and-release, measured on
+    # HAZ-1003 at rev 161 (2026-09-30). The token authorizes the EFFECT; `requested_by` in the
+    # body records WHO asked. A ServiceTokenError propagates RETRYABLE: a Keycloak blip is
+    # infra, not a denial.
+    headers = {"Authorization": f"Bearer {mint_service_token()}"}
     resp = requests.post(
         f"{CORTEX_BFF_URL}/internal/human_tasks/register",
         json=body, headers=headers, timeout=AGENT_HTTP_TIMEOUT,
@@ -1662,7 +1687,15 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
             f"(audience {audience!r}) -> {CORTEX_BFF_URL}; failing workflow (state released)",
             status_code=403,
         )
-    resp.raise_for_status()  # 5xx / network stay RETRYABLE (transient, should retry)
+    # ANY OTHER 4xx IS TERMINAL TOO, through the sibling register's own classifier so the two
+    # registers cannot drift (imported with dispatch_item at the bottom of this module).
+    # Measured on HAZ-1003 (2026-10-01): a 422 `no_entitled_recipients` fell through to
+    # raise_for_status, was retried, and Restate PAUSED the invocation, which then needed a
+    # human resume. The register refusing an audience nobody holds does not heal on
+    # retry. 429 stays retryable inside the classifier.
+    _fail_terminal_on_4xx(
+        resp, f"cortex-bff register of HumanTask {task_id!r} (audience {audience!r})")
+    resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)
     return resp.json()
 
 
@@ -1856,7 +1889,9 @@ async def _run_grouped_human_await(
 
 
 async def _run_definition(
-    ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict
+    ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict,
+    *, task_kind: str = "workflow_ack",
+    workflow_service: str = "BPMNWorkflowRunner",
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -1929,7 +1964,14 @@ async def _run_definition(
                 continue
 
             task = {
-                "id": step.id,
+                # COMPOSITE, not bare `step.id`: the bare form is shared by every INSTANCE of
+                # this definition (every SafetyAcceptance run for every hazard uses the step id
+                # "acceptance"), so `mark_task_resolved`'s `WHERE task_id = %s` resolved every
+                # pending row sharing that step id across unrelated workflow instances. The
+                # inline (non-definition-driven) `user_task` loop below is UNCHANGED and keeps
+                # emitting bare step ids — a second, separately-sealed mechanism this fix does
+                # not touch.
+                "id": f"{workflow_id}:{step.id}",
                 "audience": _bind_placeholders(
                     step.audience, bindings, where=f"step {step.id} audience", strict=True),
                 "title": _bind_placeholders(
@@ -1943,15 +1985,21 @@ async def _run_definition(
                 # Carried so the resolver echoes it back — `approve` must resolve
                 # the name this step AWAITS, and it cannot see the definition.
                 "promise_name": promise_name,
+                # WHICH SERVICE OWNS THIS RUN — cortex-bff's `/act` re-validates this against
+                # its own allowlist before interpolating it into a Restate ingress URL; it is
+                # never trusted bare off the row.
+                "workflow_service": workflow_service,
             }
             # AUTHORITY GATE INPUT — journal the audience under the promise this step
             # awaits, so `approve` can check `can_act` against the DEFINITION's audience
             # rather than one the approver's request supplied. See `_audience_key`.
             ctx.set(_audience_key(promise_name), task["audience"])
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
+            # `task_kind` is the CALLER-OF-THIS-FUNCTION's argument, never read from `request`:
+            # BPMNWorkflowRunner hands a client's request straight in. See _register_human_task.
             await ctx.run(
                 f"register_{step.id}",
-                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+                lambda t=task: _register_human_task(workflow_id, t, task_kind),
             )
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
@@ -2246,7 +2294,7 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
             # KeyError fails the workflow loudly rather than suspending invisibly).
             await ctx.run(
                 f"register_{task_id}",
-                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+                lambda t=task: _register_human_task(workflow_id, t),
             )
             # The workflow suspends here indefinitely. No polling, no CPU, no
             # memory. Restate holds a few bytes of journal state until an
@@ -2293,11 +2341,14 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     }
 
 
-@bpmn_workflow.handler()
-async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     """Resolve a durable promise to wake up a paused UserTask.
 
-    Called by the FastAPI ``/workflow/{wf}/task/{tid}/approve`` endpoint.
+    Shared by BPMNWorkflowRunner's ``approve`` and SafetyAcceptance's ``approve`` — ONE
+    function, not a copy, so the authority gate below is a single enforcement point
+    regardless of which service's workflow is suspended. Called (via a thin per-service
+    handler) by cortex-bff's ``/human_tasks/{task_id}/act`` resume path.
+
     This resolves the promise that the ``run`` handler is awaiting,
     causing the workflow to resume execution from exactly where it
     left off.
@@ -2305,7 +2356,7 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
     Args:
         ctx: Restate shared workflow context.
         request: Dict with keys:
-            - ``task_id`` (str): The BPMN task to approve.
+            - ``task_id`` (str): The task being approved.
             - ``status`` (str): e.g. "APPROVED" or "REJECTED".
             - ``comments`` (str): Optional human comments.
 
@@ -2366,6 +2417,12 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
         "task_id": task_id,
         "status": approval_payload["status"],
     }
+
+
+@bpmn_workflow.handler()
+async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """BPMNWorkflowRunner's approve — see `_approve_impl`, the shared implementation."""
+    return await _approve_impl(ctx, request)
 
 
 # ---------------------------------------------------------------------------
@@ -3371,9 +3428,10 @@ except ImportError:
 # part). Same flatten-the-dir import dance as run_tracker so the container path (/app/dispatch_driver.py)
 # and the dev package path both resolve.
 try:
-    from dispatch_driver import dispatch_item  # noqa: E402  — container path
+    from dispatch_driver import _fail_terminal_on_4xx, dispatch_item  # noqa: E402  — container path
 except ImportError:
     from agent_fleet.restate_analyst.dispatch_driver import (  # noqa: E402
+        _fail_terminal_on_4xx,
         dispatch_item,
     )
 

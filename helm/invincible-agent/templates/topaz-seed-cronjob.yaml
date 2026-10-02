@@ -76,7 +76,7 @@ name/registry/repository/tag). A plain STRING is honored verbatim (legacy
 should prefer the map form. */}}
 {{- $seedImg := .Values.topazSeed.image }}
 {{- if not (kindIs "string" $seedImg) }}
-{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" ($seedImg.tag | default "latest") "root" .) }}
+{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" $seedImg.tag "root" .) }}
 {{- end }}
 {{- $gitImg := $src.git.image }}
 {{- if not (kindIs "string" $gitImg) }}
@@ -175,7 +175,7 @@ spec:
           {{- end }}
           containers:
             - name: topaz-seed
-              image: {{ $seedImg | quote }}
+              image: {{ $seedImg }}
               imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
               env:
                 - name: TOPAZ_DIRECTORY_URL

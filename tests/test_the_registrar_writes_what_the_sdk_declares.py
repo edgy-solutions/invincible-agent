@@ -23,10 +23,16 @@ domain-plugin ingest — a THIRD writer outside ADR-0054's two doors. A seal tha
 would red because another repo is the author, which is not the drift it is for.
 
 THE DYNAMIC WRITE IS EXCLUDED BY CONSTRUCTION AND ON PURPOSE. The registrar also emits one
-relationship per registered verb, typed by the verb's own local name via `$verb_local`. That set
-is whatever the fleet registers, so it cannot be declared as literals — the derivation below
-takes QUOTED literals only, and `test_the_dynamic_verb_write_is_recognised_and_excluded` pins
-that the exclusion is deliberate rather than a gap in the regex.
+relationship per registered verb, typed by the verb's own local name (`PREDICATE_EDGE_FAMILY`'s
+`relationship_type` is a FUNCTION, `_get_verb_local_name`). That set is whatever the fleet
+registers, so it cannot be declared as literals — the derivation below takes STRING CONSTANTS
+only, and `test_the_dynamic_verb_write_is_recognised_and_excluded` pins that the exclusion is
+deliberate rather than a gap in the derivation.
+
+TWO WRITE FORMS, TWO DERIVATIONS. Since the registrar adopted the SDK's `MeshGraphWriter`
+(v0.9.5), it holds no Cypher: an edge type is the `relationship_type` of a FAMILY — a module-level
+dict handed to the writer. The trace writer still writes Cypher. `written_edge_types` takes the
+union of both, so a raw Cypher write re-added to the registrar is still seen.
 
 Run: uv run --frozen pytest tests/test_the_registrar_writes_what_the_sdk_declares.py -v
 """
@@ -71,9 +77,42 @@ def _cypher_strings(path: Path) -> list:
             if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
+def _families(path: Path) -> dict:
+    """Every writer FAMILY the module uses: name -> the AST of its `relationship_type` value.
+
+    A family is a MODULE-LEVEL DICT LITERAL WITH A `relationship_type` KEY THAT THE MODULE PASSES
+    AS AN ARGUMENT. All three halves discriminate: a dict without the key is not writer config, and
+    one that is declared but never handed to anything writes nothing. An inline
+    `Neo4jGraphWriter(..., relationship_type=...)` is collected too, under its call's source, so a
+    writer constructed without a family cannot hide from this.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    declared = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+            for key, value in zip(node.value.keys, node.value.values):
+                if isinstance(key, ast.Constant) and key.value == "relationship_type":
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            declared[target.id] = value
+    passed = set()
+    inline = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                if isinstance(arg, ast.Name) and arg.id in declared:
+                    passed.add(arg.id)
+            for kw in node.keywords:
+                if kw.arg == "relationship_type":
+                    inline[ast.unparse(node)] = kw.value
+    return {**{n: declared[n] for n in sorted(passed)}, **inline}
+
+
 def written_edge_types(interface: str = "registrar") -> set:
-    """The STRUCTURAL edge types ``interface`` actually writes, derived from its own Cypher."""
-    found = set()
+    """The STRUCTURAL edge types ``interface`` actually writes: its families' constant types plus
+    any its own Cypher names."""
+    found = {v.value for v in _families(_SOURCES[interface]).values()
+             if isinstance(v, ast.Constant) and isinstance(v.value, str)}
     for s in _cypher_strings(_SOURCES[interface]):
         if "apoc.merge.relationship" in s or "-[" in s:
             found |= set(_APOC_LITERAL.findall(s))
@@ -120,14 +159,33 @@ def test_THE_DERIVATION_READS_CONSTANTS_NOT_PROSE():
 
 
 def test_the_dynamic_verb_write_is_recognised_and_excluded():
-    """The per-verb relationship is typed by `$verb_local`, so it CANNOT be declared as a
-    literal. Asserted so the exclusion is deliberate rather than a hole in the regex — if this
-    write ever became a literal, the registry would need it and this arm says so."""
-    src = _REGISTRAR.read_text(encoding="utf-8")
-    assert "$verb_local" in src, (
-        "the dynamic per-verb write is gone or renamed — if it became a literal type, add it to "
-        "the SDK registry; if it moved, this exclusion needs re-deriving"
+    """The per-verb relationship is typed by a FUNCTION of the verb, so it CANNOT be declared as
+    a literal. Asserted so the exclusion is deliberate rather than a hole in the derivation — if
+    this write ever became a literal, the registry would need it and this arm says so."""
+    dynamic = {name: ast.unparse(v) for name, v in _families(_REGISTRAR).items()
+               if not isinstance(v, ast.Constant)}
+    assert dynamic == {"PREDICATE_EDGE_FAMILY": "_get_verb_local_name"}, (
+        f"the dynamic per-verb write is gone, renamed or joined by another ({dynamic}) — if it "
+        f"became a literal type, add it to the SDK registry; if it moved, re-derive this exclusion"
     )
+
+
+def test_THE_FAMILY_DERIVATION_SEES_ONLY_WHAT_IS_PASSED():
+    """THE CONTROL FOR `_families`, differing from the registrar in exactly what the rule decides
+    on: one family is passed, one is only declared, and one writer is built inline."""
+    import tempfile
+
+    src = (
+        "USED = {'relationship_type': 'USED_T'}\n"
+        "IDLE = {'relationship_type': 'IDLE_T'}\n"
+        "w = make(USED)\n"
+        "x = Neo4jGraphWriter(driver=d, relationship_type='INLINE_T')\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "m.py"
+        path.write_text(src, encoding="utf-8")
+        got = {ast.unparse(v) for v in _families(path).values()}
+    assert got == {"'USED_T'", "'INLINE_T'"}, got
 
 
 # ── the two directions ───────────────────────────────────────────────────────────────────

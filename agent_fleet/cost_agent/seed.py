@@ -26,7 +26,7 @@ routed on. A seed defect that raises at start is an outage; one that does not is
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Iterable
+from typing import Iterable, Optional
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
@@ -209,6 +209,24 @@ def readers_for_recipient(recipient_scope: str) -> tuple[str, ...]:
     does not exist" are the same answer to *may this caller have it*.
     """
     return RECIPIENT_READERS.get(recipient_scope, ())
+
+
+def artifact_filenames(recipient_scope: str) -> tuple[str, str]:
+    """(html, duckdb) — the two files `package_export` writes for one recipient. THE ONE PLACE
+    THE NAMING RULE IS SPELLED: the engine names its outputs with it, the engine's /artifact
+    route derives its closed set from it, and cortex-bff's download proxy maps a filename back
+    to its recipient with it. A second spelling would drift, and the authorization check would
+    read the stale one — the direction that fails open."""
+    return (f"cost-validation-{recipient_scope}.html", f"cost-{recipient_scope}.duckdb")
+
+
+def scope_of_artifact(filename: str) -> Optional[str]:
+    """Which recipient's package `filename` is, or None if no recipient's. Derived from
+    RECIPIENT_SCOPES and artifact_filenames, never parsed out of the string."""
+    for scope in RECIPIENT_SCOPES:
+        if filename in artifact_filenames(scope):
+            return scope
+    return None
 
 
 def lots_for_recipient(recipient_scope: str) -> tuple[int, ...]:

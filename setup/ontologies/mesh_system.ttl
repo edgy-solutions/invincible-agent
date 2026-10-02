@@ -775,3 +775,37 @@ mesh:doc_kind a owl:DatatypeProperty ;
   rdfs:range rdfs:Literal ;
   rdfs:label "doc kind" ;
   rdfs:comment "The Diataxis split — concept, how-to, reference, rationale — because `what IS a disposition review` and `how do I add one` are different answers that route differently. Defaults to concept and is never asked about: ADR-0037 §3 routes the how-to as a linked affordance rather than as a question to the reader. The coverage gate is stated in terms of THIS field — every registered verb needs at least one explaining page of kind concept — which is why it is a declared property rather than a convention in a filename." .
+
+# -----------------------------------------------------------------------------
+# ContentKind tree (ADR-0041 §8) — what a user can drop into the ingestion seam.
+#
+# ADR-0041 does not spell out exact class names for this tree; this shape is this
+# commit's choice, made so the classifier's suggestion (ADR-0041 §4, routed through
+# the EXISTING `manifest.metadata.content_kind` channel per ADR-0021's precedence —
+# this tree is not a second kind-selection path, it is what makes the two kinds the
+# seam currently accepts real :OntologyClass nodes rather than bare strings) has
+# somewhere to point. ADR-0019 §6: a tool-registration input/output URI is a
+# phantom unless it resolves to a declared class, and `ingress-user/<kind>/<sha>/`
+# (ADR-0041 §2) writes `<kind>` as one of these leaves.
+#
+# Two leaves only — PDF and CAD — because those are the two the drop-box ships
+# with (ADR-0041 §1: "a PCN or PDN lands in someone's inbox... they drop the PDF").
+# A THIRD LEAF IS A FUTURE COMMIT, NOT A WIDER ENUM HERE: adding one is exactly
+# the shape of change ADR-0021 §"naming correction" warns against pre-committing —
+# wait for a real document that needs it.
+# -----------------------------------------------------------------------------
+
+mesh:Artifact a owl:Class ;
+  rdfs:subClassOf prov:Entity ;
+  rdfs:label "Artifact" ;
+  rdfs:comment "Root of the ContentKind tree — anything a user can hand-carry into the ingestion seam (ADR-0041 §8) as a document. Subclasses prov:Entity for the same reason mesh:DocPage does: an ingested artifact is provenance-bearing from the moment it lands (ADR-0041 §3, 'the stamp is structural, on everything the document produces'), and PROV-O's wasDerivedFrom is the lineage relation the catalog already relies on. NOT THE SAME CONCEPT AS mesh:DecisionArtifact — that is a disposition record this engine writes; this is a document a USER drops, before any disposition exists. Distinct IRIs, deliberately: a promotion (ADR-0041 §5) may later cite a decision artifact ABOUT an Artifact, and collapsing the two names would make that citation read as self-reference." .
+
+mesh:PDFArtifact a owl:Class ;
+  rdfs:subClassOf mesh:Artifact ;
+  rdfs:label "PDF Artifact" ;
+  rdfs:comment "A PDF dropped through the ingestion seam — the drop-box's primary case (ADR-0041 §1: a PCN or PDN, typically a scanned or exported PDF). Selected via the EXISTING `manifest.metadata.content_kind` declaration channel (ADR-0021's precedence rule), never inferred by an LLM; this class is the target the declared string resolves to, not a second source of truth about what the file is." .
+
+mesh:CADArtifact a owl:Class ;
+  rdfs:subClassOf mesh:Artifact ;
+  rdfs:label "CAD Artifact" ;
+  rdfs:comment "A CAD file dropped through the ingestion seam — the drop-box's second case, alongside PDF (ADR-0041 §8's `ContentKind` pairing). Same selection rule as the PDF kind: declared via `manifest.metadata.content_kind`, resolved to this class, never LLM-classified." .

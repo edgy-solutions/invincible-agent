@@ -41,8 +41,12 @@ the variance tree needs resolvable. They are domain nouns, not `mesh:Response` s
 so they must survive. The rule being sealed is *exists only as a response shape -> filter*,
 NEVER *has no verb -> filter*.
 
-PURE STATIC ANALYSIS — no imports of engine modules, so this cannot fail or pass for an
-environment reason. Module-level string constants are resolved from the AST.
+MOSTLY STATIC ANALYSIS — every assertion below parses source text via the AST, so it cannot
+fail or pass for an environment reason. The one exception is `_RESPONSE_ROOTS` itself: it is
+now IMPORTED from `agent_fleet.ontology_service.main._RESPONSE_SHAPE_ROOTS` rather than
+restated here, so the seal derives from the master rather than keeping its own copy that
+could silently drift from it. `test_doc_tools_and_this_engine_agree_on_the_response_shape_ROOTS`
+below cross-checks that master against doc-tools' copy of the same name.
 
 Run: uv run --frozen pytest tests/routing/test_response_shapes_are_not_groundable.py -v
 """
@@ -55,12 +59,15 @@ import pytest
 
 rdflib = pytest.importorskip("rdflib")
 
+from agent_fleet.ontology_service.main import (  # noqa: E402
+    _RESPONSE_SHAPE_ROOTS as _RESPONSE_ROOTS,
+    _SPARQL_MAINTENANCE_CLASSES as _ENGINE_FALLBACK_SPARQL,
+)
+
 _REPO = Path(__file__).resolve().parents[2]
 _ONT = _REPO / "setup" / "ontologies"
-
-_RESPONSE_ROOTS = (
-    "http://invincible-agent/mesh#Response",
-    "http://invincible-agent/mesh#Archetype",
+_DOC_TOOLS_ONTOLOGY_ASSETS = (
+    _REPO.parent / "doc-tools" / "doc_tools" / "assets" / "ontology_assets.py"
 )
 
 # Kept in step with agent_fleet/finance_agent/main.py's set of the same name.
@@ -322,3 +329,69 @@ def test_the_negative_control_classes_actually_EXIST():
     all_classes = {str(s) for s in g.subjects(rdflib.RDF.type, rdflib.OWL.Class)}
     missing = sorted(_NO_VERB_BY_DESIGN - all_classes)
     assert not missing, f"_NO_VERB_BY_DESIGN names classes that do not exist: {missing}"
+
+
+# ── the COLD-START FALLBACK must apply the SAME exclusion the Weaviate index applies ────────
+
+def test_the_FALLBACK_query_excludes_every_response_shape_root():
+    """DECLARATION-LEVEL, NOT BEHAVIOURAL. This asserts the fallback query's TEXT names the
+    exclusion; it does not execute the query against any store, so it cannot catch the
+    brace-wrap hazard (that arm lives in
+    tests/routing/test_the_cold_start_fallback_spans_mesh_and_the_callers_domains.py, which
+    parses the WRAPPED query with rdflib). What this arm catches is the disagreement that
+    produced the DOCS dead end: the cold-start fallback reading the raw RDF graph with no
+    exclusion at all, while the Weaviate index doc-tools built already excludes these roots."""
+    assert "FILTER NOT EXISTS" in _ENGINE_FALLBACK_SPARQL, (
+        "the fallback query no longer declares a FILTER NOT EXISTS exclusion"
+    )
+    for root in _RESPONSE_ROOTS:
+        assert root in _ENGINE_FALLBACK_SPARQL, (
+            f"{root} is not named in the fallback query's exclusion"
+        )
+
+
+def _doc_tools_response_shape_roots(py: Path) -> list[str]:
+    """Parse `_RESPONSE_SHAPE_ROOTS`'s string literals out of doc-tools' ontology_assets.py.
+
+    AST-based, like every other harvest in this file — doc-tools is a sibling repo this
+    project does not import, so a live import is not on the table anyway.
+    """
+    tree = ast.parse(py.read_text(encoding="utf-8"))
+    for node in tree.body:
+        target = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0].id, node.value
+        else:
+            continue
+        if target == "_RESPONSE_SHAPE_ROOTS" and isinstance(value, ast.Tuple):
+            return [
+                elt.value for elt in value.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            ]
+    return []
+
+
+def test_doc_tools_and_this_engine_agree_on_the_response_shape_ROOTS():
+    """THE CROSS-CHECK NAMED IN main.py'S COMMENT. Engine O's `_RESPONSE_SHAPE_ROOTS` is the
+    master; doc-tools' `ontology_assets.py` applies the SAME rule when it builds the Weaviate
+    index that Engine O reads. If the two ever disagree, one of them is filtering (or failing
+    to filter) response shapes the other doesn't — which is exactly the disagreement that
+    produced the DOCS dead end this whole change fixes. Skipping this arm (sibling repo
+    absent) means the cross-check DID NOT RUN — it is not evidence the two agree."""
+    if not _DOC_TOOLS_ONTOLOGY_ASSETS.exists():
+        pytest.skip(
+            f"doc-tools sibling repo not found at {_DOC_TOOLS_ONTOLOGY_ASSETS} — "
+            "the cross-check against its _RESPONSE_SHAPE_ROOTS did not run"
+        )
+    doc_tools_roots = set(_doc_tools_response_shape_roots(_DOC_TOOLS_ONTOLOGY_ASSETS))
+    assert doc_tools_roots, (
+        "found doc-tools' ontology_assets.py but harvested zero _RESPONSE_SHAPE_ROOTS "
+        "entries from it — the AST parse is broken, not the agreement"
+    )
+    assert doc_tools_roots == set(_RESPONSE_ROOTS), (
+        "this engine's _RESPONSE_SHAPE_ROOTS and doc-tools' copy of the same name have "
+        f"drifted apart: engine={sorted(_RESPONSE_ROOTS)} doc-tools={sorted(doc_tools_roots)}"
+    )

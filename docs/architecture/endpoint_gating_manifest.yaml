@@ -1557,6 +1557,98 @@ services:
           is 503 rather than 404, because "we could not look" is not "there is no such
           thing".
       - method: POST
+        path: /ingest
+        identity: keycloak-jwt
+        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id (no delegation in v1)"
+        exposes: object-store-write
+        consumers: [ingestion seam UI (ADR-0041 §8), non-technical document drop]
+        class: gated
+        justification: >-
+          ADR-0041 §8's ingestion seam, days 1-3. Deny-by-default: no anonymous upload
+          (Depends(get_current_user)), and `on_behalf_of` must equal the authenticated
+          caller — the ADR names the field but not a delegation mechanism, so the narrower
+          reading wins until one exists. `kind` is validated against the closed
+          ingest_status.KINDS set (pdf|cad) BEFORE any write, never LLM-classified
+          (ADR-0021's precedence). sha256 is computed at the door; a hit against
+          ingest_status.find_primary_by_sha is level-1 dedupe (same bytes, full stop) and
+          writes NOTHING to the object store — only a `duplicate` row recording the
+          re-arrival as its own provenance fact. A miss writes
+          `ingress-user/<kind>/<sha>/` (bytes + manifest.json carrying the embedded
+          provenance block, obtained_via=user-drop) to the SAME processing-artifacts
+          bucket extraction_review_sensor.py's S3 sensor already watches.
+          HOSTED HERE rather than on a fleet engine: `agent_fleet/docs_agent` was
+          considered and ruled out (its whole surface is `mesh:explain` over reviewed
+          documentation, gated by mesh TRANSPORT auth, not end-user auth — semantically
+          unrelated and the wrong auth plane). The real document-processing pipeline is
+          Dagster-side, not a FastAPI/Restate engine, so cortex-bff hosts the seam
+          directly and reuses its own existing inline-boto3 client pattern
+          (_build_notice_prefix_index / federated_image, this same file).
+      - method: GET
+        path: /ingest/{ingest_id}/status
+        identity: keycloak-jwt
+        gate: "get_current_user + ingest_status.get_status_for scopes to submitted_by OR on_behalf_of = caller"
+        exposes: gated-content
+        consumers: [ingestion seam UI (ADR-0041 §8)]
+        class: gated
+        justification: >-
+          Same existence-oracle-safe shape as /artifacts/{artifact_id} just above and
+          human_tasks.get_task_resolution: the scoping is IN THE QUERY
+          (ingest_status.get_status_for), and a caller who is neither the submitter nor
+          the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
+          ingest" — never a 403 that would confirm another caller's upload exists.
+      - method: GET
+        path: /export/package/recipients
+        identity: keycloak-jwt
+        gate: "get_current_user + entitlement filter via seed.readers_for_recipient keyed on authz_id"
+        exposes: gated-content
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          The recipient picker's option list. Every scope returned is one the caller's
+          authz_id reads (agent_fleet.cost_agent.seed.readers_for_recipient) — the SAME
+          claim and the SAME function the production and download routes below gate on,
+          so the menu a caller sees cannot promise more than the other two routes allow.
+      - method: POST
+        path: /export/package
+        identity: keycloak-jwt
+        gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); answers refused-not-dropped via the artifact store's own ownership query"
+        exposes: object-store-write
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          THE PRODUCTION HALF OF A GOVERNED EMIT (ADR-0047). No default recipient
+          (ADR-0047 §1): a blank recipient_scope is refused (409) rather than guessed.
+          The recipient gate is on authz_id via seed.readers_for_recipient, and
+          PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD — every recipient's package
+          shares one directory and a canvas narrows what the file carries, so an
+          unentitled producer could overwrite a recipient's package with a different
+          canvas. The engine call forwards THE PERSON's bearer, never a service
+          identity (seed.py's RECIPIENT_READERS comment names no svc: reader —
+          the confused-deputy argument). Every canvas answer id is resolved through the
+          same ownership query /artifacts/{artifact_id} uses; one that does not resolve
+          is a 404, refused rather than silently dropped. artifact_uri on the response
+          is always the GATEWAY path (/export/package/artifact/{filename}), never the
+          engine's own out["artifact_uri"], so a caller cannot be handed a link that
+          bypasses this file's own download gate.
+      - method: GET
+        path: /export/package/artifact/{filename}
+        identity: keycloak-jwt
+        gate: "get_current_user + filename resolved to a recipient scope via seed.scope_of_artifact (closed set) + that scope must be one authz_id reads (seed.readers_for_recipient)"
+        exposes: gated-content
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          THE DOWNLOAD HALF, and the GATEWAY-SIDE CHECK the relay asks for. A filename
+          outside the closed set derived from seed.artifact_filenames is a 404 before
+          any call to the engine — the same structural traversal defence as the
+          engine's own /artifact route. recipient gate on authz_id via
+          seed.readers_for_recipient, same claim and same function the engine's route
+          reads, so the two checks agree by construction. The person's bearer is
+          forwarded to the engine (no service identity), so the engine repeats the
+          identical check on the identical token — belt AND braces on one disclosure,
+          not a redundant no-op, since the engine is not itself reachable from a
+          browser.
+      - method: POST
         path: /internal/identity/redeem
         identity: keycloak-jwt
         gate: "get_current_user + named-principal allowlist (VAULT_REDEEMER_AUTHZ_ID)"
@@ -1936,11 +2028,11 @@ services:
       - method: GET
         path: /electric/shape
         identity: "get_current_user -> authz_id + sub"
-        gate: "self-scoped WHERE injection (recipient_id=authz_id / produced_for_user_id=sub)"
+        gate: "self-scoped WHERE injection, per-table dispatch (recipient_id=authz_id / produced_for_user_id=sub for human_task_projection; submitted_by=authz_id OR on_behalf_of=authz_id for ingest_status_projection)"
         exposes: gated-content
-        consumers: [cortex-ui Electric subscription]
+        consumers: [cortex-ui Electric subscription, ingestion seam UI (ADR-0041 §8)]
         class: gated
-        justification: "strips client WHERE, server-injects a self-scoped filter; ownership isolation (interim, not full Topaz ACL)"
+        justification: "strips client WHERE, server-injects a self-scoped filter per table in the same if/elif dispatch; ownership isolation (interim, not full Topaz ACL). ingest_status_projection's branch added for ADR-0041 §8's ingestion seam."
       - method: GET
         path: /node_details/{node_id}
         identity: get_current_user

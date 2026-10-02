@@ -119,35 +119,52 @@ def _install_stubs():
             pass
         t.SemanticResolution = _R
         sys.modules["baml_client.types"] = t
-    if "baml_client.type_builder" not in sys.modules:
-        tb_mod = types.ModuleType("baml_client.type_builder")
+    # ALWAYS OVERWRITE baml_client.type_builder. THIS DOUBLE IS A RECORDER, NOT A SHIM: the two
+    # `n1` arms read `kwargs["baml_options"]["tb"].values` to assert what enum the LLM was shown,
+    # so an install that yields to whatever got there first makes those assertions a claim about
+    # somebody else's object. It was guarded by `if ... not in sys.modules` and that is the
+    # MEASURED cause of this file's two order-dependent reds: 2/2 green alone, 2/2 red in the
+    # suite with `'TypeBuilder' object has no attribute 'values'`, because
+    # `test_an_out_of_domain_hit_is_a_candidate_not_an_authority` loads engine-o's `main.py` at
+    # module level and pulls in the REAL, file-backed type_builder during COLLECTION. The guard
+    # loses to a legitimate import as readily as to another test's stub.
+    #
+    # The `rdflib` / `neo4j` / `utils*` guards above and below are left deferring on purpose:
+    # nothing asserts on what they recorded, so they are absence shims and the real module is
+    # strictly better than a fake of it. See `tests/conftest.py`'s header for the rule, and
+    # `tests/test_the_stub_harness_puts_sys_modules_back.py` for the seal and the ratchet.
+    #
+    # Setting `sys.modules` alone is enough HERE only because engine-o spells it
+    # `from baml_client.type_builder import TypeBuilder`; `import baml_client.type_builder` would
+    # read the real parent's attribute and never see this. `stub_modules` handles both forms.
+    tb_mod = types.ModuleType("baml_client.type_builder")
 
-        # The real TypeBuilder is opaque; for this test the only thing
-        # we need is for ``tb.Predicate.add_value(iri).description(text)``
-        # to record every value so we can assert what enum the LLM saw.
-        class _ValueBuilder:
-            def __init__(self, iri, registry):
-                self._iri = iri
-                self._registry = registry
-                registry[iri] = ""
+    # The real TypeBuilder is opaque; for this test the only thing
+    # we need is for ``tb.Predicate.add_value(iri).description(text)``
+    # to record every value so we can assert what enum the LLM saw.
+    class _ValueBuilder:
+        def __init__(self, iri, registry):
+            self._iri = iri
+            self._registry = registry
+            registry[iri] = ""
 
-            def description(self, text):
-                self._registry[self._iri] = text
-                return self
+        def description(self, text):
+            self._registry[self._iri] = text
+            return self
 
-        class _PredicateEnumBuilder:
-            def __init__(self, registry):
-                self._registry = registry
+    class _PredicateEnumBuilder:
+        def __init__(self, registry):
+            self._registry = registry
 
-            def add_value(self, iri):
-                return _ValueBuilder(iri, self._registry)
+        def add_value(self, iri):
+            return _ValueBuilder(iri, self._registry)
 
-        class _TB:
-            def __init__(self):
-                self.values: dict[str, str] = {}
-                self.Predicate = _PredicateEnumBuilder(self.values)
-        tb_mod.TypeBuilder = _TB
-        sys.modules["baml_client.type_builder"] = tb_mod
+    class _TB:
+        def __init__(self):
+            self.values: dict[str, str] = {}
+            self.Predicate = _PredicateEnumBuilder(self.values)
+    tb_mod.TypeBuilder = _TB
+    sys.modules["baml_client.type_builder"] = tb_mod
 
     if "utils" not in sys.modules:
         sys.modules["utils"] = types.ModuleType("utils")

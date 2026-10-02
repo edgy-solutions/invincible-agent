@@ -6,10 +6,11 @@ empty list both when nothing matched and when the substrate could not be asked. 
 a confident zero.
 
 **THE SECOND FINDING IS THE ONE THAT CHANGES THE FIX**, and it is asserted here rather than
-described: `execute_sparql`'s advertised rdflib fallback CANNOT SERVE ANY OF ITS EIGHT CALLERS.
+described: `execute_sparql`'s advertised rdflib fallback CANNOT SERVE ANY OF ITS CALLERS.
 The graph-scoping wrap injects `GRAPH ?__mesh_g`, and a plain `rdflib.Graph` raises on any
 named-graph pattern — so Path B does not return few rows, it raises, and the raise is swallowed
-into `return []`. Measured across all eight call sites, not sampled from one.
+into `return []`. Measured across all eight call sites on 2026-09-17, not sampled from one; the
+ninth (the DOCS subject pool, 2026-09-29) is classified in the call-site arm.
 
 Run: uv run --frozen pytest tests/test_an_outage_is_not_an_empty_answer.py -v
 """
@@ -162,13 +163,27 @@ def test_PATH_B_CANNOT_ANSWER_A_SCOPED_QUERY_AT_ALL():
     assert "dataset" in str(exc.value).lower() or "conjunctive" in str(exc.value).lower()
 
 
-def test_ALL_EIGHT_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
+def test_ALL_NINE_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
     """PARTITIONED, NOT SAMPLED - every call site in the basis or excluded with a reason.
 
-    Seven pass a query the wrap scopes. The eighth (`main.py:603`, the Jena emptiness check)
-    already contains `GRAPH ?g` so the wrap skips it - and a named-graph pattern is exactly what a
-    plain `rdflib.Graph` cannot serve either. Eight of eight, by two routes to the same raise.
+    Derived at eight on 2026-09-17: seven pass a query the wrap scopes, and the eighth (the Jena
+    emptiness check) already contains `GRAPH ?g` so the wrap skips it - and a named-graph pattern
+    is exactly what a plain `rdflib.Graph` cannot serve either.
+
+    RE-DERIVED AT NINE on 2026-09-29. The ninth is `_match_docs_subject`, the DOCS subject pool
+    read. It joins the SCOPED class, which is asserted below from the query itself rather than
+    stated: `build_all_pages_query()` spells no `GRAPH` at all, so the wrap scopes it under the
+    keyword rule and under the old substring rule alike. Its caller catches the raise and falls
+    through to the pre-existing resolve path (sealed in
+    `tests/docs/test_the_docs_subject_pool_binds_the_page.py`), so an outage binds no page and is
+    never read as "the corpus has no pages". Nine of nine, by two routes to the same raise.
     """
+    from agent_fleet.ontology_service.doc_pages import build_all_pages_query
+
+    assert "GRAPH" not in build_all_pages_query().upper(), (
+        "the ninth call site's query now spells GRAPH, so it has left the scoped class; "
+        "re-derive the partition"
+    )
     tree = ast.parse(_MAIN.read_text(encoding="utf-8", errors="replace"))
     sites = [
         n
@@ -177,8 +192,8 @@ def test_ALL_EIGHT_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback()
         and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) == "execute_sparql"
         and n.args
     ]
-    assert len(sites) == 8, (
-        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 8 "
+    assert len(sites) == 9, (
+        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 9 "
         "and a new caller has not been classified. Re-derive it rather than adjusting the number."
     )
 

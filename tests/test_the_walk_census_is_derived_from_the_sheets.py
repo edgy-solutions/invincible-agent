@@ -372,6 +372,68 @@ def test_a_verb_matches_either_spelling():
     assert {"costSupplierConcentration", "cost_supplier_concentration"} <= names, names
 
 
+def test_verb_names_NEVER_RE_ATTACHES_THE_PREFIX_IT_STRIPPED():
+    """⛔ NO SPELLING THIS HELPER OFFERS IS `<prefix>_<local>`. The rule the sheet broke.
+
+    WHAT IT COST, measured 2026-09-27 (roll #5): all four DOCS rows expected `mesh_explain`, a
+    spelling nothing produces, and every one reported `verb ['explain'] lacks 'mesh_explain'`.
+    It stayed invisible for eight days because the docs walk never got far enough to report a
+    verb at all — the earlier failure was standing in front of this one.
+
+    THE POPULATION IS COMPLETE AND IT IS THE DELIMITER SET, not a sample of prefixes: every
+    spelling `verb_names` emits is a segment taken after splitting on one of `#`, `/`, `:`, or
+    the `_camel_to_snake` of one. So the prefix is GONE from every output by construction, and
+    the three delimiters are the whole of what `verb_names` splits on — read off its body, not
+    guessed. A fourth delimiter added there reds this arm on the commit that adds it.
+
+    WHY THIS IS NOT A SEAL ON THE SHEET'S SPELLING, which is what I first tried to write: no
+    offline check can rule a sheet expectation unproducible, because EVERY string is the local
+    segment of some IRI (`mesh:mesh_explain` produces `mesh_explain`). The sheet is held down by
+    the arm below, against the IRI the engine actually spells. This one holds down the helper.
+    """
+    delims = ("#", "/", ":")
+    for d in delims:
+        for prefix, local in (("mesh", "explain"), ("cost", "rateComparison"), ("fin", "burnRate")):
+            names = verb_names({"action": {"iri": f"{prefix}{d}{local}"}})
+            assert names, f"{prefix}{d}{local} produced no spelling at all"
+            assert f"{prefix}_{local}" not in names, (
+                f"verb_names re-attached the prefix it stripped: {prefix}{d}{local} -> "
+                f"{sorted(names)}. A sheet expecting `{prefix}_{local}` would then be matchable, "
+                f"and the census's four DOCS rows were written believing exactly that."
+            )
+            # THE POSITIVE HALF, so this is not merely an absence assertion: the bare local
+            # segment MUST be offered, or a correctly-spelled sheet would red instead.
+            assert local in names, (
+                f"the bare local segment {local!r} is missing from {sorted(names)} — that is the "
+                f"spelling a sheet IS supposed to carry"
+            )
+
+
+def test_EVERY_DOCS_ROW_EXPECTS_A_SPELLING_THE_EXPLAIN_VERB_ACTUALLY_PRODUCES(rows):
+    """The sheet's side of the rule above, against the IRI engine-o spells: `mesh:explain`.
+
+    MEASURED INPUT, not a fixture invented here. roll #5 (revision 153) fired all four DOCS rows
+    against the live fleet and each reported its observed verb set as `['explain']` — so `explain`
+    is what the wire carries, and the sheet is what was wrong. `mesh:explain` is also the only
+    spelling the engine's own source uses (`ontology_service/main.py:495, 2517, 4743, 4781`).
+
+    DERIVED FROM THE ROW SET, never a list of four ids: a fifth DOCS row added with the same
+    mis-spelling reds on the commit that adds it, one commit before anyone runs it against a
+    fleet and reads the gap as an engine defect. Which is precisely how this one was read for
+    eight days.
+    """
+    produced = verb_names({"action": {"iri": "mesh:explain"}})
+    docs_rows = [r for r in rows if r.sheet.endswith("docs-walk-sheet.md") and r.expect_verb]
+    assert docs_rows, "no DOCS row carries a verb expectation — this seal is asserting nothing"
+    wrong = sorted({r.expect_verb for r in docs_rows} - produced)
+    assert not wrong, (
+        f"{len(docs_rows)} DOCS row(s) expect {wrong}, and `mesh:explain` produces "
+        f"{sorted(produced)}. Every one of those rows fails on SPELLING before the fleet's "
+        f"behaviour is reached, and reports it as `verb [...] lacks ...` — a red that reads like "
+        f"the question reached the wrong engine."
+    )
+
+
 def test_an_empty_census_is_refused(tmp_path):
     """A loader returning an empty list hands its caller a green light and nothing to run."""
     p = tmp_path / "empty.yaml"

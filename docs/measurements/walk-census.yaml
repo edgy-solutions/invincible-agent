@@ -365,7 +365,22 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
+    expect_archetype: KNOWLEDGE_DOCUMENT
+    min_rows: 1
+    dispositions: [drawn]
+
+  # THE UI'S OWN PATH. Cortex hides DOCS from the domain picker (cortex c3cf1d3), so the picker
+  # sends MESH, not DOCS — this is the screenshot's row, and `docs-how-do-i-add-an-engine` above
+  # is the DOCS-caller control.
+  - id: docs-how-do-i-add-an-engine-under-mesh
+    sheet: docs/measurements/docs-walk-sheet.md
+    sheet_index: 0
+    question: how do I add an engine
+    user: agent-user
+    persona: DATA_ENGINEER
+    domains: [MESH]
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
@@ -388,7 +403,7 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
@@ -400,34 +415,22 @@ rows:
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
+    expect_verb: explain
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
 
-  # THE DESIGNED REFUSAL, and it is a row rather than a note because the refusal screen is the one
-  # nobody looks at. `rolling-a-service` declares `explains: none` — honestly, its own frontmatter
-  # says the emptiness is the measurement — so NO question can return it through mesh:explain.
-  # The correct answer is an abstain NAMING the subject, and `drawn` would be the defect here.
-  #
-  # MEASURED 2026-09-26, three fires: this row came back `drawn`, exactly as warned above. The
-  # engine was never at fault — `explain` already returns `abstained: True` with the subject in it.
-  # Nothing read that field, so the supervisor stamped `route_status: matched` and the refusal drew
-  # as a sectionless card. Fixed at the routing layer (`iagent_pure.engine_abstain`).
-  #
-  # `dispositions` WAS `[slot_required]`, WHICH WAS THE WRONG CLAIM even while it was the only one
-  # the vocabulary could express. This row's subject is a doc-corpus gap: there are no comparable
-  # verbs to offer, and `presentation_agent` explicitly refuses to draw an empty menu, so no
-  # ELICITATION is ever produced here and `slot_required` was unreachable for this row. It asserted
-  # a neighbour of the claim. `[abstained]` asserts the claim.
-  - id: docs-how-do-i-roll-a-service-abstains
+  # THE PREMISE CHANGED. This row used to expect an abstain (`rolling-a-service` carried no
+  # `explains:` target); the page answers since roll #8 (ab9b2a4e), measured green on revision
+  # 159, so it now expects a draw like every other docs row.
+  - id: docs-how-do-i-roll-a-service
     sheet: docs/measurements/docs-walk-sheet.md
     sheet_index: 3
     question: how do I roll a service
     user: agent-user
     persona: DATA_ENGINEER
     domains: [DOCS]
-    expect_verb: mesh_explain
-    expect_archetype: null
-    min_rows: 0
-    dispositions: [abstained]
+    expect_verb: explain
+    expect_archetype: KNOWLEDGE_DOCUMENT
+    min_rows: 1
+    dispositions: [drawn]

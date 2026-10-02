@@ -1,6 +1,6 @@
 # ADR-0038 — Telemetry as provenance projection: the Langfuse observability standard (extends ADR-0010)
 
-**Status:** Proposed — standard defined; rollout staged (helper + env on v2 this week; doc-tools artifact-keyed tracing; prompt-hash; v3/OTEL migration), each sealed.
+**Status:** **Partially implemented — stage 2 in progress.** Standard defined and the leaf exists. *Measured 2026-09-23, not read:* the **shape-schema validator** and the **mesh-repo truth-check** are **live**; Langfuse **scores** and **stages 3–5** (doc-tools artifact-keyed tracing, prompt-hash linkage, v3/OTEL) are **spec-only** — declared here and in the leaf's types, with no call site. "Proposed" was wrong in both directions: it undersold two shipped mechanisms and oversold three unbuilt ones. See *Status as measured* under Rollout for what was exercised and the one seal that has no test.
 **Date:** 2026-08-03
 **Deciders:** Platform team
 **Related:**
@@ -85,6 +85,29 @@ A single `set_trace_standard(...)` in the standalone `provenance-telemetry` leaf
 **Relocation is expand/contract, not a hard move.** `baml_shared/telemetry.py` moves into the leaf; the mesh's imports of the old path keep working through a **re-export shim** during the interval. The shim carries a removal marker naming its condition — *all three repos on the leaf* — and the contract phase deletes it. A hard move would break doc-tools' adoption ordering for no reason.
 
 ## Rollout (staged, each sealed; first two this week)
+
+### Status as measured (2026-09-23, Lane 1 seat)
+
+Each line below was **exercised**, not inferred from the presence of code. Written because the
+previous status line said "Proposed" seven weeks after two of these mechanisms started refusing
+things in the test suite.
+
+| claim | how it was measured |
+| --- | --- |
+| the leaf is real and **in use**, not stubbed | `baml_shared/telemetry.py` is a re-export shim with a **no-op stub fallback** if the import fails, so a passing export test proves nothing on its own. Resolved by identity: `set_trace_standard.__module__` is `provenance_telemetry.emit`, and the leaf loads from site-packages. Had the leaf been missing, the same tests would have passed against no-ops. |
+| shape-schema validator **live** | `Mapping(slots=…)` exercised **both directions**: known slots (`user_id`, `session_id`) construct; `not_a_langfuse_slot` raises `ValidationError` naming the unknown slot against `KNOWN_SLOTS` (5 slots: `trace_id`, `user_id`, `session_id`, `release`, `version`). A refusal with no positive control would not have distinguished a working guard from one that refuses everything. |
+| mesh-repo truth-check **live** | `tests/test_telemetry.py::test_mesh_mapping_truth_check` — 7 passed. |
+| scores **spec-only** | `ScoreSpec` and `KNOWN_SCORE_ENCODINGS` (`count_total`, `binary_per_join`, `fraction`, `ordinal`) exist in the leaf as *types*. No mapping declares `scores` and no call site emits one; the sole repo hit for a score-shaped name is `agent_fleet/ontology_service/main.py:5109` `candidate_scores=`, which is routing candidate scoring and unrelated to Langfuse. |
+| stages 3–5 **spec-only** | no artifact-keyed trace minting, no `prompt@<hash>` linkage, no v3/OTEL path in this repo. |
+
+**One stage-2 seal has no test in this repo.** Stage 2 requires the shape-schema to "refuse an
+unknown slot"; that refusal is real (exercised above) but **no test asserts it** — `grep` over
+`tests/` for `KNOWN_SLOTS` / "unknown slot" returns nothing. The behaviour therefore rests on a
+manual exercise, and a regression in the leaf would land here silently. Scoped honestly: the leaf is
+a separate distributable shared with doc-tools and cortex-*, and **its own suite was not read from
+this seat** — so this is "untested *here*", not "untested". The other two stage-2 seals named in the
+list below (fail-soft proven; a trace carries the standard shape) were **not** re-measured today and
+are not claimed above.
 
 1. **This ADR** — the projection doctrine + mapping.
 2. **Helper + env vars (v2) — landing in the new `provenance-telemetry` leaf.** `set_trace_standard` (user_id=`authz_id`, session_id, tags, metadata from the mapping) + the shape-schema validator + `LANGFUSE_RELEASE` (git SHA) + environment (v2: tag/metadata), wired per-deployment in both charts; `baml_shared/telemetry.py` becomes a **re-export shim** (marked for removal when all three repos are on the leaf). Mesh-side seed mapping + its **mesh-repo truth-check** land here. **Seal:** a trace carries the standard shape; the shape-schema **refuses an unknown slot**; the truth-check **reddens on a mapped-but-nonexistent field**; and **fail-soft proven** (Langfuse down → the review still starts, the miss is counted).

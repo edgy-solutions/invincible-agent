@@ -258,6 +258,65 @@ def _extract_agent_response(raw_data: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _wrapper_field(raw_data: Any, key: str) -> Any:
+    """Read a key off the SUPERVISOR'S WRAPPER, not off the expert's response.
+
+    `_extract_agent_response` deliberately descends into `expert_response`; these fields live
+    one level ABOVE it, on the wrapper cortex-bff builds
+    (`{persona, user_persona, answerer_persona, predicate_verb_iri, sub_query, route_status,
+    expert_response}` — gateway.py's `_results`). An ELICITATION needs the wrapper's
+    `sub_query`: the question as the user asked it, which the refusal payload itself never
+    carries because an engine refusing a verb was never handed the phrase.
+
+    Returns None rather than "" for absent, so a caller can tell *not on the wrapper* from
+    *empty string on the wrapper*. Say WRAPPER and not "wire": absent here means absent from the
+    wrapper only, and a field this returns `None` for may still be present in the ENVELOPE
+    (`expert_response`) that `_project_flat_archetype` reads — `accepted_slots` is exactly that
+    case. That distinction is the whole point for `accepted_slots` — see `_reroute_fields`.
+    """
+    if isinstance(raw_data, list) and raw_data:
+        first = raw_data[0]
+        if isinstance(first, dict) and key in first:
+            return first[key]
+    if isinstance(raw_data, dict) and key in raw_data:
+        return raw_data[key]
+    return None
+
+
+# engine-docs' own KNOWLEDGE_DOCUMENT payload shape -- passed BESIDE the markdown, not
+# through it. See `_docs_explanation_passthrough` just below for why these live outside
+# `_render_document_deterministic`.
+_DOCS_PASSTHROUGH_KEYS = ("subject", "pages", "page_count", "abstained", "reason", "body")
+
+
+def _docs_explanation_passthrough(agent_response: Any) -> Dict[str, Any]:
+    """Carry engine-docs' own fields onto the component, BESIDE the markdown the composer
+    builds -- never through it.
+
+    THE SEAL THIS RESPECTS: `tests/routing/test_slot_disposition.py
+    ::test_the_fallback_renders_the_ask_rather_than_silence` AST-walks
+    `_render_document_deterministic` (the function whose dump contains "No content
+    available.") and treats every `agent_response.get(<literal>)` found INSIDE IT as a key the
+    MARKDOWN reads, then requires an ask card to carry each one so the fallback never renders
+    silence. These six keys do not feed the markdown -- with or without them the composed text
+    is byte-identical -- so they are not members of that population, and reading them inside
+    the composer would misstate what it reads. `tests/docs/test_the_doc_explanation_passes_its
+    _structure_through.py` pins the composer's read-set so the two stay separate.
+
+    THE DISCRIMINATOR mirrors cortex-ui's `knowledgeDocumentView.ts` (contract owner, commit
+    a425186) exactly: cortex draws structure when `pages` is a non-empty list, or when
+    `abstained` is literally `True`; anything else falls back to `markdown_content`. This is a
+    separation of what feeds the markdown from what rides beside it -- not a way around the
+    seal above.
+    """
+    if not isinstance(agent_response, dict):
+        return {}
+    pages = agent_response.get("pages")
+    if not (isinstance(pages, list) and pages) and agent_response.get("abstained") is not True:
+        return {}
+    return {k: agent_response[k] for k in _DOCS_PASSTHROUGH_KEYS if k in agent_response}
+
+
 def _render_document_deterministic(
     raw_data: Any,
     persona: str,
@@ -294,18 +353,29 @@ def _render_document_deterministic(
         parts.append(str(summary_text))
     if structured is not None:
         parts.append("```json\n" + json.dumps(structured, indent=2) + "\n```")
+    if not parts and agent_response and not _docs_explanation_passthrough(agent_response):
+        # A FLAT MEASURE REPLY IS THE CONTENT. `/measure/{fn}` engines (safety, cost, finance)
+        # return their answer as top-level fields with no `summary`/`structured_data` envelope,
+        # and the gateway hands that dict over as `expert_response` unchanged. Reading only the
+        # two envelope keys dropped every such answer and wrote the placeholder -- measured on
+        # HAZ-1003's RiskAssessmentDraft at rev 161, whose binding's `expected_fields` were all
+        # present one level up. The whole reply is fenced, as structured_data would be.
+        # NOT for a docs answer: its structure rides BESIDE the markdown via the passthrough
+        # (`tests/docs/...passes_its_structure_through.py`), and the read-set above stays the
+        # three envelope keys, which `test_slot_disposition` extracts from this function.
+        parts.append("```json\n" + json.dumps(agent_response, indent=2, default=str) + "\n```")
     markdown_content = "\n\n".join(parts) if parts else "No content available."
 
-    return {
-        "components": [
-            {
-                "archetype": "KNOWLEDGE_DOCUMENT",
-                "source_persona": persona,
-                "subject_concept": subject_concept,
-                "markdown_content": markdown_content,
-            }
-        ]
+    component = {
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "source_persona": persona,
+        "subject_concept": subject_concept,
+        "markdown_content": markdown_content,
     }
+    if agent_response is not None:
+        component.update(_docs_explanation_passthrough(agent_response))
+
+    return {"components": [component]}
 
 
 def _degrade_edgeless_topology_to_document(
@@ -627,6 +697,27 @@ def _project_flat_archetype(
     for field in required + optional:
         if field in resp:
             component[field] = resp[field]
+
+    # ── THE RE-ROUTE FIELDS, FILLED FROM THE WRAPPER ONLY WHERE THE ENVELOPE IS SILENT ──
+    #
+    # THIS PRODUCER INHERITED THE FIELDS INSTEAD OF INJECTING THEM, and was correct only by
+    # luck. Roll #5 (revision 153) measured the live docs asks: they come through HERE, not
+    # through `_render_refusal_menu`, and they carried `sub_query` only because their one
+    # upstream — `slot_disposition.py:619` — happens to set it. An envelope that carries
+    # `options` and no phrase produces a card with a menu and nothing to re-route with, which
+    # is the precise lot-3 defect, on a path the fix for lot 3 never touched. `cost_agent`'s
+    # refusals carry `slot` and `available` and no `sub_query` at all; they reach a card
+    # through the refusal menu today, and nothing but today's routing keeps them out of here.
+    #
+    # `setdefault`, SO THE ENVELOPE WINS. The producer that computed the ask knows more than
+    # the wrapper does: where both carry a field the envelope's value stands, and the wrapper
+    # only fills a hole. Scoped to ELICITATION because these two fields are declared on that
+    # archetype and nowhere else — a NAMED_HOLE must not acquire an `accepted_slots`.
+    #
+    # `_reroute_fields` is defined below this function; the name resolves at call time.
+    if archetype == "ELICITATION":
+        for _field, _value in _reroute_fields(raw_data).items():
+            component.setdefault(_field, _value)
     return component
 
 
@@ -827,6 +918,58 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # refused inner call RAISES there and the two hole terms are unreachable BY CONTRACT.
     # Nothing here may key on which dispositions are present.
     "SOURCE_LEDGER": ("rows", ("summary",)),
+}
+
+
+#: THE TAG RULING 1 CREATED, and the vocabulary is THE SDK'S rather than a new one. A key in a
+#: `_PROJECTED_ARCHETYPES` passthrough that is COMPLETENESS-BEARING names which field of
+#: `iagent_mesh.enumeration.EnumerateInstancesResponse` it stands in for, so this fleet has one
+#: vocabulary for the fact instead of two:
+#:
+#:   total_available  a count of the PRODUCER'S set. Not re-derivable from the rows that arrive,
+#:                    because a truncated payload reproduces every derivation over itself and
+#:                    agrees with whatever survived.
+#:   completeness     the tri-state claim proper. Per ruling 6 it is ABSENT when the producer did
+#:                    not evaluate it -- never `None`, and never inferred from a count.
+#:
+#: THE SDK SAYS THE SAME THING FIRST, and this tag is deliberately a restatement of it rather
+#: than a second opinion: `enumeration.py:57-59` names inferring completeness from
+#: `len(instances) < limit` as the defect, and `:199-202` says the field is a three-value
+#: `Literal` and not a boolean precisely so "the provider said complete" stays distinguishable
+#: from "the provider never said".
+#:
+#: WHY A TAG AND NOT A LIST OF NAMES. cortex's parity seal pinned these three BY NAME
+#: (`projectedTupleParity.test.ts:423`, "The three completeness-bearing counts travel, BY NAME"),
+#: so a FOURTH completeness count was invisible to it. That is the per-member-predicate defect
+#: this fleet has now met three times, and it is what a floor by name always is: it covers
+#: exactly the names in it. A tag makes the POPULATION derivable, so the count of
+#: completeness-bearing keys comes from the tags rather than from a floor someone must remember
+#: to widen.
+#:
+#: `methods_answered` EARNS ITS PLACE FOR A REASON THE COMMENT ABOVE NEVER STATED, and the reason
+#: is checkable rather than argued. The producer derives it as
+#: `len([Decimal(r["eac_exact"]) for r in rows if r.get("eac_exact") is not None])`
+#: (`finance_agent/measures.py:79`, used at `:90`) -- and `eac_exact` IS NOT IN THE CARD'S ROW
+#: CONTRACT. The discriminating field is withheld from the row, so the card cannot run the
+#: producer's predicate over the rows it holds, truncated or not. Were it derivable it would be
+#: the `suppliers_above_threshold` shape and would have to be WITHHELD. So the day `eac_exact`
+#: joins `CompetingMeasures.contract.ts` this tag becomes wrong; the seal asserts that absence,
+#: so the change cannot pass quietly.
+#:
+#: RULING 2's EXEMPTION IS KEYED ON THE OBSTACLE, NOT ON A VERSION. These keys keep their
+#: engine-specific names -- rather than migrating to the SDK's `completeness`/`total_available`
+#: -- for exactly as long as those fields are UNAVAILABLE on this envelope surface. Measured,
+#: not assumed: both names exist at SDK 0.9.3, on `EnumerateInstancesResponse` and on no other
+#: type, in neither the Python nor the TS surface, and nowhere in `cortex-ui/src`; and this
+#: module imports only `iagent_mesh.transport_auth`, so the projected envelope is a plain dict
+#: with no field to migrate TO. "Until v0.9.4 lands" was this trigger's first form and was
+#: withdrawn: a version number is a NAME, 0.9.4 can land carrying nothing relevant, and an
+#: exemption keyed on a name excuses whatever is given that name. The seal asserts the premise
+#: itself, so the exemption reds the day a completeness field becomes available envelope-side.
+_COMPLETENESS_BEARING: Dict[str, str] = {
+    "methods_compared": "total_available",
+    "methods_answered": "total_available",
+    "all_methods_answered": "completeness",
 }
 
 
@@ -1137,8 +1280,69 @@ def _as_options(values: "list") -> "list[Dict[str, Any]]":
     ]
 
 
+def _reroute_fields(raw_data: Any) -> Dict[str, Any]:
+    """The two fields an option-bearing ELICITATION needs to be ANSWERABLE, and no others.
+
+    A menu whose options cannot be turned back into a routed request is a menu that renders
+    and then dead-ends. `answer_ask` (src/iagent_pure/slot_disposition.py) reconstructs the
+    re-route from the CARD:
+
+        slot     = card["slot"]                       # already emitted
+        accepted = card["accepted_slots"]             # and this
+        return Reroute(BIND, {**accepted, slot: value})
+
+    `sub_query` is the phrase as asked, for the free-text arm and for a surface that must show
+    which question the menu belongs to. It rides on the supervisor's WRAPPER rather than in the
+    refusal payload, because an engine refusing a verb was never handed the phrase.
+
+    ⛔ `accepted_slots` IS OMITTED WHEN IT IS NOT ON THE WIRE, AND THAT IS DELIBERATE — IT MUST
+    NOT BE DEFAULTED TO `{}`.
+
+    ⚠️ THE SCOPE OF THAT CLAIM IS THE **WRAPPER**, WHICH IS THE ONLY THING THIS FUNCTION READS.
+    Corrected 2026-09-27 (roll #5): the 2026-09-26 measurement below is a claim about the
+    supervisor wrapper, and was read for a while as a claim about the wire. It is not one.
+
+        the WRAPPER   gateway.py's `_results`, dynamic_supervisor.py's POST body
+                      -> `sub_query`, and NO `accepted_slots`          <- what `_wrapper_field`
+                                                                          sees; the gap is HERE
+        the ENVELOPE  src/iagent_pure/slot_disposition.py:634
+                      `"accepted_slots": dict(accepted or {})`         -> ALWAYS present
+
+    So `accepted_slots` IS on the wire, inside `expert_response`, on every ask that engine builds
+    — and `_project_flat_archetype` reads the envelope, so the live ELICITATION cards carry it.
+    A `{}` arriving from :634 is the INFORMED report of a producer that holds `accepted` as a
+    parameter and is saying nothing was bound yet, which is true on a first ask. The `{}` this
+    docstring forbids is the UNINFORMED one — a default invented by a producer that cannot know.
+    The rule is about a producer's KNOWLEDGE, not about the value.
+
+    Neither caller of `/render_ui` sends it in the WRAPPER today (measured 2026-09-26:
+    gateway.py's `_results` wrapper and dynamic_supervisor.py's POST body both carry `sub_query`
+    and NOT `accepted_slots`; the accepted set exists in `direct_dispatch` only as a Dagster
+    materialization). Emitting `{}` to satisfy a schema would be strictly worse than omitting
+    it, and this is the one place that can be said: `answer_ask` does `{**accepted, slot: value}`,
+    so an empty dict does not mean "no slots were bound" — it re-routes having DROPPED every
+    slot the first turn got right, with no error anywhere, which is precisely the failure
+    `slot_disposition`'s own docstring says the field exists to prevent ("a re-route pre-binding
+    ONLY the answered slot would suppress filling of every other slot the first turn already got
+    right"). A defaulted `{}` would manufacture that bug and make the seal green over it.
+
+    So: ABSENT means "this producer could not know", which a consumer can refuse. `{}` would
+    mean "nothing was bound", which is a false claim — false FROM HERE, where nothing knows. The
+    WRAPPER gap is the blocker and is reported as one; when a caller starts sending the field in
+    the wrapper, it appears here with no change. The envelope path never needed this fix.
+    """
+    out: Dict[str, Any] = {}
+    _sq = _wrapper_field(raw_data, "sub_query")
+    if _sq is not None:
+        out["sub_query"] = str(_sq)
+    _acc = _wrapper_field(raw_data, "accepted_slots")
+    if isinstance(_acc, dict):
+        out["accepted_slots"] = dict(_acc)
+    return out
+
+
 def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
-                         persona: str) -> Dict[str, Any]:
+                         persona: str, raw_data: Any = None) -> Dict[str, Any]:
     """A refusal that names what you may say instead, drawn as the ask it is.
 
     NAMED RATHER THAN INLINE so the provenance seal can see it: that seal enumerates
@@ -1146,12 +1350,16 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
     pre-selection WITH A REASON. Two anonymous `return {"components": ...}` are
     indistinguishable to it — and an allowlist keyed on a shapeless string would have to be
     loosened to admit them, which is how an allowlist of FACTS becomes one of preferences.
+
+    `raw_data` is threaded in for `_reroute_fields` only — see its docstring for why the
+    re-route fields cannot come from `ref`.
     """
     return {"components": [{
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": slot,
         "options": _as_options(opts),
+        **_reroute_fields(raw_data),
         # NAMES THE MECHANISM HONESTLY. Not `enumeration` — no enumerate provider was asked;
         # the engine recomputed the legal values while refusing. A consumer that needs to tell
         # "the class was listed" from "the engine said what it accepts" can, and one that does
@@ -1163,13 +1371,21 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
 
 
 def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
-                         persona: str) -> Dict[str, Any]:
-    """An abstain drawn as an ask whose options are VERBS. See the ruling at the call site."""
+                         persona: str, raw_data: Any = None) -> Dict[str, Any]:
+    """An abstain drawn as an ask whose options are VERBS. See the ruling at the call site.
+
+    CARRIES THE RE-ROUTE FIELDS FOR THE SAME REASON THE REFUSAL MENU DOES. The dispatch named
+    `_render_refusal_menu`, but the defect is a property of PUTTING OPTIONS ON THE WIRE, not of
+    which producer did it — and the seal is written against that population ("an option on the
+    wire without both"), so this producer is in it. An abstain menu that cannot be answered
+    dead-ends exactly as a refusal menu does.
+    """
     return {"components": [{
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": "verb",
         "options": _as_options(cands),
+        **_reroute_fields(raw_data),
         "option_source": "candidates",
         "reason": "no_verb_classified",
         "message": str(abst.get("message") or ""),
@@ -1254,7 +1470,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             logger.info(
                 "render_ui: abstain carries %d candidate verb(s) -> ELICITATION", len(_cands),
             )
-            return _render_abstain_menu(_abst, _cands, effective_persona)
+            return _render_abstain_menu(_abst, _cands, effective_persona, request.raw_data)
         # NO CANDIDATES IS A DIFFERENT ANSWER and must not draw an empty menu: it means the
         # registry held nothing comparable for this subject, which the ordinary refusal path
         # says in words. Same absent-versus-empty rule as the refusal below.
@@ -1288,7 +1504,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 "render_ui: refusal outcome=%s carries %d option(s) for slot %r -> ELICITATION",
                 _ref.get("outcome"), len(_opts), _slot,
             )
-            return _render_refusal_menu(_ref, _opts, _slot, effective_persona)
+            return _render_refusal_menu(_ref, _opts, _slot, effective_persona, request.raw_data)
         if _slot and _opts == []:
             # THE OTHER TRUE STATE: the engine computed the list and it is genuinely empty.
             # Rendered as an ask with NO menu and the reason said, never as a menu of nothing.

@@ -16,9 +16,17 @@ unknown. An unguarded field therefore does not merely record a wrong parent — 
 AnswerArtifact into the provenance graph by being named**, and the rail then folds two cards
 together on a lineage nobody produced. A fabricated ancestor is worse than a missing one.
 
-THE CHECK IS STRUCTURAL, NOT A LOOKUP: the claim is honoured only when the turn actually
-CARRIES an answer — a pick in `bound_slots`, or typed words in `spoken_answer`. A turn with
-neither is an ordinary question, and an ordinary question does not descend from an ask.
+THE CHECK WAS STRUCTURAL AND IS NOW TWO CHECKS — corrected here 2026-09-27, because this
+paragraph said "structural, NOT a lookup" and that sentence would have gone on reading as the
+current rule. The claim is honoured when the turn CARRIES an answer (a pick in `bound_slots`, or
+typed words in `spoken_answer`) — still structural — and ALSO when it carries prose naming an
+artifact the graph confirms is the caller's, which is a lookup. A turn with neither answer nor
+prose is an ordinary question, and an ordinary question does not descend from an ask.
+
+The widening exists for HAZ-1003 and is NOT shared with the pre-resolved route, which still
+requires a carried answer. `iagent_pure.lineage_claim` holds the rule;
+`test_a_prose_turn_keeps_its_lineage_and_not_the_route.py` seals it. This file keeps the wire,
+the writer's hop, and the local wiring.
 
 Run: uv run --frozen pytest tests/routing/test_ask_to_answer_lineage.py -v
 """
@@ -65,8 +73,22 @@ def test_the_field_is_named_as_a_CLAIM_not_a_conclusion():
 # ── the guard ───────────────────────────────────────────────────────────────
 
 def _guard_window() -> str:
-    i = _GW.index("_answers_something = ")
-    return _GW[max(0, i - 1200):i + 900]
+    """The guard's text, bounded by the CODE'S OWN LANDMARKS rather than by a byte count.
+
+    It used to be `i - 1200 : i + 900`. On 2026-09-27 the guard grew a second gate and the
+    comment explaining why, the refusal warning slid past the +900 mark, and
+    `test_the_refusal_is_audible` redded — not because the refusal had gone, but because the
+    arm could no longer SEE it. That red was the lucky direction. An absence assertion keyed to
+    the same window would have gone QUIET on exactly the same edit, and a seal that stops
+    reaching its subject reports success.
+
+    So both ends are derived: from the first predicate of the gate to the route lookup that
+    closes it. If either landmark is renamed this raises, which is the correct failure — a
+    window that cannot find its own edges must not silently return a shorter one.
+    """
+    start = _GW.index("_answers_something = ")
+    end = _GW.index("_pre_resolved = ", start)
+    return _GW[start:end]
 
 
 def test_lineage_requires_the_turn_to_carry_an_answer():
@@ -83,9 +105,34 @@ def test_both_answer_shapes_count():
     assert "request.bound_slots" in w and "request.spoken_answer" in w
 
 
-def test_an_unanswered_turn_gets_no_lineage():
+def test_the_honoured_id_IS_THE_RULES_CONCLUSION_AND_NOT_THE_CLAIM():
+    """⛔ THIS ARM USED TO READ A BRANCH THAT NO LONGER EXISTS HERE, and the red it threw on
+    2026-09-27 is the correct one to have thrown.
+
+    It was `test_an_unanswered_turn_gets_no_lineage`, and it asserted `elif not _carries_prose:`
+    appeared in the gate — the inline spelling of the floor. The rule then moved to
+    `iagent_pure.lineage_claim` precisely so a seal could call it instead of matching its text,
+    and the branch this arm was reading stopped being in gateway.py at all. Re-asserting the
+    floor here would have made THIS file the mirror.
+
+    So the subject narrowed to the hop that is genuinely local and that a pure-function seal
+    cannot see: the id written to the bundle is the rule's CONCLUSION, never the caller's claim.
+    The floor itself — a turn that answers nothing and says nothing gets no lineage — is held by
+    `test_A_TURN_THAT_ANSWERS_NOTHING_AND_SAYS_NOTHING_IS_REFUSED_WITHOUT_A_GRAPH_READ` in
+    `test_a_prose_turn_keeps_its_lineage_and_not_the_route.py`, against the real function.
+    """
     w = _guard_window()
-    assert "if _answers_something else None" in w
+    assert "lineage_is_honoured(" in w, (
+        "the gate is deciding lineage inline again, so the decision this arm follows has no "
+        "single address and the floor's seal is measuring a function nothing calls"
+    )
+    assert "if _lineage_honoured else None" in w, (
+        "the honoured id is no longer gated on the lineage decision at all"
+    )
+    assert "request.answering_artifact_id or None) if" in w, (
+        "the id is no longer taken from the request under the decision — if the claim is being "
+        "copied through by some other route, the decision is decorative"
+    )
 
 
 def test_the_refusal_is_audible():

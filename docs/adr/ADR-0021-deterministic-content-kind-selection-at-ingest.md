@@ -289,3 +289,38 @@ Per the architect's overnight scope:
   the underlying kind is. At that point either the kind is too coarse
   (revisit sub-kinds), or the overlays should themselves be kind-keyed
   in the mapping table (extend the table schema).
+
+## Amendment 2026-09-30 — the user-drop door (ADR-0041)
+
+ADR-0041 §4 says the drop box "slots in without amendment". That is true of the precedence rule
+and false of one assumption beneath rule 2, so this amendment records the difference rather than
+leaving it to the driver.
+
+**1. At `ingress-user/`, the path segment is a FORMAT, never a kind — rule 2 does not fire.**
+User drops land at `ingress-user/{format}/{sha256}/`, where `{format}` is a leaf of
+`mesh_system.ttl`'s ContentKind tree (`pdf`, `cad`) — what the bytes ARE, which the door can
+determine. Rule 2 reads "the segment after `domain_type`" as a content kind; under `ingress-user/`
+that segment would be `pdf`, which is no registered kind. A path-derived kind here is therefore
+not a fallback but a guaranteed wrong answer, and it is **disabled for the `ingress-user/`
+prefix**. Two names, deliberately not one: the ContentKind tree (format) and the registered
+kinds of the mapping table (what the extractor does) are different axes, and the seam's first
+build conflated them by writing the format into `manifest.metadata.content_kind`.
+
+**2. Rule 1 is the only rule at the user-drop door.** The human's confirmed pick from the
+registered kinds (ADR-0041 §4's picker) is written to `manifest.metadata.content_kind` and to the
+manifest's top-level `content_kind` (the SDK's `IngestRequest` shape). The gateway does not
+validate the value against the registry — the registry is code-owned in doc-tools, and a second
+copy in the gateway would drift. The driver resolves it (`iagent_mesh.ingest.resolve_content_kind`).
+
+**3. Rule 3 unchanged, and it has a stage.** An undeclared or unregistered kind HALTS: the
+driver raises `ContentKindUnregistered`, and the driver **must** record stage `failed` on the
+ingest status projection with the error's text as `detail` (the SDK's `IngestStatus` requires a
+detail on `failed`). No default kind, no LLM, no silent fallthrough. As of this amendment
+**nothing writes that stage**: the gateway writes only `received` and the promote/reject
+outcome, and the doc-tools driver does not yet touch the projection. Until it does, a halted
+drop reads `received` forever, which is the gap this sentence names.
+
+**4. Open.** ADR-0041 §4 prefers refusing an undeterminable kind *at the door*. That needs the
+gateway to read the registered kinds; until doc-tools exposes them (the proposed
+`GET /ingest/kinds`), the halt happens one step later, at the driver, and is visible as `failed`.
+When that route exists, the door refusal replaces it, and this item closes.

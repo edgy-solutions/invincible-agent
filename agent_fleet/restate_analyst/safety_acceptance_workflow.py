@@ -39,7 +39,7 @@ whose acceptance could not be opened must not render as a completed turn.
 from __future__ import annotations
 
 import restate
-from restate import Workflow, WorkflowContext
+from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
 #: FROZEN CONTRACT SURFACE — the gateway calls `/SafetyAcceptance/{key}/run` by hand, the same
 #: way it calls `/GroupedReview/{key}/submit_decision`. Renaming this renames a URL.
@@ -89,6 +89,24 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
             status_code=400,
         )
 
+    # THE ROW'S KIND IS THE KIND THE REQUEST NAMES, and it must agree with the level. `/act` keys
+    # its decision vocabulary and reason requirement on the row's kind; without this the row
+    # registered as `workflow_ack`, and HAZ-1003 was approved with no reason (2026-10-01). Two
+    # declarations name the level: engine-safety's `kind` (`risk_acceptance_{level}`) and the
+    # trigger's `level_slug`, which binds the definition's audience. They are checked against
+    # each other here, so a trigger cannot open a `risk_acceptance_medium` queue and register a
+    # row of some other kind. A disagreement is the trigger's defect, so it is refused like a
+    # missing level.
+    kind = str(request.get("kind") or "")
+    level_slug = str(request.get("level_slug") or "")
+    if not level_slug or kind != f"risk_acceptance_{level_slug}":
+        raise restate.TerminalError(
+            f"safety acceptance trigger names kind {kind!r} for level_slug {level_slug!r}; the "
+            f"row's kind must be 'risk_acceptance_{level_slug}', because /act gates the decision "
+            "on it. Refusing rather than registering a row whose gate does not match its level.",
+            status_code=400,
+        )
+
     try:
         definition_id = sel.select(level)
     except sel.AcceptanceSelectionError as exc:
@@ -112,7 +130,10 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         ) from exc
 
     envelope = await _main._run_definition(
-        ctx, ctx.key(), definition.model_dump(), request,
+        ctx, ctx.key(), definition.model_dump(), request, task_kind=kind,
+        # NAMED so cortex-bff's `/act` resumes THIS service's `approve`, not
+        # BPMNWorkflowRunner's — the bug this fix exists to close (HAZ-1003).
+        workflow_service="SafetyAcceptance",
     )
 
     awaited = [
@@ -141,3 +162,22 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "steps": [r.get("step_id") for r in awaited],
         "status": awaited[-1].get("status"),
     }
+
+
+@safety_acceptance.handler()
+async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """Resolve a suspended acceptance — SAME contract as BPMNWorkflowRunner's `approve`.
+
+    Not a copy: both handlers call `main._approve_impl`, the one enforcement point for the
+    authority gate (`can_act` against the audience `_run_definition` journalled). Before this,
+    HAZ-1003-shaped acceptances had NO approve handler on this service at all, so cortex-bff's
+    `/act` — hardcoded to `/BPMNWorkflowRunner/{key}/approve` — posted to a workflow instance
+    that was never running: the acceptance stayed suspended forever while the task row showed
+    resolved.
+    """
+    try:  # lazy — see `run`'s own comment on why this import is call-time, not module-time
+        import main as _main  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst import main as _main
+
+    return await _main._approve_impl(ctx, request)
