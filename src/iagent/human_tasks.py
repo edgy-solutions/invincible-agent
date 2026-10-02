@@ -109,7 +109,7 @@ class NoEntitledRecipients(RuntimeError):
 #: `comments`, `acted_by` -> resolve the journalled promise). Validated at REGISTER time
 #: (`register_task`) and re-validated at RESUME time (`/act`) — a row-sourced name is never
 #: interpolated into a Restate ingress URL without being re-checked against this same set.
-ALLOWED_WORKFLOW_SERVICES = frozenset({"BPMNWorkflowRunner", "SafetyAcceptance"})
+ALLOWED_WORKFLOW_SERVICES = frozenset({"BPMNWorkflowRunner", "SafetyAcceptance", "WorkflowRunner"})
 
 
 class UnknownWorkflowService(RuntimeError):

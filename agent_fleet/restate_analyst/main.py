@@ -2663,12 +2663,38 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     # as the default. Resolving a name nothing awaits wakes nothing, silently.
     promise_name = request.get("promise_name") or f"approval_{task_id}"
 
+    acted_by = await _authorize_resolution(ctx, promise_name, request.get("acted_by"))
+
+    approval_payload = {
+        "status": request.get("status", "APPROVED"),
+        "comments": request.get("comments", ""),
+        "task_id": task_id,
+        # PROVENANCE OF THE DECISION. An approval with no actor is unauditable; this is
+        # the identity the gate above just verified, not one the payload asserted.
+        "acted_by": acted_by,
+    }
+
+    await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
+
+    return {
+        "message": f"Promise '{promise_name}' resolved — workflow will resume",
+        "task_id": task_id,
+        "status": approval_payload["status"],
+    }
+
+
+async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
+    """THE AUTHORITY GATE, once: every handler that resolves an awaited promise goes through it.
+
+    Factored out of ``_approve_impl`` unchanged when WorkflowRunner's ``signal`` became a second
+    resolver -- a copy would have been a second enforcement point free to drift from the first.
+    Returns the verified actor."""
     # ── AUTHORITY GATE (approval-bypass-bpmn-runner) ───────────────────────────
     # This handler resolves an APPROVAL — the promise the whole trust architecture
     # treats as the enforcement point. It is its own entry point, not merely the
     # implementation of engine-a's route: the Restate ingress reaches it directly.
     # So it defends itself rather than trusting that something upstream did.
-    acted_by = (request.get("acted_by") or "").strip()
+    acted_by = (acted_by_raw or "").strip()
     if not acted_by:
         raise restate.TerminalError(
             "approve requires `acted_by` (the caller's authz_id) — an approval with no "
@@ -2692,23 +2718,7 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
             f"caller {acted_by!r} is not authorized (can_act) for audience {audience!r}",
             status_code=403,
         )
-
-    approval_payload = {
-        "status": request.get("status", "APPROVED"),
-        "comments": request.get("comments", ""),
-        "task_id": task_id,
-        # PROVENANCE OF THE DECISION. An approval with no actor is unauditable; this is
-        # the identity the gate above just verified, not one the payload asserted.
-        "acted_by": acted_by,
-    }
-
-    await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
-
-    return {
-        "message": f"Promise '{promise_name}' resolved — workflow will resume",
-        "task_id": task_id,
-        "status": approval_payload["status"],
-    }
+    return acted_by
 
 
 @bpmn_workflow.handler()
@@ -3767,8 +3777,19 @@ except ImportError:
         safety_acceptance,
     )
 
+# WorkflowRunner + CaseEpisode — ADR-0039's case runner: select at trigger, chain at termination,
+# every definition its own instance. Generic: what it runs is entirely triggers, decision tables
+# and definitions under policy/. Registered unconditionally, for the reason SafetyAcceptance is.
+try:
+    from workflow_runner import case_episode, workflow_runner  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.workflow_runner import (  # noqa: E402
+        case_episode,
+        workflow_runner,
+    )
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, autonomous_review, review_starter, safety_acceptance]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, autonomous_review, review_starter, safety_acceptance, workflow_runner, case_episode]))
 
 
 # ---------------------------------------------------------------------------

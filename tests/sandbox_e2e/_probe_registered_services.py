@@ -39,6 +39,9 @@ EXPECTED = (
     "DispatchItem",
     "BPMNWorkflowRunner",
     "AnalystService",
+    "SafetyAcceptance",     # was never listed -- the probe could not see it missing
+    "WorkflowRunner",       # ADR-0039 case runner; task rows and acks resume it
+    "CaseEpisode",
 )
 
 
