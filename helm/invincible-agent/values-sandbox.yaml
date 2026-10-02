@@ -653,7 +653,13 @@ cortexUi:
     # kind prefix contradicts the row refuses) -> 613b6c35. Measured before pinning: the FULL tag
     # resolves to this digest (200); the abbreviated tag and the full tag with its last hex altered
     # both answer 404; the b97b9d58 control still resolves to d2e56047. VITE_FEATURES unchanged.
-    digest: "sha256:613b6c353a9a2e5feecf0a39a34ac3c15e2b657c2c04008ef2d8cb87d6d16d6d"
+    # 2026-10-01 roll #13, RE-PINNED before it fired: 613b6c35 was never rolled. cortex-ui
+    # 6596999 (adds to 0489d368: the /act refusals are drawn inline, COMPETING_MEASURES moves to
+    # its ADR-0055 package with no visual change, the ingest seal on the rev-164 capture) ->
+    # 87f1f3aa. Measured before pinning: the FULL tag resolves to this digest (200); the
+    # abbreviated tag and the full tag with its last hex altered both answer 404; the 0489d368
+    # control still resolves to 613b6c35. VITE_FEATURES unchanged.
+    digest: "sha256:87f1f3aa0e6e8591b7a7f0232c16a443bf3ce00f69985a6236cf4006c064fec5"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
