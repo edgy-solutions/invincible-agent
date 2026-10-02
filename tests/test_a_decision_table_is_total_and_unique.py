@@ -42,16 +42,19 @@ yaml = pytest.importorskip("yaml", reason="decision tables are YAML")
 _REPO = Path(__file__).resolve().parents[1]
 _SEED = _REPO / "policy" / "decisions"
 _SAMPLE_OVERLAY = _REPO / "policy" / "overlays" / "sample" / "decisions"
+#: EVERY overlay's decisions/, the set `decision_table.decision_dirs` composes. This seal globbed
+#: the sample overlay alone, so the openddil-lab tables composed into the runtime unsealed.
+_OVERLAYS = sorted(p for p in (_REPO / "policy" / "overlays").glob("*/decisions") if p.is_dir())
 
 
 def _tables() -> "list[tuple[str, dict]]":
-    """(source label, parsed table) for every decision table in seed and sample overlay.
+    """(source label, parsed table) for every decision table in the seed and every overlay.
 
     Derived by globbing rather than listed: a table added tomorrow is covered on arrival, which
     is the same rule the registry-sites packet exists to enforce.
     """
     out = []
-    for d, label in ((_SEED, "seed"), (_SAMPLE_OVERLAY, "sample-overlay")):
+    for d, label in ((_SEED, "seed"), *((o, f"overlay-{o.parent.name}") for o in _OVERLAYS)):
         for p in sorted(d.glob("*.yaml")):
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             out.append((f"{label}:{p.name}", raw))
@@ -71,6 +74,17 @@ def test_the_decisions_directories_exist():
     not-yet. Asserted so the glob below cannot silently walk nothing."""
     assert _SEED.is_dir(), f"{_SEED} does not exist — the decision layer's seed half is missing"
     assert _SAMPLE_OVERLAY.is_dir(), f"{_SAMPLE_OVERLAY} does not exist"
+
+
+def test_THE_SEAL_READS_WHAT_THE_RUNTIME_COMPOSES():
+    """The population is the runtime's, not a list kept here: every overlay directory the loader
+    composes is one this seal walks, and the reverse."""
+    from agent_fleet.restate_analyst import decision_table as dt
+
+    seed, overlays = dt.decision_dirs()
+    assert seed.resolve() == _SEED.resolve()
+    assert [o.resolve() for o in overlays] == [o.resolve() for o in _OVERLAYS]
+    assert len(_OVERLAYS) >= 2, "the seal should see the sample overlay AND openddil-lab"
 
 
 def test_AT_LEAST_ONE_TABLE_IS_FOUND():

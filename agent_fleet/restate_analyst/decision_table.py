@@ -85,7 +85,7 @@ def load_tables() -> Dict[str, Dict[str, Any]]:
     """Every composed table, keyed by `decision`. COMPOSED BY THE SHARED COMPOSER (ADR-0039
     refuses a fourth): an overlay row REPLACES a seed row wholesale, keyed on `decision`."""
     try:
-        from iagent_mesh.declarations import compose_rows
+        from iagent_mesh.declarations import compose_rows, read_rows
     except ImportError as exc:  # pragma: no cover -- the SDK is a hard dependency of the runtime
         raise DecisionError(
             "iagent-mesh SDK is not importable, so the decision layer cannot compose. This is a "
@@ -93,6 +93,24 @@ def load_tables() -> Dict[str, Dict[str, Any]]:
         ) from exc
 
     seed, overlays = decision_dirs()
+    # NO TWO OVERLAYS MAY DECLARE ONE TABLE -- `decision_dirs` said so, and said "(sealed)", and
+    # nothing refused it: the composer lets a later overlay replace an earlier one, so the second
+    # overlay's rows silently decided every case. Refused HERE, at load, because a deployment's own
+    # overlays are never in this repo's tree for a static seal to see. The triggers' rule.
+    seen: Dict[str, Path] = {}
+    for od in overlays:
+        if not od.is_dir():
+            continue
+        try:
+            found = read_rows(od, key_field="decision")
+        except Exception as exc:  # noqa: BLE001 -- the composer below names it with the paths
+            raise DecisionError(f"could not read decision tables in {str(od)!r}: {exc}") from exc
+        for key, (f, _raw) in found.items():
+            if key in seen:
+                raise DecisionError(
+                    f"decision table {key!r} is declared by two overlays ({seen[key]} and {f}); "
+                    "name order is not a precedence anyone chose")
+            seen[key] = f
     try:
         rows = compose_rows(seed, overlays, key_field="decision",
                             builder=lambda raw: raw, label="decision table")

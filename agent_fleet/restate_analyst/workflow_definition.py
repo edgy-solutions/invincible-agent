@@ -519,6 +519,14 @@ def get_workflow_definition(workflow_id: str) -> WorkflowDefinition:
             "WORKFLOW_DEFINITIONS_DIR (an os.pathsep-separated list) or mount/bake "
             "policy/workflows/."
         )
+    # NO TWO OVERLAYS MAY DECLARE ONE DEFINITION. The seal on the committed tree cannot see a
+    # deployment's own overlays, and between overlays "later" is name order, which nobody chose.
+    owners = [d for d in dirs[1:] if (d / f"{workflow_id}.yaml").is_file()]
+    if len(owners) > 1:
+        raise WorkflowDefinitionError(
+            f"definition {workflow_id!r} is declared by two overlays ({[str(d) for d in owners]}); "
+            "name order is not a precedence anyone chose"
+        )
     # LATER WINS, so search in REVERSE precedence order and take the first hit: an overlay's
     # definition replaces the platform's by id, wholesale, never field-merged.
     for d in reversed(dirs):
