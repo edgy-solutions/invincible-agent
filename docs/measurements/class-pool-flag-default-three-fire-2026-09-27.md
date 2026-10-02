@@ -1,7 +1,11 @@
 # Measurement — the class-pool flag's default, flipped and three-fired
 
 **Date:** 2026-09-27 · **Lane:** `ia-74/lane/74` · **Subject:** `ONTOLOGY_CLASS_POOL_VIA_MESH`,
-whose artifact literal is **default off**.
+whose artifact literal was `"false"` when measured.
+
+*Correction, 2026-10-01 (Lane 74):* `ONTOLOGY_CLASS_POOL_VIA_MESH` is now DEFAULT ON (literal
+`"true"`), flipped after an in-process census of every walk row moved no row (`class-pool-flag-default-on-census-2026-10-01.md`).
+Every figure in this file was measured with the literal `"false"`.
 
 > The order this answers states the other polarity, as an instruction. It is quoted verbatim below
 > and kept clear of the flag's name on purpose: the claim census decides a window, and a window

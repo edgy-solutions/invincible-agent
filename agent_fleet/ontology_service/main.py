@@ -1075,7 +1075,7 @@ class SemanticResolutionResponse(BaseModel):
     #
     # Carried by BOTH arms of the class-pool fork and with the same vocabulary, which is what makes
     # `ONTOLOGY_CLASS_POOL_VIA_MESH` measurable rather than merely switchable. A field only the
-    # off-by-default arm populated would make the flag the only way to learn the mode.
+    # on-by-default arm populated would make the flag the only way to learn the mode.
     mode: str | None = None
 
 class LegacyTableDossier(BaseModel):
@@ -1146,7 +1146,7 @@ class SearchPredicatesRequest(BaseModel):
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
     #: The person the read is attributed to, threaded from the supervisor's JWT the same way
     #: `ResolveRequest.user_email` is. The FIELD defaults to the empty string so no existing
-    #: caller breaks; the FLAG is a separate default, and it is DEFAULT OFF -- said here in the
+    #: caller breaks; the FLAG is a separate default, and it is DEFAULT ON -- said here in the
     #: decided form because a window that names the flag beside the word "defaults" and leaves the
     #: polarity to the reader is an undecided claim, which the agreement seal reds on. With
     #: `ONTOLOGY_CLASS_POOL_VIA_MESH` on, a blank value is REFUSED rather than minted as an
@@ -1405,7 +1405,7 @@ def _weaviate_hybrid_search_sync(
 #: `WeaviateVectors` had exactly ONE consumer before this: its own conformance test. An
 #: implementation whose only caller is its test is a claim about an interface, not a use of one.
 ONTOLOGY_CLASS_POOL_VIA_MESH = os.getenv(
-    "ONTOLOGY_CLASS_POOL_VIA_MESH", "false"
+    "ONTOLOGY_CLASS_POOL_VIA_MESH", "true"
 ).lower() in ("true", "1", "yes")
 
 
@@ -1998,8 +1998,9 @@ async def predicate_hybrid_search(
     `ONTOLOGY_CLASS_POOL_VIA_MESH` gates this route too, which the order asked for ("behind the same
     flag"): one switch rolls both routes back, and one switch is what an operator can use under
     load. The cost is a name that says CLASS and gates two pools — recorded here rather than
-    renamed, because the variable is set in a deployed values file and a rename is a change to the
-    chart, not to this module. Reported for the naming decision; not taken unilaterally.
+    renamed. No tracked values file sets the variable (`git grep`, 2026-10-01), so a rename is a
+    code change; it is still the operator's rollback switch, and its name is reported for the
+    naming decision rather than taken unilaterally.
 
     NO `try/except` IN THIS FUNCTION, for the reason `class_pool_with_mode` gives: a handler here
     would sit above both sync bodies and re-swallow the 503 they raise, and every arm asserting that
@@ -3149,8 +3150,9 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # diagnose-each-mechanism rationale.
     #
     # THE ONE MIGRATED ROUTE (2026-09-26). `class_pool_with_mode` forks on
-    # ONTOLOGY_CLASS_POOL_VIA_MESH, which is OFF, so this line's behaviour is unchanged — what it
-    # adds is `retrieval_mode`, which both arms now report. `user_email` is threaded because the
+    # ONTOLOGY_CLASS_POOL_VIA_MESH, which is ON by default since 2026-10-01 (flipped after an
+    # in-process census of every walk row moved no row), so this line serves the mesh arm unless
+    # the variable says otherwise. It also adds `retrieval_mode`, which both arms report. `user_email` is threaded because the
     # mesh arm attributes the read to a person and refuses a blank subject; the incumbent arm
     # ignores it, as it always has.
     candidates, retrieval_mode = await class_pool_with_mode(
@@ -5689,7 +5691,7 @@ class ClassifyPredicateRequest(BaseModel):
     entitled_domains: list[str] = Field(default_factory=list)
     # The person the read is attributed to, threaded from the supervisor's JWT the same way
     # ResolveRequest.user_email is. The FIELD defaults to the empty string so no existing caller
-    # breaks; the FLAG is a separate default, and it is DEFAULT OFF -- said in the decided form
+    # breaks; the FLAG is a separate default, and it is DEFAULT ON -- said in the decided form
     # because naming the flag beside the word "defaults" without a polarity is an undecided claim.
     # With ONTOLOGY_CLASS_POOL_VIA_MESH on, a blank value is refused rather than minted as an
     # anonymous person. See _predicate_pool_via_mesh_sync.

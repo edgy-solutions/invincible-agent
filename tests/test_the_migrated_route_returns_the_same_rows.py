@@ -1,6 +1,6 @@
 """THE ROUTE MIGRATION PILOT'S SEAL — engine-o's class lookup, incumbent arm v. `WeaviateVectors`.
 
-ONE ROUTE MOVED (`/resolve`), behind `ONTOLOGY_CLASS_POOL_VIA_MESH`, DEFAULT OFF. What this file
+ONE ROUTE MOVED (`/resolve`), behind `ONTOLOGY_CLASS_POOL_VIA_MESH`, DEFAULT ON since 2026-10-01. What this file
 asserts is the only thing that makes a flag a migration rather than a second implementation: for
 the questions the fleet actually asks, **both arms return the same rows**, and both say how they
 retrieved them.

@@ -1,7 +1,11 @@
 # Route migration pilot — `/resolve`'s class pool through `WeaviateVectors`
 
-**Date:** 2026-09-27 · **Lane:** `ia-74/lane/74` · **Flag:** `ONTOLOGY_CLASS_POOL_VIA_MESH`, **default
-off, and it stays off** · **Seal:** `tests/test_the_migrated_route_returns_the_same_rows.py` (39 arms)
+**Date:** 2026-09-27 · **Lane:** `ia-74/lane/74` · **Flag:** `ONTOLOGY_CLASS_POOL_VIA_MESH`, literal
+`"false"` when measured · **Seal:** `tests/test_the_migrated_route_returns_the_same_rows.py` (39 arms)
+
+*Correction, 2026-10-01 (Lane 74):* `ONTOLOGY_CLASS_POOL_VIA_MESH` is now DEFAULT ON (literal
+`"true"`), flipped after an in-process census of every walk row moved no row (`class-pool-flag-default-on-census-2026-10-01.md`).
+Every figure in this file was measured with the literal `"false"`.
 
 One route moved, behind a flag, to make the diff between the hand-rolled query and the shared
 implementation *measurable*. This file is the diff. Nothing here proposes flipping the default.

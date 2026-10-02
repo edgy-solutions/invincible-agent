@@ -1,8 +1,12 @@
 # Route migration pilot, second route — the predicate search through `WeaviateVectors`
 
-**Date:** 2026-09-28 · **Lane:** `ia-74/lane/74` · **Flag:** `ONTOLOGY_CLASS_POOL_VIA_MESH`, **default
-off, and it stays off** · **Seal:** `tests/test_the_migrated_predicate_route_returns_the_same_rows.py`
+**Date:** 2026-09-28 · **Lane:** `ia-74/lane/74` · **Flag:** `ONTOLOGY_CLASS_POOL_VIA_MESH`, literal
+`"false"` when measured · **Seal:** `tests/test_the_migrated_predicate_route_returns_the_same_rows.py`
 (52 arms) · **Companion:** `route-migration-pilot-class-pool-2026-09-27.md`
+
+*Correction, 2026-10-01 (Lane 74):* `ONTOLOGY_CLASS_POOL_VIA_MESH` is now DEFAULT ON (literal
+`"true"`), flipped after an in-process census of every walk row moved no row (`class-pool-flag-default-on-census-2026-10-01.md`).
+Every figure in this file was measured with the literal `"false"`.
 
 The second route moved, behind the same flag as the first. `nominate`'s docstring already said
 `domains` is a *sequence* because "both live call sites scope by an entitlement list" — this is the
@@ -146,14 +150,17 @@ decided form. Zero new reds, zero fixed, nothing swapped.
 
 * **The flag default is not settled**, and this route does not change that. It is blocked on a gated
   merge, an image build and a roll — not on a measurement.
-  *Correction, 2026-10-01 (Lane 74):* at this file's sha the flag is DEFAULT OFF (literal
-  `"false"`). "Not settled" meant the decision to flip it was still pending, never that the
-  default was unknown. Lane 1's 09-29 merge census read the sentence as an undecided claim.
+  *Correction, 2026-10-01 (Lane 74):* at this file's sha the literal was `"false"`. "Not
+  settled" meant the decision to flip it was still pending, never that the value was unknown. Lane 1's 09-29 merge census read the sentence as an undecided claim.
 * **The flag's name is now narrower than its scope.** `ONTOLOGY_CLASS_POOL_VIA_MESH` gates two pools.
   The order asked for the same flag and the reason holds — one switch rolls both routes back, and one
   switch is what an operator can use under load. The cost is recorded here and not paid unilaterally:
   the variable is set in a deployed values file, so a rename is a change to the chart, not to this
   module. **Routed for the naming decision.**
+  *Correction, 2026-10-01 (Lane 74):* no tracked values file sets the variable (`git grep` over the
+  tree), and the deployed engine-o carried none when measured
+  (`class-pool-flag-default-three-fire-2026-09-27.md` §3). A rename is a code change; the naming
+  decision is still routed.
 * **`/search_predicates` has no in-repo HTTP caller** — only the route declaration; `cortex-ui`'s
   `src/registry/frontendCapabilities.ts:18` says "Until then". Its 400 blast radius is therefore
   unmeasurable from this repo, and that is a gap in the evidence, not a reason to assume it is zero.

@@ -1,7 +1,7 @@
 """THE SECOND MIGRATED ROUTE'S SEAL — engine-o's verb lookup, incumbent arm v. `WeaviateVectors`.
 
 A SECOND ROUTE MOVED (`/search_predicates` and `/classify_predicate`, which share one search),
-behind the SAME flag as the first, `ONTOLOGY_CLASS_POOL_VIA_MESH`, DEFAULT OFF. The class pool
+behind the SAME flag as the first, `ONTOLOGY_CLASS_POOL_VIA_MESH`, DEFAULT ON since 2026-10-01. The class pool
 proved the shared implementation can serve one caller; `nominate`'s own docstring says `domains` is
 a SEQUENCE because "both live call sites scope by an entitlement LIST", and this is the second of
 those two call sites finally arriving through the interface instead of around it.

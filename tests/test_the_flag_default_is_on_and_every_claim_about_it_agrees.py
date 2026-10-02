@@ -1,8 +1,16 @@
 """THE DEFAULT ITSELF, AND EVERY CLAIM MADE ABOUT IT.
 
-WHY THIS FILE EXISTS. `ONTOLOGY_CLASS_POOL_VIA_MESH` is the route-migration flag, and four places
-in this repo state in prose that its default is OFF -- the pilot report's header, two comments in
-`main.py`, and the parity seal's own docstring. Until this file, **nothing checked any of them.**
+THE DEFAULT IS ON, RULED BY MEASUREMENT 2026-10-01. The dispatch was "flip the default on;
+three-fire census; if any row moves, flip back". The census fired both arms in-process against the
+sandbox stores for every walk-census row, three times each: 21 rows x 2 routes, no error, no fire
+unstable within an arm, and NOT ONE ROW MOVED -- same ids, same order, same scores, same mode. The
+mesh arm served all 63 on-fires on both routes, every pool held 10 rows, and the pools differed
+across rows, so that zero was a census that could have moved and did not
+(`docs/measurements/class-pool-flag-default-on-census-2026-10-01.md`). The literal is `"true"`.
+
+WHY THIS FILE EXISTS. `ONTOLOGY_CLASS_POOL_VIA_MESH` is the route-migration flag, and the repo states
+its default in prose in many places -- the pilot reports' headers, comments in `main.py`, and the
+parity seals' own docstrings. Until this file, **nothing checked any of them.**
 The parity seal (`test_the_migrated_route_returns_the_same_rows.py`) is not that check and cannot
 be: it `monkeypatch.setattr`s the flag for both arms by design, which is exactly right for parity
 and exactly why the module-level DEFAULT is invisible to it.
@@ -15,12 +23,16 @@ on the default**, because every test reader monkeypatches it and the single cons
 (`class_pool_with_mode`) reads a module global fixed at import. A census whose population cannot
 move reports a clean result it never looked at. This file is the arm that moves.
 
-SO A FLIP OF THE DEFAULT NOW COSTS SOMETHING. Flipping `"false"` to `"true"` in `main.py` reds
-`test_the_DEFAULT_is_read_from_the_ARTIFACT_and_it_is_off`, reds the resolve arm, and reds
+SO A FLIP OF THE DEFAULT COSTS SOMETHING, IN BOTH DIRECTIONS. The 2026-10-01 flip measured it:
+`"false"` to `"true"` red three arms and named ten prose homes. Flipping back now reds
+`test_the_DEFAULT_is_read_from_the_ARTIFACT_and_it_is_on`, reds the resolve arm, and reds
 `test_EVERY_CLAIM_about_the_default_agrees_with_the_artifact` once per prose home -- which is the
 point: a correction has as many homes as the claim had, and the red names them. For the dated
-measurement under `docs/measurements/` the fix is a dated correction line, not a rewrite; the red
-is the notification, not a verdict on the history.
+measurement under `docs/measurements/` the fix is a dated correction line plus ONE change of tense:
+the window census reads any polarity near the flag's name as a present-tense claim, so a correction
+placed beside the old "default off" decides as undecided and stays red. The old claim is restated as
+its literal and when it was measured, which keeps the history and states no polarity. That is what
+the 2026-10-01 flip did in three files. The red is the notification, not a verdict on the history.
 
 THE CLAIM CENSUS IS DECIDED ON CONTENT, and its undecided bucket FAILS. A window that mentions the
 flag and a polarity word my parser cannot assign a direction to is red, naming the text, because an
@@ -172,28 +184,29 @@ def test_the_getenv_KEY_is_the_flag_name_so_the_flag_is_settable_at_all():
     assert key == FLAG, f"the env var read is {key!r} but the flag is named {FLAG!r}"
 
 
-def test_the_DEFAULT_is_read_from_the_ARTIFACT_and_it_is_off():
+def test_the_DEFAULT_is_read_from_the_ARTIFACT_and_it_is_on():
     """The default and the truthy set both come out of the AST. Neither is restated here: a seal
     that retypes the value it is sealing agrees with itself, not with the code."""
     _, _, default, truthy = _flag_assignment()
-    assert default.lower() not in tuple(t.lower() for t in truthy), (
+    assert default.lower() in tuple(t.lower() for t in truthy), (
         f"{FLAG}'s default literal is {default!r}, which the module's own truthy set {truthy!r} "
-        f"reads as ON. The migrated class-pool route would be live for every caller that does not "
-        f"set the variable. If this flip is intended, the prose homes named by "
+        f"reads as OFF. Every caller that does not set the variable is back on the incumbent arm, "
+        f"which the 2026-10-01 census ruled against. If this flip back is intended, say which row "
+        f"moved, and the prose homes named by "
         f"test_EVERY_CLAIM_about_the_default_agrees_with_the_artifact must move with it."
     )
 
 
-def test_the_DEFAULT_RESOLVES_to_False_when_the_environment_is_silent(monkeypatch):
+def test_the_DEFAULT_RESOLVES_to_True_when_the_environment_is_silent(monkeypatch):
     """The literal being falsey is not the same claim as the expression evaluating to False: the
     `.lower() in (...)` parse is between them. This evaluates the artifact's own expression with
-    the variable removed, so a truthy set that grew a `"false"` entry reds here."""
+    the variable removed, so a truthy set that lost its `"true"` entry reds here."""
     monkeypatch.delenv(FLAG, raising=False)
     node, _, _, _ = _flag_assignment()
     expr = ast.Expression(body=node.value)
     ast.fix_missing_locations(expr)
     resolved = eval(compile(expr, f"<{ENGINE_O}:{node.lineno}>", "eval"), {"os": os})  # noqa: S307
-    assert resolved is False, (
+    assert resolved is True, (
         f"with {FLAG} unset, the artifact's own expression resolves to {resolved!r}"
     )
 
@@ -236,6 +249,7 @@ CLAIM_FLOOR = frozenset(
         ENGINE_O,
         "docs/measurements/route-migration-pilot-class-pool-2026-09-27.md",
         "docs/measurements/class-pool-flag-default-three-fire-2026-09-27.md",
+        "docs/measurements/class-pool-flag-default-on-census-2026-10-01.md",
         "tests/test_the_migrated_route_returns_the_same_rows.py",
     }
 )
