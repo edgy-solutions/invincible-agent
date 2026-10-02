@@ -826,3 +826,86 @@ utilImages:
     registry: "ghcr.io"
     repository: "edgy-solutions/mirror/mc"
     tag: "RELEASE.2025-08-13T08-35-41Z"
+
+# --------------------------------------------------------------------------
+# User deployments — dag-tools code location, PINNED BY DIGEST
+# --------------------------------------------------------------------------
+# WHY THIS KEY EXISTS AT ALL: this file had no `userDeployments:` before
+# 2026-10-01. Both user-deployment images are CROSS-REPO, so `$ours` is false
+# in `invincible-agent.image`, `$floor` is `latest`, and the pod has been
+# running whatever the last push to dag-tools master produced. Measured, not
+# assumed: the running pod's imageID was `sha256:746e4937…`, which matches
+# NEITHER digest in `values-roll-frontend-digest.yaml` — it fell through to
+# `:latest`, exactly as that file's header predicts when no digest reaches the
+# helper.
+#
+# ⛔ THE PIN GOES HERE AND NOT IN `values-roll-frontend-digest.yaml`, which is
+# the file whose stated purpose is carrying a roll's cross-repo digests. That
+# file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array (lines 29-33:
+# values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
+# canonical roll command never reads it and it is inert. See the long note at
+# `cortexUi.image.tag` above, which records the same finding and the same
+# resolution for the frontend.
+#
+# WHAT THIS PIN IS FOR — the dag-tools code location could not tick a sensor.
+# Every sensor in `iagent-dag-tools` was failing, 224 failures in 30 minutes,
+# with `ModuleNotFoundError: No module named 'psycopg'` out of
+# `dagster_postgres.utils.create_pg_engine`. SQLAlchemy 2.1 changed which DBAPI
+# a bare `postgresql://` URL selects, measured on the two live pods on
+# 2026-10-01:
+#
+#     iagent-dagster-daemon   sqlalchemy 2.0.54  ->  postgresql.psycopg2
+#     iagent-dag-tools        sqlalchemy 2.1.0   ->  postgresql.psycopg
+#
+# `dagster-postgres` declares and ships `psycopg2-binary` and never `psycopg`.
+# The failure lands while the DagsterInstance is being BUILT, before any sensor
+# body runs, so it takes out every sensor in the code location including ones
+# that touch no database — which is why it read as a sensor bug.
+#
+# dag-tools PR #2 (`6609fe6` on master) caps `sqlalchemy>=2.0.0,<2.1` in main
+# `dependencies`. THE CAP IS INERT UNTIL A BUILD CARRIES IT, and inert again
+# unless this cluster pulls that build: the user-deployment Dockerfile installs
+# with `uv pip install --system`, which RE-RESOLVES and does not read
+# `uv.lock`, so only the committed `pyproject.toml` ceiling binds the image —
+# and only a digest binds which image runs.
+#
+# DIGEST PROVENANCE, run `36947653296` (push event on dag-tools master,
+# `6609fe67c77a6bf4118a81daadb9fcbf44c4b982`; all three Docker jobs success).
+# A green build on a PR proves nothing — that workflow's push step is gated
+# `github.event_name != 'pull_request'`, so PR runs compile both architectures
+# and publish nothing. Two tags were read and they AGREE, which is the binding
+# that matters rather than mere existence:
+#
+#     :sha-6609fe6  -> sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61
+#     :latest       -> the same digest
+#
+# POSITIVE CONTROL: `:master` and `:6609fe6` both answer 404, so a 200 from
+# this instrument discriminates and is not an artifact of the registry
+# accepting any string.
+#
+# Index verified as `application/vnd.oci.image.index.v1+json`, children fetched
+# BY THEIR OWN DIGEST rather than read out of the index:
+#
+#     linux/amd64  sha256:a75f9c551adcadcf1039b678805b4272df00c62dc15c524ed8dc96426424a6d0  200
+#     linux/arm64  sha256:6b79fc60e64313b24244f5121bad634edd7b12a6709c880774678f65c4c32b1c  200
+#
+# arm64 is the one that matters — the sandbox nodes are arm64. (Two
+# `unknown/unknown` children are buildx provenance/SBOM attestations, also 200.)
+#
+# WHAT THIS PIN DOES NOT PROVE. The digest names bytes; it does not show what
+# those bytes resolved. The resolution was proved separately, by compiling the
+# image's own install line (`.[broker]` plus dagster, dagster-aws,
+# dagster-postgres, acryl-datahub, acryl-datahub-dagster-plugin, pandas, boto3,
+# s3fs) against the capped `pyproject.toml`: `sqlalchemy==2.0.54`,
+# `psycopg2-binary==2.9.13`, and no `psycopg` in the resolution at all — the
+# daemon's working combination. The acceptance test for this roll is still a
+# reading off the POD (`sqlalchemy.__version__` and the dialect the URL
+# selects) plus a sensor tick that does not raise, not this comment.
+#
+# ROLLBACK: delete the `digest` line. The image reference falls back through
+# `tag: ""` to `latest`, which is where this deployment was before — not to
+# `746e4937`, which no longer has a name pointing at it.
+userDeployments:
+  dag-tools:
+    image:
+      digest: "sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61"
