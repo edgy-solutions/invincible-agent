@@ -261,6 +261,8 @@ def test_graph_writer_offline_conformance():
             ("write_edge", lambda i: writer.write_edge(i, identity=_IDENTITY)),
             ("delete_edges", lambda i: writer.delete_edges(
                 i, identity_filter=EdgeIdentityFilter(key="urn:tool:1"))),
+            ("write_node", lambda i: writer.write_node(i, label="OntologyClass", id="urn:a",
+                                                        payload={"kind": "pdf"})),
         ],
     )
 
@@ -769,6 +771,78 @@ def test_a_writer_whose_verb_and_key_are_one_property_is_refused():
         _graph(verb_property="iri", key_property="iri")
 
 
+# ── write_node: an UPSERT, the opposite of write_edge's key-grants-multiplicity rule ────────────
+
+def test_write_node_is_a_single_MERGE_keyed_by_label_and_id_not_two_different_writes():
+    """The `_StubDriver` is stateless — it cannot show a second write landing on the first node —
+    so this proves the UPSERT structurally instead, the same way the SDK's own
+    `check_graph_writer_write_node_contract` proves it against a real store: two calls at the SAME
+    (label, id) with DIFFERING payloads must emit the IDENTICAL Cypher text (one `MERGE`, no
+    `ON CREATE`/`ON MATCH` branch to pick between) and the SAME `id` parameter — only `props`
+    differs. A writer that appended (write_edge's rule) or branched on existence would show up
+    here as either two distinct query texts or a second `id`."""
+    driver = _StubDriver()
+    writer = _graph(driver)
+    first = writer.write_node(_PERSON, label="OntologyClass", id="urn:a", payload={"kind": "pdf"})
+    second = writer.write_node(_PERSON, label="OntologyClass", id="urn:a",
+                               payload={"kind": "docx"})
+    assert first.outcome == second.outcome == "written"
+    assert len(driver.queries) == 2
+    (c1, p1), (c2, p2) = driver.queries
+    assert c1 == c2, "the SAME (label, id) must produce the SAME query text on every call"
+    assert "MERGE" in c1 and "ON CREATE" not in c1 and "ON MATCH" not in c1
+    assert p1["id"] == p2["id"] == "urn:a"
+    assert p1["props"] != p2["props"], "the SECOND write's payload must be the one that travels"
+    assert p1["props"]["kind"] == "pdf" and p2["props"]["kind"] == "docx"
+
+
+def test_a_hostile_label_is_refused_before_the_store():
+    driver = _StubDriver()
+    out = _graph(driver).write_node(_PERSON, label=_HOSTILE, id="urn:a")
+    assert out.outcome == "refused", out
+    assert driver.queries == [], "a refused label reached the store"
+
+
+def test_a_legal_label_is_accepted_the_CONTROL_for_the_hostile_one_above():
+    driver = _StubDriver()
+    out = _graph(driver).write_node(_PERSON, label="Legal_Name1", id="urn:a")
+    assert out.outcome == "written", out
+    assert "Legal_Name1" in driver.queries[0][0]
+
+
+def test_write_node_an_empty_id_is_refused_before_the_store():
+    driver = _StubDriver()
+    out = _graph(driver).write_node(_PERSON, label="OntologyClass", id="   ")
+    assert out.outcome == "refused", out
+    assert driver.queries == []
+
+
+def test_write_node_no_request_field_reaches_the_query_text_except_the_validated_label():
+    """Mirrors `test_no_request_field_is_ever_interpolated_on_any_path` for the one write_node
+    adds: `label` legitimately reaches the query text (validated against `_SAFE_IDENTIFIER` first,
+    see `_graph.write_node`'s docstring) — `id` and the payload never do, both staying PARAMETERS."""
+    driver = _StubDriver()
+    writer = _graph(driver)
+    out = writer.write_node(_PERSON, label="OntologyClass", id=_HOSTILE + "id",
+                            payload={"note": _HOSTILE})
+    assert out.outcome == "written", out
+    cypher, params = driver.queries[0]
+    assert _HOSTILE not in cypher and "DETACH" not in cypher, cypher
+    assert params["id"] == _HOSTILE + "id", "id must arrive as a parameter, verbatim"
+    assert params["props"]["note"] == _HOSTILE
+
+
+def test_a_node_payload_naming_the_node_key_property_is_REFUSED():
+    """`_FAMILY`'s node_key is `uri` — identity for write_node comes from the call's own `id`
+    argument, never from the payload riding beside it, same rule `write_edge` enforces for its
+    verb/key properties."""
+    driver = _StubDriver()
+    out = _graph(driver).write_node(_PERSON, label="OntologyClass", id="urn:a",
+                                    payload={"uri": "other"})
+    assert out.outcome == "refused", out
+    assert driver.queries == []
+
+
 # ── identity is identity; payload rides beside it ───────────────────────────────────────────────
 
 def test_identity_is_the_merge_key_and_is_also_written_as_properties():
@@ -873,6 +947,7 @@ def test_a_service_identity_RAISES_and_does_not_return_a_refused_result():
         lambda: graph.write_edge(_SERVICE, identity=_IDENTITY),
         lambda: graph.delete_edges(_SERVICE, identity_filter=f),
         lambda: graph.has_edges(_SERVICE, identity_filter=f),
+        lambda: graph.write_node(_SERVICE, label="OntologyClass", id="urn:a"),
         lambda: vectors.write(_SERVICE, collection="S", id="r", text="t"),
         lambda: vectors.relocate(_SERVICE, collection="S", id="r", vector=[0.1] * _STUB_DIM),
         lambda: vectors.delete(_SERVICE, collection="S", id="r"),
@@ -891,8 +966,11 @@ def test_a_delegate_is_admitted_where_a_service_is_not():
     writer = WeaviateVectorsWriter(client=_StubClient(), embedder=_StubEmbedder())
     assert writer.write(_DELEGATE, collection="S", id="r", text="t").outcome == "written"
     assert _graph().write_edge(_DELEGATE, identity=_IDENTITY).outcome == "written"
+    assert _graph().write_node(_DELEGATE, label="OntologyClass", id="urn:a").outcome == "written"
     with pytest.raises(ServiceIdentityRefused):
         writer.write(_SERVICE, collection="S", id="r", text="t")
+    with pytest.raises(ServiceIdentityRefused):
+        _graph().write_node(_SERVICE, label="OntologyClass", id="urn:a")
 
 
 def _the_transport_modules():

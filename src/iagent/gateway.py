@@ -8161,10 +8161,11 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
 def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: str,
                         ingested_at: str, subject: str) -> None:
     """Create the ingest node for a NEW /ingest arrival, through the worker's graph HOME
-    (`promotion_stores.Neo4jIngestGraph.create_node`) -- never through the SDK graph writer,
-    which is MATCH-NEVER-CREATE by design and has no node-creating call on its surface (ruling
-    2026-09-30, `src/iagent/promotion_stores.py`'s own module docstring). A module-level
-    function, not inlined in the route, so tests can monkeypatch it
+    (`promotion_stores.Neo4jIngestGraph.create_node`) -- which itself now goes through the SDK
+    graph writer's `write_node` (v0.9.6), but the idempotence (created vs already-existed) and
+    the narrow prop shape stay on that HOME, not here (see its own docstring,
+    `src/iagent/promotion_stores.py`). A module-level function, not inlined in the route, so
+    tests can monkeypatch it
     (`monkeypatch.setattr(gateway, "_create_ingest_node", ...)`) the same way `_build_s3_client`
     is faked above.
 
