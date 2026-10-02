@@ -49,3 +49,19 @@ your packet stands, including `IngestRequest` as the door and `object_ref` = `ev
     this.** iagent does re-check, as the second check.
 - [R-089](../docs/rulings/README.md#r-089--on_behalf_of-from-a-delegate-is-an-assertion-trusted-by-configuration-this-pass-only):
   `on_behalf_of` from a delegate is asserted by configuration in this pass. Token exchange is the design.
+
+## Addendum, same day: a fifth field, `domain`
+
+The architect ruled the promotion task's audience as `document_promotion:<domain>`, where <domain> is
+**the content kind's declared domain**. Nothing declares one today:
+- `ContentKindRegistration` carries `kind`, `passes` and `outputs`.
+- No kind row in doc-tools names a domain.
+- The fleet's ingest door writes `domain_type: None`.
+
+So the audience key has no source. **Ask: a `domain` field on the registration, in 0.9.7.** It should be
+required for any kind that can be promoted, because a kind with no domain has no audience, and its task
+would reach nobody.
+
+The fleet side is ready. `document_promotion:SUSTAINMENT` → bob is now in `policy/task_grants.yaml`.
+The seam will build the key from the field, and will refuse, logged, rather than guess when the field is
+absent.

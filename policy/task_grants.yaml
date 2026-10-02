@@ -372,3 +372,21 @@ audiences:
       authority would turn a refusal into a second bite at the same signature.
     grant_to:
       - bob@example.com
+
+  # ADR-0041 §5 — who vouches for a contributed document. RULED 2026-10-02 (architect): the
+  # audience is `document_promotion:<domain>`, where <domain> is the content kind's DECLARED domain.
+  # The seam derives the key from the kind and never from the uploader, and this file resolves it
+  # to that domain's reviewer role.
+  #
+  # MAINTENANCE -> liaison is ruled, but it is not granted here yet. liaison is an OpenDDIL
+  # principal that is mirrored only when OpenDDIL's client registration lands, and
+  # validate_policy refuses a grant_to that is not in users.yaml. Add it then. A domain with no
+  # audience here has no recipient, and its promotion task is visible to nobody.
+  document_promotion:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0041 §5. The reviewer who promotes or rejects a contributed SUSTAINMENT document.
+      Sandbox = bob, who already holds the SUSTAINMENT acceptance role. Bind to the domain's
+      real reviewer role at work.
+    grant_to:
+      - bob@example.com
