@@ -44,10 +44,11 @@ from decimal import Decimal
 from typing import Any, Dict, List
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import instances
     import measures
     from entities import COST, CostCategory
 except ImportError:
-    from agent_fleet.cost_agent import measures
+    from agent_fleet.cost_agent import instances, measures
     from agent_fleet.cost_agent.entities import COST, CostCategory
 
 #: The four-kind vocabulary Lane 1 established. Reproduced verbatim, in order, so a consumer
@@ -69,6 +70,17 @@ _NOT_A_SLOT = {"state"}
 #: answered an honest 422 to a perfectly answerable question.
 _REFERENT_KIND: Dict[str, str] = {
     "lot": COST + "ProductionLot",
+    "rate_vintage": COST + "RateTable",
+}
+
+#: `slot name -> the slots that narrow its valid values`, DERIVED from
+#: `instances._SCOPED_BY_SLOT` rather than restated — that registry already names, per scoped
+#: class, which slot it scopes (`rate_vintage`) and what it needs bound to do it (`("lot",)`).
+#: A second literal here would be the same defect `_SCOPED_BY_SLOT`'s own docstring warns
+#: against: two mirrors of one declaration, and a divergence between them invisible to any
+#: check that reads only one.
+_NARROWED_BY: Dict[str, tuple] = {
+    slot: needs for slot, needs in instances._SCOPED_BY_SLOT.values()
 }
 
 #: Enum vocabularies, READ OUT OF THE TYPE so they cannot drift from what the verbs accept.
@@ -142,6 +154,12 @@ def slots_for(fn_name: str) -> List[dict]:
             # Only SPOKEN slots carry a referent — a handle is resolved by the dispatcher
             # from the store and was never something a speaker names.
             decl["referent"] = _REFERENT_KIND[name]
+        if name in _NARROWED_BY:
+            # `SlotDecl._narrowed_by_is_well_formed` (SDK v0.9.5, pinned) raises on an empty
+            # list — "absent and empty would mean the same thing while looking like a
+            # decision" — so this only ever assigns the non-empty tuple `_SCOPED_BY_SLOT`
+            # declares, never a falsy one.
+            decl["narrowed_by"] = list(_NARROWED_BY[name])
         if name in _ENUM_VALUES:
             decl["values"] = _ENUM_VALUES[name]
         out.append(decl)
