@@ -61,6 +61,12 @@ __all__ = ["ENDPOINT_ABSENT", "Neo4jGraphWriter"]
 #: purpose: only shapes that cannot terminate the token they sit in.
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+#: Characters that survive into a relationship type only when an IRI was not reduced to its local
+#: name. A type is passed to apoc as a parameter, so Neo4j accepts `//invincible-agent/mesh#explain`
+#: as a type; nothing that reads the graph by the verb's local name will ever find it. The writer
+#: refuses rather than writes it, whichever family function produced it.
+_IRI_MARKS = frozenset(":/#")
+
 #: ``neo4j.exceptions`` names meaning WE NEVER GOT TO ASK — the ``unreachable`` half. Matched by
 #: name so this module imports where the driver is absent; each is resolved against the real module
 #: by a test, because a misspelled entry is a guard that never fires.
@@ -160,6 +166,11 @@ class Neo4jGraphWriter:
         rel_type = self._type_for(identity.verb)
         if not rel_type:
             return MeshWriteResult.refused(f"verb {identity.verb!r} names no relationship type")
+        if _IRI_MARKS.intersection(rel_type):
+            return MeshWriteResult.refused(
+                f"verb {identity.verb!r} yields relationship type {rel_type!r}, which still "
+                "carries an IRI's ':', '/' or '#'; the family's type function did not reduce it "
+                "to a local name")
         props[self._verb_prop] = identity.verb
         props[self._key_prop] = identity.key
         record, failure = self._run(

@@ -727,7 +727,11 @@ def test_has_edges_answers_rows_and_says_empty_when_there_are_none():
 
 # ── nothing a caller sends reaches the query text ──────────────────────────────────────────────
 
-_HOSTILE = "x`]->() DETACH DELETE n //"
+# Free of `:`, `/` and `#`, so the write path reaches the store: a type still carrying an IRI
+# mark is refused before any query (the arm after this one), which would leave nothing here
+# to inspect.
+_HOSTILE = "x`]->() DETACH DELETE n RETURN `"
+_HOSTILE_COMMENT = "x`]->() DETACH DELETE n //"
 
 
 def test_no_request_field_is_ever_interpolated_on_any_path():
@@ -754,6 +758,25 @@ def test_no_request_field_is_ever_interpolated_on_any_path():
         assert (params["subject"], params["object"], params["verb"], params["edge_key"]) == (
             ident.subject, ident.object, ident.verb, ident.key)
 
+
+
+def test_a_hostile_type_with_an_iri_mark_never_reaches_the_store_and_its_filters_stay_parameters():
+    """The `//`-commented injection: the write path refuses its type before the store, and the
+    delete and has paths, whose filters stay permissive, still carry it only as a parameter."""
+    driver = _StubDriver()
+    writer = _graph(driver, relationship_type=lambda v: v)
+    ident = EdgeIdentity(subject=_HOSTILE_COMMENT + "s", verb=_HOSTILE_COMMENT + "v",
+                         object=_HOSTILE_COMMENT + "o", key=_HOSTILE_COMMENT + "k")
+    filt = EdgeIdentityFilter(subject=ident.subject, verb=ident.verb, object=ident.object,
+                              key=ident.key)
+    wrote = writer.write_edge(_PERSON, identity=ident, payload={"note": _HOSTILE_COMMENT})
+    assert not wrote.applied and driver.queries == [], (wrote, driver.queries)
+    writer.delete_edges(_PERSON, identity_filter=filt)
+    writer.has_edges(_PERSON, identity_filter=filt)
+    assert len(driver.queries) == 2
+    for cypher, params in driver.queries:
+        assert _HOSTILE_COMMENT not in cypher and "DETACH" not in cypher, cypher
+        assert params["rel_type"] == ident.verb, "the type must arrive as a parameter"
 
 @pytest.mark.parametrize("field", ["node_label", "node_key", "verb_property", "key_property"])
 def test_config_that_reaches_the_query_text_is_refused_at_CONSTRUCTION(field):

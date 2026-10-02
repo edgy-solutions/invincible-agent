@@ -47,11 +47,20 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _get_verb_local_name(verb_iri: str) -> str:
-    """`mesh:lookupOwnership` → `lookupOwnership`. Pure string op."""
-    if ":" in verb_iri:
-        return verb_iri.split(":", 1)[1]
+    """`mesh:lookupOwnership` or `http://invincible-agent/mesh#lookupOwnership` → `lookupOwnership`.
+
+    THE FULL IRI IS TESTED FIRST. A full IRI's scheme colon is not a CURIE prefix: this used to
+    split at the first `:` whatever the form, so `http://invincible-agent/mesh#explain` became the
+    relationship type `//invincible-agent/mesh#explain`. That residue edge still sat in the
+    sandbox graph on 2026-10-01, beside the `explain` edge the compact form wrote. Both forms of
+    one verb must name one type. Pure string op.
+    """
     if "#" in verb_iri:
         return verb_iri.rsplit("#", 1)[1]
+    if "://" in verb_iri:
+        return verb_iri.rsplit("/", 1)[-1]
+    if ":" in verb_iri:
+        return verb_iri.split(":", 1)[1]
     return verb_iri.rsplit("/", 1)[-1]
 
 
