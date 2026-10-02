@@ -1617,14 +1617,23 @@ def _audience_key(promise_name: str) -> str:
     return audience_key(promise_name)
 
 
-def _register_human_task(workflow_id: str, task: dict) -> dict:
+def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack") -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
     authorized actors from Topaz and materializes one queue row per actor; the
     workflow then suspends on the promise until one of them acts. Runs inside
     ctx.run() (durable, replay-safe). The task def MUST declare `audience`
     (e.g. 'promotion:DATA_ENGINEERING'). Payload is CLEARANCE-SAFE (reference +
-    summary, never compartmented content)."""
+    summary, never compartmented content).
+
+    `kind` IS AN ARGUMENT, NEVER A FIELD OF `task`. The row's kind is what `/act` keys its
+    decision vocabulary and its reason requirement on (`human_tasks.validate_decision`), so the
+    kind decides which gate a decision must pass. A task dict is built from a definition and a
+    caller's trigger, so a kind read out of it would let the caller choose the gate. Only a
+    workflow that owns the process passes a kind (SafetyAcceptance passes the kind its
+    review_request names); every other register stays `workflow_ack`. Until 2026-10-01 this was
+    hard-coded, so HAZ-1003's acceptance registered as `workflow_ack` and its approval passed
+    with no reason, through the gate that requires one for `risk_acceptance_medium`."""
     task_id = task["id"]
     audience = task.get("audience")
     if not audience:
@@ -1636,7 +1645,7 @@ def _register_human_task(workflow_id: str, task: dict) -> dict:
             status_code=400,
         )
     body = {
-        "kind": "workflow_ack",
+        "kind": kind,
         "task_id": task_id,
         "workflow_id": workflow_id,
         "audience": audience,
@@ -1671,7 +1680,15 @@ def _register_human_task(workflow_id: str, task: dict) -> dict:
             f"(audience {audience!r}) -> {CORTEX_BFF_URL}; failing workflow (state released)",
             status_code=403,
         )
-    resp.raise_for_status()  # 5xx / network stay RETRYABLE (transient, should retry)
+    # ANY OTHER 4xx IS TERMINAL TOO, through the sibling register's own classifier so the two
+    # registers cannot drift (imported with dispatch_item at the bottom of this module).
+    # Measured on HAZ-1003 (2026-10-01): a 422 `no_entitled_recipients` fell through to
+    # raise_for_status, was retried, and Restate PAUSED the invocation, which then needed a
+    # human resume. The register refusing an audience nobody holds does not heal on
+    # retry. 429 stays retryable inside the classifier.
+    _fail_terminal_on_4xx(
+        resp, f"cortex-bff register of HumanTask {task_id!r} (audience {audience!r})")
+    resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)
     return resp.json()
 
 
@@ -1865,7 +1882,8 @@ async def _run_grouped_human_await(
 
 
 async def _run_definition(
-    ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict
+    ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict,
+    *, task_kind: str = "workflow_ack",
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -1958,9 +1976,11 @@ async def _run_definition(
             # rather than one the approver's request supplied. See `_audience_key`.
             ctx.set(_audience_key(promise_name), task["audience"])
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
+            # `task_kind` is the CALLER-OF-THIS-FUNCTION's argument, never read from `request`:
+            # BPMNWorkflowRunner hands a client's request straight in. See _register_human_task.
             await ctx.run(
                 f"register_{step.id}",
-                lambda t=task: _register_human_task(workflow_id, t),
+                lambda t=task: _register_human_task(workflow_id, t, task_kind),
             )
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
@@ -3380,9 +3400,10 @@ except ImportError:
 # part). Same flatten-the-dir import dance as run_tracker so the container path (/app/dispatch_driver.py)
 # and the dev package path both resolve.
 try:
-    from dispatch_driver import dispatch_item  # noqa: E402  — container path
+    from dispatch_driver import _fail_terminal_on_4xx, dispatch_item  # noqa: E402  — container path
 except ImportError:
     from agent_fleet.restate_analyst.dispatch_driver import (  # noqa: E402
+        _fail_terminal_on_4xx,
         dispatch_item,
     )
 
