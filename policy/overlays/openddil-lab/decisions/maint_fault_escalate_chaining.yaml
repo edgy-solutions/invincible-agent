@@ -1,0 +1,21 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# WHAT FOLLOWS AN ESCALATION. Neither row releases anything: an escalation can reopen the case or
+# withdraw it, never approve the proposal that went unanswered.
+decision: maint_fault_escalate_chaining
+
+after: maint_fault_escalate
+
+matches: [outcome]
+
+# `outcome`: the accepts of `maint_escalation`. The await declares no deadline.
+domain:
+  outcome: [reopen, withdrawn]
+
+terminals: [withdrawn]
+
+rows:
+  - when: {outcome: reopen}
+    then: maint_fault_propose
+  - when: {outcome: withdrawn}
+    then: withdrawn

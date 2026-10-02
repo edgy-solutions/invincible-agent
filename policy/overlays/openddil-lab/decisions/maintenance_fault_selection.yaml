@@ -1,0 +1,16 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# WHICH DEFINITION A MAINTENANCE EVENT OPENS. Only a corrective-maintenance discrepancy opens a
+# proposal. A `lifecycle_transition` is OUTSIDE this domain on purpose: it is a fact the picture
+# carries, not a fault to propose a repair for, and an off-domain value is refused rather than
+# routed by a default.
+decision: maintenance_fault_selection
+
+matches: [kind]
+
+domain:
+  kind: [cm_discrepancy]
+
+rows:
+  - when: {kind: cm_discrepancy}
+    then: maint_fault_propose

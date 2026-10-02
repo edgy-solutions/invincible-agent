@@ -1,0 +1,33 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE SECOND APPROVAL. Reached by a chaining row when the chosen option yields NMC or takes a
+# mission-essential asset offline -- the rule is in maint_fault_propose_chaining, not here.
+# The role is `supervisor`; in the lab it is bound to `liaison` by the grant, not by this file.
+id: maint_supervisor_review
+name: "Maintenance fault -- supervisor review"
+
+classification: null
+
+participants:
+  - role: supervisor
+
+domain_stages: [awaiting_supervisor]
+
+steps:
+  - kind: human_await
+    id: review
+    audience: "maint_supervisor_approval:{trigger.owning_tier}"
+    task_kind: maint_supervisor_approval
+    subject_ref: "{asset_id}"
+    title: "Supervisor approval -- fault {trigger.fault.fault_code} on {asset_id}"
+    summary: >-
+      The maintainer chose an option that leaves the asset NMC or takes a mission-essential asset
+      offline. Approve releases it; reject returns the case for a new proposal.
+    role: supervisor
+    approves: [approved]
+    # SAMPLE: four hours.
+    deadline_seconds: 14400
+
+observable_state:
+  visible: [domain_stages, review.status]
+  internal: []

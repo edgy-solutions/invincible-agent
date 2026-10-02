@@ -67,7 +67,7 @@ being read: a seed-only read cannot produce that error.
 
 ## Pointing a deployment at it
 
-    TASK_KIND_OVERLAY_DIRS=/app/policy/overlays/sample/task_kinds
+    TASK_KIND_OVERLAY_DIRS=/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds
     GRAPH_OVERLAY_DIRS=/app/policy/overlays/sample/graphs
 
 **UNSET IS NOT THE SAME CLAIM AS EMPTY**, and the task-kind gate turns on the difference: unset

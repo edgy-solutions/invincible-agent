@@ -2234,6 +2234,14 @@ async def _run_definition(
                 _out["chosen"] = copy.deepcopy(_hits[0]) if _hits else None
             if step.approves:
                 if _verb in step.approves:
+                    if step.chooses_from:
+                        # A CHOICE OPENS A NEW PROPOSAL, SO ITS APPROVAL STARTS A NEW CHAIN. A
+                        # proposal can be left without a "no": a later approval times out, an
+                        # escalation reopens, and the case proposes again -- and nothing in that
+                        # path cleared the chain, so the abandoned proposal's approver rode into
+                        # the new one's release. Replay-safe: `chooses_from` is new, so no
+                        # in-flight instance carries it.
+                        chain.clear()
                     # WRITTEN BY THE EXECUTOR from the identity `approve` verified, never by a
                     # template. ADR-0046 §4's entry; the decision is `approved` because the step
                     # declared this verb an approval.

@@ -1,0 +1,22 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# CLOSED ON THE OWNING TIER'S ACK. A tier that refuses the action ends the case at its own
+# terminal, so a refusal is never read as a release; what a refused action should do next is not
+# ruled, and is asked of the architect rather than invented here.
+decision: maint_release_chaining
+
+after: maint_release
+
+matches: [outcome]
+
+# `outcome`: the `accepts` of the release definition's `tier_ack` signal.
+domain:
+  outcome: [released, tier_refused]
+
+terminals: [closed, tier_refused]
+
+rows:
+  - when: {outcome: released}
+    then: closed
+  - when: {outcome: tier_refused}
+    then: tier_refused

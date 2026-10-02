@@ -190,13 +190,30 @@ def _choosing(**extra):
 async def test_AN_APPROVAL_APPENDS_ONE_ENTRY_WRITTEN_FROM_THE_VERIFIED_ACTOR(registered, no_stubs):
     prior = [{"step": 1, "role": "x", "approver_sub": "p@x", "decision": "approved",
               "decided_at": "t0", "decision_record_ref": "r"}]
-    ctx, env = await _drive(_choosing(), ctx=_Ctx({"approval_approve": _answer("replace_now")}),
+    # A PLAIN APPROVING STEP -- a second approval of the proposal already on the chain. A
+    # CHOOSING step starts a new chain instead (the next arm), so it cannot carry this claim.
+    ctx, env = await _drive([_await(role="supervisor", approves=["approved"])],
+                            ctx=_Ctx({"approval_approve": _answer("approved")}),
                             from_registry=True, approval_chain=prior)
     entry = env["approval_chain"][-1]
     assert len(env["approval_chain"]) == 2, env["approval_chain"]
     assert (entry["step"], entry["role"], entry["approver_sub"], entry["decision"]) == (
-        2, "maintainer", "m@x", "approved"), entry
+        2, "supervisor", "m@x", "approved"), entry
     assert entry["decided_at"] and entry["decision_record_ref"] == "wf-seal:approve", entry
+    assert prior == [prior[0]] and len(prior) == 1, "the caller's chain was mutated in place"
+
+
+@pytest.mark.asyncio
+async def test_A_CHOICE_STARTS_A_NEW_CHAIN(registered, no_stubs):
+    """The option a choice names did not exist before it was rendered, so no earlier approval can
+    be an approval OF it. Without this, a proposal abandoned by a timeout carried its approver
+    into the next proposal's release (timeout -> escalate -> reopen says no "no")."""
+    prior = [{"step": 1, "role": "x", "approver_sub": "p@x", "decision": "approved",
+              "decided_at": "t0", "decision_record_ref": "r"}]
+    _, env = await _drive(_choosing(), ctx=_Ctx({"approval_approve": _answer("replace_now")}),
+                          from_registry=True, approval_chain=prior)
+    assert [(e["step"], e["role"], e["approver_sub"]) for e in env["approval_chain"]] == [
+        (1, "maintainer", "m@x")], env["approval_chain"]
     assert prior == [prior[0]] and len(prior) == 1, "the caller's chain was mutated in place"
 
 

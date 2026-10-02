@@ -1,0 +1,32 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# A MAINTENANCE EVENT FROM THE OPENDDIL BRIDGE OPENS A CASE. The event is the bridge contract's
+# MaintenanceEvent, flattened; nothing in Python names a field of it.
+trigger: maintenance_fault
+
+selection: maintenance_fault_selection
+
+# THE DEDUPE ON event_id IS THE KEY: a re-delivered event reaches the case it already opened.
+key: event_id
+
+# THE DEDUPE ON FAULT + ASSET IS THE EPISODE: a second event for the same fault on the same asset
+# attaches to the open case instead of opening a second proposal for one broken part.
+episode: [asset_id, fault.item, fault.fault_code]
+
+# EVERY FACT A LATER TABLE OR TEMPLATE READS, refused at intake rather than after a maintainer
+# has already chosen an option.
+#
+# `picture.mission_essential` IS NOT IN THE WEEK-1 BRIDGE CONTRACT. The supervisor rule needs it
+# ("takes a mission-essential asset offline"), and an absent fact is not a wildcard, so until the
+# bridge carries it this trigger REFUSES every event -- visibly, naming the field. Asked of
+# OpenDDIL by packet; not defaulted here, because a default of `false` would skip the supervisor
+# for exactly the assets the rule exists to protect.
+requires:
+  - kind
+  - asset_id
+  - owning_tier
+  - fault.item
+  - fault.fault_code
+  - picture.mission_essential
+  - picture.spare.on_hand_here
+  - label.originator_nation

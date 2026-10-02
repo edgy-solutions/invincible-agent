@@ -1,0 +1,10 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# AN UNANSWERED MAINTENANCE APPROVAL. No verb here approves: the vocabulary is reopen or withdraw.
+kind: maint_escalation
+renders_as:
+  badge: MAINT-ESC
+  title: Unanswered maintenance approval
+  archetype: APPROVAL_TASK
+accepts: [reopen, withdrawn]
+reason_required: [reopen, withdrawn]
