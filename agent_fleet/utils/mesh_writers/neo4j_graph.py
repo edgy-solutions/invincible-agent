@@ -1,4 +1,6 @@
-"""``Neo4jGraphWriter`` — this fleet's ``MeshGraphWriter`` over the property graph (SDK v0.9.5).
+"""``Neo4jGraphWriter`` — this fleet's ``MeshGraphWriter`` over the property graph (SDK v0.9.6
+pin: ``write_node`` only, re-pinned to a sha ahead of v0.9.5 rather than the tag — see
+``pyproject.toml``'s own ``# TODO(0.9.6)`` comment; re-tag when v0.9.6 ships).
 
 ── ONE CLASS, SEVERAL EDGE FAMILIES ─────────────────────────────────────────────────────────
 ``EdgeIdentity`` is four opaque strings — subject, verb, object, key. The graph spells them
@@ -26,12 +28,20 @@ and compared with ``type(r) = $rel_type`` — a Neo4j type cannot be parameteris
 the obvious implementation interpolates it, and this one does not. A verb is therefore never an
 injection vector, by construction rather than by a validator.
 
-── MATCH, NEVER CREATE ──────────────────────────────────────────────────────────────────────
-Both endpoints must already exist. A write that created its own endpoints would turn a typo in
-``subject`` into a node that looks like data. A missing endpoint is discovered BY asking the store,
-so it is ``failed`` (SDK: "refused — declined before touching the store"), and its detail starts
-with :data:`ENDPOINT_ABSENT` so a caller that treats an absent referent differently from a store
-fault — the registrar's ``unresolved`` — can tell the two apart without parsing prose.
+── MATCH, NEVER CREATE — EXCEPT ``write_node``, WHICH IS THE ONE DOOR THAT DOES ─────────────
+Both endpoints must already exist for ``write_edge``. A write that created its own endpoints would
+turn a typo in ``subject`` into a node that looks like data. A missing endpoint is discovered BY
+asking the store, so it is ``failed`` (SDK: "refused — declined before touching the store"), and
+its detail starts with :data:`ENDPOINT_ABSENT` so a caller that treats an absent referent
+differently from a store fault — the registrar's ``unresolved`` — can tell the two apart without
+parsing prose.
+
+``write_node`` (SDK v0.9.6) is deliberately the opposite: it is the SDK's own node-creation door,
+an UPSERT by the Protocol's own contract — ``MERGE ... SET n += $props``, no ``ON CREATE``/``ON
+MATCH`` split, because a second write at the same ``(label, id)`` must update the SAME node, never
+mint a second one. This is not a second policy competing with MATCH-NEVER-CREATE; it is the one
+case the SDK itself names as upsert, kept to exactly the shape the SDK's own conformance arm
+(``check_graph_writer_write_node_contract``) proves.
 
 ── PAYLOAD: WIDER THAN THE PROTOCOL'S ANNOTATION, REFUSED NOT STRIPPED ──────────────────────
 ``write_edge`` annotates ``payload: Mapping[str, str]``. The registrar's predicate edge carries
@@ -105,6 +115,21 @@ RETURN mesh_s.{key} AS subject, mesh_r.{verb_prop} AS verb, mesh_o.{key} AS obje
        mesh_r.{key_prop} AS key
 """
 
+#: ``write_node``'s own template. UNLIKE every edge template above, ``{label}`` here is NOT one of
+#: the four names fixed at construction — the SDK's ``write_node`` keys a node by a caller-supplied
+#: ``label`` per call (SDK v0.9.6, ``iagent_mesh.interfaces.MeshGraphWriter.write_node``), the same
+#: way ``MeshVectorsWriter.write`` keys an object by a caller-supplied ``collection``. A Neo4j label
+#: cannot be parameterised any more than a relationship type can, so this is the one place request
+#: data DOES reach the query text — made safe the same way ``node_label`` is made safe at
+#: construction: checked against ``_SAFE_IDENTIFIER`` first, at the call, every call, never trusted
+#: once and cached. ``{key}`` is this writer's own configured ``node_key`` — fixed at construction,
+#: identical to the property every edge template above matches endpoints by.
+_WRITE_NODE = """
+MERGE (n:{label} {{{key}: $id}})
+SET n += $props
+RETURN count(n) AS n
+"""
+
 
 class Neo4jGraphWriter:
     """Concrete ``MeshGraphWriter``. Structurally satisfies the Protocol; no inheritance."""
@@ -135,6 +160,9 @@ class Neo4jGraphWriter:
         self._rel_type = relationship_type
         self._verb_prop = verb_property
         self._key_prop = key_property
+        #: ``write_node``'s id property. Fixed at construction, same as every name above — only
+        #: the node LABEL it pairs with arrives per call (see ``_WRITE_NODE``).
+        self._node_key = node_key
         names = dict(label=node_label, key=node_key, verb_prop=verb_property,
                      key_prop=key_property)
         self._write_cypher = _WRITE.format(**names)
@@ -154,7 +182,7 @@ class Neo4jGraphWriter:
         if not isinstance(identity, EdgeIdentity):
             return MeshWriteResult.refused(
                 f"identity is {type(identity).__name__}, not EdgeIdentity")
-        props, why = self._payload(payload)
+        props, why = self._payload(payload, identity_props=(self._verb_prop, self._key_prop))
         if why:
             return MeshWriteResult.refused(why)
         rel_type = self._type_for(identity.verb)
@@ -206,6 +234,38 @@ class Neo4jGraphWriter:
             return MeshResult.failed(detail)
         return MeshResult.answered(rows) if rows else MeshResult.empty()
 
+    def write_node(
+        self,
+        initiator: Initiator,
+        *,
+        label: str,
+        id: str,
+        payload: Mapping[str, Any] = {},
+    ) -> MeshWriteResult:
+        """Upsert one node of kind ``label`` at caller-supplied ``id`` (SDK v0.9.6:
+        ``MeshGraphWriter.write_node``). A second call at the SAME ``(label, id)`` updates that
+        node's payload in place — never a second node — which is what a single ``MERGE ... SET``
+        gives for free; there is no ``ON CREATE``/``ON MATCH`` branch to choose between because
+        this method makes no distinction the SDK's own contract asks it to keep.
+
+        ``label`` is the one piece of request data this class ever lets reach the query text (see
+        ``_WRITE_NODE``), so it is checked against the same ``_SAFE_IDENTIFIER`` construction uses
+        for every other interpolated name, at THIS call, before anything is formatted.
+        """
+        initiator.require_person_or_delegate("graph.write_node")
+        if not isinstance(label, str) or not _SAFE_IDENTIFIER.match(label):
+            return MeshWriteResult.refused(f"label={label!r} is not a safe Cypher identifier")
+        if not (id or "").strip():
+            return MeshWriteResult.refused("id is empty")
+        props, why = self._payload(payload, identity_props=(self._node_key,))
+        if why:
+            return MeshWriteResult.refused(why)
+        cypher = _WRITE_NODE.format(label=label, key=self._node_key)
+        _record, failure = self._run(cypher, id=id, props=props)
+        if failure is not None:
+            return failure
+        return MeshWriteResult.written()
+
     # ── helpers ─────────────────────────────────────────────────────────────────────────────
 
     def _type_for(self, verb: str) -> str:
@@ -223,16 +283,17 @@ class Neo4jGraphWriter:
         return dict(rel_type=rel_type, subject=f.subject, object=f.object, verb=f.verb,
                     edge_key=f.key)
 
-    def _payload(self, payload: Any) -> tuple[dict, str]:
+    def _payload(self, payload: Any, *, identity_props: tuple = ()) -> tuple[dict, str]:
         if not isinstance(payload, Mapping):
             return {}, f"payload is {type(payload).__name__}, not a mapping"
         out: dict = {}
         for name, value in payload.items():
             if not isinstance(name, str) or not name:
                 return {}, f"payload key {name!r} is not a non-empty string"
-            if name in (self._verb_prop, self._key_prop):
+            if name in identity_props:
                 return {}, (f"payload key {name!r} is an identity property; identity comes from "
-                            f"`identity` alone")
+                            f"this call's own identity arguments, never the payload riding "
+                            f"beside it")
             if not self._storable(value):
                 return {}, (f"payload[{name!r}] is {type(value).__name__}; Neo4j stores a "
                             f"primitive or a homogeneous list of one — refused, not stripped")

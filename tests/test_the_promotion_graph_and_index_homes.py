@@ -6,11 +6,12 @@ What is pinned here:
     read: an unreadable count, a sweep that did not apply, and a node that survives its sweep
     all RAISE;
   * the node-exists read is built FROM the family and binds the id as a parameter;
-  * `create_node` MERGEs a node built FROM the same family, is idempotent (a second call answers
-    False and writes nothing), refuses a malformed ingest_id before any read or write, and the
-    `submitted_by` prop is the HOME's own initiator subject, never a caller-supplied value --
-    this lives here, not on the SDK writer, because the writer is MATCH-NEVER-CREATE by design
-    (ruled 2026-09-30) and its write surface is edges-only;
+  * `create_node` goes through the SDK writer's `write_node` (v0.9.6) keyed by the same family's
+    `node_label`/`node_key`, is idempotent (a second call answers False and writes nothing --
+    the pre-read stays on THIS home even though `write_node` is itself an upsert), refuses a
+    malformed ingest_id before any read or write, the `submitted_by` prop is the HOME's own
+    initiator subject never a caller-supplied value, and a `write_node` that did not apply
+    raises naming the outcome;
   * the rejection sweep now also deletes the node itself, but ONLY IF bare (no relationship of
     any type survives on it) -- a node another family's edge still anchors must survive;
   * the index adapter sweeps the declared collections, which are EMPTY, and refuses rather than
@@ -56,9 +57,7 @@ class _Session:
 
     def run(self, cypher, **params):
         self._d.reads.append((cypher, params))
-        if cypher == promotion_stores._CREATE_NODE_CYPHER:
-            self._d.log.append("node_create")
-        elif cypher == promotion_stores._DELETE_BARE_NODE_CYPHER:
+        if cypher == promotion_stores._DELETE_BARE_NODE_CYPHER:
             self._d.log.append("node_delete_bare")
         else:
             self._d.log.append("node_read")
@@ -86,11 +85,17 @@ class _Writer:
         self.write_result = MeshWriteResult.written()
         self.delete_result = MeshWriteResult.written()
         self.has_result = MeshResult.empty()
+        self.write_node_result = MeshWriteResult.written()
 
     def write_edge(self, initiator, *, identity, payload):
         self.calls.append(("write", initiator, identity, payload))
         self.log.append("write")
         return self.write_result
+
+    def write_node(self, initiator, *, label, id, payload):
+        self.calls.append(("write_node", initiator, label, id, payload))
+        self.log.append("write_node")
+        return self.write_node_result
 
     def has_edges(self, initiator, *, identity_filter):
         self.calls.append(("has", initiator, identity_filter, None))
@@ -204,43 +209,62 @@ CREATE_KW = dict(kind="pdf", sha256="deadbeef", object_ref="ingress-user/pdf/x/f
                  ingested_at="2026-09-30T20:27:00Z")
 
 
-def test_create_node_MERGES_FROM_the_family_and_sets_the_scalar_props(home):
-    graph, _, driver, _, log = home
+def test_create_node_calls_write_node_FROM_the_family_with_the_right_label_id_and_payload(home):
+    graph, writer, _, _, log = home
     created = graph.create_node(INGEST_ID, **CREATE_KW)
     assert created is True
-    assert log == ["node_read", "node_create"]
-    cypher, params = driver.reads[-1]
-    assert cypher == promotion_stores._CREATE_NODE_CYPHER
-    assert params["ingest_id"] == INGEST_ID
-    assert params["props"] == {
+    assert log == ["node_read", "write_node"]
+    kind, who, label, node_id, payload = writer.calls[-1]
+    assert kind == "write_node" and who is BOB
+    assert label == INGEST_FACT_FAMILY["node_label"]
+    assert node_id == INGEST_ID
+    assert payload == {
         "kind": "pdf", "sha256": "deadbeef", "object_ref": "ingress-user/pdf/x/file.pdf",
         "submitted_by": "bob", "ingested_at": "2026-09-30T20:27:00Z",
     }
-    label, key = INGEST_FACT_FAMILY["node_label"], INGEST_FACT_FAMILY["node_key"]
-    assert re.match(
-        rf"MERGE \(n:{label} \{{{key}: \$ingest_id\}}\)\s+ON CREATE SET n \+= \$props$",
-        cypher), cypher
 
 
 def test_create_node_is_idempotent_the_SECOND_call_answers_False_and_writes_nothing(home):
-    graph, _, driver, _, log = home
+    graph, writer, driver, _, log = home
     driver.node_count = 1  # already exists
     created = graph.create_node(INGEST_ID, **CREATE_KW)
     assert created is False
-    assert log == ["node_read"], "an existing node must never reach the MERGE"
+    assert log == ["node_read"], "an existing node must never reach write_node"
+    assert writer.calls == []
 
 
 def test_create_node_refuses_a_MALFORMED_ingest_id_before_any_read_or_write(home):
-    graph, _, driver, _, log = home
+    graph, writer, driver, _, log = home
     with pytest.raises(ValueError, match="INGEST_ID_RE"):
         graph.create_node("not-an-ingest-id", **CREATE_KW)
-    assert log == [] and driver.reads == []
+    assert log == [] and driver.reads == [] and writer.calls == []
 
 
 def test_create_node_props_carry_the_INITIATORS_subject_not_a_caller_supplied_one(home):
-    graph, _, driver, _, _ = home
+    graph, writer, _, _, _ = home
     graph.create_node(INGEST_ID, **CREATE_KW)
-    assert driver.reads[-1][1]["props"]["submitted_by"] == graph._initiator.subject == "bob"
+    assert writer.calls[-1][4]["submitted_by"] == graph._initiator.subject == "bob"
+
+
+@pytest.mark.parametrize("result", [
+    MeshWriteResult.failed("boom"),
+    MeshWriteResult.refused("payload names the key"),
+    MeshWriteResult.unreachable("down")], ids=lambda r: r.outcome)
+def test_create_node_raises_naming_the_outcome_when_write_node_did_not_APPLY(home, result):
+    graph, writer, _, _, _ = home
+    writer.write_node_result = result
+    with pytest.raises(RuntimeError, match=result.outcome):
+        graph.create_node(INGEST_ID, **CREATE_KW)
+
+
+def test_promotion_stores_contains_no_raw_MERGE_for_the_ingest_node():
+    """SEAL: node creation goes through the SDK writer's `write_node`, never a raw driver MERGE.
+    A literal grep, not a parse -- the thing this guards against is exactly a stray Cypher
+    string, which a parse-based check could miss as readily as the thing it is checking for."""
+    src = (REPO / "src" / "iagent" / "promotion_stores.py").read_text(encoding="utf-8")
+    assert "MERGE" not in src, (
+        "a raw MERGE reappeared in promotion_stores.py -- the ingest node must be created "
+        "through Neo4jGraphWriter.write_node (SDK v0.9.6), not a raw driver write")
 
 
 # ── THE GRAPH: the rejection sweep ────────────────────────────────────────────────────────────

@@ -24,12 +24,18 @@ ingest artifact node to itself, carrying the three fact properties; its identity
 merges onto the same edge. The node-exists check is a parameterised READ, because `has_edges`
 cannot see a node that has no edges yet. The sweep is the writer's key-only delete, which by the
 family's fixed type and identity properties reaches no other family's edges.
-THE WRITER STILL CANNOT CREATE OR DELETE A NODE (ruled 2026-09-30: `Neo4jGraphWriter` is
-MATCH-NEVER-CREATE by design and the SDK write surface is edges-only), so node creation lives on
-this HOME instead, in `Neo4jIngestGraph.create_node` -- `/ingest` calls it, best-effort, for a
-new arrival (a failure is logged, never raised; promotion of a document with no node still
-answers 409 `ingest_node_absent` rather than 503). `delete_carrying` now deletes the bare node
-itself after its edge sweep, but ONLY IF no relationship of ANY type remains on it
+THE WRITER CAN NOW CREATE A NODE -- `write_node` (SDK v0.9.6, opened 2026-10-01 specifically for
+this call) -- but NOT delete one; the SDK shipped only what Lane 1 asked for, same as `has_edges`
+followed `write_edge`/`delete_edges` rather than arriving pre-emptively. `create_node` therefore
+goes through `write_node`, pinned past v0.9.5 to the sha that adds it (see this repo's root
+`pyproject.toml`, `# TODO(0.9.6)`), while the re-read with `node_exists` BEFORE calling it stays
+on THIS home: `write_node` is an upsert, and the pre-check is what keeps a retried `/ingest` from
+silently overwriting an existing node's original `submitted_by`/`ingested_at` -- `write_node`'s
+own contract has no "already existed" signal to report that from. `/ingest` calls `create_node`
+best-effort, for a new arrival (a failure is logged, never raised; promotion of a document with
+no node still answers 409 `ingest_node_absent` rather than 503). `delete_carrying` still deletes
+the bare node itself through a raw driver call after its edge sweep (no `delete_node` exists on
+the SDK writer to move this onto), but ONLY IF no relationship of ANY type remains on it
 (`_DELETE_BARE_NODE_CYPHER`) -- a node another family's edge still anchors must survive
 untouched. The re-read after that conditional delete still RAISES if the node persists: a
 rejection that left the document's node in the graph would report a sweep that did not finish.
@@ -196,16 +202,6 @@ _NODE_EXISTS_CYPHER = (
     f"RETURN count(n) AS n"
 )
 
-#: Built FROM the family, like `_NODE_EXISTS_CYPHER` -- the label and key are never retyped.
-#: MERGE, not CREATE: `create_node` already re-reads with `node_exists` before running this, but
-#: the read-then-write pair is not atomic, so MERGE is what makes a race (or a retried /ingest)
-#: idempotent rather than a duplicate-node or constraint error.
-_CREATE_NODE_CYPHER = (
-    f"MERGE (n:{INGEST_FACT_FAMILY['node_label']} "
-    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
-    f"ON CREATE SET n += $props"
-)
-
 #: Built FROM the family. Deletes the node ONLY IF it carries no relationship of any type --
 #: `WHERE NOT (n)--()` is untyped and undirected on purpose, so an edge from ANY other family
 #: (not just PROMOTION) still anchors the node and this never fires against it.
@@ -220,13 +216,13 @@ _DELETE_BARE_NODE_CYPHER = (
 class Neo4jIngestGraph:
     """`promotion.IngestGraph` over the property graph. Every write is the acting person's.
 
-    Also owns NODE CREATION (`create_node`, below) and the bare-node delete inside
-    `delete_carrying`, even though neither is a `promotion.IngestGraph` protocol member: the SDK
-    graph writer (`Neo4jGraphWriter`) is MATCH-NEVER-CREATE by design and its write surface is
-    edges-only (ruled 2026-09-30), so neither call can go through it. This class already owns the
-    family (`INGEST_FACT_FAMILY`) and the node read (`_NODE_EXISTS_CYPHER`), and is already
-    constructed with the acting PERSON's `Initiator` (`require_person_or_delegate`, enforced
-    below) -- so the node's own writes belong here, not on the writer.
+    Also owns NODE CREATION (`create_node`, below, now through the SDK writer's `write_node`,
+    v0.9.6) and the bare-node delete inside `delete_carrying` (still a raw driver call -- the SDK
+    ships no `delete_node`), even though neither is a `promotion.IngestGraph` protocol member:
+    this class already owns the family (`INGEST_FACT_FAMILY`), the node read
+    (`_NODE_EXISTS_CYPHER`), and is already constructed with the acting PERSON's `Initiator`
+    (`require_person_or_delegate`, enforced below) -- so the node's own operations belong here,
+    layered on top of the writer rather than duplicated beside it.
     """
 
     def __init__(self, *, driver: Any, initiator: Initiator,
@@ -247,9 +243,13 @@ class Neo4jIngestGraph:
         if it already existed (idempotent: a retried /ingest, or a concurrent one, must not
         double-create or raise).
 
-        Design chosen over the MERGE-and-report-a-flag alternative (`_CREATE_NODE_CYPHER`'s own
-        comment): re-read with `node_exists` first, then MERGE only if absent -- simpler to
-        reason about and test than inspecting which branch of an `ON CREATE`/`ON MATCH` fired.
+        Goes through the SDK writer's `write_node` (v0.9.6) rather than a raw driver upsert --
+        `Neo4jGraphWriter` is no longer edges-only (ruled 2026-09-30; amended 2026-10-01 when
+        `write_node` opened v0.9.6 scope specifically for this call). The re-read with
+        `node_exists` BEFORE calling it is kept even though `write_node` is itself an upsert: it
+        is what makes this method's OWN contract -- created vs already-existed -- true, and what
+        keeps a retried /ingest from overwriting a node's original `submitted_by`/`ingested_at`
+        with a later caller's values, which an unconditional upsert would do silently.
 
         Props are deliberately narrow and all scalar: `kind`, `sha256`, `object_ref`,
         `submitted_by` (THIS home's own `initiator.subject` -- the acting person, never a
@@ -266,8 +266,11 @@ class Neo4jIngestGraph:
             "submitted_by": self._initiator.subject,
             "ingested_at": ingested_at,
         }
-        with self._driver.session() as session:
-            session.run(_CREATE_NODE_CYPHER, ingest_id=ingest_id, props=props)
+        result = self._writer.write_node(
+            self._initiator, label=INGEST_FACT_FAMILY["node_label"], id=ingest_id, payload=props)
+        if not result.applied:
+            raise RuntimeError(
+                f"ingest node create for {ingest_id}: {result.outcome}: {result.detail}")
         return True
 
     def write_fact(self, ingest_id: str, fact: dict) -> None:
