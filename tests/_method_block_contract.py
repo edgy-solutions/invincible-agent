@@ -49,18 +49,20 @@ nobody can reopen without reopening all of it:
     block exists to make checkable. A Decimal is not JSON either. So the producer stringifies,
     and the one type is the one that survives the consumer.
 
-  * `bound_defaulted` and `producer_sha` are OURS BEYOND THE UI, deliberately. They are on the
-    wire and `readMethod` ignores both. They stay because the wire contract is not the card:
-    a reader that branches on "who chose this bound" needs the flag, and it cannot be recovered
-    from a rendered sentence.
+  * `bound_defaulted` and `producer_sha` WERE ours beyond the UI until cortex dc06ff8, when
+    `readMethod` began carrying both. The architect ruled the contract to the consumer's six
+    fields (2026-10-02): all five wire fields are now in the UI, and the sixth, `boundUnreadable`,
+    is the READER'S OWN -- it has no wire counterpart (cortex asserts exactly that as
+    `_reader_adds_only_boundUnreadable`), so it lives in `UI_READER_ONLY_FIELDS` and no producer
+    is ever asked to emit it.
 
 BOUND, WHAT IT COSTS. `bound: 0.3` renders through `formatLeaf` as the bare string "0.3" -- no
 name, no attribution. The name is recoverable, and not by guessing: a bounded measure states its
 bound among its own `inputs` (it IS an input to the comparison the formula describes), and the
 envelope carries the labelled `threshold` / `threshold_defaulted` pair beside the block. So
 three places state one bound, all from the same local, and `check_bound_agrees` asserts they
-cannot disagree. What is NOT recoverable in the card is the attribution, because
-`bound_defaulted` is dropped by the consumer. That is a cortex-side change, named in the packet.
+cannot disagree. The attribution travels in `bound_defaulted`, which `readMethod` has carried
+since cortex dc06ff8; before that it was dropped, and this paragraph said so.
 
 WHAT THIS FILE IS NOT. It is not a runtime validator wired into any engine. Each engine builds
 its own block and guards its own invariants at the producer -- the order says "Fix your side; ca
@@ -81,18 +83,22 @@ from typing import Any, Optional
 #: types are POST-`formatLeaf` (`bound: string | null` is what the card holds after formatting,
 #: not what the wire carries), so comparing our wire types to them would demand the producer
 #: send a string bound and contradict the order. The KEYS are the contract; the types are not.
-BLOCK_FIELDS_IN_THE_UI = ("formula", "inputs", "bound")
+BLOCK_FIELDS_IN_THE_UI = ("formula", "inputs", "bound", "bound_defaulted", "producer_sha")
 
 #: On the wire, ignored by `readMethod`. Each with the reason it is carried anyway, because a
-#: field in neither list is UNDECIDED and must fail rather than be waved through.
-BLOCK_FIELDS_BEYOND_THE_UI = {
-    "bound_defaulted": (
-        "a reader that BRANCHES on who chose the bound needs the flag; it cannot be recovered "
-        "from a rendered number, and the card no longer carries the sentence that said it"
-    ),
-    "producer_sha": (
-        "the attestation of WHICH build computed the figures; absent (not 'unknown') when the "
-        "image was not stamped, so a reader can tell not-attested from attested-as-this"
+#: field in neither list is UNDECIDED and must fail rather than be waved through. EMPTY since
+#: cortex dc06ff8 -- kept, rather than deleted, because the partition still needs a third bucket
+#: for the next field the wire gains before the consumer does.
+BLOCK_FIELDS_BEYOND_THE_UI: dict[str, str] = {}
+
+#: Fields the consumer's `MethodBlock` declares that NO PRODUCER EMITS: the reader derives them.
+#: Each with the reason, so the set cannot grow by appending a name. Never part of
+#: `BLOCK_FIELDS`, which is what a producer must emit.
+UI_READER_ONLY_FIELDS = {
+    "boundUnreadable": (
+        "readBound's own verdict on a `bound` it could not parse as a finite number -- the raw "
+        "value's text, so 'stated but unreadable' never renders as 'absent'. Derived from `bound`, "
+        "camelCase on purpose in cortex to mark it as the reader's"
     ),
 }
 
@@ -102,18 +108,23 @@ BLOCK_FIELDS = tuple(BLOCK_FIELDS_IN_THE_UI) + tuple(BLOCK_FIELDS_BEYOND_THE_UI)
 INPUT_REQUIRED = ("name", "value")
 
 #: Optional, and the OMISSION is a statement about what was NOT said -- see the unit convention
-#: in the module docstring. `readMethod` drops this field today; it is on the wire because a card
-#: showing "31221216" beside "5" with no units cannot tell dollars from a count.
+#: in the module docstring. It is on the wire because a card showing "31221216" beside "5" with
+#: no units cannot tell dollars from a count; `readMethod` has carried it since cortex dc06ff8.
+#: OPTIONAL ON THE WIRE is all this dict says -- whether the card reads a field is
+#: `INPUT_FIELDS_BEYOND_THE_UI`'s question, a different one.
 INPUT_OPTIONAL = {
     "unit": (
         "absent means NO UNIT STATED (lane/ca's SDK convention for this field, 2026-09-25) -- "
         "NOT dimensionless, which is the convention for a chart series' unit and a different "
-        "field; the consumer's MethodInput has no unit field and readMethod drops it, so this "
-        "is on the wire ahead of the card"
+        "field"
     ),
 }
 
 INPUT_FIELDS = tuple(INPUT_REQUIRED) + tuple(INPUT_OPTIONAL)
+
+#: Input fields on the wire that the consumer's `MethodInput` does not read, each with its
+#: reason. EMPTY since cortex gained `unit` (dc06ff8); kept as the partition's third bucket.
+INPUT_FIELDS_BEYOND_THE_UI: dict[str, str] = {}
 
 #: Where the consumer's half of this contract lives, relative to the cortex-ui checkout.
 UI_CONTRACT_FILE = "src/lib/cardExport.ts"

@@ -308,16 +308,13 @@ def test_the_declared_fields_PARTITION_against_the_consumers_interfaces():
     assert sorted(with_reason) == sorted(contract.BLOCK_FIELDS_BEYOND_THE_UI)
 
     in_ui, with_reason, undecided = contract.partition_against_the_ui(
-        contract.INPUT_FIELDS, contract.ui_input_fields(src), contract.INPUT_OPTIONAL
+        contract.INPUT_FIELDS, contract.ui_input_fields(src), contract.INPUT_FIELDS_BEYOND_THE_UI
     )
     assert undecided == [], f"input fields {undecided} are undecided against MethodInput"
-    assert sorted(in_ui) == sorted(contract.INPUT_REQUIRED)
-    # THE ONE ON THE WIRE AHEAD OF THE CARD. When cortex gains `unit`, this arm reds — which is
-    # the good news it should report rather than pass over in silence.
-    assert with_reason == ["unit"], (
-        f"the fields beyond MethodInput are {with_reason}; if `unit` is no longer among them, "
-        "cortex has gained it and the reason in INPUT_OPTIONAL is now stale"
-    )
+    # cortex gained `unit` in dc06ff8, which is the good news this arm was built to report: every
+    # input field on the wire, required or optional, is now one the card reads.
+    assert sorted(in_ui) == sorted(contract.INPUT_FIELDS)
+    assert sorted(with_reason) == sorted(contract.INPUT_FIELDS_BEYOND_THE_UI)
 
 
 # ── the checker itself ───────────────────────────────────────────────────────────────────────

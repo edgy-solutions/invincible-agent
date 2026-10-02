@@ -54,6 +54,8 @@ _CARD_EXPORT = (
 #: field sets live in `tests/_method_block_contract.py` with the reason each field exists.
 _UI_METHOD_FIELDS = set(contract.BLOCK_FIELDS_IN_THE_UI)
 _OURS_BEYOND_THE_UI = set(contract.BLOCK_FIELDS_BEYOND_THE_UI)
+#: Declared by the consumer, emitted by nobody -- never part of what the producer is held to.
+_UI_READER_ONLY = set(contract.UI_READER_ONLY_FIELDS)
 
 #: CONTRIBUTION_RANKING producers that are not cost measures. AN EXCLUSION IS A CLAIM, so each
 #: carries its reason and the partition arm fails on any member that is in neither set.
@@ -138,8 +140,9 @@ def test_the_UIs_declared_METHOD_FIELDS_are_PARSED_not_remembered():
         pytest.skip(f"cortex-ui not checked out at {_CARD_EXPORT}; the declaration runs unchecked")
     src = _CARD_EXPORT.read_text(encoding="utf-8")
     parsed = set(contract.ui_block_fields(src))
-    assert parsed == _UI_METHOD_FIELDS, (
-        f"cortex declares {sorted(parsed)}; the contract declares {sorted(_UI_METHOD_FIELDS)}"
+    assert parsed == _UI_METHOD_FIELDS | _UI_READER_ONLY, (
+        f"cortex declares {sorted(parsed)}; the contract declares "
+        f"{sorted(_UI_METHOD_FIELDS | _UI_READER_ONLY)}"
     )
 
 
@@ -240,8 +243,8 @@ def test_the_BOUNDED_measure_states_the_value_AND_WHO_CHOSE_IT(state):
     WHERE THE ATTRIBUTION LIVES CHANGED WITH THE SHAPE, and this arm changed with it rather than
     being deleted. Under the sentence form the origin was a phrase inside `bound`; under float|None
     the only carrier is `bound_defaulted`, so that flag now bears the whole claim — which is
-    precisely why both of its values are driven here, and why the packet says plainly that nothing
-    in the CARD shows it (`readMethod` drops the flag).
+    precisely why both of its values are driven here. `readMethod` has carried the flag since
+    cortex dc06ff8; before that the card could not show it.
     """
     defaulted = measures.cost_supplier_concentration(state, lot=3)["method"]
     chosen_payload = measures.cost_supplier_concentration(state, lot=3, threshold=0.30)
@@ -506,3 +509,13 @@ def test_the_projected_component_is_what_the_UIs_export_reader_looks_AT():
     # The bound survives on BOTH wires, and they must still agree after the hop — as numbers,
     # because the two wires carry two representations of one local by design.
     assert float(got["threshold"]) == got["method"]["bound"]
+
+
+def test_a_READER_ONLY_field_is_never_one_a_producer_is_held_to():
+    """`UI_READER_ONLY_FIELDS` is subtracted from the consumer's interface, so a WIRE field filed
+    there by mistake would retire the parse arm's check on it AND drop it from what the producer
+    must emit. Disjointness is the whole claim the set makes, so it is asserted, not assumed."""
+    assert not (_UI_READER_ONLY & set(contract.BLOCK_FIELDS)), sorted(
+        _UI_READER_ONLY & set(contract.BLOCK_FIELDS)
+    )
+    assert not (_UI_READER_ONLY & _UI_METHOD_FIELDS)

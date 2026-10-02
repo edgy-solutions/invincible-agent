@@ -227,8 +227,8 @@ DEFAULT_CONCENTRATION_THRESHOLD = Decimal("0.25")
 # form shipped here (546e6be) sent `bound` as the sentence "threshold = 0.30 (stated by the
 # caller)", which renders better and is one engine's private shape. Under float|None the sentence
 # dies, so the bound's NAME is stated as an INPUT — where the formula reads it anyway — and its
-# ATTRIBUTION survives only in `bound_defaulted`, which `readMethod` drops. Nothing renders who
-# chose a bound today. That is a cortex-side change, reported and not made from here.
+# ATTRIBUTION survives only in `bound_defaulted`, which `readMethod` has carried since cortex
+# dc06ff8 (it was dropped before that, and this comment said so).
 #
 # `bound_defaulted` IS DERIVED FROM THE SAME ARGUMENT as the bound, inside one helper, which is
 # the only reason two statements of one fact are allowed to stand.
@@ -267,8 +267,7 @@ def _inp(name: str, value: Any, unit: Optional[str] = None) -> dict[str, Any]:
     written down for every engine that emits a block.
 
     The unit exists because a card showing "31221216" beside "5" cannot tell dollars from a
-    count. cortex's `MethodInput` has no unit field yet and `readMethod` drops it, so this is on
-    the wire ahead of the card rather than rendered today.
+    count. cortex's `MethodInput` has carried it since cortex dc06ff8.
     """
     stated: dict[str, Any] = {"name": name, "value": _input_value(value)}
     if unit:
@@ -296,8 +295,7 @@ def _method(
     one field name is exactly the drift a reconciliation exists to stop. What the narrowing costs
     is the attribution; the bound's NAME is recovered by stating it among the inputs — where it
     belongs anyway, since the formula reads it — and the attribution survives only in
-    `bound_defaulted`, which the consumer drops. That last is a cortex-side gap, reported and
-    not patched from here.
+    `bound_defaulted`, which the consumer has carried since cortex dc06ff8.
 
     The bound and its flag are checked against each other rather than trusted, because the two
     ways of getting this wrong are the two that read as deliberate — a bound with no word on
