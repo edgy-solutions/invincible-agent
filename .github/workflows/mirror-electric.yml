@@ -27,6 +27,14 @@ on:
         description: 'Upstream sync-service version to build (must match electric.image.tag)'
         required: true
         default: '1.0.13'
+      otp_version:
+        description: 'Override the builder OTP (upstream ARG OTP_VERSION); empty = what upstream pins'
+        required: false
+        default: ''
+      debian_version:
+        description: 'Override builder+runner Debian (ARG DEBIAN_VERSION); required with otp_version'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -70,15 +78,30 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: steps.buildx.outcome == 'failure'
 
+      # An OTP override exists because upstream's pinned builder (erlang-27.2) can no longer fetch
+      # hex: `mix local.hex` dies on builds.hex.pm's certificate chain (tls key_usage_mismatch).
+      # An overridden build is NOT upstream's 1.0.13 binary, so it never takes the bare tag: it is
+      # tagged <version>-otp<otp>, and the chart pin has to say which one it means.
       - name: Build and push (linux/arm64)
         env:
           ELECTRIC_VERSION: ${{ inputs.electric_version }}
+          OTP_VERSION: ${{ inputs.otp_version }}
+          DEBIAN_VERSION: ${{ inputs.debian_version }}
         run: |
+          TAG="$ELECTRIC_VERSION"
+          OVERRIDE=()
+          if [[ -n "$OTP_VERSION" || -n "$DEBIAN_VERSION" ]]; then
+            [[ "$OTP_VERSION" =~ ^[0-9]+(\.[0-9]+)+$ && -n "$DEBIAN_VERSION" ]] \
+              || { echo "otp_version and debian_version go together: '$OTP_VERSION' '$DEBIAN_VERSION'"; exit 1; }
+            OVERRIDE=(--build-arg OTP_VERSION="$OTP_VERSION" --build-arg DEBIAN_VERSION="$DEBIAN_VERSION")
+            TAG="$ELECTRIC_VERSION-otp$OTP_VERSION"
+          fi
           docker buildx build src/packages/sync-service \
             --platform linux/arm64 \
             --build-arg ELECTRIC_VERSION="$ELECTRIC_VERSION" \
+            "${OVERRIDE[@]}" \
             --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --label org.opencontainers.image.description="electric sync-service built from upstream @core/sync-service@$ELECTRIC_VERSION" \
-            -t "$IMAGE:$ELECTRIC_VERSION" \
+            -t "$IMAGE:$TAG" \
             --push
-          docker buildx imagetools inspect "$IMAGE:$ELECTRIC_VERSION" | head -20
+          docker buildx imagetools inspect "$IMAGE:$TAG" | head -20
