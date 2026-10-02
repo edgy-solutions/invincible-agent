@@ -31,5 +31,14 @@ requires:
   - picture.battle_condition.mission_essential
   - picture.battle_condition.basis.rule
   - picture.battle_condition.basis.observed_at
-  - picture.spare.on_hand_here
   - label.originator_nation
+
+# THE SPARES PICTURE IS CARRIED, NOT REQUIRED (ca's ruling, 2026-10-02). `picture.spares` is the
+# full list of site rows; `picture.nearest_spare` is the one row the resupply option reads, the
+# same shape {site, on_hand, as_of, lead_time_days, lead_time_source}, and NULL WHEN NO SITE HAS
+# STOCK. That null is the business state "nothing to resupply from", so `requires` -- which
+# refuses a null -- would refuse exactly the events this case exists to let through. Only an
+# absent key is refused. The week-1 singular `picture.spare` is retired and no longer read.
+carries:
+  - picture.spares
+  - picture.nearest_spare

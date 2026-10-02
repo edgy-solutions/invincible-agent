@@ -75,6 +75,12 @@ class Trigger(_Declared):
     episode: list[str] = Field(default_factory=list)
     #: facts a LATER table reads -- refused at intake, not after a human has already acted
     requires: list[str] = Field(default_factory=list)
+    #: facts the event must CARRY, where any value is an answer: a null, a list, an empty mapping.
+    #: ``requires`` refuses a null, and is right to for a fact a table matches on. Some facts' null
+    #: IS the business state -- ``picture.nearest_spare`` is null when no site has stock -- and
+    #: requiring them would refuse exactly the events the case exists for. Only an ABSENT key is
+    #: refused here: the producer did not say. Lists live here too: a list is never a flat fact.
+    carries: list[str] = Field(default_factory=list)
 
 
 # ── WHERE TRIGGERS LIVE ─────────────────────────────────────────────────────────────────────
@@ -145,8 +151,22 @@ def flatten(obj: Any, prefix: str = "") -> Dict[str, Any]:
     return out
 
 
-def check_intake(trigger: Trigger, flat: Mapping[str, Any], case_key: str) -> None:
-    """Refuse an event the case could not finish. Every check names the missing fact."""
+def _carried(facts: Mapping[str, Any], path: str) -> bool:
+    node: Any = facts
+    for seg in path.split("."):
+        if not isinstance(node, Mapping) or seg not in node:
+            return False
+        node = node[seg]
+    return True
+
+
+def check_intake(trigger: Trigger, flat: Mapping[str, Any], case_key: str,
+                 facts: Optional[Mapping[str, Any]] = None) -> None:
+    """Refuse an event the case could not finish. Every check names the missing fact.
+
+    ``facts`` is the event itself, unflattened: presence of a null, a list or a mapping cannot be
+    read from ``flat``. A trigger that declares ``carries`` is refused without it -- a check that
+    skipped would admit every event it exists to refuse."""
     if CHILD_SEP in case_key:
         raise CaseRoutingError(
             f"case key {case_key!r} contains {CHILD_SEP!r}, which is reserved for a case's own "
@@ -162,6 +182,16 @@ def check_intake(trigger: Trigger, flat: Mapping[str, Any], case_key: str) -> No
         raise CaseRoutingError(
             f"trigger {trigger.trigger!r} event lacks {missing}. An absent fact is not a "
             f"wildcard -- the producer did not say (have: {sorted(flat)})")
+    if trigger.carries:
+        if facts is None:
+            raise CaseRoutingError(
+                f"trigger {trigger.trigger!r} declares `carries` {trigger.carries}, and intake was "
+                "handed only the flattened event; presence cannot be read from it")
+        absent = [p for p in trigger.carries if not _carried(facts, p)]
+        if absent:
+            raise CaseRoutingError(
+                f"trigger {trigger.trigger!r} event does not carry {absent}. A null is an answer; "
+                "an absent key is a producer that did not say")
     if str(flat[trigger.key]) != case_key:
         raise CaseRoutingError(
             f"case key {case_key!r} is not the event's {trigger.key} ({flat[trigger.key]!r}). The "

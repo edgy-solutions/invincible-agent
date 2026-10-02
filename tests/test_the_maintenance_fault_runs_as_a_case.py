@@ -53,17 +53,27 @@ def registered(monkeypatch):
     return rows
 
 
-def _event(event_id="EV-1", me=False, kind="cm_discrepancy"):
+#: The nearest site's row (ca's ruling, 2026-10-02): one `spares[]` row's shape, lifted out.
+_NEAREST = {"site": "SITE-B", "on_hand": 3, "as_of": "2026-10-01T00:00:00Z",
+            "lead_time_days": 5, "lead_time_source": "stand-in"}
+
+
+def _event(event_id="EV-1", me=False, kind="cm_discrepancy", nearest="row"):
     """A MaintenanceEvent in the week-1 bridge contract's shape, with `battle_condition` in the
-    shape OpenDDIL answered on 2026-10-02: a boolean `mission_essential` and its `basis`."""
+    shape OpenDDIL answered on 2026-10-02 (a boolean `mission_essential` and its `basis`), and
+    the spares picture as ca ruled it: `spares[]` plus `nearest_spare`, null when no site has
+    stock. `nearest=None` is that null."""
+    nearest_row = dict(_NEAREST) if nearest == "row" else nearest
     return {
         "event_id": event_id, "kind": kind, "asset_id": "AST-7", "owning_tier": "ORG",
         "fault": {"item": "fuel-pump", "fault_code": "F-0417",
                   "observed_at": "2026-10-02T00:00:00Z"},
         "sources": [{"system": "bit"}],
         "picture": {"readiness": "PMC", "factors": ["fuel"], "lifecycle": "in_service",
-                    "spare": {"on_hand_here": 0, "nearest_site_with_stock": "SITE-B",
-                              "as_of": "2026-10-01T00:00:00Z"},
+                    "spares": [{"site": "HERE", "on_hand": 0, "as_of": "2026-10-01T00:00:00Z",
+                                "lead_time_days": 0, "lead_time_source": "supply-system"},
+                               dict(_NEAREST)],
+                    "nearest_spare": nearest_row,
                     "battle_condition": {
                         "mission_essential": me,
                         "basis": {"rule": "readiness-rollup:ORG",
@@ -120,7 +130,7 @@ def test_THE_TRIGGER_IS_DECLARED_AND_ONLY_A_DISCREPANCY_OPENS_A_PROPOSAL():
     t = R.load_triggers()[TRIGGER]
     assert (t.key, t.episode) == ("event_id", ["asset_id", "fault.item", "fault.fault_code"]), t
     flat = R.flatten(_event())
-    R.check_intake(t, flat, "EV-1")
+    R.check_intake(t, flat, "EV-1", facts=_event())
     assert R.select(t, flat)["then"] == "maint_fault_propose"
     with pytest.raises(R.CaseRoutingError, match="lifecycle_transition"):
         R.select(t, R.flatten(_event(kind="lifecycle_transition")))
@@ -157,6 +167,49 @@ async def test_THE_PRE_ANSWER_SPELLING_AT_THE_PICTURE_ROOT_IS_NOT_READ(registere
     assert registered == [], registered
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["spares", "nearest_spare"])
+async def test_AN_EVENT_THAT_DOES_NOT_CARRY_THE_SPARES_PICTURE_IS_REFUSED_AT_INTAKE(registered,
+                                                                                  field):
+    ev = _event()
+    del ev["picture"][field]
+    with pytest.raises(AssertionError, match=rf"does not carry \['picture\.{field}'\]"):
+        await _run(ev, [])
+    assert registered == [], registered
+
+
+@pytest.mark.asyncio
+async def test_THE_RETIRED_SINGULAR_SPARE_IS_NOT_READ(registered):
+    """CONTROL ON THE PATH. Week-1's `picture.spare` was retired by ca's ruling; an event that
+    still carries only it must not open a proposal that cites nothing about the nearest site."""
+    ev = _event()
+    del ev["picture"]["nearest_spare"]
+    ev["picture"]["spare"] = {"on_hand_here": 0, "nearest_site_with_stock": "SITE-B"}
+    with pytest.raises(AssertionError, match=r"picture\.nearest_spare"):
+        await _run(ev, [])
+    assert registered == [], registered
+
+
+def test_A_CARRIED_NULL_IS_ADMITTED_AND_A_REQUIRED_NULL_IS_NOT():
+    """The one difference between the two lists, both directions, at the same intake."""
+    t = R.load_triggers()[TRIGGER]
+    ev = _event(nearest=None)
+    try:
+        R.check_intake(t, R.flatten(ev), "EV-1", facts=ev)
+    except R.CaseRoutingError as e:
+        raise AssertionError(f"no site has stock is an answer, and intake refused it: {e}")
+    ev["picture"]["battle_condition"]["mission_essential"] = None
+    with pytest.raises(R.CaseRoutingError, match=r"picture\.battle_condition\.mission_essential"):
+        R.check_intake(t, R.flatten(ev), "EV-1", facts=ev)
+
+
+def test_A_TRIGGER_THAT_CARRIES_IS_REFUSED_WITHOUT_ITS_EVENT():
+    """Presence cannot be read from the flattened event; a check that skipped would admit all."""
+    t = R.load_triggers()[TRIGGER]
+    with pytest.raises(R.CaseRoutingError, match="carries"):
+        R.check_intake(t, R.flatten(_event()), "EV-1")
+
+
 # ── THE OPTIONS ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -168,16 +221,32 @@ async def test_EXACTLY_FOUR_OPTIONS_IN_ORDER_EACH_CITING_THE_MANUAL_AND_THE_SPAR
     assert [o["readiness"] for o in opts] == ["FMC", "PMC", "PMC", "NMC"], opts
     for o in opts:
         assert o["task_refs"] and all("data_module_code" in r for r in o["task_refs"]), o
-        assert o["spares"] == ev["picture"]["spare"], o
+        assert o["spares"] == ev["picture"]["spares"], o
     # THE WALK IS A STUB AND ITS CODES ARE NULL: an invented DMC would be cited on a work order.
     assert {r["data_module_code"] for o in opts for r in o["task_refs"]} == {None}, opts
-    assert opts[1]["parts"][0]["source_site"] == "SITE-B", opts[1]
+    # THE RESUPPLY READS THE NEAREST ROW, WHOLE: the lead time beside the source that qualifies it.
+    assert ["nearest_spare" in o for o in opts] == [False, True, False, False], opts
+    assert opts[1]["nearest_spare"] == _NEAREST, opts[1]
+    assert (opts[1]["nearest_spare"]["lead_time_days"],
+            opts[1]["nearest_spare"]["lead_time_source"]) == (5, "stand-in"), opts[1]
     # THE SUPERVISOR-DEPENDENT OPTION CITES THE VERDICT AND ITS BASIS, raw, not a restatement.
     assert opts[0].get("battle_condition") == ev["picture"]["battle_condition"], opts[0]
     assert opts[0]["battle_condition"]["basis"]["rule"] == "readiness-rollup:ORG", opts[0]
 
 
 # ── THE PATHS ───────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_NO_SITE_HAS_STOCK_RENDERS_THE_NULL_AND_THE_CASE_STILL_CLOSES(registered):
+    """The events this case exists for: nothing anywhere to resupply from. The resupply option
+    cites the null -- the card says "no site has stock", no lead time -- and is still a choice."""
+    ev = _event(nearest=None)
+    out, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
+    opts = _options(c)
+    assert "nearest_spare" in opts[1] and opts[1]["nearest_spare"] is None, opts[1]
+    assert opts[1]["spares"] == ev["picture"]["spares"], opts[1]
+
 
 @pytest.mark.asyncio
 async def test_A_RESUPPLY_IS_RELEASED_AND_CLOSED_ON_THE_TIER_ACK(registered):

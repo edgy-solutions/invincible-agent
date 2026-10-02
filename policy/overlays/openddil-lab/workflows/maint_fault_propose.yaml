@@ -44,7 +44,7 @@ steps:
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
             source_site: here
-        spares: "{trigger.picture.spare}"
+        spares: "{trigger.picture.spares}"
         # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
         # basis {rule, observed_at}, so the card shows why a supervisor is or is not asked.
         battle_condition: "{trigger.picture.battle_condition}"
@@ -60,8 +60,14 @@ steps:
           - item: "{trigger.fault.item}"
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
-            source_site: "{trigger.picture.spare.nearest_site_with_stock}"
-        spares: "{trigger.picture.spare}"
+        spares: "{trigger.picture.spares}"
+        # THE ROW THE RESUPPLY READS, WHOLE: its site, stock, lead_time_days and lead_time_source
+        # (stand-in | supply-system) travel together, so the lead time is never shown without the
+        # source that says how far to trust it. NULL when no site has stock -- the card renders
+        # "no site has stock", no lead time. Cited whole because a definition may not compute,
+        # and a dotted path into a null is refused at render; the part's source site is this
+        # row's `site`, not a second copy of it.
+        nearest_spare: "{trigger.picture.nearest_spare}"
       - verb: defer_with_restriction
         label: "Defer with restriction"
         readiness: PMC
@@ -71,7 +77,7 @@ steps:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"}
         interval: "{outputs.maint_fault_propose.walk.citations.planning_interval.interval}"
         parts: []
-        spares: "{trigger.picture.spare}"
+        spares: "{trigger.picture.spares}"
       - verb: evacuate_for_depot
         label: "Evacuate for depot"
         readiness: NMC
@@ -80,7 +86,7 @@ steps:
         task_refs:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
         parts: []
-        spares: "{trigger.picture.spare}"
+        spares: "{trigger.picture.spares}"
 
   - kind: human_await
     id: decide

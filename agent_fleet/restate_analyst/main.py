@@ -1720,7 +1720,7 @@ _SCALAR = (str, int, float, bool)
 
 def _resolve_path(context: dict, path: str) -> "tuple[bool, object]":
     """``(found, value)`` for a dotted path through nested mappings. FOUND IS SEPARATE FROM VALUE:
-    a field that is present and None (``nearest_site_with_stock`` when no site has stock) is a
+    a field that is present and None (``picture.nearest_spare`` when no site has stock) is a
     fact, and a field that is absent is a producer that did not say."""
     node: object = context
     for seg in path.split("."):

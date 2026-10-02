@@ -108,7 +108,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     def _intake():
         trig = R.load_trigger(name)
         flat = R.flatten(facts)
-        R.check_intake(trig, flat, case_id)
+        R.check_intake(trig, flat, case_id, facts=facts)
         return {"trigger": trig.model_dump(), "flat": flat, "episode": R.episode_key(trig, flat)}
 
     intake = await ctx.run("intake", _terminal(_intake, 400))
