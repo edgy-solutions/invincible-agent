@@ -183,12 +183,25 @@ def _binding_rows() -> list[tuple[str, str]]:
     return [(m.group("subject"), m.group("object")) for m in _ROW.finditer(text)]
 
 
+def _cortex_contract_files(cortex_dir: Path) -> list:
+    """Every file where cortex declares an archetype's contract -- RULE A: the legacy
+    per-component convention `src/**/*.contract.ts` UNION the archetype-package convention
+    `src/archetypes/*/contract.ts` (ADR-0055). The package convention names the file exactly
+    `contract.ts`, which the legacy glob's required `.contract.ts` suffix cannot match, so a
+    package-only archetype is invisible to the legacy half alone.
+    """
+    src = cortex_dir / "src"
+    legacy = set(src.rglob("*.contract.ts"))
+    packages = set((src / "archetypes").glob("*/contract.ts"))
+    return sorted(legacy | packages)
+
+
 def _contract_archetypes() -> set[str]:
-    d = _ROOT.parent / "cortex-ui" / "src" / "components"
+    d = _ROOT.parent / "cortex-ui"
     if not d.is_dir():
         pytest.skip("cortex-ui is not a sibling on disk")
     names: set[str] = set()
-    for f in d.rglob("*.contract.ts"):
+    for f in _cortex_contract_files(d):
         names |= {m.group("name") for m in _ARCHETYPE.finditer(f.read_text(encoding="utf-8"))}
     return names
 

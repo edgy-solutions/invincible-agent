@@ -1193,12 +1193,27 @@ def test_row_level_fields_need_NO_declaration_and_that_is_why_favourable_survive
 _CORTEX_DIR = _ROOT.parent / "cortex-ui"
 
 
+def _cortex_contract_files(cortex_dir: Path) -> list:
+    """Every file where cortex declares an archetype's contract -- RULE A, one definition used
+    by every scan in this file: the legacy per-component convention `src/**/*.contract.ts`
+    UNION the archetype-package convention `src/archetypes/*/contract.ts` (ADR-0055).
+
+    The package convention names the file exactly `contract.ts`, which the legacy glob cannot
+    match (it requires a `.contract.ts` suffix) -- so a package-only archetype is invisible to
+    half this union and the other half alone is stale the day a component migrates.
+    """
+    src = cortex_dir / "src"
+    legacy = set(src.rglob("*.contract.ts"))
+    packages = set((src / "archetypes").glob("*/contract.ts"))
+    return sorted(legacy | packages)
+
+
 def _cortex_declared_archetypes() -> dict:
-    """archetype -> set(required field names), parsed from cortex's *.contract.ts."""
+    """archetype -> set(required field names), parsed from cortex's contract files (rule A)."""
     out = {}
     if not _CORTEX_DIR.is_dir():
         return out
-    for p in _CORTEX_DIR.rglob("*.contract.ts"):
+    for p in _cortex_contract_files(_CORTEX_DIR):
         src = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r'archetype:\s*"([A-Z_]+)"', src)
         if not m:
@@ -1367,7 +1382,7 @@ def test_THE_SKIP_PATH_ACTUALLY_WORKS(monkeypatch):
     # one level up.
     monkeypatch.setattr(sys.modules[__name__], "_cortex_declared_archetypes", lambda: {})
     monkeypatch.setattr(sys.modules[__name__], "_CORTEX", Path("no-such-sibling-repo.ts"))
-    monkeypatch.setattr(sys.modules[__name__], "_CONTRACT_FILE", Path("no-such-contract.ts"))
+    monkeypatch.setattr(sys.modules[__name__], "_CORTEX_DIR", Path("no-such-sibling-repo"))
     for name in skippers:
         fn = getattr(sys.modules[__name__], name)
         with pytest.raises(pytest.skip.Exception):
@@ -1709,8 +1724,26 @@ def test_the_mirror_check_can_actually_FAIL():
         "a one-sided binding outside the register does not surface; the seal above cannot fail"
     )
 
-_CONTRACT_FILE = (_ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
-                  / "CompetingMeasures.contract.ts")
+def _competing_measures_contract() -> Path:
+    """The contract file declaring COMPETING_MEASURES, found among rule A's contract files
+    rather than named: ADR-0055 moved it from the single-file `CompetingMeasures.contract.ts`
+    convention to `src/archetypes/competing-measures/contract.ts`, a filename the legacy
+    `*.contract.ts` glob alone can no longer find.
+
+    Caller's job to check `_CORTEX_DIR.is_dir()` first -- this only decides which ONE of
+    rule A's files is the right one once the repo is known to be there, and fails loudly
+    (never skips) if that is not exactly one file: a present repo with a moved or removed
+    contract is a real regression, not an absent sibling.
+    """
+    matches = [
+        p for p in _cortex_contract_files(_CORTEX_DIR)
+        if 'archetype: "COMPETING_MEASURES"' in p.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one contract file declaring COMPETING_MEASURES under {_CORTEX_DIR}, "
+        f"found {[str(p) for p in matches]} -- the contract moved or was removed"
+    )
+    return matches[0]
 
 
 # -- SEAL 6 -- the field-name join, which is the half that renders blanks ----------------
@@ -1750,10 +1783,10 @@ def test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES():
     payload from the verb. A field must be emitted AND survive the passthrough; either alone
     renders nothing and looks correct from that side.
     """
-    if not _CONTRACT_FILE.is_file():
-        pytest.skip("cortex-ui is not a sibling on disk; the cross-repo half cannot run here")
+    if not _CORTEX_DIR.is_dir():
+        pytest.skip("cortex-ui is not checked out beside this repo")
 
-    text = _CONTRACT_FILE.read_text(encoding="utf-8")
+    text = _competing_measures_contract().read_text(encoding="utf-8")
     block = text.split("COMPETING_MEASURES_ENVELOPE_FIELDS")[1].split("]")[0]
     declared = set(re.findall(r'"(\w+)",', block))
     assert len(declared) >= 8, (

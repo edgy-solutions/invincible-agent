@@ -24,6 +24,31 @@ def program_id(state):
     return state.programs[0].program_id
 
 
+def _competing_measures_contract(cortex_dir):
+    """The contract file declaring COMPETING_MEASURES, found rather than named: cortex's
+    ADR-0055 archetype-package move renamed the single-file `CompetingMeasures.contract.ts` to
+    `src/archetypes/competing-measures/contract.ts`, a filename the legacy `*.contract.ts` glob
+    alone can no longer match (the package convention names the file exactly `contract.ts`).
+
+    RULE A, inlined here rather than imported from a shared module (none exists in this repo):
+    `src/**/*.contract.ts` UNION `src/archetypes/*/contract.ts`. Caller's job to check
+    `cortex_dir.is_dir()` first -- this fails loudly (never skips) if the repo is there but the
+    contract is not exactly one file, since that is a real regression, not an absent sibling.
+    """
+    src = cortex_dir / "src"
+    candidates = sorted(set(src.rglob("*.contract.ts")) | set((src / "archetypes").glob("*/contract.ts")))
+    matches = [
+        p for p in candidates
+        if 'archetype: "COMPETING_MEASURES"' in p.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one contract file declaring COMPETING_MEASURES under {src}, found "
+        f"{[str(p) for p in matches]} out of {len(candidates)} contract file(s) scanned -- the "
+        f"contract moved or was removed"
+    )
+    return matches[0]
+
+
 def test_ALL_THREE_METHODS_ARE_PRESENT(state, program_id):
     """One row per recognised method, and the population is EAC_METHODS rather than a literal
     three — a fourth method added to the enum must appear here without editing this test."""
@@ -171,10 +196,10 @@ def test_IT_IS_BOUND_TO_COMPETING_MEASURES_AND_STILL_NOT_TO_FORECAST_MEASURE(sta
         f"make this binding refuse at render time"
     )
 
-    contract = (pathlib.Path(__file__).resolve().parents[2].parent / "cortex-ui" / "src"
-                / "components" / "planning" / "CompetingMeasures.contract.ts")
-    if not contract.is_file():
+    cortex_dir = pathlib.Path(__file__).resolve().parents[2].parent / "cortex-ui"
+    if not cortex_dir.is_dir():
         pytest.skip("cortex-ui is not a sibling on disk; the contract half cannot run here")
+    contract = _competing_measures_contract(cortex_dir)
     m = re.search(r"minRows:\s*(\d+)", contract.read_text(encoding="utf-8"))
     assert m, "the contract no longer declares minRows — the row-count claim is unchecked"
     assert int(m.group(1)) <= len(rows), (

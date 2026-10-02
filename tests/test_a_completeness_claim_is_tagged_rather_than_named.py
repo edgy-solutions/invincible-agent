@@ -51,9 +51,32 @@ PROVENANCE_KEYWORD = BLOCK_FIELDS_IN_THE_UI[0]
 PROJECTOR = ROOT / "agent_fleet" / "presentation_agent" / "main.py"
 PRODUCERS = sorted(ROOT.glob("agent_fleet/*/measures.py"))
 SDK_ENUMERATION = ROOT.parent / "iagent-mesh-sdk" / "iagent_mesh" / "enumeration.py"
-CORTEX_COMPETING = (
-    ROOT.parent / "cortex-ui" / "src" / "components" / "planning" / "CompetingMeasures.contract.ts"
-)
+CORTEX_DIR = ROOT.parent / "cortex-ui"
+
+
+def _competing_measures_contract() -> Path:
+    """The contract file declaring COMPETING_MEASURES, found rather than named: cortex's
+    ADR-0055 archetype-package move renamed the single-file `CompetingMeasures.contract.ts` to
+    `src/archetypes/competing-measures/contract.ts`, a filename the legacy `*.contract.ts` glob
+    alone can no longer match (the package convention names the file exactly `contract.ts`).
+
+    RULE A, inlined here rather than imported from a shared module (none exists in this repo):
+    `src/**/*.contract.ts` UNION `src/archetypes/*/contract.ts`. Caller's job to check
+    `CORTEX_DIR.is_dir()` first -- this fails loudly (never skips) if the repo is there but the
+    contract is not exactly one file, since that is a real regression, not an absent sibling.
+    """
+    src = CORTEX_DIR / "src"
+    candidates = sorted(set(src.rglob("*.contract.ts")) | set((src / "archetypes").glob("*/contract.ts")))
+    matches = [
+        p for p in candidates
+        if 'archetype: "COMPETING_MEASURES"' in p.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one contract file declaring COMPETING_MEASURES under {src}, found "
+        f"{[str(p) for p in matches]} out of {len(candidates)} contract file(s) scanned -- the "
+        f"contract moved or was removed"
+    )
+    return matches[0]
 
 #: A field nobody in twelve rounds disputed, read by the SAME extractor as the claims below. If the
 #: extractor breaks, this is what says so -- rather than every assertion going quietly vacuous.
@@ -266,8 +289,9 @@ def test_METHODS_ANSWERED_IS_NOT_DERIVABLE_FROM_THE_ROWS_THE_CARD_HOLDS():
 
     THE DAY `eac_exact` JOINS THE ROW CONTRACT THIS TAG BECOMES WRONG. This arm reds then.
     """
-    assert CORTEX_COMPETING.exists(), f"cortex-ui is not checked out beside this repo at {CORTEX_COMPETING}"
-    contract = CORTEX_COMPETING.read_bytes().decode("utf-8")
+    if not CORTEX_DIR.is_dir():
+        pytest.skip("cortex-ui is not checked out beside this repo")
+    contract = _competing_measures_contract().read_bytes().decode("utf-8")
     assert "methods_answered" in contract, (
         "the CompetingMeasures contract no longer mentions methods_answered, so this arm is "
         "reading the wrong file and its absence check below proves nothing"
