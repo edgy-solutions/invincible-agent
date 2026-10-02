@@ -648,7 +648,12 @@ cortexUi:
     # pinning: the FULL tag resolves to this digest (200, linux/amd64 + linux/arm64 + 2 attestations);
     # the abbreviated tag and the full tag with its last hex altered both answer 404; the superseded
     # 38dca3a7 still answers 200. VITE_FEATURES unchanged.
-    digest: "sha256:d2e56047cfe90960102b9b09fba2728cc29939b820a42903b4465138583446c9"
+    # 2026-10-01 roll #13 (frontend-only): cortex-ui 0489d368 (the task card reads the served
+    # decision menu, so a reason-required kind cannot be accepted without one; an audience whose
+    # kind prefix contradicts the row refuses) -> 613b6c35. Measured before pinning: the FULL tag
+    # resolves to this digest (200); the abbreviated tag and the full tag with its last hex altered
+    # both answer 404; the b97b9d58 control still resolves to d2e56047. VITE_FEATURES unchanged.
+    digest: "sha256:613b6c353a9a2e5feecf0a39a34ac3c15e2b657c2c04008ef2d8cb87d6d16d6d"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
