@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 __all__ = [
     "CompletionPolicy",
@@ -54,7 +54,20 @@ class WorkflowDefinitionError(ValueError):
     definition is a config error (fail at load, never silently skip)."""
 
 
-class CompletionPolicy(BaseModel):
+class _Declared(BaseModel):
+    """Every model a definition author writes. AN UNKNOWN FIELD IS REFUSED, NOT DROPPED.
+
+    pydantic's default is ``extra="ignore"``: a misspelled ``deadline_secs`` or a field this
+    runner does not implement validated cleanly and then did nothing. For an approval process that
+    is the worst failure available -- the YAML reads as declaring an escalation, a task kind or a
+    quorum, and the executor never sees it. Refusing at load turns a silent no-op into a typo.
+    Sealed by tests/test_a_definition_field_the_runner_cannot_see_is_refused.py.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CompletionPolicy(_Declared):
     """HOW a ``human_await`` settles — declared, so the executor SELECTS its
     resolution semantics rather than inferring them (M3.2 build 1).
 
@@ -93,7 +106,7 @@ class CompletionPolicy(BaseModel):
         return self
 
 
-class HumanAwaitStep(BaseModel):
+class HumanAwaitStep(_Declared):
     """A designed await on an authorized human (Situation B). Carries the sealed
     HITL fields verbatim; ``audience`` is the Topaz ``task_audience`` gated by
     ``can_act``. Multi-approval = N of these JOINED (ADR-0027), not a parallel
@@ -139,6 +152,23 @@ class HumanAwaitStep(BaseModel):
     # definition. A deadline with nowhere to land is a field that cannot be acted on.
     deadline_seconds: Optional[int] = Field(default=None, gt=0)
 
+    # ── THE TASK KIND IS PROCESS CONTENT, DECLARED PER STEP ────────────────────────────────────
+    #
+    # The kind keys `/act`'s decision vocabulary (`accepts`) and its reason requirement, so it
+    # decides which gate a human's verb must pass. Until this field it was an argument the SERVICE
+    # passed for every step of a run, and that was wrong the first time a definition's steps
+    # differed: `safety_concurrence` registered the user representative's concurrence under the
+    # ACCEPTANCE kind, whose vocabulary has no `concurred`.
+    #
+    # BINDABLE AND STRICT, like `audience`: ``risk_acceptance_{level_slug}`` is one declaration
+    # serving four levels, and an unbound placeholder would register a kind no species declares.
+    #
+    # HONOURED ONLY FROM THE REGISTRY. BPMNWorkflowRunner still runs a caller-supplied
+    # `definition`; a kind read from one would let the caller choose its own gate, which is why
+    # `_register_human_task` takes kind as an argument and never from the task. The executor
+    # refuses a declared kind unless its caller loaded the definition from the registry.
+    task_kind: Optional[str] = None
+
     def resolved_promise_name(self) -> str:
         """The durable promise name this step actually suspends on. ONE
         derivation, so the executor and every seal ask the same function rather
@@ -146,7 +176,7 @@ class HumanAwaitStep(BaseModel):
         return self.promise_name or f"approval_{self.id}"
 
 
-class SpoOperationStep(BaseModel):
+class SpoOperationStep(_Declared):
     """A pre-resolved SPO operation. ``subject``/``verb`` are RESOLVED
     identifiers (instance/class URI + verb IRI), NOT natural language — the
     executor verifies the declared verb against the caller's eligibility set
@@ -159,7 +189,7 @@ class SpoOperationStep(BaseModel):
     expected_output: Optional[str] = None  # declared output_uri (contract)
 
 
-class DirectCallStep(BaseModel):
+class DirectCallStep(_Declared):
     """TRANSITIONAL escape hatch for an infrastructural action not (yet) a mesh
     verb. MUST stay inside the single decider: ``capability`` is REQUIRED and
     Topaz gates it (``can_invoke(caller, capability)``). Promotion candidate —
@@ -178,7 +208,7 @@ class DirectCallStep(BaseModel):
     )
 
 
-class DispatchFanoutStep(BaseModel):
+class DispatchFanoutStep(_Declared):
     """Dispatch the review's batch WITHOUT a human — the autonomous counterpart of ``human_await``.
 
     A STEP KIND WHOSE SEMANTICS ARE EXECUTOR-OWNED, and that is the whole design. The YAML declares
@@ -224,7 +254,7 @@ Step = Annotated[
 ]
 
 
-class WorkflowDefinition(BaseModel):
+class WorkflowDefinition(_Declared):
     """A git-asserted process workflow. ``classification`` gates who may OBSERVE
     (the 3-audience tiers); ``participants``/``domain_stages`` feed observation.
     Steps execute as the workflow **initiator** (the sealed precedent — no

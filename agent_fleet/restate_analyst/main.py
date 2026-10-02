@@ -1892,6 +1892,7 @@ async def _run_definition(
     ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict,
     *, task_kind: str = "workflow_ack",
     workflow_service: str = "BPMNWorkflowRunner",
+    from_registry: bool = False,
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -1967,6 +1968,14 @@ async def _run_definition(
                     status_code=501,
                 )
 
+            if step.completion.mode == "grouped" and step.task_kind is not None:
+                raise restate.TerminalError(
+                    f"step {step.id}: task_kind on a grouped await is declarable but NOT "
+                    "implemented by this runner — its register does not take one, so the "
+                    "declared kind would be silently dropped",
+                    status_code=501,
+                )
+
             if step.completion.mode == "grouped":
                 results.append(await _run_grouped_human_await(
                     ctx, workflow_id, step, promise_name, request, bindings, user_jwt,
@@ -2004,12 +2013,27 @@ async def _run_definition(
             # awaits, so `approve` can check `can_act` against the DEFINITION's audience
             # rather than one the approver's request supplied. See `_audience_key`.
             ctx.set(_audience_key(promise_name), task["audience"])
+            # THE KIND: declared on the step when the definition came from the registry, else the
+            # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
+            # not ignored -- ignoring it would register a kind other than the one the YAML reads
+            # as declaring, and honouring it would let the caller pick its own `/act` gate.
+            step_kind = task_kind
+            if step.task_kind is not None:
+                if not from_registry:
+                    raise restate.TerminalError(
+                        f"step {step.id} declares task_kind {step.task_kind!r} on a definition "
+                        "the caller supplied. A kind decides which gate a decision must pass, so "
+                        "it is honoured only from the registry.",
+                        status_code=400,
+                    )
+                step_kind = _bind_placeholders(
+                    step.task_kind, bindings, where=f"step {step.id} task_kind", strict=True)
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
             # `task_kind` is the CALLER-OF-THIS-FUNCTION's argument, never read from `request`:
             # BPMNWorkflowRunner hands a client's request straight in. See _register_human_task.
             await ctx.run(
                 f"register_{step.id}",
-                lambda t=task: _register_human_task(workflow_id, t, task_kind),
+                lambda t=task, k=step_kind: _register_human_task(workflow_id, t, k),
             )
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
