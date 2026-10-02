@@ -39,7 +39,7 @@ whose acceptance could not be opened must not render as a completed turn.
 from __future__ import annotations
 
 import restate
-from restate import Workflow, WorkflowContext
+from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
 #: FROZEN CONTRACT SURFACE — the gateway calls `/SafetyAcceptance/{key}/run` by hand, the same
 #: way it calls `/GroupedReview/{key}/submit_decision`. Renaming this renames a URL.
@@ -113,6 +113,9 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
 
     envelope = await _main._run_definition(
         ctx, ctx.key(), definition.model_dump(), request,
+        # NAMED so cortex-bff's `/act` resumes THIS service's `approve`, not
+        # BPMNWorkflowRunner's — the bug this fix exists to close (HAZ-1003).
+        workflow_service="SafetyAcceptance",
     )
 
     awaited = [
@@ -141,3 +144,22 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "steps": [r.get("step_id") for r in awaited],
         "status": awaited[-1].get("status"),
     }
+
+
+@safety_acceptance.handler()
+async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """Resolve a suspended acceptance — SAME contract as BPMNWorkflowRunner's `approve`.
+
+    Not a copy: both handlers call `main._approve_impl`, the one enforcement point for the
+    authority gate (`can_act` against the audience `_run_definition` journalled). Before this,
+    HAZ-1003-shaped acceptances had NO approve handler on this service at all, so cortex-bff's
+    `/act` — hardcoded to `/BPMNWorkflowRunner/{key}/approve` — posted to a workflow instance
+    that was never running: the acceptance stayed suspended forever while the task row showed
+    resolved.
+    """
+    try:  # lazy — see `run`'s own comment on why this import is call-time, not module-time
+        import main as _main  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst import main as _main
+
+    return await _main._approve_impl(ctx, request)

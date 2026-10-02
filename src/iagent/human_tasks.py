@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS human_task_projection (
 CREATE INDEX IF NOT EXISTS idx_htp_recipient_id ON human_task_projection (recipient_id);
 CREATE INDEX IF NOT EXISTS idx_htp_task_id ON human_task_projection (task_id);
 CREATE INDEX IF NOT EXISTS idx_htp_status ON human_task_projection (status);
+
+-- 2026-10-01: which Restate service owns the suspended workflow, and the promise name that
+-- service's run() is awaiting (HAZ-1003 — `/act` was hardcoding BPMNWorkflowRunner and the
+-- step id, so a SafetyAcceptance resume silently posted to a workflow instance that was never
+-- running). Both NULLABLE: a row registered before this column existed, or one from the
+-- inline (non-definition-driven) BPMNWorkflowRunner `user_task` loop, carries neither — `/act`
+-- falls back to the legacy BPMNWorkflowRunner behaviour for those, honest-absent rather than
+-- a guessed default. IDEMPOTENT via IF NOT EXISTS.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS workflow_service TEXT;
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS promise_name TEXT;
 """
 
 
@@ -88,6 +98,24 @@ class NoEntitledRecipients(RuntimeError):
     and review split (svc:review-starter initiates, humans review), it must be caught HERE, on
     the reviewer plane, uniformly for every task kind. Cure: grant the audience (task_grants.yaml)
     then re-drive."""
+
+
+#: Restate services whose workflows this gate may resume on. NOT every service that reaches
+#: `_run_definition` qualifies — GroupedReview and AutonomousReview also run WorkflowDefinitions
+#: but their only `human_await` steps use `completion.mode == "grouped"`, which never calls
+#: `_register_human_task` / resolves via an `approve`-shaped handler (it goes through
+#: `_mint_dispatch_task` / `submit_decision` instead). A service belongs here only if it ships
+#: a handler with BPMNWorkflowRunner.approve's contract (`task_id`, `promise_name`, `status`,
+#: `comments`, `acted_by` -> resolve the journalled promise). Validated at REGISTER time
+#: (`register_task`) and re-validated at RESUME time (`/act`) — a row-sourced name is never
+#: interpolated into a Restate ingress URL without being re-checked against this same set.
+ALLOWED_WORKFLOW_SERVICES = frozenset({"BPMNWorkflowRunner", "SafetyAcceptance"})
+
+
+class UnknownWorkflowService(RuntimeError):
+    """Raised when a register call names a `workflow_service` outside
+    `ALLOWED_WORKFLOW_SERVICES` — refused at register time (422) rather than trusted through to
+    a later `/act` that would otherwise interpolate an unvetted name into a Restate ingress URL."""
 
 
 def _pg_connect():
@@ -221,6 +249,8 @@ def register_task(
     workflow_id: Optional[str] = None,
     subject_ref: Optional[str] = None,
     payload: Optional[dict[str, Any]] = None,
+    workflow_service: Optional[str] = None,
+    promise_name: Optional[str] = None,
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
@@ -229,7 +259,19 @@ def register_task(
     clearance-SAFE (reference + summary, never compartmented content) — the
     projection row is visible to every authorized actor and must not leak content
     an actor authorized for the TASK is not cleared for.
+
+    `workflow_service` is validated against ALLOWED_WORKFLOW_SERVICES HERE, at register time —
+    not deferred to `/act`, which re-checks it again before ever interpolating it into a
+    Restate ingress URL (defense in depth: a bad value is refused at the EARLIER of the two
+    places that could catch it, same discipline as `check_can_act` re-checking at resolve time
+    over trusting the replication filter alone).
     """
+    if workflow_service is not None and workflow_service not in ALLOWED_WORKFLOW_SERVICES:
+        raise UnknownWorkflowService(
+            f"task {task_id!r} named workflow_service {workflow_service!r}, which is not in "
+            f"ALLOWED_WORKFLOW_SERVICES ({sorted(ALLOWED_WORKFLOW_SERVICES)}) — refusing to "
+            "register a row whose service name `/act` could not safely resume"
+        )
     actors = _resolve_audience_actors(audience)
     if not actors:
         # Zero entitled recipients: refuse LOUD, never materialize a task no one can act on (it would
@@ -248,7 +290,7 @@ def register_task(
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
-            None, None, None, None, now, now,
+            None, None, None, None, now, now, workflow_service, promise_name,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -258,7 +300,8 @@ def register_task(
                     """INSERT INTO human_task_projection
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
-                        acted_by, acted_at, decision, comment, created_at, updated_at)
+                        acted_by, acted_at, decision, comment, created_at, updated_at,
+                        workflow_service, promise_name)
                        VALUES %s""",
                     rows,
                 )
@@ -276,7 +319,8 @@ def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str,
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """SELECT id, kind, task_id, workflow_id, audience, status, title,
-                          summary, requested_by, subject_ref, payload, created_at
+                          summary, requested_by, subject_ref, payload, created_at,
+                          workflow_service, promise_name
                      FROM human_task_projection
                     WHERE recipient_id = %s AND status = %s
                     ORDER BY created_at DESC""",
@@ -717,10 +761,12 @@ def validate_decision(kind: str, decision: str, comment: str = "") -> None:
 
 
 def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
-                       comment: str = "") -> int:
+                       comment: str = "", workflow_id: Optional[str] = None) -> int:
     """Mark ALL recipient rows of a logical task resolved (one human acted for the
     audience). `caller_id` (authz_id) recorded as acted_by. Returns rows updated.
     Caller MUST have passed check_can_act first (and validate_decision).
+
+    `workflow_id`, if given, scopes the update (HAZ-1003).
 
     `status` carries the DECISION's own vocabulary rather than being coerced into
     approved/rejected: an acknowledged triage task was not "rejected", and a projection that
@@ -764,8 +810,12 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
                 """UPDATE human_task_projection
                       SET status = %s, decision = %s, acted_by = %s, acted_at = %s,
                           comment = %s, updated_at = %s
-                    WHERE task_id = %s AND status = 'pending'""",
-                (status, decision, caller_id, now, comment, now, task_id),
+                    WHERE task_id = %s AND status = 'pending'
+                      -- IS NOT DISTINCT FROM, not `=`: a legacy row's workflow_id is NULL and
+                      -- `NULL = NULL` is never true, so omitting this call's workflow_id must
+                      -- still match those rows.
+                      AND workflow_id IS NOT DISTINCT FROM %s""",
+                (status, decision, caller_id, now, comment, now, task_id, workflow_id),
             )
             n = cur.rowcount
         conn.commit()
