@@ -194,6 +194,16 @@ def _bound_commits() -> list[tuple[str, str, str]]:
     return rows
 
 
+# Every git identity the one human commits under, keyed to that human. A web-UI merge on
+# GitHub commits as the account's noreply address, not the local config: PR #6's merge
+# (d1976ef4) is the commit that showed it. Same person, another surface -- so it does not
+# disambiguate lanes and the premise below still holds.
+_ONE_HUMAN = {
+    "Chris Nogradi <cnogradi@gmail.com>": "cnogradi",
+    "cnogradi <81271909+cnogradi@users.noreply.github.com>": "cnogradi",
+}
+
+
 def test_GIT_AUTHOR_CANNOT_DISAMBIGUATE_LANES():
     """THE PREMISE, asserted rather than assumed.
 
@@ -202,11 +212,22 @@ def test_GIT_AUTHOR_CANNOT_DISAMBIGUATE_LANES():
     condition that makes it necessary, so the day it stops being true somebody finds out here.
     """
     authors = {ln for ln in _git("log", "--format=%an <%ae>", "-60").splitlines() if ln.strip()}
-    assert len(authors) == 1, (
-        f"lanes now commit under {len(authors)} distinct git identities: {sorted(authors)}. "
-        f"If that is durable, `--author` disambiguates lanes and R-058's trailer may be "
-        f"redundant — re-read the ruling rather than deleting the trailer on this evidence."
+    unknown = sorted(authors - set(_ONE_HUMAN))
+    assert not unknown, (
+        f"commits under an identity not known to be the one human: {unknown}. Either it is the "
+        f"same person through another surface (add it to _ONE_HUMAN with the commit that showed "
+        f"it), or lanes now commit under distinct identities -- and if that is durable, `--author` "
+        f"disambiguates lanes and R-058's trailer may be redundant: re-read the ruling rather "
+        f"than deleting the trailer on this evidence."
     )
+    humans = {_ONE_HUMAN[a] for a in authors}
+    assert len(humans) == 1, f"{len(humans)} humans commit here: {sorted(humans)}"
+
+
+def test_THE_ALLOWED_IDENTITIES_ARE_ONE_HUMAN():
+    """The allow-list is the seal's excuse, so it is checked too: every entry names the SAME
+    human. An entry for a second person would make the premise above pass while false."""
+    assert len(set(_ONE_HUMAN.values())) == 1, _ONE_HUMAN
 
 
 def test_THE_TRAILER_FORM_IS_PARSEABLE():
