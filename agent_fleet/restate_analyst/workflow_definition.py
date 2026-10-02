@@ -29,7 +29,7 @@ increments — they touch the sealed runner and get their own seal.
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -40,6 +40,11 @@ __all__ = [
     "SpoOperationStep",
     "DirectCallStep",
     "DispatchFanoutStep",
+    "RenderStep",
+    "SignalAwaitStep",
+    "WaitStep",
+    "EmitStep",
+    "StubVerb",
     "WorkflowDefinition",
     "WorkflowDefinitionError",
     "load_workflow_definition",
@@ -169,6 +174,36 @@ class HumanAwaitStep(_Declared):
     # refuses a declared kind unless its caller loaded the definition from the registry.
     task_kind: Optional[str] = None
 
+    # ── WHAT AN ANSWER MEANS FOR THE CASE, DECLARED BESIDE THE AWAIT ────────────────────────────
+    #
+    # `approves` names the verbs that count as an APPROVAL of the current proposal. Answered with
+    # one, the executor appends an approval-chain entry (ADR-0046 §4: step, role, approver,
+    # decision, decided_at, decision_record_ref) -- written by the EXECUTOR from the verified
+    # `acted_by`, never authored by a template. Answered with any OTHER verb, the chain the step
+    # was extending ENDS: a rejection or a deferral returns the case to a new proposal, and an
+    # approval of the old one must not ride along into the next release. A timeout is not an
+    # answer and touches nothing.
+    #
+    # `role` is what the chain entry calls the approver. Required with `approves`, because an
+    # entry with no role is a signature with no capacity.
+    #
+    # `chooses_from` is a dotted path to a list of options, each carrying a `verb`. The answer's
+    # verb selects the option, which is recorded as the step's `chosen` output -- so "which option
+    # did the approver pick" is the verb itself, and `/act` needs no field it does not have.
+    role: Optional[str] = None
+    approves: list[str] = Field(default_factory=list)
+    chooses_from: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _an_approval_has_a_role(self) -> "HumanAwaitStep":
+        if self.approves and not self.role:
+            raise ValueError(f"step {self.id}: `approves` requires a `role` for the chain entry")
+        if (self.approves or self.chooses_from) and self.completion.mode == "grouped":
+            raise ValueError(
+                f"step {self.id}: `approves`/`chooses_from` on a grouped await is declarable but "
+                "NOT implemented -- a grouped review resolves N rows, not one proposal")
+        return self
+
     def resolved_promise_name(self) -> str:
         """The durable promise name this step actually suspends on. ONE
         derivation, so the executor and every seal ask the same function rather
@@ -247,9 +282,64 @@ class DispatchFanoutStep(_Declared):
     )
 
 
+class RenderStep(_Declared):
+    """Render a YAML template against the run's context and record it as this step's output.
+
+    THE OPTION TEMPLATES LIVE HERE, not in Python: a domain's proposals are data a reviewer reads
+    in git. The renderer is STRICT -- a path that resolves to nothing raises, never renders blank
+    -- because a proposal missing its spares record is a different proposal, not a shorter one.
+    A string that is EXACTLY one ``{path}`` yields the raw value (a list stays a list); anything
+    else interpolates scalars only. Registry-only: see the executor."""
+
+    kind: Literal["render"]
+    id: str
+    template: Any
+
+
+class SignalAwaitStep(_Declared):
+    """Await a SYSTEM's answer -- an acknowledgement, not a human decision.
+
+    Distinct from ``human_await`` because it registers NO human task: a machine's ack in a human
+    queue is a row nobody should act on. The gate is the same one: the resolving handler checks
+    ``can_act`` against the JOURNALLED ``audience``, and additionally refuses a status outside the
+    journalled ``accepts`` -- the vocabulary a human task's kind would otherwise supply.
+    The deadline race and its ``timed_out`` terminal are human_await's, unchanged."""
+
+    kind: Literal["signal_await"]
+    id: str
+    signal: str = Field(..., pattern=r"^[a-z][a-z0-9_]*$")
+    audience: str
+    accepts: list[str] = Field(..., min_length=1)
+    deadline_seconds: Optional[int] = Field(default=None, gt=0)
+
+
+class WaitStep(_Declared):
+    """A durable timer. Its disposition is ``elapsed``, so a chaining row can say what a parked
+    case does when it comes back -- a deferral that never revisits is a deletion."""
+
+    kind: Literal["wait"]
+    id: str
+    seconds: int = Field(..., gt=0)
+
+
+class EmitStep(_Declared):
+    """Render a template and append it to this instance's ``outbox:{channel}``.
+
+    THE TRANSPORT IS NOT DECIDED HERE, and that is deliberate: the record is durable in the
+    instance's state and readable through the owning service's ``outbox`` handler; WHO carries it
+    across the boundary is a binding the receiving side has not ruled on. Emitting is recorded;
+    delivery is not claimed."""
+
+    kind: Literal["emit"]
+    id: str
+    channel: str = Field(..., pattern=r"^[a-z][a-z0-9_]*$")
+    template: Any
+
+
 # Discriminated union on `kind` — an unknown/absent kind fails validation loudly.
 Step = Annotated[
-    Union[HumanAwaitStep, SpoOperationStep, DirectCallStep, DispatchFanoutStep],
+    Union[HumanAwaitStep, SpoOperationStep, DirectCallStep, DispatchFanoutStep,
+          RenderStep, SignalAwaitStep, WaitStep, EmitStep],
     Field(discriminator="kind"),
 ]
 
@@ -267,6 +357,23 @@ class WorkflowDefinition(_Declared):
     domain_stages: list[str] = Field(default_factory=list)
     steps: list[Step] = Field(..., min_length=1)
     observable_state: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _step_ids_are_unique(self) -> "WorkflowDefinition":
+        # A step's output is recorded under `outputs.<definition id>.<step id>`, and its promise and
+        # register names derive from the id -- two steps sharing one would overwrite each other.
+        ids = [s.id for s in self.steps]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise ValueError(f"definition {self.id}: duplicate step ids {dup}")
+        # One promise name, one awaiting step: the audience is journalled UNDER the name, so a
+        # second await on it would overwrite the first's gate input.
+        names = [s.resolved_promise_name() if s.kind == "human_await" else s.signal
+                 for s in self.steps if s.kind in ("human_await", "signal_await")]
+        shared = sorted({n for n in names if names.count(n) > 1})
+        if shared:
+            raise ValueError(f"definition {self.id}: promise names awaited twice {shared}")
+        return self
 
 
 def load_workflow_definition(path: str | Path) -> WorkflowDefinition:
@@ -342,7 +449,15 @@ def definition_dirs() -> "list[Path]":
             return dirs
     candidates = candidate_definition_dirs(Path(__file__))
     existing = [c for c in candidates if c.is_dir()]
-    return existing or candidates[:1]
+    if not existing:
+        return candidates[:1]
+    # THE SEED, THEN EVERY OVERLAY'S workflows/ IN NAME ORDER -- the same default
+    # `decision_table.decision_dirs` composes, so a definition and the table that selects it
+    # resolve from the same overlays. Before this an overlay could ship a selection table naming a
+    # definition the registry could not find. Name order is not a precedence anyone chose, so no
+    # two overlays may declare one definition id (sealed).
+    seed = existing[0]
+    return [seed, *sorted(p for p in (seed.parent / "overlays").glob("*/workflows") if p.is_dir())]
 
 
 def definitions_dir() -> Path:
@@ -543,3 +658,47 @@ def bind_placeholders(definition: dict, trigger: dict) -> dict:
         return node
 
     return _sub(definition)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# STUB VERBS — a verb a definition names before the engine that serves it exists
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+
+class StubVerb(_Declared):
+    """A declared stand-in for a mesh verb that is not served yet.
+
+    THE STUB IS DECLARED, NAMED AND DATED, never a Python branch: ``stub: true`` and a non-empty
+    ``retired_by`` say on the row itself that this is not the verb, and what replaces it. Its
+    ``returns`` renders from the run's context with the strict renderer, so a stub reads no store
+    and performs no effect -- which is the only reason it may skip the stage-2 verifier. Honoured
+    only from the registry, like every field that changes what a run does."""
+
+    verb: str = Field(..., min_length=1)
+    stub: Literal[True]
+    retired_by: str = Field(..., min_length=1)
+    returns: Any
+
+
+def verb_dirs() -> "list[Path]":
+    """``policy/verbs`` (if any) then every ``policy/overlays/*/verbs``, beside the definitions."""
+    seed = definition_dirs()[0].parent / "verbs"
+    return [seed, *sorted(p for p in (seed.parent / "overlays").glob("*/verbs") if p.is_dir())]
+
+
+def load_stub_verbs() -> "dict[str, StubVerb]":
+    """Every declared stub, keyed by verb. TWO DECLARATIONS OF ONE VERB ARE REFUSED -- name order
+    would otherwise pick which canned answer a run sees."""
+    out: dict[str, StubVerb] = {}
+    for d in verb_dirs():
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.yaml")):
+            try:
+                v = StubVerb.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+            except (OSError, yaml.YAMLError, ValidationError) as exc:
+                raise WorkflowDefinitionError(f"{p}: invalid stub verb:\n{exc}") from exc
+            if v.verb in out:
+                raise WorkflowDefinitionError(f"{p}: stub verb {v.verb!r} is declared twice")
+            out[v.verb] = v
+    return out

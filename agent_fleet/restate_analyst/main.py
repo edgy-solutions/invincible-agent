@@ -18,12 +18,14 @@ Run: uvicorn agent_fleet.restate_analyst.main:app --host 0.0.0.0 --port 8081
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import re
 import sys
 import traceback
 from pathlib import Path
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import os
@@ -1699,11 +1701,89 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     return resp.json()
 
 
-_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+# A placeholder is a bare name (a top-level TRIGGER scalar, the original form) or a DOTTED PATH
+# into the run's context (`trigger.fault.item`, `outputs.<definition>.<step>.chosen`). The dotted
+# form used to fall outside this pattern and pass through LITERALLY, with no error, strict or not --
+# an audience declared as `maint:{trigger.owning_tier}` would have registered the braces.
+_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+
+_SCALAR = (str, int, float, bool)
+
+
+def _resolve_path(context: dict, path: str) -> "tuple[bool, object]":
+    """``(found, value)`` for a dotted path through nested mappings. FOUND IS SEPARATE FROM VALUE:
+    a field that is present and None (``nearest_site_with_stock`` when no site has stock) is a
+    fact, and a field that is absent is a producer that did not say."""
+    node: object = context
+    for seg in path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return False, None
+        node = node[seg]
+    return True, node
+
+
+def _render(template: object, context: dict, *, where: str) -> object:
+    """Render a declared template against the run's context. STRICT, and the strictness is the
+    point: a proposal rendered with a blank where its spares record should be is a different
+    proposal that reads as the same one.
+
+    A string that is EXACTLY one ``{path}`` yields the RAW value -- a list stays a list, a mapping
+    a mapping, a present None stays None. Any other string interpolates, and every placeholder in
+    it must resolve to a non-None scalar. Mapping KEYS are never rendered."""
+    if isinstance(template, str):
+        whole = _PLACEHOLDER_RE.fullmatch(template)
+        if whole:
+            found, value = _resolve_path(context, whole.group(1))
+            if not found:
+                raise restate.TerminalError(
+                    f"{where}: {template!r} resolves to nothing in the run's context "
+                    f"(have: {sorted(context)}) -- refusing to render a blank", status_code=400)
+            return copy.deepcopy(value)
+        bad: list[str] = []
+
+        def _sub(m: "re.Match[str]") -> str:
+            found, value = _resolve_path(context, m.group(1))
+            if not found or value is None or not isinstance(value, _SCALAR):
+                bad.append(m.group(1))
+                return m.group(0)
+            return str(value)
+
+        out = _PLACEHOLDER_RE.sub(_sub, template)
+        if bad:
+            raise restate.TerminalError(
+                f"{where}: {sorted(set(bad))} in {template!r} resolve to nothing or to a non-scalar "
+                "-- an interpolated string takes scalars only", status_code=400)
+        return out
+    if isinstance(template, dict):
+        return {k: _render(v, context, where=f"{where}.{k}") for k, v in template.items()}
+    if isinstance(template, list):
+        return [_render(v, context, where=f"{where}[{i}]") for i, v in enumerate(template)]
+    return copy.deepcopy(template)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _signal_accepts_key(signal: str) -> str:
+    """Where a signal_await journals the statuses its resolver may deliver."""
+    return f"signal_accepts:{signal}"
+
+
+async def _race_deadline(ctx, promise, deadline_seconds: Optional[int]) -> "tuple[bool, object]":
+    """``(expired, value)``. ONE HOME for the durable deadline race -- see human_await below."""
+    if deadline_seconds:
+        timer = ctx.sleep(timedelta(seconds=deadline_seconds))
+        winner = await restate.select(approved=promise.value(), expired=timer)
+        if winner[0] == "expired":
+            return True, None
+        return False, winner[1]
+    return False, await promise.value()
 
 
 def _bind_placeholders(
-    value: Optional[str], bindings: dict, *, where: str, strict: bool = False
+    value: Optional[str], bindings: dict, *, where: str, strict: bool = False,
+    context: Optional[dict] = None,
 ) -> Optional[str]:
     """Bind ``{placeholder}`` occurrences in a declared string from the TRIGGER.
 
@@ -1735,6 +1815,12 @@ def _bind_placeholders(
 
     def _sub(m: "re.Match[str]") -> str:
         key = m.group(1)
+        if "." in key:
+            found, v = _resolve_path(context or {}, key)
+            if not found or v in (None, "") or not isinstance(v, _SCALAR):
+                missing.append(key)
+                return m.group(0)
+            return str(v)
         if key not in bindings or bindings[key] in (None, ""):
             missing.append(key)
             return m.group(0)
@@ -1893,6 +1979,8 @@ async def _run_definition(
     *, task_kind: str = "workflow_ack",
     workflow_service: str = "BPMNWorkflowRunner",
     from_registry: bool = False,
+    outputs: Optional[dict] = None,
+    approval_chain: Optional[list] = None,
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -1914,17 +2002,61 @@ async def _run_definition(
     (the executor's ``raise_for_status`` propagates un-caught).
     """
     try:
-        from workflow_definition import WorkflowDefinition  # type: ignore[no-redef]
+        from workflow_definition import (  # type: ignore[no-redef]
+            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+        )
         from spo_step_executor import (  # type: ignore[no-redef]
             StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
         )
     except ImportError:
-        from agent_fleet.restate_analyst.workflow_definition import WorkflowDefinition
+        from agent_fleet.restate_analyst.workflow_definition import (
+            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+        )
         from agent_fleet.restate_analyst.spo_step_executor import (
             StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
         )
 
     wf = WorkflowDefinition.model_validate(definition)  # validate the git-asserted def
+
+    # ── WHAT ONLY THE REGISTRY MAY DECLARE ─────────────────────────────────────────────────────
+    # BPMNWorkflowRunner runs a CALLER-SUPPLIED definition. Every step kind and field below either
+    # writes the case's record (an approval-chain entry, an emitted release, a chosen option), opens
+    # a gate a system resolves, or skips the stage-2 verifier (a stub verb). A caller who could
+    # declare them would author its own approvals, so they are refused BEFORE the first step runs
+    # rather than at the step -- a refusal after an earlier step's effect is a half-run.
+    try:
+        stubs = load_stub_verbs() if any(s.kind == "spo_operation" for s in wf.steps) else {}
+    except WorkflowDefinitionError as exc:
+        raise restate.TerminalError(f"stub verb registry: {exc}", status_code=500) from exc
+    if not from_registry:
+        authored = [
+            s.id for s in wf.steps
+            if s.kind in ("render", "signal_await", "wait", "emit")
+            or (s.kind == "human_await" and (s.approves or s.chooses_from or s.role))
+            or (s.kind == "spo_operation" and s.verb in stubs)
+        ]
+        if authored:
+            raise restate.TerminalError(
+                f"steps {authored} of {wf.id!r} declare what only a registry definition may: a "
+                "case record, a system gate, or a stub verb. Refused on a caller-supplied "
+                "definition.", status_code=400)
+
+    # ── THE RUN'S CONTEXT, which every dotted placeholder and template resolves against ────────
+    # `outputs` arrives from the case (earlier definitions' results) and leaves with this run's
+    # added, keyed `outputs.<definition id>.<step id>`. A re-run of a definition REPLACES its own
+    # prior outputs -- a second proposal supersedes the first. Copies, so a caller's dict is never
+    # mutated under it. The approval chain is NOT an output: no template can write it.
+    outputs = copy.deepcopy(outputs or {})
+    outputs[wf.id] = {}
+    chain: list = copy.deepcopy(approval_chain or [])
+    version = hashlib.sha256(
+        json.dumps(wf.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()[:16]
+    context = {
+        "trigger": request,
+        "outputs": outputs,
+        "case": {"approval_chain": chain, "instance_id": workflow_id},
+        "definition": {"id": wf.id, "version": version},
+    }
     user_jwt = request.get("user_jwt", "")
     identity = {
         "authz_id": request.get("authz_id") or request.get("caller_email") or "",
@@ -1992,13 +2124,13 @@ async def _run_definition(
                 # not touch.
                 "id": f"{workflow_id}:{step.id}",
                 "audience": _bind_placeholders(
-                    step.audience, bindings, where=f"step {step.id} audience", strict=True),
+                    step.audience, bindings, where=f"step {step.id} audience", strict=True, context=context),
                 "title": _bind_placeholders(
-                    step.title, bindings, where=f"step {step.id} title"),
+                    step.title, bindings, where=f"step {step.id} title", context=context),
                 "summary": _bind_placeholders(
-                    step.summary, bindings, where=f"step {step.id} summary"),
+                    step.summary, bindings, where=f"step {step.id} summary", context=context),
                 "subject_ref": _bind_placeholders(
-                    step.subject_ref, bindings, where=f"step {step.id} subject_ref"),
+                    step.subject_ref, bindings, where=f"step {step.id} subject_ref", context=context),
                 "requested_by": step.requested_by or identity["authz_id"],
                 "user_jwt": user_jwt,
                 # Carried so the resolver echoes it back — `approve` must resolve
@@ -2027,7 +2159,8 @@ async def _run_definition(
                         status_code=400,
                     )
                 step_kind = _bind_placeholders(
-                    step.task_kind, bindings, where=f"step {step.id} task_kind", strict=True)
+                    step.task_kind, bindings, where=f"step {step.id} task_kind", strict=True,
+                    context=context)
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
             # `task_kind` is the CALLER-OF-THIS-FUNCTION's argument, never read from `request`:
             # BPMNWorkflowRunner hands a client's request straight in. See _register_human_task.
@@ -2059,27 +2192,81 @@ async def _run_definition(
             # What happens next is a CHAINING ROW matching `timed_out` — escalate, widen the
             # audience, or abandon. That choice is policy and belongs in a row, not here.
             # Sealed by tests/test_an_unanswered_await_never_reads_as_approved.py.
-            _promise = ctx.promise(promise_name, type_hint=dict)
-            if getattr(step, "deadline_seconds", None):
-                _timer = ctx.sleep(timedelta(seconds=step.deadline_seconds))
-                _winner = await restate.select(approved=_promise.value(), expired=_timer)
-                if _winner[0] == "expired":
-                    results.append({
-                        "step_id": step.id, "kind": "human_await",
-                        "status": "TIMED_OUT", "approval": None,
-                        "terminal": "timed_out",
-                        "deadline_seconds": step.deadline_seconds,
+            _expired, approval = await _race_deadline(
+                ctx, ctx.promise(promise_name, type_hint=dict),
+                getattr(step, "deadline_seconds", None))
+            if _expired:
+                results.append({
+                    "step_id": step.id, "kind": "human_await",
+                    "status": "TIMED_OUT", "approval": None,
+                    "terminal": "timed_out",
+                    "deadline_seconds": step.deadline_seconds,
+                })
+                # The definition ENDS here. Continuing would run later steps as though the
+                # human had acted, which is the §4.3.7 defect in general form: proceeding
+                # past an await that was never satisfied.
+                break
+            _verb = approval.get("status")
+            _out = {"status": _verb, "acted_by": approval.get("acted_by"),
+                    "comments": approval.get("comments", ""), "decided_at": None}
+            if step.approves or step.chooses_from:
+                # STAMPED ONLY ON A STEP THAT DECLARES WHAT ITS ANSWER MEANS. A new journal entry
+                # on every human_await would shift the journal of an in-flight multi-step instance
+                # suspended past its first await, and Restate refuses a replay that diverges. These
+                # fields are new, so no in-flight instance carries them. The time is when the run
+                # RECEIVED the answer -- journalled, so a replay reads the same instant.
+                _out["decided_at"] = await ctx.run(f"decided_at_{step.id}", _now_iso)
+            if step.chooses_from:
+                _found, _options = _resolve_path(context, step.chooses_from)
+                if not _found or not isinstance(_options, list):
+                    raise restate.TerminalError(
+                        f"step {step.id}: chooses_from {step.chooses_from!r} is not a list of "
+                        "options in the run's context", status_code=400)
+                _hits = [o for o in _options if isinstance(o, dict) and o.get("verb") == _verb]
+                if len(_hits) > 1:
+                    raise restate.TerminalError(
+                        f"step {step.id}: {len(_hits)} options answer to verb {_verb!r}",
+                        status_code=400)
+                if not _hits and _verb in step.approves:
+                    raise restate.TerminalError(
+                        f"step {step.id}: {_verb!r} approves and no option carries it -- an "
+                        "approval of nothing", status_code=400)
+                _out["chosen"] = copy.deepcopy(_hits[0]) if _hits else None
+            if step.approves:
+                if _verb in step.approves:
+                    # WRITTEN BY THE EXECUTOR from the identity `approve` verified, never by a
+                    # template. ADR-0046 §4's entry; the decision is `approved` because the step
+                    # declared this verb an approval.
+                    chain.append({
+                        "step": len(chain) + 1,
+                        "role": step.role,
+                        "approver_sub": approval.get("acted_by"),
+                        "decision": "approved",
+                        "decided_at": _out["decided_at"],
+                        "decision_record_ref": f"{workflow_id}:{step.id}",
                     })
-                    # The definition ENDS here. Continuing would run later steps as though the
-                    # human had acted, which is the §4.3.7 defect in general form: proceeding
-                    # past an await that was never satisfied.
-                    break
-                approval = _winner[1]
-            else:
-                approval = await _promise.value()
+                else:
+                    # A rejection or a deferral ENDS the proposal this chain was approving; the
+                    # next proposal starts its own. The transition record keeps who said no.
+                    chain.clear()
+            outputs[wf.id][step.id] = _out
             results.append({
                 "step_id": step.id, "kind": "human_await",
                 "status": approval.get("status", "APPROVED"), "approval": approval,
+                "disposition": _verb,
+            })
+
+        elif step.kind == "spo_operation" and step.verb in stubs:
+            # A DECLARED STUB: rendered from the context, no store read, no effect -- the only
+            # reason it may skip the stage-2 verifier. Registry-only (refused above). The record
+            # says STUB and names what retires it, so no reader takes the canned answer for the
+            # verb's.
+            _stub = stubs[step.verb]
+            result = _render(_stub.returns, context, where=f"stub verb {step.verb}")
+            outputs[wf.id][step.id] = result
+            results.append({
+                "step_id": step.id, "kind": "spo_operation", "status": "STUB", "result": result,
+                "stub": {"verb": _stub.verb, "retired_by": _stub.retired_by},
             })
 
         elif step.kind == "spo_operation":
@@ -2094,6 +2281,7 @@ async def _run_definition(
                     # Denial -> TERMINAL (fail-and-release), never retry-and-park.
                     raise restate.TerminalError(str(e), status_code=e.status_code)
             result = await ctx.run(f"exec_{step.id}", _do_spo)
+            outputs[wf.id][step.id] = result
             results.append({
                 "step_id": step.id, "kind": "spo_operation",
                 "status": "SUCCESS", "result": result,
@@ -2220,6 +2408,51 @@ async def _run_definition(
                 "result": {"dispatched": len(_keys), "keys": _keys, "gate": _gate_result},
             })
 
+        elif step.kind == "render":
+            outputs[wf.id][step.id] = _render(step.template, context, where=f"step {step.id}")
+            results.append({"step_id": step.id, "kind": "render", "status": "SUCCESS"})
+
+        elif step.kind == "signal_await":
+            # A SYSTEM's answer. No human task is registered; the audience and the vocabulary are
+            # journalled so the resolving handler gates on the DEFINITION's, not the request's.
+            ctx.set(_audience_key(step.signal), _bind_placeholders(
+                step.audience, bindings, where=f"step {step.id} audience", strict=True,
+                context=context))
+            ctx.set(_signal_accepts_key(step.signal), list(step.accepts))
+            _expired, _sig = await _race_deadline(
+                ctx, ctx.promise(step.signal, type_hint=dict), step.deadline_seconds)
+            if _expired:
+                results.append({
+                    "step_id": step.id, "kind": "signal_await", "status": "TIMED_OUT",
+                    "signal": None, "terminal": "timed_out",
+                    "deadline_seconds": step.deadline_seconds,
+                })
+                break
+            outputs[wf.id][step.id] = {"status": _sig.get("status"),
+                                       "acted_by": _sig.get("acted_by"),
+                                       "comments": _sig.get("comments", "")}
+            results.append({
+                "step_id": step.id, "kind": "signal_await", "status": _sig.get("status"),
+                "signal": _sig, "disposition": _sig.get("status"),
+            })
+
+        elif step.kind == "wait":
+            await ctx.sleep(timedelta(seconds=step.seconds))
+            outputs[wf.id][step.id] = {"status": "elapsed"}
+            results.append({"step_id": step.id, "kind": "wait", "status": "ELAPSED",
+                            "disposition": "elapsed"})
+
+        elif step.kind == "emit":
+            _record = _render(step.template, context, where=f"step {step.id}")
+            _box_key = f"outbox:{step.channel}"
+            _box = list(await ctx.get(_box_key) or [])
+            _box.append({"instance_id": workflow_id, "definition_id": wf.id,
+                         "step_id": step.id, "record": _record})
+            ctx.set(_box_key, _box)
+            outputs[wf.id][step.id] = _record
+            results.append({"step_id": step.id, "kind": "emit", "status": "EMITTED",
+                            "channel": step.channel})
+
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #
     # A DEFINITION MUST TERMINATE WITH ITS LAST STEP'S DISPOSITION, OR CHAINING HAS NOTHING TO
@@ -2245,11 +2478,23 @@ async def _run_definition(
     # PERMANENTLY None, indistinguishable from "this definition disposes nothing", and a
     # chaining table would have matched no row for every definition forever. Fail-by-passing,
     # caught by reading the resolve site instead of assuming the field.
-    _disposing = [
-        r for r in results
-        if r.get("kind") == "human_await" and (r.get("approval") or {}).get("status")
-    ]
-    _outcome = (_disposing[-1].get("approval") or {}).get("status") if _disposing else None
+    #
+    # GENERALISED 2026-10-02 from "the last human_await's verb" to "the last record carrying a
+    # `disposition`": a human's verb, a system's acknowledgement, or a timer's `elapsed`. Every
+    # single human_await record carries its verb there. THE GROUPED PATH DOES NOT: its record comes
+    # from `_run_grouped_human_await` with the verb only in `approval.status`, and reading
+    # `disposition` alone made every grouped review terminate None (caught by the grouped control
+    # in test_an_unanswered_await_never_reads_as_approved). So a human_await's verb is read from
+    # either place, and the human-only definitions terminate exactly as they did.
+    def _disposition_of(r: dict) -> Optional[str]:
+        if r.get("disposition"):
+            return r["disposition"]
+        if r.get("kind") == "human_await":
+            return (r.get("approval") or {}).get("status") or None
+        return None
+
+    _disposing = [r for r in results if _disposition_of(r)]
+    _outcome = _disposition_of(_disposing[-1]) if _disposing else None
     _outcome_step_id = _disposing[-1].get("step_id") if _disposing else None
     # AN EXPIRY ENDS THE DEFINITION, so when one happened it is the last record and the run's
     # outcome is its terminal — whatever an earlier human said. See the deadline race above.
@@ -2265,6 +2510,11 @@ async def _run_definition(
         "outcome": _outcome,
         "outcome_step_id": _outcome_step_id,
         "step_results": results,
+        "definition_version": version,
+        # The case's carried state, returned for the runner that chains on it. `outputs` includes
+        # every earlier definition's; `approval_chain` is the current proposal's approvals.
+        "outputs": outputs,
+        "approval_chain": chain,
     }
 
 

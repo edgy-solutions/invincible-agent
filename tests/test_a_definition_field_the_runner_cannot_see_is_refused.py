@@ -68,6 +68,12 @@ _MINIMAL = {
     "SpoOperationStep": {"kind": "spo_operation", "id": "s", "subject": "urn:x", "verb": "urn:v"},
     "DirectCallStep": {"kind": "direct_call", "id": "d", "endpoint": "http://e", "capability": "c"},
     "DispatchFanoutStep": {"kind": "dispatch_fanout", "id": "f", "capability": "c"},
+    "RenderStep": {"kind": "render", "id": "r", "template": {"k": "v"}},
+    "SignalAwaitStep": {"kind": "signal_await", "id": "g", "signal": "ack", "audience": "k:D",
+                        "accepts": ["acked"]},
+    "WaitStep": {"kind": "wait", "id": "w", "seconds": 60},
+    "EmitStep": {"kind": "emit", "id": "e", "channel": "out", "template": {"k": "v"}},
+    "StubVerb": {"verb": "urn:v", "stub": True, "retired_by": "later", "returns": {}},
     "WorkflowDefinition": {"id": "w", "name": "w",
                            "steps": [{"kind": "human_await", "id": "a", "audience": "k:D"}]},
 }
