@@ -17,7 +17,9 @@ spec:
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 8 }}
+        {{- include "invincible-agent.statefulSpreadLabel" . | nindent 8 }}
     spec:
+      {{- include "invincible-agent.statefulSpreadAffinity" . | nindent 6 }}
       {{- with $.Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -29,6 +31,8 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
           env:
             - name: KEYCLOAK_ADMIN
               value: "{{ .Values.keycloak.auth.adminUser }}"

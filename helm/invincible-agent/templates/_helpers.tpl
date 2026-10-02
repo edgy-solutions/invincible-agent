@@ -135,6 +135,49 @@ wrong with it. Comments belong out here, not in there.
 {{- end }}
 
 {{/*
+Stateful-core spread group — shared label + preferred pod anti-affinity.
+
+Keycloak, Restate and Weaviate each run a single replica backed by a `local-path` PVC, and
+MEASURED 2026-10-02 all four such PVs (these three plus MinIO) are pinned to the SAME node —
+local-path has no cross-node migration, so whichever node first provisioned the PV is the only
+node that can ever mount it again. A REQUIRED pod anti-affinity on this label would therefore
+leave every pod after the first one scheduled permanently Pending: the scheduler would be asked
+to avoid a node that is the ONLY node any of them can run on. So this is
+`preferredDuringSchedulingIgnoredDuringExecution` ONLY, and must stay that way until the
+volumes themselves are migrated off local-path (a separate decision) — a requirement would be a
+regression here, not a hardening.
+
+MinIO (`iagent-minio`) is deployed EXTERNALLY to this chart (see the `minioBucketInit` comment
+block in values.yaml — "a separate manifest, not chart dependencies") and has no pod template in
+this repo, so it cannot carry this label or affinity from here; it is not part of this group.
+
+Toggle: global.statefulSpread.enabled (default true). Weight: global.statefulSpread.weight
+(default 100). Both return empty when disabled, so the call sites below render a harmless blank
+line — never add the label to a StatefulSet's spec.selector.matchLabels (selectors are
+immutable; changing one breaks `helm upgrade` on an existing release), only to pod template
+metadata.
+*/}}
+{{- define "invincible-agent.statefulSpreadLabel" -}}
+{{- if .Values.global.statefulSpread.enabled -}}
+iagent.io/spread-group: stateful-core
+{{- end -}}
+{{- end }}
+
+{{- define "invincible-agent.statefulSpreadAffinity" -}}
+{{- if .Values.global.statefulSpread.enabled -}}
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: {{ .Values.global.statefulSpread.weight | default 100 }}
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              iagent.io/spread-group: stateful-core
+{{- end -}}
+{{- end }}
+
+{{/*
 PostgreSQL connection host — uses subchart or external
 */}}
 {{- define "invincible-agent.pgHost" -}}

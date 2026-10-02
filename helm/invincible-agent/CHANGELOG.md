@@ -1,5 +1,43 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.23 — 2026-10-02
+
+Patch bump, chart item before roll #16. Resource limits + a spread preference for the
+stateful-core group.
+
+### Added / Changed
+
+- **Resource requests/limits on Keycloak, Restate, Weaviate** (Chart item before roll #16).
+  Numbers are set from ONE `kubectl top` sample taken during a substrate prime on 2026-10-02,
+  not a sustained profile:
+  - `keycloak`: was running with NO resources block at all (17m CPU / 805Mi observed). The
+    `keycloak.resources` key already existed in values.yaml but `templates/keycloak.yaml`'s
+    container never read it, so it was dead config; now requests cpu 100m / memory 1Gi, limits
+    cpu 1 / memory 1536Mi, and the container actually consumes it. No `JAVA_OPTS` / `-Xmx` /
+    `MaxRAMPercentage` is set anywhere for keycloak in this chart, so there is no fixed heap
+    bound to compare against the new memory limit.
+  - `weaviate`: was running with NO resources block at all (96m CPU / 184Mi observed); now
+    requests cpu 100m / memory 256Mi, limits cpu 1 / memory 1Gi.
+  - `restate`: requests unchanged (250m / 256Mi); memory limit raised 512Mi -> 1Gi (it was
+    observed at 114m / 372Mi, 73% of the old limit).
+  - `minio` (`iagent-minio`) is **deployed externally to this chart** — a separate manifest, not
+    a chart dependency (see the `minioBucketInit` comment block in values.yaml) — so it has no
+    pod template here to carry limits or affinity. Its numbers are unchanged because this chart
+    does not set them at all; out of scope for this change.
+- **`iagent.io/spread-group: stateful-core` pod-template label + a preferred pod anti-affinity**
+  on Keycloak, Restate and Weaviate (MinIO excluded for the reason above), toggled by
+  `global.statefulSpread.enabled` (default `true`) with weight `global.statefulSpread.weight`
+  (default `100`). **Deliberately `preferredDuringSchedulingIgnoredDuringExecution`, never
+  `requiredDuringSchedulingIgnoredDuringExecution`**: all four of these components' PVCs are
+  `storageClass: local-path`, and all four observed PVs are pinned to the SAME node — `local-path`
+  has no cross-node migration, so a REQUIRED anti-affinity on this label would leave every pod
+  after the first permanently `Pending`, asking the scheduler to avoid the only node any of them
+  can actually run on. This changes **nothing about where pods land today** while every PV stays
+  pinned to that one node; it only takes effect once those volumes are migrated off `local-path`
+  onto something that isn't node-pinned — a separate decision, not made here. The label is added
+  to pod template metadata only, never to a StatefulSet's `spec.selector.matchLabels` (selectors
+  are immutable; changing one breaks `helm upgrade` on an existing release).
+
 ## 0.4.22 — 2026-10-02
 
 Minor bump. The Topaz manifest gains a seventh namespace for the origin-entitlement
