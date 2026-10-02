@@ -1,0 +1,42 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# CHAINING AT TERMINATION for the redraft act. Before this table `safety_redraft` was a dead end:
+# nothing said what followed it, so a redrafted assessment went nowhere -- and the gateway keys an
+# acceptance on (hazard, level), so a second review_request for the same hazard at the same level
+# was answered "previously accepted" and swallowed.
+#
+# A REDRAFT RE-ENTERS REVIEW BY THE SAME ROUTE SELECTION CHOSE. "Loops are new instances"
+# (ADR-0039): the case opens a fresh instance of the review definition, so the concurrence for a
+# Serious or High hazard is asked AGAIN -- a redraft does not inherit the refusal it answered, and
+# it does not skip the act that refused it. The author's stated change travels as the reason on
+# the case record's transition (`redrafted` is reason-required on the row).
+#
+# A LEVEL CHANGE IS NOT HANDLED HERE. A redraft that moves the hazard to another level is a
+# different acceptance by a different authority: that is a new review_request, keyed on its level.
+decision: safety_redraft_chaining
+
+after: safety_redraft
+
+matches: [outcome, level]
+
+# `outcome`: the `accepts` of `safety_redraft` (sealed against the task kind). `level`: the
+# selection table's domain, because the route back is the route selection would choose.
+domain:
+  outcome: [redrafted, withdrawn]
+  level: [Low, Medium, Serious, High]
+
+terminals: [assessment_withdrawn]
+
+rows:
+  - when: {outcome: redrafted, level: High}
+    then: safety_concurrence
+  - when: {outcome: redrafted, level: Serious}
+    then: safety_concurrence
+  - when: {outcome: redrafted, level: Medium}
+    then: safety_acceptance_direct
+  - when: {outcome: redrafted, level: Low}
+    then: safety_acceptance_direct
+  # The author withdrew the assessment, with a stated reason. Terminal: nothing is owed, and the
+  # reason is on the record.
+  - when: {outcome: withdrawn}
+    then: assessment_withdrawn

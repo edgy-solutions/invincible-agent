@@ -184,13 +184,16 @@ async def test_the_emitted_request_opens_exactly_one_acceptance(draft, monkeypat
     trigger = ar.acceptance_trigger(rr)
     wf = ar.acceptance_workflow_id(trigger["hazard_id"], trigger["level_slug"])
     post = fake.posts[0]
-    assert post["url"] == f"{gw._RESTATE_INGRESS_URL}/SafetyAcceptance/{gw._restate_key(wf)}/run/send"
+    # THE CASE RUNNER, keyed on the acceptance id: SafetyAcceptance ran only the FIRST selected
+    # definition, so a concurrence never chained to the acceptance it exists to precede.
+    assert post["url"] == f"{gw._RESTATE_INGRESS_URL}/WorkflowRunner/{gw._restate_key(wf)}/run/send"
     # NO INGRESS IDEMPOTENCY KEY ON A WORKFLOW HANDLER. Restate 1.6 refuses it with 400 "cannot use
     # the idempotency key with workflow handlers" -- the workflow key already is the idempotency.
     # This line asserted the header's PRESENCE, so it was green on the one request the live
     # fleet refused on every turn (measured 2026-09-30, rev 159: 0 HAZ-1003 tasks, 4 fires).
     assert "idempotency-key" not in {k.lower() for k in (post["headers"] or {})}, post["headers"]
-    assert post["json"] == trigger
+    assert post["json"] == {"trigger": ar.SAFETY_TRIGGER, "facts": trigger}
+    assert trigger["acceptance_id"] == wf, "the case key is not the fact the trigger keys on"
     assert trigger["kind"] == "risk_acceptance_medium"
 
     dispatched = bundle["resolved_intent"]["acceptance_dispatched"]
@@ -372,7 +375,7 @@ def _names_idempotency_key(tree, call) -> bool:
 
 def test_the_workflow_population_is_real():
     names = _workflow_names()
-    assert "SafetyAcceptance" in names, names
+    assert "WorkflowRunner" in names, names
 
 
 def test_no_gateway_send_to_a_workflow_carries_an_idempotency_key():
@@ -380,7 +383,7 @@ def test_no_gateway_send_to_a_workflow_carries_an_idempotency_key():
     names = _workflow_names()
     reached = {n for n in names if any(True for _ in _posts_to(tree, n))}
     # THE MATCHER POINTS AT SOMETHING: the one workflow the gateway is known to send to.
-    assert "SafetyAcceptance" in reached, (names, reached)
+    assert "WorkflowRunner" in reached, (names, reached)
     offenders = sorted(n for n in reached
                        if any(_names_idempotency_key(tree, c) for c in _posts_to(tree, n)))
     assert offenders == [], (

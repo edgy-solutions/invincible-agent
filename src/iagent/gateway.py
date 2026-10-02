@@ -6481,7 +6481,7 @@ def _project_review_request(mat: dict) -> dict:
 async def _open_safety_acceptance(
     bundle: dict, rr: dict, *, path: str, stage_kind: str,
 ) -> str | None:
-    """Open the SafetyAcceptance workflow for one `review_request`. Returns an error SSE on
+    """Open the safety acceptance CASE (WorkflowRunner) for one `review_request`. Returns an error SSE on
     failure, None on success — and records WHICH on the artifact either way.
 
     NOT SILENT IN EITHER DIRECTION. The success record exists because the absence of a row was
@@ -6490,14 +6490,16 @@ async def _open_safety_acceptance(
     """
     try:
         _trigger = acceptance_request.acceptance_trigger(rr)
-        _wf_key = acceptance_request.acceptance_workflow_id(
-            _trigger["hazard_id"], _trigger["level_slug"],
-        )
+        _wf_key = _trigger["acceptance_id"]
         async with httpx.AsyncClient(timeout=30.0) as _client:
             _ar = await _client.post(
-                f"{_RESTATE_INGRESS_URL}/SafetyAcceptance/"
+                # THE CASE RUNNER, not SafetyAcceptance: the selection table picks concurrence or
+                # direct acceptance and the `after:` tables carry the case to a terminal. Before
+                # this, SafetyAcceptance ran only the FIRST definition -- a concurrence was never
+                # followed by its acceptance. SafetyAcceptance stays registered to drain.
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/"
                 f"{_restate_key(_wf_key)}/run/send",
-                json=_trigger,
+                json={"trigger": acceptance_request.SAFETY_TRIGGER, "facts": _trigger},
                 # SAME HAZARD AT THE SAME LEVEL IS THE SAME ACCEPTANCE. A re-asked question
                 # must attach to the acceptance already open rather than register a second
                 # task against the same authority — and the key carries the LEVEL because a
