@@ -2103,6 +2103,16 @@ topazSeed:
         repository: "alpine/git"
         tag: "v2.45.2"
 
+# STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
+# policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than
+# topazSeed (which runs this SAME sync plus five others, on a schedule, default-disabled):
+# this Job exists so task grants land on every install/upgrade without turning topazSeed on to
+# get them. Reads topazSeed.image / topazSeed.policySource / topazSeed.topazDirectoryUrl — the
+# same values the CronJob's task-grant leg reads — so the two sources can never disagree.
+# See templates/task-grant-sync-job.yaml for the hook-ordering and exit-code reasoning.
+taskGrantSync:
+  enabled: false   # bare defaults: OFF, so it never surprise-runs. Sandbox turns it on.
+
 topaz:
   enabled: true
   image:
