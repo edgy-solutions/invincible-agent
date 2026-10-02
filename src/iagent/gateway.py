@@ -637,6 +637,10 @@ class HumanTaskRegisterRequest(_BaseModel):
     # interpolate an unvetted string into a Restate ingress URL.
     workflow_service: Optional[str] = None
     promise_name: Optional[str] = None
+    # authz_ids the definition bars from deciding this task; never routed to (ruled 2026-10-02).
+    # DECLARED HERE because this model drops unknown fields silently: undeclared, an exclusion
+    # sent by the runner would vanish and the dropper would be routed the task.
+    excludes: list[str] = []
 
 
 class HumanTaskActRequest(_BaseModel):
@@ -677,7 +681,7 @@ async def register_human_task(
                 title=req.title, summary=req.summary, requested_by=req.requested_by,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
                 payload=req.payload, workflow_service=req.workflow_service,
-                promise_name=req.promise_name,
+                promise_name=req.promise_name, excludes=req.excludes,
             )
         )
     except human_tasks.HumanTaskConfigError as exc:

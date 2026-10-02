@@ -251,9 +251,17 @@ def register_task(
     payload: Optional[dict[str, Any]] = None,
     workflow_service: Optional[str] = None,
     promise_name: Optional[str] = None,
+    excludes: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
+
+    `excludes` -- authz_ids the definition bars from deciding THIS task (an artifact's own dropper
+    may not confirm its origin). RULED 2026-10-02 (item 5): they are removed from the resolved
+    actors BEFORE any row exists, so the task is never routed to them; it stays routed to everyone
+    else. The executor's gate still refuses an excluded actor who reaches the promise another way.
+    Compared casefolded, as that gate compares. An exclusion that empties the audience is
+    NoEntitledRecipients -- nobody left can decide it.
 
     CLEARANCE-BOUNDED: `title`/`summary`/`subject_ref`/`payload` must be
     clearance-SAFE (reference + summary, never compartmented content) — the
@@ -282,6 +290,15 @@ def register_task(
             f"task {task_id!r} (kind={kind}) has ZERO entitled recipients for audience {audience!r} — "
             f"refusing to register a task no one can act on (grant the audience in task_grants.yaml, "
             f"then re-drive)"
+        )
+    barred = {str(x).casefold() for x in (excludes or [])}
+    excluded = [a for a in actors if a.casefold() in barred]
+    actors = [a for a in actors if a.casefold() not in barred]
+    if not actors:
+        raise NoEntitledRecipients(
+            f"task {task_id!r} (kind={kind}): every entitled recipient for audience {audience!r} "
+            f"is excluded from deciding it ({len(excluded)} excluded) -- refusing to register a "
+            "task no one may act on (grant another actor the audience, then re-drive)"
         )
     now = int(time.time() * 1000)
     payload_json = json.dumps(payload or {})

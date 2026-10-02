@@ -213,6 +213,12 @@ class HumanAwaitStep(_Declared):
             raise ValueError(
                 f"step {self.id}: `approves`/`chooses_from` on a grouped await is declarable but "
                 "NOT implemented -- a grouped review resolves N rows, not one proposal")
+        if self.excludes and self.completion.mode == "grouped":
+            # The grouped path never binds `excludes`, so it would refuse NOBODY -- neither at
+            # routing nor at the gate. Refused at load rather than honoured in name only.
+            raise ValueError(
+                f"step {self.id}: `excludes` on a grouped await is NOT implemented -- the grouped "
+                "path neither routes around nor refuses an excluded actor")
         return self
 
     def resolved_promise_name(self) -> str:

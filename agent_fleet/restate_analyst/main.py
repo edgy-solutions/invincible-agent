@@ -1668,6 +1668,9 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
         "workflow_service": task.get("workflow_service"),
         "promise_name": task.get("promise_name"),
     }
+    # Only when declared: every other register's body is unchanged.
+    if task.get("excludes"):
+        body["excludes"] = list(task["excludes"])
     # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
     # applied to the register it named as its sibling. This used to send the trigger's stored
     # `user_jwt`, which failed two ways: a definition that suspends for human latency outlives
@@ -2173,6 +2176,9 @@ async def _run_definition(
             ctx.set(_audience_key(promise_name), task["audience"])
             if _excluded:
                 ctx.set(_excluded_key(promise_name), [x.strip() for x in _excluded])
+                # ...AND NEVER ROUTED (ruled 2026-10-02): the register drops them from the
+                # audience's actors before any row exists. The gate above stays the backstop.
+                task["excludes"] = [x.strip() for x in _excluded]
             # THE KIND: declared on the step when the definition came from the registry, else the
             # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
             # not ignored -- ignoring it would register a kind other than the one the YAML reads
