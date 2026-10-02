@@ -133,9 +133,12 @@ def _fail_terminal_on_4xx(resp, what: str) -> None:
     after a live 422 (missing requested_by) proved a non-401/403 4xx would otherwise park —
     [[feedback_hitl_suspend_vs_fail_ruling]] / the fan-out isolation seal's poisoned-item discipline."""
     if 400 <= resp.status_code < 500 and resp.status_code != 429:
+        # The refusal's own words travel with it: a register's 422 names WHY (e.g.
+        # `no_entitled_recipients`), and the failed invocation is where an operator looks.
+        detail = str(getattr(resp, "text", "") or "")[:300]
         raise restate.TerminalError(
             f"{what} rejected ({resp.status_code}) — malformed/unprocessable, won't heal on retry; "
-            f"failing TERMINALLY (release), not retry-park",
+            f"failing TERMINALLY (release), not retry-park; response: {detail!r}",
             status_code=resp.status_code,
         )
 
