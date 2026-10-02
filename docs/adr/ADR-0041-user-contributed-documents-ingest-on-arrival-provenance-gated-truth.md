@@ -122,6 +122,45 @@ Both new routes write, so `gate-class-follows-the-effect` disposes them without 
 | upload / ingest-as-user | **writes state** (objects, then assertions) | in-cluster reachability is **NEVER** sufficient — authenticated identity + domain entitlement, deny-by-default |
 | promote / reject | **writes authority** (grants truth) | **NEVER** — authenticated identity + `can_act` on the audience, fail-closed |
 
+### §8.1 — A delegate is a first-class caller (amendment, RULED 2026-10-02)
+
+**Why §8 is amended.** §8 says the drop-box UI is the API's first client, not its owner. The seam
+read that as v1's narrowest rule: `on_behalf_of` must equal the caller's own authz_id
+(`gateway.py`, the ingest route). That reading was meant to stop the drop-box UI from minting
+identities for users, and it was written before the delegate ruling existed.
+
+**The rule now:**
+
+- **A delegate is a first-class caller.** A delegate (Model Y) authenticates as itself, holds its
+  own grants, and has `on_behalf_of` recorded. The first delegate is OpenDDIL's Keycloak
+  client-credentials client. Its role bindings arrive with its registration. In this pass,
+  `on_behalf_of` is an assertion trusted by configuration
+  ([R-089](../rulings/README.md#r-089--on_behalf_of-from-a-delegate-is-an-assertion-trusted-by-configuration-this-pass-only)).
+- **A delegate reads what its workflows produced.** An artifact produced by a workflow the
+  delegate seeded is readable by that delegate, as the producer-for identity.
+- **Visibility is one rule.** Artifact visibility is entitlement on the artifact's labels, plus
+  `recipient_scope`. A subscription extends `recipient_scope` by adding the subscriber. There is
+  no special read rule tied to a subscription.
+- **Releasability is decided twice.** Across the OpenDDIL seam, OpenDDIL's gate decides it on both
+  legs. This entitlement is the second check, and both fail closed
+  ([R-088](../rulings/README.md#r-088--releasability-across-the-openddil-seam-is-decided-twice-and-each-decision-fails-closed)).
+
+**OPEN — routed to the architect, not resolved here: ADR-0047 §5.1.** §5.1 was ratified on
+2026-09-14. It says a `svc:` principal is never a disclosure recipient, and
+`validate_policy.py::service_identity_recipients` refuses one in asset grants, task grants and
+ontology compartments. Its reason is the confused deputy: a service serves every caller.
+
+A delegate is a service identity. If it is the producer-for identity, or is placed in
+`recipient_scope` by a subscription, it is a disclosure recipient, which is exactly what §5.1
+forbids. ADR-0047 itself says that delegation "must be settled as [a design decision], not by a
+grant to the service."
+
+One candidate reconciliation: the delegate is not a confused deputy, because its own gate
+re-decides releasability for each recipient (R-088). That reasoning is Lane 1's, offered as a
+proposal and not ruled. Until §5.1 is amended, or this amendment is narrowed, the delegate-read
+half of this rule is **not built**. The rest (one visibility rule, a subscription extending
+scope) applies to person principals and is built.
+
 ## Rulings this ADR records rather than defaults
 
 These are policy calls that would otherwise be settled by whichever query path happened to be written first. They are ruled here.

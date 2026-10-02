@@ -3629,6 +3629,56 @@ Measured: `docs/measurements/2026-09-28-the-frontend-bump-is-blocked-by-a-hook-i
 
 ---
 
+## R-088 — RELEASABILITY ACROSS THE OPENDDIL SEAM IS DECIDED TWICE, AND EACH DECISION FAILS CLOSED
+
+**RULED 2026-10-02.** Source: architect, on the OpenDDIL maintenance bridge
+(`openddil-contracts/decisions/ADR-0046`, PROPOSED).
+
+Every record crossing between OpenDDIL and iagent is decided twice, in this order:
+
+1. **OpenDDIL's egress gate decides first, on both legs.** It decides events going out to iagent
+   (ADR-0046 §2) and actions coming back in at the owning tier (§4, §5). It decides on the
+   record's label against the destination subject's nations.
+2. **Our cell model is the second check.** It applies the entitlement on the artifact's labels,
+   plus `recipient_scope`, to whatever the gate admitted. It does not stand in for the gate, and
+   the gate does not stand in for it.
+
+**Both fail closed, and no label is ever defaulted.** A record that arrives without a label is
+refused. It is not given one. A refusal on either side is logged as a decision line, never
+dropped silently.
+
+The reason it is two checks rather than one: the gate holds the nation partition, and we do not.
+Our cells hold the persona and domain entitlement, and the gate does not. Neither side can
+evaluate the other's predicate, so trusting one admission for both questions would answer one of
+them by default.
+
+---
+
+## R-089 — `on_behalf_of` FROM A DELEGATE IS AN ASSERTION TRUSTED BY CONFIGURATION, THIS PASS ONLY
+
+**RULED 2026-10-02.** Source: architect, on the OpenDDIL delegate client.
+
+In this pass, a delegate's `on_behalf_of` (for example, the approver named in an OpenDDIL event)
+is **an assertion trusted by deployment configuration**. iagent records it, and does not
+verify it.
+
+- The delegate is a Keycloak client-credentials client with its own grants (Model Y).
+- Its role bindings arrive with its registration, not before.
+
+**This is this pass's instantiation, not the end state.** The design is **token exchange**:
+- the approver's own token is forwarded;
+- the IdP is the trust root;
+- `on_behalf_of` becomes a verified subject rather than an asserted one.
+
+Anything built on the asserted form must say so where it reads the field, so that the move to
+token exchange finds every reader.
+
+It has the same standing as the system principals in OpenDDIL's own `policy/users.yaml`, which
+its ADR-0046 §3 records as "asserted by deployment configuration". On both sides, the assertion is
+named as an assertion.
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be
