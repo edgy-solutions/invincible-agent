@@ -1,0 +1,26 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ACCEPT RECORDS THE ORIGIN; REJECT LEAVES THE ARTIFACT UNRESOLVED. A rejection writes nothing:
+# the artifact never had a recorded origin, so "returned to unresolved" is the absence of a write,
+# and the case record keeps the steward's reason.
+#
+# NO DEADLINE, SO NO `timed_out`. An unanswered suggestion leaves the artifact exactly as visible
+# as it was before anyone suggested anything -- deny-by-default -- so silence costs nothing and
+# is never read as consent.
+decision: origin_confirm_chaining
+
+after: origin_confirm
+
+matches: [outcome]
+
+# `outcome`: the `accepts` of task kind `origin_confirmation`.
+domain:
+  outcome: [accepted, rejected]
+
+terminals: [unresolved]
+
+rows:
+  - when: {outcome: accepted}
+    then: origin_record
+  - when: {outcome: rejected}
+    then: unresolved

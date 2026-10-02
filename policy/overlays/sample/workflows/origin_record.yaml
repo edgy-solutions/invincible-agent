@@ -1,0 +1,47 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE ACCEPTED ORIGIN, HANDED TO ITS WRITER. This engine writes no store: it emits the confirmed
+# origin with the approval chain that authorizes it, and waits for the writer to say whether the
+# origin columns were written. The writer (the systems_of_record resolver) is not built; until it
+# is, nothing answers `origin_written` and the case waits -- the artifact stays unresolved, which
+# is the safe side.
+#
+# THE ORIGIN IS THE SUGGESTION AS CONFIRMED, field for field. A steward accepts or rejects the
+# suggestion whole; amending it would be a different suggestion with different evidence.
+id: origin_record
+name: "Artifact origin -- record"
+
+classification: null
+
+participants:
+  - role: origin_writer
+
+domain_stages: [recorded, written]
+
+steps:
+  - kind: emit
+    id: resolution
+    channel: origin_resolution
+    template:
+      resolution_id: "{case.instance_id}"
+      suggestion_id: "{trigger.suggestion_id}"
+      artifact_id: "{trigger.artifact_id}"
+      origin:
+        owner_domain: "{trigger.suggested.owner_domain}"
+        program: "{trigger.suggested.program}"
+        obtained_via: "{trigger.suggested.obtained_via}"
+      evidence:
+        source: "{trigger.evidence.source}"
+        citation: "{trigger.evidence.citation}"
+      approval_chain: "{case.approval_chain}"
+      provenance:
+        workflow_definition_id: "{definition.id}"
+        version: "{definition.version}"
+        instance_id: "{case.instance_id}"
+
+  # A SYSTEM'S ANSWER, not a human's: no task row. Resolved through the same authority gate.
+  - kind: signal_await
+    id: written
+    signal: origin_written
+    audience: "origin_writer:{trigger.suggested.owner_domain}"
+    accepts: [written, write_refused]

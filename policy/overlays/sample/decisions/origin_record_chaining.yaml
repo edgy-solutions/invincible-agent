@@ -1,0 +1,22 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# CLOSED ON THE WRITER'S ACK. `resolved` means the origin columns were written and the artifact
+# is readable under its origin; a writer that refuses ends the case at its own terminal, so a
+# refused write is never read as an opened artifact.
+decision: origin_record_chaining
+
+after: origin_record
+
+matches: [outcome]
+
+# `outcome`: the `accepts` of the record definition's `origin_written` signal.
+domain:
+  outcome: [written, write_refused]
+
+terminals: [resolved, write_refused]
+
+rows:
+  - when: {outcome: written}
+    then: resolved
+  - when: {outcome: write_refused}
+    then: write_refused

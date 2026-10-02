@@ -1,0 +1,43 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# A STEWARD OF THE SUGGESTED OWNER DOMAIN CONFIRMS OR REJECTS AN ORIGIN SUGGESTION. Same runner,
+# same approval card as every other human decision: one human_await, resolved through `approve`,
+# authorized by the one gate (`_authorize_resolution`).
+#
+# THE DROPPER IS EXCLUDED STRUCTURALLY. Whoever dropped the artifact has the most to gain from
+# its origin opening it up, so they may not be the one who confirms it -- even when they hold the
+# steward grant. `excludes` is journalled beside the audience and the gate refuses a listed caller
+# BEFORE `can_act` is asked, so no grant can re-admit them. It binds STRICTLY: an exclusion whose
+# subject is missing would refuse nobody, and the case refuses to open rather than run unguarded.
+#
+# NO DEADLINE. An unanswered suggestion leaves the artifact unresolved, which is where it already
+# was: deny-by-default makes silence safe, so nothing escalates and nothing times out.
+id: origin_confirm
+name: "Artifact origin -- steward confirmation"
+
+classification: null
+
+participants:
+  - role: steward
+
+domain_stages: [confirmation_pending]
+
+steps:
+  - kind: human_await
+    id: confirm
+    audience: "origin_confirmation:{trigger.suggested.owner_domain}"
+    task_kind: origin_confirmation
+    subject_ref: "{artifact_id}"
+    title: "Confirm origin -- {artifact_id} under {trigger.suggested.program}"
+    summary: >-
+      Evidence ({trigger.evidence.source}: {trigger.evidence.citation}) suggests this artifact was
+      obtained via {trigger.suggested.obtained_via} under {trigger.suggested.program}, for
+      {trigger.suggested.owner_domain}. Accepting records that origin and opens the artifact to
+      the domain's consumers; rejecting leaves it unresolved. Both need a reason.
+    role: steward
+    approves: [accepted]
+    excludes: ["{trigger.dropped_by.authz_id}"]
+
+observable_state:
+  visible: [domain_stages, confirm.status]
+  internal: []

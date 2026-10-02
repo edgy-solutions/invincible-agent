@@ -1619,6 +1619,11 @@ def _audience_key(promise_name: str) -> str:
     return audience_key(promise_name)
 
 
+def _excluded_key(promise_name: str) -> str:
+    """Where a step's declared `excludes` are journalled for the gate, beside its audience."""
+    return f"excluded_{promise_name}"
+
+
 def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack") -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
@@ -2141,10 +2146,24 @@ async def _run_definition(
                 # never trusted bare off the row.
                 "workflow_service": workflow_service,
             }
+            # STRUCTURAL EXCLUSION, bound BEFORE the audience is journalled and before the row
+            # exists: an exclusion that cannot bind fails the step while nothing about this promise
+            # is resolvable yet, so there is no moment at which an audience stands without the
+            # exclusion its definition declared. Bound STRICTLY -- a missing subject would refuse
+            # nobody. Only written when declared: a journal without the key replays unchanged.
+            _excluded = [_bind_placeholders(x, bindings, where=f"step {step.id} excludes",
+                                            strict=True, context=context)
+                         for x in step.excludes]
+            if not all(isinstance(x, str) and x.strip() for x in _excluded):
+                raise restate.TerminalError(
+                    f"step {step.id} excludes {step.excludes} bound to {_excluded}; an "
+                    "exclusion that names nobody cannot refuse anybody", status_code=422)
             # AUTHORITY GATE INPUT — journal the audience under the promise this step
             # awaits, so `approve` can check `can_act` against the DEFINITION's audience
             # rather than one the approver's request supplied. See `_audience_key`.
             ctx.set(_audience_key(promise_name), task["audience"])
+            if _excluded:
+                ctx.set(_excluded_key(promise_name), [x.strip() for x in _excluded])
             # THE KIND: declared on the step when the definition came from the registry, else the
             # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
             # not ignored -- ignoring it would register a kind other than the one the YAML reads
@@ -2708,6 +2727,15 @@ async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
             "approve requires `acted_by` (the caller's authz_id) — an approval with no "
             "actor is unauditable and cannot be authorized",
             status_code=401,
+        )
+    # STRUCTURAL EXCLUSION, before `can_act`: the definition refused this actor by name, and no
+    # grant overrides that. Compared casefolded, so a case variant of the same id is refused too.
+    excluded = await ctx.get(_excluded_key(promise_name)) or []
+    if acted_by.casefold() in {str(x).casefold() for x in excluded}:
+        raise restate.TerminalError(
+            f"caller {acted_by!r} is excluded from deciding promise {promise_name!r} by the "
+            "definition (for example, an artifact's own dropper may not confirm its origin)",
+            status_code=403,
         )
     audience = await ctx.get(_audience_key(promise_name))
     if not audience:

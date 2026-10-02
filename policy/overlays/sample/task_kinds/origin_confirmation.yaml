@@ -1,0 +1,19 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# A STEWARD CONFIRMS OR REJECTS AN ORIGIN SUGGESTION for an artifact in their domain. Audience
+# `origin_confirmation:<owner_domain>`, granted to that domain's stewards (a grant is a human's
+# Topaz write; see the packet that routes it).
+#
+# BOTH VERBS NEED A REASON. Accepting opens the artifact to the domain's consumers on the
+# evidence cited, so the record must say why the steward believed it; rejecting leaves it
+# unresolved, and a rejection without its reason invites the same suggestion again.
+#
+# THE ARTIFACT'S OWN DROPPER CANNOT ANSWER, whatever their grants: the definition declares the
+# exclusion and the authority gate refuses it before `can_act` is asked.
+kind: origin_confirmation
+renders_as:
+  badge: ORIGIN
+  title: Confirm an artifact's origin
+  archetype: APPROVAL_TASK
+accepts: [accepted, rejected]
+reason_required: [accepted, rejected]

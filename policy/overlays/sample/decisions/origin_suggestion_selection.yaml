@@ -1,0 +1,14 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# SELECTION for an origin suggestion: one kind, one definition. The table exists so the choice is
+# declared where every other case chooses, not hard-wired in the trigger.
+decision: origin_suggestion_selection
+
+matches: [kind]
+
+domain:
+  kind: [origin_suggestion]
+
+rows:
+  - when: {kind: origin_suggestion}
+    then: origin_confirm

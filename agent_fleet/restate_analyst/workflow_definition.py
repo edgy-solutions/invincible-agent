@@ -174,6 +174,17 @@ class HumanAwaitStep(_Declared):
     # refuses a declared kind unless its caller loaded the definition from the registry.
     task_kind: Optional[str] = None
 
+    # ── WHO MAY NOT DECIDE, DECLARED ───────────────────────────────────────────────────────────
+    #
+    # Actors refused at the authority gate WHATEVER their grants: a steward confirming the origin
+    # of an artifact they dropped themselves holds `can_act` on the audience like any other
+    # steward, so a grant cannot express "everyone in this audience except the one person whose
+    # claim this is". Each entry binds STRICTLY from the context (an exclusion that bound to
+    # nothing would be a guard that cannot fire) and names an `authz_id` -- the namespace
+    # `approve` verifies `acted_by` in. A JWT `sub` here would never equal an `acted_by`, and the
+    # exclusion would pass everyone.
+    excludes: list[str] = Field(default_factory=list)
+
     # ── WHAT AN ANSWER MEANS FOR THE CASE, DECLARED BESIDE THE AWAIT ────────────────────────────
     #
     # `approves` names the verbs that count as an APPROVAL of the current proposal. Answered with
