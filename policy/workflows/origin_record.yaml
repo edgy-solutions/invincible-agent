@@ -1,4 +1,5 @@
-# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+# SEED — platform species (ADR-0036). Ruled platform-generic 2026-10-02: the definition is the
+# platform's; WHO stewards a domain is each deployment's grant on `origin_confirmation:<domain>`.
 #
 # THE ACCEPTED ORIGIN, HANDED TO ITS WRITER. This engine writes no store: it emits the confirmed
 # origin with the approval chain that authorizes it, and waits for the writer to say whether the

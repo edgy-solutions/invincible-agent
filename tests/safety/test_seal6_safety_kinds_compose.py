@@ -154,18 +154,24 @@ def test_composition_yields_every_safety_kind_with_its_own_verbs():
         )
 
 
-def test_accepted_is_a_verb_the_structural_seed_has_never_heard_of():
+def test_the_safety_overlay_carries_verbs_the_structural_seed_has_never_heard_of():
     """THE PROPERTY R-004(e) DEPENDS ON, asserted directly rather than inferred from the row.
 
-    If the overlay could only narrow the seed's verb set, `accepted` would be unreachable and the
-    safety queue would show `approved` — an approval where an acceptance belongs, which is a
-    different act with the same buttons.
+    If the overlay could only narrow the seed's verb set, a verb the seed lacks would be
+    unreachable and the safety queue would show `approved` — an approval where an acceptance
+    belongs, which is a different act with the same buttons.
+
+    The verbs are DERIVED, not named. This seal once named `accepted`; on 2026-10-02 the origin
+    confirmation kind (ruled platform-generic) brought `accepted` into the seed, and a named verb
+    would have had to be re-chosen by hand. The premise is the set difference, and it must not
+    be empty.
     """
     seed_verbs = {v for r in compose(_SEED, []) for v in _verbs(r)}
-    assert "accepted" not in seed_verbs, (
-        "the seed already declares `accepted` somewhere — this seal's premise has changed"
-    )
     composed = _by_kind(compose(_SEED, [str(_OVERLAY)]))
+    novel = {k: sorted(set(_verbs(composed[k])) - seed_verbs) for k in _EXPECTED}
+    assert all(novel.values()), (
+        f"a safety kind carries no verb the seed lacks — this seal's premise has changed: {novel}"
+    )
     assert "accepted" in _verbs(composed["risk_acceptance_high"])
     assert "approved" not in _verbs(composed["risk_acceptance_high"]), (
         "the safety row carries the seed's `approved` as well as `accepted` — the overlay merged "

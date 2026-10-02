@@ -186,10 +186,49 @@ def test_the_two_definitions_differ_by_exactly_the_human_step():
     assert "awaiting_review" not in autonomous.domain_stages
 
 
+def _executor_kinds() -> set:
+    """The step kinds ``main._run_definition`` DISPATCHES on -- read from its own
+    ``step.kind == "<kind>"`` branches, never typed here. (A typed list went stale twice: it
+    lacked `emit` and `signal_await` long after the executor ran both.)"""
+    import ast
+    src = (Path(__file__).resolve().parents[1] / "agent_fleet" / "restate_analyst"
+           / "main.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_definition")
+    kinds = set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.If) and isinstance(n.test, ast.BoolOp):
+            tests = n.test.values
+        elif isinstance(n, ast.If):
+            tests = [n.test]
+        else:
+            continue
+        for t in tests:
+            if (isinstance(t, ast.Compare) and isinstance(t.ops[0], ast.Eq)
+                    and isinstance(t.left, ast.Attribute) and t.left.attr == "kind"
+                    and isinstance(t.left.value, ast.Name) and t.left.value.id == "step"
+                    and isinstance(t.comparators[0], ast.Constant)):
+                kinds.add(t.comparators[0].value)
+    return kinds
+
+
+def test_CONTROL_THE_EXECUTOR_KINDS_ARE_REAL_DECLARED_KINDS():
+    """The derivation reads real branches: every kind it finds is one a definition can declare,
+    and it finds the first one the executor ever ran."""
+    import typing
+    from agent_fleet.restate_analyst import workflow_definition as wdm
+    declared = {typing.get_args(c.model_fields["kind"].annotation)[0]
+                for c in vars(wdm).values()
+                if isinstance(c, type) and issubclass(c, wdm.BaseModel) and "kind" in c.model_fields
+                and typing.get_origin(c.model_fields["kind"].annotation) is typing.Literal}
+    found = _executor_kinds()
+    assert "human_await" in found and found <= declared, (sorted(found), sorted(declared))
+
+
 def test_every_definition_is_executable_by_the_one_runner():
     """No definition may require a step kind the single executor does not implement — that
     would be a class-driven runner with extra steps."""
-    implemented = {"human_await", "spo_operation", "direct_call", "dispatch_fanout"}
+    implemented = _executor_kinds()
     for wf_id, wf in load_all_workflows(_WORKFLOWS).items():
         for step in wf.steps:
             assert step.kind in implemented, f"{wf_id}/{step.id}: unrunnable kind {step.kind!r}"

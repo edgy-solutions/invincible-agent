@@ -4,7 +4,8 @@ An artifact with no recorded origin is unreadable to everyone but its owner. A s
 evidence for an origin; a steward of the suggested owner domain accepts it (the origin is handed
 to its writer, which opens the artifact to the domain's consumers) or rejects it (nothing is
 written; the artifact stays unresolved). Same runner, same approval card, same authority gate as
-every other human decision -- declared in the SAMPLE overlay, not the seed.
+every other human decision -- declared in the SEED (ruled platform-generic 2026-10-02); who
+stewards a domain is each deployment's grant, and no overlay may shadow the definition.
 
 THE DROPPER IS EXCLUDED STRUCTURALLY. The definition declares `excludes` on the confirm step; the
 executor journals it beside the audience; `_authorize_resolution` refuses a listed caller before
@@ -91,20 +92,38 @@ def _approve(ctx, who):
 
 # ── DECLARED, AND WHERE ─────────────────────────────────────────────────────────────────────
 
-def test_THE_ORIGIN_CASE_IS_DECLARED_IN_THE_SAMPLE_OVERLAY_NOT_THE_SEED():
+#: Each layer's KEY field: an overlay row replaces a seed row by key, never by file name.
+_KEY = {"triggers": "trigger", "decisions": "decision", "workflows": "id", "task_kinds": "kind"}
+_ORIGIN = {
+    "triggers": {"origin_suggestion"},
+    "decisions": {"origin_suggestion_selection", "origin_confirm_chaining",
+                  "origin_record_chaining"},
+    "workflows": {"origin_confirm", "origin_record"},
+    "task_kinds": {"origin_confirmation"},
+}
+
+
+def _keys(files, field):
+    import yaml
+    return {(yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get(field): f for f in files}
+
+
+def test_THE_ORIGIN_CASE_IS_DECLARED_IN_THE_SEED_AND_NO_OVERLAY_SHADOWS_IT():
+    """Ruled 2026-10-02: platform-generic, so the definition is the seed's. Every overlay ships in
+    the image and composes by KEY, so a copy in ANY overlay -- the sample included -- would replace
+    the seed's in production: a fork that stops tracking the original (ADR-0036 clause c)."""
     seed = wd.definition_dirs()[0].parent
-    sample = seed / "overlays" / "sample"
-    declared = {
-        "triggers": ["origin_suggestion"],
-        "decisions": ["origin_suggestion_selection", "origin_confirm_chaining",
-                      "origin_record_chaining"],
-        "workflows": ["origin_confirm", "origin_record"],
-        "task_kinds": ["origin_confirmation"],
-    }
-    for sub, names in declared.items():
-        for n in names:
-            assert (sample / sub / f"{n}.yaml").is_file(), (sub, n)
-            assert not (seed / sub / f"{n}.yaml").exists(), f"{sub}/{n} is in the seed"
+    overlays = sorted(p for p in (seed / "overlays").iterdir() if p.is_dir())
+    for sub, names in _ORIGIN.items():
+        in_seed = _keys((seed / sub).glob("*.yaml"), _KEY[sub])
+        assert names <= set(in_seed), (sub, sorted(names - set(in_seed)))
+        in_overlays = _keys([f for o in overlays for f in (o / sub).glob("*.yaml")], _KEY[sub])
+        shadows = {n: str(in_overlays[n]) for n in names & set(in_overlays)}
+        assert not shadows, f"an overlay shadows the seed's origin case: {shadows}"
+    # POSITIVE CONTROL: the overlay walk reads real rows in every layer it judges -- a walk that
+    # found nothing would pass on nothing.
+    assert all(_keys([f for o in overlays for f in (o / sub).glob("*.yaml")], _KEY[sub])
+               for sub in ("decisions", "workflows", "task_kinds", "triggers")), overlays
 
 
 def test_THE_CONFIRM_STEP_EXCLUDES_THE_DROPPER_BY_AUTHZ_ID_AND_INTAKE_REQUIRES_IT():
@@ -130,13 +149,13 @@ async def test_A_SUGGESTION_WITHOUT_ITS_DROPPER_IS_REFUSED_AT_INTAKE(registered)
     assert registered == [], registered
 
 
-def test_BOTH_VERBS_ON_THE_CARD_NEED_A_REASON(monkeypatch):
+def test_BOTH_VERBS_ON_THE_CARD_NEED_A_REASON(monkeypatch, tmp_path):
     """Accept-with-reason: accepting opens the artifact on the evidence cited, so the record must
-    say why the steward believed it; a bare rejection invites the same suggestion again."""
+    say why the steward believed it; a bare rejection invites the same suggestion again. Read with
+    an EMPTY overlay: the seed alone declares the kind, as it must on a deployment with none."""
     from src.iagent import human_tasks as ht
-    seed = wd.definition_dirs()[0].parent
     monkeypatch.setattr(ht, "_DECLARED_KINDS_CACHE", None)
-    monkeypatch.setenv(ht._OVERLAY_DIRS_ENV, str(seed / "overlays" / "sample" / "task_kinds"))
+    monkeypatch.setenv(ht._OVERLAY_DIRS_ENV, str(tmp_path))
     assert set(ht.verbs_for_kind("origin_confirmation")) == {"accepted", "rejected"}
     for verb in ("accepted", "rejected"):
         with pytest.raises(ht.InvalidDecisionForKind, match="REQUIRES a reason"):
