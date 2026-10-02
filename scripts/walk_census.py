@@ -312,6 +312,15 @@ def main() -> int:
     args = ap.parse_args()
 
     rows = load_rows(CENSUS)
+    # AN `--only` THAT MATCHES NOTHING IS REFUSED, before anything is fired. The filter below
+    # would otherwise drop it silently and the summary would count only the rows that DID
+    # match: a run asked for four rows printed `3 pass, 0 fail` and read as complete. It
+    # happened (`docs-how-do-i-roll-a-service-abstains`, an id that never existed).
+    unknown = sorted(set(args.only) - {r.id for r in rows})
+    if unknown:
+        print(f"walk_census: --only names no census row: {unknown}. Nothing was fired.",
+              file=sys.stderr)
+        return 2
     rec = reconcile(rows, _REPO)
     sha = _sha()
     deployed = _deployed_sha()
