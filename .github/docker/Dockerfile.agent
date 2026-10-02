@@ -147,6 +147,23 @@ COPY policy/measures/ /app/policy/measures/
 # over from a TTL absent from the prime manifest. The builder already knows how:
 # `--fetch-runtime` pulls the version pinned in `PYODIDE_VERSION`.
 COPY scripts/build_cost_package.py /app/scripts/build_cost_package.py
+# THE BUILDER'S OWN IMPORTS, SHIPPED BESIDE IT. Measured live in iagent-engine-cost:
+# `build_cost_package.py` imports `agent_fleet.cost_agent.export`, `scripts.build_cost_dataset`
+# and `scripts.labor_tab_template`, and reads `agent_fleet/cost_agent/pricing.py` and
+# `page.py` off disk by that same path — none of which the COPY above puts where the builder
+# looks. `COPY ${AGENT_DIR}/ /app/` (line 18) flattens cost_agent's tree onto the app root, so
+# `/app/agent_fleet` does not exist at all: `import build_cost_package` 500'd at its first
+# import with `ModuleNotFoundError: No module named 'agent_fleet'` before either of its
+# `SourceUnavailable` guards could run.
+#
+# UNCONDITIONAL, LIKE THE BUILDER ITSELF: this is plain .py source, a few hundred KB total,
+# copied into every engine image the way `build_cost_package.py` already is. The cost this
+# lane was told to keep cost-only is the 14 MB Pyodide runtime fetched below — not a handful
+# of kilobytes of module source that ten engines never import.
+COPY scripts/build_cost_dataset.py /app/scripts/build_cost_dataset.py
+COPY scripts/labor_tab_template.py /app/scripts/labor_tab_template.py
+COPY agent_fleet/__init__.py /app/agent_fleet/__init__.py
+COPY agent_fleet/cost_agent/ /app/agent_fleet/cost_agent/
 ARG PACKAGE_RUNTIME_SRC=.docker-empty
 COPY ${PACKAGE_RUNTIME_SRC}/ /app/.pyodide-cache/
 COPY agent_fleet/llm_utils.py /app/llm_utils.py
