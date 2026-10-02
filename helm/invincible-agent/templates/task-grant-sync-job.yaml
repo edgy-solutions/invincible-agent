@@ -51,7 +51,7 @@ hook fails the release, exactly as intended.
 header for why the structured vs. plain-string distinction matters (global registry honoring). */}}
 {{- $seedImg := .Values.topazSeed.image }}
 {{- if not (kindIs "string" $seedImg) }}
-{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" ($seedImg.tag | default "latest") "root" .) }}
+{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" $seedImg.tag "root" .) }}
 {{- end }}
 {{- $gitImg := $src.git.image }}
 {{- if not (kindIs "string" $gitImg) }}
@@ -155,7 +155,7 @@ spec:
         {{- end }}
       containers:
         - name: task-grant-sync
-          image: {{ $seedImg | quote }}
+          image: {{ $seedImg }}
           imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
           env:
             - name: TOPAZ_DIRECTORY_URL

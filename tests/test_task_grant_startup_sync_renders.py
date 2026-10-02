@@ -151,7 +151,7 @@ def test_image_and_grants_file_source_match_the_cronjob_leg():
     def image_after(marker: str) -> str:
         i = out.index(marker)
         block = out[i:i + 4000]
-        m = re.search(r'image:\s*"([^"]+cortex-bff[^"]*)"', block)
+        m = re.search(r'image:\s*"?([^"\s]+cortex-bff[^"\s]*)"?', block)
         assert m, f"no cortex-bff image found after {marker!r}"
         return m.group(1)
 
