@@ -1,0 +1,230 @@
+{{- /*
+TASK GRANT STARTUP SYNC — closes the "topazSeed is default-OFF" gap for task_grant_sync ONLY.
+
+WHY THIS EXISTS. `topaz-seed-cronjob.yaml` runs SIX syncs (persona/asset/grant/ontology/task/
+capability) and is itself default-disabled (`topazSeed.enabled: false`) so it never surprise-
+prunes five scopes nobody asked to touch today. Task grants (task_audience `actor` relations —
+see policy/sync/task_grant_sync.py) are a narrower need: they must exist on every install and
+every upgrade, without a human hand-running the sync, and without turning on the other five
+syncs to get them. This Job runs ONLY task_grant_sync.py, as an idempotent post-install/post-
+upgrade hook.
+
+SAME SOURCE OF TRUTH AS THE CRONJOB'S TASK-GRANT LEG — deliberately. This template reads
+`.Values.topazSeed.image`, `.Values.topazSeed.policySource` and
+`.Values.topazSeed.topazDirectoryUrl` — the SAME values the CronJob's task-grant leg reads —
+rather than declaring a second copy of "where does the grants file come from". The image
+resolution block immediately below is a line-for-line copy of the CronJob's, on purpose: when
+the two disagree, something was edited in only one place. tests/test_task_grant_startup_sync_
+renders.py asserts image/env parity against a topazSeed-enabled render so that drift is a test
+failure, not a silent divergence.
+
+HOOK ORDERING. `topaz-deployment.yaml` is a plain Deployment, not a hook — it is submitted
+alongside every other first-wave resource, so by the time ANY post-install hook runs, the Topaz
+pod may exist but is not necessarily Ready. A hook weight orders this Job relative to OTHER
+hooks; it does not wait for a non-hook Deployment's readiness. So this Job carries its own
+explicit wait: an initContainer polls `topazSeed.topazDirectoryUrl` (Topaz's directory-http
+port) with a bounded timeout (60 * 2s = 2m) before the sync runs. Weight "3" places it after
+realm-reconcile (2, keycloak-dependent) and before restate-init (5): task grants depend on
+neither keycloak nor restate, only on Topaz, which the wait-loop gates explicitly rather than
+by weight alone.
+
+EXIT CODES — read from policy/sync/task_grant_sync.py's main(): 0 ok (including the
+zero-audiences case — there is no separate "nothing to do" code), 2 malformed grants file
+(REFUSED, nothing applied), 4 readback failed (apply happened but a grant does not resolve
+can_act). Both non-zero codes are REAL failures; neither means "nothing to do". So nothing
+here masks either one — `set -e` plus the script's own exit code fails the Job, and a failed
+hook fails the release, exactly as intended.
+*/ -}}
+{{- if .Values.taskGrantSync.enabled }}
+{{- $src := .Values.topazSeed.policySource }}
+{{- $mode := $src.type | default "image" }}
+{{- if not (has $mode (list "image" "configMap" "git")) }}
+{{- fail (printf "topazSeed.policySource.type must be one of image|configMap|git, got %q" $mode) }}
+{{- end }}
+{{- if and (eq $mode "configMap") (not $src.configMap.name) }}
+{{- fail "topazSeed.policySource.configMap.name is required when type=configMap" }}
+{{- end }}
+{{- if and (eq $mode "git") (not $src.git.repoUrl) }}
+{{- fail "topazSeed.policySource.git.repoUrl is required when type=git" }}
+{{- end }}
+{{- /* Image resolution — copied verbatim from topaz-seed-cronjob.yaml. See that template's
+header for why the structured vs. plain-string distinction matters (global registry honoring). */}}
+{{- $seedImg := .Values.topazSeed.image }}
+{{- if not (kindIs "string" $seedImg) }}
+{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" ($seedImg.tag | default "latest") "root" .) }}
+{{- end }}
+{{- $gitImg := $src.git.image }}
+{{- if not (kindIs "string" $gitImg) }}
+{{- $gitImg = include "invincible-agent.image" (dict "registry" ($gitImg.registry | default "docker.io") "repository" ($gitImg.repository | default "alpine/git") "tag" ($gitImg.tag | default "v2.45.2") "root" .) }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-task-grant-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: task-grant-sync
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # After keycloak (realm-reconcile is weight 2); before restate-init (5). Task grants need
+    # neither keycloak nor restate — only Topaz, which the initContainer wait-loop gates
+    # explicitly. See header note on hook ordering vs. a non-hook Deployment's readiness.
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "task-grant-sync" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-topaz
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
+          env:
+            - name: TOPAZ_DIRECTORY_URL
+              value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "Waiting for Topaz directory at $TOPAZ_DIRECTORY_URL..."
+              i=0
+              # curl WITHOUT -f: any HTTP response (even 404) proves the directory API is up;
+              # only a connection failure (refused/no route/DNS) keeps the loop waiting.
+              until curl -s -o /dev/null "$TOPAZ_DIRECTORY_URL/"; do
+                i=$((i+1))
+                if [ "$i" -gt 60 ]; then
+                  echo "Topaz directory never became reachable at $TOPAZ_DIRECTORY_URL" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "Topaz directory is reachable."
+        {{- if eq $mode "git" }}
+        # Same clone shape as the CronJob's fetch-policy initContainer — fresh clone every run.
+        - name: fetch-policy
+          image: {{ $gitImg | quote }}
+          env:
+            - name: GIT_REPO_URL
+              value: {{ $src.git.repoUrl | quote }}
+            - name: GIT_REF
+              value: {{ $src.git.ref | default "main" | quote }}
+            {{- if $src.git.caSecretName }}
+            - name: GIT_SSL_CAINFO
+              value: /git-ca/ca.crt
+            {{- end }}
+            {{- if $src.git.authSecretName }}
+            - name: GIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $src.git.authSecretName | quote }}
+                  key: username
+            - name: GIT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $src.git.authSecretName | quote }}
+                  key: password
+            {{- end }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ -n "${GIT_USERNAME:-}" ]; then
+                printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "$GIT_USERNAME" ;;\n  Password*) echo "$GIT_PASSWORD" ;;\nesac\n' > /tmp/askpass.sh
+                chmod +x /tmp/askpass.sh
+                export GIT_ASKPASS=/tmp/askpass.sh
+              fi
+              git clone --depth 1 --branch "$GIT_REF" -- "$GIT_REPO_URL" /overlay-src/repo
+              echo "policy overlay at commit: $(git -C /overlay-src/repo rev-parse HEAD)"
+          volumeMounts:
+            - name: overlay-src
+              mountPath: /overlay-src
+            {{- if $src.git.caSecretName }}
+            - name: git-ca
+              mountPath: /git-ca
+              readOnly: true
+            {{- end }}
+        {{- end }}
+      containers:
+        - name: task-grant-sync
+          image: {{ $seedImg | quote }}
+          imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
+          env:
+            - name: TOPAZ_DIRECTORY_URL
+              value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
+            - name: PYTHONPATH
+              value: "/app/policy/sync"
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              cd /app
+              {{- if eq $mode "image" }}
+              POLICY_DIR=/app/policy
+              {{- else }}
+              {{- if eq $mode "git" }}
+              OVERLAY="/overlay-src/repo/{{ $src.git.path | default "policy" }}"
+              {{- else }}
+              OVERLAY=/overlay
+              {{- end }}
+              mkdir -p /work/policy
+              # ONLY task_grants.yaml — this Job runs ONLY task_grant_sync, unlike topazSeed's
+              # six-file compose, so there is nothing else here to validate or apply. Missing
+              # file = FATAL: falling back to the image's sandbox copy would silently seed
+              # sandbox grants into this cluster.
+              if [ ! -f "$OVERLAY/task_grants.yaml" ]; then
+                echo "FATAL: policy overlay is missing task_grants.yaml — refusing (no fallback to the image's sandbox copy)" >&2
+                exit 2
+              fi
+              cp "$OVERLAY/task_grants.yaml" /work/policy/
+              POLICY_DIR=/work/policy
+              {{- end }}
+              export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
+              echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace, startup sync) ====="
+              python policy/sync/task_grant_sync.py
+          {{- if ne $mode "image" }}
+          volumeMounts:
+            {{- if eq $mode "git" }}
+            - name: overlay-src
+              mountPath: /overlay-src
+              readOnly: true
+            {{- end }}
+            {{- if eq $mode "configMap" }}
+            - name: overlay
+              mountPath: /overlay
+              readOnly: true
+            {{- end }}
+            - name: work
+              mountPath: /work
+          {{- end }}
+      {{- if ne $mode "image" }}
+      volumes:
+        {{- if eq $mode "git" }}
+        - name: overlay-src
+          emptyDir: {}
+        {{- if $src.git.caSecretName }}
+        - name: git-ca
+          secret:
+            secretName: {{ $src.git.caSecretName | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- end }}
+        {{- if eq $mode "configMap" }}
+        - name: overlay
+          configMap:
+            name: {{ $src.configMap.name | quote }}
+        {{- end }}
+        - name: work
+          emptyDir: {}
+      {{- end }}
+{{- end }}

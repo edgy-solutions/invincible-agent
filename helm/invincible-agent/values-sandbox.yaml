@@ -486,6 +486,11 @@ keycloak:
 topaz:
   enabled: true
 
+# Task grants must exist without a human hand-running policy/sync/task_grant_sync.py — see
+# values.yaml's taskGrantSync comment and templates/task-grant-sync-job.yaml.
+taskGrantSync:
+  enabled: true
+
 # Dagster — webserver and daemon use our own thin multi-arch
 # `dagster-server` image (built by iagent CI specifically for this
 # purpose — see the `dagster-server` matrix entry in build-containers.yml).
