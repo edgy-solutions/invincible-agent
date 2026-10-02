@@ -279,8 +279,25 @@ async def test_topaz_down_fails_closed_with_503_not_404(read):
 
     row = _row(origin_owner_domain="AVIATION", origin_program="SANDBOX_PROGRAM_ALPHA")
     with pytest.raises(HTTPException) as exc:
-        await read(row, user=_User(("AVIATION",)), topaz_raises=True)
+        await read(
+            row, user=_User(("AVIATION",)), topaz_raises=True,
+            table={"AVIATION": frozenset({"AVIATION"})},
+        )
     assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_topaz_down_is_still_404_for_a_caller_the_table_already_refuses(read):
+    """No existence oracle through an outage: a caller whose domains cannot consume the
+    origin is refused by the pure table check BEFORE Topaz is asked, so an existing
+    artifact answers 404 exactly as a missing one does, Topaz up or down. Same row and
+    same outage as the 503 arm above; the only difference is the table."""
+    from fastapi import HTTPException
+
+    row = _row(origin_owner_domain="AVIATION", origin_program="SANDBOX_PROGRAM_ALPHA")
+    with pytest.raises(HTTPException) as exc:
+        await read(row, user=_User(("AVIATION",)), topaz_raises=True, table={})
+    assert exc.value.status_code == 404
 
 
 # ══════════════════════════════════════════════════════════════════════════════

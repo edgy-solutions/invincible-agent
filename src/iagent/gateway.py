@@ -4662,6 +4662,15 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
     from . import human_tasks, origin as origin_mod
     from starlette.concurrency import run_in_threadpool
 
+    # THE PURE CHECK RUNS FIRST. A caller whose domains cannot consume this origin is denied
+    # without asking Topaz -- otherwise a Topaz outage answers 503 for an artifact that EXISTS
+    # and 404 for one that does not, and the status code becomes the existence oracle the 404
+    # was chosen to close. Only a caller the table already admits can see a 503.
+    viewer_domains = {c.domain for c in current_user.entitlements.cells}
+    table = _load_domain_consumption_table()
+    if not origin_mod.can_consume(viewer_domains, owner_domain, table):
+        return False
+
     try:
         is_member = await run_in_threadpool(
             lambda: human_tasks.check_can_view_program(program, current_user.authz_id)
@@ -4673,8 +4682,6 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
             detail={"error": "authorization_unavailable", "message": "could not verify program membership"},
         ) from exc
 
-    viewer_domains = {c.domain for c in current_user.entitlements.cells}
-    table = _load_domain_consumption_table()
     origin_obj = origin_mod.Origin(owner_domain=owner_domain, program=program, obtained_via="recorded")
     return origin_mod.origin_visible(
         viewer_domains=viewer_domains,
