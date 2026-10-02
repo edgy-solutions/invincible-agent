@@ -352,3 +352,204 @@ def test_the_builder_REFUSES_BY_NAME_rather_than_crashing_without_the_runtime(tm
         assert runtime_file in r.stdout, (
             f"the refusal did not name {runtime_file!r} among the missing files:\n{r.stdout}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# `package_export` RESOLVES ITS SHA FROM THE IMAGE, NOT FROM GIT -- MEASURED LIVE 2026-10-02
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#
+# A SECOND DEFECT BEHIND THE FIRST'S FIX. Once `_repo_root()` could find a root in the pod
+# (8a8795b8, above), `package_export` reached further than it ever had before -- straight into
+# `builder.algorithm_sha()`, which shells out to `git` TWICE. `git` is not on PATH in the
+# deployed pod (measured, live):
+#
+#     File "/app/measures.py", line ~1157, in package_export
+#       File "/app/scripts/build_cost_package.py", line 184, in build_html   (sha = algorithm_sha())
+#       File "/app/scripts/build_cost_package.py", line 57, in algorithm_sha
+#     FileNotFoundError: [Errno 2] No such file or directory: 'git'
+#
+# `_baked_algorithm_sha()` (8a8795b8) already reads `IAGENT_GIT_SHA` for exactly this, but it
+# was wired only to `_reconcile_method_block`'s `producer_sha`; `package_export` and
+# `build_html` still called `algorithm_sha()` unconditionally. "CAN BUILD A PACKAGE HERE" and
+# "GIT WORKS HERE" are different questions -- `_can_build_a_package_here` answers the first,
+# and nothing answered the second.
+#
+# NO 14 MB PYODIDE CACHE EXISTS IN THIS CHECKOUT (it is gitignored, fetched only in CI for
+# engine-cost), so `build_html` is monkeypatched to CAPTURE its `sha` kwarg rather than
+# actually render -- every arm below still runs the REAL sha-resolution code in
+# `measures.package_export`, which is what this defect is about.
+
+_SHA_POD = "f" * 40      # a 40-hex IAGENT_GIT_SHA, as the image bakes it
+_SHA_GIT = "c" * 40      # what `builder.algorithm_sha()` (git) returns, in the checkout arm
+
+
+@pytest.fixture(scope="module")
+def real_builder():
+    """The SAME module `package_export` imports (cached under its bare name), not a copy. A
+    fresh root's own `scripts/build_cost_package.py` is never actually read once this is
+    cached -- Python resolves `import build_cost_package` from `sys.modules` first -- so the
+    marker file the fake roots below create only has to exist, never to be valid."""
+    if str(_ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(_ROOT / "scripts"))
+    import build_cost_package as builder
+    return builder
+
+
+def _stage_fake_pod_root(tmp_path, real_builder, *, with_git: bool) -> pathlib.Path:
+    """A root that satisfies `_can_build_a_package_here` (builder file + runtime DIRECTORY
+    present) without needing the real 14 MB cache -- the missing-runtime-files check in
+    `package_export` is existence-only, and `build_html` is mocked below before it would ever
+    read the files' content."""
+    root = tmp_path / "pod"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "build_cost_package.py").write_text(
+        "# placeholder -- the real module is already cached under this bare name",
+        encoding="utf-8")
+    cache = root / ".pyodide-cache"
+    cache.mkdir()
+    for fname in real_builder.RUNTIME_FILES + ("pyodide.js",):
+        (cache / fname).write_bytes(b"")
+    if with_git:
+        (root / ".git").mkdir()
+    return root
+
+
+def _no_git(*_a, **_k):
+    """Reproduces the live traceback: `subprocess.run(["git", ...])` finding no `git` on
+    PATH. Patched onto the real `subprocess` module (shared process-wide, restored by
+    `monkeypatch` on teardown) so a reinstated unconditional `builder.algorithm_sha()` call
+    cannot silently succeed just because THIS machine happens to have git installed."""
+    raise FileNotFoundError(2, "No such file or directory: 'git'")
+
+
+def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusable(
+    tmp_path, monkeypatch, real_builder):
+    """ARM A -- the pod, reproduced faithfully: not a checkout (no `.git`), the builder and
+    runtime DIRECTORY present (past both existing `SourceUnavailable` guards), `git` unusable
+    on PATH, `IAGENT_GIT_SHA` baked into the environment. Exactly the deployed engine-cost pod,
+    2026-10-02.
+    """
+    root = _stage_fake_pod_root(tmp_path, real_builder, with_git=False)
+    assert not (root / ".git").exists(), "this arm IS the not-a-checkout pod"
+
+    captured: dict = {}
+
+    def fake_build_html(*_a, **kw):
+        captured["sha_kwarg"] = kw.get("sha")
+        return "<html></html>"
+
+    monkeypatch.setattr(m, "_repo_root", lambda: root)
+    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    monkeypatch.setattr(subprocess, "run", _no_git)
+    monkeypatch.setenv("IAGENT_GIT_SHA", _SHA_POD)
+
+    result = m.package_export(STATE, recipient_scope="notional-customer-alpha")
+
+    assert result["algorithm_sha"] == _SHA_POD, (
+        "the manifest's algorithm_sha did not come from the baked IAGENT_GIT_SHA"
+    )
+    assert captured["sha_kwarg"] == _SHA_POD, (
+        "build_html did not receive the SAME sha the manifest carries -- the two can now "
+        "disagree about which commit the package names"
+    )
+
+
+@pytest.mark.parametrize("baked", ["", "unknown"])
+def test_an_UNRESOLVABLE_sha_is_a_NAMED_refusal_and_writes_NOTHING(
+    tmp_path, monkeypatch, real_builder, baked):
+    """ARM B -- the pod, but the image never baked a usable commit either (unset, or the
+    explicit sentinel a build with no sha writes). A package naming a GUESSED algorithm_sha
+    is worse than one that refuses: `SourceUnavailable`, naming `IAGENT_GIT_SHA`, and NOTHING
+    written -- not the .duckdb, not the .html -- because the sha is resolved before either.
+    """
+    root = _stage_fake_pod_root(tmp_path, real_builder, with_git=False)
+
+    monkeypatch.setattr(m, "_repo_root", lambda: root)
+    monkeypatch.setattr(subprocess, "run", _no_git)
+    monkeypatch.setenv("IAGENT_GIT_SHA", baked)
+
+    with pytest.raises(SourceUnavailable, match="IAGENT_GIT_SHA"):
+        m.package_export(STATE, recipient_scope="notional-customer-alpha")
+
+    assert not (root / "dist").exists(), (
+        "the refusal must land before anything is written -- an artifact written under a "
+        "guessed algorithm_sha is worse than none at all"
+    )
+
+
+def test_a_CHECKOUT_still_resolves_its_sha_through_GIT(tmp_path, monkeypatch, real_builder):
+    """ARM C -- a real checkout (`.git` present) still goes through `builder.algorithm_sha()`,
+    exactly as the CLI/developer path always has. Proves the new baked branch did not quietly
+    become the ONLY branch."""
+    root = _stage_fake_pod_root(tmp_path, real_builder, with_git=True)
+
+    calls = []
+
+    def fake_algorithm_sha():
+        calls.append(1)
+        return _SHA_GIT
+
+    def fake_build_html(*_a, **_kw):
+        return "<html></html>"
+
+    monkeypatch.setattr(m, "_repo_root", lambda: root)
+    monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
+    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    # POISONED ON PURPOSE. If the checkout branch ever reads the baked env instead of git,
+    # this value -- distinct from `_SHA_GIT` -- would show up in the result and expose it.
+    monkeypatch.setenv("IAGENT_GIT_SHA", "unknown")
+
+    result = m.package_export(STATE, recipient_scope="notional-customer-alpha")
+
+    assert calls, "a checkout must resolve its sha through builder.algorithm_sha(), not the baked env"
+    assert result["algorithm_sha"] == _SHA_GIT
+
+
+def test_build_html_USES_the_passed_sha_and_never_calls_its_OWN_algorithm_sha(
+    monkeypatch, real_builder):
+    """`build_html`'s own contract, independent of `package_export`: given a `sha`, it is used
+    AS-IS and the module's `algorithm_sha()` (git) is never called. Caught at the narrowest
+    seam -- `X.build_package` is made to raise the instant it is reached, before any runtime
+    file is touched, so this needs no Pyodide cache at all.
+    """
+    captured: dict = {}
+
+    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
+        captured["algorithm_sha"] = algorithm_sha
+        raise RuntimeError("stop here - captured")
+
+    def fail_if_called():
+        raise AssertionError("algorithm_sha() (git) must not be called when sha is given")
+
+    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+    monkeypatch.setattr(real_builder, "algorithm_sha", fail_if_called)
+
+    with pytest.raises(RuntimeError, match="stop here - captured"):
+        real_builder.build_html("notional-customer-alpha", pathlib.Path("/nonexistent"),
+                                sha="d" * 40)
+
+    assert captured["algorithm_sha"] == "d" * 40
+
+
+def test_build_html_STILL_DEFAULTS_to_algorithm_sha_when_none_is_given(
+    monkeypatch, real_builder):
+    """The CLI/developer path, unchanged: omit `sha` and `build_html` resolves it through git
+    exactly as it always has."""
+    captured: dict = {}
+
+    def fake_algorithm_sha():
+        captured["called"] = True
+        return "e" * 40
+
+    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
+        captured["algorithm_sha"] = algorithm_sha
+        raise RuntimeError("stop here - captured")
+
+    monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
+    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+
+    with pytest.raises(RuntimeError, match="stop here - captured"):
+        real_builder.build_html("notional-customer-alpha", pathlib.Path("/nonexistent"))
+
+    assert captured.get("called") is True
+    assert captured["algorithm_sha"] == "e" * 40

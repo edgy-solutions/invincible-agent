@@ -170,7 +170,7 @@ def select_sections(template: str, sections) -> str:
 def build_html(recipient: str, runtime_dir: pathlib.Path,
                duckdb_path: pathlib.Path | None = None, *, state=None,
                lots: tuple[int, ...] | None = None, sections: tuple[str, ...] | None = None,
-               canvas_answers: list[str] | None = None) -> str:
+               canvas_answers: list[str] | None = None, sha: str | None = None) -> str:
     """Build the page. `state` is the engine's SERVED state when `package_export` calls this.
 
     It used to call `build_state()` here unconditionally, so the verb's own state never
@@ -178,10 +178,18 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
     beside it. Identical today, because both come from the one seed; the first state that is
     not the seed would have shipped figures the engine never served. The CLI still builds its
     own, because it has no engine.
+
+    `sha`, WHEN GIVEN, IS USED AS-IS AND `algorithm_sha()` IS NEVER CALLED. A caller that has
+    already resolved a commit (a pod with no `git` on PATH, reading `IAGENT_GIT_SHA` instead)
+    passes it here; the CLI/developer path leaves it unset and gets the git-backed answer and
+    its dirty-tree refusal exactly as before. The parameter is named `sha`, not
+    `algorithm_sha`, so it does not shadow the module function of that name — this function
+    still needs to call it below when nothing is supplied.
     """
     if state is None:
         state = build_state()
-    sha = algorithm_sha()
+    if sha is None:
+        sha = algorithm_sha()
     if duckdb_path is None:
         if sections is not None or lots is not None:
             # The slice-1 page has no sections and no lot narrowing to honour. Refused rather

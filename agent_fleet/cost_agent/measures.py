@@ -101,6 +101,20 @@ def _can_build_a_package_here(root: pathlib.Path) -> bool:
     return (root / _BUILDER_REL).is_file() and (root / _RUNTIME_DIR).is_dir()
 
 
+def _in_a_checkout(root: pathlib.Path) -> bool:
+    """Whether `root` is a real git checkout, as distinct from "can build a package here".
+
+    A MARKER, in the same spirit as `_can_build_a_package_here` above -- not an inference from
+    `root` having been found at all. Measured live: the deployed pod carries BOTH
+    `scripts/build_cost_package.py` and a populated `.pyodide-cache`, so `_repo_root()` returns
+    non-None there, and it STILL has no `.git` and no `git` executable on PATH. "Can build a
+    package here" and "git works here" are different questions; `_can_build_a_package_here`
+    answers the first, this answers the second, and `package_export` must not conflate them --
+    that conflation is exactly what called `builder.algorithm_sha()` unconditionally and 500'd.
+    """
+    return (root / ".git").exists()
+
+
 def _baked_algorithm_sha() -> Optional[str]:
     """The commit the shipped modules come from, WITHOUT requiring git.
 
@@ -1113,6 +1127,22 @@ def package_export(
     except ImportError as exc:  # pragma: no cover - packaging deps absent
         raise SourceUnavailable(f"the package builder is not importable here: {exc}") from None
 
+    # ⚠ THE SHA, RESOLVED ONCE, HERE, BEFORE ANYTHING IS WRITTEN. `builder.algorithm_sha()`
+    # shells out to `git` TWICE and `git` is not on PATH in the deployed pod (measured, live:
+    # `FileNotFoundError: [Errno 2] No such file or directory: 'git'`). `_in_a_checkout` is the
+    # SAME kind of marker as `_can_build_a_package_here` above -- "can build a package here" and
+    # "git works here" are different questions, and the pod answers yes/no to them
+    # respectively. Resolved before the dataset or the HTML is built, so an unresolvable sha is
+    # a NAMED refusal rather than an artifact written under a guessed or absent algorithm_sha.
+    sha = builder.algorithm_sha() if _in_a_checkout(root) else _baked_algorithm_sha()
+    if not sha:
+        raise SourceUnavailable(
+            "this deployment cannot attest the algorithm commit: it is not running from a git "
+            "checkout, and IAGENT_GIT_SHA is unset (or 'unknown'). Set IAGENT_GIT_SHA at image "
+            "build time, or export from a checkout. A package naming no algorithm_sha, or a "
+            "guessed one, is a disclosure the recipient cannot verify."
+        )
+
     runtime = root / ".pyodide-cache"
     missing = [f for f in builder.RUNTIME_FILES + ("pyodide.js",)
                if not (runtime / f).exists()]
@@ -1154,7 +1184,8 @@ def package_export(
     # THE SERVED STATE, threaded to the page. The builder used to seed its own.
     narrowed = dict(lots=composed["lots"], sections=composed["sections"],
                     canvas_answers=composed["answers"]) if composed else {}
-    html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state, **narrowed)
+    html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state, sha=sha,
+                              **narrowed)
     problems = builder.check_javascript(html)
     if problems:
         # THE SAME GATE THE SCRIPT USES. A verb that skipped it could emit a package that is
@@ -1164,11 +1195,11 @@ def package_export(
                                 + "; ".join(problems))
 
     package = build_dataset_package(
-        state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha(),
+        state, recipient_scope=scope, algorithm_sha=sha,
         duckdb_path=str(dataset_path), duckdb_hash=dataset_builder.file_hash(dataset_path),
         **narrowed,
     ) if dataset_path else build_package(
-        state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha())
+        state, recipient_scope=scope, algorithm_sha=sha)
 
     dest = _dist_dir(root) / artifact_filenames(scope)[0]
     dest.parent.mkdir(parents=True, exist_ok=True)
