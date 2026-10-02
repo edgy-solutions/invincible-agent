@@ -47,10 +47,12 @@ from typing import Any, Optional, Sequence
 
 import pytest
 from iagent_mesh.conformance import (
+    ConformanceFailure,
     assert_fixture_discriminates,
     check_graph_writer_contract,
     check_graph_writer_has_edges_contract,
     check_graph_writer_key_only_delete_contract,
+    check_graph_writer_write_node_contract,
     check_vectors_writer_contract,
     check_vectors_writer_delete_contract,
     check_writer_marker,
@@ -1129,6 +1131,70 @@ def test_LIVE_the_sdk_graph_arms_hold_on_the_predicate_family(scratch_graph):
         call_read_edge_b_after_delete=lambda: w.has_edges(
             _PERSON, identity_filter=EdgeIdentityFilter(subject=s2, verb=other, key="shared")),
     )
+
+
+def _drive_write_node_contract(driver: Any, label: str) -> None:
+    """The SDK's `check_graph_writer_write_node_contract`, driven through the INGEST family -- the
+    configuration `Neo4jIngestGraph` constructs its writer from -- with one thing changed: the
+    label, a scratch one. The introspection answers a payload only when EXACTLY ONE node sits at
+    (label, id): a store that appended would make the id reachable as two nodes, and the SDK arm
+    has no read of its own that could see that, so the fixture refuses to name either of them."""
+    from iagent.promotion_stores import INGEST_FACT_FAMILY
+
+    w = _live_writer(driver, label, INGEST_FACT_FAMILY)
+    key = INGEST_FACT_FAMILY["node_key"]
+    node_id = "urn:mesh-writer-scratch:node"
+
+    def payload() -> dict | None:
+        with driver.session() as s:
+            rows = s.run(f"MATCH (n:{label} {{{key}: $id}}) RETURN properties(n) AS p",
+                         id=node_id).data()
+        if len(rows) != 1:
+            return None
+        return {k: v for k, v in rows[0]["p"].items() if k != key}
+
+    check_graph_writer_write_node_contract(
+        call_write_node=lambda: w.write_node(
+            _PERSON, label=label, id=node_id, payload={"kind": "pdf", "stage": "received"}),
+        node_payload_after_write=payload,
+        call_write_node_again_same_id_different_payload=lambda: w.write_node(
+            _PERSON, label=label, id=node_id, payload={"kind": "pdf", "stage": "extracting"}),
+        node_payload_after_second_write=payload,
+    )
+
+
+@pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+def test_LIVE_the_sdk_write_node_arm_holds_on_the_ingest_family(scratch_graph):
+    """SDK 0.9.6's gate: the fleet's real writer passes `check_graph_writer_write_node_contract`
+    against a real store, at the SDK sha the caller ships."""
+    driver, label = scratch_graph
+    _drive_write_node_contract(driver, label)
+
+
+_NON_UPSERTS = {
+    # appends: the id becomes reachable as two nodes, so the second read names no ONE node
+    "append": ("CREATE (n:{label} {{{key}: $id}}) SET n += $props RETURN count(n) AS n",
+               "the second write reported success"),
+    # keeps the first write: the second payload never lands, so both reads are the same
+    "first-write-wins": ("MERGE (n:{label} {{{key}: $id}}) ON CREATE SET n += $props "
+                         "RETURN count(n) AS n", "does not discriminate"),
+}
+
+
+@pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.parametrize("name", sorted(_NON_UPSERTS))
+def test_LIVE_the_write_node_arm_reds_on_each_non_upsert(scratch_graph, monkeypatch, name):
+    """The control: the arm above is worth only what it refuses. Each template is a store
+    behaviour the SDK contract names as the defect, and the live arm must red on both -- at
+    the check that defect reaches, not merely somewhere."""
+    from agent_fleet.utils.mesh_writers import neo4j_graph
+
+    assert neo4j_graph._WRITE_NODE.count("MERGE") == 1  # noqa: SLF001 -- the subject replaced
+    template, reached = _NON_UPSERTS[name]
+    monkeypatch.setattr(neo4j_graph, "_WRITE_NODE", template)
+    driver, label = scratch_graph
+    with pytest.raises(ConformanceFailure, match=reached):
+        _drive_write_node_contract(driver, label)
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
