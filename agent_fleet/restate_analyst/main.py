@@ -1653,6 +1653,13 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
         "summary": task.get("summary") or f"Approve workflow step {task_id}",
         "requested_by": task.get("requested_by", ""),
         "subject_ref": task.get("subject_ref"),
+        # NEW — the owning service and the promise this step awaits, carried so cortex-bff's
+        # `/act` can resume the RIGHT workflow by the RIGHT name instead of hardcoding
+        # BPMNWorkflowRunner's `approve`. `.get` because the inline (non-definition-driven)
+        # `user_task` loop below never sets either — both are honest-absent there, and the
+        # register route and `/act` fall back to the legacy BPMNWorkflowRunner behaviour.
+        "workflow_service": task.get("workflow_service"),
+        "promise_name": task.get("promise_name"),
     }
     # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
     # applied to the register it named as its sibling. This used to send the trigger's stored
@@ -1884,6 +1891,7 @@ async def _run_grouped_human_await(
 async def _run_definition(
     ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict,
     *, task_kind: str = "workflow_ack",
+    workflow_service: str = "BPMNWorkflowRunner",
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -1956,7 +1964,14 @@ async def _run_definition(
                 continue
 
             task = {
-                "id": step.id,
+                # COMPOSITE, not bare `step.id`: the bare form is shared by every INSTANCE of
+                # this definition (every SafetyAcceptance run for every hazard uses the step id
+                # "acceptance"), so `mark_task_resolved`'s `WHERE task_id = %s` resolved every
+                # pending row sharing that step id across unrelated workflow instances. The
+                # inline (non-definition-driven) `user_task` loop below is UNCHANGED and keeps
+                # emitting bare step ids — a second, separately-sealed mechanism this fix does
+                # not touch.
+                "id": f"{workflow_id}:{step.id}",
                 "audience": _bind_placeholders(
                     step.audience, bindings, where=f"step {step.id} audience", strict=True),
                 "title": _bind_placeholders(
@@ -1970,6 +1985,10 @@ async def _run_definition(
                 # Carried so the resolver echoes it back — `approve` must resolve
                 # the name this step AWAITS, and it cannot see the definition.
                 "promise_name": promise_name,
+                # WHICH SERVICE OWNS THIS RUN — cortex-bff's `/act` re-validates this against
+                # its own allowlist before interpolating it into a Restate ingress URL; it is
+                # never trusted bare off the row.
+                "workflow_service": workflow_service,
             }
             # AUTHORITY GATE INPUT — journal the audience under the promise this step
             # awaits, so `approve` can check `can_act` against the DEFINITION's audience
@@ -2322,11 +2341,14 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     }
 
 
-@bpmn_workflow.handler()
-async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     """Resolve a durable promise to wake up a paused UserTask.
 
-    Called by the FastAPI ``/workflow/{wf}/task/{tid}/approve`` endpoint.
+    Shared by BPMNWorkflowRunner's ``approve`` and SafetyAcceptance's ``approve`` — ONE
+    function, not a copy, so the authority gate below is a single enforcement point
+    regardless of which service's workflow is suspended. Called (via a thin per-service
+    handler) by cortex-bff's ``/human_tasks/{task_id}/act`` resume path.
+
     This resolves the promise that the ``run`` handler is awaiting,
     causing the workflow to resume execution from exactly where it
     left off.
@@ -2334,7 +2356,7 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
     Args:
         ctx: Restate shared workflow context.
         request: Dict with keys:
-            - ``task_id`` (str): The BPMN task to approve.
+            - ``task_id`` (str): The task being approved.
             - ``status`` (str): e.g. "APPROVED" or "REJECTED".
             - ``comments`` (str): Optional human comments.
 
@@ -2395,6 +2417,12 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
         "task_id": task_id,
         "status": approval_payload["status"],
     }
+
+
+@bpmn_workflow.handler()
+async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """BPMNWorkflowRunner's approve — see `_approve_impl`, the shared implementation."""
+    return await _approve_impl(ctx, request)
 
 
 # ---------------------------------------------------------------------------

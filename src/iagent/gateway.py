@@ -631,6 +631,12 @@ class HumanTaskRegisterRequest(_BaseModel):
     workflow_id: Optional[str] = None
     subject_ref: Optional[str] = None
     payload: Optional[dict] = None
+    # NEW (HAZ-1003): which Restate service owns the run, and the promise name it awaits.
+    # Validated against human_tasks.ALLOWED_WORKFLOW_SERVICES at register time — a name outside
+    # it is refused HERE (422) rather than trusted through to `/act`, which would otherwise
+    # interpolate an unvetted string into a Restate ingress URL.
+    workflow_service: Optional[str] = None
+    promise_name: Optional[str] = None
 
 
 class HumanTaskActRequest(_BaseModel):
@@ -670,7 +676,8 @@ async def register_human_task(
                 kind=req.kind, task_id=req.task_id, audience=req.audience,
                 title=req.title, summary=req.summary, requested_by=req.requested_by,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
-                payload=req.payload,
+                payload=req.payload, workflow_service=req.workflow_service,
+                promise_name=req.promise_name,
             )
         )
     except human_tasks.HumanTaskConfigError as exc:
@@ -679,6 +686,12 @@ async def register_human_task(
         # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
         # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.UnknownWorkflowService as exc:
+        # Same TERMINAL-4xx discipline as NoEntitledRecipients: an unvetted service name is a
+        # permanent misconfiguration (a typo, or a caller naming a service that was never meant
+        # to be resumable), not a transient failure — refuse rather than register a row `/act`
+        # could later be tricked into resuming against.
+        raise HTTPException(status_code=422, detail={"error": "unknown_workflow_service", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -3082,9 +3095,16 @@ async def act_on_human_task(
             return {"task_id": task_id, "decision": req.decision, "accepted": False,
                     "status": "still_pending", "reason": sub.get("reason", "")}
         # Accepted -> the workflow resumed + fanned out; NOW resolve the projection.
+        #
+        # `workflow_id=wf` ADDED (HAZ-1003 scoping): `mark_task_resolved`'s UPDATE now carries
+        # `AND workflow_id IS NOT DISTINCT FROM %s` so a cross-instance task_id collision can't
+        # resolve the wrong run's row. Omitting it here would ask for `workflow_id IS NULL`
+        # against a row that HAS one (`wf`, just posted to above) and silently resolve ZERO
+        # rows — the request would appear to succeed while the task stayed pending forever.
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment, workflow_id=wf,
             )
         )
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
@@ -3093,21 +3113,14 @@ async def act_on_human_task(
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
 
-    n = await run_in_threadpool(
-        lambda: human_tasks.mark_task_resolved(
-            task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
-        )
-    )
-    logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
-                task_id, current_user.authz_id, req.decision, n)
-
-    # FULFILLMENT (workflow_ack): resolve the Restate promise the suspended
-    # workflow is awaiting -> it RESUMES from exactly where it paused. Only an
-    # AUTHORIZED caller reaches here (can_act passed above), so an unauthorized
-    # /act NEVER resolves the promise — the workflow stays suspended, waiting for
-    # the right approver (Situation B: unauthorized-act is a denied action, not a
-    # teardown). Best-effort: the projection is already resolved; a resume failure
-    # is logged, not surfaced as an act failure.
+    # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
+    # way around. The old order resolved the projection FIRST and treated the Restate resume as
+    # best-effort afterwards — so a 403 from the handler, or cortex-bff's own hardcoded
+    # `/BPMNWorkflowRunner/.../approve` posted at a SafetyAcceptance instance that was never
+    # running there, left the task showing resolved while the definition stayed suspended
+    # FOREVER, UNSEEN (the two halves disagreeing, and neither reporting it). Now the projection
+    # is written ONLY after the resume call confirms 200; a row with no workflow_id has no
+    # suspended definition and keeps today's direct-resolve behaviour (the `else` branch below).
     resumed = False
     # ── GAP 1: ANY workflow-backed task resumes, not only `workflow_ack` ───────────────────────
     #
@@ -3140,26 +3153,98 @@ async def act_on_human_task(
         # surface that was already gated. The gate is the declaration; this was a second,
         # undeclared gate that only knew two words.
         status = req.decision
+
+        # WHICH SERVICE OWNS THIS RUN, RE-CHECKED HERE — a row-sourced name is never
+        # interpolated into a Restate ingress URL on trust alone, even though `register_task`
+        # already validated it once at write time. A row with no `workflow_service` is the
+        # LEGACY shape (the inline BPMNWorkflowRunner `user_task` loop predates this column)
+        # and falls back to the one service that loop could ever mean.
+        service = match.get("workflow_service") or "BPMNWorkflowRunner"
+        if service not in human_tasks.ALLOWED_WORKFLOW_SERVICES:
+            # NO WRITE BELOW THIS POINT — an unresumable row stays PENDING rather than being
+            # marked resolved against a service this gateway cannot safely reach.
+            raise HTTPException(status_code=409, detail={
+                "error": "task_unresumable",
+                "task_id": task_id,
+                "workflow_id": match["workflow_id"],
+                "workflow_service": service,
+                "message": f"workflow_service {service!r} is not a resumable Restate service; "
+                           "the task stays pending rather than being resolved against it",
+            })
+
+        rr = None
+        resume_exc: Exception | None = None
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 rr = await client.post(
-                    f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{_restate_key(match['workflow_id'])}/approve",
+                    f"{_RESTATE_INGRESS_URL}/{service}/{_restate_key(match['workflow_id'])}/approve",
                     # `acted_by` is REQUIRED by the handler as of approval-bypass-bpmn-runner:
                     # it re-checks can_act itself rather than trusting that this gate ran.
                     # Threaded from `current_user.authz_id` — the identity can_act was just
                     # checked against above — so the handler re-asks the same question about
                     # the same subject and must reach the same answer. Omitting it here would
                     # turn the ONE correctly-gated path into the only refused one.
+                    #
+                    # `promise_name` rides the row (set by `_register_human_task` for a
+                    # definition-driven step) so the handler resolves the promise THIS run is
+                    # actually awaiting rather than guessing `approval_{task_id}` — None for
+                    # legacy rows, which is the handler's own documented default.
                     json={"task_id": task_id, "status": status, "comments": req.comment,
-                          "acted_by": current_user.authz_id},
+                          "acted_by": current_user.authz_id,
+                          "promise_name": match.get("promise_name")},
                 )
-                resumed = rr.status_code == 200
-                if not resumed:
-                    logger.warning("workflow resume non-200: task_id=%s wf=%s code=%s",
-                                   task_id, match["workflow_id"], rr.status_code)
-        except Exception as exc:
-            logger.warning("workflow resume failed: task_id=%s wf=%s err=%s",
-                           task_id, match["workflow_id"], exc)
+            resumed = rr.status_code == 200
+        except Exception as exc:  # noqa: BLE001 — network/timeout; reported below, not swallowed
+            resume_exc = exc
+
+        if not resumed:
+            # CONFIRM-BEFORE-RESOLVE'S OTHER HALF: a refused or unreachable resume must NOT mark
+            # the task resolved — the definition is still suspended and the row must keep saying
+            # so. Check for a teammate's settle first (the same multiplayer race the pre-lookup
+            # 409 above already accounts for) before reporting a resume failure.
+            settled = await run_in_threadpool(
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+            )
+            if settled and settled.get("status") != "pending":
+                raise HTTPException(status_code=409, detail={
+                    "error": "task_already_resolved",
+                    "task_id": task_id,
+                    "status": settled.get("status"),
+                    "decision": settled.get("decision"),
+                    "acted_by": settled.get("acted_by"),
+                    "acted_at": settled.get("acted_at"),
+                    "message": "This task was already resolved by a member of its audience.",
+                })
+            raise HTTPException(status_code=502, detail={
+                "error": "workflow_resume_failed",
+                "task_id": task_id,
+                "workflow_id": match["workflow_id"],
+                "workflow_service": service,
+                "status_code": getattr(rr, "status_code", None),
+                "reason": None if rr is not None else str(resume_exc),
+                "message": "the workflow did not confirm the resume; the task stays pending "
+                           "rather than being resolved against a definition that is still "
+                           "suspended",
+            })
+
+        # ONLY ON A CONFIRMED 200 — scoped by workflow_id so this cannot resolve a different
+        # workflow instance's row sharing the same step id (the cross-instance collision that
+        # `_register_human_task`'s composite task_id now closes at the write end too).
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                comment=req.comment, workflow_id=match["workflow_id"],
+            )
+        )
+    else:
+        # NO WORKFLOW_ID -> NO SUSPENDED DEFINITION. Today's direct-resolve behaviour, unchanged.
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+            )
+        )
+    logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
+                task_id, current_user.authz_id, req.decision, n)
 
     # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
     # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
