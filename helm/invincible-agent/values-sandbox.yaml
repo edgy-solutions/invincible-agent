@@ -746,6 +746,18 @@ cortexBff:
 # block above sets VITE_ELECTRIC_URL to this host.
 # --------------------------------------------------------------------------
 electric:
+  # 2026-10-02: docker.io electricsql/electric is WITHDRAWN (the repo endpoint 404s; the pod sat
+  # in ImagePullBackOff). Rebuilt from upstream's tag @core/sync-service@1.0.13 by
+  # .github/workflows/mirror-electric.yml. NOT upstream's binary: upstream's pinned builder
+  # (erlang-27.2) can no longer fetch hex (TLS key_usage_mismatch), so the builder runs OTP
+  # 27.3.4.4 on bookworm-20260610 and the tag says so. Pinned by digest, measured anonymously:
+  # this tag answers 200 with this digest; bare 1.0.13 and -otp27.3.4.5 answer 404.
+  # values.yaml keeps the upstream default for deployments that mirror it themselves.
+  image:
+    registry: "ghcr.io"
+    repository: "edgy-solutions/mirror/electric"
+    tag: "1.0.13-otp27.3.4.4"
+    digest: "sha256:70b57efaacb5efeed39283439e050b88c328bae866a4086c6a188d0394a323c3"
   # 2026-06-30: direct Electric ingress CLOSED. Per-user isolation
   # interim flows browser → cortex-bff `/electric/shape` proxy → in-
   # cluster Electric service (`http://iagent-electric:3000`). Exposing

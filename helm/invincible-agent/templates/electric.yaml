@@ -94,7 +94,7 @@ spec:
               echo "OK."
       containers:
         - name: electric
-          image: {{ include "invincible-agent.image" (dict "name" "electric" "registry" .Values.electric.image.registry "repository" .Values.electric.image.repository "tag" .Values.electric.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "electric" "registry" .Values.electric.image.registry "repository" .Values.electric.image.repository "tag" .Values.electric.image.tag "digest" .Values.electric.image.digest "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http
