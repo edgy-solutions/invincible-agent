@@ -500,7 +500,8 @@ def test_THE_CHOSEN_OPTION_IS_A_CHAINING_FACT():
     env = {"outcome": "replace_now", "outcome_step_id": "decide",
            "outputs": {"d": {"decide": {"chosen": {"readiness": "FMC", "dmc": ["X"]}}}}}
     facts = R.termination_facts({"level": "hi"}, env, "d")
-    assert facts == {"level": "hi", "outcome": "replace_now", "chosen.readiness": "FMC"}, facts
+    assert facts == {"level": "hi", "outcome": "replace_now", "outcome_repeated": False,
+                     "chosen.readiness": "FMC"}, facts
 
 
 # ── 7. A SIGNAL PASSES THE SAME GATE AS AN APPROVAL ─────────────────────────────────────────

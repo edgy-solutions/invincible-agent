@@ -33,7 +33,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from pydantic import Field
 
@@ -50,7 +50,12 @@ CHILD_SEP = "~"
 
 #: Facts the runner writes at termination. A trigger fact of the same name would be overwritten
 #: by -- or worse, mistaken for -- the definition's own outcome, so a collision is refused.
-_RESERVED = ("outcome", "chosen")
+_RESERVED = ("outcome", "outcome_repeated", "chosen")
+
+#: The scalar facts the runner itself MEASURES at termination (``chosen.*`` is the option's own).
+#: A chaining table may match these, ``chosen.*``, or a fact some trigger requires -- nothing else
+#: reaches it, and a table keyed on anything else refuses every case that ends there.
+TERMINATION_FACTS = ("outcome", "outcome_repeated")
 
 
 class CaseRoutingError(Exception):
@@ -172,11 +177,21 @@ def episode_key(trigger: Trigger, flat: Mapping[str, Any]) -> Optional[str]:
 
 
 def termination_facts(trigger_flat: Mapping[str, Any], envelope: Mapping[str, Any],
-                      definition_id: str) -> Dict[str, Any]:
+                      definition_id: str, transitions: Sequence[Mapping[str, Any]] = ()
+                      ) -> Dict[str, Any]:
     """What a chaining table may read when `definition_id` ends: the trigger's facts, the
-    definition's `outcome`, and the chosen option's attributes under ``chosen.``."""
+    definition's `outcome`, whether it has ended so before in this case, and the chosen option's
+    attributes under ``chosen.``.
+
+    ``outcome_repeated`` IS MEASURED HERE, NOT COUNTED IN A TABLE: a row matches by equality only
+    (ADR-0039), so "the second refusal" needs a fact. It is a BOOL, not a count, so a table can be
+    total over it -- the second refusal and every later one read the same. ``transitions`` is the
+    case's record BEFORE this termination is appended."""
     facts = dict(trigger_flat)
     facts["outcome"] = envelope.get("outcome")
+    facts["outcome_repeated"] = any(
+        t.get("from") == definition_id and t.get("outcome") == facts["outcome"]
+        for t in transitions)
     step = envelope.get("outcome_step_id")
     record = ((envelope.get("outputs") or {}).get(definition_id) or {}).get(step) or {}
     chosen = record.get("chosen") if isinstance(record, Mapping) else None

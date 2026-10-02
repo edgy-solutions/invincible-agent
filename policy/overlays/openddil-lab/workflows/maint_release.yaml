@@ -60,3 +60,5 @@ steps:
     signal: tier_ack
     audience: "maint_tier_ack:{trigger.owning_tier}"
     accepts: [released, tier_refused]
+    # A REFUSAL GOES BACK TO A MAINTAINER, so it must say why; the reason rides the hop.
+    reason_required: [tier_refused]

@@ -156,7 +156,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             outputs = env.get("outputs") or {}
             chain = env.get("approval_chain") or []
 
-            term = R.termination_facts(flat, env, definition_id)
+            term = R.termination_facts(flat, env, definition_id, case["transitions"])
             nxt = await ctx.run(f"chain_{n}", _terminal(lambda: R.chain(definition_id, term), 422))
             step = (outputs.get(definition_id) or {}).get(env.get("outcome_step_id")) or {}
             await _record(
@@ -262,6 +262,11 @@ async def signal(ctx: WorkflowSharedContext, request: dict) -> dict:
     if status not in accepts:
         raise restate.TerminalError(
             f"signal {name!r} accepts {accepts}, not {status!r}", status_code=400)
+    if status in (await ctx.get(m._signal_reason_key(name)) or []) \
+            and not str(request.get("comments") or "").strip():
+        raise restate.TerminalError(
+            f"signal {name!r} answered {status!r} needs a reason (the definition's "
+            "`reason_required`); the case carries it onto the next hop", status_code=400)
     acted_by = await m._authorize_resolution(ctx, name, request.get("acted_by"))
     await ctx.promise(name, type_hint=dict).resolve(
         {"status": status, "comments": request.get("comments", ""), "acted_by": acted_by})

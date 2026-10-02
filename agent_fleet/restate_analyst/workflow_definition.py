@@ -321,7 +321,17 @@ class SignalAwaitStep(_Declared):
     signal: str = Field(..., pattern=r"^[a-z][a-z0-9_]*$")
     audience: str
     accepts: list[str] = Field(..., min_length=1)
+    #: statuses the resolver must explain; a blank `comments` on one is refused (400)
+    reason_required: list[str] = Field(default_factory=list)
     deadline_seconds: Optional[int] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _reasons_are_accepted(self) -> "SignalAwaitStep":
+        stray = sorted(set(self.reason_required) - set(self.accepts))
+        if stray:
+            raise ValueError(f"signal_await {self.id}: reason_required {stray} is not in "
+                             f"accepts {self.accepts} -- a reason for a status nobody can send")
+        return self
 
 
 class WaitStep(_Declared):

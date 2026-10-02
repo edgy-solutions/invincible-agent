@@ -298,9 +298,14 @@ async def test_A_REOPENED_CASE_STARTS_A_NEW_APPROVAL_CHAIN(registered):
 
 @pytest.mark.asyncio
 async def test_A_TIER_REFUSAL_IS_NOT_A_RELEASE(registered):
+    """What follows a refusal is ruled and sealed in
+    tests/test_a_tier_refusal_returns_to_proposal_and_a_second_parks.py; here, only that it is not
+    a close."""
     out, _ = await _run(_event(), [(DECIDE, "replace_after_resupply"),
-                                   (ACK, "tier_refused", "tier@x")])
-    assert out["terminal"] == "tier_refused", out
+                                   (ACK, "tier_refused", "tier@x"),
+                                   (DECIDE, "defer_with_restriction"),
+                                   (ACK, "released", "tier@x")])
+    assert _path(out)[2] == ("maint_release", "tier_refused", "maint_fault_propose"), _path(out)
 
 
 # ── THE TABLES AGAINST THE TEMPLATE ─────────────────────────────────────────────────────────

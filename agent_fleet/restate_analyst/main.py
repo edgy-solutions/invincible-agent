@@ -1770,6 +1770,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _signal_reason_key(signal: str) -> str:
+    """Where a signal_await journals the statuses that must carry a reason, beside `accepts`."""
+    return f"signal_reason_required_{signal}"
+
+
 def _signal_accepts_key(signal: str) -> str:
     """Where a signal_await journals the statuses its resolver may deliver."""
     return f"signal_accepts:{signal}"
@@ -2450,6 +2455,8 @@ async def _run_definition(
                 step.audience, bindings, where=f"step {step.id} audience", strict=True,
                 context=context))
             ctx.set(_signal_accepts_key(step.signal), list(step.accepts))
+            if step.reason_required:
+                ctx.set(_signal_reason_key(step.signal), list(step.reason_required))
             _expired, _sig = await _race_deadline(
                 ctx, ctx.promise(step.signal, type_hint=dict), step.deadline_seconds)
             if _expired:
