@@ -178,6 +178,42 @@ affinity:
 {{- end }}
 
 {{/*
+"Not stateful nodes" — a REQUIRED nodeAffinity that keeps every pod EXCEPT the stateful-core
+three (Keycloak, Restate, Weaviate — see invincible-agent.statefulSpreadLabel/Affinity above)
+off any node carrying global.statefulNodes.labelKey. The label is applied to nodes OUT OF
+CHART (the operator labels whichever node(s) hold the stateful-core's local-path PVs); this
+define is the reservation's other half, and REQUIRED (unlike the spread affinity above) is
+correct here because the condition is the opposite shape: avoiding ONE specific node (or small
+labelled set) is always satisfiable by the many other nodes in the pool, whereas the spread
+affinity above has to avoid pods pinned to each other with nowhere else for any of them to go.
+A cordon would do the same job, but has to be reapplied by hand after every cluster change;
+this is the no-cordon-needed equivalent, expressed as a chart default.
+
+DoesNotExist, not a value match — ANY value on the label key reserves the node, so a node can
+be marked reserved without the chart needing to agree on what the value should be.
+
+Rendered only when global.statefulNodes.enabled (default true), and renders the WHOLE
+`affinity:` key, same convention as statefulSpreadAffinity above — a call site simply includes
+this with no wrapping. AT THIS CHART'S HEAD no non-stateful-core pod template has an affinity
+of its own, so every call site is a straight include; if one ever gains its own affinity block,
+that template must MERGE this nodeAffinity into its existing `affinity:` key by hand (a document
+may carry only one `affinity:` key, and an existing `required.nodeSelectorTerms` needs this
+matchExpression appended into EACH existing term, since terms are OR'd together) rather than
+including this verbatim.
+*/}}
+{{- define "invincible-agent.avoidStatefulNodes" -}}
+{{- if .Values.global.statefulNodes.enabled -}}
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: {{ .Values.global.statefulNodes.labelKey }}
+              operator: DoesNotExist
+{{- end -}}
+{{- end }}
+
+{{/*
 PostgreSQL connection host — uses subchart or external
 */}}
 {{- define "invincible-agent.pgHost" -}}

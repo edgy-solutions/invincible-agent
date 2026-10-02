@@ -117,6 +117,7 @@ spec:
             app.kubernetes.io/component: topaz-seed
         spec:
           restartPolicy: Never
+          {{- include "invincible-agent.avoidStatefulNodes" . | nindent 10 }}
           {{- with .Values.global.imagePullSecrets }}
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}

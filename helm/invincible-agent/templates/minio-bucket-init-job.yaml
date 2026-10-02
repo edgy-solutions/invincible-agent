@@ -51,6 +51,7 @@ spec:
         {{- include "invincible-agent.selectorLabels" (dict "component" "minio-bucket-init" "root" .) | nindent 8 }}
     spec:
       restartPolicy: OnFailure
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

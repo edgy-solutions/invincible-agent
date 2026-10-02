@@ -14,6 +14,7 @@ spec:
       name: {{ .Release.Name }}-restate-init
     spec:
       restartPolicy: OnFailure
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -130,6 +131,7 @@ spec:
       name: {{ .Release.Name }}-db-init
     spec:
       restartPolicy: OnFailure
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

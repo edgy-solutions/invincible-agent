@@ -44,6 +44,7 @@ _SCRIPT = _REPO / "scripts" / "upgrade-sandbox.sh"
 
 _SPREAD_LABEL_KEY = "iagent.io/spread-group"
 _SPREAD_LABEL_VALUE = "stateful-core"
+_STATEFUL_NODE_LABEL_KEY = "iagent.io/stateful-node"
 
 # StatefulSet name -> values key the "drop its resources" mutant (m1) disables.
 _STATEFULSETS = {
@@ -104,6 +105,83 @@ def _statefulsets(rendered: str) -> dict[str, dict]:
     return out
 
 
+def _pod_templates(rendered: str) -> list[tuple[str, str, dict, dict]]:
+    """Every rendered object that carries a pod template — a Deployment/StatefulSet's
+    spec.template, or a (Cron)Job's spec.template / spec.jobTemplate.spec.template — as
+    (kind, name, pod_spec, pod_template_labels). This DERIVES the "every pod template the chart
+    renders" population from the render itself, rather than from template filenames, so a new
+    template is picked up automatically and a removed one drops out on its own."""
+    docs = yaml.safe_load_all(rendered)
+    out: list[tuple[str, str, dict, dict]] = []
+    for doc in docs:
+        if not doc:
+            continue
+        spec = doc.get("spec") or {}
+        if "jobTemplate" in spec:
+            tmpl = spec["jobTemplate"]["spec"]["template"]
+        elif "template" in spec:
+            tmpl = spec["template"]
+        else:
+            continue
+        pod_spec = tmpl["spec"]
+        tmpl_labels = (tmpl.get("metadata") or {}).get("labels", {})
+        out.append((doc["kind"], doc["metadata"]["name"], pod_spec, tmpl_labels))
+    return out
+
+
+def _is_stateful_core(template_labels: dict) -> bool:
+    return template_labels.get(_SPREAD_LABEL_KEY) == _SPREAD_LABEL_VALUE
+
+
+def _avoids_stateful_nodes(pod_spec: dict, label_key: str = _STATEFUL_NODE_LABEL_KEY) -> bool:
+    """True iff EVERY nodeSelectorTerm (terms are OR'd together) carries a DoesNotExist
+    matchExpression on label_key. A partial term would still let the pod land on a labelled node
+    via whichever term lacks the expression, so "any term" is not sufficient — it must be all."""
+    terms = (
+        (pod_spec.get("affinity") or {})
+        .get("nodeAffinity", {})
+        .get("requiredDuringSchedulingIgnoredDuringExecution", {})
+        .get("nodeSelectorTerms", [])
+    )
+    if not terms:
+        return False
+    for term in terms:
+        exprs = term.get("matchExpressions") or []
+        if not any(
+            e.get("key") == label_key and e.get("operator") == "DoesNotExist" for e in exprs
+        ):
+            return False
+    return True
+
+
+class _DupKeyLoader(yaml.SafeLoader):
+    """A YAML loader that REFUSES a mapping with a repeated `affinity` key, instead of the
+    default last-one-wins. Plain yaml.safe_load would silently accept two `affinity:` keys in
+    the same document and hand back only the second — exactly the failure mode the spec's merge
+    requirement exists to prevent, so the detector must not share that blind spot.
+
+    Scoped to the `affinity` key specifically (not "any duplicate key") — this chart has
+    pre-existing, unrelated duplicate keys elsewhere (e.g. a repeated env var name in some
+    container's env list) that are out of scope for this check and would otherwise false-positive
+    it on every run."""
+
+
+def _dup_key_construct_mapping(loader, node, deep=False):
+    mapping: dict = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        value = loader.construct_object(value_node, deep=deep)
+        if key == "affinity" and key in mapping:
+            raise ValueError("duplicate 'affinity' key in mapping")
+        mapping[key] = value
+    return mapping
+
+
+_DupKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _dup_key_construct_mapping
+)
+
+
 @pytest.fixture(scope="module")
 def sandbox() -> str:
     return _render(*_sandbox_values_args())
@@ -115,6 +193,11 @@ def statefulsets(sandbox: str) -> dict[str, dict]:
     missing = [n for n in _STATEFULSETS if n not in sts]
     assert not missing, f"expected StatefulSets missing from the sandbox render: {missing}"
     return sts
+
+
+@pytest.fixture(scope="module")
+def pod_templates(sandbox: str) -> list[tuple[str, str, dict, dict]]:
+    return _pod_templates(sandbox)
 
 
 # ── positive control: there are no MORE spread-labelled StatefulSets than expected, and MinIO
@@ -208,3 +291,120 @@ def test_disabling_stateful_spread_removes_every_spread_label_and_affinity():
         assert not affinity, (
             f"{name}: affinity still present with global.statefulSpread.enabled=false: {affinity}"
         )
+
+
+# ── "NOT STATEFUL NODES" — every pod template except the stateful-core three must refuse to
+#    land on a node labelled for the stateful-core's local volumes ──────────────────────────────
+#
+# Chart item (architect order, 2026-10-02, following roll #16): global.statefulNodes adds a
+# REQUIRED nodeAffinity (DoesNotExist on global.statefulNodes.labelKey) to every pod template in
+# this chart OTHER than keycloak/restate/weaviate, so the reservation holds with no cordon.
+
+
+# ── (a) every non-stateful-core pod template avoids nodes labelled for stateful-core ──────────
+
+def test_non_stateful_core_pod_templates_avoid_stateful_nodes(
+    pod_templates: list[tuple[str, str, dict, dict]]
+):
+    non_core = [
+        (kind, name, pod_spec)
+        for kind, name, pod_spec, labels in pod_templates
+        if not _is_stateful_core(labels)
+    ]
+    # Measured on the sandbox render 2026-10-02: 39 non-stateful-core pod templates (28
+    # Deployments, 8 Jobs, 3 StatefulSets). The floor below is deliberately well under that — it
+    # exists to catch population derivation silently breaking (e.g. _pod_templates stops
+    # matching anything), not to pin the exact count, which will grow as the chart does.
+    assert len(non_core) >= 30, (
+        f"only {len(non_core)} non-stateful-core pod templates found in the sandbox render — "
+        "population derivation may be broken (see _pod_templates)"
+    )
+    missing = [f"{kind}/{name}" for kind, name, pod_spec in non_core if not _avoids_stateful_nodes(pod_spec)]
+    assert not missing, (
+        f"{len(missing)} non-stateful-core pod template(s) do not carry a REQUIRED nodeAffinity "
+        f"DoesNotExist on {_STATEFUL_NODE_LABEL_KEY} in every nodeSelectorTerm: {missing}"
+    )
+
+
+# ── (b) no stateful-core pod template carries the rule ────────────────────────────────────────
+
+def test_stateful_core_pod_templates_do_not_avoid_stateful_nodes(
+    pod_templates: list[tuple[str, str, dict, dict]]
+):
+    core = [
+        (kind, name, pod_spec)
+        for kind, name, pod_spec, labels in pod_templates
+        if _is_stateful_core(labels)
+    ]
+    assert len(core) == 3, f"expected exactly 3 stateful-core pod templates, found {len(core)}: {core}"
+    unexpected = [f"{kind}/{name}" for kind, name, pod_spec in core if _avoids_stateful_nodes(pod_spec)]
+    assert not unexpected, (
+        "stateful-core pod template(s) unexpectedly carry the avoid-stateful-nodes rule — this "
+        f"would keep them off the very node(s) they are reserved for: {unexpected}"
+    )
+
+
+# ── (c) disabling global.statefulNodes removes the rule everywhere ────────────────────────────
+
+def test_disabling_stateful_nodes_removes_the_rule_everywhere():
+    off = _render(*_sandbox_values_args(), "--set", "global.statefulNodes.enabled=false")
+    assert _STATEFUL_NODE_LABEL_KEY not in off, (
+        "global.statefulNodes.enabled=false but the label key string still appears somewhere "
+        "in the render"
+    )
+    carriers = [
+        f"{kind}/{name}"
+        for kind, name, pod_spec, _labels in _pod_templates(off)
+        if _avoids_stateful_nodes(pod_spec)
+    ]
+    assert not carriers, (
+        f"pod template(s) still carry the avoid-stateful-nodes rule with "
+        f"global.statefulNodes.enabled=false: {carriers}"
+    )
+
+
+# ── (d) no rendered document has duplicate affinity keys ──────────────────────────────────────
+
+def test_no_rendered_document_has_duplicate_affinity_keys(sandbox: str):
+    """Guards the spec's MERGE requirement: a template that gains its own pre-existing affinity
+    block must merge this rule into it, never emit a second `affinity:` key. Plain YAML treats a
+    duplicate mapping key as last-one-wins and would never surface this, so the detector uses its
+    own loader that raises on a repeat key instead of silently keeping the second."""
+    bad: list[str] = []
+    for doc_text in re.split(r"(?m)^---$", sandbox):
+        if not doc_text.strip():
+            continue
+        try:
+            list(yaml.load_all(doc_text, Loader=_DupKeyLoader))
+        except ValueError as e:
+            bad.append(str(e))
+        except yaml.YAMLError:
+            pass  # a naive split on "---" lines can cut a multi-line scalar; unrelated here
+    assert not bad, f"duplicate mapping key(s) found in the sandbox render: {bad}"
+
+
+# ── (e) labelKey override is honoured ──────────────────────────────────────────────────────────
+
+def test_stateful_node_label_key_override_is_honoured():
+    custom_key = "example.io/custom-stateful-label"
+    rendered = _render(
+        *_sandbox_values_args(), "--set", f"global.statefulNodes.labelKey={custom_key}"
+    )
+    assert _STATEFUL_NODE_LABEL_KEY not in rendered, (
+        "the default label key still appears in the render after overriding "
+        "global.statefulNodes.labelKey"
+    )
+    non_core = [
+        (kind, name, pod_spec)
+        for kind, name, pod_spec, labels in _pod_templates(rendered)
+        if not _is_stateful_core(labels)
+    ]
+    missing = [
+        f"{kind}/{name}"
+        for kind, name, pod_spec in non_core
+        if not _avoids_stateful_nodes(pod_spec, label_key=custom_key)
+    ]
+    assert not missing, (
+        f"{len(missing)} non-stateful-core pod template(s) do not carry the overridden "
+        f"labelKey ({custom_key}): {missing}"
+    )

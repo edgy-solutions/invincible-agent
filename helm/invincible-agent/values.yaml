@@ -56,6 +56,17 @@ global:
   statefulSpread:
     enabled: true
     weight: 100
+  # -- "Not stateful nodes" scheduling: a REQUIRED nodeAffinity that keeps every pod in this
+  # chart OTHER than the stateful-core (Keycloak, Restate, Weaviate — the spread group just
+  # above) off any node labelled for the stateful-core's local volumes. The label itself is
+  # applied out-of-chart (the operator labels the dedicated node(s) that hold the stateful-core
+  # local-path PVs); this is the reservation's other half, so no cordon is needed — every
+  # non-stateful-core pod states its own refusal to land there instead of depending on an
+  # external cordon the operator must remember to apply. labelKey's VALUE is irrelevant (the
+  # rendered matchExpression is DoesNotExist), only the key's presence on a node matters.
+  statefulNodes:
+    enabled: true
+    labelKey: iagent.io/stateful-node
 
 # ==========================================================================
 # PostgreSQL

@@ -52,6 +52,7 @@ spec:
         # without needing a separate restart step.
         checksum/broker-code: {{ .Files.Get "files/domain-broker.py" | sha256sum }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       containers:
         - name: broker
           image: {{ include "invincible-agent.image" (dict "name" "python" "registry" .Values.domainBroker.image.registry "repository" .Values.domainBroker.image.repository "tag" .Values.domainBroker.image.tag "root" .) }}
