@@ -690,7 +690,12 @@ cortexUi:
     # 87f1f3aa. Measured before pinning: the FULL tag resolves to this digest (200); the
     # abbreviated tag and the full tag with its last hex altered both answer 404; the 0489d368
     # control still resolves to 613b6c35. VITE_FEATURES unchanged.
-    digest: "sha256:87f1f3aa0e6e8591b7a7f0232c16a443bf3ce00f69985a6236cf4006c064fec5"
+    # 2026-10-02 roll #16: cortex-ui 21a32d0 (drops the unused node:fs import that broke vite build
+    # for every push after roll #13; carries 65ef90f, the origin drawn after upload, inert until
+    # served) -> f4bac439. Measured before pinning: the FULL tag resolves to this digest; the
+    # abbreviated tag and the full tag with its last hex altered both answer not-found; the
+    # 6596999 control still resolves to 87f1f3aa. linux/amd64 + linux/arm64. VITE_FEATURES unchanged.
+    digest: "sha256:f4bac439be69b6e0e471c5a195c6c03b7df59cd05e0f07d034dc84aa8e9e15c4"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
