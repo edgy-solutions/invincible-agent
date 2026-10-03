@@ -1596,6 +1596,42 @@ services:
           (ingest_status.get_status_for), and a caller who is neither the submitter nor
           the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
           ingest" — never a 403 that would confirm another caller's upload exists.
+      - method: POST
+        path: /ingest/events
+        identity: keycloak-jwt
+        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id; content_kind must be registered with branch == event (else 422)"
+        exposes: action
+        consumers: [OpenDDIL maintenance bridge (event-branch content kinds), ingestion seam]
+        class: gated
+        justification: >-
+          The JSON door for event-branch content kinds (ingest/origin seam, item C). Same
+          identity rule as POST /ingest above: no anonymous call, and `on_behalf_of` must be
+          the authenticated caller (403 otherwise, no delegation in v1). The body is
+          validated against a REGISTERED content kind whose branch is `event`; anything
+          else, including a document-branch kind, is a 422 before any case opens. A file drop
+          that declares an event kind is refused at /ingest itself
+          (`event_kind_requires_json`), so this route is the only way an event enters. The
+          case it seeds is keyed on the kind's identity_field, so a re-sent event reaches
+          the existing case rather than opening a rival one. A payload missing a field the
+          seeded trigger requires is 422, naming the field; 503 when that trigger cannot be
+          loaded (`trigger_unconfigured`). An unreadable kind registry is not caught here: it
+          raises (500) rather than falling back to an empty set, and no case opens.
+      - method: POST
+        path: /ingest/{ingest_id}/stage
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: gated-content
+        consumers: [doc-tools extraction pipeline (stage writes)]
+        class: gated
+        justification: >-
+          The stage transport for a drop's processing (ingest/origin seam, item A): doc-tools
+          reports extracting, review or failed. A single SERVICE identity is accepted, checked
+          before anything is read, so no end user can move a stage and a non-doc-tools caller
+          learns nothing about which ingest ids exist (403 before the 404 lookup). Stages move
+          forward only; a lateral or backwards move, or any move out of a terminal stage, is
+          409. Reaching `review` opens the document_promotion task, idempotently.
+          The 404 for an unknown id is visible only to doc-tools, which created the ids it
+          reports on.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
