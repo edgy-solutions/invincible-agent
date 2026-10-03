@@ -132,7 +132,8 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     case["input_revisions"] = [{"rev": 1, "event_id": case_id,
                                 "received_at": case["transitions"][-1]["at"],
                                 "provenance": "pushed"}]
-    current = {"revision": 1, "event_id": case_id, "provenance": "pushed"}
+    current = {"revision": 1, "event_id": case_id, "provenance": "pushed",
+               "received_at": case["input_revisions"][0]["received_at"]}
     ctx.set("case", case)
 
     # ── TRIAGE: one open case per episode ───────────────────────────────────────────────────
@@ -214,12 +215,12 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
 
 async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
                    n: int) -> Optional[dict]:
-    """The newest input revision above ``current``, from both sources in order, or None.
+    """The input revision received after ``current``, newest of both sources, or None.
 
     PUSHED FIRST: the revision the source sent again, kept on the episode. PULLED SECOND: the
     trigger's ``pull`` stub verb, rendered with ``{kept}`` in its context -- declared now, so the
-    real picture endpoint retires a stub rather than adding a second mechanism. On equal revisions
-    the pushed one wins. The winner passes intake again and must stay in the case's episode:
+    real picture endpoint retires a stub rather than adding a second mechanism. The newest
+    ``received_at`` wins and a tie goes to the pulled one (``case_routing.newest_revision``). The winner passes intake again and must stay in the case's episode:
     ``keep_revision`` is reachable on the ingress as well as through ``revise``, so what was kept
     is never trusted as checked, and neither is what a pull returns."""
     R = _routing()
@@ -244,7 +245,7 @@ async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
 
     pulled = await ctx.run(f"pull_{n}", _pull)
     best = await ctx.run(f"newest_{n}", _terminal(
-        lambda: R.newest_revision(current["revision"], [kept, pulled]), 500))
+        lambda: R.newest_revision(current, [kept, pulled]), 500))
     if best is None:
         return None
     flat = await ctx.run(f"refresh_{n}", _terminal(
@@ -253,7 +254,8 @@ async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
                                     ("rev", "event_id", "received_at", "provenance")})
     return {"facts": best["facts"], "flat": flat,
             "current": {"revision": best["rev"], "event_id": best.get("event_id"),
-                        "provenance": best.get("provenance")}}
+                        "provenance": best.get("provenance"),
+                        "received_at": best.get("received_at")}}
 
 
 # ── ONE INSTANCE ────────────────────────────────────────────────────────────────────────────
@@ -400,12 +402,15 @@ async def release(ctx: ObjectContext, request: dict) -> None:
 @case_episode.handler()
 async def keep_revision(ctx: ObjectContext, request: dict) -> dict:
     """Keep a pushed revision for the case holding this episode. A closed case, or another
-    case's event, keeps nothing: its refresh would never read it, or would read the wrong one."""
+    case's event, keeps nothing: its refresh would never read it, or would read the wrong one.
+    A ``received_at`` the refresh could not order is refused HERE: this handler is reachable on
+    the ingress, and the same value refused at the refresh would fail the case instead."""
     holder = await ctx.get("open")
     if not holder or holder != request.get("case_id"):
         raise restate.TerminalError(
             f"case {request.get('case_id')!r} does not hold this episode (open: {holder!r}); "
             "a revision is kept only for the open case", status_code=409)
+    _terminal(lambda: _routing().received_at(request), 400)()
     prev = await ctx.get("revision")
     kept = {"rev": (prev["rev"] if prev else 1) + 1, "event_id": request["event_id"],
             "received_at": request["received_at"], "provenance": "pushed",

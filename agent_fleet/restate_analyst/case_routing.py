@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -304,10 +305,38 @@ def check_revision(trigger: Trigger, facts: Any, case_key: str,
     return flat
 
 
-def newest_revision(current: int, candidates: list) -> Optional[Dict[str, Any]]:
-    """The candidate with the highest ``rev`` above ``current``, else None. CANDIDATES ARE IN
-    PRECEDENCE ORDER -- pushed before pulled -- so on equal revs the earlier one wins."""
-    best = None
+def received_at(revision: Any) -> datetime:
+    """A revision's ``received_at`` as an aware instant, or a refusal: ordering is by it, and a
+    naive time cannot be ordered against an aware one without inventing a zone."""
+    at = revision.get("received_at") if isinstance(revision, dict) else None
+    try:
+        when = datetime.fromisoformat(at) if isinstance(at, str) else None
+    except ValueError:
+        when = None
+    if when is None or when.tzinfo is None:
+        raise CaseRoutingError(
+            f"an input revision carries a `received_at` with its zone; got {at!r}")
+    return when
+
+
+def _same_revision(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("rev", "received_at", "facts"))
+
+
+def newest_revision(current: Dict[str, Any], candidates: list) -> Optional[Dict[str, Any]]:
+    """The candidate received most recently, if after ``current``; else None.
+
+    ORDERED BY ``received_at``, ruled 2026-10-03: pushed and pulled pictures are revisions of the
+    same artifact, so this is an ordering rule, not a merge -- the winner replaces the input whole.
+    ON A TIE THE PULLED ONE WINS, because it was asked for. ``rev`` labels a revision; it does not
+    order one.
+
+    THE SAME REVISION REACHED TWICE IS NOT A TIE. The shipped pull stub returns the kept revision
+    itself, so it ties every push; letting "pulled" win that would record every pushed picture as
+    pulled. A pulled candidate identical to another (``rev``, ``received_at``, ``facts``) is that
+    candidate, and keeps its provenance."""
+    floor = received_at(current)
+    best, best_key = None, None
     for c in candidates:
         if c is None:
             continue
@@ -315,6 +344,14 @@ def newest_revision(current: int, candidates: list) -> Optional[Dict[str, Any]]:
         if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(c.get("facts"), dict):
             raise CaseRoutingError(
                 f"an input revision carries an integer `rev` and the event's `facts`; got {c!r}")
-        if rev > current and (best is None or rev > best["rev"]):
-            best = c
+        at = received_at(c)
+        if at <= floor:
+            continue
+        if best is not None and _same_revision(best, c):
+            if best.get("provenance") == "pulled":   # whichever order they came in
+                best, best_key = c, (at, c.get("provenance") == "pulled")
+            continue
+        key = (at, c.get("provenance") == "pulled")
+        if best is None or key > best_key:
+            best, best_key = c, key
     return best
