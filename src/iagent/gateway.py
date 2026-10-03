@@ -8336,7 +8336,8 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
 
 
 def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: str,
-                        ingested_at: str, subject: str) -> None:
+                        ingested_at: str, subject: str,
+                        dropped_by_authz_id: str | None = None) -> None:
     """Create the ingest node for a NEW /ingest arrival, through the worker's graph HOME
     (`promotion_stores.Neo4jIngestGraph.create_node`) -- which itself now goes through the SDK
     graph writer's `write_node` (v0.9.6), but the idempotence (created vs already-existed) and
@@ -8363,7 +8364,34 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
     graph = promotion_stores.Neo4jIngestGraph(
         driver=neo4j_driver, initiator=Initiator(subject=subject, kind="person"))
     graph.create_node(ingest_id, kind=kind, sha256=sha256, object_ref=object_ref,
-                      ingested_at=ingested_at)
+                      ingested_at=ingested_at, dropped_by_authz_id=dropped_by_authz_id)
+
+
+async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str) -> bool:
+    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
+    call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
+    two case-opening points (an event-branch content kind on arrival, section 3; an origin
+    suggestion, section 6).
+
+    BEST-EFFORT, LIKE `_create_ingest_node`'s CALLER: the durable writes (bytes, manifest,
+    status row) already happened by the time this runs, so a Restate outage here is logged
+    (WARNING, naming `ingest_id`) and swallowed, never raised -- an otherwise-successful upload
+    must not 500 because the case runner is unreachable. Returns True iff the POST succeeded.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
+                json={"trigger": trigger, "facts": facts},
+            )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:  # noqa: BLE001 — best-effort; the upload already succeeded
+        logger.warning(
+            "case open failed for ingest_id=%s case_id=%s trigger=%s (%s: %s)",
+            ingest_id, case_id, trigger, type(exc).__name__, exc,
+        )
+        return False
 
 
 @app.post("/ingest")
@@ -8403,7 +8431,7 @@ async def ingest_document(
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import ingest_status, promotion, provenance
+    from . import content_kinds, ingest_status, promotion, provenance
 
     if kind not in ingest_status.KINDS:
         raise HTTPException(
@@ -8493,11 +8521,17 @@ async def ingest_document(
         # key on, so a claim derived from this drop can be traced back without the manifest.
         ingest_id=ingest_id,
     )
+    # DECLARED AND REGISTERED -> domain_type fills from the registration (ADR-0021/0041 §4/§8,
+    # SDK 0.9.7 `ContentKindRegistration.domain`, section 1 of the ingest/origin seam). A
+    # DECLARED-but-UNREGISTERED kind leaves domain_type None -- behaviour unchanged: the HALT
+    # for an unregistered kind belongs to the driver that resolves `content_kind`, not here.
+    _registered_kind = content_kinds.by_kind(declared_content_kind) if declared_content_kind else None
     manifest = {
         "ingest_id": ingest_id,
         "object_ref": object_prefix + safe_name,
         "content_kind": declared_content_kind,
-        "domain_type": None,
+        "domain_type": _registered_kind.domain if _registered_kind is not None else None,
+        "dropped_by": {"authz_id": current_user.authz_id},
         "provenance": provenance_block,
         # kind="person" is correct: the route above refuses any on_behalf_of other than the
         # caller's own authz_id, so this is never a delegate or service identity.
@@ -8538,13 +8572,35 @@ async def ingest_document(
                 ingest_id=ingest_id, kind=kind, sha256=sha256,
                 object_ref=manifest["object_ref"], ingested_at=ingested_at,
                 subject=current_user.authz_id,
+                dropped_by_authz_id=current_user.authz_id,
             )
         )
     except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
         logger.warning("ingest node creation failed for %s: %s", ingest_id, exc)
+    # SEEDS_WORKFLOW (section 3, SDK 0.9.7): an event-branch registered kind starts its
+    # workflow on arrival instead of being extracted -- a document-branch kind, or a
+    # declared-but-unregistered one, starts nothing (`workflow` stays None). Best-effort,
+    # like the node creation above: the upload is already durable.
+    workflow: dict | None = None
+    if _registered_kind is not None and _registered_kind.branch == "event" and _registered_kind.seeds_workflow:
+        _case_id = f"{_registered_kind.seeds_workflow}:{ingest_id}"
+        _facts = {
+            "ingest_id": ingest_id,
+            "object_ref": manifest["object_ref"],
+            "content_kind": declared_content_kind,
+            "domain_type": manifest["domain_type"],
+            "dropped_by": manifest["dropped_by"],
+        }
+        if _registered_kind.identity_field and _registered_kind.identity_field in manifest:
+            _facts[_registered_kind.identity_field] = manifest[_registered_kind.identity_field]
+        _started = await _open_case(
+            case_id=_case_id, trigger=_registered_kind.seeds_workflow, facts=_facts,
+            ingest_id=ingest_id,
+        )
+        workflow = {"case_id": _case_id, "started": _started}
     return {
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
-        "object_prefix": object_prefix, "duplicate": None,
+        "object_prefix": object_prefix, "duplicate": None, "workflow": workflow,
     }
 
 
@@ -8597,6 +8653,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "sha256": row.get("sha256"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "dropped_by": {"authz_id": row.get("submitted_by")},
     }
 
 

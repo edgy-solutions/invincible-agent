@@ -238,7 +238,7 @@ class Neo4jIngestGraph:
         return row is not None and int(row["n"]) > 0
 
     def create_node(self, ingest_id: str, *, kind: str, sha256: str, object_ref: str,
-                     ingested_at: str) -> bool:
+                     ingested_at: str, dropped_by_authz_id: str | None = None) -> bool:
         """Create the ingest node for a NEW arrival. Returns True if this call created it, False
         if it already existed (idempotent: a retried /ingest, or a concurrent one, must not
         double-create or raise).
@@ -253,7 +253,9 @@ class Neo4jIngestGraph:
 
         Props are deliberately narrow and all scalar: `kind`, `sha256`, `object_ref`,
         `submitted_by` (THIS home's own `initiator.subject` -- the acting person, never a
-        caller-supplied value), `ingested_at`.
+        caller-supplied value), `ingested_at`, and `dropped_by_authz_id` (ruling 1 -- the
+        caller-supplied authz_id, kept flat/scalar because the SDK graph writer's payload must
+        be all-primitive; never the JWT `sub`).
         """
         if not INGEST_ID_RE.match(ingest_id):
             raise ValueError(f"ingest_id {ingest_id!r} does not match promotion.INGEST_ID_RE")
@@ -265,6 +267,7 @@ class Neo4jIngestGraph:
             "object_ref": object_ref,
             "submitted_by": self._initiator.subject,
             "ingested_at": ingested_at,
+            "dropped_by_authz_id": dropped_by_authz_id,
         }
         result = self._writer.write_node(
             self._initiator, label=INGEST_FACT_FAMILY["node_label"], id=ingest_id, payload=props)

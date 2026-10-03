@@ -294,14 +294,14 @@ def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client,
 def test_status_owner_gets_the_row(client, monkeypatch):
     monkeypatch.setattr(
         ist, "get_status_for",
-        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "awaiting_disposition",
+        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "review",
                                         "kind": "pdf", "sha256": "deadbeef",
                                         "created_at": 1, "updated_at": 2})
     r = client.get("/ingest/deadbeef/status")
     assert r.status_code == 200
     body = r.json()
     assert body["ingest_id"] == "deadbeef"
-    assert body["stage"] == "awaiting_disposition"
+    assert body["stage"] == "review"
     assert body["duplicate"] is None
     assert "id" not in body and "status" not in body, "one name per field: id/status are dropped"
 
@@ -400,3 +400,207 @@ def test_electric_shape_client_cannot_override_the_where_for_ingest_status(clien
     where = stub_electric["params"]["where"]
     assert "1=1" not in where
     assert "submitted_by = 'alice@example.com'" in where
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingest/origin seam (SDK 0.9.7, lane/01-seam) — sections 1-3: a declared AND registered
+# content kind fills manifest["domain_type"]; dropped_by.authz_id is recorded (never sub);
+# an event-branch kind seeds its workflow on arrival.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from urllib.parse import quote  # noqa: E402
+
+from src.iagent import content_kinds as _ck  # noqa: E402
+
+
+def _fake_registration(**kw):
+    """A lightweight stand-in for iagent_mesh.ingest.ContentKindRegistration: the gateway
+    route only ever reads .branch/.domain/.seeds_workflow/.identity_field off whatever
+    content_kinds.by_kind returns, so a real SDK model is not needed to exercise it.
+
+    content_kinds is imported LOCALLY inside gateway.ingest_document (`from . import
+    content_kinds, ...`), not at module level -- so these tests patch the attribute on the
+    shared module object (`_ck.by_kind`) rather than `gateway.content_kinds`, which does not
+    exist as a module-level name."""
+    import types
+    base = {"kind": "x", "branch": "document", "domain": None,
+            "seeds_workflow": None, "identity_field": None}
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+@pytest.fixture
+def stub_restate_post(monkeypatch):
+    """Captures every POST the gateway makes through httpx.AsyncClient (the Restate ingress
+    call `_open_case` / `_open_safety_acceptance` share) and answers 200 by default -- set
+    `state["fail"] = True` to make raise_for_status raise instead, for the best-effort-on-
+    error arm. Returns (calls, state)."""
+    calls: list[dict] = []
+    state = {"fail": False}
+
+    class _Resp:
+        def __init__(self):
+            self.status_code = 200
+        def raise_for_status(self):
+            if state["fail"]:
+                raise RuntimeError("boom: restate unreachable (stubbed)")
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            calls.append({"url": url, "json": json})
+            return _Resp()
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+    return calls, state
+
+
+def test_ingest_declared_and_registered_kind_fills_domain_type(
+        client, fake_s3, fake_create_node, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="document",
+                                        domain="maintenance-bridge",
+                                        passes=("p",), outputs=("o",))
+        if kind == "work-instruction" else None,
+    )
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"registered kind bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "work-instruction"})
+    assert r.status_code == 200, r.text
+    manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
+    import json as _json
+    manifest = _json.loads(manifest_call["Body"])
+    # MUTANT (section 1): leaving domain_type None here is the exact fragment this reds --
+    # "manifest['domain_type'] == 'maintenance-bridge'".
+    assert manifest["domain_type"] == "maintenance-bridge"
+
+
+def test_ingest_declared_but_unregistered_kind_leaves_domain_type_none(
+        client, fake_s3, fake_create_node, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    monkeypatch.setattr(_ck, "by_kind", lambda kind: None)
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"unregistered kind bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "work-instruction"})
+    assert r.status_code == 200, r.text
+    manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
+    import json as _json
+    manifest = _json.loads(manifest_call["Body"])
+    assert manifest["domain_type"] is None
+
+
+def test_ingest_records_dropped_by_authz_id_not_sub(client, fake_s3, fake_create_node, monkeypatch):
+    """Ruling 1: authz_id is recorded, the JWT sub is not -- a User whose sub != authz_id
+    proves the two are not conflated anywhere on this path."""
+    user = type("U", (), {"authz_id": "alice-authz-id", "id": "alice-sub",
+                          "sub": "alice-sub", "email": "alice@example.com",
+                          "persona": None, "entitled_domains": [],
+                          "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    r = client.post("/ingest", files={"file": ("f.pdf", b"sub vs authz_id bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice-authz-id"})
+    assert r.status_code == 200, r.text
+    manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
+    import json as _json
+    manifest = _json.loads(manifest_call["Body"])
+    # MUTANT (section 2): recording sub here is the exact fragment this reds --
+    # "manifest['dropped_by'] == {'authz_id': 'alice-authz-id'}".
+    assert manifest["dropped_by"] == {"authz_id": "alice-authz-id"}
+    assert manifest["dropped_by"]["authz_id"] != "alice-sub"
+    call = fake_create_node[0]
+    assert call["dropped_by_authz_id"] == "alice-authz-id"
+
+
+def test_ingest_event_kind_seeds_exactly_one_workflow_on_arrival(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    calls, _state = stub_restate_post
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    body_bytes = b"event kind bytes"
+    r = client.post("/ingest", files={"file": ("e.json", body_bytes, "application/json")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "maintenance-fault-event"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    expected_ingest_id = promotion.ingest_id_for(body_bytes)
+    expected_case_id = f"maintenance_fault:{expected_ingest_id}"
+    # MUTANT (section 3): starting on a document kind, or not starting at all, reds the exact
+    # fragment -- "len(calls) == 1" and "case_id == expected_case_id".
+    assert len(calls) == 1, calls
+    sent = calls[0]
+    assert sent["url"] == (
+        f"{gateway._RESTATE_INGRESS_URL}/WorkflowRunner/{quote(expected_case_id, safe='')}/run/send"
+    )
+    assert sent["json"]["trigger"] == "maintenance_fault"
+    assert sent["json"]["facts"]["ingest_id"] == expected_ingest_id
+    assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
+    assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert body["workflow"] == {"case_id": expected_case_id, "started": True}
+
+
+def test_ingest_document_kind_starts_no_workflow(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    calls, _state = stub_restate_post
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        # seeds_workflow is set here (unusually, for a document-branch kind) so this test
+        # actually exercises the branch == "event" guard rather than vacuously passing because
+        # seeds_workflow is None -- see the section-3 mutant in the report ("start on a
+        # document kind"), which removed exactly that guard.
+        lambda kind: _fake_registration(kind=kind, branch="document",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="should_never_fire",
+                                        passes=("p",), outputs=("o",))
+        if kind == "maintenance-action-record" else None,
+    )
+    r = client.post("/ingest", files={"file": ("d.pdf", b"document kind bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "maintenance-action-record"})
+    assert r.status_code == 200, r.text
+    assert len(calls) == 0, calls
+    assert r.json()["workflow"] is None
+
+
+def test_ingest_restate_error_still_returns_200_with_started_false(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    calls, state = stub_restate_post
+    state["fail"] = True
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest", files={"file": ("e.json", b"restate down", "application/json")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "maintenance-fault-event"})
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1
+    assert r.json()["workflow"]["started"] is False

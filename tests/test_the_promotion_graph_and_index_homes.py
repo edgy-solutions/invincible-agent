@@ -206,7 +206,7 @@ def test_a_fact_that_did_not_APPLY_raises_naming_the_outcome(home, result):
 # ── THE GRAPH: node creation ──────────────────────────────────────────────────────────────────
 
 CREATE_KW = dict(kind="pdf", sha256="deadbeef", object_ref="ingress-user/pdf/x/file.pdf",
-                 ingested_at="2026-09-30T20:27:00Z")
+                 ingested_at="2026-09-30T20:27:00Z", dropped_by_authz_id="bob-authz-id")
 
 
 def test_create_node_calls_write_node_FROM_the_family_with_the_right_label_id_and_payload(home):
@@ -221,6 +221,7 @@ def test_create_node_calls_write_node_FROM_the_family_with_the_right_label_id_an
     assert payload == {
         "kind": "pdf", "sha256": "deadbeef", "object_ref": "ingress-user/pdf/x/file.pdf",
         "submitted_by": "bob", "ingested_at": "2026-09-30T20:27:00Z",
+        "dropped_by_authz_id": "bob-authz-id",
     }
 
 
