@@ -74,14 +74,19 @@ steps:
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
             icn: "{outputs.maint_fault_propose.walk.citations.ipd.icn}"
             hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
+            # PER PART, as the bridge contract's `work_order.parts[]` carries them (ruled
+            # 2026-10-03: this option is where they are first populated). Copied from the row
+            # below with the null-safe step `?.`: NULL, all three, when no site has stock.
+            source_site: "{trigger.picture.nearest_spare?.site}"
+            lead_time_days: "{trigger.picture.nearest_spare?.lead_time_days}"
+            lead_time_source: "{trigger.picture.nearest_spare?.lead_time_source}"
         spares: "{trigger.picture.spares}"
         input_revision: "{input.revision}"
         # THE ROW THE RESUPPLY READS, WHOLE: its site, stock, lead_time_days and lead_time_source
         # (stand-in | supply-system) travel together, so the lead time is never shown without the
         # source that says how far to trust it. NULL when no site has stock -- the card renders
-        # "no site has stock", no lead time. Cited whole because a definition may not compute,
-        # and a dotted path into a null is refused at render; the part's source site is this
-        # row's `site`, not a second copy of it.
+        # "no site has stock", no lead time. The parts above copy three of its fields; the card
+        # reads this row.
         nearest_spare: "{trigger.picture.nearest_spare}"
       - verb: defer_with_restriction
         label: "Defer with restriction"

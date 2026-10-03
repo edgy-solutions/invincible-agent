@@ -20,7 +20,8 @@ import copy
 import pytest
 
 # One cluster double, the case runner's own -- not a second one free to drift from it.
-from tests.test_a_case_runs_from_trigger_to_terminal import R, _answer, _Cluster, main, restate, wd
+from tests.test_a_case_runs_from_trigger_to_terminal import (
+    R, _answer, _Cluster, _refused, main, restate, wd)
 
 TRIGGER = "maintenance_fault"
 OPTION_VERBS = ["replace_now", "replace_after_resupply", "defer_with_restriction",
@@ -288,6 +289,63 @@ async def test_NO_SITE_HAS_STOCK_RENDERS_THE_NULL_AND_THE_CASE_STILL_CLOSES(regi
     opts = _options(c)
     assert "nearest_spare" in opts[1] and opts[1]["nearest_spare"] is None, opts[1]
     assert opts[1]["spares"] == ev["picture"]["spares"], opts[1]
+    # PER PART, NULL ALL THREE: the null-safe copy says "not supplied", never a crash.
+    [rec] = _emitted(c)
+    for p in [*opts[1]["parts"], *rec["work_order"]["parts"]]:
+        assert {k: p.get(k, "ABSENT") for k in _SOURCED} == dict.fromkeys(_SOURCED), p
+
+
+# ── A RESUPPLY PART SAYS WHERE IT COMES FROM AND WHEN (ruled 2026-10-03) ───────────────────
+
+#: The bridge contract's per-part fields that the resupply option populates first.
+_SOURCED = ("source_site", "lead_time_days", "lead_time_source")
+
+
+@pytest.mark.asyncio
+async def test_A_RESUPPLY_PART_CARRIES_ITS_SITE_AND_LEAD_TIME_TO_THE_ACTION_RECORD(registered):
+    """The nearest row's site and lead time, copied per part as the contract's
+    ``work_order.parts[]`` carries them, on the option and on the emitted record."""
+    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    want = {"source_site": "SITE-B", "lead_time_days": 5, "lead_time_source": "stand-in"}
+    [rec] = _emitted(c)
+    parts = [*_options(c)[1]["parts"], *rec["work_order"]["parts"]]
+    assert parts and all({k: p.get(k) for k in _SOURCED} == want for p in parts), parts
+    # replace_now is not sourced under a resupply: its site stays `here`, and no lead time.
+    for p in _options(c)[0]["parts"]:
+        assert (p["source_site"], "lead_time_days" in p) == ("here", False), p
+
+
+_CTX = {"trigger": {"picture": {"nearest_spare": None, "spares": [{"site": "S"}],
+                                "row": {"site": "SITE-B"}}}}
+
+
+def test_A_NULL_SAFE_STEP_YIELDS_NONE_ONLY_FOR_A_STATED_NONE():
+    assert main._render("{trigger.picture.nearest_spare?.site}", _CTX, where="t") is None
+    assert main._render("{trigger.picture.row?.site}", _CTX, where="t") == "SITE-B"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template", [
+    "{trigger.picture.no_such_row?.site}",      # ABSENT is a producer that did not say
+    "{trigger.picture.row?.no_such_field}",      # a present row without the field
+    "{trigger.picture.spares?.site}",            # through a list, not a mapping
+    "{trigger.picture.spares.row?.site}",        # a null-safe step looked up in a list
+    "{trigger.picture.nearest_spare.site}",      # no `?.`: a dotted path into a null
+    "from {trigger.picture.nearest_spare?.site}",  # interpolated: its None would be a blank
+    "from {trigger.picture.row?.site}",          # ... even where it would resolve
+])
+async def test_A_NULL_SAFE_STEP_IS_NO_WAY_AROUND_A_REFUSAL(template):
+    async def _go():
+        return main._render(template, _CTX, where="t")
+    await _refused(_go(), 400)
+
+
+def test_ONLY_THE_RENDERER_HONOURS_THE_NULL_SAFE_STEP():
+    """The audience binder and ``chooses_from`` resolve paths too; for them ``nearest_spare?`` is
+    a field nobody writes, so the widening stays where it was ruled."""
+    assert main._resolve_path(_CTX, "trigger.picture.nearest_spare?.site") == (False, None)
+    assert main._resolve_path(_CTX, "trigger.picture.nearest_spare?.site", null_safe=True) == (
+        True, None)
 
 
 @pytest.mark.asyncio
