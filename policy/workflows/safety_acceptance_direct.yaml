@@ -34,6 +34,10 @@ steps:
     id: acceptance
     promise_name: acceptance
     audience: "risk_acceptance_{level_slug}:SUSTAINMENT"
+    # THE ROW'S KIND, DECLARED HERE (WorkflowRunner registers no row under an undeclared kind).
+    # `/act` keys this act's verbs and reason requirement on it, so it must be the kind whose
+    # `accepts` this definition's chaining table matches on -- sealed, not trusted.
+    task_kind: "risk_acceptance_{level_slug}"
     subject_ref: "{hazard_id}"
     title: "Accept {level} risk — {hazard_id}"
     summary: >-

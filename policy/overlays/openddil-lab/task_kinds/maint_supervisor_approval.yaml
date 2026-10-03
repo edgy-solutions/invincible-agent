@@ -1,0 +1,11 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE SUPERVISOR'S SECOND APPROVAL, for an option that leaves the asset NMC or takes a
+# mission-essential asset offline.
+kind: maint_supervisor_approval
+renders_as:
+  badge: MAINT-SUP
+  title: Maintenance supervisor approval
+  archetype: APPROVAL_TASK
+accepts: [approved, rejected]
+reason_required: [rejected]

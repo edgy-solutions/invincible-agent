@@ -1,0 +1,16 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# A PARKED CASE COMES BACK AS A FRESH PROPOSAL: the picture (spares, readiness) may have moved,
+# and the walk and the options are rendered again from it.
+decision: maint_fault_park_chaining
+
+after: maint_fault_park
+
+matches: [outcome]
+
+domain:
+  outcome: [elapsed]
+
+rows:
+  - when: {outcome: elapsed}
+    then: maint_fault_propose

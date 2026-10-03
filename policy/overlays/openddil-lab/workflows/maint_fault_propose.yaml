@@ -1,0 +1,109 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# PROPOSE: walk the manual, render the four options, ask the tier's maintainer to choose one.
+#
+# THE OPTIONS ARE A TEMPLATE, NOT CODE. Exactly four, in this order, each citing the walk's data
+# module codes and the event's spares record. The citations come from the walk; the options come
+# from this file ("our file provides the citations, not the options" -- 7f).
+#
+# WHO DECIDES: "the reporting maintainer or the tier's maintainer role". The substrate routes to a
+# declared AUDIENCE, not to an actor derived from the event, so the row goes to the tier's
+# maintainer audience, which the reporting maintainer is in. Per-instance routing to the reporter
+# is the same platform item as the safety redraft's author.
+id: maint_fault_propose
+name: "Maintenance fault -- propose a disposition"
+
+classification: null
+
+participants:
+  - role: initiator
+  - role: maintainer
+
+domain_stages: [proposed, awaiting_approval]
+
+steps:
+  # STUBBED until 7f Phase 2(e): see verbs/s1000d_fault_walk.yaml.
+  - kind: spo_operation
+    id: walk
+    subject: "s1000d:fault_isolation"
+    verb: s1000d_fault_walk
+
+  - kind: render
+    id: options
+    template:
+      - verb: replace_now
+        label: "Replace now"
+        readiness: FMC
+        takes_offline: true
+        task: "Remove and replace {trigger.fault.item} from local stock"
+        task_refs:
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"}
+        parts:
+          - item: "{trigger.fault.item}"
+            part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
+            quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
+            source_site: here
+        spares: "{trigger.picture.spares}"
+        # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
+        # basis {rule, observed_at}, so the card shows why a supervisor is or is not asked.
+        battle_condition: "{trigger.picture.battle_condition}"
+      - verb: replace_after_resupply
+        label: "Replace after resupply"
+        readiness: PMC
+        takes_offline: false
+        task: "Order {trigger.fault.item} and replace on receipt"
+        task_refs:
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"}
+        parts:
+          - item: "{trigger.fault.item}"
+            part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
+            quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
+        spares: "{trigger.picture.spares}"
+        # THE ROW THE RESUPPLY READS, WHOLE: its site, stock, lead_time_days and lead_time_source
+        # (stand-in | supply-system) travel together, so the lead time is never shown without the
+        # source that says how far to trust it. NULL when no site has stock -- the card renders
+        # "no site has stock", no lead time. Cited whole because a definition may not compute,
+        # and a dotted path into a null is refused at render; the part's source site is this
+        # row's `site`, not a second copy of it.
+        nearest_spare: "{trigger.picture.nearest_spare}"
+      - verb: defer_with_restriction
+        label: "Defer with restriction"
+        readiness: PMC
+        takes_offline: false
+        task: "Operate {trigger.asset_id} under restriction until the planning interval"
+        task_refs:
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"}
+        interval: "{outputs.maint_fault_propose.walk.citations.planning_interval.interval}"
+        parts: []
+        spares: "{trigger.picture.spares}"
+      - verb: evacuate_for_depot
+        label: "Evacuate for depot"
+        readiness: NMC
+        takes_offline: true
+        task: "Evacuate {trigger.asset_id} to depot for {trigger.fault.item}"
+        task_refs:
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
+        parts: []
+        spares: "{trigger.picture.spares}"
+
+  - kind: human_await
+    id: decide
+    audience: "maint_fault_approval:{trigger.owning_tier}"
+    task_kind: maint_fault_approval
+    subject_ref: "{asset_id}"
+    title: "Fault {trigger.fault.fault_code} on {asset_id}: choose a disposition"
+    summary: >-
+      Four options, each citing the manual and the spares record. Choosing one approves it;
+      reject sends it back for a new proposal, defer parks it until a revisit time. Both need a
+      reason. An unanswered proposal escalates; it is never approved by silence.
+    role: maintainer
+    chooses_from: outputs.maint_fault_propose.options
+    approves: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot]
+    # SAMPLE: four hours.
+    deadline_seconds: 14400
+
+observable_state:
+  visible: [domain_stages, decide.status]
+  internal: []

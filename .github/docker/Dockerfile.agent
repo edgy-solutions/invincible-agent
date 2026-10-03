@@ -97,6 +97,13 @@ COPY policy/overlays/ /app/policy/overlays/
 # directory over. Loud and specific, which is the only reason this is an outage and
 # not the eighteen-dead-task-rows shape recorded above.
 COPY policy/decisions/ /app/policy/decisions/
+# THE CASE RUNNER'S OTHER TWO SEEDS. Both are empty today -- every trigger and stub verb is a
+# programme's, and ships in the overlays line above -- and both loaders look for them beside the
+# definitions. Baked now, while they hold only a README, so the first platform row lands in an
+# image that already carries its directory. tests/test_a_chaining_table_is_bound_to_its_definition
+# derives every seed directory from the loaders and asserts its COPY line here.
+COPY policy/triggers/ /app/policy/triggers/
+COPY policy/verbs/ /app/policy/verbs/
 # THE RATIFIED RISK MATRIX (ADR-0051 §2), and this is the FOURTH time the comment
 # above has come true — it said "the next shared-policy file will need another line
 # here, and forgetting it fails SILENTLY". It did, and this one failed LOUDLY but

@@ -8,6 +8,11 @@
 # human to represent a decision already made.
 decision: safety_acceptance_chaining
 
+# `after:` -- the definition whose termination this table decides (case_routing.chaining_index).
+# DECLARED, never derived from this table's name: no naming convention recovers `safety_acceptance_direct` from
+# `safety_acceptance_chaining`, and a convention would be a prefix registry whose misses end a case as "no table".
+after: safety_acceptance_direct
+
 matches: [outcome]
 
 # The `accepts` of `risk_acceptance_{high,serious,medium,low}` — all four declare the same three

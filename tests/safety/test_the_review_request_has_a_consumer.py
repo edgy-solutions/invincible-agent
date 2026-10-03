@@ -316,21 +316,22 @@ def test_the_selection_distinguishes_concurrence_from_direct():
 def test_the_gateway_calls_the_service_the_runtime_registers():
     """THE URL IS A FROZEN CONTRACT SURFACE and it is spelled in two files.
 
-    The gateway builds `/SafetyAcceptance/{key}/run/send` by hand, as it does for
-    `/GroupedReview/...`; the runtime registers `Workflow("SafetyAcceptance")` with a handler
-    named `run`. Each is correct alone; a rename on either side is a 404 at the moment a hazard
+    The gateway builds `/WorkflowRunner/{key}/run/send` by hand, as it does for
+    `/GroupedReview/...`; the runtime registers `Workflow("WorkflowRunner")` with a handler
+    named `run`. (It was SafetyAcceptance until S5: that service ran only the first selected
+    definition, so the chaining tables had no consumer.) Each is correct alone; a rename on either side is a 404 at the moment a hazard
     needs an authority, and nothing else in the suite looks at both.
     """
     wf_src = (_REPO / "agent_fleet" / "restate_analyst"
-              / "safety_acceptance_workflow.py").read_text(encoding="utf-8")
+              / "workflow_runner.py").read_text(encoding="utf-8")
     gw_src = (_REPO / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
-    assert 'Workflow("SafetyAcceptance")' in wf_src
-    assert "/SafetyAcceptance/" in gw_src, (
-        "the gateway no longer calls SafetyAcceptance — the review_request consumer is "
+    assert 'Workflow("WorkflowRunner")' in wf_src
+    assert "/WorkflowRunner/" in gw_src, (
+        "the gateway no longer calls WorkflowRunner — the review_request consumer is "
         "unreachable and R-076 has recurred in the same place"
     )
     assert "/run/send" in gw_src, (
-        "the gateway calls SafetyAcceptance but not through `/send` — a synchronous call would "
+        "the gateway calls WorkflowRunner but not through `/send` — a synchronous call would "
         "hold the user's turn open until a human disposes the acceptance, which may be days"
     )
 

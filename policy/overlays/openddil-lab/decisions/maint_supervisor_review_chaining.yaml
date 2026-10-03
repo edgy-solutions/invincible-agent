@@ -1,0 +1,21 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# WHAT FOLLOWS A SUPERVISOR REVIEW. A refusal returns the case for a NEW proposal -- the
+# maintainer's approval is cleared with it -- and an unanswered review escalates.
+decision: maint_supervisor_review_chaining
+
+after: maint_supervisor_review
+
+matches: [outcome]
+
+# `outcome`: the accepts of `maint_supervisor_approval`, plus `timed_out` from the deadline.
+domain:
+  outcome: [approved, rejected, timed_out]
+
+rows:
+  - when: {outcome: approved}
+    then: maint_release
+  - when: {outcome: rejected}
+    then: maint_fault_propose
+  - when: {outcome: timed_out}
+    then: maint_fault_escalate

@@ -1,0 +1,30 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# AN UNANSWERED APPROVAL ESCALATES AND NEVER AUTO-APPROVES. A deadline on a proposal or a
+# supervisor review lands here, in its own queue. Nothing here approves anything: `reopen` sends
+# the case back for a NEW proposal (whose approvals start a new chain), `withdrawn` closes it with
+# a stated reason. No deadline: an escalation that expired would have nowhere further to go.
+id: maint_fault_escalate
+name: "Maintenance fault -- escalation"
+
+classification: null
+
+participants:
+  - role: escalation
+
+domain_stages: [escalated]
+
+steps:
+  - kind: human_await
+    id: escalation
+    audience: "maint_escalation:{trigger.owning_tier}"
+    task_kind: maint_escalation
+    subject_ref: "{asset_id}"
+    title: "Unanswered maintenance approval -- {asset_id}"
+    summary: >-
+      An approval for this fault was not answered in time. Reopen it for a new proposal, or
+      withdraw the case with a reason.
+
+observable_state:
+  visible: [domain_stages, escalation.status]
+  internal: []

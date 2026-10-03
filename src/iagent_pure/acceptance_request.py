@@ -49,6 +49,11 @@ def review_request_of(engine_response: Any) -> Dict[str, Any]:
     return rr if isinstance(rr, dict) and rr else {}
 
 
+#: The WorkflowRunner trigger a safety `review_request` opens (policy/overlays/*/triggers/). The
+#: route after it -- concurrence or direct, and what follows each outcome -- is decision-table rows.
+SAFETY_TRIGGER = "safety_review_request"
+
+
 def acceptance_trigger(review_request: Dict[str, Any]) -> Dict[str, Any]:
     """The FLAT trigger `_run_definition` binds a definition's `{placeholders}` from.
 
@@ -93,6 +98,9 @@ def acceptance_trigger(review_request: Dict[str, Any]) -> Dict[str, Any]:
         "hazard_id": str(hazard_id),
         "level": str(level),
         "level_slug": str(level_slug),
+        # THE CASE KEY, as a fact: the trigger declares `key: acceptance_id`, and the runner refuses
+        # a case whose URL key is not the event's own -- so the dedupe is this one derivation.
+        "acceptance_id": acceptance_workflow_id(str(hazard_id), str(level_slug)),
         "kind": str(review_request.get("kind") or ""),
         "audience": str(review_request.get("audience") or ""),
         "subject_ref": str(review_request.get("subject_ref") or hazard_id),

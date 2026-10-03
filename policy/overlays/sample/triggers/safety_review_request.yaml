@@ -1,0 +1,21 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE SAFETY ACCEPTANCE, AS A CASE. engine-safety's `review_request`, flattened by
+# `acceptance_request.acceptance_trigger`, opens a WorkflowRunner case; `safety_acceptance_selection`
+# chooses concurrence or direct acceptance by level, and the `after:` tables carry it to a
+# terminal. Nothing in Python knows the word "concurrence".
+trigger: safety_review_request
+
+selection: safety_acceptance_selection
+
+# THE CASE KEY: one acceptance per hazard per level (`acceptance_workflow_id`). The level is in the
+# key because a redraft that moves the hazard to another level is a different acceptance by a
+# different authority.
+key: acceptance_id
+
+# No `episode`: the key already IS one hazard at one level, so a second event for it reaches the
+# same case and nothing else could be "the same episode".
+
+# Every placeholder the safety definitions bind, refused at intake rather than at the first
+# await -- a missing one there fails the case after it has already opened.
+requires: [hazard_id, level, level_slug]

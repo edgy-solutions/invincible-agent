@@ -67,7 +67,7 @@ data:
   GRAPH_OVERLAY_DIRS: "/app/policy/overlays/sample/graphs"
   {{- end }}
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
-  TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds"
+  TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds"
   {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of

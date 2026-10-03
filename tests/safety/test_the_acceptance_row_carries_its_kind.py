@@ -187,13 +187,22 @@ async def test_the_producers_own_request_reaches_the_register_with_its_kind(monk
 async def test_the_generic_runner_does_not_take_the_kind_from_the_request(monkeypatch):
     """CONTROL, one difference: the entry point. Same trigger (it carries
     `kind: risk_acceptance_medium`) and same definition, through `_run_definition` as a client's
-    BPMN request reaches it. The row stays `workflow_ack`."""
+    BPMN request reaches it. The row stays `workflow_ack`.
+
+    The definition now DECLARES its kind (`task_kind:` on the await), which a client's request
+    may not do -- `_run_definition` refuses it with 400 off the registry path. So the declaration
+    is stripped here: what this control isolates is that the REQUEST's `kind` fact never becomes
+    the row's kind, and the stripped declaration is the only other route to one."""
     posts = _recording_post(monkeypatch)
     trigger = ar.acceptance_trigger(_HAZ_1003)
     assert trigger["kind"] == "risk_acceptance_medium"  # the request DOES name a kind
-    wf = load_workflow_definition(_DIRECT)
+    body = load_workflow_definition(_DIRECT).model_dump()
+    declared = [s for s in body["steps"] if s.get("task_kind")]
+    assert declared, "the definition no longer declares a kind, so stripping it controls nothing"
+    for s in declared:
+        s["task_kind"] = None
     ctx = _ctx_for(trigger)
-    out = await _outcome(main._run_definition(ctx, ctx.key(), wf.model_dump(), trigger))
+    out = await _outcome(main._run_definition(ctx, ctx.key(), body, trigger))
     assert isinstance(out, _Suspended), f"{type(out).__name__}: {out}"
 
     assert [b["kind"] for b in _registers(posts)] == ["workflow_ack"], _registers(posts)

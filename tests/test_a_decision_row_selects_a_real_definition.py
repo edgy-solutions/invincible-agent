@@ -36,11 +36,13 @@ import pytest
 import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
-_DECISION_DIRS = (
-    _REPO / "policy" / "decisions",
-    _REPO / "policy" / "overlays" / "sample" / "decisions",
-)
-_WORKFLOW_DIR = _REPO / "policy" / "workflows"
+# THE SEED, THEN EVERY OVERLAY ON DISK -- globbed, the composition the runtime reads. This listed
+# `sample` alone and the seed's definitions alone: the openddil-lab tables were never checked, and
+# a sample table selecting a sample-overlay definition read as "resolves nowhere" although the
+# runtime composes overlay definitions with the seed's.
+_POLICY = _REPO / "policy"
+_DECISION_DIRS = (_POLICY / "decisions", *sorted(_POLICY.glob("overlays/*/decisions")))
+_WORKFLOW_DIRS = (_POLICY / "workflows", *sorted(_POLICY.glob("overlays/*/workflows")))
 
 
 def _tables() -> list[tuple[str, dict]]:
@@ -53,7 +55,7 @@ def _tables() -> list[tuple[str, dict]]:
         for p in sorted(d.glob("*.yaml")):
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             if raw.get("rows"):
-                out.append((f"{d.name}/{p.name}", raw))
+                out.append((p.relative_to(_POLICY).as_posix(), raw))
     return out
 
 
@@ -66,7 +68,7 @@ def _definition_ids() -> set[str]:
     repository it is guarding.
     """
     ids: set[str] = set()
-    for p in sorted(_WORKFLOW_DIR.glob("*.yaml")):
+    for p in (f for d in _WORKFLOW_DIRS for f in sorted(d.glob("*.yaml"))):
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         if raw.get("id"):
             ids.add(str(raw["id"]))

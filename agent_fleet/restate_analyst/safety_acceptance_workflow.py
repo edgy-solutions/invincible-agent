@@ -134,6 +134,11 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         # NAMED so cortex-bff's `/act` resumes THIS service's `approve`, not
         # BPMNWorkflowRunner's — the bug this fix exists to close (HAZ-1003).
         workflow_service="SafetyAcceptance",
+        # THE DEFINITION IS THE REGISTRY'S (loaded above by id), and the safety awaits now DECLARE
+        # their kind -- which `_run_definition` honours only from the registry. Without this every
+        # replay of an in-flight acceptance would refuse at its first await. No journal entry
+        # moves: no safety step declares `approves` or `chooses_from`.
+        from_registry=True,
     )
 
     awaited = [

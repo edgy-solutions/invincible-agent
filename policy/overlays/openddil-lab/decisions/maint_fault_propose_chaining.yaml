@@ -1,0 +1,48 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# WHAT FOLLOWS A PROPOSAL. The SUPERVISOR RULE lives here, and only here: a second approval when
+# the chosen option yields NMC or takes a mission-essential asset offline.
+#
+# THE RULE IS WRITTEN ON THE OPTION'S VERB, NOT ON `chosen.readiness`. A chaining table matches
+# only facts that are PRESENT, and `chosen.*` is absent when the answer chose nothing (rejected,
+# deferred, timed out) -- so a table matching `chosen.readiness` would refuse those rows. The verb
+# IS the option; which verbs need a supervisor is derived from the option template's
+# `readiness` and `takes_offline`, and that agreement is sealed, not trusted:
+#
+#   replace_now             FMC  takes offline   -> supervisor iff mission-essential
+#   replace_after_resupply  PMC  stays up        -> release
+#   defer_with_restriction  PMC  stays up        -> release
+#   evacuate_for_depot      NMC  takes offline   -> supervisor always
+decision: maint_fault_propose_chaining
+
+after: maint_fault_propose
+
+matches: [outcome, picture.battle_condition.mission_essential]
+
+# `outcome`: the accepts of `maint_fault_approval`, plus `timed_out` from the deadline.
+domain:
+  outcome: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot,
+            rejected, deferred, timed_out]
+  picture.battle_condition.mission_essential: [true, false]
+
+rows:
+  - when: {outcome: replace_now, picture.battle_condition.mission_essential: true}
+    then: maint_supervisor_review
+  - when: {outcome: replace_now, picture.battle_condition.mission_essential: false}
+    then: maint_release
+  - when: {outcome: replace_after_resupply}
+    then: maint_release
+  - when: {outcome: defer_with_restriction}
+    then: maint_release
+  - when: {outcome: evacuate_for_depot}
+    then: maint_supervisor_review
+  # REJECT RETURNS TO PROPOSED, with the reason on the transition (reason-required on the kind).
+  - when: {outcome: rejected}
+    then: maint_fault_propose
+  # DEFER PARKS. Not the same act as the `defer_with_restriction` OPTION: that one approves
+  # operating under restriction; this one declines to decide yet.
+  - when: {outcome: deferred}
+    then: maint_fault_park
+  # AN UNANSWERED PROPOSAL ESCALATES. It never reaches release.
+  - when: {outcome: timed_out}
+    then: maint_fault_escalate

@@ -1,0 +1,13 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE MAINTAINER'S CHOICE. The four option verbs approve the option they name (the await's
+# `chooses_from`); `rejected` returns the case for a new proposal and `deferred` parks it. Both
+# need a reason: a refusal without its reason is the erasure the record exists to prevent.
+kind: maint_fault_approval
+renders_as:
+  badge: MAINT
+  title: Maintenance disposition
+  archetype: APPROVAL_TASK
+accepts: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot,
+          rejected, deferred]
+reason_required: [rejected, deferred]

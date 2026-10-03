@@ -1,0 +1,64 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# RELEASE: emit the ActionRecord the bridge contract names, then wait for the owning tier to
+# acknowledge it. The case closes on the tier's ack.
+#
+# THE APPROVAL CHAIN IS THE EXECUTOR'S, NEVER THE TEMPLATE'S: `{case.approval_chain}` is what the
+# executor wrote from the identities `approve` verified. A template that spelled an approver would
+# be a forgery the case record could not tell apart.
+#
+# `provenance` names the case's definition (its trigger) and the emitter (THIS definition, the
+# one that released), and this instance. The proposal is the chosen option's own record.
+id: maint_release
+name: "Maintenance fault -- release"
+
+classification: null
+
+participants:
+  - role: owning_tier
+
+domain_stages: [released, closed]
+
+steps:
+  - kind: emit
+    id: action
+    channel: maintenance_action
+    template:
+      action_id: "{case.instance_id}"
+      event_id: "{trigger.event_id}"
+      asset_id: "{trigger.asset_id}"
+      owning_tier: "{trigger.owning_tier}"
+      label: "{trigger.label}"
+      work_order:
+        option: "{outputs.maint_fault_propose.decide.chosen.verb}"
+        readiness: "{outputs.maint_fault_propose.decide.chosen.readiness}"
+        task: "{outputs.maint_fault_propose.decide.chosen.task}"
+        task_refs: "{outputs.maint_fault_propose.decide.chosen.task_refs}"
+        parts: "{outputs.maint_fault_propose.decide.chosen.parts}"
+        outcome: approved
+      approval_chain: "{case.approval_chain}"
+      provenance:
+        # RULED 2026-10-02: provenance names the CASE DEFINITION and the EMITTER, both. A case is
+        # declared by its trigger (selection, key, episode), so the case definition is the
+        # trigger's name. The three workflow_* fields are the week-1 contract's spelling and
+        # name the emitter; emitted_by says so in a field of its own.
+        case_definition: "{case.trigger}"
+        case_id: "{case.case_id}"
+        emitted_by: "{definition.id}"
+        workflow_definition_id: "{definition.id}"
+        workflow_definition_version: "{definition.version}"
+        workflow_instance_id: "{case.instance_id}"
+        manual_nodes_consulted:
+          - "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"
+          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"
+          - "{outputs.maint_fault_propose.walk.citations.ipd.dmc}"
+          - "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"
+
+  # A SYSTEM'S ANSWER, not a human's: no task row. Resolved through the same authority gate.
+  - kind: signal_await
+    id: tier_ack
+    signal: tier_ack
+    audience: "maint_tier_ack:{trigger.owning_tier}"
+    accepts: [released, tier_refused]
+    # A REFUSAL GOES BACK TO A MAINTAINER, so it must say why; the reason rides the hop.
+    reason_required: [tier_refused]

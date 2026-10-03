@@ -1,0 +1,21 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE S1000D WALK, DECLARED AS A STUB. 7f serves the real walk (fault isolation -> remove/install
+# -> IPD -> planning interval) in its Phase 2(e). Until then this row stands in, and says so on
+# the step record (`status: STUB`, `retired_by`).
+#
+# THE SHAPE IS THE ONE 7f RELAYED (sessions/2026-10-02-relay-contract-7f-mrad-arr-0417-walk-
+# return-verbatim-from-doc-tools.md). EVERY DATA MODULE CODE IS NULL: inventing a DMC is
+# forbidden, and a plausible-looking code would be cited on a work order as if a manual said it.
+# A null citation renders as null on the option, which is what the approver should see.
+verb: s1000d_fault_walk
+stub: true
+retired_by: "7f Phase 2(e) -- the S1000D walk served by doc-tools"
+returns:
+  bit_code: "{trigger.fault.fault_code}"
+  bit_text: null
+  citations:
+    fault_isolation: {dmc: null}
+    remove_install: {dmc: null}
+    ipd: {dmc: null, part_number: null, quantity: null}
+    planning_interval: {dmc: null, interval: null}

@@ -1,0 +1,55 @@
+# SEED — platform species (ADR-0036). Ruled platform-generic 2026-10-02: the definition is the
+# platform's; WHO stewards a domain is each deployment's grant on `origin_confirmation:<domain>`.
+#
+# THE ACCEPTED ORIGIN, HANDED TO ITS WRITER. This engine writes no store: it emits the confirmed
+# origin with the approval chain that authorizes it, and waits for the writer to say whether the
+# origin columns were written. The writer (the systems_of_record resolver) is not built; until it
+# is, nothing answers `origin_written` and the case waits -- the artifact stays unresolved, which
+# is the safe side.
+#
+# THE ORIGIN IS THE SUGGESTION AS CONFIRMED, field for field. A steward accepts or rejects the
+# suggestion whole; amending it would be a different suggestion with different evidence.
+id: origin_record
+name: "Artifact origin -- record"
+
+classification: null
+
+participants:
+  - role: origin_writer
+
+domain_stages: [recorded, written]
+
+steps:
+  - kind: emit
+    id: resolution
+    channel: origin_resolution
+    template:
+      resolution_id: "{case.instance_id}"
+      suggestion_id: "{trigger.suggestion_id}"
+      artifact_id: "{trigger.artifact_id}"
+      origin:
+        owner_domain: "{trigger.suggested.owner_domain}"
+        program: "{trigger.suggested.program}"
+        obtained_via: "{trigger.suggested.obtained_via}"
+      evidence:
+        source: "{trigger.evidence.source}"
+        citation: "{trigger.evidence.citation}"
+      approval_chain: "{case.approval_chain}"
+      provenance:
+        # RULED 2026-10-02: provenance names the CASE DEFINITION and the EMITTER, both. A case is
+        # declared by its trigger (selection, key, episode), so the case definition is the
+        # trigger's name. The three workflow_* fields are the week-1 contract's spelling and
+        # name the emitter; emitted_by says so in a field of its own.
+        case_definition: "{case.trigger}"
+        case_id: "{case.case_id}"
+        emitted_by: "{definition.id}"
+        workflow_definition_id: "{definition.id}"
+        workflow_definition_version: "{definition.version}"
+        workflow_instance_id: "{case.instance_id}"
+
+  # A SYSTEM'S ANSWER, not a human's: no task row. Resolved through the same authority gate.
+  - kind: signal_await
+    id: written
+    signal: origin_written
+    audience: "origin_writer:{trigger.suggested.owner_domain}"
+    accepts: [written, write_refused]

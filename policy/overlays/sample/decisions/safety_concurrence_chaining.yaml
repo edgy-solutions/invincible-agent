@@ -10,6 +10,11 @@
 # is expressed HERE, as a row, where it is reviewable as policy.
 decision: safety_concurrence_chaining
 
+# `after:` -- the definition whose termination this table decides (case_routing.chaining_index).
+# DECLARED, never derived from this table's name: no naming convention recovers `safety_concurrence` from
+# `safety_concurrence_chaining`, and a convention would be a prefix registry whose misses end a case as "no table".
+after: safety_concurrence
+
 matches: [outcome]
 
 # THE VALUES THE CONCURRENCE ACT CAN EMIT — and they are not invented here. They are exactly the

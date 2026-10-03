@@ -202,3 +202,32 @@ sites:
     reason: >-
       PROSE — a comment warning that a chaining row on a particular outcome would match nothing
       forever. A warning ABOUT a chaining table, not a chaining decision in code.
+
+  # ── added 2026-10-02: the case runner's own modules, all prose ────────────────────────────
+  # These three modules ARE the declared-table machinery: `chaining_index` / `chain` / `decide`
+  # read `policy/decisions/*_chaining.yaml`, and no line in them names a next definition (no
+  # string literal in any of the three equals a declared workflow, decision, trigger or kind id).
+
+  - site: agent_fleet/restate_analyst/case_routing.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — three matches: a `#:` comment on the facts a chaining table may match, and two
+      docstrings (the context a chaining table reads; `chain()` refusing a definition that has
+      no chaining table). The module reads the declared tables; it names no next step. Same
+      limit as main.py's: the derivation cannot tell code from comment.
+
+  - site: agent_fleet/restate_analyst/decision_table.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — one match, in the module docstring, describing what a chaining table sees (the
+      trigger, the outcome). The module evaluates declared tables; the rows are data.
+
+  - site: agent_fleet/restate_analyst/workflow_runner.py
+    pattern: next:chaining
+    disposition: excluded
+    reason: >-
+      PROSE — two matches: the module docstring (each chaining decision runs inside ctx.run) and
+      an error message refusing a chaining cycle with no human in it. The refusal guards the
+      declared tables; it does not choose a next definition.

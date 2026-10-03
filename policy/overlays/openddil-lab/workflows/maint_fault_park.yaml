@@ -1,0 +1,18 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# A DEFERRAL PARKS WITH A REVISIT TIME. A deferral that never revisits is a deletion, so the
+# chaining table sends `elapsed` back to a fresh proposal.
+id: maint_fault_park
+name: "Maintenance fault -- parked"
+
+classification: null
+
+participants: []
+
+domain_stages: [deferred]
+
+steps:
+  # SAMPLE: one day.
+  - kind: wait
+    id: revisit
+    seconds: 86400

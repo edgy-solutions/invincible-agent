@@ -1,0 +1,15 @@
+# SEED — platform species (ADR-0036). Ruled platform-generic 2026-10-02: the definition is the
+# platform's; WHO stewards a domain is each deployment's grant on `origin_confirmation:<domain>`.
+#
+# SELECTION for an origin suggestion: one kind, one definition. The table exists so the choice is
+# declared where every other case chooses, not hard-wired in the trigger.
+decision: origin_suggestion_selection
+
+matches: [kind]
+
+domain:
+  kind: [origin_suggestion]
+
+rows:
+  - when: {kind: origin_suggestion}
+    then: origin_confirm

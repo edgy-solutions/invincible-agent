@@ -1,0 +1,33 @@
+# SEED — platform species (ADR-0036). Ruled platform-generic 2026-10-02: the definition is the
+# platform's; WHO stewards a domain is each deployment's grant on `origin_confirmation:<domain>`.
+#
+# AN ORIGIN SUGGESTION: something cited evidence that an artifact with no recorded origin was
+# obtained under a program, for an owner domain. A non-owner reads such an artifact only once its
+# origin is RECORDED (gateway: an unresolved origin 404s), so a suggestion opens nothing by
+# itself -- it opens a case that asks a steward of the suggested domain to confirm it.
+#
+# WHO PRODUCES IT IS NOT BUILT. The resolver that would emit this waits on the systems_of_record
+# schema; until it exists nothing raises this trigger, and the case is sealed against fixtures.
+#
+# `dropped_by.authz_id` IS THE DROPPER IN THE GATE'S NAMESPACE. The artifact stamps its dropper
+# as the JWT `sub`; `approve` verifies `acted_by` as an `authz_id`. The producer resolves one to
+# the other -- a `sub` here would never equal an `acted_by`, and the exclusion would pass everyone.
+trigger: origin_suggestion
+
+selection: origin_suggestion_selection
+
+key: suggestion_id
+
+# One open confirmation per artifact: a second suggestion while one is pending attaches to it
+# rather than opening a rival case a different steward could answer the other way.
+episode: [artifact_id]
+
+requires:
+  - kind
+  - artifact_id
+  - dropped_by.authz_id
+  - suggested.owner_domain
+  - suggested.program
+  - suggested.obtained_via
+  - evidence.source
+  - evidence.citation

@@ -45,6 +45,42 @@ def _definitions():
     return out
 
 
+def _case_trigger_keys() -> dict:
+    """``{definition id: the bare facts EVERY trigger that can reach it guarantees}``.
+
+    A case instance binds its trigger's top-level scalars (``main._run_definition``), and intake
+    refuses an event lacking any of a trigger's key / episode / requires facts
+    (``case_routing.check_intake``). So for a case definition the bindable set is DERIVED from the
+    triggers that reach it -- through the selection table, then every chaining table -- rather
+    than typed here. Intersected: a fact one reaching trigger does not guarantee is not bound.
+    """
+    from agent_fleet.restate_analyst import case_routing as R, decision_table as dt
+    tables = dt.load_tables()
+    after = R.chaining_index(tables)
+    out: dict = {}
+    for trig in R.load_triggers().values():
+        bare = {f for f in [trig.key, *trig.episode, *trig.requires] if "." not in f}
+        todo, seen = list(dt.targets(tables[trig.selection])), set()
+        while todo:
+            d = todo.pop()
+            if d in seen:
+                continue
+            seen.add(d)
+            out[d] = out[d] & bare if d in out else set(bare)
+            if d in after:
+                todo.extend(dt.targets(after[d]))
+    return out
+
+
+_CASE_KEYS = _case_trigger_keys()
+
+
+def test_CONTROL_THE_CASE_DERIVATION_REACHES_A_DEFINITION_AND_A_BARE_FACT():
+    """A derivation that reached nothing would excuse nothing -- and bind nothing -- silently."""
+    assert "artifact_id" in _CASE_KEYS.get("origin_confirm", set()), _CASE_KEYS
+    assert "origin_record" in _CASE_KEYS, sorted(_CASE_KEYS)
+
+
 # ===========================================================================
 # THE CLAIM — the SHIPPED definitions, against the RUNTIME's own bindings
 # ===========================================================================
@@ -73,6 +109,7 @@ def test_every_shipped_definition_binds_with_runtime_values_only(name, defn):
                # which is the exact thing ADR-0034 forbids, arriving through string interpolation
                # instead of through a gateway.
                "hazard_id": "HAZ-1001", "level": "Serious", "level_slug": "serious"}
+    trigger.update({k: "x" for k in _CASE_KEYS.get(defn.get("id"), ())})
     bound = bind_placeholders(defn, trigger)
     leftover = collect_placeholders(bound)
     assert not leftover, f"{name}: placeholders survived substitution: {sorted(leftover)}"
