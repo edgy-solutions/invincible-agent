@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS ingest_status_projection (
     source TEXT,
 
     -- Lifecycle (ADR-0041 §8), mirroring `iagent_mesh.ingest.INGEST_STAGES` (ca b68926a):
-    -- 'received' -> 'extracting' -> 'awaiting_disposition' -> 'promoted' | 'rejected' |
+    -- 'received' -> 'extracting' -> 'review' -> 'promoted' | 'rejected' |
     -- 'failed'. Plus the out-of-band terminal 'duplicate' for a repeat arrival (see header
     -- note). The column keeps the name `status` (Electric subscribers already read it); only
     -- the vocabulary changed. NO DEFAULT (the writer knows the value).
@@ -84,3 +84,11 @@ CREATE INDEX IF NOT EXISTS idx_isp_status
     ON ingest_status_projection (status);
 CREATE INDEX IF NOT EXISTS idx_isp_sha256
     ON ingest_status_projection (sha256);
+
+-- 2026-10-03: 'awaiting_disposition' renamed to 'review' (ingest/origin seam, lane/01-seam) --
+-- SDK 0.9.7's `iagent_mesh.ingest.INGEST_STAGES` ships 'review', not the name this repo had
+-- mirrored ahead of a tag (lane/ca commit b68926a). No CHECK constraint on `status` to amend
+-- (there never was one), but any row already written under the old name needs updating or it
+-- stops matching `ingest_status.STAGES`/`ALL_STATUSES`. IDEMPOTENT — a second run matches zero
+-- rows.
+UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_disposition';

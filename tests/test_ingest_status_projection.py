@@ -149,14 +149,28 @@ def test_duplicate_arrival_message_handles_a_missing_source():
 # rungs (classified/extracted/review) are gone, and nothing in this repo consumed them (grep
 # census at implementation time: no import of ingest_status.CLASSIFIED/EXTRACTED/REVIEW/
 # STATUSES anywhere in src/ or tests/ besides this module's own definition).
+#
+# 2026-10-03 (ingest/origin seam, lane/01-seam): SDK 0.9.7's INGEST_STAGES renamed its third
+# rung 'awaiting_disposition' -> 'review' -- this repo's AWAITING_DISPOSITION/'awaiting_
+# disposition' is renamed to match. `REVIEW` is therefore no longer an old, dropped name: it
+# is the CURRENT third rung, so the old "not hasattr(ist, 'REVIEW')" assertion below is
+# retired along with it (CLASSIFIED/EXTRACTED/STATUSES are unrelated and still gone).
 # ===========================================================================
 def test_the_stage_vocabulary_is_cas_six_stages_in_order():
-    assert ist.STAGES == ("received", "extracting", "awaiting_disposition", "promoted",
+    assert ist.STAGES == ("received", "extracting", "review", "promoted",
                           "rejected", "failed")
     assert not hasattr(ist, "CLASSIFIED")
     assert not hasattr(ist, "EXTRACTED")
-    assert not hasattr(ist, "REVIEW")
     assert not hasattr(ist, "STATUSES"), "nothing in-repo imports the old alias; dropped, not kept"
+
+
+def test_the_stage_vocabulary_matches_the_sdk_directly():
+    """Seal against ca's SDK tuple ITSELF (iagent_mesh.ingest.INGEST_STAGES), never a restated
+    literal -- so a future SDK rename reds this test instead of silently drifting out of step,
+    the same hazard the module docstring's 'mirrored here rather than imported' already names."""
+    from iagent_mesh.ingest import INGEST_STAGES
+
+    assert ist.STAGES == INGEST_STAGES
 
 
 def test_duplicate_stays_out_of_band():

@@ -594,7 +594,7 @@ def test_ROUTE_a_rejection_WITHOUT_a_reason_is_refused_before_the_projection(rou
     """update_status refuses `rejected` without a detail, and the act branch passes the comment
     as that detail. What makes that safe is the kind declaration refusing a bare rejection
     first (422), so the projection is never asked. If the declaration ever stops requiring a
-    reason, this goes red instead of a row silently stranding at awaiting_disposition."""
+    reason, this goes red instead of a row silently stranding at review."""
     c, calls, mp, _ = _wired(route)
     updates: list = []
     mp.setattr(ingest_status, "update_status",

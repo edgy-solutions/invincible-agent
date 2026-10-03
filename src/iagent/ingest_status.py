@@ -18,7 +18,7 @@ resubmit and when, not a fact to discard.
 
 STAGE VOCABULARY MIRRORS `iagent_mesh.ingest.INGEST_STAGES` (lane/ca commit b68926a,
 iagent-mesh-sdk; untagged, and the fleet's pinned v0.9.3 lacks this module, so it is mirrored
-here rather than imported): received -> extracting -> awaiting_disposition -> promoted | rejected
+here rather than imported): received -> extracting -> review -> promoted | rejected
 | failed. `detail` is REQUIRED on `rejected`/`failed` (ca's `IngestStatus` rule) — a terminal
 state with no reason is unactionable.
 
@@ -59,9 +59,9 @@ _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
 # The stage vocabulary (ADR-0041 §8), mirroring `iagent_mesh.ingest.INGEST_STAGES` (ca b68926a).
 # ORDER meaningful for the SAME reason obtained_via's is (provenance.py): it is a
 # degradation-of-completeness path, not a cosmetic list.
-RECEIVED, EXTRACTING, AWAITING_DISPOSITION, PROMOTED, REJECTED, FAILED = (
-    "received", "extracting", "awaiting_disposition", "promoted", "rejected", "failed")
-STAGES = (RECEIVED, EXTRACTING, AWAITING_DISPOSITION, PROMOTED, REJECTED, FAILED)
+RECEIVED, EXTRACTING, REVIEW, PROMOTED, REJECTED, FAILED = (
+    "received", "extracting", "review", "promoted", "rejected", "failed")
+STAGES = (RECEIVED, EXTRACTING, REVIEW, PROMOTED, REJECTED, FAILED)
 
 # Stages whose `detail` is REQUIRED — the two that end an ingest without landing it, so a
 # consumer reading the status is told WHY rather than only THAT (ca's IngestStatus rule).
@@ -101,6 +101,12 @@ CREATE INDEX IF NOT EXISTS idx_isp_submitted_by ON ingest_status_projection (sub
 CREATE INDEX IF NOT EXISTS idx_isp_on_behalf_of ON ingest_status_projection (on_behalf_of);
 CREATE INDEX IF NOT EXISTS idx_isp_status ON ingest_status_projection (status);
 CREATE INDEX IF NOT EXISTS idx_isp_sha256 ON ingest_status_projection (sha256);
+
+-- 2026-10-03: 'awaiting_disposition' renamed to 'review' (ingest/origin seam, lane/01-seam) --
+-- SDK 0.9.7's iagent_mesh.ingest.INGEST_STAGES ships 'review'; no CHECK constraint existed to
+-- amend, but a row already written under the old name must be updated or it stops matching
+-- STAGES/ALL_STATUSES below. IDEMPOTENT -- a second run matches zero rows.
+UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_disposition';
 """
 
 
@@ -243,7 +249,7 @@ def update_status(
     extracted_total: Optional[int] = None,
     detail: Optional[str] = None,
 ) -> None:
-    """Advance a row through the ladder (received -> extracting -> awaiting_disposition ->
+    """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed). Not called by the ingest route itself (which only ever writes
     `received`) — this is the seam the classifier/extraction/review pipeline and the
     document_promotion fulfillment call as a document progresses.
