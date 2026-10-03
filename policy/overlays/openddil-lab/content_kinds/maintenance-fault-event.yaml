@@ -1,0 +1,12 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# THE OPENDDIL BRIDGE'S EVENT KIND (SDK 0.9.7 `branch: event`). A MaintenanceEvent arrival
+# starts the `maintenance_fault` case (`policy/overlays/openddil-lab/triggers/`) rather than
+# being extracted — nothing here runs a pass or stamps an OntologyClass, see that branch's own
+# shape rule in `iagent_mesh.ingest.ContentKindRegistration`. `identity_field: event_id` is the
+# SAME field the trigger dedupes arrivals on (`triggers/maintenance_fault.yaml`'s `key`).
+kind: maintenance-fault-event
+branch: event
+domain: maintenance-bridge
+seeds_workflow: maintenance_fault
+identity_field: event_id

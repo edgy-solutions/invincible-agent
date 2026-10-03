@@ -69,6 +69,16 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
   TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds"
   {{- end }}
+  {{- /* CONTENT_KIND_OVERLAY_DIRS -- exactly parallel to TASK_KIND_OVERLAY_DIRS above, but
+  for `src/iagent/content_kinds.py` (ingest/origin seam, ADR-0021/0041, SDK 0.9.7). Unlike
+  that gate, an unreadable content-kind registry FAILS CLOSED (content_kinds.registrations()
+  raises rather than falling back to "today's behaviour"), so this points ONLY at a directory
+  that exists today -- `policy/overlays/sample/` has no `content_kinds/` dir yet, and naming a
+  missing one here would turn every deployment's first /ingest into a 500 instead of a quiet
+  gap. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "CONTENT_KIND_OVERLAY_DIRS") }}
+  CONTENT_KIND_OVERLAY_DIRS: "/app/policy/overlays/openddil-lab/content_kinds"
+  {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
   these for split topologies; the hasKey guards keep the rendered CM
