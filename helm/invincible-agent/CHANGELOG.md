@@ -1,5 +1,30 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.27 — 2026-10-03
+
+Patch bump. Both halves of the 2026-10-02 architect ruling ("Topaz manifest hook +
+program_member hook, both before grant sync") now ship: the schema load and the audience fold.
+
+### Changed
+
+- **New `templates/topaz-manifest-load-job.yaml`**, gated by `topazManifestLoad.enabled`
+  (off in base, on in sandbox), a post-install/post-upgrade helm hook Job at weight "2" —
+  strictly before the task-grant Job's weight "3" — that loads the chart-shipped Topaz ReBAC
+  manifest (`topaz-configmap.yaml`'s `manifest.yaml`) via the new `policy/sync/load_manifest.py`.
+  A manifest `set` REPLACES THE WHOLE SCHEMA, so the script fail-closed PRE-CHECKS (via the new
+  `TopazClient.get_manifest()`) that the live directory declares no type the file does not
+  (else nothing loads), then loads, then READS BACK that every file type is present. Closes the
+  gap where `templates/task-grant-sync-job.yaml`'s `program_member_sync` leg (below) could die
+  E20026 "unknown type" on a cluster where nobody had hand-run `topaz ds set manifest` for a
+  recently-added type.
+- **`templates/task-grant-sync-job.yaml` now runs `policy/sync/program_member_sync.py` as its
+  FIRST leg, before `task_grant_sync.py`**, in the same Job/container. `program_member_sync`
+  writes the `program` `member` relations the origin-entitlement ruling reads and was, until
+  now, hand-run against every cluster. configMap/git overlay modes copy `program_members.yaml`
+  beside `task_grants.yaml` with the same fail-closed FATAL if missing (no fallback to the
+  image's sandbox copy); image mode reads it from `/app/policy/program_members.yaml`. No new
+  values key — it shares `taskGrantSync.enabled`.
+
 ## 0.4.26 — 2026-10-02
 
 Patch bump for chart content that merged without one.

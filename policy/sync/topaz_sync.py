@@ -530,6 +530,25 @@ class TopazClient:
         )
         r.raise_for_status()
 
+    def get_manifest(self) -> str:
+        """Fetch the LIVE Rebac manifest as raw YAML text — GET the same path
+        `set_manifest_from_file` POSTs to. Verified live 2026-10-03 against a cluster that
+        already carries a manifest: 200, `content-type: application/yaml`, body is the raw
+        manifest document (`types:\\n  user: {}\\n  dataset:...`).
+
+        A FRESH cluster with no manifest ever loaded returns 404 — this is NOT a failure
+        (there is nothing yet to read), so it is normalized to "" here rather than raised,
+        the same shape `object_exists` uses for its own 404-is-false case. Every other
+        non-2xx (5xx, a malformed gateway response, connection trouble surfacing as an
+        HTTPStatusError) fails CLOSED via `_raise_with_context` — callers that need to tell
+        "fresh cluster" apart from "topaz is unreachable/broken" must not get the same
+        exception for both."""
+        r = self._client.get("/api/v3/directory/manifest")
+        if r.status_code == 404:
+            return ""
+        self._raise_with_context(r, "manifest")
+        return r.text
+
     # -- permission check (readback verification) -------------------------
 
     def check(

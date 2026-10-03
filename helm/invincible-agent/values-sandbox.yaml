@@ -517,6 +517,12 @@ keycloak:
 topaz:
   enabled: true
 
+# The ReBAC schema must exist before taskGrantSync's startup syncs try to write objects/
+# relations of a type the base manifest only recently gained — see values.yaml's
+# topazManifestLoad comment and templates/topaz-manifest-load-job.yaml.
+topazManifestLoad:
+  enabled: true
+
 # Task grants must exist without a human hand-running policy/sync/task_grant_sync.py — see
 # values.yaml's taskGrantSync comment and templates/task-grant-sync-job.yaml.
 taskGrantSync:

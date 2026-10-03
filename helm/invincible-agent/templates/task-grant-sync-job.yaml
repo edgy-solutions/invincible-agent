@@ -1,13 +1,24 @@
 {{- /*
-TASK GRANT STARTUP SYNC — closes the "topazSeed is default-OFF" gap for task_grant_sync ONLY.
+TASK GRANT STARTUP SYNC — closes the "topazSeed is default-OFF" gap for task_grant_sync and (as
+of 2026-10-02) program_member_sync.
 
 WHY THIS EXISTS. `topaz-seed-cronjob.yaml` runs SIX syncs (persona/asset/grant/ontology/task/
 capability) and is itself default-disabled (`topazSeed.enabled: false`) so it never surprise-
 prunes five scopes nobody asked to touch today. Task grants (task_audience `actor` relations —
 see policy/sync/task_grant_sync.py) are a narrower need: they must exist on every install and
 every upgrade, without a human hand-running the sync, and without turning on the other five
-syncs to get them. This Job runs ONLY task_grant_sync.py, as an idempotent post-install/post-
+syncs to get them. This Job runs task_grant_sync.py, as an idempotent post-install/post-
 upgrade hook.
+
+PROGRAM MEMBER SYNC JOINS THIS JOB AS ITS FIRST LEG (2026-10-02, architect: "Topaz manifest
+hook + program_member hook, both before grant sync"). program_member_sync.py
+(policy/sync/program_member_sync.py) was, like task_grant_sync, hand-run against every cluster —
+it writes the `program` `member` relations the origin-entitlement ruling's audience half reads
+(see that script's header). It shares this Job rather than getting its own: both are startup-
+only, idempotent, readback-gated policy syncs with no other dependency than Topaz being up, so a
+second Job would only duplicate the wait-for-topaz initContainer and the hook-weight placement.
+It runs FIRST, before task_grant_sync, in the same container — `set -e` already fails the Job on
+either leg, so ordering is the only new concern, not isolation.
 
 SAME SOURCE OF TRUTH AS THE CRONJOB'S TASK-GRANT LEG — deliberately. This template reads
 `.Values.topazSeed.image`, `.Values.topazSeed.policySource` and
@@ -33,7 +44,10 @@ zero-audiences case — there is no separate "nothing to do" code), 2 malformed 
 (REFUSED, nothing applied), 4 readback failed (apply happened but a grant does not resolve
 can_act). Both non-zero codes are REAL failures; neither means "nothing to do". So nothing
 here masks either one — `set -e` plus the script's own exit code fails the Job, and a failed
-hook fails the release, exactly as intended.
+hook fails the release, exactly as intended. program_member_sync.py's main() uses the SAME
+exit-code scheme (0 ok, 2 malformed program_members.yaml, 4 readback/can_view_program failed),
+so `set -e` gates it identically — a failure in the program leg fails the Job before
+task_grant_sync ever runs.
 */ -}}
 {{- if .Values.taskGrantSync.enabled }}
 {{- $src := .Values.topazSeed.policySource }}
@@ -177,18 +191,27 @@ spec:
               OVERLAY=/overlay
               {{- end }}
               mkdir -p /work/policy
-              # ONLY task_grants.yaml — this Job runs ONLY task_grant_sync, unlike topazSeed's
-              # six-file compose, so there is nothing else here to validate or apply. Missing
-              # file = FATAL: falling back to the image's sandbox copy would silently seed
-              # sandbox grants into this cluster.
+              # task_grants.yaml AND program_members.yaml — this Job runs task_grant_sync AND
+              # program_member_sync (the latter added 2026-10-02, ordered BEFORE grants per
+              # architect ruling), unlike topazSeed's six-file compose, so there is nothing else
+              # here to validate or apply. Either file missing = FATAL: falling back to the
+              # image's sandbox copy would silently seed sandbox grants into this cluster.
               if [ ! -f "$OVERLAY/task_grants.yaml" ]; then
                 echo "FATAL: policy overlay is missing task_grants.yaml — refusing (no fallback to the image's sandbox copy)" >&2
                 exit 2
               fi
+              if [ ! -f "$OVERLAY/program_members.yaml" ]; then
+                echo "FATAL: policy overlay is missing program_members.yaml — refusing (no fallback to the image's sandbox copy)" >&2
+                exit 2
+              fi
               cp "$OVERLAY/task_grants.yaml" /work/policy/
+              cp "$OVERLAY/program_members.yaml" /work/policy/
               POLICY_DIR=/work/policy
               {{- end }}
               export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
+              export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"
+              echo "===== PROGRAM MEMBER SYNC (program_member_sync — program membership, startup sync, runs BEFORE grants) ====="
+              python policy/sync/program_member_sync.py
               echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace, startup sync) ====="
               python policy/sync/task_grant_sync.py
           {{- if ne $mode "image" }}

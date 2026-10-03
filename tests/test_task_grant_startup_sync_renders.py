@@ -117,8 +117,10 @@ def test_sandbox_job_carries_the_post_install_post_upgrade_hook(sandbox: str):
 
 def test_sandbox_job_runs_task_grant_sync_and_nothing_else(sandbox: str):
     i = sandbox.index("name: t-task-grant-sync")
-    # The container's args block, up to the next top-level Job/other resource.
-    block = sandbox[i:i + 3000]
+    # The container's args block, up to the next top-level Job/other resource. Widened past
+    # 3000 (2026-10-02): the program_member_sync leg's header comments and extra env/echo lines
+    # push task_grant_sync.py further from the Job name than before.
+    block = sandbox[i:i + 4500]
     assert "task_grant_sync.py" in block
     # NOT substring checks: "grant_sync.py" is a substring of "task_grant_sync.py" itself, so a
     # naive `in` check self-matches on the very line this Job is supposed to run. Require a
@@ -133,7 +135,7 @@ def test_sandbox_job_runs_task_grant_sync_and_nothing_else(sandbox: str):
 
 def test_sandbox_job_env_has_the_grants_file_and_directory_url(sandbox: str):
     i = sandbox.index("name: t-task-grant-sync")
-    block = sandbox[i:i + 3000]
+    block = sandbox[i:i + 4500]
     assert "TOPAZ_DIRECTORY_URL" in block
     assert "TASK_GRANTS_FILE" in block
 
@@ -167,6 +169,35 @@ def test_image_and_grants_file_source_match_the_cronjob_leg():
     assert "POLICY_DIR=/app/policy" in cronjob_block
     assert 'TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"' in job_block
     assert 'export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"' in cronjob_block
+
+
+# ── (e) program_member_sync folded in as the FIRST leg (2026-10-02) ─────────
+
+def test_sandbox_job_runs_program_member_sync_before_task_grant_sync(sandbox: str):
+    """architect ruling 2026-10-02: program_member hook before grant sync. Read the ORDER from
+    the rendered args, never restate it — a swap of the two legs must be visible here."""
+    i = sandbox.index("name: t-task-grant-sync")
+    block = sandbox[i:i + 4500]
+    program_i = block.index("program_member_sync.py")
+    grant_i = block.index("task_grant_sync.py")
+    assert program_i < grant_i, (
+        "program_member_sync.py must run BEFORE task_grant_sync.py in the rendered Job args"
+    )
+
+
+def test_configmap_mode_render_carries_the_program_members_fatal():
+    """configMap/git overlay modes copy program_members.yaml beside task_grants.yaml with the
+    SAME fail-closed FATAL if missing (no fallback to the image's sandbox copy)."""
+    out = _render(
+        *_sandbox_values_args(),
+        "--set", "topazSeed.policySource.type=configMap",
+        "--set", "topazSeed.policySource.configMap.name=iagent-policy-overlay",
+    )
+    i = out.index("name: t-task-grant-sync")
+    block = out[i:i + 4500]
+    assert "FATAL: policy overlay is missing program_members.yaml" in block
+    assert "FATAL: policy overlay is missing task_grants.yaml" in block
+    assert 'export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"' in block
 
 
 # ── the flip: prove (b) actually tests something ────────────────────────────

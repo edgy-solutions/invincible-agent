@@ -1,0 +1,123 @@
+{{- /*
+TOPAZ MANIFEST LOAD — closes the "topazSeed is default-OFF" gap for the ReBAC schema itself.
+
+WHY THIS EXISTS. 82ed0b7f added the `program` type to topaz-configmap.yaml's manifest.yaml.
+The roll shipped the configmap, but nothing LOADED it into Topaz's directory in sandbox
+(`topazSeed.enabled: false`; the only loader was a hand-run `topaz ds set manifest`), so
+program_member_sync died E20026 until a human loaded it by hand. This Job folds the load into
+the roll exactly as task-grant-sync-job.yaml folded the grant seed — the same narrow-fix shape,
+on the schema instead of a grant.
+
+A manifest SET REPLACES THE WHOLE SCHEMA — there is no partial/merge apply (see
+policy/sync/topaz_sync.py's TopazClient.set_manifest_from_file). So the script this Job runs
+(policy/sync/load_manifest.py) is NOT a blind "load the file": it fail-closed PRE-CHECKS that
+the live directory declares no top-level type this chart's manifest.yaml does not (loading
+would otherwise silently DROP that type and every object/relation under it), then loads, then
+READS BACK that every type the file declares is present — see that script's header for the
+exact flow and exit codes.
+
+HOOK ORDERING. Weight "2" — strictly BEFORE the task-grant Job's weight "3" (see that
+template's header for why realm-reconcile/restate-init bound the rest of the sequence), so a
+NEW type (e.g. `program`) exists in the schema before any startup sync in that later Job tries
+to write objects/relations of it. Same non-hook-Deployment caveat as task-grant-sync-job.yaml:
+topaz-deployment.yaml is a plain Deployment, not a hook, so this Job carries its own
+wait-for-topaz initContainer rather than relying on hook ordering to imply readiness.
+
+SAME IMAGE SOURCE AS task-grant-sync-job.yaml, deliberately: `.Values.topazSeed.image` (the
+cortex-bff image, which carries policy/sync/load_manifest.py + topaz_sync.py) and
+`.Values.topazSeed.topazDirectoryUrl`. No policySource logic here — this Job only ever loads
+the chart-shipped manifest.yaml (the `<release>-topaz-config` ConfigMap's `manifest.yaml` key,
+the SAME key topaz-deployment.yaml and topaz-seed-cronjob.yaml's `--load-manifest` mount), so
+there is no overlay/configMap/git mode to select between.
+
+EXIT CODES — read from policy/sync/load_manifest.py's main()/load_manifest(): 0 ok, 2 pre-check
+refused (the live directory declares a type the file does not — nothing loaded), 4 readback
+failed (loaded, but a file type does not resolve present). `set -e` plus the script's own exit
+code fails the Job, and a failed hook fails the release.
+*/ -}}
+{{- if .Values.topazManifestLoad.enabled }}
+{{- $seedImg := .Values.topazSeed.image }}
+{{- if not (kindIs "string" $seedImg) }}
+{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" $seedImg.tag "root" .) }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-topaz-manifest-load
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: topaz-manifest-load
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # BEFORE the task-grant job (weight "3") and every other startup sync — a new type must
+    # exist before anything tries to write objects/relations of it. See header note.
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "topaz-manifest-load" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-topaz
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
+          env:
+            - name: TOPAZ_DIRECTORY_URL
+              value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "Waiting for Topaz directory at $TOPAZ_DIRECTORY_URL..."
+              i=0
+              # curl WITHOUT -f: any HTTP response (even 404) proves the directory API is up;
+              # only a connection failure (refused/no route/DNS) keeps the loop waiting.
+              until curl -s -o /dev/null "$TOPAZ_DIRECTORY_URL/"; do
+                i=$((i+1))
+                if [ "$i" -gt 60 ]; then
+                  echo "Topaz directory never became reachable at $TOPAZ_DIRECTORY_URL" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "Topaz directory is reachable."
+      containers:
+        - name: topaz-manifest-load
+          image: {{ $seedImg }}
+          imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
+          env:
+            - name: TOPAZ_DIRECTORY_URL
+              value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
+            - name: TOPAZ_MANIFEST_FILE
+              value: /topaz-config/manifest.yaml
+            - name: PYTHONPATH
+              value: "/app/policy/sync"
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              cd /app
+              echo "===== TOPAZ MANIFEST LOAD (load_manifest — pre-check, load, readback) ====="
+              python policy/sync/load_manifest.py
+          volumeMounts:
+            - name: topaz-manifest
+              mountPath: /topaz-config
+              readOnly: true
+      volumes:
+        - name: topaz-manifest
+          configMap:
+            name: {{ .Release.Name }}-topaz-config
+            items:
+              - key: manifest.yaml
+                path: manifest.yaml
+{{- end }}

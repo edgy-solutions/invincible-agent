@@ -2182,6 +2182,15 @@ topazSeed:
 taskGrantSync:
   enabled: false   # bare defaults: OFF, so it never surprise-runs. Sandbox turns it on.
 
+# Loads the chart-shipped Topaz ReBAC manifest (topaz-configmap.yaml's manifest.yaml) into the
+# live directory on every install/upgrade, as a post-install/post-upgrade helm hook Job at
+# weight "2" — strictly before taskGrantSync's weight "3", so a new type (e.g. `program`)
+# exists before any startup sync tries to write objects/relations of it. Reads
+# topazSeed.image / topazSeed.topazDirectoryUrl, same as taskGrantSync. Fail-closed pre-check +
+# readback — see policy/sync/load_manifest.py and templates/topaz-manifest-load-job.yaml.
+topazManifestLoad:
+  enabled: false   # bare defaults: OFF. Sandbox turns it on.
+
 topaz:
   enabled: true
   image:
