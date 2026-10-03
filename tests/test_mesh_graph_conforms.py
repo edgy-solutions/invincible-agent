@@ -113,24 +113,51 @@ def test_the_imported_sdk_IS_the_pinned_artifact():
     with the one check that guards every other check in it quietly not running. The installed
     distribution's metadata always carries the version; if it cannot be read, that is a failure of
     this arm, not a reason to pass.
+
+    **THE PIN IS A REVISION, NOT A VERSION** (second revision, 2026-10-02). A caller proves a
+    change on a sha pin before the SDK tags it (caller-proves-then-tag), and the distribution built
+    from that sha still reports the LAST tag's version: `c5fec431` installs as `0.9.5`. The old arm
+    read only `@vX.Y.Z` pins, so it went red on the sha pin -- and comparing version strings would
+    have passed a v0.9.5 install against a pin ahead of it. The identity is the revision the
+    installer recorded in the distribution's `direct_url.json`.
+
+    This arm judges IDENTITY only. Whether a sha pin may sit on master is the FORM question, and
+    `test_sdk_pin_is_a_version` / `test_every_consuming_package_pins_the_sdk_to_a_tag` own it.
     """
     import importlib.metadata as md
+    import json
 
     try:
-        installed = md.version("iagent-mesh")
+        dist = md.distribution("iagent-mesh")
     except md.PackageNotFoundError as exc:  # pragma: no cover - a broken environment
         pytest.fail(f"iagent-mesh is not an installed distribution: {exc}")
 
-    pins = {
-        m.group(1)
-        for line in (_REPO / "pyproject.toml").read_text(encoding="utf-8").splitlines()
-        if (m := re.search(r"iagent-mesh @ git\+\S+@v?(\d+\.\d+\.\d+)", line))
-    }
+    pins = set(_PIN.findall((_REPO / "pyproject.toml").read_text(encoding="utf-8")))
     assert pins, "pyproject declares no iagent-mesh git pin to compare against"
     assert len(pins) == 1, f"the fleet's own SDK pins disagree: {sorted(pins)}"
-    assert installed.lstrip("v") == pins.pop(), (
-        f"conformance is running against iagent-mesh {installed}, the fleet pins {pins}"
-    )
+    pin = pins.pop()
+
+    raw = dist.read_text("direct_url.json")
+    assert raw, (f"iagent-mesh {dist.version} records no direct_url.json: it was not installed "
+                 f"from the git pin {pin}, so nothing says which revision this is")
+    vcs = json.loads(raw).get("vcs_info") or {}
+    assert vcs.get("requested_revision") == pin, (
+        f"conformance is running against iagent-mesh built from "
+        f"{vcs.get('requested_revision')!r}, the fleet pins {pin!r}")
+
+
+#: The revision after `@` in pyproject's git pin: a tag (`v0.9.5`) or a full sha.
+_PIN = re.compile(r"iagent-mesh @ git\+\S+?\.git@([0-9A-Za-z][\w.\-]*)")
+
+
+def test_CONTROL_THE_PIN_READER_TAKES_BOTH_FORMS_AND_ONLY_THE_REVISION():
+    """A sha pin and a tag pin each yield their revision, whole; a line naming another package
+    yields nothing."""
+    sha = "c5fec431ba6f12b298b43ad316db1e77ad867c84"
+    url = "git+https://github.com/edgy-solutions/iagent-mesh-sdk.git"
+    assert _PIN.findall(f'    "iagent-mesh @ {url}@{sha}",') == [sha]
+    assert _PIN.findall(f'    "iagent-mesh @ {url}@v0.9.5",') == ["v0.9.5"]
+    assert _PIN.findall(f'    "iagent-other @ {url}@v0.9.5",') == []
 
 
 def test_it_satisfies_the_protocol_structurally():
