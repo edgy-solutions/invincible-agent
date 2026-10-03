@@ -2,6 +2,9 @@
 #
 # WHAT FOLLOWS A SUPERVISOR REVIEW. A refusal returns the case for a NEW proposal -- the
 # maintainer's approval is cleared with it -- and an unanswered review escalates.
+# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
+# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
+# opened on. Every option cites the revision it was made from.
 decision: maint_supervisor_review_chaining
 
 after: maint_supervisor_review
@@ -17,5 +20,6 @@ rows:
     then: maint_release
   - when: {outcome: rejected}
     then: maint_fault_propose
+    refresh_input: true
   - when: {outcome: timed_out}
     then: maint_fault_escalate

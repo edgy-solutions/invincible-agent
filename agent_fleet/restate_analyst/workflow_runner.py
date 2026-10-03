@@ -20,6 +20,15 @@ The child is reachable on the Restate ingress, so it takes nothing from its requ
 the CASE's state, written by the case's own ``run`` before the call. A forged child call can only
 run what the case already chose -- and a case key may not contain ``~``, so no trigger can mint one.
 
+## A RETURN TO A PROPOSAL READS THE PICTURE AS IT IS NOW
+
+A chaining row may say ``refresh_input: true``. Before the definition it opens runs, the case reads
+the newest revision of its input from both sources, in order: what the source PUSHED (the same
+event_id again, through ``revise``, kept on the episode) and what the trigger's ``pull`` stub verb
+returns. A newer one replaces the facts the next instance and the next chaining table read; the
+case record keeps ``input_revisions[]`` and every instance sees ``input.revision``. The original
+event is revision 1. Nothing is written to a store.
+
 ## EVERY CHOICE IS JOURNALLED
 
 Selection, each chaining decision and each definition load run inside ``ctx.run``. A case lasts
@@ -119,6 +128,12 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                   "episode": episode, "instances": [], "transitions": []}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
+    # THE ORIGINAL EVENT IS REVISION 1. A refresh appends; the instance sees the newest.
+    case["input_revisions"] = [{"rev": 1, "event_id": case_id,
+                                "received_at": case["transitions"][-1]["at"],
+                                "provenance": "pushed"}]
+    current = {"revision": 1, "event_id": case_id, "provenance": "pushed"}
+    ctx.set("case", case)
 
     # ── TRIAGE: one open case per episode ───────────────────────────────────────────────────
     if episode:
@@ -147,7 +162,8 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             # can name the case it belongs to as well as the definition that emitted it.
             ctx.set(f"instance:{n}", {"definition_id": definition_id, "trigger": facts,
                                       "outputs": outputs, "approval_chain": chain,
-                                      "case": {"case_id": case_id, "trigger": name}})
+                                      "case": {"case_id": case_id, "trigger": name},
+                                      "input": dict(current)})
             case["instances"].append({"n": n, "instance_id": instance,
                                       "definition_id": definition_id})
             ctx.set("case", case)
@@ -159,13 +175,19 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             term = R.termination_facts(flat, env, definition_id, case["transitions"])
             nxt = await ctx.run(f"chain_{n}", _terminal(lambda: R.chain(definition_id, term), 422))
             step = (outputs.get(definition_id) or {}).get(env.get("outcome_step_id")) or {}
+            refreshed: dict = {}
+            if nxt.get("refresh_input") and not nxt["terminal"]:
+                fresh = await _refresh(ctx, trig, case, episode, current, n)
+                if fresh:
+                    facts, flat, current = fresh["facts"], fresh["flat"], fresh["current"]
+                refreshed = {"input_revision": current["revision"]}
             await _record(
                 ctx, case, frm=definition_id, outcome=env.get("outcome"), to=nxt["then"],
                 # WHO: the actor the gate VERIFIED for the deciding step; a timer or a system
                 # step has none, and the record says so rather than borrowing the trigger's.
                 by=step.get("acted_by") or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
-                decided_by=f"{nxt['table']} row {nxt['row']}")
+                decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
             if nxt["terminal"]:
                 case["terminal"] = nxt["then"]
                 ctx.set("case", case)
@@ -188,6 +210,50 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
         ctx.object_send(release, key=episode, arg={"case_id": case_id})
     return {"case_id": case_id, "status": "CLOSED", "terminal": case["terminal"],
             "transitions": case["transitions"], "approval_chain": chain}
+
+
+async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
+                   n: int) -> Optional[dict]:
+    """The newest input revision above ``current``, from both sources in order, or None.
+
+    PUSHED FIRST: the revision the source sent again, kept on the episode. PULLED SECOND: the
+    trigger's ``pull`` stub verb, rendered with ``{kept}`` in its context -- declared now, so the
+    real picture endpoint retires a stub rather than adding a second mechanism. On equal revisions
+    the pushed one wins. The winner passes intake again and must stay in the case's episode:
+    ``keep_revision`` is reachable on the ingress as well as through ``revise``, so what was kept
+    is never trusted as checked, and neither is what a pull returns."""
+    R = _routing()
+    case_id = case["case_id"]
+    kept = (await ctx.object_call(newest_revision, key=episode, arg={"case_id": case_id})
+            if episode else None)
+
+    def _pull():
+        if not trig.pull:
+            return None
+        try:
+            from workflow_definition import load_stub_verbs  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst.workflow_definition import load_stub_verbs
+        stub = load_stub_verbs().get(trig.pull)
+        if stub is None:
+            raise restate.TerminalError(
+                f"trigger {trig.trigger!r} pulls with {trig.pull!r}, which no stub verb declares",
+                status_code=500)
+        got = _main()._render(stub.returns, {"kept": kept}, where=f"pull verb {trig.pull}")
+        return None if got is None else {**got, "provenance": "pulled", "verb": trig.pull}
+
+    pulled = await ctx.run(f"pull_{n}", _pull)
+    best = await ctx.run(f"newest_{n}", _terminal(
+        lambda: R.newest_revision(current["revision"], [kept, pulled]), 500))
+    if best is None:
+        return None
+    flat = await ctx.run(f"refresh_{n}", _terminal(
+        lambda: R.check_revision(trig, best["facts"], case_id, episode), 422))
+    case["input_revisions"].append({k: best.get(k) for k in
+                                    ("rev", "event_id", "received_at", "provenance")})
+    return {"facts": best["facts"], "flat": flat,
+            "current": {"revision": best["rev"], "event_id": best.get("event_id"),
+                        "provenance": best.get("provenance")}}
 
 
 # ── ONE INSTANCE ────────────────────────────────────────────────────────────────────────────
@@ -231,7 +297,8 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
     return await _main()._run_definition(
         ctx, ctx.key(), definition, spec["trigger"],
         workflow_service="WorkflowRunner", from_registry=True,
-        outputs=spec["outputs"], approval_chain=spec["approval_chain"], case=spec.get("case"))
+        outputs=spec["outputs"], approval_chain=spec["approval_chain"], case=spec.get("case"),
+        case_input=spec.get("input"))
 
 
 # ── HANDLERS ────────────────────────────────────────────────────────────────────────────────
@@ -280,6 +347,31 @@ async def case(ctx: WorkflowSharedContext, request: Any = None) -> Optional[dict
 
 
 @workflow_runner.handler()
+async def revise(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """A NEWER PICTURE OF THE EVENT THIS CASE OPENED ON -- the same event_id, sent again.
+
+    Restate runs a workflow key once, so a repeat event_id cannot start a second case; it arrives
+    here instead. It passes the same intake as the original, must stay in the case's episode, and
+    is kept on the episode as revision k (the original is 1). Nothing reads it until a chaining
+    row says ``refresh_input``: a revision never changes an instance already running."""
+    R = _routing()
+    case_id = ctx.key()
+    case = await ctx.get("case")
+    if not case:
+        raise restate.TerminalError(f"no case {case_id!r} to revise", status_code=404)
+    if not case.get("episode"):
+        raise restate.TerminalError(
+            f"case {case_id!r}'s trigger declares no episode, so a revision has nowhere to be kept",
+            status_code=409)
+    facts = request.get("facts")
+    await ctx.run("revise_intake", _terminal(lambda: R.check_revision(
+        R.load_trigger(case["trigger"]), facts, case_id, case["episode"]), 400))
+    at = await ctx.run("revise_at", _main()._now_iso)
+    return await ctx.object_call(keep_revision, key=case["episode"], arg={
+        "case_id": case_id, "event_id": case_id, "facts": facts, "received_at": at})
+
+
+@workflow_runner.handler()
 async def outbox(ctx: WorkflowSharedContext, request: dict) -> list:
     """What an instance has emitted on a channel. Read on the INSTANCE, which is where the
     emitting step waits for its answer; each record names the instance an answer goes to."""
@@ -298,6 +390,33 @@ async def claim(ctx: ObjectContext, request: dict) -> str:
 
 @case_episode.handler()
 async def release(ctx: ObjectContext, request: dict) -> None:
-    """Close the episode -- only by the case that holds it."""
+    """Close the episode -- only by the case that holds it -- and drop its kept revision, which
+    belongs to that case: the next case on this episode opens on its own event."""
     if await ctx.get("open") == request.get("case_id"):
         ctx.clear("open")
+        ctx.clear("revision")
+
+
+@case_episode.handler()
+async def keep_revision(ctx: ObjectContext, request: dict) -> dict:
+    """Keep a pushed revision for the case holding this episode. A closed case, or another
+    case's event, keeps nothing: its refresh would never read it, or would read the wrong one."""
+    holder = await ctx.get("open")
+    if not holder or holder != request.get("case_id"):
+        raise restate.TerminalError(
+            f"case {request.get('case_id')!r} does not hold this episode (open: {holder!r}); "
+            "a revision is kept only for the open case", status_code=409)
+    prev = await ctx.get("revision")
+    kept = {"rev": (prev["rev"] if prev else 1) + 1, "event_id": request["event_id"],
+            "received_at": request["received_at"], "provenance": "pushed",
+            "facts": request["facts"]}
+    ctx.set("revision", kept)
+    return {"case_id": holder, "revision": kept["rev"]}
+
+
+@case_episode.handler()
+async def newest_revision(ctx: ObjectContext, request: dict) -> Optional[dict]:
+    """The newest revision kept on this episode, else None. IT IS THE HOLDER'S BY CONSTRUCTION:
+    only the holder keeps one (``keep_revision``), ``release`` drops it with the episode, and only
+    the holder refreshes -- an attached case returns before it runs anything."""
+    return await ctx.get("revision")

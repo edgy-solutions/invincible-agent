@@ -81,6 +81,9 @@ class Trigger(_Declared):
     #: requiring them would refuse exactly the events the case exists for. Only an ABSENT key is
     #: refused here: the producer did not say. Lists live here too: a list is never a flat fact.
     carries: list[str] = Field(default_factory=list)
+    #: the STUB VERB that pulls this event's newest picture from its source, read by a chaining
+    #: row's ``refresh_input`` beside the revisions the source pushed. Absent: pushed only.
+    pull: Optional[str] = Field(default=None, min_length=1)
 
 
 # ── WHERE TRIGGERS LIVE ─────────────────────────────────────────────────────────────────────
@@ -276,4 +279,42 @@ def chain(definition_id: str, facts: Mapping[str, Any],
         d = _dt.decide(table, facts)
     except _dt.DecisionError as exc:
         raise CaseRoutingError(f"after {definition_id}: {exc}") from exc
-    return {"then": d.then, "terminal": d.terminal, "row": d.row, "table": table.get("decision")}
+    return {"then": d.then, "terminal": d.terminal, "row": d.row, "table": table.get("decision"),
+            "refresh_input": d.refresh_input}
+
+
+# ── INPUT REVISIONS ─────────────────────────────────────────────────────────────────────────
+
+def check_revision(trigger: Trigger, facts: Any, case_key: str,
+                   episode: Optional[str]) -> Dict[str, Any]:
+    """The flattened facts of a NEWER picture of the event a case opened on, or a refusal.
+
+    A revision is the same event again -- the same key -- so it passes the same intake as the
+    original, and it must stay in the case's episode: a picture that moved the fault to another
+    asset is another case's event, not this case's newer one."""
+    if not isinstance(facts, dict):
+        raise CaseRoutingError(f"a revision carries the event's facts; got {type(facts).__name__}")
+    flat = flatten(facts)
+    check_intake(trigger, flat, case_key, facts=facts)
+    moved = episode_key(trigger, flat)
+    if moved != episode:
+        raise CaseRoutingError(
+            f"a revision of case {case_key!r} is in episode {moved!r}, and the case holds "
+            f"{episode!r}; another fault or asset is another case's event")
+    return flat
+
+
+def newest_revision(current: int, candidates: list) -> Optional[Dict[str, Any]]:
+    """The candidate with the highest ``rev`` above ``current``, else None. CANDIDATES ARE IN
+    PRECEDENCE ORDER -- pushed before pulled -- so on equal revs the earlier one wins."""
+    best = None
+    for c in candidates:
+        if c is None:
+            continue
+        rev = c.get("rev") if isinstance(c, dict) else None
+        if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(c.get("facts"), dict):
+            raise CaseRoutingError(
+                f"an input revision carries an integer `rev` and the event's `facts`; got {c!r}")
+        if rev > current and (best is None or rev > best["rev"]):
+            best = c
+    return best

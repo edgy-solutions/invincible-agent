@@ -1995,6 +1995,7 @@ async def _run_definition(
     outputs: Optional[dict] = None,
     approval_chain: Optional[list] = None,
     case: Optional[dict] = None,
+    case_input: Optional[dict] = None,
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -2073,6 +2074,9 @@ async def _run_definition(
         # and are set LAST: nothing the caller supplies can overwrite them.
         "case": {**(case or {}), "approval_chain": chain, "instance_id": workflow_id},
         "definition": {"id": wf.id, "version": version},
+        # WHICH REVISION OF THE CASE'S INPUT this instance reads (`input.revision`, 1 = the
+        # original event). Absent on a standalone run, so a template citing it refuses there.
+        **({"input": copy.deepcopy(case_input)} if case_input else {}),
     }
     user_jwt = request.get("user_jwt", "")
     identity = {

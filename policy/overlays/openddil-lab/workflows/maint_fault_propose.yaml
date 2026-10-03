@@ -11,6 +11,10 @@
 # manual) and never a literal null (a template lying about where a value comes from). They ride
 # the chosen option into the ActionRecord's `work_order.parts[]` untouched.
 #
+# EVERY OPTION CITES THE INPUT REVISION it was made from (`input.revision`; 1 is the event the
+# case opened on). A return to proposed re-reads the picture, so two proposals in one case may
+# rest on different pictures, and the record says which.
+#
 # WHO DECIDES: "the reporting maintainer or the tier's maintainer role". The substrate routes to a
 # declared AUDIENCE, not to an actor derived from the event, so the row goes to the tier's
 # maintainer audience, which the reporting maintainer is in. Per-instance routing to the reporter
@@ -52,6 +56,7 @@ steps:
             hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
             source_site: here
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
         # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
         # basis {rule, observed_at}, so the card shows why a supervisor is or is not asked.
         battle_condition: "{trigger.picture.battle_condition}"
@@ -70,6 +75,7 @@ steps:
             icn: "{outputs.maint_fault_propose.walk.citations.ipd.icn}"
             hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
         # THE ROW THE RESUPPLY READS, WHOLE: its site, stock, lead_time_days and lead_time_source
         # (stand-in | supply-system) travel together, so the lead time is never shown without the
         # source that says how far to trust it. NULL when no site has stock -- the card renders
@@ -87,6 +93,7 @@ steps:
         interval: "{outputs.maint_fault_propose.walk.citations.planning_interval.interval}"
         parts: []
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
       - verb: evacuate_for_depot
         label: "Evacuate for depot"
         readiness: NMC
@@ -96,6 +103,7 @@ steps:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
         parts: []
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
 
   - kind: human_await
     id: decide

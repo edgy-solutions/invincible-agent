@@ -42,3 +42,9 @@ requires:
 carries:
   - picture.spares
   - picture.nearest_spare
+
+# THE PICTURE IS RE-READ WHEN A CASE RETURNS TO PROPOSED, from both sources in order: the bridge
+# PUSHES a newer picture as the same event_id again (kept as revision k on the episode), and this
+# verb PULLS one. Declared as a stub that returns the newest kept revision, so the real picture
+# endpoint retires a stub, not a design. See verbs/maintenance_picture_read.yaml.
+pull: maintenance_picture_read

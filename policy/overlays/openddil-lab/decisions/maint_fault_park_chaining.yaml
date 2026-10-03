@@ -2,6 +2,9 @@
 #
 # A PARKED CASE COMES BACK AS A FRESH PROPOSAL: the picture (spares, readiness) may have moved,
 # and the walk and the options are rendered again from it.
+# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
+# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
+# opened on. Every option cites the revision it was made from.
 decision: maint_fault_park_chaining
 
 after: maint_fault_park
@@ -14,3 +17,4 @@ domain:
 rows:
   - when: {outcome: elapsed}
     then: maint_fault_propose
+    refresh_input: true

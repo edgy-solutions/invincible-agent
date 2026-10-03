@@ -1,0 +1,14 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# PULL THE EVENT'S NEWEST PICTURE. The case runner calls this when a chaining row says
+# `refresh_input` (a return to proposed), beside the revisions the bridge pushed. OpenDDIL's
+# architect has offered a picture endpoint; until it is served this stub returns the newest
+# revision the bridge PUSHED (`kept`, null when none), so pulling adds nothing and the pushed one
+# wins the tie. When the endpoint exists the same step reads the newest of pushed-or-pulled.
+#
+# OPEN: what orders a pulled picture against a pushed one. The stub returns the kept revision
+# itself, so its `rev` compares; a real pull needs a revision both sources share.
+verb: maintenance_picture_read
+stub: true
+retired_by: "OpenDDIL's maintenance picture endpoint (offered; not served yet)"
+returns: "{kept}"

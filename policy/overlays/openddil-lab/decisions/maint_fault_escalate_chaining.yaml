@@ -2,6 +2,9 @@
 #
 # WHAT FOLLOWS AN ESCALATION. Neither row releases anything: an escalation can reopen the case or
 # withdraw it, never approve the proposal that went unanswered.
+# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
+# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
+# opened on. Every option cites the revision it was made from.
 decision: maint_fault_escalate_chaining
 
 after: maint_fault_escalate
@@ -17,5 +20,6 @@ terminals: [withdrawn]
 rows:
   - when: {outcome: reopen}
     then: maint_fault_propose
+    refresh_input: true
   - when: {outcome: withdrawn}
     then: withdrawn
