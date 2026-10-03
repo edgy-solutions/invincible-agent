@@ -88,7 +88,10 @@ data:
                   "*"
               ]
           },
-          {{- range $i, $c := .Values.keycloak.serviceClients }}
+          {{- include "invincible-agent.validateServiceClients" $ }}
+          {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+          {{- range $i, $c := $allServiceClients }}
+          {{- $kind := $c.kind | default "service" }}
           {
               "clientId": {{ $c.clientId | quote }},
               "enabled": true,
@@ -96,7 +99,9 @@ data:
               "serviceAccountsEnabled": true,
               "standardFlowEnabled": false,
               "directAccessGrantsEnabled": false,
+              {{- if $c.secretRef }}
               "secret": {{ get $.Values.keycloak $c.secretRef | quote }},
+              {{- end }}
               "protocolMappers": [
                   {
                       "name": "authz-id-svc",
@@ -110,9 +115,22 @@ data:
                           "id.token.claim": "true",
                           "userinfo.token.claim": "true"
                       }
-                  }
+                  }{{ if eq $kind "delegate" }},
+                  {
+                      "name": "initiator-kind-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                          "claim.name": "initiator_kind",
+                          "claim.value": "delegate",
+                          "jsonType.label": "String",
+                          "access.token.claim": "true",
+                          "id.token.claim": "true",
+                          "userinfo.token.claim": "true"
+                      }
+                  }{{ end }}
               ]
-          }{{ if lt (add1 $i) (len $.Values.keycloak.serviceClients) }},{{ end }}
+          }{{ if lt (add1 $i) (len $allServiceClients) }},{{ end }}
           {{- end }}
       ],
       "roles": {

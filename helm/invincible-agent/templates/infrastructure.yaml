@@ -18,6 +18,7 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "postgresql" "root" .) | nindent 8 }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -139,6 +140,7 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "neo4j" "root" .) | nindent 8 }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -209,7 +211,9 @@ spec:
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "weaviate" "root" .) | nindent 8 }}
+        {{- include "invincible-agent.statefulSpreadLabel" . | nindent 8 }}
     spec:
+      {{- include "invincible-agent.statefulSpreadAffinity" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -222,6 +226,8 @@ spec:
               containerPort: 8080
             - name: grpc
               containerPort: 50051
+          resources:
+            {{- toYaml .Values.weaviate.resources | nindent 12 }}
           env:
             - name: PERSISTENCE_DATA_PATH
               value: /var/lib/weaviate
@@ -296,6 +302,7 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "fuseki" "root" .) | nindent 8 }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

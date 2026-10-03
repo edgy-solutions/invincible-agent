@@ -17,6 +17,7 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-ui" "root" .) | nindent 8 }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -79,6 +80,7 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 8 }}
     spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

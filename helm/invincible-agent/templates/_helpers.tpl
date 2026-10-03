@@ -135,6 +135,125 @@ wrong with it. Comments belong out here, not in there.
 {{- end }}
 
 {{/*
+Stateful-core spread group — shared label + preferred pod anti-affinity.
+
+Keycloak, Restate and Weaviate each run a single replica backed by a `local-path` PVC, and
+MEASURED 2026-10-02 all four such PVs (these three plus MinIO) are pinned to the SAME node —
+local-path has no cross-node migration, so whichever node first provisioned the PV is the only
+node that can ever mount it again. A REQUIRED pod anti-affinity on this label would therefore
+leave every pod after the first one scheduled permanently Pending: the scheduler would be asked
+to avoid a node that is the ONLY node any of them can run on. So this is
+`preferredDuringSchedulingIgnoredDuringExecution` ONLY, and must stay that way until the
+volumes themselves are migrated off local-path (a separate decision) — a requirement would be a
+regression here, not a hardening.
+
+MinIO (`iagent-minio`) is deployed EXTERNALLY to this chart (see the `minioBucketInit` comment
+block in values.yaml — "a separate manifest, not chart dependencies") and has no pod template in
+this repo, so it cannot carry this label or affinity from here; it is not part of this group.
+
+Toggle: global.statefulSpread.enabled (default true). Weight: global.statefulSpread.weight
+(default 100). Both return empty when disabled, so the call sites below render a harmless blank
+line — never add the label to a StatefulSet's spec.selector.matchLabels (selectors are
+immutable; changing one breaks `helm upgrade` on an existing release), only to pod template
+metadata.
+*/}}
+{{- define "invincible-agent.statefulSpreadLabel" -}}
+{{- if .Values.global.statefulSpread.enabled -}}
+iagent.io/spread-group: stateful-core
+{{- end -}}
+{{- end }}
+
+{{- define "invincible-agent.statefulSpreadAffinity" -}}
+{{- if .Values.global.statefulSpread.enabled -}}
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: {{ .Values.global.statefulSpread.weight | default 100 }}
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              iagent.io/spread-group: stateful-core
+{{- end -}}
+{{- end }}
+
+{{/*
+"Not stateful nodes" — a REQUIRED nodeAffinity that keeps every pod EXCEPT the stateful-core
+three (Keycloak, Restate, Weaviate — see invincible-agent.statefulSpreadLabel/Affinity above)
+off any node carrying global.statefulNodes.labelKey. The label is applied to nodes OUT OF
+CHART (the operator labels whichever node(s) hold the stateful-core's local-path PVs); this
+define is the reservation's other half, and REQUIRED (unlike the spread affinity above) is
+correct here because the condition is the opposite shape: avoiding ONE specific node (or small
+labelled set) is always satisfiable by the many other nodes in the pool, whereas the spread
+affinity above has to avoid pods pinned to each other with nowhere else for any of them to go.
+A cordon would do the same job, but has to be reapplied by hand after every cluster change;
+this is the no-cordon-needed equivalent, expressed as a chart default.
+
+DoesNotExist, not a value match — ANY value on the label key reserves the node, so a node can
+be marked reserved without the chart needing to agree on what the value should be.
+
+Rendered only when global.statefulNodes.enabled (default true), and renders the WHOLE
+`affinity:` key, same convention as statefulSpreadAffinity above — a call site simply includes
+this with no wrapping. AT THIS CHART'S HEAD no non-stateful-core pod template has an affinity
+of its own, so every call site is a straight include; if one ever gains its own affinity block,
+that template must MERGE this nodeAffinity into its existing `affinity:` key by hand (a document
+may carry only one `affinity:` key, and an existing `required.nodeSelectorTerms` needs this
+matchExpression appended into EACH existing term, since terms are OR'd together) rather than
+including this verbatim.
+*/}}
+{{- define "invincible-agent.avoidStatefulNodes" -}}
+{{- if .Values.global.statefulNodes.enabled -}}
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: {{ .Values.global.statefulNodes.labelKey }}
+              operator: DoesNotExist
+{{- end -}}
+{{- end }}
+
+{{/*
+Validates .Values.keycloak.serviceClients CONCATENATED WITH .Values.keycloak.extraServiceClients
+— ONE check, called by BOTH consumers (keycloak-configmap.yaml's first-boot import and
+realm-reconcile-job.yaml's reconcile), so the rule lives in exactly one place rather than
+drifting between two copies. The two lists share one schema: extraServiceClients exists so an
+environment overlay can APPEND clients without replacing the base serviceClients list (a Helm
+overlay replaces a list wholesale).
+
+  - kind (optional, default "service") must be "service" or "delegate".
+  - onBehalfOf is allowed only when kind is delegate.
+  - each onBehalfOf.user must name a keycloak.nonInteractiveUsers entry (same pattern as
+    meshRegistrar.onBehalfOfUser in mesh-registrar.yaml).
+  - each onBehalfOf.role must be "operator" or "supervisor".
+
+Emits nothing on success; `fail`s the render on the first violation.
+*/}}
+{{- define "invincible-agent.validateServiceClients" -}}
+{{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+{{- $kind := $c.kind | default "service" }}
+{{- if not (or (eq $kind "service") (eq $kind "delegate")) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q has kind %q; must be \"service\" or \"delegate\"" $c.clientId $kind) }}
+{{- end }}
+{{- if and $c.onBehalfOf (ne $kind "delegate") }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q declares onBehalfOf but kind is %q; onBehalfOf is allowed only on a delegate client" $c.clientId $kind) }}
+{{- end }}
+{{- range $o := $c.onBehalfOf }}
+{{- $found := false }}
+{{- range $u := $.Values.keycloak.nonInteractiveUsers }}
+{{- if eq $u.username $o.user }}{{- $found = true }}{{- end }}
+{{- end }}
+{{- if not $found }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is not a keycloak.nonInteractiveUsers entry" $c.clientId $o.user) }}
+{{- end }}
+{{- if not (or (eq $o.role "operator") (eq $o.role "supervisor")) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q has role %q; must be \"operator\" or \"supervisor\"" $c.clientId $o.user $o.role) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 PostgreSQL connection host — uses subchart or external
 */}}
 {{- define "invincible-agent.pgHost" -}}
