@@ -129,8 +129,14 @@ spec:
               rc=0
 
               {{- $claim := .Values.keycloak.authzClaim | default "email" }}
-              {{- range $c := .Values.keycloak.serviceClients }}
-              {{- $secret := get $.Values.keycloak $c.secretRef }}
+              {{- include "invincible-agent.validateServiceClients" $ }}
+              {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+              {{- range $c := $allServiceClients }}
+              {{- $kind := $c.kind | default "service" }}
+              {{- $secret := "" }}
+              {{- if $c.secretRef }}
+              {{- $secret = get $.Values.keycloak $c.secretRef }}
+              {{- end }}
               CID={{ $c.clientId | quote }}
               echo "-- $CID"
               # FIRST "id" in the array, never a greedy last-match: a client
@@ -150,7 +156,9 @@ spec:
                     "serviceAccountsEnabled": true,
                     "standardFlowEnabled": false,
                     "directAccessGrantsEnabled": false,
+                    {{- if $c.secretRef }}
                     "secret": {{ $secret | quote }},
+                    {{- end }}
                     "protocolMappers": [{
                       "name": "authz-id-svc",
                       "protocol": "openid-connect",
@@ -163,7 +171,19 @@ spec:
                         "id.token.claim": "true",
                         "userinfo.token.claim": "true"
                       }
-                    }]
+                    }{{ if eq $kind "delegate" }},{
+                      "name": "initiator-kind-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": "initiator_kind",
+                        "claim.value": "delegate",
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }{{ end }}]
                   }'
                 echo "   created"
               else
@@ -192,6 +212,31 @@ spec:
                 else
                   echo "   present, mapper ok"
                 fi
+                {{- if eq $kind "delegate" }}
+                # Delegate clients also carry initiator_kind — same repair discipline: create
+                # if missing, never overwrite an operator's own change.
+                HAS2=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                      | grep -c 'initiator-kind-svc' || true)
+                if [ "$HAS2" = "0" ]; then
+                  echo "   present, initiator_kind mapper MISSING -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$UUID/protocol-mappers/models" -d '{
+                      "name": "initiator-kind-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": "initiator_kind",
+                        "claim.value": "delegate",
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }'
+                else
+                  echo "   present, initiator_kind mapper ok"
+                fi
+                {{- end }}
               fi
               {{- end }}
 
@@ -223,7 +268,8 @@ spec:
                 echo "   ok   user $UN (no credentials)"
               fi
               {{- end }}
-              {{- range $c := .Values.keycloak.serviceClients }}
+              {{- range $c := $allServiceClients }}
+              {{- $kind := $c.kind | default "service" }}
               CID={{ $c.clientId | quote }}
               UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
                      | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -232,6 +278,11 @@ spec:
               elif ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
                      | grep -q {{ $c.authzId | quote }}; then
                 echo "   FAIL $CID: authz_id {{ $c.authzId }} not minted by any mapper"; rc=1
+              {{- if eq $kind "delegate" }}
+              elif ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                     | grep -q 'initiator-kind-svc'; then
+                echo "   FAIL $CID: initiator_kind not minted by any mapper (kind: delegate)"; rc=1
+              {{- end }}
               else
                 echo "   ok   $CID -> {{ $c.authzId }}"
               fi

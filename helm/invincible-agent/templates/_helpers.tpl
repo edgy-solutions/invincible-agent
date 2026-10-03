@@ -214,6 +214,46 @@ affinity:
 {{- end }}
 
 {{/*
+Validates .Values.keycloak.serviceClients CONCATENATED WITH .Values.keycloak.extraServiceClients
+— ONE check, called by BOTH consumers (keycloak-configmap.yaml's first-boot import and
+realm-reconcile-job.yaml's reconcile), so the rule lives in exactly one place rather than
+drifting between two copies. The two lists share one schema: extraServiceClients exists so an
+environment overlay can APPEND clients without replacing the base serviceClients list (a Helm
+overlay replaces a list wholesale).
+
+  - kind (optional, default "service") must be "service" or "delegate".
+  - onBehalfOf is allowed only when kind is delegate.
+  - each onBehalfOf.user must name a keycloak.nonInteractiveUsers entry (same pattern as
+    meshRegistrar.onBehalfOfUser in mesh-registrar.yaml).
+  - each onBehalfOf.role must be "operator" or "supervisor".
+
+Emits nothing on success; `fail`s the render on the first violation.
+*/}}
+{{- define "invincible-agent.validateServiceClients" -}}
+{{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+{{- $kind := $c.kind | default "service" }}
+{{- if not (or (eq $kind "service") (eq $kind "delegate")) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q has kind %q; must be \"service\" or \"delegate\"" $c.clientId $kind) }}
+{{- end }}
+{{- if and $c.onBehalfOf (ne $kind "delegate") }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q declares onBehalfOf but kind is %q; onBehalfOf is allowed only on a delegate client" $c.clientId $kind) }}
+{{- end }}
+{{- range $o := $c.onBehalfOf }}
+{{- $found := false }}
+{{- range $u := $.Values.keycloak.nonInteractiveUsers }}
+{{- if eq $u.username $o.user }}{{- $found = true }}{{- end }}
+{{- end }}
+{{- if not $found }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is not a keycloak.nonInteractiveUsers entry" $c.clientId $o.user) }}
+{{- end }}
+{{- if not (or (eq $o.role "operator") (eq $o.role "supervisor")) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q has role %q; must be \"operator\" or \"supervisor\"" $c.clientId $o.user $o.role) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 PostgreSQL connection host — uses subchart or external
 */}}
 {{- define "invincible-agent.pgHost" -}}

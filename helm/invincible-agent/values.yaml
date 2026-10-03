@@ -1847,6 +1847,27 @@ keycloak:
   # `authzId` is the `svc:<name>` entitlement subject (docs/reference/identity-mint-contract.md);
   # `clientId` is `iagent-<name>`; `secretRef` names the key under .Values.keycloak holding
   # the secret, so this list and secrets.yaml cannot drift.
+  #
+  # `secretRef` is OPTIONAL. Omit it and Keycloak MINTS the secret itself (first-boot import
+  # emits no "secret" key; the reconcile job creates the client without supplying one, and
+  # — additive discipline, unchanged — never sets, regenerates or rotates the secret of an
+  # EXISTING client either way). Use this for a client this chart will never need to hand the
+  # secret value to anything it deploys itself.
+  #
+  # `kind` is OPTIONAL: "service" (default) or "delegate". A render fails on any other value.
+  # A delegate client gets a second hardcoded claim, `initiator_kind: "delegate"`, beside
+  # `authz-id-svc`, in both the import and the reconcile job; a token minted for a service
+  # client carries no such claim.
+  #
+  # `onBehalfOf` is allowed ONLY on a delegate client (render fails otherwise): a list of
+  # `{user, role}`, `user` must name a `keycloak.nonInteractiveUsers` entry (render fails
+  # naming the user otherwise, same check as meshRegistrar.onBehalfOfUser) and `role` must be
+  # `operator` or `supervisor` (render fails otherwise). THIS IS A DECLARATION ONLY, this
+  # commit: nothing in the BFF consumes it yet.
+  #
+  # The above (`secretRef` / `kind` / `onBehalfOf`) applies identically to BOTH `serviceClients`
+  # below and `extraServiceClients` (declared right after it) — every consumer template and the
+  # shared validator treat the two lists as one concatenated sequence.
   serviceClients:
     # REGISTRATION IDENTITIES (2026-08-08) — engines D, E, O and W.
     #
@@ -1980,6 +2001,14 @@ keycloak:
     - clientId: "iagent-graph-host"
       authzId: "svc:graph-host"
       secretRef: "graphHostClientSecret"
+
+  # `extraServiceClients` is the SAME schema as `serviceClients` above (same `secretRef` /
+  # `kind` / `onBehalfOf` rules, validated by the same helper) — a separate key so an
+  # environment overlay can APPEND clients without replacing the base list: a Helm overlay
+  # REPLACES a list wholesale, so a client only ever needed by one environment (e.g. one whose
+  # onBehalfOf principals only exist in that environment's nonInteractiveUsers) is declared
+  # here by that overlay instead of in the shared base file.
+  extraServiceClients: []
 
   # Registration identity for engine-lg, the graph host (see serviceClients above).
   graphHostClientSecret: "sandbox-graph-host-secret"

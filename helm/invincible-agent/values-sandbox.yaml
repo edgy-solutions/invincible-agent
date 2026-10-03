@@ -449,6 +449,37 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+    # OpenDDIL's demo principals, mirrored here when its client registration landed
+    # (iagent-openddil, extraServiceClients below), so its onBehalfOf and approvals resolve
+    # to real subjects. No credentials, same shape as platform-registrar.
+    - username: operator.atlantia
+      email: operator.atlantia@example.com
+    - username: operator.borduria
+      email: operator.borduria@example.com
+    - username: liaison
+      email: liaison@example.com
+  # OpenDDIL's delegate client (2026-10-02), "Model Y": an external workload like doc-tools —
+  # a separate release, credential created here because the realm lives here. It authenticates
+  # AS ITSELF (kind: delegate), never as the three principals above; those are RECORDED in
+  # onBehalfOf, not verified this pass (R-089) — a DECLARATION only, this commit: nothing in
+  # the BFF consumes onBehalfOf yet.
+  # Declared here, in extraServiceClients, rather than the base values.yaml serviceClients:
+  # onBehalfOf's referential check requires its users to be in THIS environment's
+  # nonInteractiveUsers, so the base chart would otherwise fail to render on its own.
+  # NO secretRef: this chart deploys nothing that needs to read the secret value, so Keycloak
+  # MINTS it (first-boot import and reconcile both omit "secret") and nothing here ever sets,
+  # regenerates or rotates it on an existing client.
+  extraServiceClients:
+    - clientId: "iagent-openddil"
+      authzId: "svc:openddil"
+      kind: delegate
+      onBehalfOf:
+        - user: operator.atlantia
+          role: operator
+        - user: operator.borduria
+          role: operator
+        - user: liaison
+          role: supervisor
   # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
   #
   # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that
