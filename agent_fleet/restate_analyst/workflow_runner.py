@@ -178,7 +178,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             step = (outputs.get(definition_id) or {}).get(env.get("outcome_step_id")) or {}
             refreshed: dict = {}
             if nxt.get("refresh_input") and not nxt["terminal"]:
-                fresh = await _refresh(ctx, trig, case, episode, current, n)
+                fresh = await _refresh(ctx, trig, case, episode, current, facts, n)
                 if fresh:
                     facts, flat, current = fresh["facts"], fresh["flat"], fresh["current"]
                 refreshed = {"input_revision": current["revision"]}
@@ -213,14 +213,15 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             "transitions": case["transitions"], "approval_chain": chain}
 
 
-async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
+async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict, facts: dict,
                    n: int) -> Optional[dict]:
     """The input revision received after ``current``, newest of both sources, or None.
 
     PUSHED FIRST: the revision the source sent again, kept on the episode. PULLED SECOND: the
     trigger's ``pull`` stub verb, rendered with ``{kept}`` in its context -- declared now, so the
     real picture endpoint retires a stub rather than adding a second mechanism. The newest
-    ``received_at`` wins and a tie goes to the pulled one (``case_routing.newest_revision``). The winner passes intake again and must stay in the case's episode:
+    ``received_at`` wins, a tie goes to the pulled one, then the higher ``rev``
+    (``case_routing.newest_revision``). The winner passes intake again and must stay in the case's episode:
     ``keep_revision`` is reachable on the ingress as well as through ``revise``, so what was kept
     is never trusted as checked, and neither is what a pull returns."""
     R = _routing()
@@ -244,8 +245,10 @@ async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict,
         return None if got is None else {**got, "provenance": "pulled", "verb": trig.pull}
 
     pulled = await ctx.run(f"pull_{n}", _pull)
+    on = {"rev": current["revision"], "received_at": current["received_at"],
+          "provenance": current["provenance"], "facts": facts}
     best = await ctx.run(f"newest_{n}", _terminal(
-        lambda: R.newest_revision(current, [kept, pulled]), 500))
+        lambda: R.newest_revision(on, [kept, pulled]), 500))
     if best is None:
         return None
     flat = await ctx.run(f"refresh_{n}", _terminal(

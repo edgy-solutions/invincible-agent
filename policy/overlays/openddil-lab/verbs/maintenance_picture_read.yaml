@@ -8,7 +8,8 @@
 # newest of pushed-or-pulled.
 #
 # ORDER (ruled 2026-10-03): the newest `received_at` wins; on a tie the pulled one, because it was
-# asked for. Both are revisions of the same artifact, so this is an ordering rule, not a merge. A
+# asked for; then the higher `rev`, so two pushes in one clock tick are still read in order. Both
+# are revisions of the same artifact, so this is an ordering rule, not a merge. A
 # pulled picture therefore carries its own `received_at`, with its zone, or the refresh refuses it.
 verb: maintenance_picture_read
 stub: true

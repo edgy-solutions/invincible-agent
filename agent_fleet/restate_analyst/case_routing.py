@@ -323,35 +323,44 @@ def _same_revision(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     return all(a.get(k) == b.get(k) for k in ("rev", "received_at", "facts"))
 
 
+def _order(revision: Any) -> tuple:
+    """Where a revision sorts: ``(received_at, pulled, rev)``. Refuses one without an integer
+    ``rev``, the event's ``facts`` and an orderable ``received_at``."""
+    rev = revision.get("rev") if isinstance(revision, dict) else None
+    if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(revision.get("facts"), dict):
+        raise CaseRoutingError(
+            f"an input revision carries an integer `rev` and the event's `facts`; got {revision!r}")
+    return (received_at(revision), revision.get("provenance") == "pulled", rev)
+
+
 def newest_revision(current: Dict[str, Any], candidates: list) -> Optional[Dict[str, Any]]:
-    """The candidate received most recently, if after ``current``; else None.
+    """The candidate that sorts newest, if it sorts after ``current`` (the revision the case is
+    on, ``rev``/``received_at``/``provenance``/``facts``); else None.
 
     ORDERED BY ``received_at``, ruled 2026-10-03: pushed and pulled pictures are revisions of the
     same artifact, so this is an ordering rule, not a merge -- the winner replaces the input whole.
-    ON A TIE THE PULLED ONE WINS, because it was asked for. ``rev`` labels a revision; it does not
-    order one.
+    ON A TIE THE PULLED ONE WINS, because it was asked for. THEN ``rev``, ruled the same day: two
+    revisions received in one clock tick still have an order, because ``keep_revision`` counts
+    ``rev`` on arrival, so the later push is read. ``rev`` comes AFTER the pulled flag: a pulled
+    revision's ``rev`` is its own source's count, not comparable with a pushed one, and putting it
+    first would let a push beat a pull at the same instant.
 
-    THE SAME REVISION REACHED TWICE IS NOT A TIE. The shipped pull stub returns the kept revision
-    itself, so it ties every push; letting "pulled" win that would record every pushed picture as
-    pulled. A pulled candidate identical to another (``rev``, ``received_at``, ``facts``) is that
-    candidate, and keeps its provenance."""
-    floor = received_at(current)
+    THE SAME REVISION REACHED TWICE IS NOT A TIE (ruled 2026-10-03). The shipped pull stub returns
+    the kept revision itself, so it ties every push; letting "pulled" win that would record every
+    pushed picture as pulled. A candidate identical (``rev``, ``received_at``, ``facts``) to
+    another keeps the pushed provenance, and one identical to ``current`` is not newer."""
+    floor = _order(current)
     best, best_key = None, None
     for c in candidates:
         if c is None:
             continue
-        rev = c.get("rev") if isinstance(c, dict) else None
-        if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(c.get("facts"), dict):
-            raise CaseRoutingError(
-                f"an input revision carries an integer `rev` and the event's `facts`; got {c!r}")
-        at = received_at(c)
-        if at <= floor:
+        key = _order(c)
+        if key <= floor or _same_revision(current, c):
             continue
         if best is not None and _same_revision(best, c):
             if best.get("provenance") == "pulled":   # whichever order they came in
-                best, best_key = c, (at, c.get("provenance") == "pulled")
+                best, best_key = c, key
             continue
-        key = (at, c.get("provenance") == "pulled")
         if best is None or key > best_key:
             best, best_key = c, key
     return best

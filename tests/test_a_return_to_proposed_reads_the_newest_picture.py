@@ -13,7 +13,8 @@ battle condition may have moved. RULED (2026-10-02/03):
   received_at, provenance}); every instance sees ``input.revision`` and every option cites it.
   The original event is revision 1. No store write.
 * ORDER, NEWEST RECEIVED (ruled 2026-10-03). The newest ``received_at`` wins; on a tie the pulled
-  one, because it was asked for. Both are revisions of one artifact: an ordering rule, not a merge.
+  one, because it was asked for; then the higher ``rev``, so one clock tick still has an order.
+  Both are revisions of one artifact: an ordering rule, not a merge.
 
 The cluster double is the case runner's own; the policy is the REAL overlay.
 
@@ -53,8 +54,8 @@ def _at(s):
     return (_T0 + timedelta(seconds=s)).isoformat()
 
 
-#: A case's current input, as the runner passes it: revision 1, received at the start.
-_CUR = {"revision": 1, "received_at": _at(0)}
+#: The revision a case is on, as the runner passes it: revision 1, received at the start.
+_CUR = {"rev": 1, "received_at": _at(0), "provenance": "pushed", "facts": {"orig": 1}}
 
 
 # ── a double that lets a revision arrive WHILE an instance waits ────────────────────────────
@@ -232,6 +233,27 @@ async def test_A_SECOND_RETURN_SKIPS_WHAT_THE_FIRST_READ_AND_READS_WHAT_CAME_AFT
     assert _opts(c, 4)[1]["nearest_spare"]["site"] == "SITE-D"
 
 
+@pytest.mark.asyncio
+async def test_TWO_PUSHES_IN_ONE_CLOCK_TICK_ARE_BOTH_READ_IN_ORDER(registered, monkeypatch):
+    """The clock never moves: the case and both pushes share one instant. ``keep_revision``
+    counts ``rev`` on arrival, so each push still sorts after the revision the case is on."""
+    monkeypatch.setattr(main, "_now_iso", lambda: _at(0))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "rejected"),
+                                     (DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
+                                     (ACK, "released", "tier@x")]))
+    kept = []
+    third = _newer()
+    third["picture"]["nearest_spare"]["site"] = "SITE-D"
+    c.before[("EV-1~1", DECIDE)] = lambda: _keep(c, kept)
+    c.before[("EV-1~3", DECIDE)] = lambda: _keep(c, kept, third)
+    await _start(c, _event(me=False))
+    revs = c.case("EV-1")["input_revisions"]
+    assert {r["received_at"] for r in revs} == {_at(0)}, revs
+    assert [r["rev"] for r in revs] == [1, 2, 3], revs
+    assert [_spec(c, n)["input"]["revision"] for n in (1, 2, 3, 4)] == [1, 2, 2, 3]
+    assert _opts(c, 4)[1]["nearest_spare"]["site"] == "SITE-D"
+
+
 # ── THE PULL SOURCE ─────────────────────────────────────────────────────────────────────────
 
 def _stubs_with(monkeypatch, returns):
@@ -275,7 +297,8 @@ async def test_THE_SHIPPED_PULL_STUB_ECHOES_THE_KEPT_REVISION_AND_IT_STAYS_PUSHE
     assert R.newest_revision(_CUR, [kept, pulled])["provenance"] == "pushed"
     assert R.newest_revision(_CUR, [pulled, kept])["provenance"] == "pushed"
     assert R.newest_revision(_CUR, [None, pulled])["provenance"] == "pulled"
-    assert R.newest_revision({"revision": 2, "received_at": _at(1)}, [kept, pulled]) is None
+    # ...and once the case is ON it, neither copy is newer: the echo is that revision too.
+    assert R.newest_revision(kept, [kept, pulled]) is None
 
 
 def test_THE_NEWEST_RECEIVED_WINS_WHATEVER_ITS_REV_OR_SOURCE():
@@ -302,10 +325,24 @@ def test_ON_A_TIE_THE_PULLED_PICTURE_WINS_BECAUSE_IT_WAS_ASKED_FOR():
     assert R.newest_revision(_CUR, [spelled_alike, pulled]) is pulled
 
 
-def test_NOTHING_RECEIVED_AFTER_THE_CURRENT_INPUT_IS_NEWER():
-    same = {"rev": 2, "received_at": _at(0), "facts": {"a": 1}, "provenance": "pulled"}
+def test_NOTHING_RECEIVED_BEFORE_THE_CURRENT_INPUT_AND_NOT_THE_INPUT_ITSELF_IS_NEWER():
     older = {"rev": 3, "received_at": "2026-10-02T23:59:59+00:00", "facts": {}, "provenance": "pushed"}
-    assert R.newest_revision(_CUR, [older, same]) is None
+    assert R.newest_revision(_CUR, [older, _CUR, {**_CUR, "provenance": "pulled"}]) is None
+
+
+def test_IN_ONE_CLOCK_TICK_THE_PULLED_ONE_THEN_THE_HIGHER_REV_IS_NEWER():
+    """Ruled 2026-10-03: ``(received_at, rev)`` so two revisions in one tick still have an order.
+    The pulled flag sorts BEFORE ``rev``: a pulled ``rev`` is another source's count, and the
+    first ruling gives a same-instant tie to the pulled picture whatever the revs say."""
+    later_push = {"rev": 2, "received_at": _at(0), "facts": {"b": 1}, "provenance": "pushed"}
+    assert R.newest_revision(_CUR, [later_push]) is later_push
+    assert R.newest_revision(later_push, [{**_CUR, "facts": {"c": 1}}]) is None
+    # Equal on all three keys is not "after", whatever the facts say: the order is exhausted.
+    assert R.newest_revision(_CUR, [{**_CUR, "facts": {"c": 1}}]) is None
+    low_pull = {"rev": 1, "received_at": _at(0), "facts": {"p": 1}, "provenance": "pulled"}
+    high_push = {"rev": 9, "received_at": _at(0), "facts": {"b": 9}, "provenance": "pushed"}
+    assert R.newest_revision(_CUR, [high_push, low_pull]) is low_pull
+    assert R.newest_revision(_CUR, [low_pull, high_push]) is low_pull
 
 
 @pytest.mark.parametrize("bad", [{"rev": "2", "facts": {}}, {"rev": True, "facts": {}},
@@ -323,7 +360,7 @@ def test_A_REVISION_WHOSE_RECEIPT_CANNOT_BE_ORDERED_IS_REFUSED(at):
     """Missing, unparseable, not a string, or NAIVE: a naive time cannot be ordered against an
     aware one without inventing a zone."""
     with pytest.raises(R.CaseRoutingError, match="with its zone"):
-        R.newest_revision({"revision": 1, "received_at": at}, [])
+        R.newest_revision({**_CUR, "received_at": at}, [])
     with pytest.raises(R.CaseRoutingError, match="with its zone"):
         R.newest_revision(_CUR, [{"rev": 2, "received_at": at, "facts": {}}])
 
