@@ -8458,7 +8458,7 @@ async def ingest_document(
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import content_kinds, ingest_status, promotion, provenance
+    from . import content_kinds, ingest_status, origin_resolver, promotion, provenance
 
     if kind not in ingest_status.KINDS:
         raise HTTPException(
@@ -8625,9 +8625,27 @@ async def ingest_document(
             ingest_id=ingest_id,
         )
         workflow = {"case_id": _case_id, "started": _started}
+    # ORIGIN SUGGESTION (section 6, architect ruling 2026-10-02 "ORIGIN, not audience"): a hit
+    # records a suggestion on the status row and opens its own case -- BEST-EFFORT, like the
+    # node creation and workflow seeding above: the upload is already durable by this point, so
+    # a systems-of-record load failure or a Restate outage here is logged, never raised.
+    origin_suggestion: dict | None = None
+    try:
+        origin_suggestion = origin_resolver.resolve(manifest)
+    except Exception as exc:  # noqa: BLE001 — best-effort; the upload already succeeded
+        logger.warning("origin resolution failed for %s: %s", ingest_id, exc)
+    if origin_suggestion is not None:
+        await run_in_threadpool(
+            lambda: ingest_status.record_origin_suggestion(ingest_id, origin_suggestion)
+        )
+        await _open_case(
+            case_id=origin_suggestion["suggestion_id"], trigger="origin_suggestion",
+            facts=origin_suggestion, ingest_id=ingest_id,
+        )
     return {
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
         "object_prefix": object_prefix, "duplicate": None, "workflow": workflow,
+        "origin_suggestion": origin_suggestion,
     }
 
 
@@ -8681,6 +8699,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "dropped_by": {"authz_id": row.get("submitted_by")},
+        "origin_suggestion": row.get("origin_suggestion"),
     }
 
 

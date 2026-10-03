@@ -306,6 +306,19 @@ def test_status_owner_gets_the_row(client, monkeypatch):
     assert "id" not in body and "status" not in body, "one name per field: id/status are dropped"
 
 
+def test_status_route_passes_through_the_rows_origin_suggestion(client, monkeypatch):
+    sugg = {"kind": "origin_suggestion", "suggestion_id": "origin:deadbeef:sor-test"}
+    monkeypatch.setattr(
+        ist, "get_status_for",
+        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "review",
+                                        "kind": "pdf", "sha256": "deadbeef",
+                                        "created_at": 1, "updated_at": 2,
+                                        "origin_suggestion": sugg})
+    r = client.get("/ingest/deadbeef/status")
+    assert r.status_code == 200
+    assert r.json()["origin_suggestion"] == sugg
+
+
 def test_status_of_a_duplicate_row_reports_the_ORIGINALS_current_stage(client, monkeypatch):
     rows = {
         "new-uuid": {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
@@ -604,3 +617,80 @@ def test_ingest_restate_error_still_returns_200_with_started_false(
     assert r.status_code == 200, r.text
     assert len(calls) == 1
     assert r.json()["workflow"]["started"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingest/origin seam, section 6 (architect ruling 2026-10-02 "ORIGIN, not audience"): the
+# gateway wiring around `origin_resolver.resolve()` -- a hit records the suggestion on the
+# status row and opens its own case; a miss does neither.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from src.iagent import origin_resolver as _orr  # noqa: E402
+
+_SUGGESTION = {
+    "kind": "origin_suggestion", "suggestion_id": "origin:ART-X:sor-test",
+    "artifact_id": "ART-X", "dropped_by": {"authz_id": "alice@example.com"},
+    "suggested": {"owner_domain": "sandbox-domain", "program": "sandbox-program",
+                  "obtained_via": "authoritative_source"},
+    "evidence": {"source": "sor-test", "citation": "sandbox-fake:SANDBOX-FAKE-0001"},
+}
+
+
+def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    calls, _state = stub_restate_post
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    recorded: list = []
+    monkeypatch.setattr(ist, "record_origin_suggestion",
+                        lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
+    monkeypatch.setattr(_orr, "resolve", lambda artifact: dict(_SUGGESTION))
+    r = client.post("/ingest", files={"file": ("f.pdf", b"origin hit bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # MUTANT (section 6): dropping the record_origin_suggestion call, or opening no case, reds
+    # these two exact fragments -- "len(recorded) == 1" and "len(calls) == 1".
+    assert len(recorded) == 1, recorded
+    assert recorded[0][1] == _SUGGESTION, recorded
+    assert len(calls) == 1, calls
+    assert calls[0]["json"] == {"trigger": "origin_suggestion", "facts": _SUGGESTION}
+    assert body["origin_suggestion"] == _SUGGESTION, body
+
+
+def test_ingest_origin_suggestion_miss_records_and_opens_nothing(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    calls, _state = stub_restate_post
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    recorded: list = []
+    monkeypatch.setattr(ist, "record_origin_suggestion",
+                        lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
+    monkeypatch.setattr(_orr, "resolve", lambda artifact: None)
+    r = client.post("/ingest", files={"file": ("f.pdf", b"origin miss bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    assert recorded == [], recorded
+    assert calls == [], calls
+    assert r.json()["origin_suggestion"] is None
+
+
+def test_ingest_origin_resolver_failure_still_returns_200(
+        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    """FAIL-CLOSED `origin_resolver.systems()` must not fail an otherwise-durable upload --
+    same best-effort discipline as `_create_ingest_node` and the workflow-seeding POST."""
+    calls, _state = stub_restate_post
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+
+    def _boom(artifact):
+        raise RuntimeError("systems-of-record load failed (stubbed)")
+    monkeypatch.setattr(_orr, "resolve", _boom)
+    r = client.post("/ingest", files={"file": ("f.pdf", b"origin resolver boom bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    assert calls == []
+    assert r.json()["origin_suggestion"] is None

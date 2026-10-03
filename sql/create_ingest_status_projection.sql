@@ -92,3 +92,12 @@ CREATE INDEX IF NOT EXISTS idx_isp_sha256
 -- stops matching `ingest_status.STAGES`/`ALL_STATUSES`. IDEMPOTENT — a second run matches zero
 -- rows.
 UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_disposition';
+
+-- 2026-10-03: origin_suggestion (ingest/origin seam section 6, architect ruling 2026-10-02
+-- "ORIGIN, not audience", SDK 0.9.7 `iagent_mesh.systems_of_record`). NULLABLE -- most arrivals
+-- resolve to no suggestion at all (origin_resolver.resolve() -> None is the ordinary "no
+-- system's pattern matched, or its connector missed" outcome, not an error). Stores the
+-- `origin_suggestion` trigger's built facts dict as JSON text, plain TEXT like `detail` above --
+-- Electric rejects generated/typed columns the same way it rejects them elsewhere in this
+-- table. IDEMPOTENT (IF NOT EXISTS) -- a second run is a no-op.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;

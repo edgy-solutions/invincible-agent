@@ -28,6 +28,7 @@ for a spelling mismatch (`promotion.INGEST_ID_RE`).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -107,6 +108,10 @@ CREATE INDEX IF NOT EXISTS idx_isp_sha256 ON ingest_status_projection (sha256);
 -- amend, but a row already written under the old name must be updated or it stops matching
 -- STAGES/ALL_STATUSES below. IDEMPOTENT -- a second run matches zero rows.
 UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_disposition';
+
+-- 2026-10-03: origin_suggestion (ingest/origin seam section 6) -- NULLABLE, JSON text; see
+-- sql/create_ingest_status_projection.sql's matching comment for why. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
 """
 
 
@@ -277,6 +282,20 @@ def update_status(
         conn.commit()
 
 
+def record_origin_suggestion(ingest_id: str, suggestion: dict[str, Any]) -> None:
+    """Record an `origin_resolver.resolve()` hit on the arrival's own row (section 6).
+    `suggestion` is stored as JSON text -- see the column's migration comment. Never called for
+    a miss (`resolve() -> None`); the column simply stays NULL, which `get_status_for` reports
+    as `None`, not as "resolution pending" -- there is no third state here."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ingest_status_projection SET origin_suggestion = %s WHERE id = %s",
+                (json.dumps(suggestion), ingest_id),
+            )
+        conn.commit()
+
+
 def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
     """The status of an ingest THIS caller submitted or is the on_behalf_of principal for, or
     None otherwise.
@@ -285,6 +304,9 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
     caller`, exactly like `human_tasks.get_task_resolution`'s `recipient_id = caller` scoping —
     a caller who is neither gets None, indistinguishable from "no such ingest", preserving the
     deny-by-default 404 and never revealing another user's queue.
+
+    `origin_suggestion` is parsed back from its stored JSON text to a dict, or left `None` when
+    the column is NULL (no suggestion was ever recorded for this row).
     """
     if not ingest_id or not caller_id:
         return None
@@ -293,10 +315,14 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at
+                          created_at, updated_at, origin_suggestion
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
             )
             row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    return out

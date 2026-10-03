@@ -1,0 +1,15 @@
+# SAMPLE -- OVERLAY layer (ADR-0036), deliberately EMPTY.
+#
+# An existing empty directory is a CLAIM: "this deployment names no systems of record." That
+# is a different statement from an UNSET overlay variable, which means "nobody told me where to
+# look" and leaves the composed set unknowable -- same distinction `policy/overlays/sample/
+# graphs/.gitkeep` draws for GRAPH_OVERLAY_DIRS, repeated here for
+# SYSTEMS_OF_RECORD_OVERLAY_DIRS.
+#
+# Per the module docstring's quoted algorithm ("extracted identity -> first matching system's
+# pattern -> connector lookup -> origin from the record. Miss or no pattern -> origin
+# unresolved"), an empty composed set means every artifact's origin resolves to a miss here --
+# which is today's sandbox behaviour, unchanged: an artifact with no recorded origin stays
+# visible to its dropper/owner only. The seal path is proven instead by a TEST-ONLY
+# system-of-record row pointing at `origin_resolver.CONNECTORS["sandbox-fake"]`, built in the
+# test itself, never shipped here.

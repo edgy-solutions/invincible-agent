@@ -79,6 +79,17 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "CONTENT_KIND_OVERLAY_DIRS") }}
   CONTENT_KIND_OVERLAY_DIRS: "/app/policy/overlays/openddil-lab/content_kinds"
   {{- end }}
+  {{- /* SYSTEMS_OF_RECORD_OVERLAY_DIRS -- for `src/iagent/origin_resolver.py` (ingest/origin
+  seam, section 6, architect ruling 2026-10-02 "ORIGIN, not audience", SDK 0.9.7
+  `iagent_mesh.systems_of_record`). Same FAIL-CLOSED posture as CONTENT_KIND_OVERLAY_DIRS above
+  (origin_resolver.systems() raises rather than falling back), so this points at
+  `policy/overlays/sample/systems_of_record/` -- an EXISTING, EMPTY directory, same convention
+  as GRAPH_OVERLAY_DIRS's `sample/graphs`: the sandbox declares no systems of record, which is a
+  different fact from an unset variable, and resolves every artifact's origin to a miss
+  (dropper/owner-only visibility, unchanged). */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "SYSTEMS_OF_RECORD_OVERLAY_DIRS") }}
+  SYSTEMS_OF_RECORD_OVERLAY_DIRS: "/app/policy/overlays/sample/systems_of_record"
+  {{- end }}
   {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
   neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
   these for split topologies; the hasKey guards keep the rendered CM
