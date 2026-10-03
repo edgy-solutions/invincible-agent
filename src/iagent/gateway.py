@@ -4076,7 +4076,12 @@ def _project_sources(mat: dict) -> list[dict] | None:
             projected["open_url"] = open_url
         # Pass-through engine extras (matched_for, etc.) without
         # validating — UI's TypeScript shape ignores unknown keys.
-        for extra in ("matched_for",):
+        # `provenance` added for the provenance floor (ADR-0041 §7, section 5 of the
+        # ingest/origin seam): a ProvenanceBlock an engine attaches to a source must survive
+        # projection for provenance_floor() to read it at the SSE emission site below — no
+        # production engine attaches one yet (provenance_floor.py's own docstring), so this
+        # is dormant passthrough until one does, same as matched_for's own history.
+        for extra in ("matched_for", "provenance"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
@@ -4143,6 +4148,34 @@ def _enrich_sources_with_has_figures(sources: list[dict]) -> None:
             "has_figures enrichment failed (UI falls back to label "
             "heuristic): %s", exc,
         )
+
+
+def _sources_event_payload(mat: dict) -> tuple[list[dict] | None, dict | None]:
+    """Build the SSE 'sources' event's payload halves from a subtask_sources
+    materialization: the projected Source[] list and its provenance floor (ADR-0041 §7,
+    section 5 of the ingest/origin seam -- `src/iagent/provenance_floor.provenance_floor`).
+
+    Returns (None, None) when there is nothing to project (mirrors `_project_sources`'s own
+    None-for-nothing contract). Factored out of `_generate_dagster_stream_inner`'s dispatch
+    loop so the floor's wiring is directly testable without driving the whole streaming
+    generator (which needs a live Dagster run, routing, and more).
+
+    UNFILTERED: an unstamped source (no production path attaches a provenance block yet,
+    per provenance_floor.py's own docstring) is weaker than user-drop and must pull the
+    floor down, never be skipped — "skipping is the laundering this field exists to
+    prevent."
+    """
+    projected_sources = _project_sources(mat)
+    if not projected_sources:
+        return None, None
+    # Tag each ontology-URI source with whether the data module has linked figures, so the
+    # cortex-ui only shows the "View figures" camera-icon trigger when clicking it would
+    # actually surface figures. Failures leave `has_figures` UNSET and the UI falls back to
+    # its label-pattern heuristic.
+    _enrich_sources_with_has_figures(projected_sources)
+    from . import provenance_floor as _provenance_floor_mod
+    floor = _provenance_floor_mod.provenance_floor(projected_sources)
+    return projected_sources, floor
 
 
 def _project_access_denied(mat: dict) -> dict | None:
@@ -6307,25 +6340,19 @@ async def _generate_dagster_stream_inner(
                 # emit-once-per-run semantics as route_decision and
                 # graph_trace — first subtask wins. Multi-subtask UI
                 # semantics will revisit this.
-                projected_sources = _project_sources(mat)
+                projected_sources, _floor = _sources_event_payload(mat)
                 if projected_sources:
-                    # Tag each ontology-URI source with whether the
-                    # data module has linked figures, so the cortex-ui
-                    # only shows the "View figures" camera-icon trigger
-                    # when clicking it would actually surface figures.
-                    # Failures leave `has_figures` UNSET and the UI
-                    # falls back to its label-pattern heuristic.
-                    _enrich_sources_with_has_figures(projected_sources)
                     logger.info(
                         "📡 Emitting SSE 'sources' for run %s: %d source(s)",
                         run_id, len(projected_sources),
                     )
                     yield _sse(
                         "sources",
-                        json.dumps({"sources": projected_sources}),
+                        json.dumps({"sources": projected_sources, "provenance_floor": _floor}),
                     )
                     # Hop 1: accumulate into bundle.
                     _artifact_bundle["sources"] = projected_sources
+                    _artifact_bundle["provenance_floor"] = _floor
                 emitted_steps.add("sources_emitted")
 
             elif (

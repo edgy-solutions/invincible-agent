@@ -145,3 +145,42 @@ def test_the_rung_tuple_AGREES_with_the_SDKs_copy():
     """Live once the SDK tag carrying iagent_mesh.provenance (lane/ca b68926a) is pinned."""
     sdk = pytest.importorskip("iagent_mesh.provenance")
     assert provenance.OBTAINED_VIA == sdk.OBTAINED_VIA
+
+
+# ── THE WIRING (section 5 of the ingest/origin seam): gateway's SSE 'sources' emission ─────────
+#
+# `_sources_event_payload` is the floor's one production caller (provenance_floor.py's own
+# docstring: "no production caller" until this seam). It is factored out of
+# `_generate_dagster_stream_inner`'s dispatch loop -- driving the whole generator needs a live
+# Dagster run, routing, and an LLM-backed intent extraction, none of which this seam touches --
+# so this stubs the one input that loop hands it (a subtask_sources materialization), the same
+# "stubbed stream" shape tests/safety/test_the_ordinary_path_opens_the_acceptance.py uses for a
+# different materialization-driven feature in the same function.
+
+import json as _json  # noqa: E402
+
+from src.iagent import gateway as _gw  # noqa: E402
+
+
+def _mat_with_sources(items: list[dict]) -> dict:
+    return {
+        "assetKey": {"path": ["subtask_sources"]},
+        "metadataEntries": [{"label": "sources_json", "text": _json.dumps(items)}],
+    }
+
+
+def test_the_sources_event_carries_the_floor_and_the_ingest_id():
+    direct = {"type": "document", "label": "Doc A", "uri": "doc:a",
+              "provenance": _src("direct")["provenance"]}
+    drop = {"type": "document", "label": "Doc B", "uri": "doc:b",
+            "provenance": _src("user-drop", A)["provenance"]}
+    sources, floor = _gw._sources_event_payload(_mat_with_sources([direct, drop]))
+    assert sources is not None and len(sources) == 2
+    # MUTANT (section 5): dropping the floor from the event is the exact fragment this reds --
+    # "floor == {'obtained_via': 'user-drop', 'ingest_ids': [A], 'unidentified': 0}".
+    assert floor == {"obtained_via": "user-drop", "ingest_ids": [A], "unidentified": 0}
+
+
+def test_no_sources_means_no_payload():
+    assert _gw._sources_event_payload({"assetKey": {"path": ["subtask_sources"]},
+                                        "metadataEntries": []}) == (None, None)
