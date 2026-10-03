@@ -33,7 +33,9 @@ httpx = pytest.importorskip("httpx")
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from src.iagent import content_kinds as ck  # noqa: E402
 from src.iagent import gateway  # noqa: E402
+from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
 from src.iagent import promotion  # noqa: E402
 
@@ -42,6 +44,20 @@ from src.iagent import promotion  # noqa: E402
 def client():
     user = type("U", (), {"authz_id": "alice@example.com", "id": "alice@example.com",
                           "sub": "alice@example.com", "email": "alice@example.com",
+                          "persona": None, "entitled_domains": [],
+                          "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    with TestClient(gateway.app) as c:
+        yield c
+    gateway.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def doc_tools_client():
+    """doc-tools' OWN transport identity (`svc:doc-tools`) -- the only caller
+    POST /ingest/{ingest_id}/stage accepts."""
+    user = type("U", (), {"authz_id": "svc:doc-tools", "id": "svc:doc-tools",
+                          "sub": "svc:doc-tools", "email": None,
                           "persona": None, "entitled_domains": [],
                           "is_authenticated": True})()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
@@ -787,3 +803,92 @@ def test_ingest_origin_resolver_failure_still_returns_200(
     assert r.status_code == 200, r.text
     assert calls == []
     assert r.json()["origin_suggestion"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /ingest/{ingest_id}/stage -- doc-tools' own write into the stage ladder
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_domain(monkeypatch, domain="SUSTAINMENT"):
+    reg = type("Reg", (), {"domain": domain})()
+    monkeypatch.setattr(ck, "by_kind", lambda kind: reg)
+
+
+def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "a" * 64, "status": "received", "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: calls.append((ingest_id, stage, kw)))
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    monkeypatch.setattr(ht, "register_task",
+                        lambda **kw: {"task_id": kw["task_id"], "recipients": ["x"]})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "extracting"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ingest_id": row["id"], "stage": "extracting",
+                        "task_id": None, "task_status": None}
+    assert calls == [(row["id"], "extracting",
+                      {"extracted_count": None, "extracted_total": None, "detail": None})]
+
+
+def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "b" * 64, "status": "extracting", "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    registered = []
+    monkeypatch.setattr(ht, "register_task",
+                        lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert len(registered) == 1, registered
+    reg = registered[0]
+    assert reg["kind"] == promotion.KIND
+    assert reg["task_id"] == f"{promotion.KIND}:{row['id']}"
+    assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
+    assert reg["payload"]["ingest_id"] == row["id"]
+    assert reg["payload"]["domain"] == "SUSTAINMENT"
+    assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert r.json()["task_id"] == f"{promotion.KIND}:{row['id']}"
+    assert r.json()["task_status"] == "FILED"
+
+
+def test_stage_repeat_review_opens_none(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "c" * 64, "status": "extracting", "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: True)
+    registered = []
+    monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert registered == []
+    assert r.json()["task_status"] == "ALREADY_FILED"
+
+
+def test_stage_non_doc_tools_caller_gets_403(client, monkeypatch):
+    row = {"id": "sha256:" + "d" * 64, "status": "received", "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: calls.append((a, kw)))
+    r = client.post(f"/ingest/{row['id']}/stage", json={"stage": "extracting"})
+    assert r.status_code == 403, r.text
+    assert calls == [], "a non-doc-tools caller must write nothing"
+
+
+def test_stage_backwards_move_gets_409(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "e" * 64, "status": "review", "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: calls.append((a, kw)))
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "extracting"})
+    assert r.status_code == 409, r.text
+    assert calls == [], "a backwards move must write nothing"

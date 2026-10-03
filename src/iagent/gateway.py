@@ -8844,6 +8844,126 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     }
 
 
+# doc-tools' own transport identity (policy/users.yaml: `svc:doc-tools`, "semantic-linker
+# transport identity"). SAME IDIOM as `_VAULT_REDEEMER_AUTHZ_ID`: a Keycloak hardcoded-claim
+# mapper output, not a caller-supplied value, so it is not spoofable; env-overridable only so a
+# differently-named realm can be configured, never to widen it -- an empty value denies
+# everyone rather than admitting everyone.
+_DOC_TOOLS_SERVICE_AUTHZ_ID = os.getenv("DOC_TOOLS_SERVICE_IDENTITY", "svc:doc-tools").strip()
+
+class IngestStageUpdateRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/stage's body -- doc-tools' own write into the stage ladder
+    (ADR-0041 §8; doc-tools' `IngestStatusResource.update` validates and logs only, and this
+    route is the transport Lane 1 picked for it, HTTP into the BFF)."""
+    stage: str
+    extracted_count: Optional[int] = None
+    extracted_total: Optional[int] = None
+    detail: Optional[str] = None
+
+
+@app.post("/ingest/{ingest_id}/stage")
+async def update_ingest_stage(
+    ingest_id: str,
+    req: IngestStageUpdateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """doc-tools' extraction pipeline advances an ingest's stage. SERVICE-ONLY: only
+    `svc:doc-tools` (see `_DOC_TOOLS_SERVICE_AUTHZ_ID`) may call this -- every other caller,
+    authenticated or not, gets 403.
+
+    Enforces the forward order received -> extracting -> review, plus `failed` from any
+    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed) is
+    refused 409, same as a lateral or backwards move within the non-terminal ladder.
+    `rejected`/`detail`-required is `ingest_status.update_status`'s own existing rule.
+
+    On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
+    ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
+    carrying the ingest_id, the kind's declared domain (content_kinds.by_kind on the row's own
+    `kind`) and the original dropper (`dropped_by`, from the row's `submitted_by`).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, ingest_status, promotion
+
+    # doc-tools' pipeline writes only these three target stages through this route. `promoted`
+    # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
+    # (act_on_human_task above, via promotion.act) -- each carries a decision record this route
+    # must never fabricate, so neither is a legal target here even though it is later in
+    # STAGES' own order.
+    _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
+    _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
+    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED)
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "POST /ingest/{ingest_id}/stage is callable only by doc-tools' own "
+                       "service identity.",
+        })
+
+    if req.stage not in _stage_targets:
+        raise HTTPException(status_code=422, detail={
+            "error": "unknown_stage", "stage": req.stage,
+            "allowed": list(_stage_targets),
+        })
+
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    current_stage = row["status"]
+
+    if current_stage in _terminal_stages:
+        raise HTTPException(status_code=409, detail={
+            "error": "backwards_move", "from": current_stage, "to": req.stage,
+            "message": f"ingest {ingest_id} is already terminal ({current_stage}); no further "
+                       "stage move is possible.",
+        })
+    if req.stage != ingest_status.FAILED:
+        # extracting/review only: both current and target must sit on the forward ladder, and
+        # strictly later than where the row already is.
+        if (current_stage not in _forward_order
+                or _forward_order.index(req.stage)
+                <= _forward_order.index(current_stage)):
+            raise HTTPException(status_code=409, detail={
+                "error": "backwards_move", "from": current_stage, "to": req.stage,
+            })
+
+    try:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, req.stage, extracted_count=req.extracted_count,
+            extracted_total=req.extracted_total, detail=req.detail))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
+
+    task_id = None
+    task_status = None
+    if req.stage == ingest_status.REVIEW:
+        kind_reg = content_kinds.by_kind(row["kind"])
+        domain = kind_reg.domain if kind_reg is not None else None
+        audience = f"{promotion.KIND}:{domain}"
+        task_id = f"{promotion.KIND}:{ingest_id}"
+        if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+            task_status = "ALREADY_FILED"
+        else:
+            try:
+                await run_in_threadpool(lambda: human_tasks.register_task(
+                    kind=promotion.KIND, task_id=task_id, audience=audience,
+                    title=f"Promote document {ingest_id}",
+                    summary=f"Review the extracted document {ingest_id} for promotion.",
+                    requested_by=caller, subject_ref=ingest_id,
+                    payload={"ingest_id": ingest_id, "domain": domain,
+                             "dropped_by": {"authz_id": row.get("submitted_by")}},
+                ))
+            except human_tasks.HumanTaskConfigError as exc:
+                raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+            except human_tasks.NoEntitledRecipients as exc:
+                raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+            task_status = "FILED"
+
+    return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
+
+
 # ════════════════════════════════════════════════════════════════════
 # Data-module figures endpoint (Phase B of the 2026-06-30 figure work)
 # ════════════════════════════════════════════════════════════════════

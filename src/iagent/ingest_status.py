@@ -246,6 +246,30 @@ def record_duplicate_arrival(
     return row
 
 
+def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
+    """The row for `ingest_id`, unscoped to any caller, or None if it does not exist.
+
+    Deliberately NOT caller-scoped (unlike `get_status_for`, which is existence-oracle-safe
+    by scoping to `submitted_by`/`on_behalf_of`): this is asked by a SERVICE identity (the
+    doc-tools pipeline) about an ingest_id it was already handed at drop time, not by an
+    end user browsing a queue -- same reasoning as `human_tasks.task_exists`'s own docstring.
+    The caller-facing gate here is the route's service-identity check, not row scoping."""
+    if not ingest_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
+                          status, extracted_count, extracted_total, duplicate_of, detail,
+                          created_at, updated_at
+                     FROM ingest_status_projection
+                    WHERE id = %s""",
+                (ingest_id,),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def update_status(
     ingest_id: str,
     status: str,
