@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.26 — 2026-10-02
+
+Patch bump for chart content that merged without one.
+
+### Changed
+
+- **`TASK_KIND_OVERLAY_DIRS` default gains `/app/policy/overlays/openddil-lab/task_kinds`**
+  (`templates/configmap.yaml`, lane/74 `fc3098f2`, merged in `57ae5cab`). The maintenance fault
+  workflow's task kinds load from the openddil-lab overlay beside the sample overlay. The change
+  merged after 0.4.25 was cut, so two chart contents shared one version number until this bump.
+  As before, an explicit `agentFleet.env.TASK_KIND_OVERLAY_DIRS` still overrides the default.
+
 ## 0.4.23 — 2026-10-02
 
 Patch bump, chart item before roll #16. Resource limits + a spread preference for the
