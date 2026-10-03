@@ -442,6 +442,26 @@ def _fake_registration(**kw):
     return types.SimpleNamespace(**base)
 
 
+#: A payload satisfying EVERY dotted path `policy/overlays/openddil-lab/triggers/
+#: maintenance_fault.yaml`'s `requires:` names, read from that real file (not restated here) --
+#: the tests below read the requires list itself via `case_routing.load_trigger`, this constant
+#: only supplies values at the paths that file is known (as of this writing) to name.
+_VALID_EVENT_PAYLOAD = {
+    "kind": "maintenance_fault",
+    "event_id": "evt-001",
+    "asset_id": "ASSET-1",
+    "owning_tier": "tier-1",
+    "fault": {"item": "pump", "fault_code": "F-01"},
+    "picture": {
+        "battle_condition": {
+            "mission_essential": False,
+            "basis": {"rule": "R1", "observed_at": "2026-10-03T00:00:00Z"},
+        },
+    },
+    "label": {"originator_nation": "US"},
+}
+
+
 @pytest.fixture
 def stub_restate_post(monkeypatch):
     """Captures every POST the gateway makes through httpx.AsyncClient (the Restate ingress
@@ -535,12 +555,22 @@ def test_ingest_records_dropped_by_authz_id_not_sub(client, fake_s3, fake_create
     assert call["dropped_by_authz_id"] == "alice-authz-id"
 
 
-def test_ingest_event_kind_seeds_exactly_one_workflow_on_arrival(
+def test_ingest_refuses_an_event_kind_multipart_drop_with_zero_writes(
         client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
+    """Section C (ingest/origin seam): an event-branch kind never arrives as a file -- it is a
+    JSON IngestRequest at POST /ingest/events. The multipart door refuses it before the bounded
+    read, so NOTHING is written: no S3 object, no status row, no graph node, no workflow start.
+    """
     calls, _state = stub_restate_post
-    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
-    monkeypatch.setattr(ist, "record_received",
-                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    called = {"find": False, "received": False}
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: called.__setitem__("find", True))
+    # Returns a well-shaped row despite setting "received" -- so that a mutant which deletes the
+    # door check (and so reaches this call for real) fails on the assertions below with a clean
+    # 200 vs 422 mismatch, rather than on an unrelated KeyError/TypeError from a half-shaped fake.
+    monkeypatch.setattr(
+        ist, "record_received",
+        lambda **kw: called.__setitem__("received", True) or {"id": kw["ingest_id"], "status": "received"},
+    )
     monkeypatch.setattr(
         _ck, "by_kind",
         lambda kind: _fake_registration(kind=kind, branch="event",
@@ -549,26 +579,19 @@ def test_ingest_event_kind_seeds_exactly_one_workflow_on_arrival(
                                         identity_field="event_id")
         if kind == "maintenance-fault-event" else None,
     )
-    body_bytes = b"event kind bytes"
-    r = client.post("/ingest", files={"file": ("e.json", body_bytes, "application/json")},
+    r = client.post("/ingest", files={"file": ("e.json", b"event kind bytes", "application/json")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "maintenance-fault-event"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    expected_ingest_id = promotion.ingest_id_for(body_bytes)
-    expected_case_id = f"maintenance_fault:{expected_ingest_id}"
-    # MUTANT (section 3): starting on a document kind, or not starting at all, reds the exact
-    # fragment -- "len(calls) == 1" and "case_id == expected_case_id".
-    assert len(calls) == 1, calls
-    sent = calls[0]
-    assert sent["url"] == (
-        f"{gateway._RESTATE_INGRESS_URL}/WorkflowRunner/{quote(expected_case_id, safe='')}/run/send"
-    )
-    assert sent["json"]["trigger"] == "maintenance_fault"
-    assert sent["json"]["facts"]["ingest_id"] == expected_ingest_id
-    assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
-    assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
-    assert body["workflow"] == {"case_id": expected_case_id, "started": True}
+    # MUTANT (section C, "accept the file"): dropping this door check lets the multipart event
+    # reach the bounded read / S3 write / workflow seeding below, which reds the exact fragment
+    # -- "r.status_code == 422" (it would be 200) -- and every zero-write assertion below with it.
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "event_kind_requires_json", r.json()
+    assert called["find"] is False, "an event kind reached the dedupe/DB layer"
+    assert called["received"] is False, "an event kind reached record_received"
+    assert fake_s3 == [], "an event kind reached the object store"
+    assert fake_create_node == [], "an event kind reached the graph node write"
+    assert calls == [], "an event kind reached the workflow-seeding POST"
 
 
 def test_ingest_document_kind_starts_no_workflow(
@@ -597,23 +620,93 @@ def test_ingest_document_kind_starts_no_workflow(
     assert r.json()["workflow"] is None
 
 
-def test_ingest_restate_error_still_returns_200_with_started_false(
-        client, fake_s3, fake_create_node, monkeypatch, stub_restate_post):
-    calls, state = stub_restate_post
-    state["fail"] = True
-    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
-    monkeypatch.setattr(ist, "record_received",
-                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /ingest/events -- the JSON door for an event-branch content kind (section C). The
+# trigger's own `requires:` (read from the REAL file via `case_routing.load_trigger`, no env
+# override -- same discipline as tests/test_the_maintenance_fault_runs_as_a_case.py) is the
+# validatable schema; a payload failing it is refused before any case is opened.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
+        client, monkeypatch, stub_restate_post):
+    calls, _state = stub_restate_post
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
         _ck, "by_kind",
         lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
                                         seeds_workflow="maintenance_fault",
                                         identity_field="event_id")
         if kind == "maintenance-fault-event" else None,
     )
-    r = client.post("/ingest", files={"file": ("e.json", b"restate down", "application/json")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
-                          "content_kind": "maintenance-fault-event"})
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(calls) == 1, calls
+    sent = calls[0]
+    assert sent["json"]["trigger"] == "maintenance_fault"
+    assert sent["json"]["facts"]["asset_id"] == "ASSET-1"
+    assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
+    assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert body["workflow"]["started"] is True
+
+
+def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(
+        client, monkeypatch, stub_restate_post):
+    import copy
+    calls, _state = stub_restate_post
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    bad_payload = copy.deepcopy(_VALID_EVENT_PAYLOAD)
+    del bad_payload["fault"]["fault_code"]
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": bad_payload,
+    })
+    # MUTANT (section C, "skip the schema check"): dropping the `missing` check before opening
+    # the case reds this exact fragment -- "r.status_code == 422" and "'fault.fault_code' in
+    # r.json()['detail']['missing']" -- the case would open on an incomplete event instead.
+    assert r.status_code == 422, r.text
+    assert "fault.fault_code" in r.json()["detail"]["missing"], r.json()
+    assert calls == [], "a schema-failing payload reached the workflow-seeding POST"
+
+
+def test_ingest_events_restate_error_still_returns_200_with_started_false(
+        client, monkeypatch, stub_restate_post):
+    """Moved from the multipart door (now refused there, see the test above) to POST
+    /ingest/events: `_open_case` is the same best-effort helper either way, so a Restate
+    outage is logged and swallowed, not raised."""
+    calls, state = stub_restate_post
+    state["fail"] = True
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
     assert r.status_code == 200, r.text
     assert len(calls) == 1
     assert r.json()["workflow"]["started"] is False

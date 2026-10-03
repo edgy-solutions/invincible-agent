@@ -8484,6 +8484,27 @@ async def ingest_document(
                 detail="content_kind must be <=128 chars and must not contain '/'",
             )
 
+    # EVENT KINDS ARE REFUSED AT THIS DOOR (section C, ingest/origin seam). A document-branch
+    # kind is bytes to extract; an event-branch kind is a JSON IngestRequest validated against
+    # its trigger's declared shape -- there is no file for it to be "the bytes of". Checked
+    # BEFORE the bounded read below so a misrouted multipart drop writes NOTHING (no S3 object,
+    # no status row, no graph node) and starts no workflow -- caught here rather than letting
+    # the branch=="event" block further down silently seed a workflow for bytes that were ALSO
+    # durably written, which is what this repo did before this check existed.
+    _registered_kind = content_kinds.by_kind(declared_content_kind) if declared_content_kind else None
+    if _registered_kind is not None and _registered_kind.branch == "event":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "event_kind_requires_json",
+                "message": (
+                    f"content_kind {declared_content_kind!r} is an event-branch kind — it "
+                    "arrives as a JSON IngestRequest at POST /ingest/events, validated against "
+                    "its trigger's declared fields, never as a file. Refusing before any write."
+                ),
+            },
+        )
+
     # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
     # limit in values-sandbox), so one authenticated drop could take the BFF down for every
     # user. ADR-0041 names no size; INGEST_MAX_BYTES is a LOCAL default (50 MiB), not a
@@ -8552,7 +8573,8 @@ async def ingest_document(
     # SDK 0.9.7 `ContentKindRegistration.domain`, section 1 of the ingest/origin seam). A
     # DECLARED-but-UNREGISTERED kind leaves domain_type None -- behaviour unchanged: the HALT
     # for an unregistered kind belongs to the driver that resolves `content_kind`, not here.
-    _registered_kind = content_kinds.by_kind(declared_content_kind) if declared_content_kind else None
+    # `_registered_kind` itself was already resolved above (event-kind door check, section C) --
+    # not recomputed here, so the two reads of the registry in one request cannot disagree.
     manifest = {
         "ingest_id": ingest_id,
         "object_ref": object_prefix + safe_name,
@@ -8604,27 +8626,12 @@ async def ingest_document(
         )
     except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
         logger.warning("ingest node creation failed for %s: %s", ingest_id, exc)
-    # SEEDS_WORKFLOW (section 3, SDK 0.9.7): an event-branch registered kind starts its
-    # workflow on arrival instead of being extracted -- a document-branch kind, or a
-    # declared-but-unregistered one, starts nothing (`workflow` stays None). Best-effort,
-    # like the node creation above: the upload is already durable.
+    # SEEDS_WORKFLOW: NO LONGER REACHABLE HERE (section C, ingest/origin seam). An event-branch
+    # kind is refused at the door above (`event_kind_requires_json`) before this point is ever
+    # reached, so `_registered_kind.branch == "event"` cannot be true below -- a file kind
+    # carries no trigger requirements and seeds nothing; event seeding now happens only at
+    # POST /ingest/events. `workflow` stays None for every multipart drop.
     workflow: dict | None = None
-    if _registered_kind is not None and _registered_kind.branch == "event" and _registered_kind.seeds_workflow:
-        _case_id = f"{_registered_kind.seeds_workflow}:{ingest_id}"
-        _facts = {
-            "ingest_id": ingest_id,
-            "object_ref": manifest["object_ref"],
-            "content_kind": declared_content_kind,
-            "domain_type": manifest["domain_type"],
-            "dropped_by": manifest["dropped_by"],
-        }
-        if _registered_kind.identity_field and _registered_kind.identity_field in manifest:
-            _facts[_registered_kind.identity_field] = manifest[_registered_kind.identity_field]
-        _started = await _open_case(
-            case_id=_case_id, trigger=_registered_kind.seeds_workflow, facts=_facts,
-            ingest_id=ingest_id,
-        )
-        workflow = {"case_id": _case_id, "started": _started}
     # ORIGIN SUGGESTION (section 6, architect ruling 2026-10-02 "ORIGIN, not audience"): a hit
     # records a suggestion on the status row and opens its own case -- BEST-EFFORT, like the
     # node creation and workflow seeding above: the upload is already durable by this point, so
@@ -8646,6 +8653,140 @@ async def ingest_document(
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
         "object_prefix": object_prefix, "duplicate": None, "workflow": workflow,
         "origin_suggestion": origin_suggestion,
+    }
+
+
+class IngestEventRequest(_BaseModel):
+    """POST /ingest/events' body — the JSON door for an event-branch content kind (section C,
+    ingest/origin seam). `payload` carries the event's own fields; the trigger named by the
+    kind's registration (`seeds_workflow`) is validated against them below, dotted-path by
+    dotted-path, the same vocabulary `agent_fleet.restate_analyst.case_routing.Trigger.requires`
+    already declares -- this route does not invent a second one."""
+    content_kind: str
+    on_behalf_of: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def _dotted_present(d: dict[str, Any], path: str) -> bool:
+    """True iff the dotted `path` resolves to a non-None value in `d`. Mirrors
+    `case_routing.Trigger.requires`'s own rule ("refused at intake... refuses a null") -- an
+    ABSENT key and a key present-but-None are the same refusal here, deliberately: a trigger's
+    `requires` is read the same way wherever it is enforced."""
+    cur: Any = d
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False
+        cur = cur[part]
+    return cur is not None
+
+
+def _dotted_get(d: dict[str, Any], path: str) -> Any:
+    """Same walk as `_dotted_present`, returning the value (or None)."""
+    cur: Any = d
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+@app.post("/ingest/events")
+async def ingest_event(
+    req: IngestEventRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch
+    content kind. An event never arrives as a file: it is a JSON `IngestRequest` payload,
+    validated against the kind's declared trigger before anything is seeded.
+
+    `content_kind` MUST be registered AND `branch == "event"` — a document-branch or
+    unregistered kind is refused here with a named reason (the multipart `/ingest` door is
+    theirs; this one refuses a file for the same reason in reverse, see that route's own door
+    check). The kind's registration carries NO schema field of its own (`iagent_mesh.ingest.
+    ContentKindRegistration` has `passes`/`outputs`, which name OntologyClass kinds for a
+    document's extraction, not a payload shape) -- so the validatable shape THIS repo actually
+    has is the kind's own trigger's `requires:` (`policy/triggers/<seeds_workflow>.yaml`, the
+    same list `case_routing.Trigger.requires` loads), checked dotted-path by dotted-path against
+    `payload` plus the facts this route adds itself (`dropped_by.authz_id`). A payload missing
+    any required path is refused 422, naming which.
+    """
+    from . import content_kinds
+
+    if on_behalf_of_mismatch := (req.on_behalf_of != current_user.authz_id):
+        raise HTTPException(
+            status_code=403,
+            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
+        )
+    _registered_kind = content_kinds.by_kind(req.content_kind)
+    if _registered_kind is None or _registered_kind.branch != "event":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "not_an_event_kind",
+                "message": (
+                    f"content_kind {req.content_kind!r} is not a registered event-branch kind — "
+                    "this route only seeds a workflow for branch=='event'; a document-branch or "
+                    "unregistered kind belongs at the multipart POST /ingest door"
+                ),
+            },
+        )
+
+    try:
+        from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
+            CaseRoutingError, load_trigger,
+        )
+        trigger = load_trigger(_registered_kind.seeds_workflow)
+    except CaseRoutingError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "trigger_unconfigured", "message": str(exc)},
+        )
+
+    # Dedupe key: `ContentKindRegistration.identity_field`'s own docstring ("the seam dedupes
+    # arrivals on it; this module does not perform the dedupe ... that is Lane 1's seam, keyed
+    # via Restate's run/send") -- so the case_id below is built from THIS field's value, not a
+    # hash of the whole payload, so that re-POSTing the same event reaches the same Restate run
+    # rather than opening a rival one. `identity_field` is required (non-None) for branch="event"
+    # by the SDK's own validator, so `_registered_kind.identity_field` is never None here.
+    identity_value = _dotted_get(req.payload, _registered_kind.identity_field)
+    if identity_value is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "payload_missing_identity_field",
+                "message": f"payload is missing {_registered_kind.identity_field!r}, this "
+                           f"kind's identity_field",
+            },
+        )
+    ingest_id = "evt-" + hashlib.sha256(
+        f"{req.content_kind}:{identity_value}".encode()
+    ).hexdigest()
+    facts: dict[str, Any] = {
+        **req.payload,
+        "ingest_id": ingest_id,
+        "content_kind": req.content_kind,
+        "domain_type": _registered_kind.domain,
+        "dropped_by": {"authz_id": current_user.authz_id},
+    }
+    missing = [path for path in trigger.requires if not _dotted_present(facts, path)]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "payload_missing_required_fields",
+                "missing": missing,
+                "message": f"payload is missing {missing} required by trigger "
+                           f"{trigger.trigger!r} ({_registered_kind.seeds_workflow!r})",
+            },
+        )
+
+    case_id = f"{_registered_kind.seeds_workflow}:{ingest_id}"
+    started = await _open_case(
+        case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
+        ingest_id=ingest_id,
+    )
+    return {
+        "ingest_id": ingest_id, "workflow": {"case_id": case_id, "started": started},
     }
 
 
