@@ -1,5 +1,24 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.28 — 2026-10-03
+
+Patch bump for the ingest/origin seam (SDK lane/ca-0.9.7), which adds two env keys to the
+agent-fleet ConfigMap.
+
+### Changed
+
+- **`templates/configmap.yaml` gains `CONTENT_KIND_OVERLAY_DIRS`** (default
+  `/app/policy/overlays/openddil-lab/content_kinds`), parallel to `TASK_KIND_OVERLAY_DIRS`.
+  `src/iagent/content_kinds.py` reads it and FAILS CLOSED on an unreadable registry, so it names
+  only a directory that exists in the image.
+- **`templates/configmap.yaml` gains `SYSTEMS_OF_RECORD_OVERLAY_DIRS`** (default
+  `/app/policy/overlays/sample/systems_of_record`, an existing EMPTY directory), read by
+  `src/iagent/origin_resolver.py`, which fails closed in the same way. The sandbox declares no
+  system of record, so every drop's origin resolves to a miss: dropper/owner-only visibility,
+  unchanged.
+- Both keys yield to an explicit `agentFleet.env` entry (`hasKey` guard), as the neighbouring
+  overlay keys do.
+
 ## 0.4.27 — 2026-10-03
 
 Patch bump. Both halves of the 2026-10-02 architect ruling ("Topaz manifest hook +
