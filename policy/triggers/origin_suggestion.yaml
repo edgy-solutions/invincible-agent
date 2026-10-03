@@ -6,8 +6,11 @@
 # origin is RECORDED (gateway: an unresolved origin 404s), so a suggestion opens nothing by
 # itself -- it opens a case that asks a steward of the suggested domain to confirm it.
 #
-# WHO PRODUCES IT IS NOT BUILT. The resolver that would emit this waits on the systems_of_record
-# schema; until it exists nothing raises this trigger, and the case is sealed against fixtures.
+# WHO PRODUCES IT: `src/iagent/origin_resolver.py::resolve()` (ingest/origin seam section 6,
+# architect ruling 2026-10-02 "ORIGIN, not audience"), called from `/ingest` on every arrival. A
+# hit against a composed `iagent_mesh.systems_of_record.SystemOfRecord` row builds exactly this
+# trigger's facts and opens the case; a miss (no system matches, or the matched system's
+# connector lookup misses) raises nothing, same as before the resolver existed.
 #
 # `dropped_by.authz_id` IS THE DROPPER IN THE GATE'S NAMESPACE. The artifact stamps its dropper
 # as the JWT `sub`; `approve` verifies `acted_by` as an `authz_id`. The producer resolves one to

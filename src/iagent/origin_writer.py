@@ -56,9 +56,18 @@ logger = logging.getLogger(__name__)
 #: see the module docstring's "function only" framing).
 _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
-#: `Origin.resolved_by` for a write this function performs -- always "a SystemOfRecord lookup
-#: resolved it" by the time a confirmed `origin_resolution` reaches this function.
-_RESOLVED_BY_RECORD = "record"
+#: `Origin.resolved_by`, keyed on `origin.obtained_via` (RULED 2026-10-03, item D): a
+#: `SystemOfRecord` hit (`origin_resolver._OBTAINED_VIA_RECORD`) resolves to "record" -- ruled
+#: RIGHT, carried over from the single-value constant this replaces. A bare `user-drop` (no
+#: record backs it) resolves to "unresolved" -- added per the same ruling. Anything else is not
+#: yet a decided mapping and is refused rather than guessed; see `write_origin`'s KeyError
+#: handling below. Not `SDK Origin.RESOLVED_BY`'s third rung ("steward"): nothing produces a
+#: resolution whose origin was vouched for by a human without a record, so this table has no
+#: row for it -- adding one unexercised would be an invented mapping, not an encoded one.
+_RESOLVED_BY_BY_OBTAINED_VIA = {
+    "authoritative_source": "record",
+    "user-drop": "unresolved",
+}
 
 #: The case's own signal name (`policy/workflows/origin_record.yaml`'s `written` step).
 ORIGIN_WRITTEN_SIGNAL = "origin_written"
@@ -72,8 +81,45 @@ def write_origin(
     dropper_is_program_member: bool,
 ) -> dict[str, Any]:
     """Returns `{"status": "written" | "write_refused", "reason": str | None}`. See the module
-    docstring for `dropper_is_program_member` (deviation #1)."""
+    docstring for `dropper_is_program_member` (deviation #1).
+
+    BRANCHES ON `resolved_by` (item D). `_RESOLVED_BY_BY_OBTAINED_VIA["user-drop"]` is
+    `"unresolved"`, and the SDK's own `Origin` validator (read in full) REQUIRES an
+    `"unresolved"` origin to carry no `owner_domain`, no `program` and no `evidence` -- "there is
+    nothing resolved to attach any of them to". A bare user-drop therefore skips
+    `check_dropper_bound` entirely (there is no program in the write for the dropper to be bound
+    to) and writes only the `resolved_by` marker -- making explicit the SAME "visible to its
+    dropper/owner only" default `origin.py`'s module docstring already describes for an
+    unresolved artifact, never a new grant.
+    """
     o = resolution["origin"]
+    try:
+        resolved_by = _RESOLVED_BY_BY_OBTAINED_VIA[o["obtained_via"]]
+    except KeyError:
+        return {
+            "status": "write_refused",
+            "reason": f"no resolved_by mapping for obtained_via={o['obtained_via']!r} "
+                      f"(known: {sorted(_RESOLVED_BY_BY_OBTAINED_VIA)})",
+        }
+
+    if resolved_by == "unresolved":
+        try:
+            from iagent_mesh.systems_of_record import Origin as _SorOrigin  # noqa: PLC0415
+
+            _SorOrigin(resolved_by=resolved_by)
+        except ValidationError as exc:
+            return {"status": "write_refused", "reason": f"origin shape invalid: {exc}"}
+        result = graph_writer.write_node(
+            initiator, label=INGEST_FACT_FAMILY["node_label"], id=resolution["artifact_id"],
+            payload={"origin_resolved_by": resolved_by},
+        )
+        if result.outcome != "written":
+            return {
+                "status": "write_refused",
+                "reason": f"graph write outcome={result.outcome!r}: {result.detail}",
+            }
+        return {"status": "written", "reason": None}
+
     origin_obj = origin.Origin(
         owner_domain=o["owner_domain"], program=o["program"], obtained_via=o["obtained_via"],
     )
@@ -89,7 +135,7 @@ def write_origin(
 
         _SorOrigin(
             owner_domain=o["owner_domain"], program=o["program"],
-            resolved_by=_RESOLVED_BY_RECORD, evidence=(citation,),
+            resolved_by=resolved_by, evidence=(citation,),
         )
     except ValidationError as exc:
         return {"status": "write_refused", "reason": f"origin shape invalid: {exc}"}
@@ -101,7 +147,7 @@ def write_origin(
         payload={
             "origin_owner_domain": o["owner_domain"],
             "origin_program": o["program"],
-            "origin_resolved_by": _RESOLVED_BY_RECORD,
+            "origin_resolved_by": resolved_by,
             "origin_evidence": citation,
         },
     )
