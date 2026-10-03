@@ -8,6 +8,10 @@
 # return-verbatim-from-doc-tools.md). EVERY DATA MODULE CODE IS NULL: inventing a DMC is
 # forbidden, and a plausible-looking code would be cited on a work order as if a manual said it.
 # A null citation renders as null on the option, which is what the approver should see.
+#
+# THE IPD CITATION GAINS `icn` AND `hotspot_id` (2026-10-02): the figure and the hotspot on it that
+# locate the part. 7f's parser fills them; until then both are null here, and a null renders as
+# "not supplied", never as a crash.
 verb: s1000d_fault_walk
 stub: true
 retired_by: "7f Phase 2(e) -- the S1000D walk served by doc-tools"
@@ -17,5 +21,5 @@ returns:
   citations:
     fault_isolation: {dmc: null}
     remove_install: {dmc: null}
-    ipd: {dmc: null, part_number: null, quantity: null}
+    ipd: {dmc: null, part_number: null, quantity: null, icn: null, hotspot_id: null}
     planning_interval: {dmc: null, interval: null}

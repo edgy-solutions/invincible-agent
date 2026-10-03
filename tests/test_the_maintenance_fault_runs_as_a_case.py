@@ -20,7 +20,7 @@ import copy
 import pytest
 
 # One cluster double, the case runner's own -- not a second one free to drift from it.
-from tests.test_a_case_runs_from_trigger_to_terminal import R, _answer, _Cluster, main, restate
+from tests.test_a_case_runs_from_trigger_to_terminal import R, _answer, _Cluster, main, restate, wd
 
 TRIGGER = "maintenance_fault"
 OPTION_VERBS = ["replace_now", "replace_after_resupply", "defer_with_restriction",
@@ -232,6 +232,48 @@ async def test_EXACTLY_FOUR_OPTIONS_IN_ORDER_EACH_CITING_THE_MANUAL_AND_THE_SPAR
     # THE SUPERVISOR-DEPENDENT OPTION CITES THE VERDICT AND ITS BASIS, raw, not a restatement.
     assert opts[0].get("battle_condition") == ev["picture"]["battle_condition"], opts[0]
     assert opts[0]["battle_condition"]["basis"]["rule"] == "readiness-rollup:ORG", opts[0]
+
+
+_FIGURE = {"icn": "ICN-TEST-00001-A", "hotspot_id": "hs-007"}
+
+
+@pytest.fixture
+def walk_cites_a_figure(monkeypatch):
+    """The walk as 7f's parser will serve it: the IPD citation names the figure and the hotspot.
+    Patched on the SAME module object main loads stubs from, and only the two new keys differ."""
+    real = wd.load_stub_verbs
+
+    def _load():
+        out = real()
+        walk = out["s1000d_fault_walk"]
+        returns = copy.deepcopy(walk.returns)
+        returns["citations"]["ipd"].update(_FIGURE)
+        out["s1000d_fault_walk"] = walk.model_copy(update={"returns": returns})
+        return out
+    monkeypatch.setattr(wd, "load_stub_verbs", _load)
+
+
+@pytest.mark.asyncio
+async def test_A_PART_CARRIES_THE_WALKS_FIGURE_TO_THE_ACTION_RECORD(registered, walk_cites_a_figure):
+    """icn and hotspot_id come from the walk's IPD citation, ride the option, and reach the
+    emitted ActionRecord's work_order.parts[] -- the chosen option's parts, cited whole."""
+    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    parts = [p for o in _options(c) for p in o["parts"]]
+    assert parts and all({k: p.get(k) for k in _FIGURE} == _FIGURE for p in parts), parts
+    [rec] = _emitted(c)
+    assert rec["work_order"]["parts"] and all(
+        {k: p.get(k) for k in _FIGURE} == _FIGURE for p in rec["work_order"]["parts"]), rec
+
+
+@pytest.mark.asyncio
+async def test_THE_STUB_WALK_NAMES_NO_FIGURE_AND_THE_CASE_STILL_CLOSES(registered):
+    """Until 7f's parser fills them: both keys PRESENT and null on every part, never an invented
+    figure, and the case releases -- a null is "not supplied", not a crash."""
+    out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
+    [rec] = _emitted(c)
+    for p in [*(p for o in _options(c) for p in o["parts"]), *rec["work_order"]["parts"]]:
+        assert {k: p.get(k, "ABSENT") for k in _FIGURE} == {"icn": None, "hotspot_id": None}, p
 
 
 # ── THE PATHS ───────────────────────────────────────────────────────────────────────────────
