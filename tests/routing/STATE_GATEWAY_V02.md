@@ -1244,7 +1244,7 @@ The 40051 (US Army TM) format track is now plumbed parallel to S1000D:
 
 - **`iads_extract`** (tool-specific): parses the IADS container
   (`Package` manifest + concatenated gzip blobs) into
-  `(relative_path, xml_bytes)` tuples. Kept isolated so an EAGLE
+  `(relative_path, xml_bytes)` tuples. Kept isolated so an sor-events-a
   adapter later swaps just this front-end.
 - **`read_40051_wp`** (format-general): the WP XML reader. Extracts
   wpno + maintlvl + title + tool refs + inter-WP xrefs. Skips
@@ -1349,7 +1349,7 @@ visible: every fallthrough hit increments the counter.
 - ✗ NO verbs added (B4 territory).
 - ✗ NO new matrix rows (B5 territory).
 - ✗ NO work-cluster deploy.
-- ✗ NO EAGLE work — the format-general layers are written so EAGLE
+- ✗ NO sor-events-a work — the format-general layers are written so sor-events-a
   becomes a sibling of `iads_extract`, no changes to the rest.
 
 ### Routing probe — the cap that turns "ingested" into "answerable"

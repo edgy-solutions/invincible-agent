@@ -46,7 +46,7 @@ Shipped 2026-06-13. Three layers:
 
 - `doc_tools.parsers.iads_extract.iter_iads_xml_entries(path)` — the
   IADS-container-specific layer. Unpacks the manifest + concatenated
-  gzip blobs into `(relative_path, xml_bytes)`. An EAGLE adapter
+  gzip blobs into `(relative_path, xml_bytes)`. An sor-events-a adapter
   later would be a sibling module feeding into the same downstream
   reader.
 - `doc_tools.parsers.mil_40051_ingest.read_40051_wp(xml_bytes)` — the

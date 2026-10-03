@@ -46,7 +46,7 @@ Name the three lifecycle shapes with their first consumers:
   drop and re-land
 - **stateful iagent-authored** — artifacts, lineage, `bound_slot_sources`, assessments and
   acceptances, checkpoints; preserved, retention as a rail row per kind, `valid_until` honoured
-- **of-record-elsewhere** — FRACAS: Eagle events, CAPA records; OpenDDIL: any intent once accepted
+- **of-record-elsewhere** — FRACAS: sor-events-a events, CAPA records; OpenDDIL: any intent once accepted
   — a mirror with provenance and a write-back contract, never the authority; ADR-0040 §7's line
   verbatim
 
