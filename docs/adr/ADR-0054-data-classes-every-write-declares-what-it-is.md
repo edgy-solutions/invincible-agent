@@ -112,7 +112,7 @@ than discovered in the data. And it gives the census **one thing to count**: sto
   2026-09-17; see the second amendment).
 - **`stateful`, iagent-authored** — artifacts, lineage, `bound_slot_sources`, assessments and
   acceptances, checkpoints. Preserved; retention is a rail row per kind; `valid_until` honoured.
-- **`of-record-elsewhere`** — FRACAS: Eagle events, CAPA records. OpenDDIL: any intent once
+- **`of-record-elsewhere`** — FRACAS: sor-events-a events, CAPA records. OpenDDIL: any intent once
   accepted. ADR-0040 §7's line, verbatim: **a mirror with provenance and a write-back contract,
   never the authority.**
 
@@ -174,7 +174,7 @@ write-back contract, **never the authority***.
 **So declaring `sync: write-back` on a store REQUIRES its own ruling**, naming the authority, the
 submitter's identity, and what an accepted correction changes for answers already derived from the
 disputed value. Without that, the field becomes precisely the scope creep ADR-0047 refuses, wearing
-a schema. The FRACAS phase-2 flip — corrective actions writing back to Eagle — is therefore its own
+a schema. The FRACAS phase-2 flip — corrective actions writing back to sor-events-a — is therefore its own
 decision, which is what the two-phase plan already said.
 
 ## 4. Enforcement — unwritable, not audited-for
