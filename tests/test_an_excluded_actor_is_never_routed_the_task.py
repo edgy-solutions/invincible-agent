@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from tests.test_a_case_runs_from_trigger_to_terminal import main, wd
 from tests import test_an_origin_suggestion_runs_as_a_case as og
-from tests.test_an_origin_suggestion_runs_as_a_case import _real_policy  # noqa: F401 -- fixture
+from tests.test_an_origin_suggestion_runs_as_a_case import _real_policy, writer  # noqa: F401 -- fixtures
 
 _HT = Path(__file__).resolve().parents[1] / "src" / "iagent" / "human_tasks.py"
 _spec = importlib.util.spec_from_file_location("iagent_human_tasks_excl", _HT)
@@ -164,9 +164,8 @@ def routed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_THE_ORIGIN_CASE_REGISTERS_ITS_CONFIRM_TASK_WITHOUT_ITS_DROPPER(routed):
-    out, _ = await og._run(og._suggestion(), [(og.CONFIRM, "accepted"),
-                                              (og.WRITTEN, "written", "w@x")])
+async def test_THE_ORIGIN_CASE_REGISTERS_ITS_CONFIRM_TASK_WITHOUT_ITS_DROPPER(routed, writer):
+    out, _ = await og._run(og._suggestion(), [(og.CONFIRM, "accepted")])
     assert out["terminal"] == "resolved", out
     by_step = {t["id"].rsplit(":", 1)[1]: t.get("excludes") for t in routed}
     assert by_step.get("confirm") == [DROPPER], by_step

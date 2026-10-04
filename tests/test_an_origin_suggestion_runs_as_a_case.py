@@ -25,9 +25,11 @@ import pytest
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     R, _answer, _body, _Cluster, _refused, main, restate, wd, wr)
 
+import spo_step_executor as ex  # noqa: E402 -- the SAME module object main imports the call from
+
 TRIGGER = "origin_suggestion"
 DROPPER, STEWARD = "dropper@x", "steward@x"
-CONFIRM, WRITTEN = "approval_confirm", "origin_written"
+CONFIRM = "approval_confirm"
 AUDIENCE = "origin_confirmation:aviation"
 SUGGESTED = {"owner_domain": "aviation", "program": "PRG-1",
              "obtained_via": "contract_deliverable"}
@@ -57,6 +59,30 @@ def _suggestion(sid="SG-1", dropper=DROPPER):
         "suggested": dict(SUGGESTED),
         "evidence": {"source": "contract", "citation": "CDRL A001 para 3"},
     }
+
+
+@pytest.fixture
+def writer(monkeypatch):
+    """The origin writer, at its HTTP edge: the case runner's own gate and mint are granted, and
+    the POST answers ``body`` the way ``POST /internal/origin/write`` does -- 200 for a write AND
+    for a refused one. Records what was asked of each, so an arm can read the request."""
+    seen = {"body": {"status": "written", "reason": None}, "invoke": [], "posts": []}
+
+    class _Resp:
+        status_code, text = 200, ""
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return seen["body"]
+
+    monkeypatch.setattr(ex, "check_can_invoke",
+                        lambda cap, who, **kw: seen["invoke"].append((cap, who)) or True)
+    monkeypatch.setattr(ex, "mint_case_runner_token", lambda **kw: "case-runner-token")
+    monkeypatch.setattr(ex.requests, "post", lambda url, json, headers, timeout: seen[
+        "posts"].append((url, json, headers)) or _Resp())
+    return seen
 
 
 async def _run(event, answers):
@@ -166,13 +192,15 @@ def test_BOTH_VERBS_ON_THE_CARD_NEED_A_REASON(monkeypatch, tmp_path):
 # ── THE THREE ENDINGS ───────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_A_STEWARD_ACCEPTS_AND_THE_CONFIRMED_ORIGIN_GOES_TO_ITS_WRITER(registered):
-    out, c = await _run(_suggestion(), [(CONFIRM, "accepted"), (WRITTEN, "written", "w@x")])
+async def test_A_STEWARD_ACCEPTS_AND_THE_CONFIRMED_ORIGIN_GOES_TO_ITS_WRITER(registered, writer):
+    out, c = await _run(_suggestion(), [(CONFIRM, "accepted")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "resolved"), out
     assert _path(out) == [("triaged", "selected", "origin_confirm"),
                           ("origin_confirm", "accepted", "origin_record"),
                           ("origin_record", "written", "resolved")], _path(out)
-    # A SIGNAL REGISTERS NO HUMAN ROW: one task, the steward's, on the suggested domain.
+    # The writer decided, not a person: the hop is the system's.
+    assert out["transitions"][-1]["by"] == "system", out["transitions"][-1]
+    # A CALL REGISTERS NO HUMAN ROW: one task, the steward's, on the suggested domain.
     assert registered == [("SG-1~1", AUDIENCE, "origin_confirmation")], registered
     [rec] = _emitted(c)
     assert rec["origin"] == SUGGESTED and rec["artifact_id"] == "ART-9", rec
@@ -183,10 +211,18 @@ async def test_A_STEWARD_ACCEPTS_AND_THE_CONFIRMED_ORIGIN_GOES_TO_ITS_WRITER(reg
     assert prov.get("case_definition") == "origin_suggestion" and prov.get("case_id") == "SG-1", prov
     assert prov.get("emitted_by") == prov.get("workflow_definition_id") == "origin_record", prov
     assert prov.get("workflow_instance_id") == rec["resolution_id"] == "SG-1~2", rec
+    # THE WRITER WAS ASKED, ONCE, AS THE CASE RUNNER, WITH THE RESOLUTION IT EMITTED.
+    assert writer["invoke"] == [("origin.write", "svc:case-runner")], writer["invoke"]
+    [(url, sent, headers)] = writer["posts"]
+    assert url.endswith("/internal/origin/write") and "{" not in url, url
+    assert headers == {"Authorization": "Bearer case-runner-token"}, headers
+    assert "user_jwt" not in sent, sorted(sent)
+    for field in ("artifact_id", "dropped_by", "origin", "evidence", "approval_chain"):
+        assert sent[field] == rec[field], (field, sent[field], rec[field])
 
 
 @pytest.mark.asyncio
-async def test_A_REJECTION_LEAVES_THE_ARTIFACT_UNRESOLVED_WITH_ITS_REASON(registered):
+async def test_A_REJECTION_LEAVES_THE_ARTIFACT_UNRESOLVED_WITH_ITS_REASON(registered, writer):
     out, c = await _run(_suggestion(), [(CONFIRM, "rejected")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "unresolved"), out
     hops = out["transitions"][2:]
@@ -195,13 +231,47 @@ async def test_A_REJECTION_LEAVES_THE_ARTIFACT_UNRESOLVED_WITH_ITS_REASON(regist
         ("origin_confirm", "rejected", "unresolved")], hops
     assert (hops[1]["by"], hops[1]["reason"]) == (STEWARD, "because 1"), hops[1]
     assert _emitted(c) == [], "a rejection wrote an origin"
+    assert writer["posts"] == [], "a rejection reached the writer"
 
 
 @pytest.mark.asyncio
-async def test_A_REFUSED_WRITE_IS_NOT_A_RESOLUTION(registered):
-    out, c = await _run(_suggestion(), [(CONFIRM, "accepted"), (WRITTEN, "write_refused", "w@x")])
-    assert out["terminal"] == "write_refused", out
-    assert len(_emitted(c)) == 1, _emitted(c)
+async def test_A_REFUSED_WRITE_IS_NOT_A_RESOLUTION(registered, writer):
+    """The writer refuses with a 200, as its route does: the refusal is an answer, not an error."""
+    writer["body"] = {"status": "write_refused", "reason": "dropper is not a program member"}
+    out, c = await _run(_suggestion(), [(CONFIRM, "accepted")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "write_refused"), out
+    assert _path(out)[-1] == ("origin_record", "write_refused", "write_refused"), _path(out)
+    assert len(_emitted(c)) == 1 and len(writer["posts"]) == 1, (_emitted(c), writer["posts"])
+
+
+@pytest.mark.asyncio
+async def test_AN_ENDPOINT_THE_DEPLOYMENT_DOES_NOT_BIND_IS_REFUSED_BEFORE_ANYTHING_EMITS(
+        registered, writer, monkeypatch):
+    """Bound at the instance's admission, so an unbound endpoint fails before `resolution` emits:
+    a refusal after the emit would be a half-run."""
+    monkeypatch.setattr(wd, "config_bindings", lambda: {})
+    c = _Cluster({("SG-1~1", CONFIRM): _answer("accepted", STEWARD, "evidence holds")})
+    msg = await _refused(c.start("SG-1", TRIGGER, _suggestion()), 500)
+    assert "'written'" in msg and "origin_write_endpoint" in msg, msg
+    assert _emitted(c) == [] and writer["posts"] == [], (_emitted(c), writer["posts"])
+
+
+@pytest.mark.asyncio
+async def test_A_TRIGGER_FACT_DOES_NOT_CHOOSE_WHERE_THE_CASE_RUNNERS_TOKEN_GOES(registered, writer):
+    """The endpoint is config, never data: an event naming the placeholder changes nothing."""
+    ev = {**_suggestion(), "origin_write_endpoint": "http://elsewhere.test/collect"}
+    await _run(ev, [(CONFIRM, "accepted")])
+    [(url, _, _)] = writer["posts"]
+    assert "elsewhere" not in url and url.endswith("/internal/origin/write"), url
+
+
+@pytest.mark.asyncio
+async def test_A_WRITER_ANSWER_WITHOUT_A_STATUS_IS_TERMINAL_NOT_UNDECIDED(registered, writer):
+    """outcome_from is declared, so a 200 that names no status cannot close the case on None."""
+    writer["body"] = {"reason": "a writer that forgot to say"}
+    with pytest.raises(AssertionError) as exc:
+        await _run(_suggestion(), [(CONFIRM, "accepted")])
+    assert "TerminalError" in str(exc.value) and "outcome_from 'status'" in str(exc.value), exc.value
 
 
 # ── THE DROPPER, AT THE GATE ────────────────────────────────────────────────────────────────

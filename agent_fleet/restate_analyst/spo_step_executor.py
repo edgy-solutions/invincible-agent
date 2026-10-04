@@ -41,12 +41,14 @@ import requests
 try:  # pragma: no cover - import path differs by runtime
     from utils.service_identity import (  # type: ignore[no-redef]
         ServiceTokenError,
+        forget_case_runner_token,
         mint_case_runner_token,
         outbound_auth_headers,
     )
 except ImportError:  # pragma: no cover
     from agent_fleet.utils.service_identity import (
         ServiceTokenError,
+        forget_case_runner_token,
         mint_case_runner_token,
         outbound_auth_headers,
     )
@@ -300,10 +302,11 @@ def execute_direct_call(
         payload["user_jwt"] = user_jwt
         headers["Authorization"] = f"Bearer {user_jwt}"
     else:
-        # No human JWT on this step: mint the case runner's OWN credential, fresh, at the
-        # point of use — MINT AT USE, never a stored token (agent_fleet/utils/service_identity.py,
-        # filed from the notice-A dispatch defect). A missing/failed credential is never papered
-        # over by sending the request unauthenticated — it fails and releases, named.
+        # No human JWT on this step: the case runner's OWN credential, minted at the point of
+        # use and cached in memory only to its own expiry — never journaled, never carried across
+        # a human wait (agent_fleet/utils/service_identity.py, filed from the notice-A dispatch
+        # defect). A missing/failed credential is never papered over by sending the request
+        # unauthenticated — it fails and releases, named.
         try:
             case_runner_token = mint_case_runner_token()
         except ServiceTokenError as exc:
@@ -334,6 +337,9 @@ def execute_direct_call(
             status_code=500,
         ) from exc
     if resp.status_code in (401, 403):
+        if not user_jwt:
+            # The cached token was refused before its expiry: the next step mints again.
+            forget_case_runner_token()
         raise StepFailAndRelease(
             f"access denied ({resp.status_code}) on direct_call {step.get('id')!r} -> "
             f"{endpoint}; failing and releasing.",

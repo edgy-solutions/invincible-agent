@@ -207,9 +207,11 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
 
     def _load():
         try:
-            from workflow_definition import get_workflow_definition  # type: ignore[no-redef]
+            from workflow_definition import (  # type: ignore[no-redef]
+                UnboundPlaceholder, bind_placeholders, get_workflow_definition)
         except ImportError:  # pragma: no cover — import path differs by runtime
-            from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+            from agent_fleet.restate_analyst.workflow_definition import (
+                UnboundPlaceholder, bind_placeholders, get_workflow_definition)
         try:
             wf = get_workflow_definition(spec["definition_id"])
         except Exception as exc:  # noqa: BLE001
@@ -225,7 +227,21 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
             raise restate.TerminalError(
                 f"{wf.id}: human_await step(s) {undeclared} declare no task_kind; the case runner "
                 "registers no row under a kind nobody declared", status_code=500)
-        return wf.model_dump(mode="json")
+        # A DIRECT CALL'S ENDPOINT IS DEPLOYMENT WIRING, BOUND HERE, AT ADMISSION. Nothing else on
+        # this path binds it, so `{origin_write_endpoint}` reached the HTTP client verbatim and
+        # the write failed as an unusable URL -- after `resolution` had already emitted. Bound
+        # from CONFIG ONLY, never from the trigger: the call carries the case runner's own bearer
+        # token, and a fact on an event must not choose where that token is sent.
+        bound = wf.model_dump(mode="json")
+        for st in bound["steps"]:
+            if st["kind"] == "direct_call":
+                try:
+                    st["endpoint"] = bind_placeholders(
+                        {"id": wf.id, "endpoint": st["endpoint"]}, {})["endpoint"]
+                except UnboundPlaceholder as exc:
+                    raise restate.TerminalError(
+                        f"step {st['id']!r}: {exc}", status_code=500) from exc
+        return bound
 
     definition = await ctx.run("definition", _load)
     return await _main()._run_definition(

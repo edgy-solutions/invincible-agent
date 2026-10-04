@@ -18,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from tests.test_a_case_runs_from_trigger_to_terminal import (
-    R, _body, _Cluster, _refused, main, wd, wr)
+    R, _answer, _body, _Cluster, _dump, _refused, main, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixture
     ACK, DECIDE, _event, _path, _real_policy, _run, registered)
 
@@ -156,18 +156,36 @@ def test_A_REASON_FOR_A_STATUS_THE_SIGNAL_DOES_NOT_ACCEPT_IS_REFUSED_AT_LOAD():
 
 
 @pytest.mark.asyncio
-async def test_ONLY_A_SIGNAL_THAT_DECLARES_REASONS_JOURNALS_THEM(registered, monkeypatch):
-    """Replay-unchanged for every signal that declares nothing: `origin_written` declares no
-    reason, and the origin case journals no reason key; the release's `tier_ack` does."""
+async def test_ONLY_A_SIGNAL_THAT_DECLARES_REASONS_JOURNALS_THEM(registered, monkeypatch,
+                                                                tmp_path):
+    """Replay-unchanged for every signal that declares nothing. The release's `tier_ack` declares
+    a reason and journals it; a signal declaring none, answered WITH one, journals no key.
+
+    The control was the origin case's `origin_written` until its `written` step became a
+    direct_call (item B, 2026-10-03). No committed signal is left that declares nothing, so the
+    control is a definition of its own -- differing from `tier_ack` only in declaring no reason."""
     out, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", TIER)])
     assert out["terminal"] == "closed", out
     keys = {k: v for ctx in c.ctxs.values() for k, v in ctx.state.items()
             if k.startswith("signal_reason_")}
     assert keys == {main._signal_reason_key("tier_ack"): ["tier_refused"]}, keys
 
-    from tests import test_an_origin_suggestion_runs_as_a_case as og
-    out, c = await og._run(og._suggestion(), [(og.CONFIRM, "accepted"),
-                                              (og.WRITTEN, "written", "w@x")])
-    assert out["terminal"] == "resolved", out
+    monkeypatch.setenv("CASE_TRIGGER_DIR", str(_dump(tmp_path / "triggers", {
+        "acks": {"trigger": "acks", "selection": "sel_ack", "key": "event_id"}})))
+    monkeypatch.setenv("DECISION_TABLE_DIR", str(_dump(tmp_path / "decisions", {
+        "sel_ack": {"decision": "sel_ack", "matches": ["level"], "domain": {"level": ["hi"]},
+                    "rows": [{"then": "plain"}]},
+        "plain_chain": {"decision": "plain_chain", "after": "plain", "matches": ["outcome"],
+                        "domain": {"outcome": ["fine", "tier_refused"]},
+                        "terminals": ["done", "refused"],
+                        "rows": [{"when": {"outcome": "fine"}, "then": "done"},
+                                 {"when": {"outcome": "tier_refused"}, "then": "refused"}]}})))
+    monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(_dump(tmp_path / "workflows", {
+        "plain": {"id": "plain", "name": "plain", "steps": [
+            {"kind": "signal_await", "id": "ack", "signal": "plain_ack", "audience": "ops:ORG",
+             "accepts": ["fine", "tier_refused"]}]}})))
+    c = _Cluster({("E-1~1", "plain_ack"): _answer("tier_refused", TIER, "a reason nobody asked for")})
+    out = await c.start("E-1", "acks", {"event_id": "E-1", "level": "hi"})
+    assert out["terminal"] == "refused", out
     assert not [k for ctx in c.ctxs.values() for k in ctx.state
                 if k.startswith("signal_reason_")], "a signal that declares no reason journalled one"

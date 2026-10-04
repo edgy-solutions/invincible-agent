@@ -2,10 +2,8 @@
 # platform's; WHO stewards a domain is each deployment's grant on `origin_confirmation:<domain>`.
 #
 # THE ACCEPTED ORIGIN, HANDED TO ITS WRITER. This engine writes no store: it emits the confirmed
-# origin with the approval chain that authorizes it, and waits for the writer to say whether the
-# origin columns were written. The writer (the systems_of_record resolver) is not built; until it
-# is, nothing answers `origin_written` and the case waits -- the artifact stays unresolved, which
-# is the safe side.
+# origin with the approval chain that authorizes it, and the writer says whether the origin
+# columns were written.
 #
 # THE ORIGIN IS THE SUGGESTION AS CONFIRMED, field for field. A steward accepts or rejects the
 # suggestion whole; amending it would be a different suggestion with different evidence.
@@ -63,6 +61,10 @@ steps:
     id: written
     endpoint: "{origin_write_endpoint}"
     capability: origin.write
+    # THE WRITER'S ANSWER IS THE DISPOSITION (outcome_from, ruled 2026-10-03): its 200 body says
+    # `status: written` or `status: write_refused`, and origin_record_chaining matches on that
+    # value. A body without a `status` is terminal, never an undecided case.
+    outcome_from: status
     extra_payload:
       artifact_id: "{outputs.origin_record.resolution.artifact_id}"
       dropped_by: "{outputs.origin_record.resolution.dropped_by}"

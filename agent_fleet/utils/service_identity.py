@@ -29,15 +29,20 @@ it to ``/app/utils/``, and the Dagster user-code image has it at ``/app/agent_fl
 never importable there). The Dagster sensor keeps a thin wrapper that re-raises as ``dagster.Failure``
 so its proven test contract is unchanged; the mint logic itself is only here.
 """
+import base64
+import json
 import logging
 import os
-from typing import Dict
+import threading
+import time
+from typing import Dict, Optional, Tuple
 
 __all__ = [
     "ServiceTokenError",
     "mint_service_token",
     "mint_supervisor_token",
     "mint_case_runner_token",
+    "forget_case_runner_token",
     "outbound_auth_headers",
 ]
 
@@ -67,20 +72,64 @@ def mint_supervisor_token(*, timeout: float = 15.0) -> str:
     )
 
 
+#: The case runner's tokens, by client id: ``(token, exp)``. Process memory only -- never journaled.
+_CASE_RUNNER_TOKENS: Dict[str, Tuple[str, float]] = {}
+_CASE_RUNNER_TOKENS_LOCK = threading.Lock()
+#: A cached token is served only while it has more than this long left, so a request in flight
+#: does not arrive with a token that expired on the way.
+_EXPIRY_MARGIN_S = 30.0
+
+
+def _expiry_of(token: str) -> Optional[float]:
+    """The ``exp`` claim of a JWT, read WITHOUT verifying it -- the token is ours, just minted, and
+    the expiry only decides when to mint again. None if there is no readable numeric ``exp``."""
+    try:
+        payload = token.split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"]
+        return float(exp) if isinstance(exp, (int, float)) else None
+    except Exception:  # noqa: BLE001 -- any unreadable token is simply not cached
+        return None
+
+
 def mint_case_runner_token(*, timeout: float = 15.0) -> str:
     """The CASE RUNNER's delegate identity (``svc:case-runner``). Its OWN credentials —
     for ``direct_call`` steps (item B, 2026-10-03) that carry no human ``user_jwt``: a step
     with no JWT attached is machine-initiated by construction, so it acts under this identity
-    rather than being sent unauthenticated. Minted fresh per call, same rule as every other
-    wrapper in this module — there is no stored token to go stale.
+    rather than being sent unauthenticated.
+
+    CACHED TO EXPIRY (ruled 2026-10-03), in process memory, keyed by client id. A token is served
+    again only while more than ``_EXPIRY_MARGIN_S`` of its own ``exp`` remains, and one whose
+    ``exp`` cannot be read is never cached. This does NOT relax MINT AT USE. The rule is against a
+    credential carried across a HUMAN's latency in durable state (notice-A: a token journaled
+    in Restate and reused hours later). This cache is in memory and never reaches a journal: the
+    executor mints inside the step's ``ctx.run`` and only the response is recorded. It never
+    outlives the token's own expiry, and a restart empties it. A token refused before its expiry
+    (a rotated realm key, a disabled client) is dropped by ``forget_case_runner_token``, which the
+    executor calls on a 401/403, so the next step mints again.
 
     Env: ``CASE_RUNNER_CLIENT_ID`` / ``CASE_RUNNER_CLIENT_SECRET``.
     """
-    return mint_token(
-        client_id=os.environ["CASE_RUNNER_CLIENT_ID"],
+    client_id = os.environ["CASE_RUNNER_CLIENT_ID"]
+    with _CASE_RUNNER_TOKENS_LOCK:
+        held = _CASE_RUNNER_TOKENS.get(client_id)
+        if held is not None and held[1] - _EXPIRY_MARGIN_S > time.time():
+            return held[0]
+    token = mint_token(
+        client_id=client_id,
         client_secret=os.environ["CASE_RUNNER_CLIENT_SECRET"],
         timeout=timeout,
     )
+    exp = _expiry_of(token)
+    if exp is not None:   # one already inside the margin is held, and refused by the read above
+        with _CASE_RUNNER_TOKENS_LOCK:
+            _CASE_RUNNER_TOKENS[client_id] = (token, exp)
+    return token
+
+
+def forget_case_runner_token() -> None:
+    """Drop every cached case-runner token: a receiver refused one before its expiry."""
+    with _CASE_RUNNER_TOKENS_LOCK:
+        _CASE_RUNNER_TOKENS.clear()
 
 
 def mint_service_token(*, timeout: float = 15.0) -> str:
