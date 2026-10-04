@@ -19,6 +19,7 @@ Run: uv run --frozen pytest tests/test_engine_o_registers_when_its_stores_answer
 from __future__ import annotations
 
 import copy
+import types
 
 import pytest
 
@@ -102,6 +103,19 @@ def test_EVERY_SILENT_STORE_IS_NAMED(mr):
 # ── engine-o's lifespan ─────────────────────────────────────────────────────────────────────
 
 class _Weaviate:
+    """A Weaviate whose class index holds one class. A read that reaches the index returns it,
+    and nothing else can: the cold-start fallback answers from the maintenance ontology."""
+    INDEXED = {"uri": "urn:test#FromTheIndex", "label": "FromTheIndex", "definition": "d"}
+
+    def __init__(self):
+        def answer(**kw):
+            hit = types.SimpleNamespace(properties=self.INDEXED,
+                                        metadata=types.SimpleNamespace(score=0.9))
+            return types.SimpleNamespace(objects=[hit])
+        index = types.SimpleNamespace(query=types.SimpleNamespace(hybrid=answer, bm25=answer))
+        self.collections = types.SimpleNamespace(exists=lambda name: name == "OntologyClass",
+                                                 get=lambda name: index)
+
     def is_ready(self):
         return True
 
@@ -147,6 +161,7 @@ def boot(mr, monkeypatch):
 
     monkeypatch.setattr(eo, "_WEAVIATE_CLIENT", None)
     monkeypatch.setattr(eo, "create_weaviate_client", make)
+    monkeypatch.setattr(eo, "embed_query", lambda q: [0.0, 1.0])
     monkeypatch.setattr(eo.GraphDatabase, "driver", lambda *a, **k: _Neo())
     monkeypatch.setattr(eo, "_check_jena_populated", _populated)
     monkeypatch.setattr(eo, "_jena_ontology_post", jena_post)
@@ -187,9 +202,43 @@ async def test_WEAVIATE_UNREACHABLE_AT_BOOT_IS_RECONNECTED_WHEN_IT_RETURNS(boot,
     assert reconnect() is False and eo._WEAVIATE_CLIENT is None
     world["weaviate"] = True
     assert reconnect() is True
-    assert isinstance(eo._WEAVIATE_CLIENT, _Weaviate)
+    assert _uris(_read(eo)) == [_Weaviate.INDEXED["uri"]]
     # ...and it does not hold the verb, which never reads Weaviate.
     assert world["registered"] == ["mesh:resolveInstance"]
+
+
+def _read(eo):
+    """A read the way `/resolve` makes one: through the class index."""
+    return eo._weaviate_hybrid_search_sync("pump")
+
+
+def _uris(read):
+    return [r["uri"] for r in read[0]]
+
+
+@pytest.mark.asyncio
+async def test_A_POD_BOOTED_WITHOUT_WEAVIATE_READS_THE_INDEX_WHEN_IT_RETURNS(boot, mr):
+    """ROLL #16 (packet 2026-10-04): engine-o started with no Weaviate and sat cold until a
+    restart. Here there is no restart: the read is made inside the same lifespan that booted
+    without Weaviate.
+
+    THE RETRY THREAD'S NEXT TICK IS EVERY ATTEMPT THE BOOT ARMED, run once. No gate is named,
+    so the arm stands against a lifespan that arms nothing -- the one-shot connect it replaced,
+    which leaves the client None and every reader on its no-Weaviate branch.
+
+    IT ASSERTS A READ. A client object existing is not an answer from the index; the class only
+    the index holds is."""
+    eo, world = boot
+    world["weaviate"] = False
+    async with eo.lifespan(eo.app):
+        assert _read(eo) == ([], None)  # the shape `/resolve` takes for a cold start
+        world["weaviate"] = True
+        for _, attempt in list(mr.armed):
+            attempt()
+        rows, mode = _read(eo)
+        assert _uris((rows, mode)) == [_Weaviate.INDEXED["uri"]], (
+            "booted without Weaviate, the pod never read the index after Weaviate returned")
+        assert mode == "hybrid"
 
 
 @pytest.mark.asyncio
