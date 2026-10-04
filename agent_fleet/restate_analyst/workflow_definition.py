@@ -258,6 +258,15 @@ class DirectCallStep(_Declared):
             "so a permanently-ungated step kind cannot be expressed (RULING Q3)."
         ),
     )
+    outcome_from: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "The response field whose value is this step's disposition, so a chaining table can "
+            "match on what the call decided. Undeclared, the call disposes nothing. A response "
+            "without it is terminal, never a None (ruled 2026-10-03)."
+        ),
+    )
 
 
 class DispatchFanoutStep(_Declared):
