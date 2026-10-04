@@ -22,7 +22,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
@@ -96,6 +96,14 @@ def create_app(loop: Optional[ApplyLoop] = None) -> FastAPI:
 
     @app.get("/health")
     def health():
+        # ALIVE MEANS THE APPLY TASK IS STILL RUNNING (2026-10-04). This answered 200 whatever the
+        # task's state, and it is the kubelet's LIVENESS probe: a loop that had ended -- by any
+        # path out of `run_forever`, which catches only `Exception` -- left a pod reporting healthy
+        # and applying nothing, which no restart would ever correct. A batch that FAILS is not an
+        # ended task; `run_forever` logs it and polls again, which is how this pod rides out a
+        # Neo4j outage without one (tests/test_the_projector_recovers_when_neo4j_returns.py).
+        if _task is None or _task.done():
+            raise HTTPException(status_code=503, detail="projector apply loop is not running")
         return {"status": "ok"}
 
     @app.get("/projector/watermark")
