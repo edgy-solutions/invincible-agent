@@ -2348,6 +2348,19 @@ async def _run_definition(
                 "step_id": step.id, "kind": "direct_call",
                 "status": "SUCCESS", "result": result,
             })
+            # OPT-IN DISPOSITION (ruled 2026-10-03): a call whose response IS the decision -- a
+            # writer's `written`/`write_refused` -- names the field, and a chaining table matches
+            # its value. A response without it is a TerminalError naming the field, never a None,
+            # which a table reads as "decided nothing". Undeclared, a call disposes nothing.
+            if step.outcome_from is not None:
+                said = result.get(step.outcome_from) if isinstance(result, dict) else None
+                if not isinstance(said, str) or not said:
+                    raise restate.TerminalError(
+                        f"direct_call {step.id!r} declares outcome_from {step.outcome_from!r}, and "
+                        f"its response carries no non-empty string there: {result!r}"[:500],
+                        status_code=502,
+                    )
+                results[-1]["disposition"] = said
 
         elif step.kind == "dispatch_fanout":
             # ── THE AUTONOMOUS COUNTERPART OF human_await, and its semantics live HERE ──────────
