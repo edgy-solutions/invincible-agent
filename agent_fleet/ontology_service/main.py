@@ -781,6 +781,35 @@ async def _check_jena_populated():
         print(f"[ontology-service] Error checking Jena dataset: {e}")
 
 
+def _mesh_registration():
+    """THE ONE resolution of the registration module this process uses: the container's flat
+    layout first, the source layout second. The lifespan and its seal both call this, so a test
+    patches the module object the lifespan actually reads, never a twin under the other name."""
+    try:
+        import utils.mesh_registration as mr  # type: ignore[no-redef]
+    except ImportError:
+        import agent_fleet.utils.mesh_registration as mr
+    return mr
+
+
+def _weaviate_answers() -> bool:
+    """Weaviate is ready, connecting the client first if no earlier attempt could."""
+    global _WEAVIATE_CLIENT
+    if _WEAVIATE_CLIENT is None:
+        _WEAVIATE_CLIENT = create_weaviate_client()
+    return bool(_WEAVIATE_CLIENT.is_ready())
+
+
+def _jena_answers() -> bool:
+    """Jena ITSELF answers an ASK, over the same credentialed POST engine-o's other Jena reads use.
+
+    NOT THROUGH `execute_sparql`: its rdflib fallback answers when Jena does not, so a probe
+    built on it would answer every time -- a gate that can never close."""
+    resp = _jena_ontology_post(_JENA_ENDPOINT, data={"query": "ASK {}"},
+                               headers={"Accept": "application/sparql-results+json"})
+    return resp.status_code == 200 and isinstance(resp.json().get("boolean"), bool)
+
+
 # ---------------------------------------------------------------------------
 # FastAPI lifespan — verify connectivity on startup
 # ---------------------------------------------------------------------------
@@ -788,11 +817,11 @@ async def _check_jena_populated():
 async def lifespan(app: FastAPI):
     global _WEAVIATE_CLIENT, _NEO4J_DRIVER
     
-    # Initialize Weaviate with Fleet-Standard Custom Connection
-    try:
-        _WEAVIATE_CLIENT = create_weaviate_client()
-    except Exception as e:
-        print(f"[ontology-service] FAILED to connect to Weaviate: {e}")
+    mr = _mesh_registration()
+
+    # Weaviate: connected through the gate, so a boot it missed is retried rather than kept for
+    # the pod's life. It reads `_WEAVIATE_CLIENT` is None until the first answer, as it always did.
+    mr.when_stores_answer("engine-o:weaviate", {"weaviate": _weaviate_answers}, lambda: None)
 
     # Initialize Neo4j
     try:
@@ -806,38 +835,47 @@ async def lifespan(app: FastAPI):
     # Engine D). engine-o owns the SUSTAINMENT_INSTANCES graph, so it self-hosts /resolve_instance
     # and self-registers here — REPRODUCIBLE: runs every boot, survives re-prime, NOT a hand-run Cypher
     # (bootstrap-state-debt). The /resolve fan-out then discovers it like any other provider.
+    #
+    # GATED ON THE STORE THE VERB READS (2026-10-03): `/resolve_instance` reads Jena through
+    # `execute_sparql`, whose rdflib fallback answers when Jena does not -- so a provider
+    # registered while Jena is down abstains CONFIDENTLY. Not on Weaviate: the verb never reads it.
+    # A deployment that declares no Jena answers from rdflib by design, and is not held.
     try:
-        try:
-            from utils.mesh_registration import engine_mint, register_engine_to_mesh  # type: ignore[no-redef]
-        except ImportError:
-            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
         _pcn_endpoint = os.getenv(
             "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
         ).rstrip("/") + "/resolve_instance"
-        register_engine_to_mesh(
-        mint=engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
-            name="engine_o_sustainment_resolve_instance",
-            description=(
-                "Resolves a PCN/PDN identifier — a manufacturer part number (e.g. NSR01L30NXT5G) or a "
-                "notice id (e.g. PCN IPCN25300X) — to its pcn: instance node in the SUSTAINMENT graph, "
-                "by deterministic-IRI exact match then descriptor-strip fuzzy match. Returns candidates "
-                "with class URI, label, IRI identity, and score sorted descending. An empty list is a "
-                "first-class answer — abstains below its floor rather than returning least-bad matches. "
-                "pcn/pdn are identifier fragments, never stripped; MPNs are matched verbatim."
-            ),
-            verb="mesh:resolveInstance",
-            input_uri="http://invincible-agent/mesh#InstanceIdentifier",
-            output_uri="http://invincible-agent/mesh#InstanceResolution",
-            verb_synonyms=["resolve part", "look up MPN", "which component", "identify notice", "resolve PCN"],
-            endpoint_url=_pcn_endpoint,
-            owner_persona="OPS_OPERATOR",
-            domains=["SUSTAINMENT"],
-            cost_class="fast",
-            requires_human_approval=False,
-            provider="engine_o_sustainment",
-            timeout_s=5.0,
+
+        def _register_resolve_instance():
+            mr.register_engine_to_mesh(
+                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                name="engine_o_sustainment_resolve_instance",
+                description=(
+                    "Resolves a PCN/PDN identifier — a manufacturer part number (e.g. NSR01L30NXT5G) or a "
+                    "notice id (e.g. PCN IPCN25300X) — to its pcn: instance node in the SUSTAINMENT graph, "
+                    "by deterministic-IRI exact match then descriptor-strip fuzzy match. Returns candidates "
+                    "with class URI, label, IRI identity, and score sorted descending. An empty list is a "
+                    "first-class answer — abstains below its floor rather than returning least-bad matches. "
+                    "pcn/pdn are identifier fragments, never stripped; MPNs are matched verbatim."
+                ),
+                verb="mesh:resolveInstance",
+                input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+                output_uri="http://invincible-agent/mesh#InstanceResolution",
+                verb_synonyms=["resolve part", "look up MPN", "which component", "identify notice", "resolve PCN"],
+                endpoint_url=_pcn_endpoint,
+                owner_persona="OPS_OPERATOR",
+                domains=["SUSTAINMENT"],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_o_sustainment",
+                timeout_s=5.0,
+            )
+            print(f"[ontology-service] registered SUSTAINMENT mesh:resolveInstance provider -> {_pcn_endpoint}")
+
+        mr.when_stores_answer(
+            "engine_o_sustainment_resolve_instance:stores",
+            {"jena": _jena_answers} if _JENA_ENDPOINT else {},
+            _register_resolve_instance,
         )
-        print(f"[ontology-service] registered SUSTAINMENT mesh:resolveInstance provider -> {_pcn_endpoint}")
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] pcn mesh:resolveInstance registration failed: {e}")
 
