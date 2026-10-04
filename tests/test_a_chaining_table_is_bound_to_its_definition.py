@@ -7,13 +7,21 @@ the definition names its last disposing step, the step names its vocabulary. So 
 every table in the seed and every overlay, and the map stops being a list somebody must extend.
 
 WHAT A DEFINITION CAN EMIT, as the executor computes it (`main._run_definition`): the outcome is
-the disposition of the LAST disposing record -- a human verb, a signal status, a timer elapsing --
-and an expiry anywhere ends the definition as `timed_out`. So the outcome domain is
+the disposition of the LAST disposing record -- a human verb, a signal status, a timer elapsing,
+a call's declared response field -- and an expiry anywhere ends the definition as `timed_out`. So
+the outcome domain is
 
     vocabulary(last disposing step)  plus  timed_out iff any step declares a deadline
 
 and a table whose `domain.outcome` differs in either direction is wrong: smaller falls through
 on a verb a human can emit, larger carries rows that can never fire.
+
+A CALL'S VOCABULARY IS THE CALLEE'S (outcome_from, ruled 2026-10-03). A `direct_call` disposes
+only when it declares `outcome_from`, and then it disposes whatever its response says there. No
+definition declares that set, so this seal cannot derive it, and it checks only that the table
+declares a domain. The runtime still holds the other edge: `decision_table` refuses a fact outside
+the declared domain, so an unexpected answer is a refusal, never a fall-through. A row for an
+answer the callee never gives is NOT caught here.
 
 EVERY STEP KIND IS CLASSIFIED as disposing or silent, against the step union the model declares,
 so a new kind fails here until somebody decides what it emits -- an unclassified kind is the
@@ -50,10 +58,17 @@ _REPO = Path(__file__).resolve().parents[1]
 _POLICY = _REPO / "policy"
 _DOCKERFILE = _REPO / ".github" / "docker" / "Dockerfile.agent"
 
-#: Steps whose result record carries a `disposition` (main._run_definition), and steps whose
-#: record never does. Their union must be the model's step union -- see the partition arm.
+#: Steps whose result record carries a `disposition` (main._run_definition), steps whose record
+#: carries one only when they declare the named field, and steps whose record never does. Their
+#: union must be the model's step union -- see the partition arm.
 _DISPOSING = {"human_await", "signal_await", "wait"}
-_SILENT = {"spo_operation", "direct_call", "dispatch_fanout", "render", "emit"}
+_DISPOSING_IF_DECLARED = {"direct_call": "outcome_from"}
+_SILENT = {"spo_operation", "dispatch_fanout", "render", "emit"}
+
+
+def _disposes(step) -> bool:
+    field = _DISPOSING_IF_DECLARED.get(step.kind)
+    return step.kind in _DISPOSING or (field is not None and getattr(step, field) is not None)
 
 _ENVS = ("WORKFLOW_DEFINITIONS_DIR", "DECISION_TABLE_DIR", "CASE_TRIGGER_DIR")
 
@@ -102,12 +117,18 @@ def _kinds_for(task_kind: str, kinds: dict) -> "list[str]":
     return sorted(k for k in kinds if rx.fullmatch(k))
 
 
-def _emits(definition_id: str) -> "set[str]":
-    """The outcome domain a definition can terminate with, as the executor computes it."""
+def _emits(definition_id: str) -> "typing.Optional[set[str]]":
+    """The outcome domain a definition can terminate with, as the executor computes it. None when
+    the last disposer is a call: its vocabulary is the callee's, and no definition declares it."""
     wf = wd.get_workflow_definition(definition_id)
-    disposing = [s for s in wf.steps if s.kind in _DISPOSING]
+    disposing = [s for s in wf.steps if _disposes(s)]
     assert disposing, f"{definition_id} has no disposing step, so its outcome is always None"
     last = disposing[-1]
+    if last.kind in _DISPOSING_IF_DECLARED:
+        assert not any(getattr(s, "deadline_seconds", None) for s in wf.steps), (
+            f"{definition_id}: a deadline beside a call's open vocabulary; this seal does not "
+            "derive that, and an undecided case must fail rather than pass")
+        return None
     if last.kind == "human_await":
         assert last.completion.mode != "grouped", (
             f"{definition_id}: the last disposing step is GROUPED; this seal does not yet derive a "
@@ -133,11 +154,16 @@ def _emits(definition_id: str) -> "set[str]":
 
 def test_EVERY_STEP_KIND_IS_CLASSIFIED():
     union = typing.get_args(typing.get_args(wd.Step)[0])
-    declared = {typing.get_args(c.model_fields["kind"].annotation)[0] for c in union}
-    assert not (_DISPOSING & _SILENT)
-    assert _DISPOSING | _SILENT == declared, (
-        f"unclassified step kinds {sorted(declared - _DISPOSING - _SILENT)}, or classified kinds "
-        f"the model no longer declares {sorted((_DISPOSING | _SILENT) - declared)}")
+    by_kind = {typing.get_args(c.model_fields["kind"].annotation)[0]: c for c in union}
+    opt_in = set(_DISPOSING_IF_DECLARED)
+    assert not (_DISPOSING & _SILENT) and not (opt_in & (_DISPOSING | _SILENT))
+    classified = _DISPOSING | opt_in | _SILENT
+    assert classified == set(by_kind), (
+        f"unclassified step kinds {sorted(set(by_kind) - classified)}, or classified kinds "
+        f"the model no longer declares {sorted(classified - set(by_kind))}")
+    # The opt-in field is one the step's model declares -- a misspelt one would read as never set.
+    for kind, field in _DISPOSING_IF_DECLARED.items():
+        assert field in by_kind[kind].model_fields, (kind, field)
 
 
 def test_EVERY_TABLE_IS_A_SELECTION_OR_A_CHAINING_TABLE():
@@ -162,10 +188,18 @@ def test_AT_LEAST_THE_KNOWN_CHAINING_TABLES_ARE_FOUND():
 
 @pytest.mark.parametrize("key", [k for k, _ in _chaining()])
 def test_THE_DOMAIN_IS_WHAT_THE_DEFINITION_CAN_EMIT(key):
-    table = _tables()[key]
+    _judge(key, _tables()[key])
+
+
+def _judge(key: str, table: dict) -> None:
     emits = _emits(table["after"])
     domain = set((table.get("domain") or {}).get("outcome") or [])
     assert "outcome" in (table.get("matches") or []), f"{key} does not match on outcome"
+    if emits is None:
+        assert domain, (
+            f"{key}: {table['after']} disposes what its call answers, and the table declares no "
+            "outcome domain to refuse an answer nobody wrote a row for")
+        return
     assert not emits - domain, (
         f"{key}: {table['after']} can emit {sorted(emits - domain)} and the domain omits them -- "
         "that outcome FALLS THROUGH at the moment it is emitted")
@@ -196,6 +230,28 @@ def test_THE_LAST_DISPOSER_DECIDES_AND_ANY_DEADLINE_ADDS_TIMED_OUT(tmp_path, mon
     monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(d))
     assert _emits("two") == {"fine", "refused"}
     assert _emits("early") == {"elapsed", "timed_out"}
+
+
+_CALL = "  - {kind: direct_call, id: w, endpoint: 'http://w.test', capability: c%s}\n"
+_ACK = "  - {kind: signal_await, id: ack, signal: ack, audience: a, accepts: [fine]}\n"
+
+
+def test_A_CALL_DISPOSES_ONLY_WHEN_IT_DECLARES_WHERE(tmp_path, monkeypatch):
+    """Declared and last, the call's answer is the outcome, whose vocabulary is the callee's; then
+    the table must declare a domain. Undeclared, it is silent and the signal before it decides."""
+    d = _write(tmp_path / "defs", {
+        "said.yaml": "id: said\nname: said\nsteps:\n" + _ACK + _CALL % ", outcome_from: status",
+        "mute.yaml": "id: mute\nname: mute\nsteps:\n" + _ACK + _CALL % "",
+        "alone.yaml": "id: alone\nname: alone\nsteps:\n" + _CALL % ""})
+    monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(d))
+    assert _emits("said") is None
+    assert _emits("mute") == {"fine"}
+    with pytest.raises(AssertionError, match="no disposing step"):
+        _emits("alone")
+    on = {"after": "said", "matches": ["outcome"], "domain": {"outcome": ["written"]}}
+    _judge("t", on)
+    with pytest.raises(AssertionError, match="declares no outcome domain"):
+        _judge("t", {**on, "domain": {}})
 
 
 def test_A_TEMPLATED_KIND_NAMES_ONLY_ITS_OWN_TIER():
