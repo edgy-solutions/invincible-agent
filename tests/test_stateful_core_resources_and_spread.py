@@ -133,6 +133,18 @@ def _is_stateful_core(template_labels: dict) -> bool:
     return template_labels.get(_SPREAD_LABEL_KEY) == _SPREAD_LABEL_VALUE
 
 
+def _claiming_statefulsets(rendered: str) -> set[str]:
+    """Names of the rendered StatefulSets that claim a volume (spec.volumeClaimTemplates): the
+    reserved set's population. Such a pod is bound, through its local-path PV, to the node that
+    provisioned it; if that node is labelled and the pod carries the avoid rule, it has nowhere
+    to run. Derived from the render, so a new stateful workload joins on its own."""
+    return {
+        name
+        for name, doc in _statefulsets(rendered).items()
+        if (doc.get("spec") or {}).get("volumeClaimTemplates")
+    }
+
+
 def _avoids_stateful_nodes(pod_spec: dict, label_key: str = _STATEFUL_NODE_LABEL_KEY) -> bool:
     """True iff EVERY nodeSelectorTerm (terms are OR'd together) carries a DoesNotExist
     matchExpression on label_key. A partial term would still let the pod land on a labelled node
@@ -329,14 +341,23 @@ def test_non_stateful_core_pod_templates_avoid_stateful_nodes(
 # ── (b) no stateful-core pod template carries the rule ────────────────────────────────────────
 
 def test_stateful_core_pod_templates_do_not_avoid_stateful_nodes(
-    pod_templates: list[tuple[str, str, dict, dict]]
+    pod_templates: list[tuple[str, str, dict, dict]], sandbox: str
 ):
     core = [
         (kind, name, pod_spec)
         for kind, name, pod_spec, labels in pod_templates
         if _is_stateful_core(labels)
     ]
-    assert len(core) == 3, f"expected exactly 3 stateful-core pod templates, found {len(core)}: {core}"
+    # The reserved set is DERIVED, not counted: every StatefulSet that claims a volume. A
+    # hard-coded "exactly 3" here is what let neo4j, postgresql and fuseki sit outside it --
+    # roll #16 left neo4j Pending once the node holding its volume was labelled.
+    claiming = _claiming_statefulsets(sandbox)
+    assert len(claiming) >= 3, f"population derivation may be broken: {sorted(claiming)}"
+    assert {name for _, name, _ in core} == claiming, (
+        f"stateful-core pod templates {sorted(n for _, n, _ in core)} != the StatefulSets that "
+        f"claim a volume {sorted(claiming)} -- a claiming StatefulSet outside the reserved set "
+        "carries the avoid rule and goes Pending the day its volume's node is labelled"
+    )
     unexpected = [f"{kind}/{name}" for kind, name, pod_spec in core if _avoids_stateful_nodes(pod_spec)]
     assert not unexpected, (
         "stateful-core pod template(s) unexpectedly carry the avoid-stateful-nodes rule — this "

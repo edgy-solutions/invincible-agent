@@ -137,8 +137,13 @@ wrong with it. Comments belong out here, not in there.
 {{/*
 Stateful-core spread group — shared label + preferred pod anti-affinity.
 
-Keycloak, Restate and Weaviate each run a single replica backed by a `local-path` PVC, and
-MEASURED 2026-10-02 all four such PVs (these three plus MinIO) are pinned to the SAME node —
+The stateful core is EVERY StatefulSet that claims a volume (spec.volumeClaimTemplates):
+Keycloak, Restate, Weaviate, PostgreSQL, Neo4j and Fuseki. Each runs a single replica backed by
+a `local-path` PVC. Until 0.4.29 only the first three were in the set; roll #16 then left Neo4j
+Pending once the node holding its volume was labelled, because the other three carried the
+avoid rule below. tests/test_stateful_core_resources_and_spread.py derives the set from the
+render, so a new claiming StatefulSet outside it reds. MEASURED 2026-10-02, four such PVs
+(Keycloak, Restate, Weaviate plus MinIO) were pinned to the SAME node —
 local-path has no cross-node migration, so whichever node first provisioned the PV is the only
 node that can ever mount it again. A REQUIRED pod anti-affinity on this label would therefore
 leave every pod after the first one scheduled permanently Pending: the scheduler would be asked
@@ -178,8 +183,8 @@ affinity:
 {{- end }}
 
 {{/*
-"Not stateful nodes" — a REQUIRED nodeAffinity that keeps every pod EXCEPT the stateful-core
-three (Keycloak, Restate, Weaviate — see invincible-agent.statefulSpreadLabel/Affinity above)
+"Not stateful nodes" — a REQUIRED nodeAffinity that keeps every pod EXCEPT the stateful core
+(every volume-claiming StatefulSet — see invincible-agent.statefulSpreadLabel/Affinity above)
 off any node carrying global.statefulNodes.labelKey. The label is applied to nodes OUT OF
 CHART (the operator labels whichever node(s) hold the stateful-core's local-path PVs); this
 define is the reservation's other half, and REQUIRED (unlike the spread affinity above) is

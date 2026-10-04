@@ -1,5 +1,24 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.29 — 2026-10-03
+
+The reserved set is every StatefulSet that claims a volume, not a list of three.
+
+### Fixed
+
+- **PostgreSQL, Neo4j and Fuseki join the stateful core** (`templates/infrastructure.yaml`).
+  They now carry `statefulSpreadLabel` and `statefulSpreadAffinity` in place of
+  `avoidStatefulNodes`, as Keycloak, Restate and Weaviate already did. Before this, all three
+  claimed a `local-path` volume and still carried the REQUIRED avoid rule. Roll #16 left Neo4j
+  Pending once the node holding its volume was labelled. The first roll with the spread chart
+  found one stateful workload missing from its own reserved set.
+- **The seal derives the set** (`tests/test_stateful_core_resources_and_spread.py`). The
+  stateful-core pod templates must equal the rendered StatefulSets that have
+  `volumeClaimTemplates`, which replaces a hard-coded count of 3. Mutant: Neo4j reverted to
+  `avoidStatefulNodes` makes `test_stateful_core_pod_templates_do_not_avoid_stateful_nodes` red
+  ("claim a volume").
+- The comments in `_helpers.tpl` and `values.yaml` no longer name three members.
+
 ## 0.4.28 — 2026-10-03
 
 Patch bump for the ingest/origin seam (SDK lane/ca-0.9.7), which adds two env keys to the

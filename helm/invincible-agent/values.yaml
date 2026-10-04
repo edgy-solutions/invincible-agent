@@ -47,7 +47,7 @@ global:
   # chart 0.3.0. Utility images now live under top-level `utilImages:`
   # with the same registry/repository/tag split as component images.
   # See `utilImages:` block at the end of this file.
-  # -- Stateful-core spread group (Keycloak, Restate, Weaviate): a shared pod-template label
+  # -- Stateful-core spread group (every StatefulSet that claims a volume): a shared pod-template label
   # plus a PREFERRED (never required) pod anti-affinity, so the scheduler spreads them across
   # nodes when it can. PREFERRED only because all three (plus MinIO, deployed externally to
   # this chart) sit on `local-path` PVCs pinned to one node — see
@@ -57,7 +57,7 @@ global:
     enabled: true
     weight: 100
   # -- "Not stateful nodes" scheduling: a REQUIRED nodeAffinity that keeps every pod in this
-  # chart OTHER than the stateful-core (Keycloak, Restate, Weaviate — the spread group just
+  # chart OTHER than the stateful-core (every volume-claiming StatefulSet — the spread group just
   # above) off any node labelled for the stateful-core's local volumes. The label itself is
   # applied out-of-chart (the operator labels the dedicated node(s) that hold the stateful-core
   # local-path PVs); this is the reservation's other half, so no cordon is needed — every
