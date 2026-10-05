@@ -33,7 +33,7 @@ from agent_fleet.restate_analyst.spo_step_executor import (  # noqa: E402
 
 _STEP = {"id": "dispatch_dispositions", "endpoint": "http://engine-o/write_item_state",
          "capability": "mesh:dispatchDispositions"}
-_IDENT = {"authz_id": "svc:review-starter"}
+_IDENT = {"authz_id": "svc:review-starter", "user_jwt": "tok-review-starter"}
 
 
 @pytest.fixture(autouse=True)

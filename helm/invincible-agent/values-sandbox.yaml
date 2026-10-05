@@ -480,6 +480,26 @@ keycloak:
           role: operator
         - user: liaison
           role: supervisor
+    # The case runner's delegate identity (item B, 2026-10-03): restate-analyst's direct_call
+    # steps act as this client when a step carries no human user_jwt. kind: delegate, same
+    # reason as iagent-openddil above — onBehalfOf.user (platform-registrar) only exists in
+    # THIS environment's nonInteractiveUsers, so the base chart's values.yaml would fail to
+    # render this client on its own. UNLIKE iagent-openddil, this one HAS a secretRef: engine-a
+    # (restate-analyst's image) reads the secret to mint its own tokens, so Keycloak's
+    # self-minted secret would be unusable by the only process that needs it — the same
+    # declared-but-unwired gap secrets.yaml's comments name for engine-a/p/fin/safety.
+    - clientId: "iagent-case-runner"
+      authzId: "svc:case-runner"
+      kind: delegate
+      secretRef: "caseRunnerClientSecret"
+      onBehalfOf:
+        - user: platform-registrar
+          role: operator
+  # Case runner's client secret — read by templates/secrets.yaml's CASE_RUNNER_CLIENT_SECRET
+  # projection (hasKey-guarded, same fallback literal) and by the realm reconcile/configmap
+  # templates via secretRef above (`get $.Values.keycloak $c.secretRef`), so both sides of the
+  # mint agree on one value rather than drifting.
+  caseRunnerClientSecret: "sandbox-case-runner-secret"
   # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
   #
   # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that

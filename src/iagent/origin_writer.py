@@ -1,12 +1,14 @@
 """The origin WRITER (ruling 3, architect ruling 2026-10-02 "ORIGIN, not audience", item 3):
 turns a confirmed `origin_resolution` (`policy/workflows/origin_record.yaml`'s own emit) into
-a graph write, and answers the case's `origin_written` signal with the outcome.
+a graph write.
 
-FUNCTION ONLY. This module does NOT consume the outbox (`origin_resolution` channel) --
-that transport (reading `outbox:origin_resolution`, calling this function once per record,
-calling `answer_signal` with its result) is going to the architect. This module ships the two
-callables the consumer will call: `write_origin` (pure given its injected `graph_writer`/
-`initiator`) and `answer_signal` (one HTTP call).
+FUNCTION ONLY -- `write_origin` is pure given its injected `graph_writer`/`initiator`. The
+TRANSPORT (item B, 2026-10-03) is `POST /internal/origin/write` on the BFF
+(`src/iagent/gateway.py:write_origin_route`), called directly by the case's own `written`
+`direct_call` step -- the step's HTTP response IS this function's return value, synchronously,
+so there is no separate signal to answer. `answer_signal`/`ORIGIN_WRITTEN_SIGNAL` (the prior
+signal-based transport's answer-back, for the `written` step when it was still `signal_await`)
+are REMOVED as dead code in this same change: no caller remained once the step converted.
 
 ORDER, per spec: `origin.check_dropper_bound` -> SDK `systems_of_record.Origin` shape
 validation -> `graph_writer.write_node`. Any outcome other than the graph write's own
@@ -25,36 +27,19 @@ skipping the check, this function takes the already-resolved boolean as a REQUIR
 parameter, `dropper_is_program_member` -- the same shape `origin.check_dropper_bound` itself
 already takes, pushed one level up to whoever DOES hold the dropper's authz_id (the original
 `origin_suggestion`'s `dropped_by.authz_id`) and a membership source (e.g.
-`human_tasks.check_can_view_program`): the outbox consumer, out of scope here.
-
-DEVIATION #2 (flagged in the report): `answer_signal`'s spec'd signature is
-`(instance_id, status)` -- two parameters. `agent_fleet/restate_analyst/workflow_runner.py`'s
-`signal` handler (read in full) calls `main._authorize_resolution(ctx, name, request.get(
-"acted_by"))`, which HARD-REQUIRES a non-blank `acted_by` (raises `restate.TerminalError`,
-401, otherwise) -- confirmed independently by `tests/test_an_origin_suggestion_runs_as_a_case.
-py`'s own `_approve` helper, which always supplies one. Calling the real endpoint with no
-`acted_by` would always 401, so this function adds it as a required keyword parameter rather
-than guessing a value to hardcode.
+`human_tasks.check_can_view_program`): the transport route, item B's `write_origin_route`.
 """
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
-from urllib.parse import quote
 
-import httpx
 from pydantic import ValidationError
 
 from . import origin
 from .promotion_stores import INGEST_FACT_FAMILY
 
 logger = logging.getLogger(__name__)
-
-#: Same env var, same default, as gateway._RESTATE_INGRESS_URL -- duplicated rather than
-#: imported from `gateway.py` (a 7700+-line module this function-only file should not pull in;
-#: see the module docstring's "function only" framing).
-_RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
 #: `Origin.resolved_by`, keyed on `origin.obtained_via` (RULED 2026-10-03, item D): a
 #: `SystemOfRecord` hit (`origin_resolver._OBTAINED_VIA_RECORD`) resolves to "record" -- ruled
@@ -68,10 +53,6 @@ _RESOLVED_BY_BY_OBTAINED_VIA = {
     "authoritative_source": "record",
     "user-drop": "unresolved",
 }
-
-#: The case's own signal name (`policy/workflows/origin_record.yaml`'s `written` step).
-ORIGIN_WRITTEN_SIGNAL = "origin_written"
-
 
 def write_origin(
     resolution: dict[str, Any],
@@ -160,18 +141,3 @@ def write_origin(
             "reason": f"graph write outcome={result.outcome!r}: {result.detail}",
         }
     return {"status": "written", "reason": None}
-
-
-async def answer_signal(instance_id: str, status: str, *, acted_by: str) -> None:
-    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{instance_id}/signal`, body
-    `{"signal": "origin_written", "status": status, "acted_by": acted_by}` -- see the module
-    docstring's deviation #2 for `acted_by`. Raises on any transport/HTTP failure (unlike the
-    ingest seam's best-effort `_open_case`): the case is waiting on this answer, so a swallowed
-    failure here would leave it waiting forever with no record that the write even happened.
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{quote(instance_id, safe='')}/signal",
-            json={"signal": ORIGIN_WRITTEN_SIGNAL, "status": status, "acted_by": acted_by},
-        )
-    resp.raise_for_status()

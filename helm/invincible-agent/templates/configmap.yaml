@@ -345,6 +345,14 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "SUPERVISOR_CLIENT_ID") }}
   SUPERVISOR_CLIENT_ID: "iagent-supervisor"
   {{- end }}
+  {{- /* The case runner's delegate identity (item B, 2026-10-03). restate-analyst mints per
+  direct_call step via client-credentials when the step carries no human user_jwt; secret in
+  CASE_RUNNER_CLIENT_SECRET (secrets.yaml). authz_id resolves to svc:case-runner via the
+  client's hardcoded-claim mapper. The client itself only exists where values-sandbox.yaml's
+  extraServiceClients declares it. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "CASE_RUNNER_CLIENT_ID") }}
+  CASE_RUNNER_CLIENT_ID: "iagent-case-runner"
+  {{- end }}
   {{- /* ENFORCEMENT POSTURE — declared, never implied (2026-08-07).
   A SECURITY POSTURE MUST NOT RIDE AN IMPLICIT DEFAULT, whichever way the default points: a
   reader cannot distinguish "deliberately off" from "nobody thought about it", and the next

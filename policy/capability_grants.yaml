@@ -226,3 +226,21 @@ capabilities:
       - agent@example.com
       - alice@example.com
       - bob@example.com
+
+  # origin.write (item B, 2026-10-03) — the single decider gating restate-analyst's
+  # origin_record workflow's accept step (POST /internal/origin/write on the BFF). Same shape
+  # as mesh:startReview above: the service INITIATES the write under its OWN entitled, auditable
+  # identity, never a borrowed human token; the steward's authz_id who approved the case travels
+  # separately as on_behalf_of (provenance, never a gate input), recorded on the write rather
+  # than consulted for it. svc:case-runner is seeded in users.yaml (service species), kind
+  # delegate (values-sandbox.yaml's extraServiceClients, onBehalfOf platform-registrar).
+  origin.write:
+    granted_by: cnogradi
+    reason: >-
+      svc:case-runner (restate-analyst's direct_call delegate identity for steps with no human
+      user_jwt) may invoke origin.write — write the case's resolved origin once the steward has
+      accepted it. The workflow acts under its own entitled identity rather than forwarding the
+      steward's token across the human-latency gap the accept step suspends for; the steward's
+      authz_id is recorded as on_behalf_of on the write instead.
+    grant_to:
+      - svc:case-runner

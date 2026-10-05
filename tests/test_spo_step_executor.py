@@ -121,12 +121,14 @@ def test_can_invoke_granted_and_denied_and_deny_by_default():
 
 
 def test_direct_call_denied_never_dispatches():
+    # user_jwt present: the "byte-identical" caller=authz_id path, just denied.
     calls = []
     with _Patch(httpx_post=lambda *a, **k: FakeResp(200, {"check": False}),
                 requests_post=lambda *a, **k: calls.append(1) or FakeResp(200)):
         try:
             ex.execute_direct_call({"id": "s", "endpoint": "http://e", "capability": "cap"},
-                                   {"authz_id": "alice"}, topaz_url="http://t")
+                                   {"authz_id": "alice", "user_jwt": "tok-alice"},
+                                   topaz_url="http://t")
         except ex.StepFailAndRelease as e:
             assert e.status_code == 403
             assert calls == [], "denied direct_call must NOT reach the POST"
@@ -138,8 +140,101 @@ def test_direct_call_granted_dispatches():
     with _Patch(httpx_post=lambda *a, **k: FakeResp(200, {"check": True}),
                 requests_post=lambda *a, **k: FakeResp(200, {"published": True})):
         r = ex.execute_direct_call({"id": "s", "endpoint": "http://e", "capability": "cap"},
-                                   {"authz_id": "alice"}, topaz_url="http://t")
+                                   {"authz_id": "alice", "user_jwt": "tok-alice"},
+                                   topaz_url="http://t")
     assert r == {"published": True}
+
+
+# ── item B (2026-10-03): direct_call with no human user_jwt acts as svc:case-runner ─────────
+
+def test_direct_call_with_user_jwt_is_byte_identical_and_never_mints():
+    """MUTANT (a): the executor attaches the service token even when a user_jwt is present.
+    Guard: mint_case_runner_token is stubbed to a SENTINEL value that must never appear in the
+    outbound header, and check_can_invoke's caller must still be the human authz_id."""
+    seen = {}
+    old_mint = ex.mint_case_runner_token
+    ex.mint_case_runner_token = lambda **k: "SENTINEL-SHOULD-NOT-BE-MINTED"
+    try:
+        def fake_can_invoke(capability, caller, *, topaz_url):
+            seen["caller"] = caller
+            return True
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            seen["headers"] = headers
+            seen["payload"] = json
+            return FakeResp(200, {"published": True})
+
+        with _Patch(requests_post=fake_post):
+            old_cci = ex.check_can_invoke
+            ex.check_can_invoke = fake_can_invoke
+            try:
+                r = ex.execute_direct_call(
+                    {"id": "s", "endpoint": "http://e", "capability": "cap"},
+                    {"authz_id": "alice", "user_jwt": "tok-alice"}, topaz_url="http://t")
+            finally:
+                ex.check_can_invoke = old_cci
+    finally:
+        ex.mint_case_runner_token = old_mint
+    assert r == {"published": True}
+    assert seen["caller"] == "alice", seen
+    assert seen["headers"]["Authorization"] == "Bearer tok-alice", seen["headers"]
+    assert seen["payload"]["user_jwt"] == "tok-alice", seen["payload"]
+
+
+def test_direct_call_without_user_jwt_uses_case_runner_identity():
+    """MUTANT (b): the route/caller used for can_invoke stays the (blank) human authz_id
+    instead of svc:case-runner when there is no user_jwt."""
+    seen = {}
+    old_mint = ex.mint_case_runner_token
+    ex.mint_case_runner_token = lambda **k: "minted-case-runner-token"
+    try:
+        def fake_can_invoke(capability, caller, *, topaz_url):
+            seen["caller"] = caller
+            return True
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            seen["headers"] = headers
+            return FakeResp(200, {"published": True})
+
+        with _Patch(requests_post=fake_post):
+            old_cci = ex.check_can_invoke
+            ex.check_can_invoke = fake_can_invoke
+            try:
+                r = ex.execute_direct_call(
+                    {"id": "s", "endpoint": "http://e", "capability": "cap"},
+                    {"authz_id": ""}, topaz_url="http://t")
+            finally:
+                ex.check_can_invoke = old_cci
+    finally:
+        ex.mint_case_runner_token = old_mint
+    assert r == {"published": True}
+    assert seen["caller"] == "svc:case-runner", seen
+    assert seen["headers"]["Authorization"] == "Bearer minted-case-runner-token", seen["headers"]
+
+
+def test_direct_call_without_user_jwt_mint_failure_fails_and_releases_never_unauthenticated():
+    """A missing/failed credential fails and releases with a named reason; it is never sent
+    unauthenticated — the POST must never happen."""
+    calls = []
+    old_mint = ex.mint_case_runner_token
+
+    def _boom(**k):
+        raise ex.ServiceTokenError("mint failed (test)")
+
+    ex.mint_case_runner_token = _boom
+    try:
+        with _Patch(httpx_post=lambda *a, **k: FakeResp(200, {"check": True}),
+                    requests_post=lambda *a, **k: calls.append(1) or FakeResp(200)):
+            try:
+                ex.execute_direct_call({"id": "s", "endpoint": "http://e", "capability": "cap"},
+                                       {"authz_id": ""}, topaz_url="http://t")
+            except ex.StepFailAndRelease as e:
+                assert e.status_code == 503, e.status_code
+                assert calls == [], "a missing credential must NEVER reach the POST"
+                return
+            raise AssertionError("a failed mint should fail-and-release, never dispatch")
+    finally:
+        ex.mint_case_runner_token = old_mint
 
 
 if __name__ == "__main__":

@@ -258,6 +258,17 @@ class DirectCallStep(_Declared):
             "so a permanently-ungated step kind cannot be expressed (RULING Q3)."
         ),
     )
+    extra_payload: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Declared inputs for this call, templated against the run's context the same way "
+            "emit/render steps' `template` is ({case.*}/{trigger.*}/{outputs.*} placeholders; the "
+            "strict renderer, not the flat `{placeholder}` endpoint binder). Rendered by the "
+            "dispatch loop and passed through to the executor's own `extra_payload` parameter "
+            "verbatim -- the executor stays generic; only this step's declared surface widens "
+            "(item B, 2026-10-03)."
+        ),
+    )
 
 
 class DispatchFanoutStep(_Declared):
@@ -656,6 +667,8 @@ def config_bindings() -> dict:
         # (`dispatch_driver`: f"{ENGINE_O_URL}/write_item_state"). Same endpoint, same source.
         "dispatch_endpoint": f"{engine_o}/write_item_state",
         "publish_endpoint": f"{bff}/internal/human_tasks/register",
+        # origin_record's `written` step (item B, 2026-10-03) — same BFF, same env var.
+        "origin_write_endpoint": f"{bff}/internal/origin/write",
     }
 
 

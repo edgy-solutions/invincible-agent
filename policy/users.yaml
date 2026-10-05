@@ -218,3 +218,22 @@ users:
   - id: svc:doc-tools
     display_name: doc-tools (service - semantic-linker transport identity)
     groups: []
+
+  # Instance TEN (item B, 2026-10-02/03) — the case runner, restate-analyst's DELEGATE identity
+  # for direct_call steps that carry no human user_jwt. A step with no JWT attached is
+  # machine-initiated by construction: it cannot authenticate as the dropper or the steward (no
+  # token to forward), so it acts under its OWN credential (kind: delegate in
+  # values-sandbox.yaml's extraServiceClients) and carries the steward's authz_id separately, as
+  # `on_behalf_of` — PROVENANCE, never a gate input (same discipline as the SDK's Initiator).
+  #
+  # WHY IT NEEDS ITS OWN, same governance test as doc-tools above: this is not engine-a, not the
+  # supervisor, not the review starter, and reusing any of them would authenticate the write as a
+  # service it is not. UNLIKE doc-tools, this identity DOES carry a grant — can_invoke(origin.write)
+  # — because its one platform-facing call is a WRITE of governed provenance state, so the grant
+  # is a deliberate decision made here (policy/capability_grants.yaml), not an inherited one.
+  #
+  # ITEM ZERO, NOT A FOLLOW-UP: the call cannot mint as an identity that does not exist, so this
+  # stanza precedes the code change rather than trailing it.
+  - id: svc:case-runner
+    display_name: case-runner (service - restate-analyst direct_call delegate identity)
+    groups: []

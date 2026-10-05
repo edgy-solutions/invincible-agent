@@ -39,9 +39,17 @@ import requests
 
 # Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
 try:  # pragma: no cover - import path differs by runtime
-    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+    from utils.service_identity import (  # type: ignore[no-redef]
+        ServiceTokenError,
+        mint_case_runner_token,
+        outbound_auth_headers,
+    )
 except ImportError:  # pragma: no cover
-    from agent_fleet.utils.service_identity import outbound_auth_headers
+    from agent_fleet.utils.service_identity import (
+        ServiceTokenError,
+        mint_case_runner_token,
+        outbound_auth_headers,
+    )
 
 __all__ = [
     "StepFailAndRelease",
@@ -54,6 +62,12 @@ __all__ = [
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "")
 STEP_HTTP_TIMEOUT = float(os.getenv("STEP_HTTP_TIMEOUT", "1800"))
+
+# A direct_call step with no human `user_jwt` attached is machine-initiated by construction
+# (item B, 2026-10-03): it acts under the case runner's OWN delegate identity rather than being
+# sent unauthenticated. `on_behalf_of` is carried separately, by whoever constructs the
+# Initiator at the write boundary — this identity only says WHICH SERVICE is calling.
+CASE_RUNNER_AUTHZ_ID = "svc:case-runner"
 
 
 class StepFailAndRelease(Exception):
@@ -261,7 +275,8 @@ def execute_direct_call(
     capability). Then POST the declared ``endpoint`` (behavior-identical to today's
     service_task; a 401/403 there also fails-and-releases)."""
     capability = step.get("capability") or ""
-    caller = identity.get("authz_id", "")
+    user_jwt = identity.get("user_jwt")
+    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
     if not check_can_invoke(capability, caller, topaz_url=topaz_url):
         raise StepFailAndRelease(
             f"caller {caller!r} is not authorized (can_invoke) for capability "
@@ -281,9 +296,23 @@ def execute_direct_call(
     if isinstance(extra_payload, dict):
         payload.update(extra_payload)
     headers = {}
-    if identity.get("user_jwt"):
-        payload["user_jwt"] = identity["user_jwt"]
-        headers["Authorization"] = f"Bearer {identity['user_jwt']}"
+    if user_jwt:
+        payload["user_jwt"] = user_jwt
+        headers["Authorization"] = f"Bearer {user_jwt}"
+    else:
+        # No human JWT on this step: mint the case runner's OWN credential, fresh, at the
+        # point of use — MINT AT USE, never a stored token (agent_fleet/utils/service_identity.py,
+        # filed from the notice-A dispatch defect). A missing/failed credential is never papered
+        # over by sending the request unauthenticated — it fails and releases, named.
+        try:
+            case_runner_token = mint_case_runner_token()
+        except ServiceTokenError as exc:
+            raise StepFailAndRelease(
+                f"direct_call {step.get('id')!r}: could not mint the case-runner credential "
+                f"({type(exc).__name__}: {exc}) — refusing to send unauthenticated.",
+                status_code=503,
+            ) from exc
+        headers["Authorization"] = f"Bearer {case_runner_token}"
     # PERMANENT vs TRANSIENT, second consumer of the taxonomy this module already applies to
     # `spo_operation` (401/403 terminal · 5xx/network retryable). Added 2026-08-09 after a live
     # miss: `{dispatch_endpoint}` reached this line unbound, `requests` raised MissingSchema

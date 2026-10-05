@@ -33,7 +33,13 @@ import logging
 import os
 from typing import Dict
 
-__all__ = ["ServiceTokenError", "mint_service_token", "outbound_auth_headers"]
+__all__ = [
+    "ServiceTokenError",
+    "mint_service_token",
+    "mint_supervisor_token",
+    "mint_case_runner_token",
+    "outbound_auth_headers",
+]
 
 
 # ── THE ONE IMPLEMENTATION LIVES IN THE SDK (iagent_mesh >= 0.2.0) ──────────────────────
@@ -57,6 +63,22 @@ def mint_supervisor_token(*, timeout: float = 15.0) -> str:
     return mint_token(
         client_id=os.environ["SUPERVISOR_CLIENT_ID"],
         client_secret=os.environ["SUPERVISOR_CLIENT_SECRET"],
+        timeout=timeout,
+    )
+
+
+def mint_case_runner_token(*, timeout: float = 15.0) -> str:
+    """The CASE RUNNER's delegate identity (``svc:case-runner``). Its OWN credentials —
+    for ``direct_call`` steps (item B, 2026-10-03) that carry no human ``user_jwt``: a step
+    with no JWT attached is machine-initiated by construction, so it acts under this identity
+    rather than being sent unauthenticated. Minted fresh per call, same rule as every other
+    wrapper in this module — there is no stored token to go stale.
+
+    Env: ``CASE_RUNNER_CLIENT_ID`` / ``CASE_RUNNER_CLIENT_SECRET``.
+    """
+    return mint_token(
+        client_id=os.environ["CASE_RUNNER_CLIENT_ID"],
+        client_secret=os.environ["CASE_RUNNER_CLIENT_SECRET"],
         timeout=timeout,
     )
 

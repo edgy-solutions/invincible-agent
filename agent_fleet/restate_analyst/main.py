@@ -2330,11 +2330,16 @@ async def _run_definition(
             })
 
         elif step.kind == "direct_call":
-            def _do_dc(s=step, ident=identity):
+            def _do_dc(s=step, ident=identity, ctx_=context):
                 try:
+                    extra = (
+                        _render(s.extra_payload, ctx_, where=f"step {s.id}.extra_payload")
+                        if s.extra_payload is not None else None
+                    )
                     return execute_direct_call(
                         {"id": s.id, "endpoint": s.endpoint, "capability": s.capability},
                         ident,
+                        extra_payload=extra,
                     )
                 except StepFailAndRelease as e:
                     raise restate.TerminalError(str(e), status_code=e.status_code)

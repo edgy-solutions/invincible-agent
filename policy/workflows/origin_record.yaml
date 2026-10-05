@@ -9,6 +9,14 @@
 #
 # THE ORIGIN IS THE SUGGESTION AS CONFIRMED, field for field. A steward accepts or rejects the
 # suggestion whole; amending it would be a different suggestion with different evidence.
+#
+# THE WRITER EXISTS NOW (item B, 2026-10-03): `written` is a `direct_call` to the BFF's
+# `POST /internal/origin/write`, capability `origin.write`, gated to the case runner's own
+# service identity. Its declared `extra_payload` is the SAME resolution object `resolution`
+# emitted above, read back from `outputs` rather than re-derived from `trigger` a second time --
+# one source for what "the case resolution" means. A direct_call's HTTP response IS the step's
+# result, synchronously, so there is no signal left to answer: `answer_signal`/
+# `ORIGIN_WRITTEN_SIGNAL` in `origin_writer.py` are dead and removed in this same change.
 id: origin_record
 name: "Artifact origin -- record"
 
@@ -27,6 +35,8 @@ steps:
       resolution_id: "{case.instance_id}"
       suggestion_id: "{trigger.suggestion_id}"
       artifact_id: "{trigger.artifact_id}"
+      dropped_by:
+        authz_id: "{trigger.dropped_by.authz_id}"
       origin:
         owner_domain: "{trigger.suggested.owner_domain}"
         program: "{trigger.suggested.program}"
@@ -47,9 +57,15 @@ steps:
         workflow_definition_version: "{definition.version}"
         workflow_instance_id: "{case.instance_id}"
 
-  # A SYSTEM'S ANSWER, not a human's: no task row. Resolved through the same authority gate.
-  - kind: signal_await
+  # THE WRITE, gated by Topaz the same way every direct_call is (RULING Q3) -- the case runner's
+  # own delegate identity invokes `origin.write`, never a borrowed human token (item B, 2026-10-03).
+  - kind: direct_call
     id: written
-    signal: origin_written
-    audience: "origin_writer:{trigger.suggested.owner_domain}"
-    accepts: [written, write_refused]
+    endpoint: "{origin_write_endpoint}"
+    capability: origin.write
+    extra_payload:
+      artifact_id: "{outputs.origin_record.resolution.artifact_id}"
+      dropped_by: "{outputs.origin_record.resolution.dropped_by}"
+      origin: "{outputs.origin_record.resolution.origin}"
+      evidence: "{outputs.origin_record.resolution.evidence}"
+      approval_chain: "{outputs.origin_record.resolution.approval_chain}"

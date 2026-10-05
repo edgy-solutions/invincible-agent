@@ -8964,6 +8964,103 @@ async def update_ingest_stage(
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
 
 
+# the case runner's own transport identity (policy/users.yaml: `svc:case-runner`, restate-analyst's
+# direct_call delegate identity). SAME IDIOM as `_DOC_TOOLS_SERVICE_AUTHZ_ID` above: a Keycloak
+# hardcoded-claim mapper output, not a caller-supplied value, so it is not spoofable; env-overridable
+# only so a differently-named realm can be configured, never to widen it.
+_CASE_RUNNER_SERVICE_AUTHZ_ID = os.getenv("CASE_RUNNER_SERVICE_IDENTITY", "svc:case-runner").strip()
+
+
+class _OriginWriteDroppedBy(_BaseModel):
+    authz_id: str
+
+
+class OriginWriteRequest(_BaseModel):
+    """POST /internal/origin/write's body -- the origin_record case's own resolution
+    (`policy/workflows/origin_record.yaml`'s `resolution` emit, read back through its `written`
+    direct_call step's `extra_payload`). Field-for-field what `src/iagent/origin_writer.write_origin`
+    expects in its `resolution` argument, plus `dropped_by` (write_origin itself never reads it --
+    this route uses it to find the steward's `on_behalf_of` and to resolve program membership)."""
+    artifact_id: str
+    dropped_by: _OriginWriteDroppedBy
+    origin: dict
+    evidence: dict
+    approval_chain: list[dict]
+
+
+@app.post("/internal/origin/write")
+async def write_origin_route(
+    req: OriginWriteRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The origin_record case's `written` step (item B, 2026-10-03): writes the steward-accepted
+    origin through `origin_writer.write_origin`. SERVICE-ONLY: only `svc:case-runner` (see
+    `_CASE_RUNNER_SERVICE_AUTHZ_ID`) may call this -- every other caller, authenticated or not,
+    gets 403, same idiom as `/ingest/{ingest_id}/stage` above.
+
+    `on_behalf_of` is the STEWARD who accepted the case -- the `approval_chain` entry whose
+    `role` is `"steward"` (`policy/workflows/origin_confirm.yaml`'s accept step is the only step
+    with that role in this chain); absent, this refuses 422 rather than writing under nobody's
+    provenance.
+
+    Never raises for a refused WRITE -- `write_refused` is a normal outcome of a resolution that
+    fails `check_dropper_bound` or shape validation, reported 200 like `written` is. Only the
+    caller gate (403) and the missing-steward bound check (422) are HTTP errors.
+    """
+    from iagent_mesh.interfaces import Initiator
+
+    from . import human_tasks, origin_writer
+    from .promotion_stores import INGEST_FACT_FAMILY
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/origin/write is callable only by the case runner's own "
+                       "service identity.",
+        })
+
+    steward_entries = [e for e in req.approval_chain if e.get("role") == "steward"]
+    if not steward_entries or not steward_entries[-1].get("approver_sub"):
+        raise HTTPException(status_code=422, detail={
+            "error": "no_steward_approval",
+            "message": "approval_chain carries no `role: steward` entry with an `approver_sub` "
+                       "-- refusing to write under nobody's provenance.",
+        })
+    on_behalf_of = steward_entries[-1]["approver_sub"]
+
+    dropped_by_authz_id = req.dropped_by.authz_id
+    program = req.origin.get("program")
+    dropper_is_program_member = (
+        human_tasks.check_can_view_program(program, dropped_by_authz_id) if program else False
+    )
+
+    try:
+        from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter  # noqa: PLC0415
+
+        graph_writer = Neo4jGraphWriter(driver=neo4j_driver, **INGEST_FACT_FAMILY)
+    except Exception as exc:  # noqa: BLE001 — refused by name below, never a 500 here
+        logger.warning("origin write graph store unavailable: %s", exc)
+        return {"status": "write_refused", "reason": f"graph store unavailable: {exc}"}
+
+    initiator = Initiator(
+        subject=_CASE_RUNNER_SERVICE_AUTHZ_ID, kind="delegate", on_behalf_of=on_behalf_of,
+    )
+    resolution = {
+        "artifact_id": req.artifact_id,
+        "origin": req.origin,
+        "evidence": req.evidence,
+        "approval_chain": req.approval_chain,
+    }
+    result = origin_writer.write_origin(
+        resolution,
+        graph_writer=graph_writer,
+        initiator=initiator,
+        dropper_is_program_member=dropper_is_program_member,
+    )
+    return {"status": result["status"], "reason": result.get("reason")}
+
+
 # ════════════════════════════════════════════════════════════════════
 # Data-module figures endpoint (Phase B of the 2026-06-30 figure work)
 # ════════════════════════════════════════════════════════════════════
