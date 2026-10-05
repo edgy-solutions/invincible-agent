@@ -250,10 +250,20 @@ def test_import_carries_both_mappers_for_openddil(sandbox_render):
     assert ik["protocolMapper"] == "oidc-hardcoded-claim-mapper"
 
 
+#: Clients RULED to carry the delegate initiator-kind mapper, each by name with its ruling.
+#: Never derived from `kind: delegate` in values: that declaration is what this guard checks.
+_DELEGATE_CLIENTS = {
+    "cortex-ui": "the interactive client",
+    _NEW_CLIENT_ID: "OpenDDIL delegate (this file's subject)",
+    "iagent-case-runner": "item B (architect-ruled, c81d9312): the case runner calls "
+                          "/internal/origin/write as svc:case-runner on behalf of platform-registrar",
+}
+
+
 def test_import_service_clients_get_no_initiator_kind_mapper(sandbox_render):
     clients = _configmap_clients(sandbox_render)
     for cid, c in clients.items():
-        if cid in ("cortex-ui", _NEW_CLIENT_ID):
+        if cid in _DELEGATE_CLIENTS:
             continue
         names = {m["name"] for m in c.get("protocolMappers", [])}
         assert "initiator-kind-svc" not in names, f"{cid} is not a delegate client"

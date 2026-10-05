@@ -1632,6 +1632,21 @@ services:
           409. Reaching `review` opens the document_promotion task, idempotently.
           The 404 for an unknown id is visible only to doc-tools, which created the ids it
           reports on.
+      - method: POST
+        path: /internal/origin/write
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (origin_record's `written` direct_call step)]
+        class: gated
+        justification: >-
+          The origin_record case's `written` step (item B): writes the steward-accepted origin
+          through origin_writer.write_origin. One SERVICE identity is accepted, checked before
+          the body is used, so no end user can write an origin directly; the case runner holds
+          that identity as a delegate client on behalf of platform-registrar. on_behalf_of is
+          derived from the approval_chain's steward entry, never taken from the caller (422 when
+          absent). A refused write answers 200 with its reason; only the caller gate (403) and
+          the missing steward (422) are HTTP errors.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
