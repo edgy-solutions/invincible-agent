@@ -36,6 +36,34 @@ except ImportError:
     except ImportError:
         from embed import embed_query
 
+# The SAME canonicalizer doc-tools' S1000D parser mints its root URI with
+# (`mil#dmc-<canonical>`, s1000d_rdf.parse_data_module), so the label below is
+# read back through the function that wrote it, never re-parsed by hand.
+try:
+    from utils.dmc_canonicalizer import canonicalize_dmc
+except ImportError:
+    from agent_fleet.utils.dmc_canonicalizer import canonicalize_dmc
+
+
+def source_label(doc_id: str, page_number=None) -> str:
+    """A retrieved chunk's citation label: the DMC for an S1000D data module.
+
+    An S1000D chunk's ``doc_id`` is its data module's root URI, whose fragment is
+    ``dmc-`` + the canonical DMC. Cortex draws ``label`` verbatim and will not
+    parse a DMC out of a uri, so the fleet names it: ``DMC-<canonical>``. Any
+    other doc_id (DITA, IADS, 40051, a PDF name, "Unknown Document") and any
+    fragment the canonicalizer refuses keeps the doc_id unchanged -- an honest
+    miss, never a guessed DMC.
+    """
+    label = f"{doc_id}"
+    frag = label.rsplit("#", 1)[-1] if "#" in label else ""
+    if frag[:4].lower() == "dmc-":
+        dmc = canonicalize_dmc(frag[4:])
+        if dmc:
+            label = f"DMC-{dmc}"
+    return label + (f" · p.{page_number}" if page_number else "")
+
+
 from baml_client import b
 
 
@@ -229,7 +257,7 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     # used when neither score nor certainty is set,
                     # which is rare but possible for some query shapes.
                     relevance = max(0.0, 1.0 - float(distance))
-            label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
+            label = source_label(doc_id, page_number)
             sources_collected.append({
                 "type": "document",
                 "label": label,
@@ -408,7 +436,7 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     elif distance is not None:
                         relevance = max(0.0, 1.0 - float(distance))
 
-                label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
+                label = source_label(doc_id, page_number)
                 local_sources.append({
                     "type": "document",
                     "label": label,
