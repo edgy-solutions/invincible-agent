@@ -54,7 +54,7 @@ def review_request_of(engine_response: Any) -> Dict[str, Any]:
 SAFETY_TRIGGER = "safety_review_request"
 
 
-def acceptance_trigger(review_request: Dict[str, Any]) -> Dict[str, Any]:
+def acceptance_trigger(review_request: Dict[str, Any], *, authz_id: str) -> Dict[str, Any]:
     """The FLAT trigger `_run_definition` binds a definition's `{placeholders}` from.
 
     `_run_definition` builds its bindings as ``{k: v for k, v in request.items() if
@@ -75,7 +75,22 @@ def acceptance_trigger(review_request: Dict[str, Any]) -> Dict[str, Any]:
     `acceptance_audience` the engine resolved INDEPENDENTLY from the ratified matrix TTL. Two
     derivations of one audience, agreeing — an invariant BETWEEN two declarations, which no
     per-declaration check can see (R-035), and `tests/safety/` now asserts it.
+
+    `authz_id` IS THE CASE'S REQUESTER (ruled 2026-10-05): the person whose turn's answer carried
+    this review_request, read from the answer's envelope by the consumer. It travels as the fact
+    `authz_id` because that is the key `_run_definition` builds its identity from, and the
+    `human_await` row's `requested_by` is that identity when the step declares none (no safety
+    definition does). Refused when blank: the register would refuse the row anyway, but only
+    after the case had opened, and an open case with no row is a review nobody was asked for.
+    The review_request's own `requested_by` stays a separate fact -- it names the engine that
+    drafted, not the person who asked.
     """
+    if not str(authz_id or "").strip():
+        raise AcceptanceRequestError(
+            f"review_request (kind={review_request.get('kind')!r}, subject_ref="
+            f"{review_request.get('subject_ref')!r}) reached the acceptance consumer with no "
+            "requester: the turn's envelope carries no authz_id. A case opened without one would "
+            "register a row the store refuses.")
     payload = review_request.get("payload") or {}
     if not isinstance(payload, dict):
         payload = {}
@@ -107,6 +122,7 @@ def acceptance_trigger(review_request: Dict[str, Any]) -> Dict[str, Any]:
         "title": str(review_request.get("title") or ""),
         "summary": str(review_request.get("summary") or ""),
         "requested_by": str(review_request.get("requested_by") or ""),
+        "authz_id": str(authz_id).strip(),
         # NOT a scalar, so no placeholder binds from it. Carried because an acceptance recorded
         # without the evidence that justified it is the signature ADR-0051 exists to prevent.
         "review_payload": payload,

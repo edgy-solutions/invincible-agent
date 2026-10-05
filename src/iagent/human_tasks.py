@@ -118,6 +118,14 @@ class UnknownWorkflowService(RuntimeError):
     a later `/act` that would otherwise interpolate an unvetted name into a Restate ingress URL."""
 
 
+class NoRequester(ValueError):
+    """Raised when a register call names no requester -- absent, empty or whitespace. RULED
+    2026-10-05: a row with no requester is refused, not registered. The column is NOT NULL, which
+    refused only an ABSENT value; `""` passed it, and HAZ-1003's acceptance row registered with
+    nobody behind it, so the case could name the turn that opened it only by log timestamps. The
+    BFF maps this to a TERMINAL 422 (`no_requester`), so a case runner fails and releases."""
+
+
 def _pg_connect():
     if not _PG_DSN:
         raise HumanTaskConfigError("PROJECTOR_POSTGRES_DSN is unset")
@@ -304,7 +312,14 @@ def register_task(
     Restate ingress URL (defense in depth: a bad value is refused at the EARLIER of the two
     places that could catch it, same discipline as `check_can_act` re-checking at resolve time
     over trusting the replication filter alone).
+
+    `requested_by` must name someone (`NoRequester` otherwise), checked FIRST: before the audience
+    is resolved and before any DB touch, so no other refusal can stand in front of it.
     """
+    if not str(requested_by or "").strip():
+        raise NoRequester(
+            f"task {task_id!r} (kind={kind}) names no requester (requested_by={requested_by!r}) -- "
+            "refusing to register a row nobody asked for; the caller must pass who asked")
     if workflow_service is not None and workflow_service not in ALLOWED_WORKFLOW_SERVICES:
         raise UnknownWorkflowService(
             f"task {task_id!r} named workflow_service {workflow_service!r}, which is not in "

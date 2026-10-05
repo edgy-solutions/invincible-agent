@@ -23,6 +23,10 @@ from types import SimpleNamespace
 from ._engine_extra import requires_rdflib
 from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
 from iagent_pure import acceptance_request as ar
+
+#: The turn's person, as the envelope names them (`produced_for.authz_id`). Required by the
+#: builder since 2026-10-05: a case with no requester registers a row the store refuses.
+_REQUESTER = "requester@example.org"
 from tests.conftest import stub_modules
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -98,7 +102,7 @@ def test_the_trigger_carries_no_token_so_the_register_cannot_borrow_one():
         "kind": "risk_acceptance", "audience": "risk_acceptance_medium:SUSTAINMENT",
         "subject_ref": "HAZ-1003",
         "payload": {"hazard_id": "HAZ-1003", "risk_level": "MEDIUM", "risk_level_slug": "medium"},
-    })
+    }, authz_id=_REQUESTER)
     assert not any("jwt" in k or "token" in k for k in trig), sorted(trig)
 
 
