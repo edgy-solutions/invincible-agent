@@ -3043,6 +3043,33 @@ def _docs_pool_accepts(referent) -> bool:
     )
 
 
+async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
+                           narrowed_by: list[str]) -> dict | None:
+    """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
+
+    BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
+    `narrowed_by` is not the set of values the verb accepts, and a bind from it is the
+    class-wide-menu defect in a new place. Exact match only (id, or label case-folded), and
+    exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
+    the ask, which is where the menu for a near-miss already lives.
+    """
+    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
+    if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
+        return None
+    members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
+    said = spoken.strip()
+    hits = [m for m in members
+            if str(m["instance_id"]) == said or str(m.get("label") or "").casefold() == said.casefold()]
+    if len(hits) != 1:
+        return None
+    hit = hits[0]
+    return {"outcome": "exact", "spoken": spoken, "instance_id": hit["instance_id"],
+            "instance_label": hit.get("label", ""), "referent_disambiguated": False,
+            "bound_from": "scope", "scoped_by": list(enum.get("scoped_by") or []),
+            "candidates": [{"instance_id": m["instance_id"], "class_uri": referent,
+                            "label": m.get("label", ""), "score": 1.0} for m in members]}
+
+
 async def _bind_docs_slot(spoken: str, query: str) -> dict | None:
     """The `/fill_slots` resolution record for a page bind, or None when no page wins.
 
@@ -4429,7 +4456,10 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 accepted[name] = bound["instance_id"]
                 resolution[name] = bound
 
-    for name in list(accepted):
+    # A NARROWED SLOT RESOLVES LAST. Its scoped bind below reads the narrowing slots' RESOLVED
+    # ids (`lot` is itself a referent), and the model's key order is not a contract. Stable
+    # sort: every other slot keeps the order it had.
+    for name in sorted(accepted, key=lambda n: bool((by_name.get(n) or {}).get("narrowed_by"))):
         decl = by_name.get(name) or {}
         referent = decl.get("referent")
         if not referent:
@@ -4448,6 +4478,24 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             if bound is not None:
                 accepted[name] = bound["instance_id"]
                 resolution[name] = bound
+                continue
+
+        # A SLOT NARROWED BY ANOTHER BINDS FROM ITS SCOPED MENU. MEASURED 2026-10-03 (roll #16
+        # census, lot-3 vintage row): `rate_vintage` gained a referent at bcaf2455 so its chips
+        # could be lot-scoped, and from then on a correct read ("2021-02-01") went through the
+        # fan-out below, which matches CLASS-WIDE ids of the form `<fy>-<vintage>` — a bare
+        # vintage can never equal one. Outcome `empty`, slot removed, and the ask offered the
+        # very value the model had already read. The scoped enumeration is the one list in the
+        # form the slot accepts, so a spoken value that IS a member binds from it; anything
+        # else falls through to the old path and asks.
+        narrowed_by = [str(n) for n in (decl.get("narrowed_by") or [])]
+        if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
+            scoped = await _bind_from_scope(
+                referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+            )
+            if scoped is not None:
+                accepted[name] = scoped["instance_id"]
+                resolution[name] = scoped
                 continue
 
         # DELIBERATELY UNSCOPED. This path builds a MENU of what anything knows by that
