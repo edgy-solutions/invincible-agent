@@ -1,7 +1,8 @@
 import os
 import asyncio
 import httpx
-from typing import Dict, Any
+from types import SimpleNamespace
+from typing import Dict, Any, List, Optional, Tuple
 
 from restate import Context, Service
 from smolagents import CodeAgent, ToolCallingAgent, tool
@@ -29,12 +30,21 @@ except ImportError:
 # "what task prefix." Engine W is a READ path, so embed_query is the right
 # helper (it adds the nomic search_query: prefix).
 try:
-    from utils.embed import embed_query
+    from utils.embed import embed_query, observe_query_embedding
 except ImportError:
     try:
-        from agent_fleet.utils.embed import embed_query
+        from agent_fleet.utils.embed import embed_query, observe_query_embedding
     except ImportError:
-        from embed import embed_query
+        from embed import embed_query, observe_query_embedding
+
+# The fleet's MeshVectors reader. It lives in `utils` so this image has it: engine images copy
+# `agent_fleet/utils` -> `/app/utils` and only their OWN engine directory besides.
+try:
+    from utils.mesh_vectors import WeaviateVectors
+except ImportError:
+    from agent_fleet.utils.mesh_vectors import WeaviateVectors
+
+from iagent_mesh.interfaces import Initiator
 
 from baml_client import b
 
@@ -93,6 +103,189 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine W] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
+
+
+# ── the knowledge search, behind KNOWLEDGE_SEARCH_VIA_MESH ──────────────────────────────────
+#
+# OFF (the default): the incumbent query, unchanged — near_vector on an `embed_query` vector,
+# bm25 when the embed fails, the domain filter AND-ed with exact-match metadata filters.
+# ON: the same search through the fleet's `MeshVectors` reader, `mode="vector_only"` (what the
+# incumbent already ran), metadata filters passed through. What the reader adds: the collection
+# marker checked at open, a degradation that is MARKED in the result (`mode == "bm25"`), and a
+# failure that is a refusal rather than an exception's text.
+#
+# THE IDENTITY GATE IS THE SAME ON BOTH PATHS, BY CONSTRUCTION: both produce hits, and one
+# function (`_gate_hits`) decides which reach synthesis. The flag chooses the RETRIEVAL, never the
+# ENFORCEMENT. The reader's person guard is an additional refusal on the ON path, not a substitute.
+#
+# THE DIFFERENCES THE FLAG MAKES, each deliberate and sealed in
+# tests/test_engine_w_knowledge_search_via_mesh.py:
+#   1. An EMPTY caller is refused before any search on the ON path: the read is attributed to a
+#      person, and the SDK's `Initiator` refuses a blank subject. OFF, an empty caller still
+#      searches, and the gate denies every chunk only when ENABLE_AGENTIC_AUTH is on.
+#   2. A list/set filter value is MEMBERSHIP on the ON path (SDK 0.9.8). OFF, every value is
+#      `equal`.
+#   3. A chunk with neither `source_url` nor `uri` gets a source URI from doc and page on the ON
+#      path, because a reader row carries no Weaviate uuid. Two such chunks of one page then share
+#      one Sources card. The GATE is unaffected: it keys on source_url/uri/doc_id, never the uuid.
+#   4. An ABSENT collection is "No relevant information" on the ON path (the reader answers
+#      `empty`). OFF, the driver raises and the tool returns its error string.
+_KNOWLEDGE_VIA_MESH_RAW = os.getenv("KNOWLEDGE_SEARCH_VIA_MESH")
+KNOWLEDGE_SEARCH_VIA_MESH = (_KNOWLEDGE_VIA_MESH_RAW or "false").lower() in ("true", "1", "yes")
+print(
+    f"knowledge search: {'MESH (MeshVectors.nominate)' if KNOWLEDGE_SEARCH_VIA_MESH else 'DIRECT'} "
+    f"({'explicit config' if _KNOWLEDGE_VIA_MESH_RAW is not None else 'DEFAULT'}) "
+    f"[weaviate_expert: KNOWLEDGE_SEARCH_VIA_MESH]",
+    flush=True,
+)
+
+KNOWLEDGE_SEARCH_LIMIT = 5
+
+
+class _MeshHit:
+    """A reader row in the shape the gate and the source projection read off a driver object.
+
+    `score` moves from the row to `metadata.score`; the projection reads a positive score first,
+    and the reader puts a near_vector hit's similarity there (never the driver's 0.0). `uuid` is
+    NOT the object's: a reader row carries none, so it is derived from doc and page, which is the
+    difference numbered 3 above.
+    """
+
+    def __init__(self, row: Dict[str, Any]):
+        props = dict(row)
+        score = props.pop("score", None)
+        self.properties = props
+        self.metadata = SimpleNamespace(score=score, certainty=None, distance=None)
+        page = props.get("page_number")
+        self.uuid = f"{props.get('doc_id') or 'unknown'}" + (f"/p{page}" if page is not None else "")
+
+
+def _hit_relevance(obj) -> Optional[float]:
+    """The Sources card's relevance for one hit: a POSITIVE score, else certainty, else
+    1 - distance. A near_vector hit's `score` is 0.0, not None (banked 2026-06-28), hence > 0."""
+    md = getattr(obj, "metadata", None)
+    if md is None:
+        return None
+    score = getattr(md, "score", None)
+    certainty = getattr(md, "certainty", None)
+    distance = getattr(md, "distance", None)
+    if score is not None and float(score) > 0:
+        return float(score)
+    if certainty is not None:
+        return float(certainty)
+    if distance is not None:
+        return max(0.0, 1.0 - float(distance))
+    return None
+
+
+def _search_direct(weaviate_client, collection_name: str, domain_label: str,
+                   semantic_query: str, metadata_filters) -> list:
+    """The incumbent query, moved here verbatim from the tool body."""
+    collection = weaviate_client.collections.get(collection_name)
+    base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
+    if metadata_filters and isinstance(metadata_filters, dict):
+        filter_list = [base_filter]
+        for key, value in metadata_filters.items():
+            filter_list.append(wvc.query.Filter.by_property(key).equal(value))
+        final_filter = wvc.query.Filter.all_of(filter_list)
+    else:
+        final_filter = base_filter
+
+    metadata_query = wvc.query.MetadataQuery(score=True, certainty=True, distance=True)
+    try:
+        query_vector = embed_query(semantic_query)
+        response = collection.query.near_vector(
+            near_vector=query_vector,
+            limit=KNOWLEDGE_SEARCH_LIMIT,
+            filters=final_filter,
+            return_metadata=metadata_query,
+        )
+    except Exception as embed_err:
+        print(f"embed_query failed in Engine W; BM25 fallback: {embed_err}")
+        response = collection.query.bm25(
+            query=semantic_query,
+            limit=KNOWLEDGE_SEARCH_LIMIT,
+            filters=final_filter,
+            return_metadata=metadata_query,
+        )
+    return list(response.objects)
+
+
+def _search_via_mesh(weaviate_client, collection_name: str, domain_label: str,
+                     semantic_query: str, metadata_filters, caller_email: str) -> list:
+    """The same search through `MeshVectors.nominate`. Raises on a refusal or a failure; the tool
+    turns that into its error string, as it does for the incumbent's exceptions.
+
+    NO BLANK-CALLER CHECK HERE, deliberately: the SDK's `Initiator` refuses a blank subject (a
+    ValueError, raised while the arguments are built, so before any search). A check of ours
+    above it was measured redundant — deleting it left the behaviour unchanged — so the refusal
+    has one owner, and the seal pins it to that owner.
+    """
+    impl = WeaviateVectors(
+        client=weaviate_client,
+        embed=observe_query_embedding,
+        filters=wvc.query.Filter,
+        metadata=wvc.query.MetadataQuery,
+        report=lambda m: print(f"[Engine W] mesh knowledge search: {m}", flush=True),
+    )
+    result = impl.nominate(
+        # Declared a person, as engine-o's class pool does: `user_email` is the end user's
+        # entitlement key, threaded from the supervisor's specialist dispatch.
+        Initiator(subject=caller_email, kind="person"),
+        collection=collection_name,
+        text=semantic_query,
+        domains=[domain_label],
+        limit=KNOWLEDGE_SEARCH_LIMIT,
+        mode="vector_only",
+        metadata_filters=dict(metadata_filters) if isinstance(metadata_filters, dict) else {},
+    )
+    if result.outcome in ("failed", "unreachable"):
+        raise RuntimeError(f"knowledge search {result.outcome}: {result.detail}")
+    if result.mode == "bm25":
+        print("[Engine W] knowledge search DEGRADED to bm25 (embed failed; marked by the reader)",
+              flush=True)
+    return [_MeshHit(row) for row in (result.rows or ())]
+
+
+def _gate_hits(hits: list, caller_email: str) -> Tuple[List[Tuple[int, Any]], int]:
+    """THE RESULT-FILTER, one function for both retrieval paths. Returns the kept hits with
+    their retrieval positions, and how many were dropped.
+
+    Each chunk is gated on can_read of its SOURCE DOCUMENT before synthesis: a chunk this lets
+    through is one the LLM can synthesize into the answer. The source identity is stamped at
+    ingest (source_url/uri/doc_id); an UNRESOLVABLE source fails CLOSED, because an unidentifiable
+    chunk cannot be gated and letting it through is the leak. The domain filter is RELEVANCE
+    scope, not enforcement — this gate is the enforcement, whatever the search already did.
+    """
+    kept: List[Tuple[int, Any]] = []
+    dropped = 0
+    for idx, obj in enumerate(hits):
+        source_id = (
+            obj.properties.get("source_url")
+            or obj.properties.get("uri")
+            or obj.properties.get("doc_id")
+        )
+        if source_id == "Unknown Document":
+            source_id = None
+        if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
+            dropped += 1
+            continue
+        kept.append((idx, obj))
+    return kept, dropped
+
+
+def retrieve_gated_chunks(weaviate_client, *, collection_name: str, domain_label: str,
+                          semantic_query: str, metadata_filters, caller_email: str
+                          ) -> Tuple[List[Tuple[int, Any]], int, int]:
+    """Search (by the flag's path), then gate. Returns (kept, dropped, retrieved)."""
+    if KNOWLEDGE_SEARCH_VIA_MESH:
+        hits = _search_via_mesh(weaviate_client, collection_name, domain_label,
+                                semantic_query, metadata_filters, caller_email)
+    else:
+        hits = _search_direct(weaviate_client, collection_name, domain_label,
+                              semantic_query, metadata_filters)
+    kept, dropped = _gate_hits(hits, caller_email)
+    return kept, dropped, len(hits)
 
 # Initialize runtime BAML configuration
 b = init_baml_client(b)
@@ -395,18 +588,7 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     return
                 local_seen_uris.add(object_uri)
 
-                relevance: float | None = None
-                md = getattr(obj, "metadata", None)
-                if md is not None:
-                    score = getattr(md, "score", None)
-                    certainty = getattr(md, "certainty", None)
-                    distance = getattr(md, "distance", None)
-                    if score is not None and float(score) > 0:
-                        relevance = float(score)
-                    elif certainty is not None:
-                        relevance = float(certainty)
-                    elif distance is not None:
-                        relevance = max(0.0, 1.0 - float(distance))
+                relevance = _hit_relevance(obj)
 
                 label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
                 local_sources.append({
@@ -445,63 +627,27 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     and exact values to filter by (e.g., {"doc_id": "TM-123"}).
             """
             try:
-                collection = weaviate_client.collections.get(doc_collection_name)
-                base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
-                if metadata_filters and isinstance(metadata_filters, dict):
-                    filter_list = [base_filter]
-                    for key, value in metadata_filters.items():
-                        filter_list.append(wvc.query.Filter.by_property(key).equal(value))
-                    final_filter = wvc.query.Filter.all_of(filter_list)
-                else:
-                    final_filter = base_filter
-
-                metadata_query = wvc.query.MetadataQuery(
-                    score=True, certainty=True, distance=True
+                # RESULT-FILTER (before synthesis) — THIS is the LIVE tool (the agent below is
+                # given `search_knowledge_base_local`, NOT the outer `search_knowledge_base`).
+                # `retrieve_gated_chunks` searches by KNOWLEDGE_SEARCH_VIA_MESH's path and gates
+                # every hit with ONE function on either path; a chunk not in `kept` never reaches
+                # the smolagent. Unresolvable source fails CLOSED.
+                kept, dropped, retrieved = retrieve_gated_chunks(
+                    weaviate_client,
+                    collection_name=doc_collection_name,
+                    domain_label=domain_label,
+                    semantic_query=semantic_query,
+                    metadata_filters=metadata_filters,
+                    caller_email=caller_email,
                 )
-                try:
-                    query_vector = embed_query(semantic_query)
-                    response = collection.query.near_vector(
-                        near_vector=query_vector,
-                        limit=5,
-                        filters=final_filter,
-                        return_metadata=metadata_query,
-                    )
-                except Exception as embed_err:
-                    print(f"embed_query failed in Engine W; BM25 fallback: {embed_err}")
-                    response = collection.query.bm25(
-                        query=semantic_query,
-                        limit=5,
-                        filters=final_filter,
-                        return_metadata=metadata_query,
-                    )
 
-                if not response.objects:
+                if not retrieved:
                     return f"No relevant information found for '{semantic_query}' in the {domain} domain."
 
                 results = []
-                dropped = 0
-                for idx, obj in enumerate(response.objects):
+                for idx, obj in kept:
                     text = obj.properties.get("text", "")
                     doc_id = obj.properties.get("doc_id", "Unknown Document")
-                    # RESULT-FILTER (before synthesis) — THIS is the LIVE tool
-                    # (the CodeAgent below is given `search_knowledge_base_local`,
-                    # NOT the outer `search_knowledge_base`). Gate each chunk on
-                    # can_read of its source document; drop ungated/unresolvable
-                    # chunks so the smolagent never sees them. Unresolvable
-                    # source fails CLOSED. Same gate as the outer tool — BOTH
-                    # retrieval paths must filter (the multi-path discipline:
-                    # this engine has two retrieval tools, and only the one the
-                    # agent actually calls being gated is the whole point).
-                    source_id = (
-                        obj.properties.get("source_url")
-                        or obj.properties.get("uri")
-                        or obj.properties.get("doc_id")
-                    )
-                    if source_id == "Unknown Document":
-                        source_id = None
-                    if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
-                        dropped += 1
-                        continue
                     results.append(
                         f"--- Excerpt {idx + 1} (Source: {doc_id}) ---\n{text}"
                     )

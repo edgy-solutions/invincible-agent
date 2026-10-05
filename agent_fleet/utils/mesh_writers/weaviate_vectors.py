@@ -89,7 +89,7 @@ __all__ = ["FleetEmbedder", "WeaviateVectorsWriter"]
 #: it there. Two reasons it moved, the second worse than the first:
 #:
 #: 1. The reader looks elsewhere. ``iagent_mesh`` names the carrier ``MeshCollectionMeta``, and the
-#:    fleet's reader (``ontology_service/mesh_vectors.py``) resolves a marker through an injected
+#:    fleet's reader (``utils/mesh_vectors.py``) resolves a marker through an injected
 #:    ``fetch_marker(collection) -> Optional[dict]``. A marker stamped as a row inside the described
 #:    collection is a marker in a place nothing reads — present, correct and invisible.
 #: 2. A marker row inside a searched collection IS A SEARCH RESULT. It would carry ``text=""`` and

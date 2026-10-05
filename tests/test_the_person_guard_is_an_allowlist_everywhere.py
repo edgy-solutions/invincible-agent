@@ -40,7 +40,7 @@ from iagent_mesh.interfaces import (  # noqa: E402
 )
 
 from agent_fleet.ontology_service.mesh_graph import Neo4jGraph  # noqa: E402
-from agent_fleet.ontology_service.mesh_vectors import WeaviateVectors  # noqa: E402
+from agent_fleet.utils.mesh_vectors import WeaviateVectors  # noqa: E402
 
 # -- the population, derived from the type and never typed -----------------------------------
 
@@ -67,7 +67,7 @@ FLEET_GUARDS = {
 }
 
 _GUARD_SOURCES = {
-    "mesh_vectors.WeaviateVectors": _REPO / "agent_fleet" / "ontology_service" / "mesh_vectors.py",
+    "mesh_vectors.WeaviateVectors": _REPO / "agent_fleet" / "utils" / "mesh_vectors.py",
     "mesh_graph.Neo4jGraph": _REPO / "agent_fleet" / "ontology_service" / "mesh_graph.py",
 }
 
