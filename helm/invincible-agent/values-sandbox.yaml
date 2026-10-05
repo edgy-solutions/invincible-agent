@@ -721,7 +721,13 @@ cortexUi:
     # served) -> f4bac439. Measured before pinning: the FULL tag resolves to this digest; the
     # abbreviated tag and the full tag with its last hex altered both answer not-found; the
     # 6596999 control still resolves to 87f1f3aa. linux/amd64 + linux/arm64. VITE_FEATURES unchanged.
-    digest: "sha256:f4bac439be69b6e0e471c5a195c6c03b7df59cd05e0f07d034dc84aa8e9e15c4"
+    # 2026-10-04 roll #17: cortex-ui b49db01 (the ingest stage set renames awaiting_disposition to
+    # review, matching the producer since 1c10e28c; 21a32d0 refused every row at review) ->
+    # 49767746. PAIRING: this image refuses awaiting_disposition, so it must not roll with a
+    # producer before 1c10e28c. Measured before pinning: the FULL tag resolves to this digest
+    # (linux/amd64 + linux/arm64); the abbreviated tag and the full tag with its last hex altered
+    # both answer not-found; the 21a32d0 control still resolves to f4bac439. VITE_FEATURES unchanged.
+    digest: "sha256:4976774636d704f05fa9632461ef1fdcd6b01b5d7e308a2b81acddcd8a1030f1"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
