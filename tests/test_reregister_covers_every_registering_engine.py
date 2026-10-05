@@ -115,9 +115,8 @@ def _components() -> dict[str, str]:
 def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
     """Does this agent call register_engine_to_mesh at startup?
 
-    Matches the CALL, not the import: Engine O imports registration helpers as the registry
-    CONSUMER and must not appear in the re-register list, which is exactly the distinction an
-    import-based check would get wrong.
+    Matches the CALL, not the import: an agent that imports the helpers and never calls them
+    registers nothing on boot, which is exactly the distinction an import-based check gets wrong.
 
     DERIVED BY THE SHARED SCANNER, NOT BY A REGEX HERE, and the regex it replaces was blind in
     three ways measured on 2026-09-17: it matched the helper's NAME and not its ALIAS (the
@@ -135,26 +134,14 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
     return any(f.startswith(prefix) for f in sites.registering_files)
 
 
-# Engine O is EXCLUDED BY DESIGN, and the exclusion rests on a measurement of the WRONG
-# PROPERTY. This is recorded rather than quietly fixed because the measurement was careful.
-#
-# WHAT WAS MEASURED: Engine O self-registers `mesh:resolveInstance` in its own lifespan with
-# the note "runs every boot, survives re-prime", and the graph holds exactly 1
-# resolveInstance row (2026-08-22; independently confirmed 2026-09-15, still 1). The first
-# attempt read 0 rows because the query named a Weaviate field that does not exist — a
-# waiver resting on a number is only as good as the query behind it, and that catch is why
-# this comment reads as trustworthy.
-#
-# WHAT IT DOES NOT ESTABLISH: **measured under `wipe: false`; the post-wipe control has not
-# been run.** The sandbox overlay sets `wipe: false`, so the prime re-ingests without
-# clearing verb edges. The row being PRESENT therefore says nothing about whether it would
-# be RESTORED after a wipe — and a wipe is the only condition the re-register hook exists
-# for. Nothing was destroyed, so nothing was proven about recovery.
-#
-# THE CONTROL THAT WOULD SETTLE IT, ruled 2026-09-15: run a wipe-and-prime ONCE,
-# deliberately, in an ephemeral namespace or a scheduled sandbox window, and assert that
-# engine-o's provider row AND cortex_bff_orchestration's two rows return through the hook
-# chain. Until that runs, this waiver is provisional and this comment says so.
+# THERE IS NO WAIVER LIST, AND THAT IS DELIBERATE (2026-10-04). Engine O was waived here as the
+# registry CONSUMER -- a property that does not bear on the question, since it also registers
+# `mesh:resolveInstance` on boot -- and the waiver called itself provisional: it was measured
+# under `wipe: false`, and the post-wipe control that would have settled it never ran. Roll #16
+# then showed the cost from another side: engine-o booted against a missing Weaviate, the
+# re-register hook restarted every LISTED engine once the stores came up, and engine-o sat cold
+# for two and a half hours. It is on the list now. The list of excuses is gone with it, so the
+# next exclusion cannot be one line appended to a dict: it has to change the seal.
 #
 # THE BFF IS NOW IN THE POPULATION, AND ITS ABSENCE FROM THE LIST IS A DECISION RATHER THAN A
 # BLIND SPOT. This paragraph used to read "the population here does not reach the bff... it is
@@ -168,15 +155,6 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
 # not a correction to make while fixing an instrument. The distinction worth keeping: the bff
 # was previously OMITTED because nothing could see it, and is now OMITTED because nobody has
 # ruled it in. Those are the same list and completely different facts.
-WAIVED_BY_DESIGN = {
-    "engine-o": (
-        "registry consumer; self-registers resolveInstance every boot. 1 row measured "
-        "under wipe:false — the post-wipe control has NOT been run, so this waiver is "
-        "provisional"
-    ),
-}
-
-
 def _declared_reregister_list() -> list[str]:
     values = yaml.safe_load(_VALUES.read_text(encoding="utf-8"))
     return list(values["primeSubstrate"]["reregisterEngines"]["deployments"])
@@ -220,8 +198,6 @@ def test_every_registering_engine_is_in_the_reregister_list():
         if not _registers_on_boot(_FLEET / agent_dir):
             continue
         component = components.get(key)
-        if component in WAIVED_BY_DESIGN:
-            continue
         if component and component not in declared:
             missing.append(f"{component} (agent_fleet/{agent_dir}, values key {key})")
 

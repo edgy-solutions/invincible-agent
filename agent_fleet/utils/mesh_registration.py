@@ -195,9 +195,9 @@ def registration_is_ready() -> bool:
 
     An engine with nothing to register is ready — `components` is empty and the status stays
     at its initial value, which is the correct answer for a service that registers no verbs
-    (Engine O consumes the registry and registers nothing; engine-f's presentation
-    capabilities DO record here, so an engine-f holding an unregistered presentation is
-    visible in `registration_status()` rather than only in a log line).
+    (engine-f's presentation capabilities DO record here, so an engine-f holding an
+    unregistered presentation is visible in `registration_status()` rather than only in a log
+    line; so does engine-o's store gate, `when_stores_answer`).
     """
     with _REG_LOCK:
         if not _REG_STATE["components"]:
@@ -247,6 +247,59 @@ def _start_retry(component: str, attempt_once) -> None:
         target=_retry_forever, args=(component, attempt_once),
         name=f"mesh-register-retry:{component}", daemon=True,
     ).start()
+
+
+# ── ACT ONLY ONCE THE STORES ANSWER (2026-10-03, for roll #17) ──────────────────────────────
+# An engine that registers while a store its verb reads is down advertises a provider that
+# cannot answer -- or, worse, answers from a fallback as if it had. Engine-o's lifespan logged a
+# failed store connection and registered anyway, so the pod's first boot decided its routing for
+# its whole life. This is the same supervised retry a refused registration takes (`_start_retry`
+# above, from 2c7b85cf), keyed on whether the STORES answer rather than the registrar.
+def when_stores_answer(gate: str, stores: dict, then) -> bool:
+    """Run ``then()`` once every probe in ``stores`` answers; until then, retry on the
+    registration backoff and say so in ``registration_status()``.
+
+    ``stores`` maps a store's name to a zero-argument probe. A probe answers by returning truthy;
+    a falsy return or any exception is "no answer", and the names of the stores that gave none
+    are the recorded error. An empty ``stores`` acts at once.
+
+    ``gate`` is a component of its own in the readiness state, deliberately not the name the
+    registration records under: one says whether the STORES answered, the other whether the
+    REGISTRAR accepted, and one key would let the second overwrite the first.
+
+    Returns True when ``then`` ran now, False when it was handed to the retry thread. ``then``
+    runs once the stores answer and is not run again after it returns; a ``then`` that raises on
+    the retry thread is retried like a silent store, and one that raises at boot raises here.
+    """
+    silent: list = []
+
+    def attempt_once() -> bool:
+        silent[:] = _no_answer(stores)
+        if silent:
+            _record(gate, _REG_RETRYING, f"{gate}: no answer from {', '.join(silent)}")
+            return False
+        then()
+        return True
+
+    if attempt_once():
+        _record(gate, _REG_OK)
+        return True
+    logger.warning("%s: no answer from %s; retrying on the registration backoff",
+                   gate, ", ".join(silent))
+    _start_retry(gate, attempt_once)
+    return False
+
+
+def _no_answer(stores: dict) -> list:
+    silent = []
+    for name, probe in stores.items():
+        try:
+            answered = bool(probe())
+        except Exception:  # noqa: BLE001 -- an unreachable store raises; that IS no answer
+            answered = False
+        if not answered:
+            silent.append(name)
+    return silent
 
 
 def _emit_to_registrar(

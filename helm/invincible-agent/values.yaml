@@ -1296,10 +1296,17 @@ primeSubstrate:
     # Default ON with prime so wipe+reprime is self-healing. No-op if the
     # engine deployments don't exist; harmless on a non-wipe triggerIngest.
     enabled: true
-    # The engine deployments that self-register verbs on startup. Engine O
-    # is the registry CONSUMER and is deliberately excluded. Names render
+    # The engine deployments that self-register verbs on startup. Names render
     # as <release>-<entry>. Trim to your enabled engine set.
     deployments:
+      # engine-o is the registry CONSUMER and ALSO a registrant: its lifespan registers the
+      # SUSTAINMENT mesh:resolveInstance provider. It was excluded as a consumer, a property that
+      # does not bear on the question, and the post-wipe control that waiver waited on never ran.
+      # Roll #16 paid for it: engine-o booted with no Weaviate, the 00:59 hook restarted every
+      # listed engine after the stores came up and not this one, and the census sat at 0/21 until
+      # a hand roll at 02:26. Its lifespan now retries until its stores answer (store-gate); this
+      # entry is the other half, for the edge a wipe+reprime clears after a healthy boot.
+      - engine-o
       - engine-a
       - engine-d
       - engine-e

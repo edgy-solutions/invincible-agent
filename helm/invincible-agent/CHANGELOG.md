@@ -1,5 +1,23 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.30 — 2026-10-04
+
+engine-o is restarted by the re-register hook like every other engine that registers on boot.
+
+### Fixed
+
+- **`primeSubstrate.reregisterEngines.deployments` gains `engine-o`** (`values.yaml`). Its
+  lifespan registers the SUSTAINMENT `mesh:resolveInstance` provider, so it has the property the
+  list exists for. It was excluded as the registry consumer, and the comment saying so is
+  corrected. At roll #16 the hook restarted every listed engine at 00:59, after the stores came
+  up. engine-o was not listed, booted without Weaviate, and stayed cold until a hand roll at
+  02:26.
+- **The coverage seal has no waiver list** (`tests/test_reregister_covers_every_registering_engine.py`).
+  `WAIVED_BY_DESIGN` held only engine-o, and is deleted. Excluding a registering engine now
+  means changing the seal, not appending a line to it.
+- The other half is in engine-o's own lifespan (store-gate): Weaviate is retried until it
+  answers, so a pod booted during an outage recovers without any restart.
+
 ## 0.4.29 — 2026-10-03
 
 The reserved set is every StatefulSet that claims a volume, not a list of three.
