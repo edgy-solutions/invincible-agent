@@ -49,9 +49,15 @@ def _endpoint() -> str:
 
     This was `i + 4200`, and adding comments to the function pushed its tail outside the
     window — three assertions went red without the code changing. A magic span is a seal that
-    rots as the thing it guards grows."""
+    rots as the thing it guards grows.
+
+    And the next ROUTE is not the end of the function: 7a5a8778 put module-level slot-bind
+    helpers between the two, and their `return {"outcome": "exact", ...}` -- a /fill_slots
+    record, never an enumerate answer -- was read as an enumerate return missing `members`.
+    The body ends at the next TOP-LEVEL statement. A marker that falls outside raises."""
     i = _EO.index("async def enumerate_instances(")
-    j = _EO.index('@app.post("/resolve"', i)
+    j = min(k for k in (_EO.find(m, i + 1) for m in ("\n@", "\ndef ", "\nasync def ", "\nclass "))
+            if k != -1)
     return _EO[i:j]
 
 
