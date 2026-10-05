@@ -1,0 +1,17 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# PULL THE EVENT'S NEWEST PICTURE. The case runner calls this when a chaining row says
+# `refresh_input` (a return to proposed), beside the revisions the bridge pushed. OpenDDIL's
+# architect has offered a picture endpoint; until it is served this stub returns the newest
+# revision the bridge PUSHED (`kept`, null when none), so pulling adds nothing: the same revision
+# reached twice is not a tie, and it stays pushed. When the endpoint exists the same step reads the
+# newest of pushed-or-pulled.
+#
+# ORDER (ruled 2026-10-03): the newest `received_at` wins; on a tie the pulled one, because it was
+# asked for; then the higher `rev`, so two pushes in one clock tick are still read in order. Both
+# are revisions of the same artifact, so this is an ordering rule, not a merge. A
+# pulled picture therefore carries its own `received_at`, with its zone, or the refresh refuses it.
+verb: maintenance_picture_read
+stub: true
+retired_by: "OpenDDIL's maintenance picture endpoint (offered; not served yet)"
+returns: "{kept}"

@@ -13,6 +13,9 @@
 #   replace_after_resupply  PMC  stays up        -> release
 #   defer_with_restriction  PMC  stays up        -> release
 #   evacuate_for_depot      NMC  takes offline   -> supervisor always
+# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
+# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
+# opened on. Every option cites the revision it was made from.
 decision: maint_fault_propose_chaining
 
 after: maint_fault_propose
@@ -39,6 +42,7 @@ rows:
   # REJECT RETURNS TO PROPOSED, with the reason on the transition (reason-required on the kind).
   - when: {outcome: rejected}
     then: maint_fault_propose
+    refresh_input: true
   # DEFER PARKS. Not the same act as the `defer_with_restriction` OPTION: that one approves
   # operating under restriction; this one declines to decide yet.
   - when: {outcome: deferred}

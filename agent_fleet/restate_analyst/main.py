@@ -1715,18 +1715,32 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
 # an audience declared as `maint:{trigger.owning_tier}` would have registered the braces.
 _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
 
+# A NULL-SAFE STEP, ``?.``, IN A WHOLE PLACEHOLDER ONLY: ``{trigger.picture.nearest_spare?.site}``
+# is None where ``nearest_spare`` is PRESENT AND None, so a definition can copy a field per part out
+# of a row that may be null (ruled 2026-10-03, the resupply option's parts) without computing.
+# ABSENT IS STILL REFUSED: only a producer's stated None short-circuits, never a producer that did
+# not say. In an interpolated string it is refused, never passed through as literal braces.
+_NULL_SAFE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\??\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+
 _SCALAR = (str, int, float, bool)
 
 
-def _resolve_path(context: dict, path: str) -> "tuple[bool, object]":
+def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tuple[bool, object]":
     """``(found, value)`` for a dotted path through nested mappings. FOUND IS SEPARATE FROM VALUE:
     a field that is present and None (``picture.nearest_spare`` when no site has stock) is a
-    fact, and a field that is absent is a producer that did not say."""
+    fact, and a field that is absent is a producer that did not say.
+
+    With ``null_safe``, a segment spelled ``name?`` that is present and None ends the walk as
+    ``(True, None)``. Without it, ``name?`` is just a field no producer writes."""
     node: object = context
     for seg in path.split("."):
+        safe = null_safe and seg.endswith("?")
+        seg = seg[:-1] if safe else seg
         if not isinstance(node, dict) or seg not in node:
             return False, None
         node = node[seg]
+        if safe and node is None:
+            return True, None
     return True, node
 
 
@@ -1739,14 +1753,20 @@ def _render(template: object, context: dict, *, where: str) -> object:
     a mapping, a present None stays None. Any other string interpolates, and every placeholder in
     it must resolve to a non-None scalar. Mapping KEYS are never rendered."""
     if isinstance(template, str):
-        whole = _PLACEHOLDER_RE.fullmatch(template)
+        whole = _NULL_SAFE_RE.fullmatch(template)
         if whole:
-            found, value = _resolve_path(context, whole.group(1))
+            found, value = _resolve_path(context, whole.group(1), null_safe=True)
             if not found:
                 raise restate.TerminalError(
                     f"{where}: {template!r} resolves to nothing in the run's context "
                     f"(have: {sorted(context)}) -- refusing to render a blank", status_code=400)
             return copy.deepcopy(value)
+        stray = sorted({m.group(1) for m in _NULL_SAFE_RE.finditer(template) if "?" in m.group(1)})
+        if stray:
+            raise restate.TerminalError(
+                f"{where}: {stray} in {template!r} -- a null-safe step `?.` is allowed only in a "
+                "whole placeholder, whose None is a value; interpolated, it would be a blank",
+                status_code=400)
         bad: list[str] = []
 
         def _sub(m: "re.Match[str]") -> str:
@@ -1995,6 +2015,7 @@ async def _run_definition(
     outputs: Optional[dict] = None,
     approval_chain: Optional[list] = None,
     case: Optional[dict] = None,
+    case_input: Optional[dict] = None,
 ) -> dict:
     """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
 
@@ -2073,6 +2094,9 @@ async def _run_definition(
         # and are set LAST: nothing the caller supplies can overwrite them.
         "case": {**(case or {}), "approval_chain": chain, "instance_id": workflow_id},
         "definition": {"id": wf.id, "version": version},
+        # WHICH REVISION OF THE CASE'S INPUT this instance reads (`input.revision`, 1 = the
+        # original event). Absent on a standalone run, so a template citing it refuses there.
+        **({"input": copy.deepcopy(case_input)} if case_input else {}),
     }
     user_jwt = request.get("user_jwt", "")
     identity = {

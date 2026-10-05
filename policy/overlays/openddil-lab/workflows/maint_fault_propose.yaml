@@ -6,6 +6,15 @@
 # module codes and the event's spares record. The citations come from the walk; the options come
 # from this file ("our file provides the citations, not the options" -- 7f).
 #
+# A PART CITES ITS FIGURE: `icn` and `hotspot_id` are the illustrated-parts module's, read by the
+# walk, so the template cites the walk for them -- never the event (OpenDDIL has the fault, not the
+# manual) and never a literal null (a template lying about where a value comes from). They ride
+# the chosen option into the ActionRecord's `work_order.parts[]` untouched.
+#
+# EVERY OPTION CITES THE INPUT REVISION it was made from (`input.revision`; 1 is the event the
+# case opened on). A return to proposed re-reads the picture, so two proposals in one case may
+# rest on different pictures, and the record says which.
+#
 # WHO DECIDES: "the reporting maintainer or the tier's maintainer role". The substrate routes to a
 # declared AUDIENCE, not to an actor derived from the event, so the row goes to the tier's
 # maintainer audience, which the reporting maintainer is in. Per-instance routing to the reporter
@@ -43,8 +52,11 @@ steps:
           - item: "{trigger.fault.item}"
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
+            icn: "{outputs.maint_fault_propose.walk.citations.ipd.icn}"
+            hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
             source_site: here
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
         # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
         # basis {rule, observed_at}, so the card shows why a supervisor is or is not asked.
         battle_condition: "{trigger.picture.battle_condition}"
@@ -60,13 +72,21 @@ steps:
           - item: "{trigger.fault.item}"
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
             quantity: "{outputs.maint_fault_propose.walk.citations.ipd.quantity}"
+            icn: "{outputs.maint_fault_propose.walk.citations.ipd.icn}"
+            hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
+            # PER PART, as the bridge contract's `work_order.parts[]` carries them (ruled
+            # 2026-10-03: this option is where they are first populated). Copied from the row
+            # below with the null-safe step `?.`: NULL, all three, when no site has stock.
+            source_site: "{trigger.picture.nearest_spare?.site}"
+            lead_time_days: "{trigger.picture.nearest_spare?.lead_time_days}"
+            lead_time_source: "{trigger.picture.nearest_spare?.lead_time_source}"
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
         # THE ROW THE RESUPPLY READS, WHOLE: its site, stock, lead_time_days and lead_time_source
         # (stand-in | supply-system) travel together, so the lead time is never shown without the
         # source that says how far to trust it. NULL when no site has stock -- the card renders
-        # "no site has stock", no lead time. Cited whole because a definition may not compute,
-        # and a dotted path into a null is refused at render; the part's source site is this
-        # row's `site`, not a second copy of it.
+        # "no site has stock", no lead time. The parts above copy three of its fields; the card
+        # reads this row.
         nearest_spare: "{trigger.picture.nearest_spare}"
       - verb: defer_with_restriction
         label: "Defer with restriction"
@@ -78,6 +98,7 @@ steps:
         interval: "{outputs.maint_fault_propose.walk.citations.planning_interval.interval}"
         parts: []
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
       - verb: evacuate_for_depot
         label: "Evacuate for depot"
         readiness: NMC
@@ -87,6 +108,7 @@ steps:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
         parts: []
         spares: "{trigger.picture.spares}"
+        input_revision: "{input.revision}"
 
   - kind: human_await
     id: decide

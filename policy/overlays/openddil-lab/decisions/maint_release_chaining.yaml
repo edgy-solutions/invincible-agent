@@ -7,6 +7,9 @@
 # park's revisit timer -- rather than putting the same choice to the same maintainer a third time.
 # "Second" is the runner's measured `outcome_repeated` (this definition has ended `tier_refused`
 # before in this case), so the second refusal and every later one park.
+# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
+# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
+# opened on. Every option cites the revision it was made from.
 decision: maint_release_chaining
 
 after: maint_release
@@ -25,5 +28,6 @@ rows:
     then: closed
   - when: {outcome: tier_refused, outcome_repeated: false}
     then: maint_fault_propose
+    refresh_input: true
   - when: {outcome: tier_refused, outcome_repeated: true}
     then: maint_fault_park

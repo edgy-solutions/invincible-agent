@@ -184,7 +184,8 @@ def test_a_row_with_no_then_is_refused():
 
 
 def test_a_terminal_is_flagged_and_a_definition_is_not():
-    assert _chosen(_T, {"outcome": "timed_out", "tier": "org"}) == ("closed", True, 3)
+    # (then, terminal, row, refresh_input): a terminal opens nothing, so it never refreshes.
+    assert _chosen(_T, {"outcome": "timed_out", "tier": "org"}) == ("closed", True, 3, False)
     assert _chosen(_T, {"outcome": "rejected", "tier": "org"}).terminal is False
 
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -81,6 +82,9 @@ class Trigger(_Declared):
     #: requiring them would refuse exactly the events the case exists for. Only an ABSENT key is
     #: refused here: the producer did not say. Lists live here too: a list is never a flat fact.
     carries: list[str] = Field(default_factory=list)
+    #: the STUB VERB that pulls this event's newest picture from its source, read by a chaining
+    #: row's ``refresh_input`` beside the revisions the source pushed. Absent: pushed only.
+    pull: Optional[str] = Field(default=None, min_length=1)
 
 
 # ── WHERE TRIGGERS LIVE ─────────────────────────────────────────────────────────────────────
@@ -276,4 +280,87 @@ def chain(definition_id: str, facts: Mapping[str, Any],
         d = _dt.decide(table, facts)
     except _dt.DecisionError as exc:
         raise CaseRoutingError(f"after {definition_id}: {exc}") from exc
-    return {"then": d.then, "terminal": d.terminal, "row": d.row, "table": table.get("decision")}
+    return {"then": d.then, "terminal": d.terminal, "row": d.row, "table": table.get("decision"),
+            "refresh_input": d.refresh_input}
+
+
+# ── INPUT REVISIONS ─────────────────────────────────────────────────────────────────────────
+
+def check_revision(trigger: Trigger, facts: Any, case_key: str,
+                   episode: Optional[str]) -> Dict[str, Any]:
+    """The flattened facts of a NEWER picture of the event a case opened on, or a refusal.
+
+    A revision is the same event again -- the same key -- so it passes the same intake as the
+    original, and it must stay in the case's episode: a picture that moved the fault to another
+    asset is another case's event, not this case's newer one."""
+    if not isinstance(facts, dict):
+        raise CaseRoutingError(f"a revision carries the event's facts; got {type(facts).__name__}")
+    flat = flatten(facts)
+    check_intake(trigger, flat, case_key, facts=facts)
+    moved = episode_key(trigger, flat)
+    if moved != episode:
+        raise CaseRoutingError(
+            f"a revision of case {case_key!r} is in episode {moved!r}, and the case holds "
+            f"{episode!r}; another fault or asset is another case's event")
+    return flat
+
+
+def received_at(revision: Any) -> datetime:
+    """A revision's ``received_at`` as an aware instant, or a refusal: ordering is by it, and a
+    naive time cannot be ordered against an aware one without inventing a zone."""
+    at = revision.get("received_at") if isinstance(revision, dict) else None
+    try:
+        when = datetime.fromisoformat(at) if isinstance(at, str) else None
+    except ValueError:
+        when = None
+    if when is None or when.tzinfo is None:
+        raise CaseRoutingError(
+            f"an input revision carries a `received_at` with its zone; got {at!r}")
+    return when
+
+
+def _same_revision(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("rev", "received_at", "facts"))
+
+
+def _order(revision: Any) -> tuple:
+    """Where a revision sorts: ``(received_at, pulled, rev)``. Refuses one without an integer
+    ``rev``, the event's ``facts`` and an orderable ``received_at``."""
+    rev = revision.get("rev") if isinstance(revision, dict) else None
+    if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(revision.get("facts"), dict):
+        raise CaseRoutingError(
+            f"an input revision carries an integer `rev` and the event's `facts`; got {revision!r}")
+    return (received_at(revision), revision.get("provenance") == "pulled", rev)
+
+
+def newest_revision(current: Dict[str, Any], candidates: list) -> Optional[Dict[str, Any]]:
+    """The candidate that sorts newest, if it sorts after ``current`` (the revision the case is
+    on, ``rev``/``received_at``/``provenance``/``facts``); else None.
+
+    ORDERED BY ``received_at``, ruled 2026-10-03: pushed and pulled pictures are revisions of the
+    same artifact, so this is an ordering rule, not a merge -- the winner replaces the input whole.
+    ON A TIE THE PULLED ONE WINS, because it was asked for. THEN ``rev``, ruled the same day: two
+    revisions received in one clock tick still have an order, because ``keep_revision`` counts
+    ``rev`` on arrival, so the later push is read. ``rev`` comes AFTER the pulled flag: a pulled
+    revision's ``rev`` is its own source's count, not comparable with a pushed one, and putting it
+    first would let a push beat a pull at the same instant.
+
+    THE SAME REVISION REACHED TWICE IS NOT A TIE (ruled 2026-10-03). The shipped pull stub returns
+    the kept revision itself, so it ties every push; letting "pulled" win that would record every
+    pushed picture as pulled. A candidate identical (``rev``, ``received_at``, ``facts``) to
+    another keeps the pushed provenance, and one identical to ``current`` is not newer."""
+    floor = _order(current)
+    best, best_key = None, None
+    for c in candidates:
+        if c is None:
+            continue
+        key = _order(c)
+        if key <= floor or _same_revision(current, c):
+            continue
+        if best is not None and _same_revision(best, c):
+            if best.get("provenance") == "pulled":   # whichever order they came in
+                best, best_key = c, key
+            continue
+        if best is None or key > best_key:
+            best, best_key = c, key
+    return best

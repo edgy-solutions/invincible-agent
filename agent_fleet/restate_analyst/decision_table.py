@@ -35,6 +35,13 @@ class Decision(NamedTuple):
     then: str          # a definition id, an audience, or one of the table's declared terminals
     terminal: bool     # True when `then` is in the table's `terminals:` -- a state, not a process
     row: int           # the index of the one matching row, for the transition record
+    #: the row's ``refresh_input``: re-read the case's input before the next instance runs
+    refresh_input: bool = False
+
+
+#: Every key a row may carry. A row is read by key, so a misspelled one -- ``refresh_inputs`` --
+#: would load, decide, and never refresh: a field the runner cannot see.
+ROW_KEYS = frozenset({"when", "then", "refresh_input"})
 
 
 # ---------------------------------------------------------------------------------------
@@ -194,7 +201,33 @@ def decide(table: Mapping[str, Any], facts: Mapping[str, Any]) -> Decision:
     then = table["rows"][hits[0]].get("then")
     if not then or not isinstance(then, str):
         raise DecisionError(f"{name} row {hits[0]} for {inp} has no `then`: {then!r}")
-    return Decision(then, then in (table.get("terminals") or []), hits[0])
+    return Decision(then, then in (table.get("terminals") or []), hits[0],
+                    row_refreshes(table, hits[0]))
+
+
+def row_refreshes(table: Mapping[str, Any], i: int) -> bool:
+    """Row ``i``'s ``refresh_input``, refused unless it is a bool on a row that opens an instance.
+
+    A CHAINING ROW MAY RE-READ THE CASE'S INPUT before the definition it opens runs: a case that
+    returns to a proposal days later proposes against the picture as it is now, not as it was.
+    Refused on a terminal -- a terminal opens nothing, so nothing would read what was refreshed --
+    and on anything but a bool, since ``"no"`` is truthy. Read on the decided row at run time and
+    on every shipped row at build time, by this one function."""
+    name = table.get("decision", "<unnamed>")
+    row = (table.get("rows") or [])[i]
+    unknown = sorted(set(row) - ROW_KEYS)
+    if unknown:
+        raise DecisionError(
+            f"{name} row {i} carries {unknown}; a row may carry only {sorted(ROW_KEYS)}. A key "
+            "nothing reads would load and never act.")
+    refresh = row.get("refresh_input", False)
+    if not isinstance(refresh, bool):
+        raise DecisionError(f"{name} row {i}: `refresh_input` must be true or false, not {refresh!r}")
+    if refresh and row.get("then") in (table.get("terminals") or []):
+        raise DecisionError(
+            f"{name} row {i}: `refresh_input` on the terminal {row.get('then')!r} -- a terminal "
+            "opens no instance, so nothing would read the refreshed input")
+    return refresh
 
 
 def targets(table: Mapping[str, Any]) -> tuple[str, ...]:
