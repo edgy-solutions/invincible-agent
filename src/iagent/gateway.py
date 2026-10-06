@@ -725,7 +725,10 @@ async def create_access_request(
                 title=f"Grant read access to {current_user.email}",
                 summary=(f"{current_user.email} requests READ access to {req.asset}. "
                          f"Reason: {req.reason or '(none given)'}"),
-                requested_by=current_user.email,        # display: who asked
+                # WHO ASKED, by the key every other register path uses (authz_id, never the
+                # display email): at work-deploy the two differ, and a requester the store
+                # cannot join to a grant subject names nobody.
+                requested_by=current_user.authz_id,
                 subject_ref=req.asset,                  # the resource
                 # fulfillment reads these: the grant SUBJECT (authz_id, Topaz's key)
                 # and the ASSET. Clearance-safe (a URN + a request, not content).
