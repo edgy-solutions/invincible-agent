@@ -727,7 +727,14 @@ cortexUi:
     # producer before 1c10e28c. Measured before pinning: the FULL tag resolves to this digest
     # (linux/amd64 + linux/arm64); the abbreviated tag and the full tag with its last hex altered
     # both answer not-found; the 21a32d0 control still resolves to f4bac439. VITE_FEATURES unchanged.
-    digest: "sha256:4976774636d704f05fa9632461ef1fdcd6b01b5d7e308a2b81acddcd8a1030f1"
+    # 2026-10-05 roll #18: cortex-ui 3ea967f (the card renders the method block again: formula,
+    # inputs, bound, bound_defaulted, producer_sha; carries d4bb0d2, the rev-171 captures sealed and
+    # the card export retired) -> 8b929940. Supersedes the d4bb0d2 arming (c8a03678), never rolled.
+    # Measured before pinning: the FULL tag resolves to this digest (linux/amd64 + linux/arm64 + 2
+    # attestations); the abbreviated tag and the full tag with its last hex altered both answer
+    # not-found; the b49db01 control still resolves to 49767746. No change under .github or the
+    # Dockerfile since b49db01, so VITE_FEATURES unchanged.
+    digest: "sha256:8b9299407305a45e7df133d24fd3e69d9921dee9a00b1cf7dcb7b8d42fe4c9c8"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

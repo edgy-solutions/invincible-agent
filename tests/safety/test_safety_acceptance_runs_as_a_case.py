@@ -27,6 +27,10 @@ import pytest
 from tests.test_a_case_runs_from_trigger_to_terminal import R, _answer, _Cluster, main, wr
 from src.iagent_pure import acceptance_request as ar
 
+#: The turn's person, as the envelope names them (`produced_for.authz_id`). Required by the
+#: builder since 2026-10-05: a case with no requester registers a row the store refuses.
+_REQUESTER = "requester@example.org"
+
 
 @pytest.fixture(autouse=True)
 def _real_policy(monkeypatch):
@@ -47,7 +51,7 @@ def _trigger(level="High", hazard="HAZ-9001", **extra):
     rr = {"kind": f"risk_acceptance_{level.lower()}", "subject_ref": hazard,
           "payload": {"hazard_id": hazard, "risk_level": level,
                       "risk_level_slug": level.lower()}}
-    return {**ar.acceptance_trigger(rr), **extra}
+    return {**ar.acceptance_trigger(rr, authz_id=_REQUESTER), **extra}
 
 
 async def _run(trigger, answers):

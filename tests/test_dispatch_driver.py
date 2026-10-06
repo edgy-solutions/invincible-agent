@@ -86,7 +86,8 @@ def _payload(disposition, *, mpn="NSR01L30NXT5G",
     # which the terminal-vs-park tests below would happily accept, since they only assert the TYPE.
     # They would then pass while never reaching the denial they exist to measure. Supplying it keeps
     # those tests pointed at their own subject and exercises the real emission.
-    return dispatch_driver.plan_to_payload(plan, compartment="SUSTAINMENT")
+    return dispatch_driver.plan_to_payload(plan, requested_by="svc:review-starter",
+                                           compartment="SUSTAINMENT")
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +269,7 @@ async def test_unresolved_subject_mints_task_only_with_relink_provenance(http):
     )
     payload = dispatch_driver.plan_to_payload(
         plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"),
+        requested_by="svc:review-starter",
     )
     outcome = await _invoke(payload, {})
 
@@ -359,7 +361,7 @@ def test_fan_out_sends_one_keyed_invocation_per_item():
     ]
     ctx = _SendRecorder()
     keys = dispatch_driver.fan_out_dispatch(ctx, resolutions, notice_fingerprint="IPCN25300X",
-                                       notice_id="IPCN25300X")
+                                       notice_id="IPCN25300X", requested_by="svc:review-starter")
     assert keys == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1", "IPCN25300X:MPN-2"]
     assert [s["key"] for s in ctx.sends] == keys
     assert [s["idempotency_key"] for s in ctx.sends] == keys, "invocation dedup key must be the notice x part key"

@@ -25,6 +25,10 @@ from ._engine_extra import requires_rdflib
 from agent_fleet.safety_agent import entities, matrix, measures
 from iagent_pure import acceptance_request as ar
 
+#: The turn's person, as the envelope names them (`produced_for.authz_id`). Required by the
+#: builder since 2026-10-05: a case with no requester registers a row the store refuses.
+_REQUESTER = "requester@example.org"
+
 _REPO = Path(__file__).resolve().parents[2]
 _WORKFLOWS = _REPO / "policy" / "workflows"
 
@@ -106,7 +110,7 @@ def test_the_trigger_binds_every_strict_placeholder_in_the_selected_definition()
     sel = _selection()
     checked = 0
     for hazard_id, draft in _drafts():
-        trigger = ar.acceptance_trigger(draft["review_request"])
+        trigger = ar.acceptance_trigger(draft["review_request"], authz_id=_REQUESTER)
         scalars = {k for k, v in trigger.items() if isinstance(v, (str, int, float)) and v != ""}
         definition_id = sel.select(trigger["level"])
         wf = yaml.safe_load((_WORKFLOWS / f"{definition_id}.yaml").read_text(encoding="utf-8"))
@@ -157,7 +161,7 @@ def test_the_two_derivations_of_the_audience_agree():
         engine_audience = draft.get("acceptance_audience")
         if not engine_audience:
             continue
-        trigger = ar.acceptance_trigger(draft["review_request"])
+        trigger = ar.acceptance_trigger(draft["review_request"], authz_id=_REQUESTER)
         scalars = {k: v for k, v in trigger.items() if isinstance(v, (str, int, float))}
         definition_id = sel.select(trigger["level"])
         wf = yaml.safe_load(
@@ -200,7 +204,7 @@ def test_both_paths_are_exercised_by_the_fixture():
     sel = _selection()
     reached = set()
     for _hazard_id, draft in _drafts():
-        trigger = ar.acceptance_trigger(draft["review_request"])
+        trigger = ar.acceptance_trigger(draft["review_request"], authz_id=_REQUESTER)
         reached.add(sel.select(trigger["level"]))
     assert len(reached) >= 2, (
         f"every fixture hazard selects {reached} — the concurrence/direct distinction is "
@@ -223,7 +227,7 @@ def test_every_audience_the_selected_definition_binds_is_granted():
         (_REPO / "policy" / "task_grants.yaml").read_text(encoding="utf-8"))["audiences"]
     checked = 0
     for hazard_id, draft in _drafts():
-        trigger = ar.acceptance_trigger(draft["review_request"])
+        trigger = ar.acceptance_trigger(draft["review_request"], authz_id=_REQUESTER)
         scalars = {k: v for k, v in trigger.items() if isinstance(v, (str, int, float))}
         definition_id = sel.select(trigger["level"])
         wf = yaml.safe_load(
@@ -253,7 +257,7 @@ def test_an_incomplete_request_refuses_rather_than_inventing_a_slug():
     rr["payload"] = {k: v for k, v in rr["payload"].items()
                      if k not in ("risk_level", "risk_level_slug")}
     with pytest.raises(ar.AcceptanceRequestError) as exc:
-        ar.acceptance_trigger(rr)
+        ar.acceptance_trigger(rr, authz_id=_REQUESTER)
     assert "risk_level" in str(exc.value)
 
 

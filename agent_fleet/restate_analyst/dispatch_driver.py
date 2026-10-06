@@ -64,7 +64,7 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 # ---------------------------------------------------------------------------
 # Serialization — DispatchPlan (pure dataclass) -> a JSON-native invocation body
 # ---------------------------------------------------------------------------
-def plan_to_payload(plan, *, requested_by: str = "", acted_by: str = "",
+def plan_to_payload(plan, *, requested_by: str, acted_by: str = "",
                     compartment: str = "") -> dict:
     """Flatten a ``DispatchPlan`` to the payload the VirtualObject consumes. Kept flat + JSON-native so
     it rides a Restate invocation body; ``None`` graph_write / human_task pass through as ``None``
@@ -81,7 +81,19 @@ def plan_to_payload(plan, *, requested_by: str = "", acted_by: str = "",
     terminally after a human approved it, the effect-failure has to be ROUTED, and
     ``dispatch_failure:<compartment>`` is the audience that owns it. Carrying it here keeps the
     driver from having to parse a compartment out of an authz key at the moment it is handling a
-    failure — deriving identity by string-splitting is how a clean diff denies everyone."""
+    failure — deriving identity by string-splitting is how a clean diff denies everyone.
+
+    ``requested_by`` IS REQUIRED AND NEVER BLANK (2026-10-05). It used to default to ``""``, and
+    the store now refuses a blank requester as a terminal 422 (``no_requester``) — so a default
+    here would only move the refusal to the register, after the fan-out had already sent. Every
+    live caller passes the review's ``approver`` (the gateway's ``current_user.authz_id``, which
+    auth refuses blank); a plan without one is refused before anything is sent."""
+    if not isinstance(requested_by, str) or not requested_by.strip():
+        raise restate.TerminalError(
+            f"no_requester: dispatch plan {plan.resolution.idempotency_key!r} names no requester; "
+            f"refusing to serialize it rather than register a task nobody asked for",
+            status_code=422,
+        )
     gw = plan.graph_write
     ht = plan.human_task
     return {
@@ -501,7 +513,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # Fan-out — one grouped approval -> N per-item dispatches (execution grain, §1)
 # ---------------------------------------------------------------------------
 def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "",
-                     requested_by: str = "", acted_by: str = "",
+                     requested_by: str, acted_by: str = "",
                      compartment: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
     SENT (fire-and-forget) to its own ``DispatchItem`` keyed by ``idempotency_key`` — per-item,

@@ -1,4 +1,4 @@
-"""Engine-o's `MeshVectors` implementation, against the SDK's own conformance suite and the
+"""The fleet's `MeshVectors` implementation (`agent_fleet/utils/mesh_vectors.py`), against the SDK's own conformance suite and the
 properties the suite cannot reach.
 
 **RUN THE SDK'S ARM FIRST AND DO NOT REIMPLEMENT IT.** `check_offline` asserts what the contract
@@ -32,7 +32,7 @@ from iagent_mesh.conformance import check_offline  # noqa: E402
 from iagent_mesh.interfaces import Initiator, ServiceIdentityRefused  # noqa: E402
 from iagent_mesh.results import MeshResult  # noqa: E402
 
-from agent_fleet.ontology_service.mesh_vectors import (  # noqa: E402
+from agent_fleet.utils.mesh_vectors import (  # noqa: E402
     MODES,
     MarkerMismatch,
     WeaviateVectors,
@@ -85,6 +85,28 @@ class _Query:
     def hybrid(self, **kw):
         return self._resp(kind="hybrid", **kw)
 
+    def near_vector(self, **kw):
+        # THE DRIVER'S NEAR_VECTOR SHAPE, not a convenient one: `score` comes back 0.0 (NOT None)
+        # whatever was asked, and certainty/distance arrive only when the query asked for them.
+        # Engine W banked the 0.0 on 2026-06-28 (real hits at MATCH=0%), so a reader that took
+        # `score` here would read every hit as unranked — and this double makes that visible.
+        self.last = dict(kind="near_vector", **kw)
+        rm = kw.get("return_metadata")
+        asked = getattr(rm, "kw", {}) if rm is not None else {}
+        objs = []
+        for i, r in enumerate(self._rows):
+            s = None if self._scores is None or i >= len(self._scores) else self._scores[i]
+            if s is None or rm is None:
+                md = None
+            else:
+                md = type("M", (), {
+                    "score": 0.0,
+                    "certainty": s if asked.get("certainty") else None,
+                    "distance": (1.0 - s) * 2 if asked.get("distance") else None,
+                })
+            objs.append(type("O", (), {"properties": r, "metadata": md}))
+        return type("R", (), {"objects": objs})
+
     def bm25(self, **kw):
         return self._resp(kind="bm25", **kw)
 
@@ -134,6 +156,11 @@ class _Filters:
     def any_of(cls, parts):
         cls.calls.append(("any_of", len(parts)))
         return ("any_of", tuple(parts))
+
+    @classmethod
+    def all_of(cls, parts):
+        cls.calls.append(("all_of", len(parts)))
+        return ("all_of", tuple(parts))
 
 
 def _impl(*, rows=(), present=True, marker=None, embed=None, oldest=None, report=None,
@@ -369,12 +396,12 @@ def test_the_predicate_this_module_COMPILES_AGAINST_exists():
     **IT NOW ASSERTS THE OLD NAME IS NOT WHAT WE CALL**, which is the half that keeps the alias
     contractable: if anything here drifts back onto `marker_is_stale`, the SDK cannot remove it.
     """
-    import agent_fleet.ontology_service.mesh_vectors as mv
+    import agent_fleet.utils.mesh_vectors as mv
     from iagent_mesh.interfaces import marker_predates_collection
 
     assert callable(marker_predates_collection)
 
-    src = (_REPO / "agent_fleet" / "ontology_service" / "mesh_vectors.py").read_text("utf-8")
+    src = (_REPO / "agent_fleet" / "utils" / "mesh_vectors.py").read_text("utf-8")
     tree = __import__("ast").parse(src)
     called = {
         n.func.id
@@ -391,50 +418,178 @@ def test_the_predicate_this_module_COMPILES_AGAINST_exists():
 # ── the retrieval score: asked for, attached, and never overwriting the store's own ─────────
 
 
-def test_the_retrieval_metadata_IS_REQUESTED_and_not_merely_read():
-    """A score that was never asked for arrives as None from a perfectly healthy cluster.
+def _explode(_t):
+    raise RuntimeError("embedding gateway down")
 
-    Weaviate returns no ranking metadata unless the query requests it, so this arm asserts the
-    REQUEST, not the row. Without it every other score arm below could pass against a double that
-    volunteers metadata the real driver would have withheld — the double would be the only thing
-    supplying the property under test.
+
+#: EVERY QUERY SHAPE THE READER CAN ISSUE, derived from its two inputs: the REQUEST (`mode=`) and
+#: whether the embed answered. Four cells, and each names the query it must reach, what it must
+#: ask the driver for, what it must REPORT, and the score that must land on the row. The table
+#: replaces an arm that said "score=True on every search": true of hybrid and bm25, and false of
+#: near_vector, whose `score` is 0.0 whatever is asked.
+_SHAPES = [
+    # request,       embed,     query kind,     metadata asked,                         reported
+    ("hybrid",       None,      "hybrid",       {"score": True},                        "hybrid"),
+    ("vector_only",  None,      "near_vector",  {"certainty": True, "distance": True},  "hybrid"),
+    ("hybrid",       _explode,  "bm25",         {"score": True},                        "bm25"),
+    ("vector_only",  _explode,  "bm25",         {"score": True},                        "bm25"),
+]
+
+
+@pytest.mark.parametrize(
+    "request_mode,embed,kind,asked,reported", _SHAPES,
+    ids=[f"{r}-{'embed' if e is None else 'no-embed'}" for r, e, *_ in _SHAPES],
+)
+def test_EVERY_query_shape_requests_its_metadata_and_lands_the_score(
+    request_mode, embed, kind, asked, reported
+):
+    """A score never asked for arrives as None from a perfectly healthy cluster, so this asserts the
+    REQUEST (built AND sent), then the row.
+
+    BUILDING THE REQUEST IS NOT MAKING IT: asserting only on `_Meta.calls` once left both
+    delete-the-kwarg mutants green. What the driver reads is the kwarg on the query it received.
+    And the degraded path is the one that gets forgotten — a bm25 search still ranks, and it is the
+    branch a caller is on while the gateway is down, precisely when someone is reading scores.
     """
     _Meta.calls.clear()
+    impl = _impl(rows=[{"uri": "x"}], scores=[0.7], embed=embed)
+    out = impl.nominate(PERSON, collection="OntologyClass", text="q", mode=request_mode)
+    sent = impl._client.collections._q.last
+    assert sent["kind"] == kind, f"mode={request_mode!r} reached {sent['kind']!r}, not {kind!r}"
+    assert _Meta.calls == [asked], f"{kind} asked the driver for {_Meta.calls!r}, not {asked!r}"
+    assert isinstance(sent.get("return_metadata"), _Meta), (
+        f"the {kind} query was issued without the metadata it had just built: {sent!r}"
+    )
+    assert out.mode == reported
+    assert out.rows[0]["score"] == pytest.approx(0.7), (
+        f"the {kind} branch did not land the similarity on `score`: {out.rows[0]!r}"
+    )
+
+
+def test_the_DEFAULT_request_is_the_SDKs_vector_only():
+    """The SDK's default is `vector_only`. Engine-o never takes it (see the next arm); a caller
+    that does must get near_vector, not the hybrid this reader ran before 0.9.8."""
     impl = _impl(rows=[{"uri": "x"}], scores=[0.7])
     impl.nominate(PERSON, collection="OntologyClass", text="q")
-    assert _Meta.calls == [{"score": True}], (
-        f"the metadata factory was called {_Meta.calls!r}; the implementation must ask for "
-        f"score=True on every search or the score it returns is always None"
-    )
-    # BUILDING THE REQUEST IS NOT MAKING IT. Asserting only on `_Meta.calls` left both
-    # delete-the-kwarg mutants green: the factory is called ABOVE the branch, so it stays called
-    # when neither query passes its result on. What the driver reads is the kwarg.
-    sent = impl._client.collections._q.last
-    assert isinstance(sent.get("return_metadata"), _Meta), (
-        f"the query was issued without the metadata it had just built: {sent!r}"
-    )
+    assert impl._client.collections._q.last["kind"] == "near_vector"
 
 
-def test_BOTH_query_shapes_request_the_metadata_not_only_the_hybrid_one():
-    """The degraded path is the one that gets forgotten, and it is the one that needs it most.
+def test_ENGINE_O_asks_for_hybrid_at_EVERY_nominate_call():
+    """THE RANKING ENGINE-O SHIPS IS HYBRID, and 0.9.8 moved the default under it.
 
-    A bm25-only search still ranks, and this is the branch a caller reaches while the embedding
-    gateway is down — precisely when someone is reading scores to find out what happened.
+    The population is DERIVED: every call to an attribute named `nominate` in engine-o's
+    main.py, counted before it is judged, so a third call site joins the check by existing.
     """
-    def _explode(_t):
-        raise RuntimeError("embedding gateway down")
+    import ast
 
-    for label, embed in (("hybrid", None), ("bm25", _explode)):
-        _Meta.calls.clear()
-        impl = _impl(rows=[{"uri": "x"}], scores=[0.7], embed=embed)
-        out = impl.nominate(PERSON, collection="OntologyClass", text="q")
-        assert out.mode == label, f"fixture did not reach the {label} branch (mode={out.mode})"
-        assert _Meta.calls == [{"score": True}], (
-            f"the {label} branch did not request score metadata: {_Meta.calls!r}"
+    src = (_REPO / "agent_fleet" / "ontology_service" / "main.py").read_text("utf-8")
+    calls = [
+        n for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "nominate"
+    ]
+    assert len(calls) >= 2, f"found {len(calls)} nominate calls; the derivation lost its population"
+    for c in calls:
+        kw = {k.arg: k.value for k in c.keywords}
+        assert isinstance(kw.get("mode"), ast.Constant) and kw["mode"].value == "hybrid", (
+            f"main.py:{c.lineno} calls nominate without mode=\"hybrid\" — it would take the SDK "
+            "default, vector_only, and change engine-o's ranking"
         )
-        assert (out.rows or [{}])[0].get("score") == 0.7, (
-            f"the {label} branch dropped the score it asked for"
-        )
+
+
+def test_a_request_mode_OUTSIDE_the_vocabulary_is_the_callers_defect():
+    with pytest.raises(ValueError, match="bm25"):
+        _impl(rows=[{"uri": "x"}]).nominate(PERSON, collection="OntologyClass", text="q", mode="bm25")
+
+
+@pytest.mark.parametrize("md,expected", [
+    ({"score": 0.0, "certainty": 0.8, "distance": 0.4}, 0.8),   # certainty wins
+    ({"score": 0.0, "certainty": None, "distance": 0.25}, 0.75),  # 1 - distance
+    ({"score": 0.0, "certainty": None, "distance": 1.5}, 0.0),    # floored, never negative
+    ({"score": 0.9, "certainty": None, "distance": None}, None),  # score is NEVER read here
+], ids=["certainty", "distance", "floored", "score-ignored"])
+def test_a_near_vector_hit_s_similarity_never_reads_the_zero_score(md, expected):
+    from agent_fleet.utils.mesh_vectors import _similarity
+
+    assert _similarity(type("M", (), md)) == expected
+
+
+# ── metadata_filters (SDK 0.9.8): scalar = equal, set/sequence = membership, AND-ed ─────────
+
+
+def _filters_sent(metadata_filters, domains=()):
+    _Filters.calls.clear()
+    impl = _impl(rows=[{"uri": "x"}])
+    out = impl.nominate(
+        PERSON, collection="DocumentChunks", text="q", domains=domains,
+        metadata_filters=metadata_filters,
+    )
+    return out, impl._client.collections._q.last
+
+
+def test_a_SCALAR_filter_is_exact_match_and_a_STRING_is_a_scalar():
+    """The string half is the trap: a str is a Sequence to Python, and membership in its
+    characters would match `T`, `M`, `-` and `1` for `{"doc_id": "TM-1"}`."""
+    _out, sent = _filters_sent({"doc_id": "TM-1"})
+    assert sent["filters"] == ("equal", "doc_id", "TM-1")
+
+
+@pytest.mark.parametrize("members", [{"a", "b"}, ["a", "b"], ("a", "b"), frozenset({"a", "b"})],
+                         ids=["set", "list", "tuple", "frozenset"])
+def test_a_SET_or_SEQUENCE_filter_is_membership(members):
+    _out, sent = _filters_sent({"verb_iris": members})
+    op, prop, got = sent["filters"]
+    assert (op, prop, sorted(got)) == ("contains_any", "verb_iris", ["a", "b"])
+
+
+def test_filters_AND_with_the_domain_scope_and_with_each_other():
+    """One `all_of` over every part. The domain scope stays a part, so a caller's filter can only
+    narrow what its entitlement already allowed, never replace it."""
+    _out, sent = _filters_sent({"doc_id": "TM-1", "page_number": 3}, domains=["SUSTAINMENT"])
+    op, parts = sent["filters"]
+    assert op == "all_of"
+    assert set(parts) == {
+        ("equal", "domain", "SUSTAINMENT"),
+        ("equal", "doc_id", "TM-1"),
+        ("equal", "page_number", 3),
+    }
+
+
+def test_NO_filters_builds_exactly_the_filter_it_always_did():
+    """The control for the arm above: no all_of when there is one part, None when there are none."""
+    _out, sent = _filters_sent({}, domains=["SUSTAINMENT"])
+    assert sent["filters"] == ("equal", "domain", "SUSTAINMENT")
+    _out, sent = _filters_sent({})
+    assert sent["filters"] is None
+
+
+def test_an_EMPTY_membership_set_is_an_EMPTY_answer_without_a_search():
+    out, sent = _filters_sent({"verb_iris": set()})
+    assert out.outcome == "empty"
+    assert sent is None, f"a search was issued for a filter nothing can match: {sent!r}"
+
+
+@pytest.mark.parametrize("bad", [None, {"nested": 1}], ids=["None", "mapping"])
+def test_a_filter_value_with_no_filter_meaning_is_REFUSED_naming_the_key(bad):
+    with pytest.raises(ValueError, match="doc_id"):
+        _filters_sent({"doc_id": bad})
+
+
+def test_the_signature_carries_EVERY_parameter_the_installed_SDK_declares():
+    """PARITY WITH WHATEVER SDK IS INSTALLED, as a superset. At the fleet pin (no `mode` on the
+    Protocol) this asserts the old parameters; against ca's 0.9.8 branch it asserts `mode` and
+    `metadata_filters` too, with the SDK's own defaults. Run it on that tree to prove the caller."""
+    import inspect
+
+    from iagent_mesh.interfaces import MeshVectors
+
+    ours = inspect.signature(WeaviateVectors.nominate).parameters
+    for name, p in inspect.signature(MeshVectors.nominate).parameters.items():
+        assert name in ours, f"the SDK's nominate declares {name!r} and this reader does not"
+        assert ours[name].kind == p.kind, f"{name!r}: {ours[name].kind} vs the SDK's {p.kind}"
+        if p.default is not inspect.Parameter.empty:
+            assert ours[name].default == p.default, (
+                f"{name!r} defaults to {ours[name].default!r}; the SDK says {p.default!r}"
+            )
 
 
 def test_the_metadata_score_LANDS_ON_THE_ROW_under_the_key_the_incumbent_uses():

@@ -153,7 +153,8 @@ def _dispatch_payload(disposition="dispatchQualification", *, mpn="NSR01L30NXT5G
         idempotency_key=f"IPCN25300X:{mpn}", needs_review=False,
         override_reason=None, proposed_by_ruleset="rules@abc123def456",
     )
-    return dispatch_driver.plan_to_payload(plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"))
+    return dispatch_driver.plan_to_payload(plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"),
+                                           requested_by="svc:review-starter")
 
 
 # ---------------------------------------------------------------------------

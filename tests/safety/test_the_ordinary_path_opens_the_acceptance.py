@@ -36,6 +36,10 @@ import pytest
 from ._engine_extra import requires_rdflib
 from iagent_pure import acceptance_request as ar
 
+#: The turn's person, as the envelope names them (`produced_for.authz_id`). Required by the
+#: builder since 2026-10-05: a case with no requester registers a row the store refuses.
+_REQUESTER = "requester@example.org"
+
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
@@ -126,7 +130,8 @@ class _Restate:
 
 
 def _bundle():
-    return {"id": "urn:li:answerArtifact:test", "resolved_intent": {}}
+    return {"id": "urn:li:answerArtifact:test", "resolved_intent": {},
+            "produced_for": {"authz_id": _REQUESTER}}
 
 
 async def _consume(monkeypatch, mats, *, boom=False):
@@ -181,7 +186,7 @@ async def test_the_emitted_request_opens_exactly_one_acceptance(draft, monkeypat
 
     assert errors == []
     assert len(fake.posts) == 1, fake.posts
-    trigger = ar.acceptance_trigger(rr)
+    trigger = ar.acceptance_trigger(rr, authz_id=_REQUESTER)
     wf = ar.acceptance_workflow_id(trigger["hazard_id"], trigger["level_slug"])
     post = fake.posts[0]
     # THE CASE RUNNER, keyed on the acceptance id: SafetyAcceptance ran only the FIRST selected

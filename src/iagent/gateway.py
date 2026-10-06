@@ -696,6 +696,8 @@ async def register_human_task(
         # to be resumable), not a transient failure — refuse rather than register a row `/act`
         # could later be tricked into resuming against.
         raise HTTPException(status_code=422, detail={"error": "unknown_workflow_service", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -723,7 +725,10 @@ async def create_access_request(
                 title=f"Grant read access to {current_user.email}",
                 summary=(f"{current_user.email} requests READ access to {req.asset}. "
                          f"Reason: {req.reason or '(none given)'}"),
-                requested_by=current_user.email,        # display: who asked
+                # WHO ASKED, by the key every other register path uses (authz_id, never the
+                # display email): at work-deploy the two differ, and a requester the store
+                # cannot join to a grant subject names nobody.
+                requested_by=current_user.authz_id,
                 subject_ref=req.asset,                  # the resource
                 # fulfillment reads these: the grant SUBJECT (authz_id, Topaz's key)
                 # and the ASSET. Clearance-safe (a URN + a request, not content).
@@ -737,6 +742,8 @@ async def create_access_request(
         # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
         # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("access_request created: task_id=%s subject=%s asset=%s approvers=%d",
                 task_id, current_user.authz_id, req.asset, len(result.get("recipients", [])))
     return {"request_id": task_id, "status": "pending",
@@ -826,6 +833,8 @@ async def file_triage_task(
         # TERMINAL 4xx: an audience with zero actors cannot receive the refusal, and a triage task
         # nobody sees is the very failure this route exists to end. The caller must surface it.
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("triage_task filed: task_id=%s reason=%s audience=%s recipients=%d",
                 task_id, req.reason_code, audience, len(result.get("recipients", [])))
     return {"task_id": task_id, "status": "FILED", "audience": audience,
@@ -5884,6 +5893,11 @@ async def _generate_dagster_stream_inner(
         },
         "produced_for": {
             "user_id": user_id,
+            # WHO THE TURN WAS FOR, as policy keys them: the authz_id, which `user_email` CARRIES
+            # (see /orchestrate). `user_id` is the sub and names nobody Topaz knows. The acceptance
+            # consumer reads THIS as the case's requester (ruled 2026-10-05): the person whose
+            # turn's answer carried the review_request.
+            "authz_id": user_email or "",
             "is_authenticated": True,
             "user_persona": user_persona,
             "entitled_domains": entitled_domains or [],
@@ -6606,7 +6620,12 @@ async def _open_safety_acceptance(
     path opened which workflow.
     """
     try:
-        _trigger = acceptance_request.acceptance_trigger(rr)
+        # THE REQUESTER IS THE TURN'S PERSON, read from the envelope this turn produced -- never
+        # from the engine's own `requested_by`, which names the drafter. A blank one is refused
+        # by the builder, so it lands below as `acceptance_not_opened` rather than as a case
+        # whose row the register would refuse after the case had already opened.
+        _trigger = acceptance_request.acceptance_trigger(
+            rr, authz_id=(bundle.get("produced_for") or {}).get("authz_id") or "")
         _wf_key = _trigger["acceptance_id"]
         async with httpx.AsyncClient(timeout=30.0) as _client:
             _ar = await _client.post(
@@ -8709,6 +8728,12 @@ async def ingest_event(
     same list `case_routing.Trigger.requires` loads), checked dotted-path by dotted-path against
     `payload` plus the facts this route adds itself (`dropped_by.authz_id`). A payload missing
     any required path is refused 422, naming which.
+
+    THE RESPONSE CONTRACT IS 200 WITH `workflow.case_id` (ruled 2026-10-05). The seam spec said
+    202; the door has always answered 200, the first producer is coded against 200, and the
+    ruling keeps it, so 202 is not an open question. `case_id` is the key the case runner
+    holds the case under (the trigger's key, i.e. the producer's own identity field), and the
+    door only answers 200 once the runner's own intake check has accepted the payload.
     """
     from . import content_kinds
 
@@ -8733,7 +8758,7 @@ async def ingest_event(
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
-            CaseRoutingError, load_trigger,
+            CaseRoutingError, check_intake, flatten, load_trigger,
         )
         trigger = load_trigger(_registered_kind.seeds_workflow)
     except CaseRoutingError as exc:
@@ -8780,7 +8805,33 @@ async def ingest_event(
             },
         )
 
-    case_id = f"{_registered_kind.seeds_workflow}:{ingest_id}"
+    # The case key is the value of the TRIGGER's `key` -- the runner's rule, checked at intake
+    # (`case_routing.check_intake`: "the key IS the dedupe"); the safety door keys by its bare
+    # `acceptance_id` the same way. Keying by `{seeds_workflow}:{ingest_id}` opened a case the
+    # runner refused 123 ms later (OpenDDIL's first live event, 2026-10-05). The registration's
+    # `identity_field` (this door's dedupe) and the trigger's `key` (the runner's) are separate
+    # declarations: if they ever disagree the two dedupes split, so refuse rather than pick one.
+    if trigger.key != _registered_kind.identity_field:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "trigger_unconfigured",
+                "message": f"kind {req.content_kind!r} dedupes on identity_field "
+                           f"{_registered_kind.identity_field!r} but trigger "
+                           f"{trigger.trigger!r} keys its cases on {trigger.key!r}",
+            },
+        )
+    case_id = str(identity_value)
+    # The runner's OWN intake check, run here before the case opens: `requires` above is only
+    # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
+    # answered 200 must not be refused 123 ms later where the producer cannot see it.
+    try:
+        check_intake(trigger, flatten(facts), case_id, facts=facts)
+    except CaseRoutingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "payload_refused_by_trigger", "message": str(exc)},
+        )
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id,
@@ -8959,6 +9010,8 @@ async def update_ingest_stage(
                 raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
             except human_tasks.NoEntitledRecipients as exc:
                 raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+            except human_tasks.NoRequester as exc:
+                raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
             task_status = "FILED"
 
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}

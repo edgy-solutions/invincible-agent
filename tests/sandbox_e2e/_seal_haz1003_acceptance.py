@@ -68,7 +68,8 @@ def _expected() -> dict:
     rr = ar.review_request_of(measures.draft_risk_assessment(hazard_id=HAZARD))
     if not rr:
         raise SystemExit(f"FIXTURE VOID: the local {HAZARD} draft asks for no review")
-    trig = ar.acceptance_trigger(rr)
+    # Only the kind and the key are read here, and the requester changes neither.
+    trig = ar.acceptance_trigger(rr, authz_id=CALLER[0])
     return {"kind": trig["kind"],
             "workflow_id": ar.acceptance_workflow_id(trig["hazard_id"], trig["level_slug"])}
 
