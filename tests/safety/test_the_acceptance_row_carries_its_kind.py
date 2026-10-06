@@ -30,6 +30,10 @@ import requests
 from ._engine_extra import requires_rdflib
 from iagent_pure import acceptance_request as ar
 
+#: The turn's person, as the envelope names them (`produced_for.authz_id`). Required by the
+#: builder since 2026-10-05: a case with no requester registers a row the store refuses.
+_REQUESTER = "requester@example.org"
+
 _REPO = Path(__file__).resolve().parents[2]
 _RA = _REPO / "agent_fleet" / "restate_analyst"
 for _p in (str(_RA), str(_REPO)):
@@ -158,7 +162,7 @@ async def _run_acceptance(trigger):
 @pytest.mark.asyncio
 async def test_haz_1003s_acceptance_registers_the_kind_its_request_names(monkeypatch):
     posts = _recording_post(monkeypatch)
-    await _run_acceptance(ar.acceptance_trigger(_HAZ_1003))
+    await _run_acceptance(ar.acceptance_trigger(_HAZ_1003, authz_id=_REQUESTER))
 
     bodies = _registers(posts)
     assert len(bodies) == 1, f"expected one register, got {len(bodies)}: {posts}"
@@ -177,7 +181,7 @@ async def test_the_producers_own_request_reaches_the_register_with_its_kind(monk
 
     review_request = measures.draft_risk_assessment(hazard_id="HAZ-1003")["review_request"]
     posts = _recording_post(monkeypatch)
-    await _run_acceptance(ar.acceptance_trigger(review_request))
+    await _run_acceptance(ar.acceptance_trigger(review_request, authz_id=_REQUESTER))
 
     bodies = _registers(posts)
     assert [b["kind"] for b in bodies] == [review_request["kind"]], (bodies, review_request["kind"])
@@ -194,7 +198,7 @@ async def test_the_generic_runner_does_not_take_the_kind_from_the_request(monkey
     is stripped here: what this control isolates is that the REQUEST's `kind` fact never becomes
     the row's kind, and the stripped declaration is the only other route to one."""
     posts = _recording_post(monkeypatch)
-    trigger = ar.acceptance_trigger(_HAZ_1003)
+    trigger = ar.acceptance_trigger(_HAZ_1003, authz_id=_REQUESTER)
     assert trigger["kind"] == "risk_acceptance_medium"  # the request DOES name a kind
     body = load_workflow_definition(_DIRECT).model_dump()
     declared = [s for s in body["steps"] if s.get("task_kind")]
@@ -214,7 +218,7 @@ async def test_a_trigger_whose_kind_disagrees_with_its_level_is_refused_before_a
     monkeypatch, kind
 ):
     posts = _recording_post(monkeypatch)
-    trigger = {**ar.acceptance_trigger(_HAZ_1003), "kind": kind}
+    trigger = {**ar.acceptance_trigger(_HAZ_1003, authz_id=_REQUESTER), "kind": kind}
     out = await _outcome(saw.run(_ctx_for(trigger), trigger))
 
     assert isinstance(out, restate.TerminalError), (
@@ -268,7 +272,7 @@ async def test_haz_1003s_measured_422_fails_the_acceptance_terminally(monkeypatc
     """The incident's shape end to end: the register refuses with a 422, and the acceptance
     fails terminally with that status instead of retrying into a paused invocation."""
     _recording_post(monkeypatch, _Resp(422, text='{"detail":"no_entitled_recipients"}'))
-    trigger = ar.acceptance_trigger(_HAZ_1003)
+    trigger = ar.acceptance_trigger(_HAZ_1003, authz_id=_REQUESTER)
     out = await _outcome(saw.run(_ctx_for(trigger), trigger))
     assert isinstance(out, restate.TerminalError), (
         f"HAZ-1003's 422 ended the acceptance in {type(out).__name__}, which Restate retries")

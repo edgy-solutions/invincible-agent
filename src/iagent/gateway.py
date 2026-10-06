@@ -696,6 +696,8 @@ async def register_human_task(
         # to be resumable), not a transient failure — refuse rather than register a row `/act`
         # could later be tricked into resuming against.
         raise HTTPException(status_code=422, detail={"error": "unknown_workflow_service", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -737,6 +739,8 @@ async def create_access_request(
         # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
         # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("access_request created: task_id=%s subject=%s asset=%s approvers=%d",
                 task_id, current_user.authz_id, req.asset, len(result.get("recipients", [])))
     return {"request_id": task_id, "status": "pending",
@@ -826,6 +830,8 @@ async def file_triage_task(
         # TERMINAL 4xx: an audience with zero actors cannot receive the refusal, and a triage task
         # nobody sees is the very failure this route exists to end. The caller must surface it.
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     logger.info("triage_task filed: task_id=%s reason=%s audience=%s recipients=%d",
                 task_id, req.reason_code, audience, len(result.get("recipients", [])))
     return {"task_id": task_id, "status": "FILED", "audience": audience,
@@ -5884,6 +5890,11 @@ async def _generate_dagster_stream_inner(
         },
         "produced_for": {
             "user_id": user_id,
+            # WHO THE TURN WAS FOR, as policy keys them: the authz_id, which `user_email` CARRIES
+            # (see /orchestrate). `user_id` is the sub and names nobody Topaz knows. The acceptance
+            # consumer reads THIS as the case's requester (ruled 2026-10-05): the person whose
+            # turn's answer carried the review_request.
+            "authz_id": user_email or "",
             "is_authenticated": True,
             "user_persona": user_persona,
             "entitled_domains": entitled_domains or [],
@@ -6606,7 +6617,12 @@ async def _open_safety_acceptance(
     path opened which workflow.
     """
     try:
-        _trigger = acceptance_request.acceptance_trigger(rr)
+        # THE REQUESTER IS THE TURN'S PERSON, read from the envelope this turn produced -- never
+        # from the engine's own `requested_by`, which names the drafter. A blank one is refused
+        # by the builder, so it lands below as `acceptance_not_opened` rather than as a case
+        # whose row the register would refuse after the case had already opened.
+        _trigger = acceptance_request.acceptance_trigger(
+            rr, authz_id=(bundle.get("produced_for") or {}).get("authz_id") or "")
         _wf_key = _trigger["acceptance_id"]
         async with httpx.AsyncClient(timeout=30.0) as _client:
             _ar = await _client.post(
@@ -8985,6 +9001,8 @@ async def update_ingest_stage(
                 raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
             except human_tasks.NoEntitledRecipients as exc:
                 raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+            except human_tasks.NoRequester as exc:
+                raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
             task_status = "FILED"
 
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
