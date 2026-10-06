@@ -473,6 +473,9 @@ _VALID_EVENT_PAYLOAD = {
             "mission_essential": False,
             "basis": {"rule": "R1", "observed_at": "2026-10-03T00:00:00Z"},
         },
+        # the trigger's `carries`: present, and a null is an answer
+        "spares": [],
+        "nearest_spare": None,
     },
     "label": {"originator_nation": "US"},
 }
@@ -670,6 +673,99 @@ def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
     assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
     assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
     assert body["workflow"]["started"] is True
+
+
+def test_ingest_events_the_case_key_is_one_the_runner_accepts(
+        client, monkeypatch, stub_restate_post):
+    """THE JOIN: what the door POSTs (key in the URL, trigger and facts in the body) goes
+    through the runner's REAL intake check. Each half had its own tests and the pair still
+    disagreed -- the door keyed `{seeds_workflow}:{ingest_id}`, the runner demands the event's
+    own `event_id` -- and OpenDDIL's first live event was refused at intake."""
+    from urllib.parse import unquote
+    from agent_fleet.restate_analyst import case_routing as cr
+    calls, _state = stub_restate_post
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1, calls
+    url, sent = calls[0]["url"], calls[0]["json"]
+    head, sep, tail = url.partition("/WorkflowRunner/")
+    assert sep and tail.endswith("/run/send"), url
+    key = unquote(tail[: -len("/run/send")])
+    assert key == r.json()["workflow"]["case_id"], (key, r.json())
+    trig = cr.load_trigger(sent["trigger"])
+    # MUTANT (the 2026-10-05 key): `case_id = f"{seeds_workflow}:{ingest_id}"` reds here with
+    # the runner's own message, "case key ... is not the event's event_id".
+    cr.check_intake(trig, cr.flatten(sent["facts"]), key, facts=sent["facts"])
+
+
+def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
+        client, monkeypatch, stub_restate_post):
+    """`requires` is not all intake checks: a payload with every required fact and without a
+    `carries` key was answered 200 here and refused by the runner, where the producer cannot
+    see it. The door now runs the runner's own check_intake first."""
+    import copy
+    calls, _state = stub_restate_post
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    bad_payload = copy.deepcopy(_VALID_EVENT_PAYLOAD)
+    del bad_payload["picture"]["spares"]
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": bad_payload,
+    })
+    # MUTANT (drop the door's check_intake): 200 and one call -- reds both fragments below.
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "payload_refused_by_trigger", r.json()
+    assert "picture.spares" in r.json()["detail"]["message"], r.json()
+    assert calls == [], "a payload the runner refuses reached the workflow-seeding POST"
+
+
+def test_ingest_events_identity_field_and_trigger_key_must_agree(
+        client, monkeypatch, stub_restate_post):
+    """Two declarations, two dedupes: the door's (`identity_field`) and the runner's (the
+    trigger's `key`). A kind whose two disagree is refused before any case opens."""
+    calls, _state = stub_restate_post
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="asset_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "trigger_unconfigured", r.json()
+    assert calls == [], "a kind whose dedupes disagree reached the workflow-seeding POST"
 
 
 def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(

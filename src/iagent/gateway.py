@@ -8733,7 +8733,7 @@ async def ingest_event(
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
-            CaseRoutingError, load_trigger,
+            CaseRoutingError, check_intake, flatten, load_trigger,
         )
         trigger = load_trigger(_registered_kind.seeds_workflow)
     except CaseRoutingError as exc:
@@ -8780,7 +8780,33 @@ async def ingest_event(
             },
         )
 
-    case_id = f"{_registered_kind.seeds_workflow}:{ingest_id}"
+    # The case key is the value of the TRIGGER's `key` -- the runner's rule, checked at intake
+    # (`case_routing.check_intake`: "the key IS the dedupe"); the safety door keys by its bare
+    # `acceptance_id` the same way. Keying by `{seeds_workflow}:{ingest_id}` opened a case the
+    # runner refused 123 ms later (OpenDDIL's first live event, 2026-10-05). The registration's
+    # `identity_field` (this door's dedupe) and the trigger's `key` (the runner's) are separate
+    # declarations: if they ever disagree the two dedupes split, so refuse rather than pick one.
+    if trigger.key != _registered_kind.identity_field:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "trigger_unconfigured",
+                "message": f"kind {req.content_kind!r} dedupes on identity_field "
+                           f"{_registered_kind.identity_field!r} but trigger "
+                           f"{trigger.trigger!r} keys its cases on {trigger.key!r}",
+            },
+        )
+    case_id = str(identity_value)
+    # The runner's OWN intake check, run here before the case opens: `requires` above is only
+    # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
+    # answered 200 must not be refused 123 ms later where the producer cannot see it.
+    try:
+        check_intake(trigger, flatten(facts), case_id, facts=facts)
+    except CaseRoutingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "payload_refused_by_trigger", "message": str(exc)},
+        )
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id,
