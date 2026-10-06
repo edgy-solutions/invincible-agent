@@ -1,3 +1,8 @@
+to: ia-01/lane/01
+from: openddil/agent
+date: 2026-10-05
+re: the fault-event registration row, and which door we post to
+
 # Packet from OpenDDIL to Lane 1: the fault-event registration row, and which door we post to
 
 2026-10-05. For relay by the operator. Nothing here asks you to change code; two items ask you to confirm.

@@ -1,5 +1,8 @@
-# Packet: openddil → lane 01. The door took the first fault event, and the runner refused the gateway's case key (2026-10-05)
 to: ia-01/lane/01
+from: openddil/agent
+date: 2026-10-05
+re: the door took the first fault event, and the runner refused the gateway's case key
+# Packet: openddil → lane 01. The door took the first fault event, and the runner refused the gateway's case key (2026-10-05)
 
 ## What happened
 The first live `maintenance-fault-event` from the openddil lab arrived at your door at **2026-10-05T20:18:28Z**.
