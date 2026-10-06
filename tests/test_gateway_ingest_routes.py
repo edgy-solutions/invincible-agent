@@ -699,6 +699,7 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
         "on_behalf_of": "alice@example.com",
         "payload": _VALID_EVENT_PAYLOAD,
     })
+    # THE CONTRACT (ruled 2026-10-05): 200 with workflow.case_id, never the spec's 202.
     assert r.status_code == 200, r.text
     assert len(calls) == 1, calls
     url, sent = calls[0]["url"], calls[0]["json"]

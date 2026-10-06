@@ -8728,6 +8728,12 @@ async def ingest_event(
     same list `case_routing.Trigger.requires` loads), checked dotted-path by dotted-path against
     `payload` plus the facts this route adds itself (`dropped_by.authz_id`). A payload missing
     any required path is refused 422, naming which.
+
+    THE RESPONSE CONTRACT IS 200 WITH `workflow.case_id` (ruled 2026-10-05). The seam spec said
+    202; the door has always answered 200, the first producer is coded against 200, and the
+    ruling keeps it, so 202 is not an open question. `case_id` is the key the case runner
+    holds the case under (the trigger's key, i.e. the producer's own identity field), and the
+    door only answers 200 once the runner's own intake check has accepted the payload.
     """
     from . import content_kinds
 
