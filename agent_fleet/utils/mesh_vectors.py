@@ -1,4 +1,11 @@
-"""Engine-o's `MeshVectors` implementation — the reader half of the marker contract.
+"""The fleet's `MeshVectors` implementation — the reader half of the marker contract.
+
+**IT LIVES IN `utils` BECAUSE A SECOND ENGINE READS THROUGH IT** (moved from
+`ontology_service/` 2026-10-04). Every engine image copies `agent_fleet/utils/` to `/app/utils/`
+(`Dockerfile.agent`) and copies only its OWN engine directory besides, so a reader under
+`ontology_service/` was importable by engine-o alone. Engine W's knowledge search is the second
+caller, behind `KNOWLEDGE_SEARCH_VIA_MESH`. One implementation, so both engines get the marker
+check, the person guard and the marked degradation from the same lines.
 
 **THIS MODULE IMPORTS NO DRIVER.** The Weaviate client, the filter factory and the metadata-query
 factory are INJECTED, the same shape `state_sparql` and `sustainment_instance_provider` already use
@@ -11,6 +18,10 @@ WHAT THE CONTRACT ASKS FOR, and where each part lives:
     the return says WHETHER         MeshResult: answered | empty | failed | unreachable
     the return says HOW             `mode`: "hybrid" when the vector was used, "bm25" when the
                                     embedding endpoint failed and we degraded — never silent
+    the request says WHICH SEARCH   `mode=` "vector_only" (near_vector) or "hybrid" (vector + BM25
+                                    in one ranking); a different axis from the result's `mode`
+    the request may RESTRICT        `metadata_filters`: scalar = equal, set/sequence = membership,
+                                    AND-ed with the domain filter and with each other
     the implementation owns embed   `embedding_model` is the SERVED identity from the response,
                                     never `DEFAULT_EMBED_MODEL`
     the marker is checked AT OPEN   once per collection, before the first search
@@ -32,6 +43,8 @@ oldest-object proxy does not move while the vectors underneath are rewritten.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping, Set
+from types import MappingProxyType
 from typing import Any, Callable, Optional, Sequence
 
 from iagent_mesh.interfaces import (  # noqa: F401 — CollectionMarker is part of the surface
@@ -47,6 +60,15 @@ from iagent_mesh.results import MeshResult
 #: The vocabulary THIS interface declares. Conformance asserts an implementation emits only these,
 #: which is why the pair lives here rather than in a central enum nobody owns.
 MODES = ("hybrid", "bm25")
+
+#: What a CALLER may ask for (SDK 0.9.8). A different axis from `MODES`, which is what HAPPENED.
+#:
+#: ⚠ THE REPORT HAS NO WORD FOR A HEALTHY `vector_only` SEARCH, and that is the interface's, not
+#: this file's to fix: `MODES` is ("hybrid", "bm25") and conformance refuses any other value. So a
+#: `vector_only` search that used its vector reports "hybrid" — read it as "the vector was used,
+#: nothing degraded", never as "a lexical signal was blended in". "bm25" keeps its one meaning on
+#: both requests: the embed failed and the search fell back.
+REQUEST_MODES = ("vector_only", "hybrid")
 
 
 class MarkerMismatch(RuntimeError):
@@ -198,14 +220,27 @@ class WeaviateVectors:
         text: str,
         domains: Sequence[str] = (),
         limit: int = 10,
+        mode: str = "vector_only",
+        metadata_filters: Mapping[str, object] = MappingProxyType({}),
     ) -> MeshResult:
         """Candidate rows for a phrase, within one collection and across the given domains.
 
         `domains` IS A SEQUENCE and the singular form would be a regression: both live call sites
         scope by an entitlement LIST, and a per-domain loop would return separately-ranked results
         whose scores are not comparable across calls.
+
+        `mode` IS A REQUEST and the default is the SDK's, `"vector_only"`. ⚠ The SDK calls that
+        "today's only behaviour", and FOR THIS IMPLEMENTATION IT WAS NOT: until 0.9.8 this method
+        ran `hybrid` whenever it had a vector. Engine-o's class pool therefore passes
+        `mode="hybrid"` explicitly; a caller that took the new default would change its ranking
+        without changing a line.
         """
         self._require_person(initiator, "nominate")
+        if mode not in REQUEST_MODES:
+            # A REQUEST OUTSIDE THE VOCABULARY IS THE CALLER'S DEFECT, not a substrate outcome, so
+            # it raises rather than returning `failed` — a 503 would send someone to the store.
+            raise ValueError(f"nominate: mode={mode!r} is not one of {REQUEST_MODES}")
+        restrict = self._metadata_parts(metadata_filters)
 
         try:
             if not self._client.collections.exists(collection):
@@ -213,8 +248,17 @@ class WeaviateVectors:
         except Exception as exc:
             return MeshResult.unreachable(f"nominate({collection}): {exc}")
 
+        if restrict is None:
+            # A MEMBERSHIP IN THE EMPTY SET MATCHES NOTHING, which is an answer and not an error:
+            # a computed set can legitimately come out empty, and querying with `contains_any([])`
+            # is a shape the driver need not accept. Empty without a search, so no `mode`.
+            return MeshResult.empty()
+
         # ── the embedding, and the identity that came with it ──
-        mode = "hybrid"
+        # `reported`, NOT `mode`: the request parameter shares the SDK's name, and reusing it for the
+        # report overwrote the request before the search read it (caught 2026-10-04, every
+        # `vector_only` call ran hybrid while the old score arms stayed green).
+        reported = "hybrid"
         try:
             obs = self._embed(text)
             vector = list(obs.vector)
@@ -223,24 +267,24 @@ class WeaviateVectors:
         except Exception as exc:
             # A DEGRADED RETRIEVAL IS A MARKED SUCCESS, NEVER AN UNMARKED ONE. The fleet ran
             # sixty-seven days BM25-only with nothing in any result saying so.
-            mode, vector, observed_dim = "bm25", None, 0
+            reported, vector, observed_dim = "bm25", None, 0
             self._report(f"nominate({collection}): embedding failed, degrading to bm25 ({exc})")
 
         if vector is not None:
             try:
                 self._ensure_opened(collection, self._embedding_model or "", observed_dim)
             except MarkerMismatch as exc:
-                return MeshResult.failed(str(exc), mode=mode)
+                return MeshResult.failed(str(exc), mode=reported)
 
         try:
-            rows = self._search(collection, text, vector, domains, limit)
+            rows = self._search(collection, text, vector, domains, limit, mode, restrict)
         except Exception as exc:
             # A MID-QUERY FAILURE IS A REFUSAL, NEVER AN EMPTY SUCCESS — an empty list here means
             # "nothing matched", and a caller that cannot tell the two apart reads a substrate
             # outage as a confident zero.
-            return MeshResult.failed(f"nominate({collection}): {exc}", mode=mode)
+            return MeshResult.failed(f"nominate({collection}): {exc}", mode=reported)
 
-        return MeshResult.answered(rows, mode=mode) if rows else MeshResult.empty(mode=mode)
+        return MeshResult.answered(rows, mode=reported) if rows else MeshResult.empty(mode=reported)
 
     # ── the query itself ────────────────────────────────────────────────────────────────────
 
@@ -265,6 +309,31 @@ class WeaviateVectors:
         prop = self._filters.by_property("domain")
         return prop.equal(scoped[0]) if len(scoped) == 1 else prop.contains_any(scoped)
 
+    def _metadata_parts(self, metadata_filters: Mapping[str, object]) -> Optional[list]:
+        """One filter part per key, or None when a membership set is EMPTY (nothing can match).
+
+        A scalar is exact-match; a `Set` or a non-string `Sequence` is membership. A string is a
+        scalar: it is a Sequence to Python, and treating it as one would turn `{"doc_id": "TM-1"}`
+        into membership in its characters. A `None` or a `Mapping` value has no filter meaning and
+        is refused naming the key, rather than sent to the store as `equal(None)`.
+        """
+        parts: list = []
+        for key, value in dict(metadata_filters or {}).items():
+            if value is None or isinstance(value, Mapping):
+                raise ValueError(
+                    f"nominate: metadata_filters[{key!r}] is {type(value).__name__}; a filter "
+                    "value is a scalar (equal) or a set/sequence (membership)"
+                )
+            prop = self._filters.by_property(key)
+            if isinstance(value, (Set, Sequence)) and not isinstance(value, (str, bytes)):
+                members = list(value)
+                if not members:
+                    return None
+                parts.append(prop.contains_any(members))
+            else:
+                parts.append(prop.equal(value))
+        return parts
+
     def _search(
         self,
         collection: str,
@@ -272,9 +341,15 @@ class WeaviateVectors:
         vector: Optional[list],
         domains: Sequence[str],
         limit: int,
+        mode: str = "vector_only",
+        restrict: Sequence[Any] = (),
     ) -> list[dict]:
         handle = self._client.collections.get(collection)
-        filters = self._domain_filter(collection, domains)
+        # FILTERS AND TOGETHER: the domain scope, then each metadata key. `all_of` only when there
+        # is more than one part, so an unrestricted call builds exactly the filter it always did.
+        parts = [p for p in (self._domain_filter(collection, domains),) if p is not None]
+        parts.extend(restrict)
+        filters = None if not parts else parts[0] if len(parts) == 1 else self._filters.all_of(parts)
         # THE SCORE IS ASKED FOR, or it does not arrive. Weaviate returns no ranking metadata
         # unless the query requests it, and this method used to return `o.properties` alone — so
         # every row came back scoreless while looking complete. The interface docstring calls the
@@ -285,20 +360,32 @@ class WeaviateVectors:
         # scores are the PROV-contamination diagnosis (prov#Bundle at 0.66 beating idp#Pipeline),
         # which had to be fished out of a hand-written Weaviate query because the pipeline threw
         # them away. `/resolve` carries the whole pool for exactly that reason.
-        meta = self._metadata(score=True)
-        if vector is None:
+        nearest = vector is not None and mode == "vector_only"
+        if nearest:
+            # A NEAR_VECTOR SEARCH RANKS BY DISTANCE, AND ITS `score` IS 0.0, NOT None — Engine W
+            # banked that on 2026-06-28 when real hits showed MATCH=0%. So the similarity is asked
+            # for as certainty and distance, and lands under the same `score` key below.
+            resp = handle.query.near_vector(
+                near_vector=vector, limit=limit, filters=filters,
+                return_metadata=self._metadata(certainty=True, distance=True),
+            )
+        elif vector is None:
             resp = handle.query.bm25(
-                query=text, limit=limit, filters=filters, return_metadata=meta
+                query=text, limit=limit, filters=filters, return_metadata=self._metadata(score=True)
             )
         else:
             resp = handle.query.hybrid(
-                query=text, vector=vector, limit=limit, filters=filters, return_metadata=meta
+                query=text, vector=vector, limit=limit, filters=filters,
+                return_metadata=self._metadata(score=True),
             )
         rows: list[dict] = []
         for o in getattr(resp, "objects", []):
             row = dict(getattr(o, "properties", {}) or {})
             md = getattr(o, "metadata", None)
-            retrieved = getattr(md, "score", None) if md is not None else None
+            if nearest:
+                retrieved = _similarity(md)
+            else:
+                retrieved = getattr(md, "score", None) if md is not None else None
             if "score" in row:
                 # A STORED PROPERTY WINS, AND THE COLLISION IS REPORTED. `score` is a name a
                 # collection is free to own, and overwriting it would replace the store's own
@@ -321,3 +408,21 @@ class WeaviateVectors:
                 row["score"] = float(retrieved) if retrieved is not None else None
             rows.append(row)
         return rows
+
+
+def _similarity(md: Any) -> Optional[float]:
+    """A near_vector hit's similarity on the 0..1 scale `score` carries: certainty, else 1 - distance.
+
+    Certainty is reported only for cosine; distance is the fallback (cosine distance 0 = identical,
+    2 = opposite), floored at 0. None when the object carries neither, so "not ranked" keeps its
+    shape. Engine W's source projection used the same order before this reader served it.
+    """
+    if md is None:
+        return None
+    certainty = getattr(md, "certainty", None)
+    if certainty is not None:
+        return float(certainty)
+    distance = getattr(md, "distance", None)
+    if distance is not None:
+        return max(0.0, 1.0 - float(distance))
+    return None

@@ -895,14 +895,14 @@ from fastapi import Depends
 # the announcement has a real posture the gauge cannot read.
 from iagent_mesh.interfaces import Initiator
 
-# `WeaviateVectors` lives beside this file, so it takes the SAME dual-layout try/except every other
-# sibling here takes (`state_sparql`, `sustainment_instance_provider`). A relative import would work
-# in the source layout and fail in the container's flat one, where this module is top-level — and it
-# would fail at import time, i.e. the whole service, not the one route the flag governs.
+# `WeaviateVectors` lives in `utils` (moved 2026-10-04, when Engine W became its second caller), so it
+# takes the utils dual-layout try/except: engine images flatten `agent_fleet/utils` -> `/app/utils`,
+# the source layout keeps the package path. Either failing fails at import time, i.e. the whole
+# service, not the one route the flag governs.
 try:
-    from mesh_vectors import WeaviateVectors  # type: ignore[no-redef]
+    from utils.mesh_vectors import WeaviateVectors  # type: ignore[no-redef]
 except ImportError:
-    from agent_fleet.ontology_service.mesh_vectors import WeaviateVectors
+    from agent_fleet.utils.mesh_vectors import WeaviateVectors
 
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
@@ -1519,6 +1519,9 @@ def _class_pool_via_mesh_sync(
         text=query,
         domains=scope,
         limit=limit,
+        # MODE IS EXPLICIT. SDK 0.9.8's default is `vector_only`; this pool has always been ranked
+        # by `hybrid`, so taking the default would change the ranking without changing a line.
+        mode="hybrid",
     )
 
     if result.outcome in ("failed", "unreachable"):
@@ -2001,6 +2004,9 @@ def _predicate_pool_via_mesh_sync(
         text=query,
         domains=list(entitled_domains or []),
         limit=limit,
+        # MODE IS EXPLICIT. SDK 0.9.8's default is `vector_only`; this pool has always been ranked
+        # by `hybrid`, so taking the default would change the ranking without changing a line.
+        mode="hybrid",
     )
 
     if result.outcome in ("failed", "unreachable"):
