@@ -50,7 +50,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_three_prompts(sheet):
+def test_the_parser_finds_the_sheets_four_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -59,6 +59,7 @@ def test_the_parser_finds_the_sheets_three_prompts(sheet):
         "draft a risk assessment for HAZ-1003",
         "what hazards are unattended",
         "risk of deferring this work order",
+        "what failed on this part",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 

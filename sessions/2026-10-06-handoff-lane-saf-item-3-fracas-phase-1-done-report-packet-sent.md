@@ -111,3 +111,12 @@ The Jena-to-Neo4j gap is labelled hypothesis; no live store was queried.
 
 **3. Item 1** still waits on Lane 1 merging `e15877ef` (only on `lane/74-docs-serve-entitlement`).
 Nothing to do until it lands on master.
+
+## Merge-gate red (2026-10-07) -- fixed in 241f365c
+
+Lane 1's gate named `tests/safety/test_the_walk_sheet_matches_the_engine.py::test_the_parser_finds_the_sheets_three_prompts`.
+Cause: `3e0aace2` added a fourth sheet prompt; the positive control listed three. CONTROL was stale,
+SUBJECT was right. Control now lists four (test renamed ..._four_prompts), still exact-match. Reproduced
+red alone on tip; the test file is identical at 2b6fe0f6 where the sheet has 3 prompts (so green there).
+Ran alone (12 passed) and tests/safety/ + walk-census + two routing walk tests (348 passed, 3 skipped).
+Next: Lane 1 re-merges by sha, rolls, then sends the helm revision for the HAZ-1004 walk-census row.
