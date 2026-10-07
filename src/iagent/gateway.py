@@ -8825,7 +8825,10 @@ async def ingest_event(
     case_id = str(identity_value)
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
-    # answered 200 must not be refused 123 ms later where the producer cannot see it.
+    # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
+    # BOTH a first arrival and a repeat below -- `check_intake` is a pure facts/schema check with
+    # no notion of "does a case already exist", so a repeat's facts pass through it unchanged
+    # (the runner's `revise` handler runs the same check itself, via `check_revision`).
     try:
         check_intake(trigger, flatten(facts), case_id, facts=facts)
     except CaseRoutingError as exc:
@@ -8833,10 +8836,104 @@ async def ingest_event(
             status_code=422,
             detail={"error": "payload_refused_by_trigger", "message": str(exc)},
         )
+
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    sha256_hex = hashlib.sha256(
+        json.dumps(req.payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    # REPEAT DETECTION (section B, roll #20 item 4): ask the RUNNER, not only our own status
+    # table -- the first live event on OpenDDIL opened its case before this status seam existed,
+    # so a row-only check would call that case "new" and crash straight into the runner's own
+    # key-reuse refusal. `case` is a shared, no-input handler (workflow_runner.py) that answers
+    # the case record or null; a non-null answer is a repeat.
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            case_resp = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case",
+            )
+    except Exception as exc:  # noqa: BLE001 — unreachable runner; do not guess at the answer
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "message": str(exc)},
+        )
+    if case_resp.status_code != 200:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "code": case_resp.status_code},
+        )
+    existing_case = case_resp.json()
+
+    if existing_case is not None:
+        # A REVISION, not a duplicate: the same event_id, arriving again. Backfill the status
+        # row ONLY when this ingest_id has never been seen here -- the pre-roll case has no row
+        # at all; a row that already exists keeps its own stage (it is not this route's place to
+        # rewrite history for an id it already has an opinion about).
+        existing_row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if existing_row is None:
+            await run_in_threadpool(lambda: ingest_status.record_received(
+                ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+                object_prefix="", submitted_by=current_user.authz_id,
+                on_behalf_of=req.on_behalf_of, source="events",
+                content_kind=req.content_kind,
+            ))
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/revise",
+                    json={"facts": facts},
+                )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "runner_error", "message": str(exc)},
+            )
+        if rr.status_code == 200:
+            return {
+                "ingest_id": ingest_id, "rev": rr.json().get("revision"),
+                "workflow": {"case_id": case_id, "started": False},
+            }
+        if rr.status_code == 400:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "payload_refused_by_trigger",
+                        "message": _restate_refusal_message(rr)},
+            )
+        if rr.status_code in (404, 409):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_not_kept", "message": _restate_refusal_message(rr)},
+            )
+        raise HTTPException(status_code=502, detail={"error": "runner_error"})
+
+    # FIRST ARRIVAL: write the status row BEFORE opening the case -- "no case without its
+    # record" -- so a write failure here must refuse rather than open a case nobody has a
+    # status row for.
+    try:
+        await run_in_threadpool(lambda: ingest_status.record_received(
+            ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+            object_prefix="", submitted_by=current_user.authz_id,
+            on_behalf_of=req.on_behalf_of, source="events",
+            content_kind=req.content_kind,
+        ))
+    except Exception as exc:  # noqa: BLE001 — "no case without its record"
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "status_unavailable", "message": str(exc)},
+        )
+
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id,
     )
+    if started:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
     return {
         "ingest_id": ingest_id, "workflow": {"case_id": case_id, "started": started},
     }
@@ -8893,6 +8990,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "updated_at": row.get("updated_at"),
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
+        "case_id": row.get("case_id"),
     }
 
 

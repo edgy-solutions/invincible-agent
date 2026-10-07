@@ -335,6 +335,21 @@ def test_status_route_passes_through_the_rows_origin_suggestion(client, monkeypa
     assert r.json()["origin_suggestion"] == sugg
 
 
+def test_status_route_includes_case_id_when_present(client, monkeypatch):
+    """Requirement 1 (roll #20 item 4), the status-route half: once a row has moved to
+    case_opened, GET /ingest/{id}/status surfaces case_id -- not just the gateway's own
+    in-process response to the original POST."""
+    monkeypatch.setattr(
+        ist, "get_status_for",
+        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "case_opened",
+                                        "kind": "event", "sha256": "deadbeef",
+                                        "created_at": 1, "updated_at": 2,
+                                        "case_id": "evt-001"})
+    r = client.get("/ingest/deadbeef/status")
+    assert r.status_code == 200
+    assert r.json()["case_id"] == "evt-001"
+
+
 def test_status_of_a_duplicate_row_reports_the_ORIGINALS_current_stage(client, monkeypatch):
     rows = {
         "new-uuid": {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
@@ -496,6 +511,12 @@ def stub_restate_post(monkeypatch):
         def raise_for_status(self):
             if state["fail"]:
                 raise RuntimeError("boom: restate unreachable (stubbed)")
+        def json(self):
+            # Default answer for the events door's repeat-detection lookup
+            # (`WorkflowRunner/{key}/case`): None = "no case yet", i.e. not a repeat. Tests
+            # exercising a repeat replace this fixture's AsyncClient outright (see the events
+            # revision tests below) rather than overloading this one default.
+            return None
 
     class _Client:
         def __init__(self, *a, **k): ...
@@ -644,11 +665,36 @@ def test_ingest_document_kind_starts_no_workflow(
 # trigger's own `requires:` (read from the REAL file via `case_routing.load_trigger`, no env
 # override -- same discipline as tests/test_the_maintenance_fault_runs_as_a_case.py) is the
 # validatable schema; a payload failing it is refused before any case is opened.
+#
+# roll #20 item 4: the door now also (a) writes an ingest_status row (received -> case_opened)
+# around the open, and (b) asks the runner whether `case_id` already exists before opening --
+# so EVERY test below that reaches that point stubs `ist.record_received`/`ist.update_status`
+# (via `_stub_event_status_writes`) and now sees TWO restate POSTs (the `/case` lookup, then
+# `/run/send`), not one.
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_event_status_writes(monkeypatch):
+    """Stand in for the real ingest_status writes the events door now makes around opening a
+    case -- these tests are about the DOOR's own routing/translation (same split
+    test_gateway_ingest_routes.py's own docstring draws for the multipart door), not about
+    ingest_status.py's SQL (covered in tests/test_ingest_status_projection.py)."""
+    received_calls: list[dict] = []
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        ist, "record_received",
+        lambda **kw: received_calls.append(kw) or {"id": kw["ingest_id"], "status": "received"},
+    )
+    monkeypatch.setattr(
+        ist, "update_status",
+        lambda *a, **kw: status_calls.append((a, kw)),
+    )
+    return received_calls, status_calls
+
 
 def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
         client, monkeypatch, stub_restate_post):
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -666,13 +712,22 @@ def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert len(calls) == 1, calls
-    sent = calls[0]
+    # TWO restate calls now: the repeat-detection lookup (`/case`), then `/run/send`.
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    sent = calls[1]
     assert sent["json"]["trigger"] == "maintenance_fault"
     assert sent["json"]["facts"]["asset_id"] == "ASSET-1"
     assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
     assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
     assert body["workflow"]["started"] is True
+    # Requirement 1: first arrival writes received then case_opened with case_id.
+    assert len(received_calls) == 1, received_calls
+    assert received_calls[0]["kind"] == "event"
+    assert len(status_calls) == 1, status_calls
+    args, kw = status_calls[0]
+    assert args[1] == ist.CASE_OPENED
+    assert kw["case_id"] == body["workflow"]["case_id"]
 
 
 def test_ingest_events_the_case_key_is_one_the_runner_accepts(
@@ -684,6 +739,7 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     from urllib.parse import unquote
     from agent_fleet.restate_analyst import case_routing as cr
     calls, _state = stub_restate_post
+    _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -701,8 +757,9 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     })
     # THE CONTRACT (ruled 2026-10-05): 200 with workflow.case_id, never the spec's 202.
     assert r.status_code == 200, r.text
-    assert len(calls) == 1, calls
-    url, sent = calls[0]["url"], calls[0]["json"]
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    url, sent = calls[1]["url"], calls[1]["json"]
     head, sep, tail = url.partition("/WorkflowRunner/")
     assert sep and tail.endswith("/run/send"), url
     key = unquote(tail[: -len("/run/send")])
@@ -720,6 +777,7 @@ def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
     see it. The door now runs the runner's own check_intake first."""
     import copy
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -742,6 +800,9 @@ def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
     assert r.json()["detail"]["error"] == "payload_refused_by_trigger", r.json()
     assert "picture.spares" in r.json()["detail"]["message"], r.json()
     assert calls == [], "a payload the runner refuses reached the workflow-seeding POST"
+    # Requirement 3: every existing 4xx refusal writes no status row.
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_identity_field_and_trigger_key_must_agree(
@@ -749,6 +810,7 @@ def test_ingest_events_identity_field_and_trigger_key_must_agree(
     """Two declarations, two dedupes: the door's (`identity_field`) and the runner's (the
     trigger's `key`). A kind whose two disagree is refused before any case opens."""
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -767,12 +829,15 @@ def test_ingest_events_identity_field_and_trigger_key_must_agree(
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "trigger_unconfigured", r.json()
     assert calls == [], "a kind whose dedupes disagree reached the workflow-seeding POST"
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(
         client, monkeypatch, stub_restate_post):
     import copy
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -796,6 +861,8 @@ def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(
     assert r.status_code == 422, r.text
     assert "fault.fault_code" in r.json()["detail"]["missing"], r.json()
     assert calls == [], "a schema-failing payload reached the workflow-seeding POST"
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_restate_error_still_returns_200_with_started_false(
@@ -805,6 +872,7 @@ def test_ingest_events_restate_error_still_returns_200_with_started_false(
     outage is logged and swallowed, not raised."""
     calls, state = stub_restate_post
     state["fail"] = True
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -821,8 +889,243 @@ def test_ingest_events_restate_error_still_returns_200_with_started_false(
         "payload": _VALID_EVENT_PAYLOAD,
     })
     assert r.status_code == 200, r.text
-    assert len(calls) == 1
+    # calls[0] is the repeat-detection lookup (`.../case`, not a repeat here); calls[1] is
+    # `_open_case`'s own POST, which raise_for_status() turns into the swallowed RuntimeError.
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
     assert r.json()["workflow"]["started"] is False
+    # Requirement 2: the row was written `received` (record_received DID run, before the case
+    # open attempt) but NEVER moved to case_opened -- `_open_case` returning False must leave it
+    # exactly where a reader would expect "not started yet" to leave it.
+    assert len(received_calls) == 1, received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_status_write_failure_refuses_503_and_never_opens_the_case(
+        client, monkeypatch, stub_restate_post):
+    """Requirement 4, "no case without its record": if `record_received` itself raises (status
+    substrate unavailable), the door answers 503 and the case is never opened -- `_open_case`'s
+    own POST (`/run/send`) must never follow the failed write."""
+    calls, _state = stub_restate_post
+
+    def _boom(**kw):
+        raise ist.IngestStatusConfigError("PROJECTOR_POSTGRES_DSN is unset")
+
+    monkeypatch.setattr(ist, "record_received", _boom)
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "status_unavailable", r.json()
+    # Only the repeat-detection lookup ran -- record_received's own failure happens before
+    # `_open_case` would make its own `/run/send` POST, so a second call here would BE
+    # `_open_case` having fired anyway.
+    assert len(calls) == 1, calls
+    assert calls[0]["url"].endswith("/case"), calls
+
+
+def _stub_restate_routed(monkeypatch, *, case_body=None, case_error=None,
+                          revise_status=200, revise_body=None):
+    """A routed stand-in for httpx.AsyncClient, for the repeat-detection tests below: unlike
+    `stub_restate_post` (one answer for every POST), these tests need `/case` and `/revise` to
+    disagree -- e.g. `/case` answers a non-null record (a repeat) while `/revise` answers 409."""
+    calls: list[dict] = []
+
+    class _Resp:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"boom: restate {self.status_code} (stubbed)")
+        def json(self):
+            return self._body
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            calls.append({"url": url, "json": json})
+            if url.endswith("/case"):
+                if case_error is not None:
+                    raise case_error
+                return _Resp(200, case_body)
+            if url.endswith("/revise"):
+                return _Resp(revise_status, revise_body)
+            return _Resp(200, None)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+    return calls
+
+
+def _events_post(client, payload=None):
+    return client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": payload or _VALID_EVENT_PAYLOAD,
+    })
+
+
+def _register_maintenance_fault(monkeypatch):
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+
+
+def test_ingest_events_repeat_calls_revise_not_open_case(client, monkeypatch):
+    """Requirement 5: a non-null `/case` answer is a repeat -- the door calls `revise` with the
+    same facts dict a first arrival would have built, answers 200 with `rev`, and never calls
+    `_open_case` (no `/run/send` POST)."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})  # row already exists
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 2},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rev"] == 2, body
+    assert body["workflow"] == {"case_id": "evt-001", "started": False}, body
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/revise"), calls
+    assert calls[1]["json"] == {"facts": calls[1]["json"]["facts"]}  # shape check
+    assert calls[1]["json"]["facts"]["asset_id"] == "ASSET-1"
+    assert not any(c["url"].endswith("/run/send") for c in calls), \
+        "_open_case must not run on a repeat"
+    # row already existed (get_row stubbed non-None) -- no backfill write on this path.
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_revise_400_is_422_payload_refused(client, monkeypatch):
+    """Requirement 6a: the runner's own check_revision refusal (its `check_intake` reran and
+    failed) surfaces as 422 payload_refused_by_trigger, same vocabulary as a first-arrival
+    refusal."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=400, revise_body={"message": "carries key missing"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "payload_refused_by_trigger", r.json()
+    assert "carries key missing" in r.json()["detail"]["message"], r.json()
+
+
+def test_ingest_events_revise_409_is_409_revision_not_kept(client, monkeypatch):
+    """Requirement 6b: the runner refuses to keep the revision (not the episode holder, or no
+    episode at all) -- surfaced as 409 revision_not_kept, never swallowed as a generic error."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=409, revise_body={"message": "not the episode holder"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "revision_not_kept", r.json()
+
+
+def test_ingest_events_revise_404_is_also_409_revision_not_kept(client, monkeypatch):
+    """A 404 from `revise` (no case/episode at all, despite `/case` having just answered
+    non-null -- a race) maps to the SAME 409 revision_not_kept as a 409, per spec: both are "the
+    revision was not kept", not "not found" (which would mis-imply the repeat detection was
+    wrong)."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=404, revise_body={"message": "no such episode"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "revision_not_kept", r.json()
+
+
+def test_ingest_events_repeat_with_no_row_backfills_received_then_case_opened(
+        client, monkeypatch):
+    """Requirement 7a: a repeat for an ingest_id this seam has never written a row for (the
+    pre-roll case -- the case opened before this status seam existed) backfills
+    received -> case_opened with case_id, same as a first arrival, before calling revise."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: None)  # no row exists yet
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 3},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert r.json()["rev"] == 3, r.json()
+    assert len(received_calls) == 1, received_calls
+    assert received_calls[0]["kind"] == "event"
+    assert len(status_calls) == 1, status_calls
+    args, kw = status_calls[0]
+    assert args[1] == ist.CASE_OPENED
+    assert kw["case_id"] == "evt-001"
+
+
+def test_ingest_events_repeat_with_an_existing_row_leaves_its_stage(client, monkeypatch):
+    """Requirement 7b: a repeat for an ingest_id that already has a row (the ordinary case --
+    the first arrival already moved it to case_opened) leaves that row's stage alone; the door
+    is not the place to rewrite history for an id it already has an opinion about."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id, "status": "case_opened"})
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 4},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert r.json()["rev"] == 4, r.json()
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_case_lookup_failure_is_503_and_opens_nothing(client, monkeypatch):
+    """Requirement 8: the repeat-detection lookup itself failing (Restate unreachable) must not
+    be guessed at either way -- 503 runner_unavailable, no status write, no case open, no
+    revise."""
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_routed(
+        monkeypatch, case_error=RuntimeError("boom: restate unreachable (stubbed)"),
+    )
+    r = _events_post(client)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "runner_unavailable", r.json()
+    assert len(calls) == 1, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 # ─────────────────────────────────────────────────────────────────────────────

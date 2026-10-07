@@ -141,6 +141,60 @@ def test_record_received_defaults_content_kind_to_none_when_undeclared():
     assert row["content_kind"] is None
 
 
+_EVENT_INGEST_ID = "evt-" + "cd" * 32  # gateway.py's own shape: "evt-" + 64 lowercase hex
+
+
+def test_record_received_accepts_kind_event_not_only_pdf_cad():
+    """2026-10-06 (roll #20 item 4): the event branch's `kind` is 'event', not a file format --
+    `record_received`'s own closed-set check (KINDS) is the only gate this value passes
+    through, so KINDS had to widen even though 'event' is not a ContentKind leaf."""
+    cm, conn, _ = _fake_conn()
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        row = ist.record_received(ingest_id=_EVENT_INGEST_ID, sha256="abc123", kind=ist.EVENT,
+                                   object_prefix="", submitted_by="alice@example.com",
+                                   on_behalf_of="alice@example.com", source="events")
+    assert row["kind"] == "event"
+    conn.commit.assert_called_once()
+
+
+def test_record_received_on_conflict_does_nothing_and_returns_the_existing_row():
+    """ON CONFLICT (id) DO NOTHING (roll #20 item 4): a repeat POST /ingest/events for an
+    event_id that already has a row must not crash on the primary key -- it must leave the
+    existing row alone and return WHAT IS ACTUALLY THERE (including its case_id), never the
+    attempted-but-not-written dict."""
+    existing = {
+        "id": _EVENT_INGEST_ID, "sha256": "abc123", "kind": "event", "object_prefix": "",
+        "submitted_by": "alice@example.com", "on_behalf_of": "alice@example.com",
+        "source": "events", "status": "case_opened", "extracted_count": None,
+        "extracted_total": None, "duplicate_of": None, "detail": None,
+        "created_at": 1, "updated_at": 2, "content_kind": None, "case_id": "evt-001",
+    }
+    cm, conn, cur = _fake_conn()
+    # rowcount == 0 is how the code detects "ON CONFLICT DO NOTHING actually fired"; the second
+    # cursor (RealDictCursor, opened only on conflict) is what the positive-controlled fetch
+    # below exercises. record_received's own code does `cur2 = conn.cursor(...); with cur2:
+    # cur2.execute(...)` -- i.e. the SECOND conn.cursor() call's return value is used directly
+    # as the context manager AND as the thing .execute/.fetchone are called on (unlike the
+    # first conn.cursor() call, used as `with conn.cursor() as cur:`) -- so cur2 itself, a
+    # MagicMock (which supports __enter__/__exit__ out of the box), is what goes in the second
+    # slot below, never a separate context-manager wrapper around it.
+    cur.rowcount = 0
+    cur2 = mock.MagicMock()
+    cur2.fetchone.return_value = existing
+    first_cm = mock.MagicMock()
+    first_cm.__enter__ = mock.Mock(return_value=cur)
+    first_cm.__exit__ = mock.Mock(return_value=False)
+    conn.cursor.side_effect = [first_cm, cur2]
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        row = ist.record_received(ingest_id=_EVENT_INGEST_ID, sha256="abc123", kind=ist.EVENT,
+                                   object_prefix="", submitted_by="alice@example.com",
+                                   on_behalf_of="alice@example.com", source="events")
+    assert row["id"] == _EVENT_INGEST_ID
+    assert row["status"] == "case_opened", "the row ACTUALLY there, not the attempted 'received'"
+    assert row["case_id"] == "evt-001"
+    conn.commit.assert_called_once()
+
+
 # ===========================================================================
 # record_duplicate_arrival -- the caller-facing message shape (ADR-0041 §8's exact wording)
 # ===========================================================================
@@ -201,7 +255,10 @@ def test_the_stage_vocabulary_matches_the_sdk_directly():
 
 
 def test_duplicate_stays_out_of_band():
-    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE,)
+    # 2026-10-06 (roll #20 item 4): CASE_OPENED joins DUPLICATE out-of-band, for the same
+    # reason -- STAGES stays byte-for-byte the SDK's INGEST_STAGES (the seal above), so the
+    # event branch's own next-step status lives in ALL_STATUSES only.
+    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE, ist.CASE_OPENED)
 
 
 # ===========================================================================
@@ -237,6 +294,29 @@ def test_update_status_refuses_an_unknown_stage():
         pg.assert_not_called()
 
 
+def test_update_status_accepts_case_opened_and_writes_the_case_id():
+    """Requirement 9 (roll #20 item 4): case_opened is a legal update_status target (it is in
+    ALL_STATUSES though not in STAGES), and `case_id` rides along in the SAME write, COALESCEd
+    like detail/extracted_count so a later stage move never has to restate it."""
+    cm, conn, cur = _fake_conn()
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        ist.update_status(_INGEST_ID, ist.CASE_OPENED, case_id="evt-001")
+    conn.commit.assert_called_once()
+    sql, params = cur.execute.call_args[0][0], cur.execute.call_args[0][1]
+    assert "case_id = COALESCE(%s, case_id)" in sql, f"SQL was: {sql}"
+    assert params[0] == "case_opened"
+    assert "evt-001" in params
+
+
+def test_update_status_still_refuses_an_unknown_stage_after_case_opened_was_added():
+    """Positive control for the test above: widening ALL_STATUSES to admit case_opened must not
+    have widened it to admit everything -- an unrecognized stage name is still refused."""
+    with mock.patch.object(ist, "_pg_connect") as pg:
+        with pytest.raises(ValueError):
+            ist.update_status(_INGEST_ID, "case_closed", detail="x")
+        pg.assert_not_called()
+
+
 # ===========================================================================
 # get_status_for -- existence-oracle-safe caller scoping (mirrors
 # test_resolution_lookup_is_caller_scoped_not_an_existence_oracle exactly)
@@ -248,6 +328,18 @@ def test_get_status_for_owner_gets_the_row():
     with mock.patch.object(ist, "_pg_connect", return_value=cm):
         out = ist.get_status_for("abc123", caller_id="alice@example.com")
     assert out["status"] == "received"
+
+
+def test_get_status_for_includes_case_id_when_present():
+    row = {"id": "evt-001-row", "sha256": "abc123", "kind": "event", "status": "case_opened",
+           "submitted_by": "alice@example.com", "on_behalf_of": "alice@example.com",
+           "case_id": "evt-001"}
+    cm, _, cur = _fake_conn(row)
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        out = ist.get_status_for("evt-001-row", caller_id="alice@example.com")
+    assert out["case_id"] == "evt-001"
+    sql = cur.execute.call_args[0][0]
+    assert "case_id" in sql, f"SQL was: {sql}"
 
 
 def test_get_status_for_non_owner_gets_none_not_another_users_row():
