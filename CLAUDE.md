@@ -100,6 +100,12 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
 - **Every commit needs a `Lane: <worktree-dir>/<branch>` trailer**, or `.githooks/pre-push`
   refuses the push (R-058). Derive it, don't type it: basename of `git rev-parse --show-toplevel`,
   then `git branch --show-current`. Add it with `git commit --trailer`.
+- **Only the owning lane commits in this repo; packets are placed, never committed, by anyone
+  else.** Another repo's lane drops its packet into `sessions/` and leaves it untracked (or
+  staged); the owning lane reads it and commits it with its own work.
+- **Print a length and a hash prefix, never a secret value.** To show that a token, password
+  or key is present or matches, print `len` and the first 8 hex of its sha256 — never the
+  value, and never decode a Secret's data into the transcript.
 - **Never commit infra detail** (IPs, Pi-hole, kube contexts) — that is what the out-of-repo
   handoff log is for.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
