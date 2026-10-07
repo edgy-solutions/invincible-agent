@@ -131,6 +131,16 @@ users:
       persona: MECHANIC
       domains: [AVIATION]
 
+  # ── OpenDDIL principals (no credentials) ────────────────────────────
+  # Mirrored as a non-interactive Keycloak user (values-sandbox.yaml keycloak.nonInteractiveUsers)
+  # when OpenDDIL's client registration landed, 2026-10-02. Seeded here only so a task audience
+  # can name it: validate_policy refuses a grant_to that is not in this file. It never signs in,
+  # never opens the picker, and so carries no `groups` and no `default` persona/domain cell;
+  # its only entitlement is the document_promotion:MAINTENANCE audience in task_grants.yaml.
+  - id: liaison@example.com
+    display_name: Liaison (OpenDDIL principal - MAINTENANCE document reviewer)
+    groups: []
+
   # ── Service identities (non-human subjects) ─────────────────────────
   # A service identity is a SUBJECT in the entitlement model exactly like
   # a human — seeded here so its grants carry the same git-blame audit

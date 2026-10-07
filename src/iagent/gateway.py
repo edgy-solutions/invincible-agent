@@ -8560,6 +8560,7 @@ async def ingest_document(
                 on_behalf_of=on_behalf_of,
                 source=file.filename,
                 original=existing,
+                content_kind=declared_content_kind,
             )
         )
         return {
@@ -8626,7 +8627,7 @@ async def ingest_document(
         lambda: ingest_status.record_received(
             ingest_id=ingest_id, sha256=sha256, kind=kind, object_prefix=object_prefix,
             submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
-            source=file.filename,
+            source=file.filename, content_kind=declared_content_kind,
         )
     )
     # BEST-EFFORT node creation (ruled 2026-09-30): the bytes, manifest and status row above are
@@ -8929,8 +8930,13 @@ async def update_ingest_stage(
 
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
-    carrying the ingest_id, the kind's declared domain (content_kinds.by_kind on the row's own
-    `kind`) and the original dropper (`dropped_by`, from the row's `submitted_by`).
+    carrying the ingest_id, the DECLARED content kind's domain (content_kinds.by_kind on the
+    row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad) and the
+    original dropper (`dropped_by`, from the row's `submitted_by`). TASK FIRST, STATUS SECOND:
+    for `review`, the task is filed (or found ALREADY_FILED) before `update_status` runs, so a
+    422/503 refusal from the task step (no declared domain, no entitled recipients, no
+    requester, HITL unconfigured) leaves the row exactly where it was -- never stranded at
+    `review` with no task and no way back (a retry on a row already at `review` is 409).
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -8980,18 +8986,30 @@ async def update_ingest_stage(
                 "error": "backwards_move", "from": current_stage, "to": req.stage,
             })
 
-    try:
-        await run_in_threadpool(lambda: ingest_status.update_status(
-            ingest_id, req.stage, extracted_count=req.extracted_count,
-            extracted_total=req.extracted_total, detail=req.detail))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
-
     task_id = None
     task_status = None
     if req.stage == ingest_status.REVIEW:
-        kind_reg = content_kinds.by_kind(row["kind"])
-        domain = kind_reg.domain if kind_reg is not None else None
+        # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
+        # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
+        # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
+        # registry, resolves to a None domain, and files a task no one can be entitled to.
+        kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+        if domain is None:
+            # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write. Writing
+            # update_status first and only then discovering there is no entitled audience
+            # strands the row at `review` with no task and no way back (a retry is 409).
+            raise HTTPException(status_code=422, detail={
+                "error": "no_declared_domain",
+                "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
+                           "which resolves to no registered domain -- refusing to open a "
+                           "promotion task with no audience.",
+            })
+        # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain (the same value the
+        # door writes into manifest.domain_type and doc-tools uses), but the Topaz grant key in
+        # policy/task_grants.yaml is UPPERCASE (document_promotion:SUSTAINMENT) -- uppercase it
+        # for both the audience and the payload so the resolved domain actually matches a grant.
+        domain = domain.upper()
         audience = f"{promotion.KIND}:{domain}"
         task_id = f"{promotion.KIND}:{ingest_id}"
         if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
@@ -9013,6 +9031,17 @@ async def update_ingest_stage(
             except human_tasks.NoRequester as exc:
                 raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
             task_status = "FILED"
+
+    # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
+    # everything above either raised (nothing written) or produced a resolvable audience; only
+    # now does the row actually move, so a 422/503 above never strands the row at `review` with
+    # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
+    try:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, req.stage, extracted_count=req.extracted_count,
+            extracted_total=req.extracted_total, detail=req.detail))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
 

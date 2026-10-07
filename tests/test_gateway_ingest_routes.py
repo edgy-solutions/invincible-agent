@@ -906,14 +906,21 @@ def test_ingest_origin_resolver_failure_still_returns_200(
 # POST /ingest/{ingest_id}/stage -- doc-tools' own write into the stage ladder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _stub_domain(monkeypatch, domain="SUSTAINMENT"):
+def _stub_domain(monkeypatch, domain="sustainment", expected="pcn"):
+    """Stubs `content_kinds.by_kind` to answer ONLY for `expected` -- a stub that answers for
+    every argument (the old `lambda kind: reg`, ignoring its own parameter) is why the
+    `by_kind(row["kind"])` defect passed every existing test: `row["kind"]` is the file format
+    (`pdf`), never a registered content kind, so a stub that cannot tell the difference can
+    never red that call. `domain` is lowercase -- the SAME casing a real registration carries
+    (the pipeline's `domain_type`); the route itself is responsible for uppercasing it to match
+    the Topaz grant key."""
     reg = type("Reg", (), {"domain": domain})()
-    monkeypatch.setattr(ck, "by_kind", lambda kind: reg)
+    monkeypatch.setattr(ck, "by_kind", lambda kind: reg if kind == expected else None)
 
 
 def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "a" * 64, "status": "received", "kind": "pdf",
-          "submitted_by": "alice@example.com"}
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     calls = []
     monkeypatch.setattr(ist, "update_status",
@@ -932,7 +939,7 @@ def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
 
 def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "b" * 64, "status": "extracting", "kind": "pdf",
-          "submitted_by": "alice@example.com"}
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
     _stub_domain(monkeypatch)
@@ -956,7 +963,7 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
 
 def test_stage_repeat_review_opens_none(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "c" * 64, "status": "extracting", "kind": "pdf",
-          "submitted_by": "alice@example.com"}
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
     _stub_domain(monkeypatch)
@@ -967,6 +974,94 @@ def test_stage_repeat_review_opens_none(doc_tools_client, monkeypatch):
     assert r.status_code == 200, r.text
     assert registered == []
     assert r.json()["task_status"] == "ALREADY_FILED"
+
+
+def test_stage_review_resolves_domain_from_content_kind_never_from_file_format(
+        doc_tools_client, monkeypatch):
+    """MUTANT (review-audience fix): `content_kinds.by_kind(row["kind"])` instead of
+    `row["content_kind"]` reds this -- `calls` would carry `"pdf"`, and `by_kind` would be
+    asked about a value it never answers for (the recording stub below answers for nothing),
+    so the review would 422 `no_declared_domain` instead of 200."""
+    row = {"id": "sha256:" + "f" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
+    calls = []
+
+    def _recording_by_kind(kind):
+        calls.append(kind)
+        reg = type("Reg", (), {"domain": "sustainment"})()
+        return reg if kind == "pcn" else None
+    monkeypatch.setattr(ck, "by_kind", _recording_by_kind)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    monkeypatch.setattr(ht, "register_task",
+                        lambda **kw: {"task_id": kw["task_id"], "recipients": ["x"]})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert "pcn" in calls, calls
+    assert "pdf" not in calls, calls
+
+
+def test_stage_review_undeclared_content_kind_refuses_and_writes_nothing(
+        doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "g" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": None, "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: status_calls.append((a, kw)))
+    monkeypatch.setattr(ck, "by_kind", lambda kind: None)
+    task_calls = []
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: task_calls.append(task_id) or False)
+    registered = []
+    monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "no_declared_domain"
+    assert status_calls == [], "a 422 with no declared domain must write nothing"
+    assert task_calls == [], "no task lookup once there is no domain to resolve"
+    assert registered == []
+
+
+def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client, monkeypatch):
+    """The row must NOT be stranded at `review` with no task: a 422 from register_task must
+    leave update_status uncalled, so a retry sees the ORIGINAL stage (409, not a second 422
+    against a row already moved)."""
+    row = {"id": "sha256:" + "h" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: status_calls.append((a, kw)))
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+
+    def _boom(**kw):
+        raise ht.NoEntitledRecipients("no recipients for audience (stubbed)")
+    monkeypatch.setattr(ht, "register_task", _boom)
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "no_entitled_recipients"
+    assert status_calls == [], "update_status must not run when register_task refuses"
+
+
+def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypatch):
+    """TASK FIRST, STATUS SECOND (review-audience fix): record call order in one list so a
+    regression that reorders these back -- update_status before register_task -- reds this
+    exact fragment."""
+    row = {"id": "sha256:" + "i" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "pcn", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    order: list[str] = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: order.append("update_status"))
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+
+    def _register(**kw):
+        order.append("register_task")
+        return {"task_id": kw["task_id"], "recipients": ["x"]}
+    monkeypatch.setattr(ht, "register_task", _register)
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert order == ["register_task", "update_status"], order
 
 
 def test_stage_non_doc_tools_caller_gets_403(client, monkeypatch):
@@ -989,3 +1084,94 @@ def test_stage_backwards_move_gets_409(doc_tools_client, monkeypatch):
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "extracting"})
     assert r.status_code == 409, r.text
     assert calls == [], "a backwards move must write nothing"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /ingest -- content_kind travels to the row, not only to the S3 manifest
+# (review-audience fix, 2026-10-06)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_ingest_declared_content_kind_reaches_record_received(client, fake_s3, fake_create_node, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    recorded = []
+
+    def _record_received(**kw):
+        recorded.append(kw)
+        return {"id": kw["ingest_id"], "status": "received"}
+    monkeypatch.setattr(ist, "record_received", _record_received)
+    r = client.post("/ingest", files={"file": ("f.pdf", b"declared pcn bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "pcn"})
+    assert r.status_code == 200, r.text
+    assert len(recorded) == 1, recorded
+    # MUTANT (review-audience fix): dropping `content_kind=declared_content_kind` from the
+    # record_received call reds this exact fragment.
+    assert recorded[0]["content_kind"] == "pcn", recorded[0]
+
+
+def test_ingest_undeclared_drop_passes_none_content_kind_to_record_received(
+        client, fake_s3, fake_create_node, monkeypatch):
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    recorded = []
+
+    def _record_received(**kw):
+        recorded.append(kw)
+        return {"id": kw["ingest_id"], "status": "received"}
+    monkeypatch.setattr(ist, "record_received", _record_received)
+    r = client.post("/ingest", files={"file": ("f.pdf", b"undeclared bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    assert len(recorded) == 1, recorded
+    assert recorded[0]["content_kind"] is None, recorded[0]
+
+
+def test_ingest_duplicate_arrival_passes_content_kind_to_record_duplicate_arrival(
+        client, fake_s3, fake_create_node, monkeypatch):
+    existing = {"id": "sha256:" + "z" * 64, "object_prefix": "ingress-user/pdf/dup/",
+                "status": "received", "created_at": 1785000000000, "source": "orig.pdf"}
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: existing)
+    recorded = []
+
+    def _record_dup(**kw):
+        recorded.append(kw)
+        return {"id": "dup-id", "detail": "already processed"}
+    monkeypatch.setattr(ist, "record_duplicate_arrival", _record_dup)
+    r = client.post("/ingest", files={"file": ("f.pdf", b"dup-content-bytes", "application/pdf")},
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com",
+                          "content_kind": "pcn"})
+    assert r.status_code == 200, r.text
+    assert len(recorded) == 1, recorded
+    assert recorded[0]["content_kind"] == "pcn", recorded[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The REAL composed registry (policy/overlays/openddil-lab/content_kinds) -- no stub, reads
+# the actual files this deployment ships, and cross-checks against the actual
+# policy/task_grants.yaml so a kind/grant-key mismatch is caught here rather than live.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_real_overlay_registry_resolves_pcn_pdn_s1000d_and_has_a_matching_grant(monkeypatch):
+    import os
+    from pathlib import Path
+
+    import yaml
+
+    from src.iagent import content_kinds as real_ck
+
+    repo_root = Path(__file__).resolve().parents[1]
+    overlay_dir = repo_root / "policy" / "overlays" / "openddil-lab" / "content_kinds"
+    # monkeypatch reverts both the cache and the env var to their pre-test values on teardown --
+    # "before and after" is the setattr/setenv call itself plus that automatic revert.
+    monkeypatch.setattr(real_ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(overlay_dir))
+    assert real_ck.by_kind("pcn").domain == "sustainment"
+    assert real_ck.by_kind("pdn").domain == "sustainment"
+    assert real_ck.by_kind("s1000d-data-module").domain == "maintenance"
+
+    grants_path = repo_root / "policy" / "task_grants.yaml"
+    grants_doc = yaml.safe_load(grants_path.read_text(encoding="utf-8"))
+    audiences = grants_doc["audiences"]
+    # the uppercased pcn/pdn domain (what the route now produces as `domain.upper()`) must be a
+    # key doc-tools' review actually resolves a recipient against -- a kind with no matching
+    # grant key here has no recipient and 422s at review time.
+    assert "document_promotion:SUSTAINMENT" in audiences, sorted(audiences)
