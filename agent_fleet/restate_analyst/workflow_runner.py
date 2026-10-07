@@ -355,7 +355,10 @@ async def signal(ctx: WorkflowSharedContext, request: dict) -> dict:
         raise restate.TerminalError(
             f"signal {name!r} answered {status!r} needs a reason (the definition's "
             "`reason_required`); the case carries it onto the next hop", status_code=400)
-    acted_by = await m._authorize_resolution(ctx, name, request.get("acted_by"))
+    # R-089: no caller sends `acted_via` into a signal today (it answers a system, not a
+    # delegated human act), but the field is wired through so the one authority gate stays
+    # one enforcement point rather than drifting between its two callers.
+    acted_by = await m._authorize_resolution(ctx, name, request.get("acted_by"), request.get("acted_via"))
     await ctx.promise(name, type_hint=dict).resolve(
         {"status": status, "comments": request.get("comments", ""), "acted_by": acted_by})
     return {"signal": name, "status": status}

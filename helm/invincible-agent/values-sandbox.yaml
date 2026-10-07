@@ -461,8 +461,9 @@ keycloak:
   # OpenDDIL's delegate client (2026-10-02), "Model Y": an external workload like doc-tools —
   # a separate release, credential created here because the realm lives here. It authenticates
   # AS ITSELF (kind: delegate), never as the three principals above; those are RECORDED in
-  # onBehalfOf, not verified this pass (R-089) — a DECLARATION only, this commit: nothing in
-  # the BFF consumes onBehalfOf yet.
+  # onBehalfOf, not verified this pass (R-089). configmap.yaml renders it as
+  # DELEGATE_ON_BEHALF_OF; the BFF's /human_tasks/{id}/act reads it to let this client act for
+  # exactly these principals, can_act asked of the principal, the delegate recorded as acted_via.
   # Declared here, in extraServiceClients, rather than the base values.yaml serviceClients:
   # onBehalfOf's referential check requires its users to be in THIS environment's
   # nonInteractiveUsers, so the base chart would otherwise fail to render on its own.

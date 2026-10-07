@@ -650,6 +650,11 @@ class HumanTaskActRequest(_BaseModel):
     # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
     # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
     overrides: Optional[dict] = None
+    # R-089: the PRINCIPAL a delegate caller asserts it is acting for. iagent RECORDS this
+    # claim and does not verify it this pass (the ruling's own words) — trusted only because
+    # DELEGATE_ON_BEHALF_OF (deploy configuration) says this caller may speak for this
+    # principal. Absent, or equal to the caller's own authz_id, is the unchanged person path.
+    on_behalf_of: Optional[str] = None
 
 
 class AccessRequestRequest(_BaseModel):
@@ -2822,6 +2827,34 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+def _delegate_principals() -> dict[str, frozenset[str]]:
+    """R-089: the asserted delegate -> {principal authz_ids} map, read fresh from
+    DELEGATE_ON_BEHALF_OF (deploy configuration, see helm configmap.yaml) ON EVERY CALL — never
+    cached at import time — so a test can monkeypatch.setenv and so a chart re-render is live
+    without a process restart.
+
+    Unset or blank is `{}` (no delegate may act for anyone). Malformed JSON or the wrong shape
+    is logged and answered as `{}` too: FAILS CLOSED, because an unreadable map must refuse
+    every delegated act rather than guess. This never raises — a parse failure here must not
+    become a 500 for a caller who never asked to delegate."""
+    raw = os.environ.get("DELEGATE_ON_BEHALF_OF")
+    if not raw or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"DELEGATE_ON_BEHALF_OF is a {type(parsed).__name__}, not an object")
+        out: dict[str, frozenset[str]] = {}
+        for k, v in parsed.items():
+            if not isinstance(k, str) or not isinstance(v, list) or not all(isinstance(e, str) for e in v):
+                raise ValueError(f"DELEGATE_ON_BEHALF_OF[{k!r}] is not a list of strings")
+            out[k] = frozenset(v)
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail closed, never raise out of this helper
+        logger.error("DELEGATE_ON_BEHALF_OF unreadable, failing closed (no delegate can act): %s", exc)
+        return {}
+
+
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
@@ -2867,16 +2900,39 @@ async def act_on_human_task(
     foundation validates the gate + resolution bookkeeping."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
+
+    # R-089: `on_behalf_of` is ASSERTED, not verified, this pass — the ruling's own words. This
+    # runs FIRST, before any lookup, so a refused delegation never leaks whether the task_id
+    # exists, who its audience is, or anything else. `actor` is who the gate (`check_can_act`,
+    # the lookups, the resolution, the resume) is about; `via` is who authenticated, carried
+    # only so it can be recorded, never asked `can_act`. An `on_behalf_of` equal to the caller's
+    # own authz_id is the unchanged, non-delegated path.
+    actor = current_user.authz_id
+    via: Optional[str] = None
+    if req.on_behalf_of and req.on_behalf_of != current_user.authz_id:
+        delegates = _delegate_principals()
+        if current_user.authz_id not in delegates:
+            raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
+        if req.on_behalf_of not in delegates[current_user.authz_id]:
+            raise HTTPException(status_code=403, detail={
+                "error": "principal_not_declared_for_delegate",
+                "delegate": current_user.authz_id,
+                "on_behalf_of": req.on_behalf_of,
+            })
+        actor = req.on_behalf_of
+        via = current_user.authz_id
+
     # NB the verb is validated PER KIND below, once the task's kind is known — not against a
     # hardcoded pair here. A triage task ("this notice could not be prepared") accepts
     # acknowledge/re-drive and must REFUSE approve/reject, because storing "approved" on an
     # extraction failure writes a decision the task's semantics cannot represent, and
     # ADR-0034's decision records would archive it immutably as promotion evidence.
     # Look up the task's audience (from any of the caller's recipient rows) to
-    # re-check. Keyed on authz_id — same as the replication filter.
+    # re-check. Keyed on authz_id — same as the replication filter. ON THE ACTOR
+    # (the principal, for a delegated act; R-089): the delegate itself holds no audience row.
     try:
         rows = await run_in_threadpool(
-            lambda: human_tasks.list_tasks_for(current_user.authz_id, status="pending")
+            lambda: human_tasks.list_tasks_for(actor, status="pending")
         )
     except human_tasks.HumanTaskConfigError:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
@@ -2892,7 +2948,7 @@ async def act_on_human_task(
         # is scoped to recipient_id = caller, so it can never become an existence
         # oracle for another audience's queue; a non-recipient still gets 404.
         settled = await run_in_threadpool(
-            lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+            lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
         )
         if settled and settled.get("status") != "pending":
             raise HTTPException(status_code=409, detail={
@@ -2906,9 +2962,24 @@ async def act_on_human_task(
             })
         raise HTTPException(status_code=404, detail={"error": "task_not_found"})
     audience = match["audience"]
-    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
+    # can_act is asked about the ACTOR (the principal for a delegated act; R-089) — NEVER about
+    # the delegate. A delegate speaks only as far as the principal it names is itself entitled.
+    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+
+    if via is not None:
+        # R-089: a delegated act is supported ONLY for a workflow-backed resume whose kind is
+        # neither document_promotion nor grouped_review — AFTER the authz check above, BEFORE
+        # any write below. Those two branches build stores (document_promotion: the decision
+        # record/ledger/graph/objects via `_promotion_stores`) or grants (grouped_review: the
+        # GroupedReview.submit_decision call) AS THE PERSON, and are out of scope for this pass.
+        # access_request too: its fulfilment below writes a reader grant whose `granted_by` is
+        # the authenticated caller, so a delegated act would grant in the DELEGATE's name.
+        if not match.get("workflow_id") or match.get("kind") in (
+                "document_promotion", "grouped_review", "access_request"):
+            raise HTTPException(status_code=409, detail={
+                "error": "delegated_act_unsupported", "kind": match.get("kind")})
 
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
@@ -2976,11 +3047,11 @@ async def act_on_human_task(
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment))
         logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
-                    current_user.authz_id)
+                    actor)
 
         # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
         # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
@@ -3092,7 +3163,7 @@ async def act_on_human_task(
             # deterministic boolean). Same shape as the pre-submit 409 above, so the UI
             # has ONE conflict outcome to handle regardless of which path detected it.
             settled = await run_in_threadpool(
-                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
             ) or {}
             raise HTTPException(status_code=409, detail={
                 "error": "task_already_resolved",
@@ -3116,12 +3187,12 @@ async def act_on_human_task(
         # rows — the request would appear to succeed while the task stayed pending forever.
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment, workflow_id=wf,
             )
         )
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
-                    task_id, wf, current_user.authz_id, sub.get("resolved_count"))
+                    task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
@@ -3193,18 +3264,23 @@ async def act_on_human_task(
                     f"{_RESTATE_INGRESS_URL}/{service}/{_restate_key(match['workflow_id'])}/approve",
                     # `acted_by` is REQUIRED by the handler as of approval-bypass-bpmn-runner:
                     # it re-checks can_act itself rather than trusting that this gate ran.
-                    # Threaded from `current_user.authz_id` — the identity can_act was just
-                    # checked against above — so the handler re-asks the same question about
-                    # the same subject and must reach the same answer. Omitting it here would
-                    # turn the ONE correctly-gated path into the only refused one.
+                    # Threaded from `actor` (R-089: the PRINCIPAL, for a delegated act — the
+                    # identity can_act was just checked against above) — so the handler
+                    # re-asks the same question about the same subject and must reach the
+                    # same answer. Omitting it here would turn the ONE correctly-gated path
+                    # into the only refused one.
                     #
                     # `promise_name` rides the row (set by `_register_human_task` for a
                     # definition-driven step) so the handler resolves the promise THIS run is
                     # actually awaiting rather than guessing `approval_{task_id}` — None for
                     # legacy rows, which is the handler's own documented default.
+                    #
+                    # `acted_via` (R-089) is added ONLY when this act is delegated — a plain
+                    # person's payload stays byte-identical to today's.
                     json={"task_id": task_id, "status": status, "comments": req.comment,
-                          "acted_by": current_user.authz_id,
-                          "promise_name": match.get("promise_name")},
+                          "acted_by": actor,
+                          "promise_name": match.get("promise_name"),
+                          **({"acted_via": via} if via is not None else {})},
                 )
             resumed = rr.status_code == 200
         except Exception as exc:  # noqa: BLE001 — network/timeout; reported below, not swallowed
@@ -3216,7 +3292,7 @@ async def act_on_human_task(
             # so. Check for a teammate's settle first (the same multiplayer race the pre-lookup
             # 409 above already accounts for) before reporting a resume failure.
             settled = await run_in_threadpool(
-                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
             )
             if settled and settled.get("status") != "pending":
                 raise HTTPException(status_code=409, detail={
@@ -3245,19 +3321,21 @@ async def act_on_human_task(
         # `_register_human_task`'s composite task_id now closes at the write end too).
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment, workflow_id=match["workflow_id"],
             )
         )
     else:
         # NO WORKFLOW_ID -> NO SUSPENDED DEFINITION. Today's direct-resolve behaviour, unchanged.
+        # (A delegated act never reaches here — it is refused above, since the 409 check
+        # requires a workflow_id.)
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+                task_id, caller_id=actor, decision=req.decision, comment=req.comment
             )
         )
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
-                task_id, current_user.authz_id, req.decision, n)
+                task_id, actor, req.decision, n)
 
     # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
     # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
