@@ -1597,6 +1597,30 @@ services:
           the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
           ingest" — never a 403 that would confirm another caller's upload exists.
       - method: POST
+        path: /ingest/{ingest_id}/retry
+        identity: keycloak-jwt
+        gate: "get_current_user + the status route's own scoping (submitted_by OR on_behalf_of = caller); a stranger and a missing row get the identical 404"
+        exposes: action
+        consumers: [ingestion seam UI (ADR-0041 §8), the dropper un-stranding their own row]
+        class: gated
+        justification: >-
+          The dropper's own retry (roll #20). The visibility rule and the 404 are the status
+          route's, so this adds no new existence oracle. The only effect is re-running the
+          find-or-file of the document_promotion task, and only for a row already at review.
+          Terminal rows, event rows at received and documents still in doc-tools' pipeline are
+          refused 409 and nothing is written.
+      - method: GET
+        path: /cases/{case_id}
+        identity: keycloak-jwt
+        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; otherwise the identical 404"
+        exposes: gated-content
+        consumers: [cortex-ui case view (WorkflowCasePayload)]
+        class: gated
+        justification: >-
+          Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
+          case and one the caller may not read answer the same 404. A runner that cannot be
+          reached is a different fact and answers 503 runner_unavailable, not 404.
+      - method: POST
         path: /ingest/events
         identity: keycloak-jwt
         gate: "get_current_user + on_behalf_of must equal the caller's own authz_id; content_kind must be registered with branch == event (else 422)"
