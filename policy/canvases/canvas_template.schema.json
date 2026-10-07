@@ -41,6 +41,19 @@
           "title": "Slots",
           "type": "object"
         },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The verb's INPUT CLASS, full IRI form (e.g. `http://invincible-agent/fin#Program`) \u2014 exactly the string `find_compatible_verbs`/`dispatch_pre_resolved` compare as `subject_uri`, and exactly the producing engine's own VERBS catalogue `input_uri` for this verb. THE TEMPLATE DECLARES IT; nothing here looks it up. A seed_panel turn reads this field directly as `subject_uri` \u2014 the mesh still CONFIRMS it on every dispatch via `find_compatible_verbs`, so a stale or wrong declaration fails visibly (FALL_BACK) rather than silently routing. Unset on a panel that cannot be dispatched directly from a seed (e.g. portfolio's panels).",
+          "title": "Subject"
+        },
         "verb": {
           "description": "Prefixed verb IRI, e.g. `mesh:planCostCurve`. Dispatched through the stage-2 structural gate, never the classifier.",
           "pattern": "^[a-zA-Z][a-zA-Z0-9_]*:[A-Za-z][A-Za-z0-9_]*$",
@@ -70,6 +83,19 @@
           "minLength": 1,
           "title": "Name",
           "type": "string"
+        },
+        "param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The verb PARAMETER this slot binds as, when it differs from `name`. `program_finance` asks about `program` but every one of its six verbs takes `program_id` \u2014 `name` is the ASK's identity (what \u00a73.1 offers one menu for), `param` is the DISPATCH identity (what the verb's signature spells). None means they are the same word.",
+          "title": "Param"
         },
         "required": {
           "default": true,

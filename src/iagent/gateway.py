@@ -2355,6 +2355,99 @@ async def seed_portfolio_canvas(
     }
 
 
+async def seed_template_canvas(
+    template: "CanvasTemplate",
+    bindings: dict,
+    request: "CanvasSeedRequest",
+    http_request: Request,
+    current_user: User,
+):
+    """Seed every panel of a RATIFIED, NON-PORTFOLIO template through its own declared verb.
+
+    Mirrors `seed_portfolio_canvas` on purpose — sequential (never gathered), slot-aligned
+    `artifact_ids` with null holes on a failed panel, the same SSE success detection — but it
+    never builds a phrase. Each panel already names its verb and its slots (ADR-0050 §2); this
+    function's only job is to hand `/interview/stream` the panel's INDEX and the caller's
+    `bindings` as `seed_panel`, so the stream rebuilds the dispatch route from the TEMPLATE'S
+    own declaration, never from whatever `message` says. `message` here is a label for logs and
+    traces — never parsed, never classified.
+    """
+    auth = http_request.headers.get("Authorization", "")
+    base = "http://localhost:8090"
+    session_id = "canvas-seed-" + uuid.uuid4().hex[:8]
+    frontend_id = "cortex-ui-desktop"
+    bound_desc = ", ".join(f"{k}={v}" for k, v in bindings.items())
+
+    results: list = []
+    artifact_ids: list = [None] * len(template.panels)
+
+    for i, panel in enumerate(template.panels):
+        artifact_id = (
+            "urn:li:answerArtifact:" + session_id + "-seed" + str(i) + "-" + uuid.uuid4().hex[:8]
+        )
+        started = time.time()
+        payload = {
+            "message": f"Seed panel {i} of {template.template_id}: {panel.verb} for {bound_desc}",
+            "session_id": session_id + "-seed" + str(i),
+            "frontend_id": frontend_id,
+            "artifact_id": artifact_id,
+            "active_persona": request.active_persona,
+            "active_domains": request.active_domains,
+            "seed_panel": {"template_id": template.template_id, "panel": i, "bindings": bindings},
+        }
+        status = "failed"
+        detail = None
+        try:
+            # SEQUENTIAL BY CONSTRUCTION, same reason as `seed_portfolio_canvas`: gathering
+            # these would be one line and would deadlock the run queue.
+            async with httpx.AsyncClient(timeout=900.0) as client:
+                async with client.stream(
+                    "POST",
+                    base + "/interview/stream",
+                    json=payload,
+                    headers={"Authorization": auth} if auth else {},
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = "HTTP " + str(resp.status_code)
+                    else:
+                        saw_final = False
+                        saw_error = False
+                        async for line in resp.aiter_lines():
+                            if line.startswith("event: final_payload"):
+                                saw_final = True
+                            elif line.startswith("event: pipeline_error"):
+                                saw_error = True
+                        status = "ok" if (saw_final and not saw_error) else "failed"
+                        detail = None if status == "ok" else "pipeline_error"
+        except Exception as exc:  # noqa: BLE001 - one bad panel must not lose the rest
+            detail = (type(exc).__name__ + ": " + str(exc))[:160]
+
+        if status == "ok":
+            artifact_ids[i] = artifact_id
+        results.append({
+            "slot": i,
+            "verb": panel.verb,
+            "artifact_id": artifact_id if status == "ok" else None,
+            "status": status,
+            "detail": detail,
+            "elapsed_s": round(time.time() - started, 1),
+        })
+        logger.info(
+            "seed_template_canvas: template=%s panel=%s verb=%s status=%s %.1fs",
+            template.template_id, i, panel.verb, status, time.time() - started,
+        )
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "session_id": session_id,
+        "artifact_ids": artifact_ids,
+        "ordered_artifact_ids": [a for a in artifact_ids if a],
+        "seeded": ok,
+        "total": len(template.panels),
+        "results": results,
+    }
+
+
 class CanvasSeedRequest(_BaseModel):
     """A canvas TYPE or a ratified `template_id`, and nothing else.
 
@@ -2365,9 +2458,21 @@ class CanvasSeedRequest(_BaseModel):
     `requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds
     the new field would break the live client for a rename, so both are accepted and the
     resolution below is explicit rather than a silent precedence.
+
+    `bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,
+    which is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by
+    `name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`
+    exists to resolve on the dispatch side.
+
+    `active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`
+    lets the stream fall back to the caller's own default cell exactly as a hand-typed turn
+    would, rather than this route inventing a cell on the caller's behalf.
     """
     canvas_type: str = "portfolio_planning"
     template_id: Optional[str] = None
+    bindings: Optional[dict[str, str]] = None
+    active_persona: Optional[str] = None
+    active_domains: Optional[list[str]] = None
 
 
 @app.post("/canvas/seed")
@@ -2472,33 +2577,56 @@ async def canvas_seed(
             ),
         )
 
-    _unbound = sorted(_consumed)
+    # `bindings` IS KEYED BY `name` — the ask's own identity, never `param` (dispatch
+    # vocabulary the caller never sees; see `SharedSlot.bind_as`). An empty string counts as
+    # NOT supplying the slot: a picker that sends `{"program": ""}` has not bound anything, and
+    # treating it as bound would carry an empty value all the way to a verb that requires one.
+    _bindings = {
+        k: v for k, v in (request.bindings or {}).items() if v not in (None, "")
+    }
+
+    # A BINDING NAMING A SLOT THE TEMPLATE NEVER DECLARED is the same fault as an undeclared
+    # CONSUMPTION — a typo no binding will ever satisfy — discovered from the request side
+    # instead of the template's. Named here rather than silently ignored, so a caller sending
+    # `{"progam": "..."}` gets told which word is wrong instead of reading as "still unbound".
+    _unknown_bindings = sorted(set(_bindings) - _declared)
+    if _unknown_bindings:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"template {_template.template_id!r} does not declare shared slot(s) "
+                f"{_unknown_bindings} named in `bindings`."
+            ),
+        )
+
+    _unbound = sorted(_consumed - set(_bindings))
     if _unbound:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
-                f"{_unbound} that nothing binds yet, so those panels would refuse. This is "
-                f"the ADR-0050 §3 carry, not a fault in the template or the request."
-            ),
-        )
-    if _template.template_id != "portfolio":
-        # HONEST BOUND, NOT A SILENT ONE. Seeding still runs the portfolio PHRASE list; the
-        # per-panel pre-resolved dispatch that would make any template seedable is the next
-        # increment and is deliberately not implied by this registration.
-        raise HTTPException(
-            status_code=501,
-            detail=(
-                f"template {_template.template_id!r} is ratified and not yet seedable: the "
-                f"seeder still runs a phrase list rather than the template's declared verbs. "
-                f"Only 'portfolio' seeds today."
+                f"{_unbound} that nothing binds yet, so those panels would refuse. Supply it "
+                f"in `bindings`. This is the ADR-0050 §3 carry, not a fault in the template or "
+                f"the request."
             ),
         )
 
-    inner = SeedPortfolioCanvasRequest(
-        session_id="canvas-seed-" + uuid.uuid4().hex[:8],
-    )
-    result = await seed_portfolio_canvas(inner, http_request, current_user)
+    if _template.template_id == "portfolio":
+        inner = SeedPortfolioCanvasRequest(
+            session_id="canvas-seed-" + uuid.uuid4().hex[:8],
+        )
+        result = await seed_portfolio_canvas(inner, http_request, current_user)
+    else:
+        # EVERY RATIFIED TEMPLATE BUT `portfolio` SEEDS THROUGH ITS OWN DECLARED VERBS now that
+        # every shared slot it consumes is bound (checked above). `portfolio` keeps calling
+        # `seed_portfolio_canvas` UNCHANGED — that seeder's RULING_A seal
+        # (tests/planning/test_seed_portfolio_canvas.py) requires its body to go through the
+        # interview-stream path and never call an engine's measure endpoint directly, and
+        # folding it into the new per-panel path would be touching a function that seal is
+        # sealing.
+        result = await seed_template_canvas(
+            _template, _bindings, request, http_request, current_user
+        )
 
     seeded, total = result.get("seeded"), result.get("total")
 
@@ -3412,6 +3540,17 @@ class InterviewRequest(BaseModel):
     # graph by naming one, and a fabricated ancestor is worse than no ancestor: the rail would
     # collapse two cards into one on a lineage nobody produced.
     answering_artifact_id: str | None = None
+    # ADR-0050 §3's carry. `seed_template_canvas` sends exactly this — never a phrase — for one
+    # panel of a ratified template: `{"template_id": str, "panel": int, "bindings": dict}`.
+    # `orchestrate()` validates it (template known, panel in range, panel declares a `subject`,
+    # every consumed shared slot bound) BEFORE the stream opens, and
+    # `_generate_dagster_stream_inner` rebuilds the dispatch route from the TEMPLATE's own
+    # declaration — `panel.verb`, `panel.subject` as `subject_uri`, `panel.slots` merged with the
+    # bound shared slots — never from this request re-parsed. THE TEMPLATE STATES THE SUBJECT;
+    # THE MESH CONFIRMS IT ON EVERY DISPATCH: `dispatch_pre_resolved`'s own
+    # `find_compatible_verbs` call still runs against the live mesh, so a declared `subject` the
+    # mesh no longer agrees with is `FALL_BACK` — a visible failure, never a silent route.
+    seed_panel: dict | None = None
 
 
 class BPMNTask(BaseModel):
@@ -4517,6 +4656,69 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
     }
 
 
+def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
+    """The (subject, verb) ADR-0050 §3's per-panel seed declares, plus the slots to dispatch
+    with — `({}, {})` on anything that cannot be rebuilt.
+
+    THE TEMPLATE STATES THE SUBJECT; THE MESH CONFIRMS IT ON EVERY DISPATCH. `panel.subject` is
+    handed straight through as `subject_uri`, verbatim — no ontology lookup runs here, because
+    none exists (nothing in the fleet maps verb_iri -> input_uri; every path runs subject ->
+    verbs). The declaration is sealed against the producing engine's own VERBS catalogue by
+    `tests/planning/test_program_finance_seeds_six_panels.py`. `dispatch_pre_resolved`'s `find_compatible_verbs` call is what verifies this
+    against the LIVE mesh, same as it would for any other pre-resolved route — a declared
+    `subject` the mesh no longer agrees with comes back `FALL_BACK`, and the caller
+    (`_generate_dagster_stream_inner`) is responsible for turning that into a visible failure
+    for a seed_panel turn rather than letting it fall through to the classified path, because
+    unlike an ordinary pick-answer there is no NL question underneath this one to route instead.
+
+    `orchestrate()` 422s every one of unknown template, out-of-range panel and a no-`subject`
+    panel BEFORE the stream opens (ADR-0050 §3's own validation, mirroring `canvas_seed`'s own
+    gates). This function re-checks the same three defensively rather than trusting the caller
+    validated — a second line, not the first.
+    """
+    from .canvas_template import load_template
+
+    template_id = str(seed_panel.get("template_id") or "")
+    panel_idx = seed_panel.get("panel")
+    try:
+        template = load_template(template_id)
+        panel = template.panels[panel_idx]  # type: ignore[index]
+    except (KeyError, ValueError, IndexError, TypeError):
+        return {}, {}
+    if not panel.subject:
+        return {}, {}
+
+    # `bindings` IS KEYED BY THE SHARED SLOT'S `name` — the ask's own identity, exactly as
+    # `/canvas/seed`'s own `bindings` are (see `seed_template_canvas`) — and `bind_as` (never
+    # `name`) is what lands in the dispatch payload, the same split `SharedSlot.bind_as` exists
+    # to resolve on every other path.
+    bindings = dict(seed_panel.get("bindings") or {})
+    by_name = {s.name: s for s in template.shared_slots}
+    params: dict = dict(panel.slots)
+    subject_instance_id = ""
+    for slot_name in panel.consumes:
+        slot = by_name.get(slot_name)
+        if slot is None:
+            continue
+        value = bindings.get(slot_name)
+        if value in (None, ""):
+            continue
+        params[slot.bind_as] = value
+        # THE FIRST CONSUMED, BOUND SLOT IS THE SUBJECT INSTANCE. Every ratified
+        # program_finance panel consumes exactly one shared slot (`program`), so "first" is not
+        # yet a real choice — but the loop is written to not assume that stays true.
+        if not subject_instance_id:
+            subject_instance_id = str(value)
+
+    return {
+        "subject_uri": panel.subject,
+        "subject_instance_id": subject_instance_id,
+        "subject_instance_label": "",
+        "verb_iri": panel.verb,
+        "owner_persona": "",
+    }, params
+
+
 def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
     """Does this artifact EXIST and belong to this caller? Existence, never routability.
 
@@ -5619,11 +5821,41 @@ async def _generate_dagster_stream_inner(
     # leak into the second, so `_answers_something` is named again here rather than inherited
     # through `_answering_artifact_id` — the two gates now differ, and relying on the id alone
     # would silently re-join them the day anyone widened the lineage arm again.
-    _pre_resolved = (
-        _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
-        if pre_resolved_route_allowed(answers_something=_answers_something)
-        else {}
-    )
+    # ── ADR-0050 §3's SEED_PANEL ROUTE — THE TEMPLATE STATES THE SUBJECT; THE MESH CONFIRMS
+    # IT ON EVERY DISPATCH. A seed_panel turn never names an ask (there is no card to answer —
+    # it is the FIRST dispatch of this panel), so it is mutually exclusive with the ask-derived
+    # route below BY CONSTRUCTION: `request.seed_panel` and `_answering_artifact_id` are never
+    # both meaningful on the same turn, and this branches on both rather than trusting that.
+    _is_seed_panel_turn = bool(request.seed_panel) and not _answering_artifact_id
+    _seed_panel_bound_slots: dict = {}
+    if _is_seed_panel_turn:
+        _pre_resolved, _seed_panel_bound_slots = _pre_resolved_from_seed_panel(
+            request.seed_panel  # type: ignore[arg-type]
+        )
+    else:
+        _pre_resolved = (
+            _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+            if pre_resolved_route_allowed(answers_something=_answers_something)
+            else {}
+        )
+
+    # A SEED_PANEL TURN HAS NO QUESTION UNDERNEATH IT TO FALL BACK TO. Every other route to
+    # `{}` here means "route the ordinary way, merely slower" — correct, because an ordinary
+    # NL question or an ask's pick both have a classified path that still answers them. A
+    # seed_panel turn has no phrase to classify (`seed_template_canvas` never built one; see
+    # its own docstring) — `orchestrate()` already 422s an unroutable seed_panel before the
+    # stream opens, so reaching `{}` here means that validation and this rebuild disagree, and
+    # the honest answer is a visible failure, never a silent slide into `/route_intent` on a
+    # message that was only ever a label for logs.
+    if _is_seed_panel_turn and not _pre_resolved:
+        yield _perror(
+            "this template's panel declares no subject, so it cannot be dispatched directly",
+            kind="understanding",
+            retryable=False,
+            cause="seed_panel_unroutable",
+        )
+        yield _sse("stream_end", "{}")
+        return
     if _pre_resolved:
         logger.info(
             "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
@@ -5957,7 +6189,15 @@ async def _generate_dagster_stream_inner(
                 functools.partial(
                     dispatch_pre_resolved,
                     pre_resolved=_pre_resolved,
-                    bound_slots=request.bound_slots or {},
+                    # SEED_PANEL'S SLOTS ARE THE TEMPLATE'S, NEVER THE REQUEST'S OWN
+                    # `bound_slots` — a seed_panel turn carries no pick-menu answer, it carries
+                    # the panel's declared `slots` merged with the bound shared slots
+                    # (`_pre_resolved_from_seed_panel`'s `params`), under the verb's own
+                    # parameter names (`bind_as`).
+                    bound_slots=(
+                        _seed_panel_bound_slots if _is_seed_panel_turn
+                        else (request.bound_slots or {})
+                    ),
                     # Read from the graph under the caller's ownership edge, never from the
                     # request body — the same rule as `pre_resolved`, because it is the same
                     # kind of fact: something an earlier ask established in THIS caller's
@@ -6041,6 +6281,27 @@ async def _generate_dagster_stream_inner(
             _detail = {"outcome": _direct.kind, "reason": _direct.reason}
             yield _stage(direct_dispatch.STAGE_FELL_BACK, "started", detail=_detail)
             yield _stage(direct_dispatch.STAGE_FELL_BACK, "completed", detail=_detail)
+            if _is_seed_panel_turn:
+                # A SEED_PANEL TURN HAS NO PHRASE UNDERNEATH IT TO FALL BACK TO. Every other
+                # fall-back correctly re-routes through the classified path because an ordinary
+                # question or an ask's pick both have a real phrase to classify; this one's
+                # `message` is only ever a label for logs (`seed_template_canvas`'s own
+                # docstring), so "route the full path" would dispatch whatever `/route_intent`
+                # makes of that label — a DIFFERENT question than the panel named, answered
+                # silently in place of the one the caller actually asked for. THE TEMPLATE
+                # STATED THE SUBJECT; THE MESH JUST DISAGREED (`_detail["reason"]`) — that
+                # disagreement must reach the caller as a visible failure, never get laundered
+                # through the classifier guessing at a label.
+                _artifact_bundle["status"] = "failed"
+                yield _perror(
+                    f"seed_panel's declared route is no longer valid: {_detail['reason']}",
+                    kind="verifying_route",
+                    retryable=True,
+                    cause="seed_panel_fell_back",
+                )
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
             _direct = None
 
     if _direct is not None:
@@ -7524,6 +7785,101 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         effective_source,
         current_user.entitlement_source,
     )
+
+    # ── ADR-0050 §3's SEED_PANEL — VALIDATED BEFORE THE STREAM OPENS, NEVER MID-STREAM ────
+    #
+    # `seed_template_canvas` is the only caller today, but this gate is the contract for
+    # `seed_panel` itself, not for that one caller — any client naming a template/panel pair
+    # gets the same refusals. Mirrors `canvas_seed`'s own gates (same two faults, same status
+    # codes) because they are the same faults: an unknown id or an out-of-range index is a
+    # caller mistake (422), a consumed shared slot with nothing binding it is a request the
+    # panel cannot answer yet (422, named), and — new here — a panel with no declared
+    # `subject` cannot be dispatched directly AT ALL, because `_pre_resolved_from_seed_panel`
+    # has nothing to hand `dispatch_pre_resolved` as `subject_uri`. All of this runs BEFORE
+    # the stream opens so the caller gets one clean HTTP status rather than a pipeline_error
+    # buried inside an SSE body it already started reading.
+    if request.seed_panel is not None:
+        from .canvas_template import load_template, ratified_template_ids
+
+        # A SEED IS NOT AN ANSWER. The stream honours `seed_panel` only when no ask is being
+        # answered, so a turn carrying both would silently drop the seed and route the
+        # ordinary way — a seeded panel answering a different question. Refused here, by name.
+        if request.answering_artifact_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "seed_panel and answering_artifact_id cannot be sent together: a seeded "
+                    "panel answers no ask. Send one or the other."
+                ),
+            )
+
+        _sp = request.seed_panel
+        _sp_template_id = str(_sp.get("template_id") or "")
+        try:
+            _sp_template = load_template(_sp_template_id)
+        except (KeyError, ValueError) as _sp_terr:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"seed_panel names template_id {_sp_template_id!r}, which is not a "
+                    f"ratified template (ratified: {ratified_template_ids()}) — {_sp_terr}"
+                ),
+            )
+
+        _sp_panel_idx = _sp.get("panel")
+        if not isinstance(_sp_panel_idx, int) or not (
+            0 <= _sp_panel_idx < len(_sp_template.panels)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"seed_panel names panel {_sp_panel_idx!r}, out of range for template "
+                    f"{_sp_template_id!r} (has {len(_sp_template.panels)} panel(s))."
+                ),
+            )
+        _sp_panel = _sp_template.panels[_sp_panel_idx]
+
+        # A PANEL WITH NO DECLARED `subject` CANNOT BE DISPATCHED DIRECTLY. `portfolio`'s
+        # panels are the ratified example (ADR-0050 §3's carry has not landed there) — naming
+        # one here is a caller mistake, not the ADR-0050 §3 carry gap (that is the 409 below).
+        if not _sp_panel.subject:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "this template's panel declares no subject, so it cannot be dispatched "
+                    "directly"
+                ),
+            )
+
+        _sp_declared = {s.name for s in _sp_template.shared_slots}
+        _sp_bindings = {
+            k: v for k, v in (_sp.get("bindings") or {}).items() if v not in (None, "")
+        }
+
+        # A BINDING NAMING A SLOT THE TEMPLATE NEVER DECLARED — the same typo-shaped fault
+        # `canvas_seed` names on the request side.
+        _sp_unknown = sorted(set(_sp_bindings) - _sp_declared)
+        if _sp_unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"template {_sp_template_id!r} does not declare shared slot(s) "
+                    f"{_sp_unknown} named in seed_panel's `bindings`."
+                ),
+            )
+
+        # A CONSUMED SLOT WITH NOTHING BINDING IT — this panel, specifically, not the whole
+        # template: a caller asking for panel 0 must not be refused over panel 5's slot.
+        _sp_unbound = sorted(set(_sp_panel.consumes) - set(_sp_bindings))
+        if _sp_unbound:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
+                    f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
+                    f"`bindings`."
+                ),
+            )
 
     return StreamingResponse(
         _keepalive_wrap(

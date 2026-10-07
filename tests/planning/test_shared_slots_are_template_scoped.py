@@ -65,10 +65,10 @@ def _template(tid, shared, panels):
 
 @pytest.fixture()
 def seed(monkeypatch):
-    """Call the REAL `/canvas/seed` with only template resolution and the inner seeder faked."""
+    """Call the REAL `/canvas/seed` with only template resolution and the inner seeders faked."""
     import iagent.gateway as gw
 
-    async def _go(tmpl):
+    async def _go(tmpl, bindings=None):
         # PATCHED AT THE SOURCE MODULE, NOT THE GATEWAY NAMESPACE. `canvas_seed` imports
         # `load_template` INSIDE the function body, so the gateway module never holds the
         # name and patching it there silently does nothing — the real loader runs and the
@@ -87,8 +87,17 @@ def seed(monkeypatch):
                 "results": [{"slot": i, "status": "ok", "detail": None} for i in range(n)],
             }
 
+        async def _inner_template(template, _bindings, request, http_request, current_user):
+            n = len(template.panels)
+            return {
+                "seeded": n, "total": n,
+                "artifact_ids": [f"id-{i}" for i in range(n)],
+                "results": [{"slot": i, "status": "ok", "detail": None} for i in range(n)],
+            }
+
         monkeypatch.setattr(gw, "seed_portfolio_canvas", _inner)
-        req = gw.CanvasSeedRequest(template_id=tmpl.template_id)
+        monkeypatch.setattr(gw, "seed_template_canvas", _inner_template)
+        req = gw.CanvasSeedRequest(template_id=tmpl.template_id, bindings=bindings)
         try:
             return 200, await gw.canvas_seed(req, _Req(), _User())
         except HTTPException as exc:
@@ -123,6 +132,23 @@ async def test_a_CONSUMED_and_unbound_slot_STILL_gates_the_seed(seed):
     ))
     assert status == 409, f"a consumed, unbound shared slot no longer gates the seed: {detail}"
     assert "program" in str(detail)
+
+
+@pytest.mark.asyncio
+async def test_a_CONSUMED_slot_WITH_a_BINDING_reaches_the_seeder(seed):
+    """THE OTHER SIDE OF THE 409 ABOVE. A binding for every consumed shared slot must let the
+    request through to the per-panel seeder rather than refusing — the 409 is about what is
+    MISSING, not a blanket refusal on `program_finance` regardless of what the caller sends."""
+    status, body = await seed(
+        _template(
+            "program_finance",
+            shared=[("program", True)],
+            panels=[("mesh:finVarianceAnalysis", ["program"]), ("mesh:finBurnRate", ["program"])],
+        ),
+        bindings={"program": "NP-MERIDIAN"},
+    )
+    assert status == 200, f"a fully bound template still refused: {body}"
+    assert body["seeded"] == 2
 
 
 @pytest.mark.asyncio

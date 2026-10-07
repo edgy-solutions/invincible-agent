@@ -55,6 +55,19 @@ class SharedSlot(BaseModel):
         description=("Whether the template refuses to load unfilled. §3.4: a shared slot is the "
                      "BOARD'S SUBJECT, so a caller not entitled to it refuses the TEMPLATE, not "
                      "the panel — every panel would be a hole."))
+    param: Optional[str] = Field(
+        default=None,
+        description=("The verb PARAMETER this slot binds as, when it differs from `name`. "
+                     "`program_finance` asks about `program` but every one of its six verbs "
+                     "takes `program_id` — `name` is the ASK's identity (what §3.1 offers one "
+                     "menu for), `param` is the DISPATCH identity (what the verb's signature "
+                     "spells). None means they are the same word."))
+
+    @property
+    def bind_as(self) -> str:
+        """The verb parameter this slot's bound value is passed under. `param or name` —
+        read through one property so a caller never has to repeat the fallback."""
+        return self.param or self.name
 
 
 class Panel(BaseModel):
@@ -83,6 +96,17 @@ class Panel(BaseModel):
         default=None,
         description="Why this panel declares what it does — carried into review, not into "
                     "`template_ref`, so an explanation can be improved without minting a ref.")
+    subject: Optional[str] = Field(
+        default=None,
+        description="The verb's INPUT CLASS, full IRI form (e.g. "
+                    "`http://invincible-agent/fin#Program`) — exactly the string "
+                    "`find_compatible_verbs`/`dispatch_pre_resolved` compare as `subject_uri`, "
+                    "and exactly the producing engine's own VERBS catalogue `input_uri` for this "
+                    "verb. THE TEMPLATE DECLARES IT; nothing here looks it up. A seed_panel turn "
+                    "reads this field directly as `subject_uri` — the mesh still CONFIRMS it on "
+                    "every dispatch via `find_compatible_verbs`, so a stale or wrong declaration "
+                    "fails visibly (FALL_BACK) rather than silently routing. Unset on a panel "
+                    "that cannot be dispatched directly from a seed (e.g. portfolio's panels).")
 
 
 class CanvasTemplate(BaseModel):
@@ -124,10 +148,13 @@ def semantic_content(t: CanvasTemplate) -> dict[str, Any]:
     """
     return {
         "template_id": t.template_id,
-        "shared_slots": [s.name for s in t.shared_slots],
+        # `bind_as`, NOT `name`. A `param` change repoints which verb parameter the ask's
+        # answer lands on — same ask, different dispatch — so it is semantic content exactly
+        # as `consumes`/`slots` are, and must mint a new ref.
+        "shared_slots": [{"name": s.name, "bind_as": s.bind_as} for s in t.shared_slots],
         "panels": [
             {"ordinal": i, "verb": p.verb, "role": p.role,
-             "slots": p.slots, "consumes": sorted(p.consumes)}
+             "slots": p.slots, "consumes": sorted(p.consumes), "subject": p.subject}
             for i, p in enumerate(t.panels)
         ],
     }
