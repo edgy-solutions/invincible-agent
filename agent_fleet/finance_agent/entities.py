@@ -64,6 +64,25 @@ class NotInModel(Exception):
     """
 
 
+class Unentitled(Exception):
+    """The caller may not see this — an authorisation answer, never an empty result.
+
+    ADR-0049 Ruling 4's three refusal types, carried into this engine for `package_export`
+    (item 3): "we do not disclose to you" must never collapse into "we have no data", because
+    a caller reading the second tries a different query instead of reporting the first.
+    """
+
+
+class SourceUnavailable(Exception):
+    """A required input could not be reached from this deployment — never an empty result.
+
+    The caller, the entitlement and the data model are all fine; something this process needs
+    (the package builder, the pinned Pyodide runtime, `duckdb`, a git checkout) is absent from
+    THIS process. Collapsing that into "no data" sends a reader to doubt the program instead of
+    the deployment.
+    """
+
+
 class MethodRequired(Exception):
     """A method-bearing verb was called without its method, and it refuses.
 

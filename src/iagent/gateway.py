@@ -1688,6 +1688,10 @@ async def plan_state_version(
 # a name nobody sets is the ENGINE_P_URL mistake (two lines up) happening a second time.
 _ENGINE_COST_URL = os.getenv("ENGINE_COST_PUBLIC_URL", "http://iagent-engine-cost:8097")
 
+# SAME NAME THE FINANCE ENGINE REGISTERS WITH (`finance_agent/main.py`'s own
+# `_PUBLIC_BASE_ENV`/`_DEFAULT_BASE`), never a second one — the ENGINE_P_URL mistake again.
+_ENGINE_FIN_URL = os.getenv("ENGINE_FIN_PUBLIC_URL", "http://iagent-engine-fin:8096")
+
 # The engine's own sha256-locator shape (`measures.package_export`'s `artifact_sha256`):
 # "sha256:" + 64 lowercase hex digits. A response missing this, or carrying something that
 # merely looks like it, is not a verifiable artifact and must not be reported as one.
@@ -1707,9 +1711,71 @@ def _export_recipients_for(user: "User") -> list[str]:
     )
 
 
+def _fin_export_recipients_for(user: "User") -> list[str]:
+    """`_export_recipients_for`'s exact shape, read against engine-fin's own
+    `export.RECIPIENT_SCOPES`/`readers_for_recipient` instead of cost's — the two engines'
+    disclosures are entitled independently, and this is why there are two functions rather
+    than one parameterised by module: a caller reading the wrong engine's scopes would grant
+    access this gateway never meant to."""
+    from agent_fleet.finance_agent import export as _fin_export
+    return sorted(
+        s for s in _fin_export.RECIPIENT_SCOPES
+        if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
+    )
+
+
 def _user_bearer(request: Request) -> str:
     """The caller's raw bearer, exactly as the disposition route reads it above."""
     return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+
+
+def _shape_export_package_response(
+    out: dict, *, recipient_scope: str, template_id: Optional[str],
+    extra: Optional[dict] = None,
+) -> dict:
+    """The one place a producing engine's `package_export` response becomes this gateway's
+    own response shape — read by BOTH the cost path and the finance-template path, so the two
+    cannot drift into reporting "exists" under different rules. `extra` carries whatever a
+    given engine's response has beyond the shared fields (cost's `lots_disclosed`/`sections`;
+    finance has none today). `template_id` is placed after them, which is the order the cost
+    route emitted before this helper existed.
+
+    An engine that refuses in-band (`refused: true`, cost's empty-disclosure outcome) is shaped
+    here too, so the refusal shape is also one rule rather than one per route.
+    """
+    if out.get("refused"):
+        return {
+            "export_id": None,
+            "status": "failed",
+            "recipient_scope": recipient_scope,
+            "reason": out.get("reason"),
+            "outcome": out.get("outcome"),
+        }
+    sha = out.get("artifact_sha256")
+    filename = out.get("artifact_filename")
+    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
+    export_status = "exists" if exists else "failed"
+    reason = None if exists else "engine returned no verifiable artifact hash"
+    shaped = {
+        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
+        # with the same inputs reports the same export_id.
+        "export_id": sha if exists else None,
+        "status": export_status,
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
+        # the engine directly, which this route's own authorization check would then be
+        # bypassable around.
+        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
+        "artifact_sha256": sha,
+        "artifact_bytes": out.get("artifact_bytes"),
+        "artifact_filename": filename,
+        "algorithm_sha": out.get("algorithm_sha"),
+    }
+    if extra:
+        shaped.update(extra)
+    shaped["template_id"] = template_id
+    return shaped
 
 
 class ExportAnswer(_BaseModel):
@@ -1721,9 +1787,16 @@ class ExportPackageRequest(_BaseModel):
     # ADR-0047 §1: no default recipient. A disclosure verb that can be invoked without naming
     # its recipient is one keystroke from disclosing the wrong program to the wrong party.
     recipient_scope: Optional[str] = None
-    # Accepted and echoed back on the response; NOT used to select a template or to shape the
-    # engine call. No template surface exists yet on either side of this hop.
+    # ITEM 3: a ratified, packageable template id (today, only `program_finance`) DRIVES the
+    # export when given — the panels and the recipient come from the template and `bindings`,
+    # not from `answers`/`recipient_scope`. Absent, this request takes the ORIGINAL cost path,
+    # where this field is echoed back only. The two inputs are mutually exclusive with
+    # `answers` (checked in `export_package`), never silently combined.
     template_id: Optional[str] = None
+    # KEYED BY SHARED SLOT `name` — the SAME shape `/canvas/seed`'s own `bindings` take (see
+    # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
+    # functions that call reads. Ignored on the cost path.
+    bindings: Optional[dict[str, Any]] = None
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -1782,6 +1855,126 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     }
 
 
+async def _export_package_from_template(
+    body: "ExportPackageRequest", request: Request, current_user: "User",
+) -> dict:
+    """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
+    `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
+    this function and `canvas_seed` both call `validate_bindings`, and both reach each panel's
+    `(verb, params)` through the identical `panel_dispatch` ("Seeding and packageExport read
+    the same thing" — `canvas_template.py`).
+
+    Ordered gates, each refusing before the next is even attempted:
+      1. unknown template id -> 400
+      2. the template declares no `package` -> 422
+      3. R-005's three binding outcomes -> 422 / 422 / 409 (`validate_bindings`)
+      4. an explicit `recipient_scope` that disagrees with the one the template+bindings
+         derive -> 409 (two names for the same disclosure is the hazard this rejects)
+      5. the caller not entitled to the derived recipient -> 403
+      6. the engine unreachable, or the engine's own refusal, forwarded verbatim
+
+    Only `program_finance` is wired to an engine today (engine-fin). A second packageable
+    template would need its own dispatch here — this function does not invent one.
+    """
+    from .canvas_template import (
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, load_template,
+        panel_dispatch, ratified_template_ids, recipient_scope_for, template_ref,
+        validate_bindings,
+    )
+
+    template_id = (body.template_id or "").strip()
+    try:
+        template = load_template(template_id)
+    except (KeyError, ValueError) as exc:
+        # SAME REFUSAL SHAPE as `canvas_seed`'s own unknown-template 400 (~L2736-2744).
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"no ratified canvas template {template_id!r} "
+                f"(ratified: {ratified_template_ids()}) — {exc}"
+            ),
+        )
+
+    if template.package is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"template {template_id!r} declares no package; it cannot be exported",
+        )
+
+    try:
+        bindings = validate_bindings(template, body.bindings or {})
+    except UndeclaredConsumption as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except UnknownBinding as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except UnboundRequiredSlot as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    # `validate_bindings` already guarantees every slot this template's panels CONSUME is
+    # bound, so `recipient_scope_for` cannot raise here in practice — this still catches it
+    # rather than let a future template shape turn into an uncaught 500.
+    try:
+        recipient_scope = recipient_scope_for(template, bindings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    requested_scope = (body.recipient_scope or "").strip()
+    if requested_scope and requested_scope != recipient_scope:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "recipient_scope_disagrees_with_canvas_audience",
+                "derived": recipient_scope,
+            },
+        )
+
+    if recipient_scope not in _fin_export_recipients_for(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": "not_a_recipient_you_may_export_to",
+                "recipient_scope": recipient_scope,
+            },
+        )
+
+    panels = []
+    for idx, _panel in enumerate(template.panels):
+        verb, _subject, params = panel_dispatch(template, idx, bindings)
+        panels.append({"panel": idx, "verb": verb, "params": params})
+
+    canvas = {
+        "template_id": template.template_id,
+        "template_hash": template_ref(template),
+        "panels": panels,
+    }
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/package_export",
+                json={"recipient_scope": recipient_scope, "canvas": canvas},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=template.template_id,
+    )
+
+
 @app.post("/export/package")
 async def export_package(
     body: ExportPackageRequest,
@@ -1794,12 +1987,31 @@ async def export_package(
     writes to disk inline, in the same request, so there is no async job to poll. A caller
     gets `"exists"` or `"failed"` in the same response that asked for the build.
 
-    Four hard stops, in order, each refusing before the next is even attempted:
+    `template_id` and `answers` are MUTUALLY EXCLUSIVE — a canvas template's own panels decide
+    what is exported, so naming one while also handing over cost `answers` is ambiguous about
+    which governs, and is refused rather than guessed at (422). Given `template_id`, this
+    dispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.
+
+    Absent `template_id`, four hard stops, in order, each refusing before the next is even
+    attempted:
       1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
       4. the engine unreachable, or the engine's own refusal, forwarded verbatim
     """
+    if body.template_id and body.answers:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "template_id and answers are mutually exclusive — a canvas template's own "
+                "panels decide what is exported; naming cost answers alongside one does not "
+                "say which governs."
+            ),
+        )
+
+    if body.template_id:
+        return await _export_package_from_template(body, request, current_user)
+
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
     recipient_scope = (body.recipient_scope or "").strip()
@@ -1861,41 +2073,10 @@ async def export_package(
         raise HTTPException(status_code=rr.status_code, detail=detail)
 
     out = rr.json()
-
-    if out.get("refused"):
-        return {
-            "export_id": None,
-            "status": "failed",
-            "recipient_scope": recipient_scope,
-            "reason": out.get("reason"),
-            "outcome": out.get("outcome"),
-        }
-
-    sha = out.get("artifact_sha256")
-    filename = out.get("artifact_filename")
-    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
-    export_status = "exists" if exists else "failed"
-    reason = None if exists else "engine returned no verifiable artifact hash"
-
-    return {
-        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
-        # with the same inputs reports the same export_id.
-        "export_id": sha if exists else None,
-        "status": export_status,
-        "recipient_scope": recipient_scope,
-        "reason": reason,
-        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
-        # the engine directly, which this route's own authorization check would then be
-        # bypassable around.
-        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
-        "artifact_sha256": sha,
-        "artifact_bytes": out.get("artifact_bytes"),
-        "artifact_filename": filename,
-        "algorithm_sha": out.get("algorithm_sha"),
-        "lots_disclosed": out.get("lots_disclosed"),
-        "sections": out.get("sections"),
-        "template_id": body.template_id,
-    }
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=body.template_id,
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
+    )
 
 
 @app.get("/export/package/artifact/{filename}")
@@ -1911,20 +2092,35 @@ async def export_package_artifact(
     since the engine sits behind the mesh and is not itself reachable from a browser.
     """
     from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
 
+    # THE CLOSED SET, over BOTH engines' producible names. Checked in a fixed order — cost
+    # first, then finance — which is safe only because the two engines' filename sets are
+    # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
+    # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
     scope = _cost_seed.scope_of_artifact(filename)
-    if scope is None:
-        # THE CLOSED SET. Same structural traversal defence as the engine's own route: a
-        # filename this engine could not have produced is refused outright rather than
-        # sanitized and forwarded.
-        raise HTTPException(
-            status_code=404,
-            detail=f"{filename!r} is not an export artifact this gateway serves",
-        )
+    if scope is not None:
+        engine_url = _ENGINE_COST_URL
+        recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    else:
+        scope = _fin_export.scope_of_artifact(filename)
+        if scope is not None:
+            engine_url = _ENGINE_FIN_URL
+            recipients_fn = _fin_export_recipients_for
+            engine_label = "fin"
+        else:
+            # Same structural traversal defence as either engine's own route: a filename
+            # neither engine could have produced is refused outright rather than sanitized
+            # and forwarded.
+            raise HTTPException(
+                status_code=404,
+                detail=f"{filename!r} is not an export artifact this gateway serves",
+            )
 
-    if scope not in _export_recipients_for(current_user):
+    if scope not in recipients_fn(current_user):
         # NAMES THE PACKAGE, NOT ITS READERS — same wording and reasoning as the engine's own
-        # /artifact 403 (cost_agent/main.py ~700-716).
+        # /artifact 403 (cost_agent/main.py ~700-716; finance_agent/main.py's analog).
         raise HTTPException(
             status_code=403,
             detail=(
@@ -1938,12 +2134,12 @@ async def export_package_artifact(
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             rr = await client.get(
-                f"{_ENGINE_COST_URL}/artifact/{filename}",
+                f"{engine_url}/artifact/{filename}",
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail={
-            "error": "cost_engine_unreachable", "message": str(exc),
+            "error": f"{engine_label}_engine_unreachable", "message": str(exc),
         })
 
     if rr.status_code >= 400:
@@ -2559,57 +2755,22 @@ async def canvas_seed(
     # A SharedSlot's answer "binds into every panel that CONSUMES it". So a declared slot no
     # panel consumes cannot refuse anything, and must not gate anything. The population the
     # seeder demands values for is the CONSUMED set, never the declared set.
-    _declared = {s.name for s in _template.shared_slots}
-    _consumed = {c for p in _template.panels for c in p.consumes}
+    # THE THREE R-005 OUTCOMES, ONE FUNCTION — item 3 factored this block out into
+    # `canvas_template.validate_bindings` so packageExport's own gates (below, `/export/package`)
+    # read the SAME checks rather than a second copy that could drift from this one. Messages
+    # and status codes are unchanged; only where they are computed moved.
+    from .canvas_template import (
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, validate_bindings,
+    )
 
-    # TWO DIFFERENT FAULTS, KEPT APART. A panel consuming a slot the template never declared is
-    # a broken TEMPLATE and no amount of binding fixes it; a declared-and-consumed slot with
-    # nothing to bind it is the ADR-0050 §3 carry. Collapsing them into one 409 told a reader
-    # to wait for a carry that would never satisfy a typo.
-    _undeclared = sorted(_consumed - _declared)
-    if _undeclared:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
-                f"{_undeclared} that the template does not declare. This is a fault in the "
-                f"template, not a missing binding — declaring them is the fix."
-            ),
-        )
-
-    # `bindings` IS KEYED BY `name` — the ask's own identity, never `param` (dispatch
-    # vocabulary the caller never sees; see `SharedSlot.bind_as`). An empty string counts as
-    # NOT supplying the slot: a picker that sends `{"program": ""}` has not bound anything, and
-    # treating it as bound would carry an empty value all the way to a verb that requires one.
-    _bindings = {
-        k: v for k, v in (request.bindings or {}).items() if v not in (None, "")
-    }
-
-    # A BINDING NAMING A SLOT THE TEMPLATE NEVER DECLARED is the same fault as an undeclared
-    # CONSUMPTION — a typo no binding will ever satisfy — discovered from the request side
-    # instead of the template's. Named here rather than silently ignored, so a caller sending
-    # `{"progam": "..."}` gets told which word is wrong instead of reading as "still unbound".
-    _unknown_bindings = sorted(set(_bindings) - _declared)
-    if _unknown_bindings:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"template {_template.template_id!r} does not declare shared slot(s) "
-                f"{_unknown_bindings} named in `bindings`."
-            ),
-        )
-
-    _unbound = sorted(_consumed - set(_bindings))
-    if _unbound:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
-                f"{_unbound} that nothing binds yet, so those panels would refuse. Supply it "
-                f"in `bindings`. This is the ADR-0050 §3 carry, not a fault in the template or "
-                f"the request."
-            ),
-        )
+    try:
+        _bindings = validate_bindings(_template, request.bindings or {})
+    except UndeclaredConsumption as _terr:
+        raise HTTPException(status_code=422, detail=str(_terr))
+    except UnknownBinding as _terr:
+        raise HTTPException(status_code=422, detail=str(_terr))
+    except UnboundRequiredSlot as _terr:
+        raise HTTPException(status_code=409, detail=str(_terr))
 
     if _template.template_id == "portfolio":
         inner = SeedPortfolioCanvasRequest(
@@ -4678,7 +4839,7 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
     gates). This function re-checks the same three defensively rather than trusting the caller
     validated — a second line, not the first.
     """
-    from .canvas_template import load_template
+    from .canvas_template import load_template, panel_dispatch
 
     template_id = str(seed_panel.get("template_id") or "")
     panel_idx = seed_panel.get("panel")
@@ -4694,9 +4855,13 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
     # `/canvas/seed`'s own `bindings` are (see `seed_template_canvas`) — and `bind_as` (never
     # `name`) is what lands in the dispatch payload, the same split `SharedSlot.bind_as` exists
     # to resolve on every other path.
+    #
+    # THE DISPATCH ITSELF IS `panel_dispatch` — ITEM 3's rule: seeding and packageExport read
+    # the SAME function for a panel's (verb, subject, params), never two that happen to agree.
     bindings = dict(seed_panel.get("bindings") or {})
+    verb, subject, params = panel_dispatch(template, panel_idx, bindings)
+
     by_name = {s.name: s for s in template.shared_slots}
-    params: dict = dict(panel.slots)
     subject_instance_id = ""
     for slot_name in panel.consumes:
         slot = by_name.get(slot_name)
@@ -4705,7 +4870,6 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
         value = bindings.get(slot_name)
         if value in (None, ""):
             continue
-        params[slot.bind_as] = value
         # THE FIRST CONSUMED, BOUND SLOT IS THE SUBJECT INSTANCE. Every ratified
         # program_finance panel consumes exactly one shared slot (`program`), so "first" is not
         # yet a real choice — but the loop is written to not assume that stays true.
@@ -4713,10 +4877,10 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
             subject_instance_id = str(value)
 
     return {
-        "subject_uri": panel.subject,
+        "subject_uri": subject,
         "subject_instance_id": subject_instance_id,
         "subject_instance_label": "",
-        "verb_iri": panel.verb,
+        "verb_iri": verb,
         "owner_persona": "",
     }, params
 

@@ -109,6 +109,20 @@ class Panel(BaseModel):
                     "that cannot be dispatched directly from a seed (e.g. portfolio's panels).")
 
 
+class Package(BaseModel):
+    """A template declares itself packageable by naming WHO it may be disclosed to.
+
+    `audience` is a closed set of one value today, `program_office` — a `Literal`, not a bare
+    `str`, so an unratified audience fails at load rather than at the first packageExport call.
+    Absent on a template (e.g. `portfolio`) means that template has no recipient and
+    packageExport has nothing to compute a scope for.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    audience: Literal["program_office"] = Field(
+        ..., description="Who a packageExport of this template may be disclosed to.")
+
+
 class CanvasTemplate(BaseModel):
     """One file, one template (§1.1)."""
     model_config = ConfigDict(extra="forbid")
@@ -121,6 +135,10 @@ class CanvasTemplate(BaseModel):
     description: str = Field(..., min_length=1)
     shared_slots: list[SharedSlot] = Field(default_factory=list)
     panels: list[Panel] = Field(..., min_length=1)
+    package: Optional[Package] = Field(
+        default=None,
+        description="Set when this template is a package definition for some audience — see "
+                    "`recipient_scope_for`. Unset means this template cannot be packageExported.")
 
 
 # ── §1.5 — `template_ref` is a CONTENT hash, minted deliberately ────────────────────────────
@@ -157,6 +175,9 @@ def semantic_content(t: CanvasTemplate) -> dict[str, Any]:
              "slots": p.slots, "consumes": sorted(p.consumes), "subject": p.subject}
             for i, p in enumerate(t.panels)
         ],
+        # `audience` only — a template packaged for a different audience is a different
+        # disclosure, and must mint a new ref.
+        "package": {"audience": t.package.audience} if t.package else None,
     }
 
 
@@ -222,3 +243,132 @@ def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTe
             f"{path.name} declares template_id {t.template_id!r}, which is not its stem"
         )
     return t
+
+
+# ── §3 — ONE DISPATCH, READ BY SEEDING AND BY packageExport ────────────────────────────────
+#
+# `panel_dispatch` is the pre-resolved route a panel compiles to: its verb, its subject (the
+# mesh's own `subject_uri`, still CONFIRMED on every dispatch — this function only declares it)
+# and its bound params. `gateway.py`'s `_pre_resolved_from_seed_panel` calls this rather than
+# recomputing it, and packageExport calls it for the same panel to build the same params it
+# would seed with. Two implementations that happen to agree is exactly the defect this item
+# exists to close — there is one function, and both callers read it.
+def panel_dispatch(
+    template: CanvasTemplate, panel_idx: int, bindings: dict[str, Any],
+) -> tuple[str, Optional[str], dict[str, Any]]:
+    """`(verb, subject, params)` for one panel, bound against `bindings`.
+
+    `params` starts from the panel's own declared `slots` (panel-local, never asked at load)
+    and adds every consumed shared slot that `bindings` actually supplies, under its `bind_as`
+    — the DISPATCH identity, not the ask's. An unbound consumed slot is OMITTED, never sent as
+    `None`: a param this verb never received is a param it should see as absent, not as null.
+    """
+    panel = template.panels[panel_idx]
+    by_name = {s.name: s for s in template.shared_slots}
+    params: dict[str, Any] = dict(panel.slots)
+    for slot_name in panel.consumes:
+        slot = by_name.get(slot_name)
+        if slot is None:
+            continue
+        value = bindings.get(slot_name)
+        if value in (None, ""):
+            continue
+        params[slot.bind_as] = value
+    return panel.verb, panel.subject, params
+
+
+def recipient_scope_for(template: CanvasTemplate, bindings: dict[str, Any]) -> str:
+    """`<package.audience>.<bound program>` — the recipient one packageExport is scoped to.
+
+    THE SEPARATOR IS `.`, NEVER `:`: the scope becomes a filename
+    (`fin-package-{scope}.html`), and a colon is not a safe filename character everywhere
+    this runs.
+
+    THE BOUND PROGRAM IS DERIVED, never hard-coded to `"program"` — it is whichever shared
+    slot this template's own panels `consumes`, read in the template's declared order, so a
+    template whose ask is spelled differently is not a special case here.
+
+    Raises `ValueError` when this template declares no `package`, when none of its shared
+    slots is consumed by any panel, or when that slot is unbound — a packageExport has no
+    recipient in any of those states.
+    """
+    if template.package is None:
+        raise ValueError(
+            f"{template.template_id!r} declares no package; packageExport has no recipient"
+        )
+    consumed = {name for p in template.panels for name in p.consumes}
+    program_slot = next((s for s in template.shared_slots if s.name in consumed), None)
+    if program_slot is None:
+        raise ValueError(
+            f"{template.template_id!r} consumes no shared slot; packageExport has no recipient"
+        )
+    value = bindings.get(program_slot.name)
+    if value in (None, ""):
+        raise ValueError(
+            f"{template.template_id!r}'s shared slot {program_slot.name!r} is unbound; "
+            f"packageExport has no recipient"
+        )
+    return f"{template.package.audience}.{value}"
+
+
+# ── R-005's gate, factored out so `canvas_seed` and packageExport read ONE function ─────────
+#
+# This is `canvas_seed`'s own binding-validation block (ADR-0050 §4, R-005), extracted rather
+# than copied: item 3 needs the SAME three checks before it will compute a recipient scope or
+# dispatch a panel, and a second hand-kept copy beside this one is exactly the "two
+# implementations that happen to agree" defect `panel_dispatch`'s own docstring exists to
+# foreclose. The three outcomes keep their ORIGINAL wording verbatim —
+# `tests/planning/test_shared_slots_are_template_scoped.py` asserts substrings of it — so this
+# extraction changes WHERE the checks run, never WHAT they say.
+
+class UndeclaredConsumption(ValueError):
+    """A panel consumes a shared slot the template itself never declares — a fault in the
+    TEMPLATE, which no binding can fix. 422."""
+
+
+class UnknownBinding(ValueError):
+    """`bindings` names a shared slot this template does not declare — a fault in the
+    REQUEST, most often a typo. 422."""
+
+
+class UnboundRequiredSlot(ValueError):
+    """A declared, consumed shared slot has nothing bound to it yet — the ADR-0050 §3 carry,
+    not a fault in either the template or the request. 409."""
+
+
+def validate_bindings(template: CanvasTemplate, bindings: dict[str, Any]) -> dict[str, Any]:
+    """The bound slots a seed or a packageExport may dispatch with, or a raise naming which
+    of the three R-005 outcomes applies. Strips `None`/`""` values from `bindings` first — an
+    empty string counts as NOT supplying the slot, so a picker sending `{"program": ""}` is
+    treated as having bound nothing, never as carrying an empty value to a verb that requires
+    one.
+    """
+    declared = {s.name for s in template.shared_slots}
+    consumed = {c for p in template.panels for c in p.consumes}
+
+    undeclared = sorted(consumed - declared)
+    if undeclared:
+        raise UndeclaredConsumption(
+            f"template {template.template_id!r} has panel(s) consuming shared slot(s) "
+            f"{undeclared} that the template does not declare. This is a fault in the "
+            f"template, not a missing binding — declaring them is the fix."
+        )
+
+    clean = {k: v for k, v in (bindings or {}).items() if v not in (None, "")}
+
+    unknown = sorted(set(clean) - declared)
+    if unknown:
+        raise UnknownBinding(
+            f"template {template.template_id!r} does not declare shared slot(s) "
+            f"{unknown} named in `bindings`."
+        )
+
+    unbound = sorted(consumed - set(clean))
+    if unbound:
+        raise UnboundRequiredSlot(
+            f"template {template.template_id!r} has panel(s) consuming shared slot(s) "
+            f"{unbound} that nothing binds yet, so those panels would refuse. Supply it "
+            f"in `bindings`. This is the ADR-0050 §3 carry, not a fault in the template or "
+            f"the request."
+        )
+    return clean

@@ -440,8 +440,31 @@ def _builder_dict(src: str | None = None) -> ast.Dict:
         f"expected exactly one handler routed at {_MEASURE_ROUTE!r}, found {len(handlers)} -- "
         f"the envelope builder is no longer addressable by its route"
     )
+    builder = handlers[0]
+    # FOLLOW ONE DELEGATION, AND ONLY A WHOLE ONE. lane/fin moved the envelope into
+    # `_measure_envelope` so `/package_export` builds through the same function; the route's
+    # handler became `return _measure_envelope(...)`. The route still selects -- a handler whose
+    # ONLY exit hands back a module-level function's result unchanged is that function's wire.
+    # A handler that touches the result first (`env = f(); env["x"] = 1; return env`) is not a
+    # delegation and still has to return its own one literal.
+    exits = [n for n in ast.walk(builder) if isinstance(n, ast.Return)]
+    if (
+        len(exits) == 1 and isinstance(exits[0].value, ast.Call)
+        and isinstance(exits[0].value.func, ast.Name)
+    ):
+        callee = exits[0].value.func.id
+        defs = [
+            node for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == callee
+        ]
+        assert len(defs) == 1, (
+            f"the {_MEASURE_ROUTE!r} handler delegates to {callee!r}, which this module does not "
+            f"define exactly once at top level ({len(defs)} found) -- the envelope it serves is "
+            f"unreadable from here"
+        )
+        builder = defs[0]
     dicts = [
-        n.value for n in ast.walk(handlers[0])
+        n.value for n in ast.walk(builder)
         if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict)
     ]
     assert len(dicts) == 1, (
@@ -2050,7 +2073,82 @@ _SELECTOR_MUST_REJECT = {
         '    return {"measure": fn, "rows": rows}\n',
         "no longer carries",
     ),
+    "a delegation to a function the module does not define": (
+        '\n@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    return _envelope(fn)\n",
+        "does not define exactly once",
+    ),
+    "a delegation to a function defined twice": (
+        "\ndef _envelope(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n\n\n'
+        "def _envelope(fn):\n"
+        '    return {"measure": fn, "rows": [], "data_provenance": prov, "extra": 1}\n\n\n'
+        '@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    return _envelope(fn)\n",
+        "does not define exactly once",
+    ),
+    "a delegate's result DECORATED before it leaves the handler": (
+        "\ndef _envelope(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n\n\n'
+        '@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    env = _envelope(fn)\n"
+        '    env["unasserted"] = 1\n'
+        "    return env\n",
+        "asserts one envelope",
+    ),
+    "a delegation beside a second exit": (
+        "\ndef _envelope(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov}\n\n\n'
+        '@app.post("/measure/{fn}")\n'
+        # The bare delegation is the exit `ast.walk` reaches FIRST (breadth-first: the function
+        # body before the `if` body). Written the other way round this case was quiet under a
+        # mutant that follows any first exit -- measured 2026-10-07.
+        "def run_measure(fn):\n"
+        "    if not fn:\n"
+        '        return _envelope("x") | {"unasserted": 1}\n'
+        "    return _envelope(fn)\n",
+        "asserts one envelope",
+    ),
+    "a delegate with two envelopes": (
+        "\ndef _envelope(fn):\n"
+        "    if fn:\n"
+        '        return {"measure": fn, "rows": rows, "data_provenance": prov}\n'
+        '    return {"measure": fn, "rows": [], "data_provenance": None}\n\n\n'
+        '@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    return _envelope(fn)\n",
+        "asserts one envelope",
+    ),
 }
+
+
+def test_the_BUILDER_SELECTOR_FOLLOWS_a_whole_delegation_and_nothing_else():
+    """The accepting side of the delegation branch. `_SELECTOR_MUST_REJECT` shows it refusing;
+    only this shows it can ACCEPT -- a branch that refused everything would pass every rejection
+    case and red the four real envelope arms, which is how its absence was found (2026-10-07,
+    lane/fin's `_measure_envelope` refactor: all four read "0 dict literals").
+
+    The decoy is a nested function of the same name inside another def: resolution is top-level
+    only, so a lookalike inside a closure cannot be selected."""
+    src = (
+        "\ndef _other():\n"
+        "    def _envelope(fn):\n"
+        '        return {"measure": fn, "rows": rows, "data_provenance": prov, "decoy": 1}\n'
+        "    return _envelope\n\n\n"
+        "def _envelope(fn):\n"
+        '    return {"measure": fn, "rows": rows, "data_provenance": prov, "real": 1}\n\n\n'
+        '@app.post("/measure/{fn}")\n'
+        "def run_measure(fn):\n"
+        "    return _envelope(fn)\n"
+    )
+    keys = {k.value for k in _builder_dict(src).keys if isinstance(k, ast.Constant)}
+    assert "real" in keys and "decoy" not in keys, (
+        f"the selector did not follow the routed handler's delegation to the top-level "
+        f"definition: {sorted(keys)}"
+    )
 
 
 # Builders whose merged operands the file must accept, and ones it must refuse. Written as

@@ -44,6 +44,12 @@
 ---
 template_id: program_finance
 title: Program finance status
+# ITEM 3 — this template IS the package definition for a program-office disclosure.
+# `recipient_scope_for` reads `audience` plus whichever shared slot below is bound, so the
+# scope is `program_office.<program>` — NEVER hand-typed, and NEVER a second place that could
+# disagree with the seeder about what this board is.
+package:
+  audience: program_office
 description: >-
   Funding status anchoring the top, with burn rate and performance indices beneath it, then the
   variance decomposition, its ranked drivers, and the estimate at completion. The six

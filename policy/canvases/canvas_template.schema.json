@@ -1,6 +1,23 @@
 {
   "$comment": "GENERATED from src/iagent/canvas_template.py by scripts/generate_canvas_schema.py (ADR-0050 \u00a71.2). Do not edit by hand \u2014 run the generator. Sealed by tests/test_canvas_schema_drift.py.",
   "$defs": {
+    "Package": {
+      "additionalProperties": false,
+      "description": "A template declares itself packageable by naming WHO it may be disclosed to.\n\n`audience` is a closed set of one value today, `program_office` \u2014 a `Literal`, not a bare\n`str`, so an unratified audience fails at load rather than at the first packageExport call.\nAbsent on a template (e.g. `portfolio`) means that template has no recipient and\npackageExport has nothing to compute a scope for.",
+      "properties": {
+        "audience": {
+          "const": "program_office",
+          "description": "Who a packageExport of this template may be disclosed to.",
+          "title": "Audience",
+          "type": "string"
+        }
+      },
+      "required": [
+        "audience"
+      ],
+      "title": "Package",
+      "type": "object"
+    },
     "Panel": {
       "additionalProperties": false,
       "description": "`{verb, slots, layout}` \u2014 ADR-0050 \u00a72.\n\n`slots` are PANEL-LOCAL declared values; `consumes` names template-level shared slots. Both\nare declarations, not requests: \u00a73 is BLOCKED until the dispatch boundary carries slots, so a\nslice-1 template declares the verbs' OWN DEFAULTS, which is true today and produces the same\nboard whether or not the carry has landed. The declaration documents reality rather than\nhoping for it \u2014 and when the carry lands, a declared default that changes the card is the\ncarry ARRIVING, which is a correction to record, not a regression.",
@@ -120,6 +137,18 @@
       "minLength": 1,
       "title": "Description",
       "type": "string"
+    },
+    "package": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Package"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set when this template is a package definition for some audience \u2014 see `recipient_scope_for`. Unset means this template cannot be packageExported."
     },
     "panels": {
       "items": {
