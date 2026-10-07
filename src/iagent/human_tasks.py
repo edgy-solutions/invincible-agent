@@ -475,6 +475,33 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     return dict(row) if row else None
 
 
+def list_tasks_for_workflows(workflow_ids: "list[str]") -> list[dict[str, Any]]:
+    """Every row whose `workflow_id` is one of `workflow_ids` -- UNSCOPED by recipient_id.
+
+    For `GET /cases/{case_id}` (case_projection.project_approvals): the case's approvals are
+    not one caller's queue, they are every instance's human_await task, across whichever
+    actors were entitled -- there is no single `recipient_id` to filter on the way
+    `list_tasks_for`/`get_task_resolution` do. Safe to leave unscoped here because the ROUTE
+    gates on the case's own entitlement check before this is ever called; this function makes
+    no viewability decision of its own; it only reads rows, as `project_approvals` collapses
+    the per-recipient duplicates into one entry per task_id.
+
+    Returns `[]` for an empty/falsy `workflow_ids` rather than running a query with an empty
+    `IN ()`, which some drivers refuse."""
+    ids = [w for w in (workflow_ids or []) if w]
+    if not ids:
+        return []
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment
+                     FROM human_task_projection
+                    WHERE workflow_id = ANY(%s)""",
+                (ids,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
 # WHICH VERBS EACH TASK SPECIES ACCEPTS. A task kind's verbs are part of its meaning, not
 # a UI choice: "approve" on *"this notice could not be prepared for review"* is not merely an
 # awkward label, it records a decision the data cannot represent — and ADR-0034's decision

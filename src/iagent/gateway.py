@@ -8440,6 +8440,101 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str)
         return False
 
 
+async def _fetch_case(case_id: str) -> Optional[dict]:
+    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/case` -- the shared ``case``
+    handler (workflow_runner.py), synchronous (no `/send`), same calling idiom as
+    `GroupedReview/.../get_batch` (~line 1256). Raises on an unreachable runner (the route
+    turns that into 503); returns ``None`` for "no such case" (runner reachable, case absent)."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
+    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/instance_spec` with `{"n": 1}` --
+    called on the CASE's own key (workflow_runner._run_instance calls it the same way: `await
+    ctx.workflow_call(instance_spec, key=case_id, arg={"n": n})`). ``None`` iff instance 1 has
+    never been opened (``ctx.get`` returns falsy)."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/instance_spec",
+            json={"n": 1},
+        )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+@app.get("/cases/{case_id}")
+async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
+    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
+
+    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
+    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
+    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
+    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
+
+    The pure projection and the entitlement gate live in `case_projection`; this route only
+    fetches runner/DB state and calls them.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
+        WorkflowDefinitionError, get_workflow_definition,
+    )
+
+    from . import case_projection, human_tasks
+
+    try:
+        case = await _fetch_case(case_id)
+    except Exception as exc:  # noqa: BLE001 — connect errors, timeouts, 5xx via raise_for_status
+        raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+    if not case:
+        raise HTTPException(status_code=404, detail="case not found")
+
+    instance1_spec = None
+    if case.get("instances"):
+        try:
+            instance1_spec = await _fetch_instance1_spec(case_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+
+    definition_ids = sorted({inst.get("definition_id") for inst in (case.get("instances") or [])
+                             if inst.get("definition_id")})
+    definitions: dict = {}
+    try:
+        for wf_id in definition_ids:
+            definitions[wf_id] = await run_in_threadpool(get_workflow_definition, wf_id)
+    except WorkflowDefinitionError as exc:
+        # A definition the case already chose is not shipped in THIS runtime -- a deploy fault,
+        # not an authz question or a missing case. Same 503 family as the runner itself: the
+        # caller cannot distinguish "the runner is down" from "the runner's definitions aren't"
+        # and must not be told their case doesn't exist over a config gap.
+        raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+
+    caller_domains = [c.domain for c in current_user.entitlements.cells]
+    if not case_projection.can_view_case(
+        case, instance1_spec, definitions,
+        caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
+    ):
+        raise HTTPException(status_code=404, detail="case not found")
+
+    instance_ids = [inst.get("instance_id") for inst in (case.get("instances") or [])
+                    if inst.get("instance_id")]
+    try:
+        task_rows = await run_in_threadpool(human_tasks.list_tasks_for_workflows, instance_ids)
+    except human_tasks.HumanTaskConfigError:
+        task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
+                        # the case itself is readable without it.
+
+    return case_projection.project_workflow_case(case, definitions, task_rows)
+
+
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
