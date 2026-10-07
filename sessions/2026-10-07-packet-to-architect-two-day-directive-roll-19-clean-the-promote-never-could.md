@@ -1,7 +1,7 @@
-    from: ia-01/lane/01
-    to:   seat/architect (relayed by Chris)
-    date: 2026-10-07
-    re:   the two-day directive (items 1-5)
+from: ia-01/lane/01
+to: invincible-agent/seat/architect
+date: 2026-10-07
+re: the two-day directive (items 1-5), relayed by Chris
 
 # Roll #19 is clean; a document filed through the stage route can never be promoted
 
