@@ -93,17 +93,23 @@ AWAITING_ORIGIN = "awaiting_origin"
 ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
-# declared-at-the-door, never LLM-classified (ADR-0021's precedence). Two today; a third is a
-# future commit (see mesh_system.ttl's comment on the tree), not a wider enum here.
-PDF, CAD = "pdf", "cad"
+# declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
+# third leaf, added for the document that needed it: S1000D data modules, which arrive as
+# kind=xml with content_kind=s1000d-data-module (the registered kind rides under the format).
+# FILE_KINDS is what POST /ingest accepts; each member is a leaf, sealed both ways by
+# tests/test_ingest_content_kind_tree.py.
+PDF, CAD, XML = "pdf", "cad", "xml"
+FILE_KINDS = (PDF, CAD, XML)
 # EVENT (roll #20 item 4): not a file format and not a ContentKind leaf -- POST /ingest/events
 # never carries bytes, so there is no `ingress-user/<kind>/<sha256>/` object prefix for it
 # (the route passes object_prefix=""). Added to KINDS anyway because `record_received`'s own
 # `kind` validation is the only gate this value passes through; widening the TUPLE the comment
 # above warns against would be the ContentKind registry (`content_kind` column, a separate
-# channel) -- this is the file-format/arrival-shape column instead.
+# channel) -- this is the file-format/arrival-shape column instead. The multipart door checks
+# FILE_KINDS, not KINDS, so a file cannot be dropped as `event`. KINDS spells its names out
+# rather than `FILE_KINDS + (EVENT,)` because cortex-ui's parity test parses this tuple by name.
 EVENT = "event"
-KINDS = (PDF, CAD, EVENT)
+KINDS = (PDF, CAD, XML, EVENT)
 
 # 2026-10-06 (roll #20 item 4): the event branch's own id shape -- gateway.py mints
 # `"evt-" + sha256(f"{content_kind}:{identity_value}").hexdigest()` for POST /ingest/events
@@ -147,7 +153,7 @@ UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_d
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
 
 -- 2026-10-06: content_kind (review-audience fix) -- NULLABLE. `kind` stays the FILE FORMAT
--- (pdf|cad); this column carries the DECLARED, registry-level content kind (the `content_kind`
+-- (pdf|cad|xml); this column carries the DECLARED, registry-level content kind (the `content_kind`
 -- form field on POST /ingest) so a later stage move can resolve the promotion audience's domain
 -- from the registry rather than from the file format. NULL for undeclared drops and for every
 -- row written before this column existed. IDEMPOTENT.

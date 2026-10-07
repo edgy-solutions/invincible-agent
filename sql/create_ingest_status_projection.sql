@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS ingest_status_projection (
     -- key: a second arrival with the same sha256 is the SAME bytes, full stop.
     sha256 TEXT NOT NULL,
 
-    -- ContentKind leaf (ADR-0041 §8's ContentKind tree, mesh_system.ttl): 'pdf' | 'cad' today.
+    -- ContentKind leaf (ADR-0041 §8's ContentKind tree, mesh_system.ttl): 'pdf' | 'cad' | 'xml' for a file,
+    -- 'event' for POST /ingest/events (ingest_status.KINDS).
     -- DECLARED at the door (multipart field), never LLM-classified — ADR-0021's precedence.
     kind TEXT NOT NULL,
 

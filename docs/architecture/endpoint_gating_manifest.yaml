@@ -1581,7 +1581,7 @@ services:
           (Depends(get_current_user)), and `on_behalf_of` must equal the authenticated
           caller — the ADR names the field but not a delegation mechanism, so the narrower
           reading wins until one exists. `kind` is validated against the closed
-          ingest_status.KINDS set (pdf|cad) BEFORE any write, never LLM-classified
+          ingest_status.FILE_KINDS set (pdf|cad|xml) BEFORE any write, never LLM-classified
           (ADR-0021's precedence). sha256 is computed at the door; a hit against
           ingest_status.find_primary_by_sha is level-1 dedupe (same bytes, full stop) and
           writes NOTHING to the object store — only a `duplicate` row recording the
