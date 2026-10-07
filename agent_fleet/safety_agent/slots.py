@@ -68,6 +68,9 @@ _REFERENT_KIND = {
     "write_up_id":   _SAFETY + "WriteUp",
     # POINTS OUT OF THIS ENGINE, on purpose — see the module docstring.
     "work_order_id": _MRO + "MaintenanceWorkOrderRecord",
+    # ADR-0056 §Decision-1: `what_failed_on_this_part`'s slot resolves against the ALREADY-OWNED
+    # SafetyCriticalItem class, not a new Part concept — see that ADR's survey before reusing it.
+    "part_number":   _SAFETY + "SafetyCriticalItem",
 }
 
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing
