@@ -114,6 +114,33 @@ def test_record_received_writes_a_received_row_at_the_ingest_id_as_id():
     conn.commit.assert_called_once()
 
 
+def test_record_received_writes_the_declared_content_kind_not_only_the_file_format():
+    """review-audience fix: `content_kind` (the DECLARED, registry-level kind) is a column of
+    its own, separate from `kind` (the file format). Omitted, it defaults to None (old-row
+    shape); declared, it is both returned AND passed to the INSERT."""
+    cm, conn, cur = _fake_conn()
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        row = ist.record_received(ingest_id=_INGEST_ID, sha256="abc123", kind="pdf",
+                                   object_prefix="ingress-user/pdf/abc123/",
+                                   submitted_by="alice@example.com", on_behalf_of="alice@example.com",
+                                   source="notice.pdf", content_kind="pcn")
+    assert row["content_kind"] == "pcn"
+    assert row["kind"] == "pdf", "kind stays the file format, unchanged"
+    sql, params = cur.execute.call_args[0][0], cur.execute.call_args[0][1]
+    assert "content_kind" in sql
+    assert params["content_kind"] == "pcn"
+
+
+def test_record_received_defaults_content_kind_to_none_when_undeclared():
+    cm, _, _ = _fake_conn()
+    with mock.patch.object(ist, "_pg_connect", return_value=cm):
+        row = ist.record_received(ingest_id=_INGEST_ID, sha256="abc123", kind="pdf",
+                                   object_prefix="ingress-user/pdf/abc123/",
+                                   submitted_by="alice@example.com", on_behalf_of="alice@example.com",
+                                   source="notice.pdf")
+    assert row["content_kind"] is None
+
+
 # ===========================================================================
 # record_duplicate_arrival -- the caller-facing message shape (ADR-0041 §8's exact wording)
 # ===========================================================================

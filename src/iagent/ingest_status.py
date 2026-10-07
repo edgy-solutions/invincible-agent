@@ -112,6 +112,13 @@ UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_d
 -- 2026-10-03: origin_suggestion (ingest/origin seam section 6) -- NULLABLE, JSON text; see
 -- sql/create_ingest_status_projection.sql's matching comment for why. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
+
+-- 2026-10-06: content_kind (review-audience fix) -- NULLABLE. `kind` stays the FILE FORMAT
+-- (pdf|cad); this column carries the DECLARED, registry-level content kind (the `content_kind`
+-- form field on POST /ingest) so a later stage move can resolve the promotion audience's domain
+-- from the registry rather than from the file format. NULL for undeclared drops and for every
+-- row written before this column existed. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS content_kind TEXT;
 """
 
 
@@ -145,7 +152,7 @@ def find_primary_by_sha(sha256: str) -> Optional[dict[str, Any]]:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of,
-                          source, status, created_at
+                          source, status, created_at, content_kind
                      FROM ingest_status_projection
                     WHERE sha256 = %s AND status != %s
                     ORDER BY created_at ASC
@@ -165,13 +172,17 @@ def record_received(
     submitted_by: str,
     on_behalf_of: str,
     source: Optional[str] = None,
+    content_kind: Optional[str] = None,
 ) -> dict[str, Any]:
     """A genuinely new arrival: one row, id = ingest_id. `ingest_id` must be
     `promotion.ingest_id_for(body)` — the SAME derivation `document_promotion` requires
     (`promotion.INGEST_ID_RE`) — so a seam-minted document is never refused promotion for a
     spelling mismatch. This is a DIFFERENT spelling from `sha256` (bare hex): the row keeps
     `sha256` as its own column (the dedupe key, and the `ingress-user/{kind}/{sha256}/` object
-    prefix) while `id` carries the `sha256:<64 hex>` form. status = received."""
+    prefix) while `id` carries the `sha256:<64 hex>` form. status = received.
+
+    `content_kind` is the DECLARED, registry-level kind (POST /ingest's `content_kind` form
+    field) — None when undeclared. `kind` stays the file format, unchanged."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
     if not INGEST_ID_RE.match(ingest_id or ""):
@@ -184,6 +195,7 @@ def record_received(
         "submitted_by": submitted_by, "on_behalf_of": on_behalf_of, "source": source,
         "status": RECEIVED, "extracted_count": None, "extracted_total": None,
         "duplicate_of": None, "detail": None, "created_at": now, "updated_at": now,
+        "content_kind": content_kind,
     }
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -191,11 +203,11 @@ def record_received(
                 """INSERT INTO ingest_status_projection
                    (id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                     status, extracted_count, extracted_total, duplicate_of, detail,
-                    created_at, updated_at)
+                    created_at, updated_at, content_kind)
                    VALUES (%(id)s, %(sha256)s, %(kind)s, %(object_prefix)s, %(submitted_by)s,
                            %(on_behalf_of)s, %(source)s, %(status)s, %(extracted_count)s,
                            %(extracted_total)s, %(duplicate_of)s, %(detail)s,
-                           %(created_at)s, %(updated_at)s)""",
+                           %(created_at)s, %(updated_at)s, %(content_kind)s)""",
                 row,
             )
         conn.commit()
@@ -211,12 +223,16 @@ def record_duplicate_arrival(
     on_behalf_of: str,
     source: Optional[str],
     original: dict[str, Any],
+    content_kind: Optional[str] = None,
 ) -> dict[str, Any]:
     """A repeat arrival of content already processed. ADR-0041 §8: "records the arrival as
     provenance" — so this WRITES a new row (id = fresh uuid, status = duplicate,
     duplicate_of = original['id']) rather than silently discarding the second drop. The
     caller-facing message ("already processed on <date> from <source>") is derived from
-    `original`, not restated here — see gateway.py's ingest route."""
+    `original`, not restated here — see gateway.py's ingest route.
+
+    `content_kind` is THIS arrival's own declared kind (not `original`'s) — None when
+    undeclared."""
     now = int(time.time() * 1000)
     from datetime import datetime, timezone
     processed_on = datetime.fromtimestamp(
@@ -228,6 +244,7 @@ def record_duplicate_arrival(
         "submitted_by": submitted_by, "on_behalf_of": on_behalf_of, "source": source,
         "status": DUPLICATE, "extracted_count": None, "extracted_total": None,
         "duplicate_of": original["id"], "detail": detail, "created_at": now, "updated_at": now,
+        "content_kind": content_kind,
     }
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -235,11 +252,11 @@ def record_duplicate_arrival(
                 """INSERT INTO ingest_status_projection
                    (id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                     status, extracted_count, extracted_total, duplicate_of, detail,
-                    created_at, updated_at)
+                    created_at, updated_at, content_kind)
                    VALUES (%(id)s, %(sha256)s, %(kind)s, %(object_prefix)s, %(submitted_by)s,
                            %(on_behalf_of)s, %(source)s, %(status)s, %(extracted_count)s,
                            %(extracted_total)s, %(duplicate_of)s, %(detail)s,
-                           %(created_at)s, %(updated_at)s)""",
+                           %(created_at)s, %(updated_at)s, %(content_kind)s)""",
                 row,
             )
         conn.commit()
@@ -261,7 +278,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at
+                          created_at, updated_at, content_kind
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -339,7 +356,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, origin_suggestion
+                          created_at, updated_at, origin_suggestion, content_kind
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
