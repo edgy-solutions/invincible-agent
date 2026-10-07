@@ -66,37 +66,40 @@ order-dependent reds (which only appear in some orders) — still not 49. The 49
 
 ## State (2026-10-07, end of session)
 
-lane/gov on origin at `f5e9151e`, rebased on master `213ec945`:
+lane/gov on origin at `59b55ebf` (plus this handoff's commit), rebased on master `213ec945`:
 `705cedea` routing VOID/18084 · `f6e129d2` inbox scanner · `f6513994` CLAUDE.md rules 3–5 ·
-`3b6b8e98` citation census · `f5e9151e` census imports its own scanner. Merge is Lane 1's gate.
+`3b6b8e98` citation census · `f5e9151e` census imports its own scanner · `9b20a4b4` handoff ·
+`59b55ebf` sys.modules restore. Merge is Lane 1's gate.
 
 - Item 1:
   - Routing reds become VOID (absent or foreign), live-verified with a stand-in foreign server.
   - `test_adr0019_engine_o_contract_a.py` lost its spurious marker but STAYS in
     `_DEFERRING_FILES` (its remaining guards are absence shims).
   - The order-dependent reds do not reproduce at this sha.
-  - SDK pin waits on lane/ca's tag.
-  - The sys.modules restore conversion (A2, implementer) was in flight at session end; its
-    measurements are in the session scratchpad `a2/`.
+  - SDK pin waits on lane/ca's tag; `test_sdk_is_pinned_to_a_tag[<root>]` stays red until then.
+  - **sys.modules: done (`59b55ebf`).** An AST walk found 32 writers, 31 restore-less; all
+    converted. The "21" does not reproduce (it was a marker grep). The ratchet
+    `test_NO_FILE_WRITES_SYS_MODULES_WITHOUT_A_RESTORE` has no exemption list. 26 files gave 397
+    passed in the default order and with seeds 1–2, gated. Mutants M1 and M2 red by file and line.
+  - Not ours, reported to the architect: the two `tests/planning/` archetype tests read the
+    sibling `../cortex-ui` (cross-repo drift); the FIN `EstimateAtCompletion` missing `method`
+    red predates this work (lane/fin).
 - Items 2+3: the 30 ruling drafts are with Lane 1 (R-021). The scanner and census are done.
 - Item 4: CLAUDE.md here is done. Packets are placed (untracked) in cortex-ui, the SDK and
   doc-tools, with their CI line corrected in place. The dag-tools packet sits in
   invincible-agent/sessions (dag-tools has no sessions/ dir and no CLAUDE.md, only AGENTS.md).
-- Report placed: `invincible-agent/sessions/2026-10-07-packet-to-architect-gov-the-four-item-brief-measured.md`.
+- Reports placed in `invincible-agent/sessions/`:
+  - `2026-10-07-packet-to-architect-gov-the-four-item-brief-measured.md`
+  - `2026-10-07-packet-to-architect-gov-sys-modules-restore-landed-and-the-21-does-not-reproduce.md`
+- **Unanswered by Chris:** what to do about the implementer's routing run, which overlapped Lane 1's
+  ia-01-roll21 suite (09:47 vs 09:44). Stopping it and messaging the implementer were both refused
+  by permission. Do not pursue either by another route.
 
 ## Next step
 
-1. If A2's diff is in this worktree, uncommitted:
-   - review it: population derived rather than listed, before/after alone + per directory +
-     seeds 1–3, ratchet `test_NO_FILE_WRITES_SYS_MODULES_WITHOUT_A_RESTORE` red on a
-     no-restore mutant, reconciled against "21";
-   - commit named paths with `--trailer "Lane: ia-gov/lane/gov"` (derive it) and push
-     `origin lane/gov`; upstream is origin/master, so always name it.
-
-   If A2's diff is not there, re-spec A2 from the brief above. Either way, place a follow-up
-   packet to the architect.
-2. On lane/ca's reply (v0.9.7 at `012a24fb`, or the tag that contains it):
+1. On lane/ca's reply (v0.9.7 at `012a24fb`, or the tag that contains it):
    - re-pin root `pyproject.toml` (lines 66, 138) and `uv.lock`;
-   - re-run the four SDK-pin files.
-3. Watch for the architect's ruling on `ia-`-prefixed addresses to out-of-repo lanes
+   - re-run the four SDK-pin files (gated: one suite machine-wide, refuse under 2 GB free commit).
+2. Watch for the architect's ruling on `ia-`-prefixed addresses to out-of-repo lanes
    (`ia-cortex-60`, `ia-ca`; 20 packets read NO BRANCH here). Do not teach the scanner to guess.
+3. Otherwise the brief is complete pending Lane 1's merge of lane/gov.
