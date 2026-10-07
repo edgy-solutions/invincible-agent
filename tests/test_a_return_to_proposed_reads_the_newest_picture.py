@@ -4,17 +4,21 @@ A maintenance case lasts days. When it comes back to proposed -- rejected, refus
 supervisor or the tier, reopened after escalation, or a parked revisit -- the spares and the
 battle condition may have moved. RULED (2026-10-02/03):
 
-* SOURCE, BOTH IN ORDER. The bridge PUSHES a newer picture as the same event_id again; it runs
-  through intake and is kept on the episode as revision k. A PULL verb is declared as a stub that
-  returns the newest kept revision; when OpenDDIL's picture endpoint exists the same step reads the
-  newest of pushed-or-pulled. Same step, two sources, no second mechanism later.
+* SOURCE. The bridge PUSHES a newer picture as the same event_id again; it runs through intake
+  and is appended to the episode's chain. A PULL is the SDK's ``RefreshSpec`` on the trigger; the
+  runner refuses one until it holds the seeding delegate's credential (RULED 2026-10-06: the
+  ``pull:`` stub verb echoed the kept push and added nothing, and its revision shape was a local
+  reimplementation of the SDK's). ``refresh_url`` -- the pure half -- is sealed here.
 * PLACEMENT, A ROW ATTRIBUTE. ``refresh_input: true`` on the chaining rows that return to proposed.
-* REVISION, A CASE INPUT REVISION. The case keeps ``input_revisions[]`` ({rev, event_id,
-  received_at, provenance}); every instance sees ``input.revision`` and every option cites it.
-  The original event is revision 1. No store write.
-* ORDER, NEWEST RECEIVED (ruled 2026-10-03). The newest ``received_at`` wins; on a tie the pulled
-  one, because it was asked for; then the higher ``rev``, so one clock tick still has an order.
-  Both are revisions of one artifact: an ordering rule, not a merge.
+* REVISION, THE SDK's ``ArtifactRevision`` (RULED 2026-10-06). The case keeps
+  ``input_revisions[]`` -- the chain as it READ it, ``{rev, received_at, provenance, supersedes}``
+  with each revision's OWN ``ProvenanceBlock``; every instance sees ``input.revision`` and every
+  option cites it. The original event is revision 1, supersedes nothing; the holder's claim plants
+  it as the episode chain's head, and each push appends ``rev + 1`` superseding the head. No store
+  write.
+* ORDER, NEWEST RECEIVED (ruled 2026-10-03), NOW THE CHAIN'S. A push received BEFORE the head is
+  refused at the door, so ``rev`` order is receipt order and the reader takes the head -- no sort.
+  One clock tick is not "before": both are appended, in arrival order.
 
 The cluster double is the case runner's own; the policy is the REAL overlay.
 
@@ -29,11 +33,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tests.test_a_case_runs_from_trigger_to_terminal import (
-    R, _answer, _body, _Cluster, _Ctx, _Promise, _refused, main, restate, wd, wr)
+    DOOR_BLOCK, R, _answer, _body, _Cluster, _Ctx, _Promise, _refused, main, restate, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixtures
     ACK, DECIDE, REVIEW, TRIGGER, _event, _path, _real_policy, registered)
 
 import decision_table as dt  # noqa: E402 -- on sys.path via the runner test's import
+import iagent_mesh.ingest as sdk_ingest  # noqa: E402
+from iagent_mesh.provenance import AS_OF_UNKNOWN, DIRECT, make_provenance  # noqa: E402
 
 
 #: Every ``_now_iso`` in these arms is one second after the last, so ORDER (by ``received_at``)
@@ -54,8 +60,18 @@ def _at(s):
     return (_T0 + timedelta(seconds=s)).isoformat()
 
 
-#: The revision a case is on, as the runner passes it: revision 1, received at the start.
-_CUR = {"rev": 1, "received_at": _at(0), "provenance": "pushed", "facts": {"orig": 1}}
+def _push_block(tag="push"):
+    """A pushed revision's OWN provenance, as the event door builds it for a resend."""
+    return make_provenance(
+        authoritative_source="unconfirmed-at-intake", obtained_via=DIRECT, as_of=AS_OF_UNKNOWN,
+        ingested_at="2026-10-06T00:00:01Z", ingest_run=f"event:{tag}", standing="supervised",
+        ingest_id=tag)
+
+
+def _head(at=0, facts=None):
+    """An episode's chain head as the holder's claim plants it: revision 1 and its event."""
+    return {"revision": R.first_revision(_at(at), DOOR_BLOCK).model_dump(),
+            "facts": facts if facts is not None else {"orig": 1}}
 
 
 # ── a double that lets a revision arrive WHILE an instance waits ────────────────────────────
@@ -93,8 +109,13 @@ class _RevCluster(_Cluster):
         fresh.state = self.ctx(key).state
         return fresh
 
-    async def revise(self, key, facts):
-        return await _body(wr.revise)(self.invocation(key), {"facts": copy.deepcopy(facts)})
+    async def revise(self, key, facts, provenance="default"):
+        req = {"facts": copy.deepcopy(facts)}
+        if provenance == "default":
+            provenance = _push_block()
+        if provenance is not None:
+            req["provenance"] = provenance
+        return await _body(wr.revise)(self.invocation(key), req)
 
 
 def _script(key, answers):
@@ -152,9 +173,12 @@ async def test_A_REJECTION_REPROPOSES_AGAINST_THE_PUSHED_REVISION(registered):
         "maint_fault_propose", "maint_fault_propose", "maint_supervisor_review", "maint_release",
         "closed"], _path(out)
     revs = c.case("EV-1")["input_revisions"]
-    assert [(r["rev"], r["event_id"], r["provenance"]) for r in revs] == [
-        (1, "EV-1", "pushed"), (2, "EV-1", "pushed")], revs
+    # EACH REVISION CARRIES ITS OWN PROVENANCE: rev 1 the event door's, rev 2 the push's.
+    assert [(r["rev"], r["supersedes"], r["provenance"]["ingest_run"]) for r in revs] == [
+        (1, None, "event:evt-test"), (2, 1, "event:push")], revs
+    assert [sdk_ingest.ArtifactRevision.model_validate(r).model_dump() for r in revs] == revs
     assert all(r["received_at"] for r in revs), revs
+    assert [_spec(c, n)["input"]["supersedes"] for n in (1, 2)] == [None, 1]
     assert [_spec(c, n)["input"]["revision"] for n in (1, 2, 3, 4)] == [1, 2, 2, 2]
     assert {o["input_revision"] for o in _opts(c, 1)} == {1}
     assert {o["input_revision"] for o in _opts(c, 2)} == {2}
@@ -210,7 +234,9 @@ async def test_THE_NEWEST_OF_SEVERAL_PUSHES_IS_READ(registered):
     c.before[("EV-1~1", DECIDE)] = _two
     await _start(c, _event(me=False))
     assert [k["revision"] for k in kept] == [2, 3], kept
-    assert [r["rev"] for r in c.case("EV-1")["input_revisions"]] == [1, 3]
+    # The case READ 1 and then the head, 3; 3 supersedes 2, which the case never read.
+    assert [(r["rev"], r["supersedes"]) for r in c.case("EV-1")["input_revisions"]] == [
+        (1, None), (3, 2)]
     assert _opts(c, 2)[1]["nearest_spare"]["site"] == "SITE-C"
 
 
@@ -235,8 +261,8 @@ async def test_A_SECOND_RETURN_SKIPS_WHAT_THE_FIRST_READ_AND_READS_WHAT_CAME_AFT
 
 @pytest.mark.asyncio
 async def test_TWO_PUSHES_IN_ONE_CLOCK_TICK_ARE_BOTH_READ_IN_ORDER(registered, monkeypatch):
-    """The clock never moves: the case and both pushes share one instant. ``keep_revision``
-    counts ``rev`` on arrival, so each push still sorts after the revision the case is on."""
+    """The clock never moves: the case and both pushes share one instant. One tick is not
+    "before", so ``next_revision`` appends both, and ``rev`` -- counted on arrival -- orders them."""
     monkeypatch.setattr(main, "_now_iso", lambda: _at(0))
     c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "rejected"),
                                      (DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
@@ -254,102 +280,25 @@ async def test_TWO_PUSHES_IN_ONE_CLOCK_TICK_ARE_BOTH_READ_IN_ORDER(registered, m
     assert _opts(c, 4)[1]["nearest_spare"]["site"] == "SITE-D"
 
 
-# ── THE PULL SOURCE ─────────────────────────────────────────────────────────────────────────
+# ── THE CHAIN: the SDK's ArtifactRevision, built by the runner ─────────────────────────────
 
-def _stubs_with(monkeypatch, returns):
-    real = wd.load_stub_verbs
-
-    def _load():
-        out = dict(real())
-        out["maintenance_picture_read"] = wd.StubVerb.model_validate({
-            "verb": "maintenance_picture_read", "stub": True, "retired_by": "test",
-            "returns": returns})
-        return out
-    monkeypatch.setattr(wd, "load_stub_verbs", _load)
+def test_THE_CHAIN_STARTS_AT_ONE_AND_EACH_REVISION_SUPERSEDES_THE_HEAD():
+    one = R.first_revision(_at(0), DOOR_BLOCK)
+    two = R.next_revision(one, _at(1), _push_block("p2"))
+    three = R.next_revision(two.model_dump(), _at(2), _push_block("p3"))
+    assert [(r.rev, r.supersedes) for r in (one, two, three)] == [(1, None), (2, 1), (3, 2)]
+    assert {type(r) for r in (one, two, three)} == {sdk_ingest.ArtifactRevision}
+    assert three.provenance.ingest_run == "event:p3", three
 
 
-@pytest.mark.asyncio
-async def test_A_NEWER_PULLED_PICTURE_IS_READ_AND_SAYS_IT_WAS_PULLED(registered, monkeypatch):
-    """The second source: what the pull verb returns. A pulled revision above the current one
-    replaces the input exactly as a pushed one would, and the record says it was pulled."""
-    _stubs_with(monkeypatch, {"rev": 5, "event_id": "EV-1", "received_at": "2099-01-01T00:00:00Z",
-                              "facts": _newer()})
-    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_now"),
-                                     (REVIEW, "approved", "s@x"), (ACK, "released", "tier@x")]))
-    out = await _start(c, _event(me=False))
-    revs = c.case("EV-1")["input_revisions"]
-    assert [(r["rev"], r["provenance"]) for r in revs] == [(1, "pushed"), (5, "pulled")], revs
-    assert "maint_supervisor_review" in [h[2] for h in _path(out)], _path(out)
-    assert {o["input_revision"] for o in _opts(c, 2)} == {5}
-
-
-@pytest.mark.asyncio
-async def test_THE_SHIPPED_PULL_STUB_ECHOES_THE_KEPT_REVISION_AND_IT_STAYS_PUSHED(registered):
-    """The shipped stub returns ``{kept}``: the SAME revision reached twice, which is not a tie, so
-    it keeps its pushed provenance and pulling adds nothing until the endpoint is served."""
-    stub = wd.load_stub_verbs()["maintenance_picture_read"]
-    assert stub.returns == "{kept}" and stub.stub is True, stub
-    kept = {"rev": 2, "event_id": "E", "received_at": _at(1), "facts": {"a": 1},
-            "provenance": "pushed"}
-    assert main._render(stub.returns, {"kept": kept}, where="t") == kept
-    assert main._render(stub.returns, {"kept": None}, where="t") is None
-    pulled = {**kept, "provenance": "pulled"}
-    assert R.newest_revision(_CUR, [kept, pulled])["provenance"] == "pushed"
-    assert R.newest_revision(_CUR, [pulled, kept])["provenance"] == "pushed"
-    assert R.newest_revision(_CUR, [None, pulled])["provenance"] == "pulled"
-    # ...and once the case is ON it, neither copy is newer: the echo is that revision too.
-    assert R.newest_revision(kept, [kept, pulled]) is None
-
-
-def test_THE_NEWEST_RECEIVED_WINS_WHATEVER_ITS_REV_OR_SOURCE():
-    """``rev`` labels a revision; it does not order one. A pulled picture received after a pushed
-    one wins even with the lower rev, and a pushed one received later still beats it."""
-    pushed = {"rev": 7, "received_at": _at(2), "facts": {}, "provenance": "pushed"}
-    pulled = {"rev": 5, "received_at": _at(3), "facts": {}, "provenance": "pulled"}
-    assert R.newest_revision(_CUR, [pushed, pulled]) is pulled
-    assert R.newest_revision(_CUR, [pulled, pushed]) is pulled
-    later = {**pushed, "received_at": _at(4)}
-    assert R.newest_revision(_CUR, [later, pulled]) is later
-    assert R.newest_revision(_CUR, [pulled, later]) is later
-
-
-def test_ON_A_TIE_THE_PULLED_PICTURE_WINS_BECAUSE_IT_WAS_ASKED_FOR():
-    """Two DIFFERENT pictures received at one instant -- compared as instants, not as strings
-    (the pushed one's spelling sorts AFTER the pulled one's), and different by facts alone."""
-    pushed = {"rev": 2, "received_at": "2026-10-03T01:00:02+01:00", "facts": {"a": 1},
-              "provenance": "pushed"}
-    pulled = {"rev": 2, "received_at": _at(2), "facts": {"a": 2}, "provenance": "pulled"}
-    assert R.newest_revision(_CUR, [pushed, pulled]) is pulled
-    assert R.newest_revision(_CUR, [pulled, pushed]) is pulled
-    spelled_alike = {**pushed, "received_at": _at(2)}
-    assert R.newest_revision(_CUR, [spelled_alike, pulled]) is pulled
-
-
-def test_NOTHING_RECEIVED_BEFORE_THE_CURRENT_INPUT_AND_NOT_THE_INPUT_ITSELF_IS_NEWER():
-    older = {"rev": 3, "received_at": "2026-10-02T23:59:59+00:00", "facts": {}, "provenance": "pushed"}
-    assert R.newest_revision(_CUR, [older, _CUR, {**_CUR, "provenance": "pulled"}]) is None
-
-
-def test_IN_ONE_CLOCK_TICK_THE_PULLED_ONE_THEN_THE_HIGHER_REV_IS_NEWER():
-    """Ruled 2026-10-03: ``(received_at, rev)`` so two revisions in one tick still have an order.
-    The pulled flag sorts BEFORE ``rev``: a pulled ``rev`` is another source's count, and the
-    first ruling gives a same-instant tie to the pulled picture whatever the revs say."""
-    later_push = {"rev": 2, "received_at": _at(0), "facts": {"b": 1}, "provenance": "pushed"}
-    assert R.newest_revision(_CUR, [later_push]) is later_push
-    assert R.newest_revision(later_push, [{**_CUR, "facts": {"c": 1}}]) is None
-    # Equal on all three keys is not "after", whatever the facts say: the order is exhausted.
-    assert R.newest_revision(_CUR, [{**_CUR, "facts": {"c": 1}}]) is None
-    low_pull = {"rev": 1, "received_at": _at(0), "facts": {"p": 1}, "provenance": "pulled"}
-    high_push = {"rev": 9, "received_at": _at(0), "facts": {"b": 9}, "provenance": "pushed"}
-    assert R.newest_revision(_CUR, [high_push, low_pull]) is low_pull
-    assert R.newest_revision(_CUR, [low_pull, high_push]) is low_pull
-
-
-@pytest.mark.parametrize("bad", [{"rev": "2", "facts": {}}, {"rev": True, "facts": {}},
-                                 {"rev": 2}, {"rev": 2, "facts": None}, "rev 2"])
-def test_A_REVISION_WITHOUT_AN_INTEGER_REV_AND_FACTS_IS_REFUSED(bad):
-    with pytest.raises(R.CaseRoutingError, match="integer `rev`"):
-        R.newest_revision(_CUR, [bad])
+def test_A_RECEIPT_BEFORE_THE_HEAD_IS_REFUSED_COMPARED_AS_INSTANTS():
+    """Spelled in another zone: ``01:00:01+01:00`` is BEFORE a head at ``00:00:02Z`` though it
+    sorts after it as a string, and ``01:00:02+01:00`` is the same instant -- not before."""
+    head = R.next_revision(R.first_revision(_at(0), DOOR_BLOCK), _at(2), _push_block())
+    with pytest.raises(R.CaseRoutingError, match="do not run backwards"):
+        R.next_revision(head, "2026-10-03T01:00:01+01:00", _push_block())
+    assert R.next_revision(head, "2026-10-03T01:00:02+01:00", _push_block()).rev == 3
+    assert R.next_revision(head, _at(2), _push_block()).rev == 3
 
 
 _UNORDERABLE = [None, "t", 1759449600, "2026-10-03T00:00:05"]
@@ -360,29 +309,104 @@ def test_A_REVISION_WHOSE_RECEIPT_CANNOT_BE_ORDERED_IS_REFUSED(at):
     """Missing, unparseable, not a string, or NAIVE: a naive time cannot be ordered against an
     aware one without inventing a zone."""
     with pytest.raises(R.CaseRoutingError, match="with its zone"):
-        R.newest_revision({**_CUR, "received_at": at}, [])
+        R.first_revision(at, DOOR_BLOCK)
     with pytest.raises(R.CaseRoutingError, match="with its zone"):
-        R.newest_revision(_CUR, [{"rev": 2, "received_at": at, "facts": {}}])
+        R.next_revision(R.first_revision(_at(0), DOOR_BLOCK), at, _push_block())
 
 
-@pytest.mark.asyncio
-async def test_A_PULL_VERB_NOBODY_DECLARED_FAILS_THE_CASE(registered, monkeypatch):
-    real = wd.load_stub_verbs
-    monkeypatch.setattr(wd, "load_stub_verbs", lambda: {
-        k: v for k, v in real().items() if k != "maintenance_picture_read"})
-    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected")]))
-    await _refused(c.start("EV-1", TRIGGER, _event()), 500)
-    assert c.case("EV-1")["transitions"][-1]["outcome"] == "failed"
+_BAD_BLOCKS = [None, {}, {**DOOR_BLOCK, "obtained_via": "pushed"}, {**DOOR_BLOCK, "pulled": True}]
 
 
-@pytest.mark.asyncio
-async def test_A_PULLED_PICTURE_IN_ANOTHER_EPISODE_FAILS_THE_CASE(registered, monkeypatch):
-    moved = _newer()
-    moved["asset_id"] = "AST-8"
-    _stubs_with(monkeypatch, {"rev": 5, "event_id": "EV-1", "received_at": "2099-01-01T00:00:00Z",
-                              "facts": moved})
-    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected")]))
-    await _refused(c.start("EV-1", TRIGGER, _event()), 422)
+@pytest.mark.parametrize("block", _BAD_BLOCKS)
+def test_A_REVISION_WITHOUT_ITS_OWN_PROVENANCE_BLOCK_IS_REFUSED(block):
+    with pytest.raises(R.CaseRoutingError, match="provenance"):
+        R.first_revision(_at(0), block)
+    with pytest.raises(R.CaseRoutingError, match="provenance"):
+        R.next_revision(R.first_revision(_at(0), DOOR_BLOCK), _at(1), block)
+
+
+@pytest.mark.parametrize("head", [None, {"rev": 2, "received_at": _at(0)},
+                                  {"rev": 2, "received_at": _at(0), "provenance": DOOR_BLOCK}])
+def test_A_HEAD_THAT_IS_NOT_AN_ARTIFACT_REVISION_IS_REFUSED(head):
+    """The last: rev 2 with no ``supersedes`` -- the SDK's own chain rule refuses it."""
+    with pytest.raises(R.CaseRoutingError, match="not an ArtifactRevision"):
+        R.next_revision(head, _at(1), _push_block())
+
+
+def test_THE_HEAD_IS_NEWER_ONLY_FURTHER_ALONG_THE_CHAIN():
+    head = R.next_revision(R.first_revision(_at(0), DOOR_BLOCK), _at(1), _push_block())
+    kept = {"revision": head.model_dump(), "facts": {"b": 1}}
+    assert R.newer_revision(1, kept) == kept
+    assert R.newer_revision(2, kept) is None
+    assert R.newer_revision(3, kept) is None
+    assert R.newer_revision(1, None) is None
+
+
+@pytest.mark.parametrize("kept, why", [
+    ("rev 2", "and the event's `facts`"),
+    ({"revision": None, "facts": {}}, "not an ArtifactRevision"),
+    ({"revision": {"rev": 2, "received_at": _at(1), "provenance": "pushed", "supersedes": 1},
+      "facts": {}}, "not an ArtifactRevision"),
+    ({"revision": {"rev": 2, "received_at": _at(1), "provenance": DOOR_BLOCK, "supersedes": 1},
+      "facts": None}, "and the event's `facts`"),
+])
+def test_A_KEPT_REVISION_IS_REVALIDATED_WHEN_READ(kept, why):
+    with pytest.raises(R.CaseRoutingError, match=why):
+        R.newer_revision(1, kept)
+
+
+# ── THE PULL: the SDK's RefreshSpec, refused until the delegate exists ─────────────────────
+
+def _trigger(**extra):
+    return {**R.load_trigger(TRIGGER).model_dump(exclude={"refresh"}), **extra}
+
+
+_SPEC = {"url_template": "https://picture.example/fault/{event_id}", "method": "GET",
+         "auth": "seeding-delegate"}
+
+
+@pytest.mark.parametrize("refresh, why", [
+    (_SPEC, "cannot pull"),
+    ({**_SPEC, "url_template": "https://picture.example/fault/{asset_id}"}, "must carry"),
+    ({**_SPEC, "auth": "caller"}, "seeding-delegate"),
+])
+def test_A_TRIGGER_THAT_DECLARES_A_REFRESH_IS_REFUSED(refresh, why):
+    with pytest.raises(ValueError, match=why):
+        R.Trigger.model_validate(_trigger(refresh=refresh))
+
+
+def test_CONTROL_THE_SAME_TRIGGER_WITHOUT_A_REFRESH_LOADS():
+    assert R.Trigger.model_validate(_trigger()).refresh is None
+
+
+def test_THE_RETIRED_PULL_KEY_IS_REFUSED_NOT_DROPPED():
+    with pytest.raises(ValueError, match="pull"):
+        R.Trigger.model_validate(_trigger(pull="maintenance_picture_read"))
+
+
+def test_NO_SHIPPED_TRIGGER_DECLARES_A_REFRESH_AND_THE_PULL_STUB_IS_GONE():
+    triggers = R.load_triggers()
+    # POPULATION: the walk reaches the trigger whose stub this ruling retired.
+    assert TRIGGER in triggers, sorted(triggers)
+    assert {k: t.refresh for k, t in triggers.items() if t.refresh is not None} == {}
+    assert "maintenance_picture_read" not in wd.load_stub_verbs()
+
+
+def test_A_PULL_URL_IS_THE_EVENTS_KEY_FILLED():
+    spec = sdk_ingest.RefreshSpec(**_SPEC)
+    assert R.refresh_url(spec, "event_id", "EV-417") == "https://picture.example/fault/EV-417"
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_A_PULL_FOR_NO_EVENT_IS_REFUSED(value):
+    with pytest.raises(R.CaseRoutingError, match="a pull needs the event's 'event_id'"):
+        R.refresh_url(sdk_ingest.RefreshSpec(**_SPEC), "event_id", value)
+
+
+def test_A_PULL_URL_KEYED_ON_ANOTHER_FACT_IS_REFUSED():
+    spec = sdk_ingest.RefreshSpec(**{**_SPEC, "url_template": "https://p.example/{asset_id}"})
+    with pytest.raises(R.CaseRoutingError, match="must carry {event_id}"):
+        R.refresh_url(spec, "event_id", "EV-417")
 
 
 # ── THE DOOR: what a revision must be ───────────────────────────────────────────────────────
@@ -429,41 +453,132 @@ async def test_A_REVISION_PASSES_THE_SAME_INTAKE_AND_STAYS_IN_ITS_EPISODE(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("block", _BAD_BLOCKS)
+async def test_A_CASE_WHOSE_TRIGGER_KEEPS_A_CHAIN_OPENS_ONLY_WITH_ITS_PROVENANCE(registered, block):
+    """The maintenance trigger declares an episode, so its case keeps a chain from revision 1,
+    whose provenance comes with the event. Absent or malformed, the case is the caller's 400 AT
+    INTAKE, naming the provenance: without the intake check an absent block still ends in a 400,
+    but from the first instance's render of ``{input.revision}``, after the case was recorded and
+    its episode claimed (measured 2026-10-06) -- the status alone cannot tell the two apart."""
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
+                                     (ACK, "released", "tier@x")]))
+    why = await _refused(c.start("EV-1", TRIGGER, _event(), provenance=block), 400)
+    assert ("keeps a revision chain" if block is None else "carries a `provenance` block") in why, why
+    assert c.case("EV-1") is None, c.case("EV-1")
+    assert not any(o.state.get("open") for o in c.objs.values()), c.objs
+    # CONTROL: the same event with the door's block opens and closes.
+    c2 = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
+                                      (ACK, "released", "tier@x")]))
+    assert (await _start(c2, _event()))["status"] == "CLOSED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("block", _BAD_BLOCKS)
+async def test_A_PUSH_WITHOUT_ITS_OWN_PROVENANCE_IS_REFUSED(registered, block):
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
+                                     (ACK, "released", "tier@x")]))
+    seen = []
+
+    async def _try():
+        with pytest.raises(restate.TerminalError) as exc:
+            await c.revise("EV-1", _newer(), provenance=block)
+        seen.append(exc.value.status_code)
+        # CONTROL: the same door, the same moment, the same picture with its block is kept.
+        seen.append((await c.revise("EV-1", _newer()))["revision"])
+    c.before[("EV-1~1", DECIDE)] = _try
+    await _start(c, _event())
+    assert seen == [400, 2], seen
+
+
+def _keep_req(case_id="EV-1", at=_at(1), facts=None, provenance="default"):
+    return {"case_id": case_id, "facts": {"x": 1} if facts is None else facts,
+            "received_at": at,
+            "provenance": _push_block() if provenance == "default" else provenance}
+
+
+def _held(head=True):
+    o = _RevCluster().obj("ep")
+    o.state["open"] = "EV-1"
+    if head:
+        o.state["revision"] = _head()
+    return o
+
+
+@pytest.mark.asyncio
 async def test_ANOTHER_CASES_EVENT_KEEPS_NOTHING_ON_THIS_EPISODE():
-    c = _RevCluster()
-    o = c.obj("ep")
-    o.state["open"] = "EV-1"
-    await _refused(_body(wr.keep_revision)(o, {"case_id": "EV-2", "event_id": "EV-2",
-                                              "facts": {}, "received_at": _at(1)}), 409)
-    assert "revision" not in o.state
+    o = _held()
+    before = copy.deepcopy(o.state["revision"])
+    await _refused(_body(wr.keep_revision)(o, _keep_req(case_id="EV-2")), 409)
+    assert o.state["revision"] == before
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("at", _UNORDERABLE)
-async def test_A_KEPT_REVISION_THE_REFRESH_COULD_NOT_ORDER_IS_REFUSED_AT_THE_DOOR(at):
+async def test_A_HOLDER_WITH_NO_REVISION_ONE_KEEPS_NOTHING():
+    """A chain is appended AFTER its head; a holder whose claim planted none has nothing to
+    supersede, and inventing a rev 1 here would cite an event nobody received."""
+    o = _held(head=False)
+    await _refused(_body(wr.keep_revision)(o, _keep_req()), 409)
+    assert o.state.get("revision") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("req", [
+    _keep_req(facts="not the event"),
+    _keep_req(at="2026-10-02T23:59:59+00:00"),       # before the head
+    _keep_req(provenance=None),
+    *[_keep_req(at=a) for a in _UNORDERABLE],
+])
+async def test_A_REVISION_THE_CHAIN_COULD_NOT_HOLD_IS_REFUSED_AT_THE_DOOR(req):
     """``keep_revision`` is on the ingress: refused here it is the caller's 400, where kept it
-    would fail the holder's case at its next refresh."""
-    c = _RevCluster()
-    o = c.obj("ep")
-    o.state["open"] = "EV-1"
-    await _refused(_body(wr.keep_revision)(o, {"case_id": "EV-1", "event_id": "EV-1",
-                                              "facts": {}, "received_at": at}), 400)
-    assert "revision" not in o.state
+    would fail the holder's case at its next refresh. The head is untouched."""
+    o = _held()
+    before = copy.deepcopy(o.state["revision"])
+    await _refused(_body(wr.keep_revision)(o, req), 400)
+    assert o.state["revision"] == before
 
 
 @pytest.mark.asyncio
-async def test_RELEASE_DROPS_THE_KEPT_REVISION_WITH_THE_EPISODE():
-    """The next case on this episode opens on its own event; a kept revision of the last one
-    would otherwise be its 'newest picture'."""
-    c = _RevCluster()
-    o = c.obj("ep")
-    o.state["open"] = "EV-1"
-    got = await _body(wr.keep_revision)(o, {"case_id": "EV-1", "event_id": "EV-1",
-                                           "facts": {"x": 1}, "received_at": _at(1)})
-    assert got == {"case_id": "EV-1", "revision": 2}
+async def test_CONTROL_A_PUSH_AFTER_THE_HEAD_IS_APPENDED():
+    o = _held()
+    assert await _body(wr.keep_revision)(o, _keep_req()) == {"case_id": "EV-1", "revision": 2}
+    assert (o.state["revision"]["revision"]["rev"],
+            o.state["revision"]["revision"]["supersedes"]) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_AN_ATTACHED_DUPLICATE_DOES_NOT_REPLACE_THE_HOLDERS_CHAIN():
+    o = _held()
+    before = copy.deepcopy(o.state["revision"])
+    assert await _body(wr.claim)(o, {"case_id": "EV-2", "head": _head(5, {"dup": 1})}) == "EV-1"
+    assert o.state["revision"] == before
+
+
+@pytest.mark.asyncio
+async def test_A_KEPT_REVISION_IN_ANOTHER_EPISODE_FAILS_THE_CASE(registered):
+    """``keep_revision`` is reachable directly, past ``revise``'s intake: the refresh checks what
+    it reads again, and a picture of another asset fails the case rather than becoming its input."""
+    moved = _newer()
+    moved["asset_id"] = "AST-8"
+    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected")]))
+
+    async def _plant():
+        [ep] = [o for o in c.objs.values() if o.state.get("open") == "EV-1"]
+        await _body(wr.keep_revision)(ep, _keep_req(facts=moved))
+    c.before[("EV-1~1", DECIDE)] = _plant
+    await _refused(c.start("EV-1", TRIGGER, _event()), 422)
+    assert c.case("EV-1")["transitions"][-1]["outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_RELEASE_DROPS_THE_CHAIN_WITH_THE_EPISODE():
+    """The next case on this episode opens on its own event, as revision 1; the last case's
+    chain would otherwise be its 'newest picture'."""
+    o = _held()
+    assert await _body(wr.keep_revision)(o, _keep_req()) == {"case_id": "EV-1", "revision": 2}
     await _body(wr.release)(o, {"case_id": "EV-1"})
-    assert await _body(wr.claim)(o, {"case_id": "EV-2"}) == "EV-2"
-    assert await _body(wr.newest_revision)(o, {"case_id": "EV-2"}) is None
+    own = _head(9, {"next": 1})
+    assert await _body(wr.claim)(o, {"case_id": "EV-2", "head": own}) == "EV-2"
+    assert await _body(wr.newest_revision)(o, {"case_id": "EV-2"}) == own
 
 
 # ── THE ROW ATTRIBUTE ───────────────────────────────────────────────────────────────────────
@@ -511,13 +626,6 @@ def test_EVERY_ROW_THAT_RETURNS_TO_PROPOSED_REFRESHES():
             for i, r in enumerate(t.get("rows") or []) if r.get("then") == "maint_fault_propose"]
     assert len(back) >= 5, back
     assert [(n, i) for n, i in back if not tables[n]["rows"][i].get("refresh_input")] == []
-
-
-def test_EVERY_PULL_VERB_IS_A_DECLARED_STUB():
-    stubs = wd.load_stub_verbs()
-    pulls = {t.trigger: t.pull for t in R.load_triggers().values() if t.pull}
-    assert pulls.get(TRIGGER) == "maintenance_picture_read", pulls
-    assert {k: v for k, v in pulls.items() if v not in stubs} == {}
 
 
 def test_EVERY_OPTION_CITES_THE_INPUT_REVISION():

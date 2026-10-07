@@ -40,6 +40,14 @@ import main  # noqa: E402  — the real executor
 import workflow_definition as wd  # noqa: E402  — the SAME module object main validates with
 import workflow_runner as wr  # noqa: E402  — the SAME module object main registers
 import case_routing as R  # noqa: E402
+from iagent_mesh.provenance import AS_OF_UNKNOWN, DIRECT, make_provenance  # noqa: E402
+
+#: Revision 1's provenance as the JSON event door builds it (gateway ``ingest_event``). The
+#: double sends it on every run, as the door does; an arm that omits it passes ``provenance=None``.
+DOOR_BLOCK = make_provenance(
+    authoritative_source="unconfirmed-at-intake", obtained_via=DIRECT, as_of=AS_OF_UNKNOWN,
+    ingested_at="2026-10-06T00:00:00Z", ingest_run="event:evt-test", standing="supervised",
+    ingest_id="evt-test")
 
 
 # ── the double: a cluster of keyed contexts ─────────────────────────────────────────────────
@@ -123,9 +131,12 @@ class _Cluster:
     def obj(self, key):
         return self.objs.setdefault(key, _Ctx(self, key))
 
-    async def start(self, key, trigger, facts):
+    async def start(self, key, trigger, facts, provenance=DOOR_BLOCK):
+        req = {"trigger": trigger, "facts": facts}
+        if provenance is not None:
+            req["provenance"] = provenance
         try:
-            return await _body(wr.run)(self.ctx(key), {"trigger": trigger, "facts": facts})
+            return await _body(wr.run)(self.ctx(key), req)
         finally:
             while self.sends:
                 h, k, a = self.sends.pop(0)

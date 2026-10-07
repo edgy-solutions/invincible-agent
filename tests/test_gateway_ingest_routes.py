@@ -775,6 +775,14 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     # MUTANT (the 2026-10-05 key): `case_id = f"{seeds_workflow}:{ingest_id}"` reds here with
     # the runner's own message, "case key ... is not the event's event_id".
     cr.check_intake(trig, cr.flatten(sent["facts"]), key, facts=sent["facts"])
+    # REVISION 1: the maintenance trigger keeps a chain (it declares an episode), so the runner
+    # refuses a case opened without the event's provenance. The door's block goes through the
+    # runner's REAL builder; it is `direct` -- the producer posted it -- and names this ingest.
+    assert trig.episode, trig
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.rev, rev.supersedes) == (1, None)
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id,
+            rev.provenance.standing) == ("direct", r.json()["ingest_id"], "supervised"), rev
 
 
 def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
@@ -1022,7 +1030,13 @@ def test_ingest_events_repeat_calls_revise_not_open_case(client, monkeypatch):
     assert len(calls) == 2, calls
     assert calls[0]["url"].endswith("/case"), calls
     assert calls[1]["url"].endswith("/revise"), calls
-    assert calls[1]["json"] == {"facts": calls[1]["json"]["facts"]}  # shape check
+    # keep_revision refuses a revision without its own provenance (400 -> 422 here), so the
+    # door must send one: measured at the roll #21 merge, where master's door (facts only) met
+    # the worker's runner (provenance required) and every repeat would have 422'd.
+    assert set(calls[1]["json"]) == {"facts", "provenance"}, calls[1]["json"]
+    prov = calls[1]["json"]["provenance"]
+    assert prov["obtained_via"] == "direct", prov
+    assert prov["ingest_run"].startswith("event:") and prov["ingest_id"], prov
     assert calls[1]["json"]["facts"]["asset_id"] == "ASSET-1"
     assert not any(c["url"].endswith("/run/send") for c in calls), \
         "_open_case must not run on a repeat"
@@ -1224,7 +1238,15 @@ def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
     assert len(recorded) == 1, recorded
     assert recorded[0][1] == _SUGGESTION, recorded
     assert len(calls) == 1, calls
-    assert calls[0]["json"] == {"trigger": "origin_suggestion", "facts": _SUGGESTION}
+    sent = calls[0]["json"]
+    assert {k: sent[k] for k in ("trigger", "facts")} == {
+        "trigger": "origin_suggestion", "facts": _SUGGESTION}, sent
+    # REVISION 1'S PROVENANCE IS THE DROP'S OWN BLOCK -- the one the manifest carries -- and the
+    # runner's real revision builder accepts it. MUTANT: `obtained_via=DIRECT` here reds the first.
+    from agent_fleet.restate_analyst import case_routing as cr
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id) == (
+        "user-drop", body["ingest_id"]), sent["provenance"]
     assert body["origin_suggestion"] == _SUGGESTION, body
 
 

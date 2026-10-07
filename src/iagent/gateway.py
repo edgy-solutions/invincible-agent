@@ -8413,7 +8413,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
                       ingested_at=ingested_at, dropped_by_authz_id=dropped_by_authz_id)
 
 
-async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str) -> bool:
+async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
+                     provenance_block: dict) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -8423,12 +8424,16 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str)
     status row) already happened by the time this runs, so a Restate outage here is logged
     (WARNING, naming `ingest_id`) and swallowed, never raised -- an otherwise-successful upload
     must not 500 because the case runner is unreachable. Returns True iff the POST succeeded.
+
+    `provenance_block` IS REVISION 1'S PROVENANCE (SDK `ArtifactRevision.provenance`): the case
+    runner opens the event's revision chain on it, and refuses a trigger with an episode -- one
+    whose event can be revised -- that arrives without one.
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
-                json={"trigger": trigger, "facts": facts},
+                json={"trigger": trigger, "facts": facts, "provenance": provenance_block},
             )
         resp.raise_for_status()
         return True
@@ -8773,7 +8778,7 @@ async def ingest_document(
         )
         await _open_case(
             case_id=origin_suggestion["suggestion_id"], trigger="origin_suggestion",
-            facts=origin_suggestion, ingest_id=ingest_id,
+            facts=origin_suggestion, ingest_id=ingest_id, provenance_block=provenance_block,
         )
     return {
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
@@ -8842,7 +8847,7 @@ async def ingest_event(
     holds the case under (the trigger's key, i.e. the producer's own identity field), and the
     door only answers 200 once the runner's own intake check has accepted the payload.
     """
-    from . import content_kinds
+    from . import content_kinds, provenance
 
     if on_behalf_of_mismatch := (req.on_behalf_of != current_user.authz_id):
         raise HTTPException(
@@ -8951,6 +8956,22 @@ async def ingest_event(
         json.dumps(req.payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
+    # THIS ARRIVAL'S PROVENANCE -- revision 1's on a first arrival, the revision's own on a
+    # repeat (keep_revision refuses a revision without one) -- built at this door like the drop door builds a drop's: who owns
+    # the truth is not confirmed at intake, the truth-date is not in the contract, and the
+    # standing is born-supervised. It differs in HOW: the producer posted the event to this
+    # route itself, so it is `direct`, not a hand-carried `user-drop` (ruled 2026-10-06).
+    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    provenance_block = provenance.make_provenance(
+        authoritative_source=_AUTHORITATIVE_SOURCE_UNCONFIRMED,
+        obtained_via=provenance.DIRECT,
+        as_of=provenance.AS_OF_UNKNOWN,
+        ingested_at=ingested_at,
+        ingest_run=f"event:{ingest_id}",
+        standing="supervised",
+        ingest_id=ingest_id,
+    )
+
     # REPEAT DETECTION (section B, roll #20 item 4): ask the RUNNER, not only our own status
     # table -- the first live event on OpenDDIL opened its case before this status seam existed,
     # so a row-only check would call that case "new" and crash straight into the runner's own
@@ -8998,7 +9019,7 @@ async def ingest_event(
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
                     f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/revise",
-                    json={"facts": facts},
+                    json={"facts": facts, "provenance": provenance_block},
                 )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
@@ -9041,7 +9062,7 @@ async def ingest_event(
 
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
-        ingest_id=ingest_id,
+        ingest_id=ingest_id, provenance_block=provenance_block,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(
