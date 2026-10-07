@@ -97,9 +97,10 @@ lane/gov on origin at `59b55ebf` (plus this handoff's commit), rebased on master
 
 ## Next step
 
-1. On lane/ca's reply (v0.9.7 at `012a24fb`, or the tag that contains it):
+1. When `git ls-remote --tags origin` in the SDK shows `v0.9.8` (cut locally 2026-10-07 and contains
+   `012a24fb`, but NOT pushed; Lane 1 has told lane/ca). It adds 1,212 lines, so it is an upgrade:
    - re-pin root `pyproject.toml` (lines 66, 138) and `uv.lock`;
-   - re-run the four SDK-pin files (gated: one suite machine-wide, refuse under 2 GB free commit).
+   - re-run the pin files and the 30 test files that import `iagent_mesh` (gated: one suite machine-wide, refuse under 2 GB free commit).
 2. Watch for the architect's ruling on `ia-`-prefixed addresses to out-of-repo lanes
    (`ia-cortex-60`, `ia-ca`; 20 packets read NO BRANCH here). Do not teach the scanner to guess.
 3. Otherwise the brief is complete pending Lane 1's merge of lane/gov.
