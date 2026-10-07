@@ -817,3 +817,21 @@ mesh:XMLArtifact a owl:Class ;
   rdfs:subClassOf mesh:Artifact ;
   rdfs:label "XML Artifact" ;
   rdfs:comment "An XML file dropped through the ingestion seam — the third leaf, added for the first real document that needed it: S1000D data modules, which arrive as kind xml with the registered content kind s1000d-data-module riding under it. Same selection rule as the PDF and CAD kinds: declared at the door, resolved to this class, never LLM-classified." .
+
+# The format-level content kinds' outputs (doc-tools' KIND_MAPPING; overlay rows in
+# policy/overlays/openddil-lab/content_kinds/). They REFINE a format leaf and are not leaves of
+# mesh:Artifact themselves: the door accepts only ingest_status.FILE_KINDS, and
+# tests/test_ingest_content_kind_tree.py pins mesh:Artifact's direct children to exactly that set.
+# Placed under PDF because, measured 2026-10-07, a PDF is the only form in which either kind can
+# reach its pass. doc-tools' one user-drop sensor filters ingress-user/pdf/, and
+# identity.document_identity reads page texts. If a DOORS export ever arrives as ReqIF (XML), this
+# placement must be revisited.
+mesh:EngineeringDocumentArtifact a owl:Class ;
+  rdfs:subClassOf mesh:PDFArtifact ;
+  rdfs:label "Engineering Document Artifact" ;
+  rdfs:comment "A drawing or engineering document dropped under the format-level content kind engineering-document. It declares no domain (architect ruling 2026-10-02): its origin is resolved from title-block evidence by identity.document_identity, not asserted by its kind." .
+
+mesh:DoorsExportArtifact a owl:Class ;
+  rdfs:subClassOf mesh:PDFArtifact ;
+  rdfs:label "DOORS Export Artifact" ;
+  rdfs:comment "A requirements-module export from DOORS, dropped under the format-level content kind doors-export. It declares no domain (architect ruling 2026-10-02): its origin is resolved from the export preamble's labelled lines by identity.document_identity, not asserted by its kind." .

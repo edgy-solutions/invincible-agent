@@ -1595,6 +1595,48 @@ def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting
     assert register_calls == []
 
 
+# The ruling's set (architect, 2026-10-02): "engineering-document, doors-export, pdf -> none".
+_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export"}
+_OPENDDIL_CONTENT_KINDS = (Path(__file__).resolve().parents[1]
+                           / "policy" / "overlays" / "openddil-lab" / "content_kinds")
+
+
+def _real_overlay_domainless(monkeypatch) -> set[str]:
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(_OPENDDIL_CONTENT_KINDS))
+    return {r.kind for r in ck.registrations()
+            if r.domain is None and "domain" in r.model_fields_set}
+
+
+def test_the_real_overlay_writes_domain_null_on_exactly_the_ruled_kinds(monkeypatch):
+    """The join between the overlay's YAML and the stage route's discriminator. The route
+    sends a row to `awaiting_origin` only if `domain` is in the composed row's
+    `model_fields_set`. The arms above prove that logic on tmp fixtures; this arm proves the
+    rows the sandbox actually composes take it, and no others."""
+    assert _real_overlay_domainless(monkeypatch) == _RULED_DOMAINLESS
+
+
+@pytest.mark.parametrize("content_kind", sorted(_RULED_DOMAINLESS))
+def test_stage_review_on_a_real_format_level_kind_goes_to_awaiting_origin(
+        doc_tools_client, monkeypatch, content_kind):
+    _real_overlay_domainless(monkeypatch)
+    row = {"id": "sha256:" + "4" * 64, "status": "extracting", "kind": "pdf",
+           "content_kind": content_kind, "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage)))
+    register_calls = []
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert r.json()["stage"] == "awaiting_origin"
+    assert status_calls == [(row["id"], ist.AWAITING_ORIGIN)]
+    assert register_calls == []
+
+
 def test_stage_move_out_of_awaiting_origin_gets_409(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "3" * 64, "status": ist.AWAITING_ORIGIN, "kind": "pdf",
           "submitted_by": "alice@example.com"}
