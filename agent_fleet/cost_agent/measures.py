@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from contextlib import contextmanager
 import pathlib
 from decimal import Decimal
 from typing import Any, Optional
@@ -1027,6 +1028,25 @@ def cost_supplier_concentration(
 
 
 
+@contextmanager
+def _a_builder_exit_is_named():
+    """A builder's `SystemExit` becomes this engine's named refusal, `SourceUnavailable`.
+
+    ⚠ THE BUILDERS ARE SCRIPTS, AND A SCRIPT REFUSES BY EXITING. `build_cost_package` raises
+    `SystemExit` on a missing or unpinned Pyodide runtime, a loader it cannot localise, a CDN
+    reference left in the page, or dataset drift; `build_cost_dataset` does on a lot set it will
+    not package; `algorithm_sha` does when git cannot answer. Every one is a designed refusal
+    with its reason in the message. Uncaught here, `SystemExit` is a `BaseException`, so no
+    `except Exception` above it sees it and the caller got a bare 500 that carried none of that.
+    engine-fin catches the same exit and answers 503; the named form here is `unavailable`,
+    the outcome every other "this deployment cannot build it" refusal in this verb already uses.
+    """
+    try:
+        yield
+    except SystemExit as exc:
+        raise SourceUnavailable(f"the package builder refused: {exc}") from None
+
+
 def package_export(
     state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None,
     canvas: Optional[dict] = None,
@@ -1132,7 +1152,8 @@ def package_export(
     # "git works here" are different questions, and the pod answers yes/no to them
     # respectively. Resolved before the dataset or the HTML is built, so an unresolvable sha is
     # a NAMED refusal rather than an artifact written under a guessed or absent algorithm_sha.
-    sha = builder.algorithm_sha() if _in_a_checkout(root) else _baked_algorithm_sha()
+    with _a_builder_exit_is_named():
+        sha = builder.algorithm_sha() if _in_a_checkout(root) else _baked_algorithm_sha()
     if not sha:
         raise SourceUnavailable(
             "this deployment cannot attest the algorithm commit: it is not running from a git "
@@ -1176,14 +1197,16 @@ def package_export(
         import build_cost_dataset as dataset_builder
 
         dataset_path = _dist_dir(root) / artifact_filenames(scope)[1]
-        dataset_builder.build(scope, dataset_path, state=state,
-                              lots=composed["lots"] if composed else None)
+        with _a_builder_exit_is_named():
+            dataset_builder.build(scope, dataset_path, state=state,
+                                  lots=composed["lots"] if composed else None)
 
     # THE SERVED STATE, threaded to the page. The builder used to seed its own.
     narrowed = dict(lots=composed["lots"], sections=composed["sections"],
                     canvas_answers=composed["answers"]) if composed else {}
-    html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state, sha=sha,
-                              **narrowed)
+    with _a_builder_exit_is_named():
+        html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state,
+                                  sha=sha, **narrowed)
     problems = builder.check_javascript(html)
     if problems:
         # THE SAME GATE THE SCRIPT USES. A verb that skipped it could emit a package that is
