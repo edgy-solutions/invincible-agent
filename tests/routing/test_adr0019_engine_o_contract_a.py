@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import stub_modules
+
 # NOT an integration test: every dependency is stubbed and Engine O runs in-process (see
 # `ontology_main` fixture below). Measured 2026-10-07 (lane/gov): at baseline it PASSED with
 # no Engine O present, so `requires_engine_o` was always the wrong marker for this file — it
@@ -48,7 +50,8 @@ if str(_REPO) not in sys.path:
 # Stubs — duplicated from test_predicate_hybrid_search.py for self-containment.
 # Changes there must not silently affect this file's assertions; same logic.
 # ---------------------------------------------------------------------------
-def _install_stubs():
+def _stub_doubles() -> dict[str, object]:
+    doubles: dict[str, object] = {}
     if "rdflib" not in sys.modules:
         rdflib = types.ModuleType("rdflib")
 
@@ -57,12 +60,12 @@ def _install_stubs():
                 pass
         rdflib.Namespace = _NS
         rdflib.Graph = type("Graph", (), {})
-        sys.modules["rdflib"] = rdflib
+        doubles["rdflib"] = rdflib
 
     # Always overwrite weaviate + weaviate.classes; other test modules
     # install MagicMocks for those that confuse the imports.
     wv = types.ModuleType("weaviate")
-    sys.modules["weaviate"] = wv
+    doubles["weaviate"] = wv
     wvc = types.ModuleType("weaviate.classes")
 
     class _Q:
@@ -96,7 +99,7 @@ def _install_stubs():
             def __init__(self, *a, **kw):
                 pass
     wvc.config = _CCfg
-    sys.modules["weaviate.classes"] = wvc
+    doubles["weaviate.classes"] = wvc
     wv.classes = wvc
 
     if "neo4j" not in sys.modules:
@@ -105,19 +108,19 @@ def _install_stubs():
             "GraphDatabase", (),
             {"driver": staticmethod(lambda *a, **k: None)},
         )
-        sys.modules["neo4j"] = n
+        doubles["neo4j"] = n
 
     if "baml_client" not in sys.modules:
         bc = types.ModuleType("baml_client")
         bc.b = object()
-        sys.modules["baml_client"] = bc
+        doubles["baml_client"] = bc
     if "baml_client.types" not in sys.modules:
         t = types.ModuleType("baml_client.types")
 
         class _R:
             pass
         t.SemanticResolution = _R
-        sys.modules["baml_client.types"] = t
+        doubles["baml_client.types"] = t
     # ALWAYS OVERWRITE baml_client.type_builder. THIS DOUBLE IS A RECORDER, NOT A SHIM: the two
     # `n1` arms read `kwargs["baml_options"]["tb"].values` to assert what enum the LLM was shown,
     # so an install that yields to whatever got there first makes those assertions a claim about
@@ -163,26 +166,27 @@ def _install_stubs():
             self.values: dict[str, str] = {}
             self.Predicate = _PredicateEnumBuilder(self.values)
     tb_mod.TypeBuilder = _TB
-    sys.modules["baml_client.type_builder"] = tb_mod
+    doubles["baml_client.type_builder"] = tb_mod
 
     if "utils" not in sys.modules:
-        sys.modules["utils"] = types.ModuleType("utils")
+        doubles["utils"] = types.ModuleType("utils")
     if "utils.weaviate_utils" not in sys.modules:
         m = types.ModuleType("utils.weaviate_utils")
         m.create_weaviate_client = lambda *a, **k: None
-        sys.modules["utils.weaviate_utils"] = m
+        doubles["utils.weaviate_utils"] = m
+    return doubles
 
 
 @pytest.fixture(scope="module")
 def ontology_main():
-    _install_stubs()
-    spec = importlib.util.spec_from_file_location(
-        "ontology_main_contract_a_test",
-        str(_REPO / "agent_fleet" / "ontology_service" / "main.py"),
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    with stub_modules(_stub_doubles()):
+        spec = importlib.util.spec_from_file_location(
+            "ontology_main_contract_a_test",
+            str(_REPO / "agent_fleet" / "ontology_service" / "main.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        yield mod
 
 
 # ---------------------------------------------------------------------------

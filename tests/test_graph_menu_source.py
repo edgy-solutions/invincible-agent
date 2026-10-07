@@ -36,19 +36,21 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _MESH = "http://invincible-agent/mesh#"
+_GMS_NAME = "graph_menu_source__test"
+_REG_NAME = "capability_registry__sentinel_test"
 
 
 def _gms():
     spec = importlib.util.spec_from_file_location(
-        "graph_menu_source__test",
+        _GMS_NAME,
         _REPO / "agent_fleet" / "presentation_agent" / "graph_menu_source.py",
     )
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_GMS_NAME] = m
     try:
         spec.loader.exec_module(m)
     except Exception as exc:  # noqa: BLE001
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(_GMS_NAME, None)
         pytest.skip(f"graph_menu_source not importable: {type(exc).__name__}: {exc}")
     return m
 
@@ -257,15 +259,15 @@ def test_no_weaviate_host_is_inactive_not_an_error(monkeypatch):
 
 def _reg():
     spec = importlib.util.spec_from_file_location(
-        "capability_registry__sentinel_test",
+        _REG_NAME,
         _REPO / "agent_fleet" / "presentation_agent" / "capability_registry.py",
     )
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_REG_NAME] = m
     try:
         spec.loader.exec_module(m)
     except Exception as exc:  # noqa: BLE001
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(_REG_NAME, None)
         pytest.skip(f"capability_registry not importable: {type(exc).__name__}: {exc}")
     return m
 
@@ -448,3 +450,17 @@ def test_an_explicit_url_is_left_alone(monkeypatch):
     m = _gms()
     monkeypatch.setenv("WEAVIATE_HTTP_HOST", "https://wv.example.com/")
     assert m._weaviate_http() == "https://wv.example.com"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_GMS_NAME, _REG_NAME)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

@@ -25,14 +25,15 @@ import yaml
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 _AUDIT = _REPO / "policy" / "kind_hardcode_audit.yaml"
 _SCRIPT = _REPO / "scripts" / "audit_kind_hardcodes.py"
+_MOD_NAME = "kind_audit_derivation"
 
 DISPOSITIONS = {"declaration_row", "selection_row", "chaining_row", "excluded", "UNDECIDED"}
 
 
 def _derive() -> dict[tuple[str, str], int]:
-    spec = importlib.util.spec_from_file_location("kind_audit_derivation", _SCRIPT)
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, _SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["kind_audit_derivation"] = mod
+    sys.modules[_MOD_NAME] = mod
     spec.loader.exec_module(mod)
     return mod.population(_REPO)
 
@@ -132,3 +133,17 @@ def test_no_domain_species_is_dispositioned_into_the_platform_seed():
                 f"{s['site']}:{s['pattern']} is a domain species dispositioned to a declaration "
                 f"row — its note must say the row lives in a work-side overlay"
             )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

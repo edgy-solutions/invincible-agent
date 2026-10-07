@@ -23,12 +23,13 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _SRC = _REPO / "agent_fleet" / "planning_agent" / "entity_resolution.py"
+_MOD_NAME = "planning_entity_resolution__test"
 
 
 def _mod():
-    spec = importlib.util.spec_from_file_location("planning_entity_resolution__test", _SRC)
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, _SRC)
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_MOD_NAME] = m
     try:
         spec.loader.exec_module(m)
     except Exception as exc:  # noqa: BLE001
@@ -142,3 +143,17 @@ def test_provenance_is_always_populated():
     m = _mod()
     for name in ("Site Alpha", "Site Zulu", "Site"):
         assert m.resolve_planning_entity(name, SITES).provenance != {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

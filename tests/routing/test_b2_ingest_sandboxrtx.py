@@ -146,8 +146,11 @@ def ingest_module():
     Override DOC_TOOLS_REPO env var if doc-tools lives elsewhere; the
     default targets a sibling-repo layout (your-workspace/doc-tools/).
     """
+    import contextlib
     import importlib.util
     import sys
+
+    from tests.conftest import stub_modules
 
     doc_tools_root = Path(os.getenv(
         "DOC_TOOLS_REPO",
@@ -168,20 +171,27 @@ def ingest_module():
     pkg_root.__path__ = [str(doc_tools_root / "doc_tools")]
     pkg_parsers = types.ModuleType("doc_tools.parsers")
     pkg_parsers.__path__ = [str(parsers_dir)]
-    sys.modules.setdefault("doc_tools", pkg_root)
-    sys.modules.setdefault("doc_tools.parsers", pkg_parsers)
+    # Absence shims only (an existing real `doc_tools` wins), installed through `stub_modules`
+    # so the namespace and every parser module loaded under it are put back after the module.
+    stack = contextlib.ExitStack()
+    shims = {
+        k: v for k, v in (("doc_tools", pkg_root), ("doc_tools.parsers", pkg_parsers))
+        if k not in sys.modules
+    }
+    stack.enter_context(stub_modules(shims))
 
     def _load(modname: str, filename: str):
         spec = importlib.util.spec_from_file_location(
             modname, parsers_dir / filename,
         )
         mod = importlib.util.module_from_spec(spec)
-        sys.modules[modname] = mod
+        stack.enter_context(stub_modules({modname: mod}))
         spec.loader.exec_module(mod)
         return mod
 
-    _load("doc_tools.parsers.mil_info_code_map", "mil_info_code_map.py")
-    return _load("doc_tools.parsers.s1000d_ingest", "s1000d_ingest.py")
+    with stack:
+        _load("doc_tools.parsers.mil_info_code_map", "mil_info_code_map.py")
+        yield _load("doc_tools.parsers.s1000d_ingest", "s1000d_ingest.py")
 
 
 # ---------------------------------------------------------------------------

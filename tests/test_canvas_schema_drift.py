@@ -137,7 +137,7 @@ def test_validate_refuses_to_pass_on_zero_files():
         "the validator has no zero-files guard — an empty glob would report success")
 
 
-def test_a_template_referencing_an_undeclared_verb_is_rejected():
+def test_a_template_referencing_an_undeclared_verb_is_rejected(monkeypatch):
     """ADR-0050 acceptance seal 1, broken-on-purpose: *a schema check that never rejects is
     indistinguishable from no check.*
 
@@ -149,7 +149,7 @@ def test_a_template_referencing_an_undeclared_verb_is_rejected():
     import importlib.util
     spec = importlib.util.spec_from_file_location("_ct_models_test", _MODELS)
     models = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = models
+    monkeypatch.setitem(sys.modules, spec.name, models)
     spec.loader.exec_module(models)
 
     with pytest.raises(Exception):
@@ -158,13 +158,13 @@ def test_a_template_referencing_an_undeclared_verb_is_rejected():
             panels=[{"verb": "not a verb iri", "role": "anchor"}])
 
 
-def test_template_ref_is_content_not_bytes():
+def test_template_ref_is_content_not_bytes(monkeypatch):
     """§1.5 — a reflowed comment or a changed description must NOT mint a new ref; a changed
     panel must. This is `ruleset_ref`'s content-only property, inherited deliberately."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("_ct_models_ref", _MODELS)
     models = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = models
+    monkeypatch.setitem(sys.modules, spec.name, models)
     spec.loader.exec_module(models)
 
     base = models.CanvasTemplate(

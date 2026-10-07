@@ -110,11 +110,13 @@ def _load_main():
     spec.loader.exec_module(harness)
 
     before = dict(sys.modules)
-    harness._install_stubs()
-    footprint = [k for k, v in sys.modules.items() if before.get(k) is not v]
-    _FOOTPRINT.update({k: before.get(k, _ABSENT) for k in footprint})
-
     try:
+        # The install sits INSIDE the try whose `finally` puts the footprint back, so the restore
+        # is visible in this file's own code (tests/test_the_stub_harness_puts_sys_modules_back.py).
+        sys.modules.update(harness._stub_doubles())
+        footprint = [k for k, v in sys.modules.items() if before.get(k) is not v]
+        _FOOTPRINT.update({k: before.get(k, _ABSENT) for k in footprint})
+
         spec = importlib.util.spec_from_file_location(
             "ontology_main_predicate_migration_test", str(_ENGINE_O)
         )

@@ -34,19 +34,20 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _MESH = "http://invincible-agent/mesh#"
+_MOD_NAME = "v2_substrate__menu_row_test"
 
 
 def _sub():
     spec = importlib.util.spec_from_file_location(
-        "v2_substrate__menu_row_test",
+        _MOD_NAME,
         _REPO / "agent_fleet" / "mesh_registrar" / "v2_substrate.py",
     )
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_MOD_NAME] = m
     try:
         spec.loader.exec_module(m)
     except Exception as exc:  # noqa: BLE001
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(_MOD_NAME, None)
         pytest.skip(f"v2_substrate not importable: {type(exc).__name__}: {exc}")
     return m
 
@@ -359,3 +360,17 @@ def test_the_saga_marks_AFTER_the_probe_not_before():
     probe_at = src.index('name="probe_both_stores"')
     mark_at = src.index("mark_registration_complete(")
     assert probe_at < mark_at, "the completion marker is written before the probe confirms both stores"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

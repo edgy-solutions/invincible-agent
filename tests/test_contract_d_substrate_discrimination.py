@@ -75,8 +75,15 @@ def _load_registrar(monkeypatch, *, present: set[str], sentinel: str = SENTINEL)
     monkeypatch.setitem(sys.modules, "neo4j", fake_neo4j)
     monkeypatch.setenv("MESH_REGISTRAR_SUBSTRATE_SENTINEL", sentinel)
 
-    sys.modules.pop("agent_fleet.mesh_registrar.main", None)
-    mod = importlib.import_module("agent_fleet.mesh_registrar.main")
+    # The registrar is re-imported against the fake driver. setitem-then-delitem records the
+    # prior entry (or its absence) so the module built against the fake is not left in
+    # sys.modules, nor as the package's `main` attribute, for the next file.
+    _reg = "agent_fleet.mesh_registrar.main"
+    monkeypatch.setitem(sys.modules, _reg, sys.modules.get(_reg))
+    monkeypatch.delitem(sys.modules, _reg)
+    _pkg = importlib.import_module("agent_fleet.mesh_registrar")
+    monkeypatch.setattr(_pkg, "main", getattr(_pkg, "main", None), raising=False)
+    mod = importlib.import_module(_reg)
     monkeypatch.setattr(mod, "_get_neo4j_driver", lambda: _Driver())
     return mod
 

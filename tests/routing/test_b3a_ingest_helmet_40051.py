@@ -61,6 +61,9 @@ from pathlib import Path
 
 import pytest
 
+import contextlib
+from tests.conftest import stub_modules
+
 try:
     from neo4j import GraphDatabase
 except ImportError:
@@ -177,22 +180,29 @@ def mods():
     pkg_root.__path__ = [str(doc_tools_root / "doc_tools")]
     pkg_parsers = types.ModuleType("doc_tools.parsers")
     pkg_parsers.__path__ = [str(parsers_dir)]
-    sys.modules.setdefault("doc_tools", pkg_root)
-    sys.modules.setdefault("doc_tools.parsers", pkg_parsers)
+    # Absence shims only (an existing real `doc_tools` wins), installed through `stub_modules`
+    # so the namespace and every parser module loaded under it are put back after the module.
+    stack = contextlib.ExitStack()
+    shims = {
+        k: v for k, v in (("doc_tools", pkg_root), ("doc_tools.parsers", pkg_parsers))
+        if k not in sys.modules
+    }
+    stack.enter_context(stub_modules(shims))
 
     def _load(modname, fname):
         spec = importlib.util.spec_from_file_location(modname, parsers_dir / fname)
         mod = importlib.util.module_from_spec(spec)
-        sys.modules[modname] = mod
+        stack.enter_context(stub_modules({modname: mod}))
         spec.loader.exec_module(mod)
         return mod
 
-    _load("doc_tools.parsers.mil_info_code_map", "mil_info_code_map.py")
-    _load("doc_tools.parsers.dmc_canonicalizer", "dmc_canonicalizer.py")
-    classifier = _load("doc_tools.parsers.mil_40051_classifier", "mil_40051_classifier.py")
-    ingest = _load("doc_tools.parsers.mil_40051_ingest", "mil_40051_ingest.py")
-    extract = _load("doc_tools.parsers.iads_extract", "iads_extract.py")
-    return {"classifier": classifier, "ingest": ingest, "extract": extract}
+    with stack:
+        _load("doc_tools.parsers.mil_info_code_map", "mil_info_code_map.py")
+        _load("doc_tools.parsers.dmc_canonicalizer", "dmc_canonicalizer.py")
+        classifier = _load("doc_tools.parsers.mil_40051_classifier", "mil_40051_classifier.py")
+        ingest = _load("doc_tools.parsers.mil_40051_ingest", "mil_40051_ingest.py")
+        extract = _load("doc_tools.parsers.iads_extract", "iads_extract.py")
+        yield {"classifier": classifier, "ingest": ingest, "extract": extract}
 
 
 # ---------------------------------------------------------------------------

@@ -31,12 +31,13 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _SRC = _REPO / "agent_fleet" / "planning_agent" / "number_check.py"
+_MOD_NAME = "number_check__test"
 
 
 def _mod():
-    spec = importlib.util.spec_from_file_location("number_check__test", _SRC)
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, _SRC)
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_MOD_NAME] = m
     spec.loader.exec_module(m)
     return m
 
@@ -147,3 +148,17 @@ def test_prose_with_no_numbers_passes_untouched():
     text = "Spend is concentrated in the later periods."
     clean, violations = m.check_narration(text, [{"v": 5}])
     assert clean == text and not violations
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)
