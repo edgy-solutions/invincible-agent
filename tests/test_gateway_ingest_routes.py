@@ -1573,3 +1573,33 @@ def test_real_overlay_registry_resolves_pcn_pdn_s1000d_and_has_a_matching_grant(
     # key doc-tools' review actually resolves a recipient against -- a kind with no matching
     # grant key here has no recipient and 422s at review time.
     assert "document_promotion:SUSTAINMENT" in audiences, sorted(audiences)
+
+
+# THE JOIN BETWEEN THE FILER AND THE ACTOR (found live 2026-10-07, PCN26-119 on roll #19). Each
+# side is sealed alone: the stage route's arms above assert the payload it files, and
+# test_a_document_is_promoted_on_the_approval_plane asserts what `promotion.subject_from_payload`
+# requires. Nothing asserted that the first satisfies the second, and it does not. The stage
+# route files {ingest_id, domain, dropped_by}; the act refuses 422 promotion_payload_invalid for
+# lack of object_ref, content_kind, pipeline_version, format_fingerprint, standing,
+# extraction_ref. So no document filed through POST /ingest/{id}/stage can be promoted or
+# rejected. STRICT xfail: once the filer carries the record's fields, this goes XPASS and
+# fails, and the marker comes off. The fix needs doc-tools' stage body to name its extraction
+# (packet to doc-tools/lane/7f, 2026-10-07).
+@pytest.mark.xfail(strict=True, raises=promotion.PromotionRefused,
+                   reason="stage route files a document_promotion payload the "
+                   "act refuses (promotion_payload_invalid); needs the extraction contract")
+def test_the_payload_the_stage_route_files_is_one_the_act_accepts(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "e" * 64, "status": "extracting", "kind": "pdf",
+           "content_kind": "pcn", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    registered = []
+    monkeypatch.setattr(ht, "register_task",
+                        lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert len(registered) == 1, registered
+    subject = promotion.subject_from_payload(registered[0]["payload"])
+    assert subject.ingest_id == row["id"]
