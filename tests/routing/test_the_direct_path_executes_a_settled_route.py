@@ -572,7 +572,8 @@ def _shared_record() -> dict:
         status="matched", subject_uri=_SUBJ, subject_confidence=1.0,
         subject_instance_id="urn:lot:4", subject_instance_label="Lot 4", verb_iri=_VERB,
         verb_confidence=1.0, classify_called=False, candidate_count=1,
-        subject_candidates=[], fallback_reason="", eligibility_excluded=[],
+        subject_candidates=[], fallback_reason="", reason_code="pre_resolved",
+        eligibility_excluded=[],
         acting_persona="COST_ANALYST", acting_domains=["PRODUCTION_COST"],
         sub_query="where did the money go",
         predicate={"endpoint": _ENDPOINT, "owner_persona": "COST_ANALYST",
@@ -646,7 +647,8 @@ def test_a_registered_provider_WINS_and_an_absent_one_is_derived():
             status="matched", subject_uri="S", subject_confidence=1.0,
             subject_instance_id="", subject_instance_label="", verb_iri="V",
             verb_confidence=1.0, classify_called=False, candidate_count=1,
-            subject_candidates=None, fallback_reason="", eligibility_excluded=None,
+            subject_candidates=None, fallback_reason="", reason_code="pre_resolved",
+            eligibility_excluded=None,
             acting_persona="P", acting_domains=None, sub_query="q", predicate=pred,
         )["handler_provider"]
 
@@ -674,10 +676,10 @@ def test_the_record_carries_EXACTLY_the_contract_it_declares():
     """
     from iagent_pure.routing_record import GRAPH_TRACE_LABELS, ROUTING_LABELS
     assert set(ROUTING_LABELS) == {
-        "route_status", "subject_uri", "subject_confidence", "subject_instance_id",
-        "subject_instance_label", "verb_iri", "verb_confidence", "classify_called",
-        "candidate_count", "subject_candidates", "fallback_reason", "eligibility_excluded",
-        "acting_persona", "acting_domains", "sub_query",
+        "route_status", "reason_code", "subject_uri", "subject_confidence",
+        "subject_instance_id", "subject_instance_label", "verb_iri", "verb_confidence",
+        "classify_called", "candidate_count", "subject_candidates", "fallback_reason",
+        "eligibility_excluded", "acting_persona", "acting_domains", "sub_query",
     }
     assert set(GRAPH_TRACE_LABELS) == {
         "route_status", "subject_uri", "picked_verb_iri", "compatible_verbs",

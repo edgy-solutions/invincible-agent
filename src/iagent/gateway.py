@@ -4109,6 +4109,7 @@ def _project_route_decision(mat: dict) -> dict | None:
                 "endpoint_url": handler_endpoint or None,
             },
             "route_status": route_status,
+            "reason_code": md.get("reason_code") or None,
             "fallback": False,
             "acting": acting,
             # The candidates the winner beat — the visualizer shows the
@@ -4164,6 +4165,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             "endpoint_url": None,
         },
         "route_status": route_status,
+        "reason_code": md.get("reason_code") or None,
         "fallback": True,
         "acting": acting,
         "fallback_reason": fallback_reason,
