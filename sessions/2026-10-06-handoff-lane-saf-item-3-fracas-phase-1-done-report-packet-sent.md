@@ -79,3 +79,35 @@ resume — wait for the architect's next assignment or re-check Item 1's gate.
 ## Report packet placed (untracked, shared tree)
 
 `C:\Users\cnogr\git\invincible-agent\sessions\2026-10-06-packet-to-architect-three-items-item-3-fracas-done.md`
+
+## Follow-up work order (2026-10-07) — status
+
+**1. HAZ-1004 severity.** Matrix: `setup/ontologies/safety_risk_matrix.ttl` line 194:
+`[] a safety:MatrixCell ; safety:whenSeverity "III" ; safety:whenProbability "B" ; safety:yieldsRiskLevel safety:Serious .`
+Severity III is `safety:Marginal` (about lines 109-110); line 96 records the matrix as verified against
+MIL-STD-882E Table III on 2026-09-12. HAZ-1004 (`agent_fleet/safety_agent/entities.py` about line 221):
+severity "III", probability "B". So severity = Marginal (III); risk level = Serious.
+"High" and "Serious" are the SAME axis (risk level: High > Serious > Medium > Low), but neither is a
+severity category (Catastrophic I, Critical II, Marginal III, Negligible IV). The work order's "high" was
+wrong on value (the cell yields Serious, not High) and loosely worded as a severity. My "Serious" was
+right as a risk level; my phrasing of it as "severity" was wrong and is corrected here.
+
+**2a. Seal.** `4f6dd2b3` covered only the first act (ladder routes beyond alice to
+`safety_concurrence`, carol). The risk_acceptance_high path was not covered. Now sealed in `88f65457`
+(`tests/safety/test_seal7_the_ladder_routes_not_just_alice.py` section 6): High acceptance lands in
+`risk_acceptance_high`, which only alice holds; parametrized controls differing only in risk level
+(HAZ-1004 serious -> alice's serious audience; HAZ-1003 medium -> bob) do not reach the high audience.
+14 passed. Mutation (hardcoding the high audience in `policy/workflows/safety_acceptance_direct.yaml`)
+killed 3 tests; restored. There was no fix to run it against, so the mutation is the red proof.
+
+**2b. HAZ-1004 walk-census row: NOT RUN, blocked.** Unblocked by a Lane 1 packet that reports a roll
+whose image sha contains `88f65457` (or the merge carrying lane/saf's safety commits `3e0aace2`,
+`88f65457`) onto master. Check: `git merge-base --is-ancestor 88f65457 origin/master` exits 0 AND a
+Lane 1 packet names the rolled revision. Until both hold, do not fire it.
+
+**2c. Deferral-risk refusal** is doc-tools 7f's. Packet (untracked, in invincible-agent/sessions/):
+`2026-10-07-packet-to-7f-safety-deferral-risk-refusal-failing-since-0926-hypothesis-only.md`.
+The Jena-to-Neo4j gap is labelled hypothesis; no live store was queried.
+
+**3. Item 1** still waits on Lane 1 merging `e15877ef` (only on `lane/74-docs-serve-entitlement`).
+Nothing to do until it lands on master.
