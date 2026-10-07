@@ -25,6 +25,8 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -70,6 +72,21 @@ OWNER_PERSONA = "PROGRAM_FINANCE_ANALYST"
 #: The notional model. Read-only for the life of the process — no verb here mutates it, which
 #: is ADR-0045 Decision 1 expressed in the one place it cannot be argued with.
 STATE = build_seed()
+
+
+def _artifact_id(fn: str, params: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    """Mint a CONTENT-ADDRESSED id for one measure's answer — never a pointer into a store.
+
+    Nothing is persisted here. The same verb, the same params and the same rows always hash to
+    the same id, so a citation built from it is checkable by RE-RUNNING the measure rather than
+    by dereferencing something this engine kept. Callers (the brief, a card) must never describe
+    it as a stored artifact — there is no store behind it.
+    """
+    digest = hashlib.sha256(
+        json.dumps({"measure": fn, "params": params, "rows": rows},
+                   sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()[:16]
+    return f"fin:{fn}:{digest}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -619,6 +636,9 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
     return {
         "measure": fn,
         "output_uri": measures.OUTPUT_URI[fn],
+        # THE KEY THE BRIEF CITES (`fin_program_brief.py` reads `artifact_id`). Absent, every
+        # finding carried `artifact: null`. Content-addressed — see `_artifact_id`.
+        "artifact_id": _artifact_id(fn, params, rows),
         # DECLARED, NEVER INFERRED. A verb absent from VALUE_UNIT emits no such key and the
         # renderer keeps showing a bare number rather than guessing a currency this payload
         # never sent — which is why `fin_performance_indices` has none: CPI is a ratio, and

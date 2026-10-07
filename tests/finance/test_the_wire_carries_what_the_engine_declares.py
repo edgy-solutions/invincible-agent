@@ -633,7 +633,11 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 
 # Keys the builder composes itself rather than reading from a declaration table. Named, and
 # the arm below CHECKS the reason rather than trusting it.
-_NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows"})
+#
+# `artifact_id` joined 2026-10-06: it is MINTED by `_artifact_id(fn, params, rows)`, a hash over
+# the verb's own call, never a lookup into one of the tables below -- so it belongs here, not in
+# `_envelope_tables()`'s population.
+_NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows", "artifact_id"})
 
 # The tables an opaque `**` spread may draw from. Each name here MUST appear in
 # _MEMBER_REGISTERS below -- written-down members plus the producer mapping to compare them
