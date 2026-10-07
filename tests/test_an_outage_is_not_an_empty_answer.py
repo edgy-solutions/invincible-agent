@@ -163,7 +163,7 @@ def test_PATH_B_CANNOT_ANSWER_A_SCOPED_QUERY_AT_ALL():
     assert "dataset" in str(exc.value).lower() or "conjunctive" in str(exc.value).lower()
 
 
-def test_ALL_NINE_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
+def test_ALL_TEN_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
     """PARTITIONED, NOT SAMPLED - every call site in the basis or excluded with a reason.
 
     Derived at eight on 2026-09-17: seven pass a query the wrap scopes, and the eighth (the Jena
@@ -177,6 +177,15 @@ def test_ALL_NINE_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
     through to the pre-existing resolve path (sealed in
     `tests/docs/test_the_docs_subject_pool_binds_the_page.py`), so an outage binds no page and is
     never read as "the corpus has no pages". Nine of nine, by two routes to the same raise.
+
+    RE-DERIVED AT TEN on 2026-10-06. The tenth is `/declared_query`'s per-select loop: every
+    declared-query SELECT is built by `declared_query.build_selects` from a `[PREFIX…] SELECT
+    [DISTINCT] ?v… WHERE { … }` shape with no `GRAPH`/`SERVICE`/`FROM` keyword (the loader refuses
+    those at load time, module docstring of `agent_fleet/utils/declared_query.py`), so it joins
+    the SAME scoped class as the other nine under the keyword rule. The route catches none of
+    `execute_sparql`'s raises -- `SubstrateUnavailable` propagates uncaught out of the route
+    coroutine, and FastAPI's default handling of an unhandled exception is a 500, the same 5xx
+    `/instances_by_property` surfaces on an outage. Ten of ten.
     """
     from agent_fleet.ontology_service.doc_pages import build_all_pages_query
 
@@ -192,8 +201,8 @@ def test_ALL_NINE_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
         and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) == "execute_sparql"
         and n.args
     ]
-    assert len(sites) == 9, (
-        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 9 "
+    assert len(sites) == 10, (
+        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 10 "
         "and a new caller has not been classified. Re-derive it rather than adjusting the number."
     )
 

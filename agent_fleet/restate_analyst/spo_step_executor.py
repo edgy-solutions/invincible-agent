@@ -53,12 +53,18 @@ except ImportError:  # pragma: no cover
         outbound_auth_headers,
     )
 
+try:  # pragma: no cover - import path differs by runtime
+    from utils.declared_query import QueryVerb  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.declared_query import QueryVerb
+
 __all__ = [
     "StepFailAndRelease",
     "verify_spo_step",
     "dispatch_spo_step",
     "check_can_invoke",
     "execute_direct_call",
+    "execute_declared_query",
 ]
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
@@ -359,3 +365,76 @@ def execute_direct_call(
     # genuinely worth retrying. That distinction is the whole point of the two branches above.
     resp.raise_for_status()
     return resp.json()
+
+
+def execute_declared_query(
+    decl: QueryVerb,
+    params: dict,
+    identity: dict,
+    *,
+    engine_o_url: str = ENGINE_O_URL,
+    topaz_url: str = TOPAZ_DIRECTORY_URL,
+) -> dict:
+    """A declared-query verb (``agent_fleet/utils/declared_query.py``): a mesh READ, gated and
+    dispatched exactly like :func:`execute_direct_call` — same capability gate, same identity
+    rule, same auth headers, timeouts and error taxonomy — but posting to engine-o's own
+    ``/declared_query`` seam rather than a caller-declared endpoint. The query text never
+    reaches this module; only the verb's name and its parameter values do."""
+    user_jwt = identity.get("user_jwt")
+    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
+    if not check_can_invoke(decl.capability, caller, topaz_url=topaz_url):
+        raise StepFailAndRelease(
+            f"caller {caller!r} is not authorized (can_invoke) for capability "
+            f"{decl.capability!r} — failing and releasing.",
+            status_code=403,
+        )
+    endpoint = f"{engine_o_url}/declared_query"
+    payload: dict[str, Any] = {"verb": decl.verb, "params": params}
+    headers = {}
+    if user_jwt:
+        headers["Authorization"] = f"Bearer {user_jwt}"
+    else:
+        # Same as direct_call: the case runner's OWN credential, minted at the point of use and
+        # never sent unauthenticated.
+        try:
+            case_runner_token = mint_case_runner_token()
+        except ServiceTokenError as exc:
+            raise StepFailAndRelease(
+                f"declared query {decl.verb!r}: could not mint the case-runner credential "
+                f"({type(exc).__name__}: {exc}) — refusing to send unauthenticated.",
+                status_code=503,
+            ) from exc
+        headers["Authorization"] = f"Bearer {case_runner_token}"
+    try:
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=STEP_HTTP_TIMEOUT)
+    except (requests.exceptions.MissingSchema,
+            requests.exceptions.InvalidSchema,
+            requests.exceptions.InvalidURL) as exc:
+        # Same taxonomy as direct_call's unusable-endpoint case: a malformed ENGINE_O_URL is a
+        # DEPLOYMENT defect, not transport, and no retry can fix it.
+        raise StepFailAndRelease(
+            f"declared query {decl.verb!r} has an UNUSABLE endpoint {endpoint!r}: {exc}. This is "
+            f"a DEPLOYMENT defect, not transport — it fails identically on every run and no retry "
+            f"can change it.",
+            status_code=500,
+        ) from exc
+    if resp.status_code in (401, 403):
+        if not user_jwt:
+            forget_case_runner_token()
+        raise StepFailAndRelease(
+            f"access denied ({resp.status_code}) on declared query {decl.verb!r} -> "
+            f"{endpoint}; failing and releasing.",
+            status_code=403,
+        )
+    if 400 <= resp.status_code < 500:
+        # A 4xx is about THIS REQUEST (an unknown verb, bad params) — terminal, like direct_call's.
+        raise StepFailAndRelease(
+            f"declared query {decl.verb!r} -> {endpoint} refused permanently "
+            f"({resp.status_code}): {resp.text[:300]}. A 4xx is about the REQUEST; retrying sends "
+            f"the same one again.",
+            status_code=resp.status_code,
+        )
+    # 5xx and network errors fall through to raise_for_status / propagate — genuinely transient,
+    # genuinely worth retrying, exactly as in direct_call.
+    resp.raise_for_status()
+    return resp.json()["selects"]

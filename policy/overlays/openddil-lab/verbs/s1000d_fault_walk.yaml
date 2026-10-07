@@ -1,25 +1,122 @@
 # SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
 #
-# THE S1000D WALK, DECLARED AS A STUB. 7f serves the real walk (fault isolation -> remove/install
-# -> IPD -> planning interval) in its Phase 2(e). Until then this row stands in, and says so on
-# the step record (`status: STUB`, `retired_by`).
+# THE S1000D WALK, NOW DECLARED DATA (fault isolation -> remove/install -> IPD -> planning
+# interval). It used to be a stub (`stub: true`, `retired_by: "7f Phase 2(e)"`) that always
+# returned nulls; it is now a declared-query verb, served by engine-o by name from its own baked
+# policy tree -- the SPARQL text below never crosses the wire, and no Python anywhere names this
+# domain, S1000D or "fault" (the mesh's declared-query mechanism is domain-agnostic; this file is
+# what makes it a fault walk).
 #
-# THE SHAPE IS THE ONE 7f RELAYED (sessions/2026-10-02-relay-contract-7f-mrad-arr-0417-walk-
-# return-verbatim-from-doc-tools.md). EVERY DATA MODULE CODE IS NULL: inventing a DMC is
-# forbidden, and a plausible-looking code would be cited on a work order as if a manual said it.
-# A null citation renders as null on the option, which is what the approver should see.
+# A DMC IS NEVER INVENTED. Every `dmc` cited below is a select's `?dmc` binding, read straight off
+# a `rdfs:label` in the graph -- never synthesised, never defaulted, never guessed at when a
+# select finds nothing. A select that matches no row for a `one` select renders as a strict
+# failure (the runner's `_render` refuses a blank), not as a plausible-looking code that would be
+# cited on a work order as if the manual said it.
 #
-# THE IPD CITATION GAINS `icn` AND `hotspot_id` (2026-10-02): the figure and the hotspot on it that
-# locate the part. 7f's parser fills them; until then both are null here, and a null renders as
-# "not supplied", never as a crash.
+# DMC VALUES ARE THE DATA MODULES' `rdfs:label`, CANONICAL -- the fixture graph's labels carry no
+# `DMC-` prefix, and a select never adds one. (The cross-repo
+# GROUND-TRUTH.json fixture still carries the `DMC-` prefix on its citations -- that file is a
+# DRAFT per ADR-0046 v2 §9, and the prefix mismatch is a finding for that doc, not something to
+# patch into the SPARQL here.)
+#
+# DOMAIN: `MAINTENANCE` (uppercase). Evidence this is the tag engine-o's domain scoping
+# (`execute_sparql` in agent_fleet/ontology_service/main.py) reads the maintenance instance graph
+# under -- i.e. that it resolves to `http://internal/MAINTENANCE` / `…MAINTENANCE_INSTANCES`:
+#   - `execute_sparql`'s own `domain` parameter defaults to the literal string `"MAINTENANCE"`
+#     (main.py:589), as does every maintenance-reading route's request model
+#     (`ResolveRequest`/`PolicyRulesRequest`/etc., main.py:1016,1037,5845) and
+#     `_get_active_ontology_classes` (main.py:726) -- a default is the engine's own fallback
+#     answer to "which domain", not a value some caller invented.
+#   - `spo_interview.py`'s `domain` parameters (lines 98, 150) default to the same string.
+#   - `policy/groups.yaml` grants the MECHANIC persona the `MAINTENANCE` domain cell (line 68),
+#     and `policy/domains.yaml` lists `MAINTENANCE` (line 16) as a domain name, both uppercase.
+#   - `policy/domain_consumption.yaml` (line 73) keys the maintenance-mechanics consumption rule
+#     by `MAINTENANCE`, uppercase, and reads "artifact whose origin is MAINTENANCE".
+#   - `agent_fleet/ontology_service/registry_views.py:69` labels `"MAINTENANCE"` (uppercase) as
+#     the wrench-turning/physical-repair domain's display row.
+#   This is a DIFFERENT field from `content_kinds/s1000d-data-module.yaml`'s `domain: maintenance`
+#   (lowercase) -- that one tags a *content kind* for classification/routing, not a Jena graph
+#   URI, and nothing cited above treats the two spellings as the same value.
 verb: s1000d_fault_walk
-stub: true
-retired_by: "7f Phase 2(e) -- the S1000D walk served by doc-tools"
+capability: "mesh:s1000dFaultWalk"
+domain: MAINTENANCE
+params:
+  fault_code: "{trigger.fault.fault_code}"
+selects:
+  fault_isolation:
+    cardinality: one
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?dmc ?text WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            rdfs:label ?dmc ;
+            mil:hasFaultCode ?fc .
+        ?fc mil:hasFaultCodeValue ?fault_code ;
+            mil:hasFaultCodeText ?text .
+      }
+  remove_install:
+    cardinality: values
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?dmc WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            mil:hasFaultCode ?fc ;
+            mil:refersToDataModule ?dm .
+        ?fc mil:hasFaultCodeValue ?fault_code .
+        ?dm a mil:ProcedureDataModule ;
+            rdfs:label ?dmc .
+      } ORDER BY ?dmc
+  ipd:
+    cardinality: one
+    integers: [quantity]
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?dmc ?part_number ?quantity ?icn ?hotspot_id WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            mil:hasFaultCode ?fc ;
+            mil:refersToDataModule ?procDm .
+        ?fc mil:hasFaultCodeValue ?fault_code .
+        ?procDm a mil:ProcedureDataModule ;
+            mil:hasPart ?part ;
+            mil:refersToDataModule ?ipdDm .
+        ?part mil:hasPartNumber ?part_number .
+        ?ipdDm a mil:IllustratedPartsDataModule ;
+            rdfs:label ?dmc ;
+            mil:hasCatalogItem ?item .
+        ?item mil:hasPartNumber ?part_number ;
+              mil:hasQuantity ?quantity .
+        OPTIONAL { ?ipdDm mil:hasFigure ?fig . ?fig mil:hasICN ?icn . }
+        OPTIONAL { ?item mil:hasHotspotId ?hotspot_id . }
+      }
+  planning_interval:
+    cardinality: one
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT DISTINCT ?dmc ?interval WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            mil:hasFaultCode ?fc ;
+            mil:refersToDataModule ?procDm .
+        ?fc mil:hasFaultCodeValue ?fault_code .
+        ?procDm a mil:ProcedureDataModule .
+        ?planDm mil:refersToDataModule ?procDm ;
+                mil:hasPlanningInterval ?iv ;
+                rdfs:label ?dmc .
+        ?iv rdfs:label ?interval .
+      }
 returns:
-  bit_code: "{trigger.fault.fault_code}"
-  bit_text: null
+  bit_code: "{params.fault_code}"
+  bit_text: "{fault_isolation.text}"
   citations:
-    fault_isolation: {dmc: null}
-    remove_install: {dmc: null}
-    ipd: {dmc: null, part_number: null, quantity: null, icn: null, hotspot_id: null}
-    planning_interval: {dmc: null, interval: null}
+    fault_isolation: {dmc: "{fault_isolation.dmc}"}
+    remove_install: {dmc: "{remove_install}"}
+    ipd:
+      dmc: "{ipd.dmc}"
+      part_number: "{ipd.part_number}"
+      quantity: "{ipd.quantity}"
+      icn: "{ipd.icn}"
+      hotspot_id: "{ipd.hotspot_id}"
+    planning_interval: {dmc: "{planning_interval.dmc}", interval: "{planning_interval.interval}"}

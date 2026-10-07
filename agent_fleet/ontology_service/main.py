@@ -5287,6 +5287,58 @@ async def policy_rules(request: PolicyRulesRequest) -> dict:
             "graph": request.graph, "ruleset_label": request.ruleset_label}
 
 
+# ---------------------------------------------------------------------------
+# POST /declared_query — a declared-query verb, served by NAME (ADR-0046-adjacent; see
+# `agent_fleet/utils/declared_query.py`). A mesh read whose question is DATA: the caller names a
+# verb and passes parameter values, and engine-o loads the declaration from its OWN baked policy
+# tree. THE QUERY TEXT NEVER CROSSES THE WIRE — a route that executed caller-supplied SPARQL would
+# let any holder of a service token read any graph, and leave the domain scoping to the caller.
+# ---------------------------------------------------------------------------
+try:  # pragma: no cover - import path differs by runtime
+    from utils.declared_query import (  # type: ignore[no-redef]
+        DeclaredQueryError, build_selects, load_query_verbs, policy_root, shape_selects, verb_dirs,
+    )
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    from agent_fleet.utils.declared_query import (
+        DeclaredQueryError, build_selects, load_query_verbs, policy_root, shape_selects, verb_dirs,
+    )
+
+
+class DeclaredQueryRequest(BaseModel):
+    verb: str
+    params: dict[str, str] = Field(default_factory=dict)
+
+
+@app.post("/declared_query")
+async def declared_query_route(request: DeclaredQueryRequest) -> dict:
+    """Load the named verb from the registry, bind its params, run its selects and shape the
+    rows. Unknown verb -> 404 (nothing to serve); bad params or an unshapeable answer ->
+    422 (the caller's request); a registry that fails to load -> 500 (engine-o's own tree, not the
+    caller's). Each select runs through the SAME `execute_sparql` scope wrap every other route
+    uses, so a substrate outage surfaces exactly as it does at `/instances_by_property` — a raise
+    that reaches the caller as a 5xx, never a quiet `[]`."""
+    try:
+        verbs = load_query_verbs(verb_dirs(policy_root()))
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=500, detail=f"declared-query registry: {exc}") from exc
+    decl = verbs.get(request.verb)
+    if decl is None:
+        raise HTTPException(
+            status_code=404, detail=f"no declared-query verb named {request.verb!r}")
+    try:
+        built = build_selects(decl, request.params)
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rows_by_select: dict[str, list[dict]] = {}
+    for name, q in built.items():
+        rows_by_select[name] = await execute_sparql(q, domain=decl.domain)
+    try:
+        selects = shape_selects(decl, rows_by_select)
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"verb": decl.verb, "domain": decl.domain, "selects": selects}
+
+
 class FindCompatibleVerbsRequest(BaseModel):
     subject_uri: str
     # How many subClassOf hops to walk. 0 = direct edges only;
