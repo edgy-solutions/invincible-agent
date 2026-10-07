@@ -82,7 +82,15 @@ DUPLICATE = "duplicate"
 # ca's SDK -- it is this repo's own event-branch extension. Keeping it out of STAGES keeps that
 # seal intact; it is still a legal `update_status` target via ALL_STATUSES below.
 CASE_OPENED = "case_opened"
-ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED)
+# Out-of-band terminal, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
+# registration declares `domain` EXPLICITLY as null (`pdf`, `engineering-document`,
+# `doors-export` -- "origin resolved by evidence, not kind") never enters `review`'s task-filing
+# step at all, so it does not belong on the STAGES ladder either -- it is a different fact
+# (no audience exists to file a task against), recorded once and done, same as a duplicate
+# arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
+# 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
+AWAITING_ORIGIN = "awaiting_origin"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). Two today; a third is a

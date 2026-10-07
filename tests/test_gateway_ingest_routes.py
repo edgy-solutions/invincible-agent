@@ -1390,6 +1390,101 @@ def test_stage_backwards_move_gets_409(doc_tools_client, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /ingest/{ingest_id}/stage -- `awaiting_origin` (architect ruling 2026-10-02): a
+# registration can declare `domain` EXPLICITLY as null ("origin resolved by evidence, not
+# kind" -- pdf/engineering-document/doors-export), which must be told apart from a registration
+# that never mentioned `domain` at all. REAL overlay fixtures, not the plain-attribute `_Reg`
+# stub `_stub_domain` uses above -- the thing under test IS pydantic's `model_fields_set`
+# behaviour on a row `iagent_mesh.ingest.compose` actually built, which a hand-built stub
+# object cannot exercise either way.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_no_task(
+        doc_tools_client, monkeypatch, tmp_path):
+    (tmp_path / "test-domainless-kind.yaml").write_text(
+        'kind: test-domainless-kind\n'
+        'passes: ["x.baml::Y"]\n'
+        'outputs: ["mfg:X"]\n'
+        'domain: null\n',
+        encoding="utf-8",
+    )
+    # "before AND after": the setattr/setenv calls themselves plus monkeypatch's automatic
+    # revert on teardown -- same idiom as test_real_overlay_registry_resolves_... above.
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(tmp_path))
+
+    row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "test-domainless-kind", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
+    task_exists_calls = []
+    register_calls = []
+    monkeypatch.setattr(ht, "task_exists",
+                        lambda task_id: task_exists_calls.append(task_id) or False)
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ingest_id": row["id"], "stage": "awaiting_origin",
+                        "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
+    assert task_exists_calls == [], "no task lookup for a deliberately domainless kind"
+    assert register_calls == [], "no task filed for a deliberately domainless kind"
+    assert status_calls == [(row["id"], ist.AWAITING_ORIGIN,
+                             {"extracted_count": None, "extracted_total": None,
+                              "detail": "origin resolved by evidence, not kind (ruling 2026-10-02)"})]
+
+
+def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting_origin(
+        doc_tools_client, monkeypatch, tmp_path):
+    """CONTROL for the test above, differing in exactly one thing: this YAML OMITS `domain`
+    entirely rather than writing `domain: null`. `model_fields_set` is what tells the two
+    rows apart -- a discriminator that collapsed to `reg.domain is None` alone could not, and
+    would route this row to `awaiting_origin` too, which is exactly the collision the ruling
+    is about."""
+    (tmp_path / "test-domain-omitted-kind.yaml").write_text(
+        'kind: test-domain-omitted-kind\n'
+        'passes: ["x.baml::Y"]\n'
+        'outputs: ["mfg:X"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(tmp_path))
+
+    row = {"id": "sha256:" + "2" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "test-domain-omitted-kind", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
+    task_exists_calls = []
+    monkeypatch.setattr(ht, "task_exists",
+                        lambda task_id: task_exists_calls.append(task_id) or False)
+    register_calls = []
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "no_declared_domain"
+    assert status_calls == [], "a 422 with no declared domain must write nothing"
+    assert task_exists_calls == [], "no task lookup once there is no domain to resolve"
+    assert register_calls == []
+
+
+def test_stage_move_out_of_awaiting_origin_gets_409(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "3" * 64, "status": ist.AWAITING_ORIGIN, "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: calls.append((a, kw)))
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage",
+                              json={"stage": "failed", "detail": "irrelevant"})
+    assert r.status_code == 409, r.text
+    assert calls == [], "a move off awaiting_origin (terminal) must write nothing"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /ingest -- content_kind travels to the row, not only to the S3 manifest
 # (review-audience fix, 2026-10-06)
 # ─────────────────────────────────────────────────────────────────────────────

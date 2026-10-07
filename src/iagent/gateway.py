@@ -9128,7 +9128,7 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
     stage = row["status"]
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-        ingest_status.DUPLICATE, ingest_status.CASE_OPENED,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
     )
     if stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
@@ -9248,9 +9248,10 @@ async def update_ingest_stage(
     authenticated or not, gets 403.
 
     Enforces the forward order received -> extracting -> review, plus `failed` from any
-    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed) is
-    refused 409, same as a lateral or backwards move within the non-terminal ladder.
-    `rejected`/`detail`-required is `ingest_status.update_status`'s own existing rule.
+    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed/
+    awaiting_origin) is refused 409, same as a lateral or backwards move within the
+    non-terminal ladder. `rejected`/`detail`-required is `ingest_status.update_status`'s own
+    existing rule.
 
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
@@ -9261,10 +9262,15 @@ async def update_ingest_stage(
     422/503 refusal from the task step (no declared domain, no entitled recipients, no
     requester, HITL unconfigured) leaves the row exactly where it was -- never stranded at
     `review` with no task and no way back (a retry on a row already at `review` is 409).
+
+    EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
+    2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
+    filed at all (there is no fixed audience to file one against) and the row moves straight
+    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import ingest_status
+    from . import content_kinds, ingest_status
 
     # doc-tools' pipeline writes only these three target stages through this route. `promoted`
     # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
@@ -9273,7 +9279,10 @@ async def update_ingest_stage(
     # STAGES' own order.
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED)
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
+    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
+                        ingest_status.AWAITING_ORIGIN)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -9313,6 +9322,41 @@ async def update_ingest_stage(
     task_id = None
     task_status = None
     if req.stage == ingest_status.REVIEW:
+        # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
+        # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
+        # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
+        # registry, resolves to a None domain, and files a task no one can be entitled to.
+        kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
+        # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
+        # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a
+        # different fact from a kind that never said anything about a domain at all. Pydantic's
+        # `model_fields_set` is what tells the two apart: a YAML row that WROTE `domain: null`
+        # has "domain" in its fields_set (even though the value equals the field's own default,
+        # None); a row that OMITTED the key entirely does not. `reg.domain is None` alone sees
+        # only the value and cannot discriminate -- that is the collision section 4 of the
+        # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
+        # domained registration (the common case, and the only shape existing tests' plain stub
+        # objects carry) never has to support `model_fields_set` at all.
+        # Decided HERE, in the stage route, before the shared find-or-file helper: a retry never
+        # meets this case, because `awaiting_origin` is terminal and a row only reaches it
+        # through this branch.
+        deliberately_domainless = (
+            kind_reg is not None and not kind_reg.domain
+            and "domain" in getattr(kind_reg, "model_fields_set", frozenset())
+            and kind_reg.domain is None)
+
+        if deliberately_domainless:
+            # NO TASK -- there is no fixed audience to file one against; the origin_record
+            # case (section 6) resolves this artifact's audience per-artifact, from evidence,
+            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.AWAITING_ORIGIN,
+                extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+            return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
+                    "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
+
         # Find-or-file is the shared helper now (`_file_or_find_document_promotion_task`,
         # also used by `ingest_retry_route`'s re-run of this same find-or-file) -- requested_by
         # here is doc-tools' OWN service identity, since this is doc-tools' own transition INTO

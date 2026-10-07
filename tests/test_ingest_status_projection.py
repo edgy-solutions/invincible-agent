@@ -254,11 +254,14 @@ def test_the_stage_vocabulary_matches_the_sdk_directly():
     assert ist.STAGES == INGEST_STAGES
 
 
-def test_duplicate_stays_out_of_band():
-    # 2026-10-06 (roll #20 item 4): CASE_OPENED joins DUPLICATE out-of-band, for the same
-    # reason -- STAGES stays byte-for-byte the SDK's INGEST_STAGES (the seal above), so the
-    # event branch's own next-step status lives in ALL_STATUSES only.
-    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE, ist.CASE_OPENED)
+def test_duplicate_case_opened_and_awaiting_origin_stay_out_of_band():
+    """Three out-of-band statuses, each a legal `update_status` target and none a rung on the
+    STAGES ladder (sealed separately against the SDK's own tuple above): `duplicate`;
+    `case_opened` (roll #20 item 4, the event branch's own next step after `received`);
+    `awaiting_origin` (architect ruling 2026-10-02, a deliberately domainless kind at review)."""
+    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE, ist.CASE_OPENED, ist.AWAITING_ORIGIN)
+    assert ist.CASE_OPENED not in ist.STAGES
+    assert ist.AWAITING_ORIGIN not in ist.STAGES
 
 
 # ===========================================================================

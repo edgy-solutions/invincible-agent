@@ -85,7 +85,7 @@ def test_retry_stranger_gets_404(client, monkeypatch):
 
 
 @pytest.mark.parametrize("stage", [ist.PROMOTED, ist.REJECTED, ist.FAILED, ist.DUPLICATE,
-                                   ist.CASE_OPENED])
+                                   ist.CASE_OPENED, ist.AWAITING_ORIGIN])
 def test_retry_terminal_stage_returns_409(client, monkeypatch, stage):
     row = {"id": "deadbeef", "status": stage, "kind": "pdf",
           "submitted_by": "alice@example.com"}
