@@ -711,6 +711,14 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     # MUTANT (the 2026-10-05 key): `case_id = f"{seeds_workflow}:{ingest_id}"` reds here with
     # the runner's own message, "case key ... is not the event's event_id".
     cr.check_intake(trig, cr.flatten(sent["facts"]), key, facts=sent["facts"])
+    # REVISION 1: the maintenance trigger keeps a chain (it declares an episode), so the runner
+    # refuses a case opened without the event's provenance. The door's block goes through the
+    # runner's REAL builder; it is `direct` -- the producer posted it -- and names this ingest.
+    assert trig.episode, trig
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.rev, rev.supersedes) == (1, None)
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id,
+            rev.provenance.standing) == ("direct", r.json()["ingest_id"], "supervised"), rev
 
 
 def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
@@ -861,7 +869,15 @@ def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
     assert len(recorded) == 1, recorded
     assert recorded[0][1] == _SUGGESTION, recorded
     assert len(calls) == 1, calls
-    assert calls[0]["json"] == {"trigger": "origin_suggestion", "facts": _SUGGESTION}
+    sent = calls[0]["json"]
+    assert {k: sent[k] for k in ("trigger", "facts")} == {
+        "trigger": "origin_suggestion", "facts": _SUGGESTION}, sent
+    # REVISION 1'S PROVENANCE IS THE DROP'S OWN BLOCK -- the one the manifest carries -- and the
+    # runner's real revision builder accepts it. MUTANT: `obtained_via=DIRECT` here reds the first.
+    from agent_fleet.restate_analyst import case_routing as cr
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id) == (
+        "user-drop", body["ingest_id"]), sent["provenance"]
     assert body["origin_suggestion"] == _SUGGESTION, body
 
 
