@@ -735,7 +735,14 @@ cortexUi:
     # attestations); the abbreviated tag and the full tag with its last hex altered both answer
     # not-found; the b49db01 control still resolves to 49767746. No change under .github or the
     # Dockerfile since b49db01, so VITE_FEATURES unchanged.
-    digest: "sha256:8b9299407305a45e7df133d24fd3e69d9921dee9a00b1cf7dcb7b8d42fe4c9c8"
+    # 2026-10-07 roll #21: cortex-ui dabeeac (sealed on the live PCN26-119 rev-175 capture; nine
+    # commits on 3ea967f) -> 7cd6fb27. Measured before pinning: the FULL tag resolves to this digest
+    # (an OCI index, linux/amd64 + linux/arm64 + 2 attestations); the abbreviated tag and the full
+    # tag with its last hex altered both answer 404, as does this digest with its last hex altered.
+    # Since 3ea967f, nothing under .github or the Dockerfile has changed. docker-entrypoint.sh
+    # gains VITE_MOCK_GROUNDING (3d44ee0), sanitised and empty by default, and this chart does
+    # not set it.
+    digest: "sha256:7cd6fb272379ae59e9344141eb2d8a9299d86211ee85cd7797800d6a8b320118"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
