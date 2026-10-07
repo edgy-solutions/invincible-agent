@@ -1210,6 +1210,51 @@ services:
           unsupported over notional entities so an elicitation can offer a menu; members carry
           instance_id and label. Same identity gap and the same incidental bound as resolve
           above — the menu bound of 8 truncates larger classes to a count, which is not a gate."
+      - method: POST
+        path: /package_export
+        identity: none
+        gate: "transport auth (OBSERVE) + a closed recipient-scope set + per-panel program match; NO caller authorization in this engine"
+        exposes: object-store-write
+        consumers: ["cortex-bff /export/package (template route and mesh:packageExport route)"]
+        class: delegates
+        justification: >-
+          THE PRODUCTION HALF OF A FINANCE DISCLOSURE (8bcf9fb7). Builds one recipient's
+          package (an .html page plus a .duckdb) from the same _measure_envelope that
+          /measure/{fn} serves, and WRITES it to the shared dist directory. The caller's
+          authorization is DECIDED AT THE GATEWAY, not here: cortex-bff's /export/package
+          requires get_current_user and refuses a caller who is not a reader of the derived
+          recipient_scope (403), so this route is delegates, not gated. THIS ENGINE DOES NOT
+          READ THE CALLER'S IDENTITY ON THIS ROUTE, unlike /artifact/{filename} below, and
+          that is a real difference worth stating: anything that can reach the engine on the
+          cluster network can ask it to write any recipient's package. What it does enforce
+          is structural: an unknown recipient_scope is 403 (never 404), an empty panel list
+          is 422, an unserved verb is 422, and a panel whose program_id disagrees with the
+          recipient's program is 403, so a request cannot put one program's rows into
+          another program's package. Revisit as ungated_by_accident if the gateway stops
+          being the only caller; it is the row to re-examine when the data stops being
+          notional. 503 (named) when the build cannot run in the image: that behaviour is
+          deliberate and stays.
+      - method: GET
+        path: /artifact/{filename}
+        identity: "caller authz_id, checked against the recipient's reader list"
+        gate: "AUTHORIZATION on the caller (export.readers_for_recipient) + a DERIVED filename allow-list; transport auth (OBSERVE)"
+        exposes: the-whole-disclosure-package
+        consumers: ["cortex-bff /export/package/artifact/{filename}", the recipient the package was built for]
+        class: gated
+        justification: >-
+          Serves a produced finance validation package, every figure the recipient's program
+          was willing to disclose, in one file. Mirrors engine-cost's /artifact/{filename}
+          row above and the same posture: a name outside the closed set derived from
+          export.artifact_filenames is a 404 BEFORE any entitlement check (a 403 there would
+          confirm that some package exists under it), then the caller's authz_id must be in
+          export.readers_for_recipient(scope) or the answer is 403 naming the package and
+          never its readers. No service identity is entitled (a card action through cortex-bff
+          carries the person's identity, ADR-0044). Traversal is refused structurally by
+          comparison against the closed set, never by cleaning input into a path.
+          THE READER LIST IS SEED DATA (export.RECIPIENT_READERS), not policy: a real
+          deployment reads that relation from the grant rail where it can be reviewed and
+          revoked. 404 in a deployed pod where the builder and runtime are absent from the
+          image, since nothing is written there.
 
   docs_agent:
     file: agent_fleet/docs_agent/main.py
