@@ -11,6 +11,7 @@ Run: uv run pytest tests/test_an_address_in_another_repo_is_external_and_unanswe
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -217,3 +218,22 @@ def test_NOT_COMMITTED_counts_untracked_only_and_dedupes(gitrepo):
 def test_a_clean_tree_prints_no_NOT_COMMITTED(gitrepo):
     main, _ = gitrepo
     assert "NOT COMMITTED" not in _census(main)
+
+
+@needs_git
+def test_the_census_scans_a_tree_with_ITS_OWN_scanner_never_the_subjects(gitrepo):
+    """The instrument and the subject must not share a surface. The scanned tree carries a decoy
+    `iagent_pure.lane_packets` with none of the census's names -- as master did on 2026-10-07,
+    when `report_lanes(master)` printed `LANES: unavailable (ImportError)`. A subprocess, because
+    in-process the real module is already in sys.modules and would hide the shadowing."""
+    main, _ = gitrepo
+    decoy = main / "src" / "iagent_pure"
+    decoy.mkdir(parents=True)
+    (decoy / "__init__.py").write_text("", encoding="utf-8")
+    (decoy / "lane_packets.py").write_text("DECOY = True\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(_REPO / "scripts" / "_lane_census.py"), str(main)],
+                       capture_output=True, encoding="utf-8", errors="replace",
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    assert "LANES: unavailable" not in r.stdout, r.stdout[-400:]
+    assert "LANES:" in r.stdout, r.stdout[-400:]

@@ -77,7 +77,11 @@ def _worktrees(repo: Path) -> list:
 def report_lanes(repo: Path) -> None:
     """Print the LANES block. Never raises and never changes the caller's exit code."""
     try:
-        sys.path.insert(0, str(repo / "src"))
+        # The scanner comes from THIS script's tree, never from the tree being scanned: the
+        # instrument and the subject must not share a surface. Importing from `repo / "src"`
+        # made a census of master fail outright (master's scanner predates external_packets),
+        # and once merged it would measure every tree with that tree's own scanner.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
         from iagent_pure.lane_packets import (
             external_packets,
             scan,
