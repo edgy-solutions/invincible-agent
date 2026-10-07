@@ -351,3 +351,81 @@ async def test_haz_1003_the_control_reaches_bobs_acceptance_in_one_act_not_two(m
     assert row["kind"] == "risk_acceptance_medium", row
     assert row["audience"] == "risk_acceptance_medium:SUSTAINMENT", row
     assert _grant_to(row["audience"]) == ["bob@example.com"]
+
+
+# ── 6. THE SECOND ACT: risk_acceptance_high IS ALICE'S, AND ONLY A HIGH LEVEL OPENS IT ───────
+#
+# Sections 2 and 4 prove the FIRST act of a Serious/High hazard is carol's concurrence. They do
+# not prove where the act AFTER it lands: `safety_concurrence_chaining` sends `concurred` to
+# `safety_acceptance_direct`, whose single await binds `audience` and `task_kind` from the
+# trigger's `level_slug`. This section runs that definition on the real `_run_definition`
+# (from_registry, as `saw.run` calls it) with the trigger a `concurred` would hand it.
+#
+# THE CONTROL DIFFERS IN ONE THING, THE LEVEL. Same definition, same entry point, same requester,
+# same trigger shape; only `level`/`level_slug`/`kind`/`audience` move together, exactly as the
+# producer moves them. A non-High level that reached `risk_acceptance_high:SUSTAINMENT` would
+# turn the control arms red, and so would a High that fell to another audience.
+
+def _acceptance_direct_definition(trigger):
+    from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+    return get_workflow_definition("safety_acceptance_direct").model_dump()
+
+
+async def _second_act_register(monkeypatch, trigger):
+    posts = _recording_post(monkeypatch)
+    ctx = _ctx_for(trigger)
+    definition = _acceptance_direct_definition(trigger)
+    out = await _outcome(main._run_definition(
+        ctx, ctx.key(), definition, trigger, task_kind=trigger["kind"],
+        workflow_service="SafetyAcceptance", from_registry=True))
+    assert isinstance(out, _Suspended), f"{type(out).__name__}: {out}"
+    bodies = _registers(posts)
+    assert len(bodies) == 1, bodies
+    return bodies[0]
+
+
+def _synthetic_high_request():
+    from agent_fleet.safety_agent import measures
+    base = measures.draft_risk_assessment(hazard_id="HAZ-1004")["review_request"]
+    return {
+        **base, "kind": "risk_acceptance_high",
+        "task_id": "risk-acceptance-HAZ-SEAL7-HIGH",
+        "audience": "risk_acceptance_high:SUSTAINMENT",
+        "subject_ref": "HAZ-SEAL7-HIGH",
+        "payload": {**base["payload"], "hazard_id": "HAZ-SEAL7-HIGH",
+                    "risk_level": "High", "risk_level_slug": "high"},
+    }
+
+
+@requires_rdflib
+@pytest.mark.asyncio
+async def test_a_high_acceptance_lands_in_risk_acceptance_high_which_only_alice_holds(monkeypatch):
+    trigger = ar.acceptance_trigger(_synthetic_high_request(), authz_id=_REQUESTER)
+    assert trigger["level_slug"] == "high"
+    row = await _second_act_register(monkeypatch, trigger)
+    assert row["kind"] == "risk_acceptance_high", row
+    assert row["audience"] == "risk_acceptance_high:SUSTAINMENT", row
+    assert _grant_to(row["audience"]) == ["alice@example.com"]
+    for stranger in ("bob@example.com", "carol@example.com"):
+        assert stranger not in _grant_to(row["audience"])
+
+
+@requires_rdflib
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hazard,level_slug,holder", [
+    ("HAZ-1004", "serious", "alice@example.com"),   # Serious: alice too in sandbox, DIFFERENT audience
+    ("HAZ-1003", "medium", "bob@example.com"),      # Medium: bob, not alice
+])
+async def test_CONTROL_a_non_high_acceptance_does_not_reach_the_high_audience(
+        monkeypatch, hazard, level_slug, holder):
+    from agent_fleet.safety_agent import measures
+    request = measures.draft_risk_assessment(hazard_id=hazard)["review_request"]
+    trigger = ar.acceptance_trigger(request, authz_id=_REQUESTER)
+    assert trigger["level_slug"] == level_slug
+    row = await _second_act_register(monkeypatch, trigger)
+    assert row["kind"] == f"risk_acceptance_{level_slug}", row
+    assert row["audience"] == f"risk_acceptance_{level_slug}:SUSTAINMENT", row
+    assert row["kind"] != "risk_acceptance_high" and \
+        row["audience"] != "risk_acceptance_high:SUSTAINMENT", (
+        f"a {level_slug} acceptance reached alice's HIGH audience")
+    assert holder in _grant_to(row["audience"])
