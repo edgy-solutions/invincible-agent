@@ -1007,3 +1007,13 @@ userDeployments:
   dag-tools:
     image:
       digest: "sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61"
+
+# ── NetworkPolicy: ON for the sandbox (roll #21, only after #19 and #20 are clean) ──────────
+# The substrate ban's templates (PR #4, a16e2391) render 20 policies with values-sandbox.
+# `extraEgress` is deliberately NOT set here: the object store and the model endpoint sit
+# outside the chart, and their addresses are deployment detail that never enters git. Before
+# this rolls, they go in the untracked values-sandbox.secret.yaml (upgrade-sandbox.sh bakes it
+# in), or the gate cuts the fleet off from both. Roll it with the census run flag-on, so an
+# engine the policies cut off shows up as a routing miss, not a mystery.
+networkPolicy:
+  enabled: true
