@@ -73,7 +73,16 @@ _DETAIL_REQUIRED_STAGES = (REJECTED, FAILED)
 # STAGES so a caller walking the ladder in order does not have to reason about a branch that
 # isn't one.
 DUPLICATE = "duplicate"
-ALL_STATUSES = STAGES + (DUPLICATE,)
+
+# Out-of-band terminal, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
+# registration declares `domain` EXPLICITLY as null (`pdf`, `engineering-document`,
+# `doors-export` -- "origin resolved by evidence, not kind") never enters `review`'s task-filing
+# step at all, so it does not belong on the STAGES ladder either -- it is a different fact
+# (no audience exists to file a task against), recorded once and done, same as a duplicate
+# arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
+# 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
+AWAITING_ORIGIN = "awaiting_origin"
+ALL_STATUSES = STAGES + (DUPLICATE, AWAITING_ORIGIN)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). Two today; a third is a

@@ -8924,9 +8924,10 @@ async def update_ingest_stage(
     authenticated or not, gets 403.
 
     Enforces the forward order received -> extracting -> review, plus `failed` from any
-    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed) is
-    refused 409, same as a lateral or backwards move within the non-terminal ladder.
-    `rejected`/`detail`-required is `ingest_status.update_status`'s own existing rule.
+    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed/
+    awaiting_origin) is refused 409, same as a lateral or backwards move within the
+    non-terminal ladder. `rejected`/`detail`-required is `ingest_status.update_status`'s own
+    existing rule.
 
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
@@ -8937,6 +8938,11 @@ async def update_ingest_stage(
     422/503 refusal from the task step (no declared domain, no entitled recipients, no
     requester, HITL unconfigured) leaves the row exactly where it was -- never stranded at
     `review` with no task and no way back (a retry on a row already at `review` is 409).
+
+    EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
+    2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
+    filed at all (there is no fixed audience to file one against) and the row moves straight
+    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -8949,7 +8955,10 @@ async def update_ingest_stage(
     # STAGES' own order.
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED)
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
+    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
+                        ingest_status.AWAITING_ORIGIN)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -8994,11 +9003,46 @@ async def update_ingest_stage(
         # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
         # registry, resolves to a None domain, and files a task no one can be entitled to.
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
-        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+        # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
+        # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
+        # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a
+        # different fact from a kind that never said anything about a domain at all. Pydantic's
+        # `model_fields_set` is what tells the two apart: a YAML row that WROTE `domain: null`
+        # has "domain" in its fields_set (even though the value equals the field's own default,
+        # None); a row that OMITTED the key entirely does not. `reg.domain is None` alone sees
+        # only the value and cannot discriminate -- that is the collision section 4 of the
+        # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
+        # domained registration (the common case, and the only shape existing tests' plain stub
+        # objects carry) never has to support `model_fields_set` at all.
+        if kind_reg is None:
+            domain = None
+            deliberately_domainless = False
+        elif kind_reg.domain:
+            domain = kind_reg.domain
+            deliberately_domainless = False
+        else:
+            domain = None
+            deliberately_domainless = (
+                "domain" in getattr(kind_reg, "model_fields_set", frozenset())
+                and kind_reg.domain is None)
+
+        if deliberately_domainless:
+            # NO TASK -- there is no fixed audience to file one against; the origin_record
+            # case (section 6) resolves this artifact's audience per-artifact, from evidence,
+            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.AWAITING_ORIGIN,
+                extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+            return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
+                    "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
+
         if domain is None:
-            # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write. Writing
-            # update_status first and only then discovering there is no entitled audience
-            # strands the row at `review` with no task and no way back (a retry is 409).
+            # UNREGISTERED, UNDECLARED CONTENT_KIND, OR A REGISTRATION THAT OMITS THE DOMAIN
+            # KEY -- refuse before any write. Writing update_status first and only then
+            # discovering there is no entitled audience strands the row at `review` with no
+            # task and no way back (a retry is 409). A DELIBERATE explicit-null domain is
+            # handled above and never reaches here.
             raise HTTPException(status_code=422, detail={
                 "error": "no_declared_domain",
                 "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "

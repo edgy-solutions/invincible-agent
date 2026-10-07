@@ -200,8 +200,12 @@ def test_the_stage_vocabulary_matches_the_sdk_directly():
     assert ist.STAGES == INGEST_STAGES
 
 
-def test_duplicate_stays_out_of_band():
-    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE,)
+def test_duplicate_and_awaiting_origin_stay_out_of_band():
+    """`awaiting_origin` (architect ruling 2026-10-02) joins `duplicate` OUT OF BAND -- a legal
+    `update_status` target, but not a rung on the STAGES ladder (sealed separately against the
+    SDK's own tuple above)."""
+    assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE, ist.AWAITING_ORIGIN)
+    assert ist.AWAITING_ORIGIN not in ist.STAGES
 
 
 # ===========================================================================
