@@ -8920,7 +8920,10 @@ async def ingest_event(
     case_id = str(identity_value)
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
-    # answered 200 must not be refused 123 ms later where the producer cannot see it.
+    # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
+    # BOTH a first arrival and a repeat below -- `check_intake` is a pure facts/schema check with
+    # no notion of "does a case already exist", so a repeat's facts pass through it unchanged
+    # (the runner's `revise` handler runs the same check itself, via `check_revision`).
     try:
         check_intake(trigger, flatten(facts), case_id, facts=facts)
     except CaseRoutingError as exc:
@@ -8928,10 +8931,104 @@ async def ingest_event(
             status_code=422,
             detail={"error": "payload_refused_by_trigger", "message": str(exc)},
         )
+
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    sha256_hex = hashlib.sha256(
+        json.dumps(req.payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    # REPEAT DETECTION (section B, roll #20 item 4): ask the RUNNER, not only our own status
+    # table -- the first live event on OpenDDIL opened its case before this status seam existed,
+    # so a row-only check would call that case "new" and crash straight into the runner's own
+    # key-reuse refusal. `case` is a shared, no-input handler (workflow_runner.py) that answers
+    # the case record or null; a non-null answer is a repeat.
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            case_resp = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case",
+            )
+    except Exception as exc:  # noqa: BLE001 — unreachable runner; do not guess at the answer
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "message": str(exc)},
+        )
+    if case_resp.status_code != 200:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "code": case_resp.status_code},
+        )
+    existing_case = case_resp.json()
+
+    if existing_case is not None:
+        # A REVISION, not a duplicate: the same event_id, arriving again. Backfill the status
+        # row ONLY when this ingest_id has never been seen here -- the pre-roll case has no row
+        # at all; a row that already exists keeps its own stage (it is not this route's place to
+        # rewrite history for an id it already has an opinion about).
+        existing_row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if existing_row is None:
+            await run_in_threadpool(lambda: ingest_status.record_received(
+                ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+                object_prefix="", submitted_by=current_user.authz_id,
+                on_behalf_of=req.on_behalf_of, source="events",
+                content_kind=req.content_kind,
+            ))
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/revise",
+                    json={"facts": facts},
+                )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "runner_error", "message": str(exc)},
+            )
+        if rr.status_code == 200:
+            return {
+                "ingest_id": ingest_id, "rev": rr.json().get("revision"),
+                "workflow": {"case_id": case_id, "started": False},
+            }
+        if rr.status_code == 400:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "payload_refused_by_trigger",
+                        "message": _restate_refusal_message(rr)},
+            )
+        if rr.status_code in (404, 409):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_not_kept", "message": _restate_refusal_message(rr)},
+            )
+        raise HTTPException(status_code=502, detail={"error": "runner_error"})
+
+    # FIRST ARRIVAL: write the status row BEFORE opening the case -- "no case without its
+    # record" -- so a write failure here must refuse rather than open a case nobody has a
+    # status row for.
+    try:
+        await run_in_threadpool(lambda: ingest_status.record_received(
+            ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+            object_prefix="", submitted_by=current_user.authz_id,
+            on_behalf_of=req.on_behalf_of, source="events",
+            content_kind=req.content_kind,
+        ))
+    except Exception as exc:  # noqa: BLE001 — "no case without its record"
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "status_unavailable", "message": str(exc)},
+        )
+
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id,
     )
+    if started:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
     return {
         "ingest_id": ingest_id, "workflow": {"case_id": case_id, "started": started},
     }
@@ -8988,7 +9085,74 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "updated_at": row.get("updated_at"),
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
+        "case_id": row.get("case_id"),
     }
+
+
+@app.post("/ingest/{ingest_id}/retry")
+async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """POST /ingest/<id>/retry -- let the dropper un-strand their own row without a hand write
+    (roll #20 item 3).
+
+    SAME caller scoping as GET /ingest/{ingest_id}/status just above (visible iff
+    submitted_by == caller OR on_behalf_of == caller): reuses that route's own
+    `ingest_status.get_status_for` lookup/predicate rather than writing a second, divergent
+    one, and refuses with the SAME plain 404 body a stranger or a missing row gets from
+    status -- existence-oracle-safe for the same reason.
+
+    Dispatch on the row:
+      * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
+        nothing to retry.
+      * an EVENT row, which by this point can only be sitting at `received` (its own only
+        non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
+        through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
+        hash, so the fix is to resend the same event, not to retry here.
+      * a DOCUMENT row at `received`/`extracting` -- 409 `in_pipeline`: extraction runs in
+        doc-tools' own pipeline (ingress_user_sensor); a retry here cannot advance it.
+      * a DOCUMENT row at `review` -- the one stage this CAN move: re-runs the
+        `document_promotion` find-or-file via the SAME helper `update_ingest_stage` uses
+        (`_file_or_find_document_promotion_task`) so the two routes share one implementation.
+        `requested_by` is THIS caller (the retrying party), never doc-tools' service identity.
+        The row itself is NOT moved -- it is already at `review`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+
+    stage = row["status"]
+    _terminal_stages = (
+        ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED,
+    )
+    if stage in _terminal_stages:
+        raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
+
+    if row.get("kind") == ingest_status.EVENT:
+        raise HTTPException(status_code=409, detail={
+            "error": "resend_the_event",
+            "message": "the row holds only the payload hash; resend the same event to "
+                       "POST /ingest/events, which is idempotent on event_id",
+        })
+
+    if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
+        raise HTTPException(status_code=409, detail={
+            "error": "in_pipeline", "pipeline": "doc-tools", "stage": stage,
+            "message": "extraction runs in doc-tools' pipeline (ingress_user_sensor); a retry "
+                       "here cannot advance it",
+        })
+
+    # Only `review` is left on the ladder here. The row is not moved -- it is already there.
+    task_id, task_status = await _file_or_find_document_promotion_task(
+        ingest_id, row, requested_by=current_user.authz_id)
+
+    return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW, "task_id": task_id,
+            "task_status": task_status}
 
 
 # doc-tools' own transport identity (policy/users.yaml: `svc:doc-tools`, "semantic-linker
@@ -9006,6 +9170,71 @@ class IngestStageUpdateRequest(_BaseModel):
     extracted_count: Optional[int] = None
     extracted_total: Optional[int] = None
     detail: Optional[str] = None
+
+
+async def _file_or_find_document_promotion_task(
+    ingest_id: str, row: dict, *, requested_by: str,
+) -> tuple[Optional[str], str]:
+    """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
+    refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
+    block (review-audience fix's domain resolution, task_exists-before-register_task, and the
+    503/422/422 exception mapping), now shared with `ingest_retry_route`'s re-run of the same
+    find-or-file on a row already at `review` (roll #20 item 3) -- ONE helper, not a second,
+    divergent copy.
+
+    THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND: resolves the registry on
+    `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad) -- a lookup
+    on the file format always misses the registry, resolves to a None domain, and files a task
+    no one can be entitled to.
+
+    `requested_by` is the caller each route should be attributing the task to -- doc-tools'
+    own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
+    caller's own authz_id for a retry; this helper does not decide which, it only takes it.
+
+    Raises HTTPException for every refusal (422 `no_declared_domain`, 503
+    `hitl_unconfigured`, 422 `no_entitled_recipients`, 422 `no_requester`) and never writes a
+    task on any of them. Returns `(task_id, "FILED" | "ALREADY_FILED")` on success. Never
+    moves the row itself -- callers that need the row moved do that themselves, in order
+    (TASK FIRST, STATUS SECOND): a 422/503 from here must never strand the row.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, promotion
+
+    kind_reg = content_kinds.by_kind(row.get("content_kind"))
+    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    if domain is None:
+        # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write.
+        raise HTTPException(status_code=422, detail={
+            "error": "no_declared_domain",
+            "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
+                       "which resolves to no registered domain -- refusing to open a "
+                       "promotion task with no audience.",
+        })
+    # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain, but the Topaz grant
+    # key in policy/task_grants.yaml is UPPERCASE -- uppercase it below for both the audience
+    # and the payload so the resolved domain actually matches a grant.
+    domain = domain.upper()
+    audience = f"{promotion.KIND}:{domain}"
+    task_id = f"{promotion.KIND}:{ingest_id}"
+    if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+        return task_id, "ALREADY_FILED"
+    try:
+        await run_in_threadpool(lambda: human_tasks.register_task(
+            kind=promotion.KIND, task_id=task_id, audience=audience,
+            title=f"Promote document {ingest_id}",
+            summary=f"Review the extracted document {ingest_id} for promotion.",
+            requested_by=requested_by, subject_ref=ingest_id,
+            payload={"ingest_id": ingest_id, "domain": domain,
+                     "dropped_by": {"authz_id": row.get("submitted_by")}},
+        ))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    return task_id, "FILED"
 
 
 @app.post("/ingest/{ingest_id}/stage")
@@ -9035,7 +9264,7 @@ async def update_ingest_stage(
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import content_kinds, human_tasks, ingest_status, promotion
+    from . import ingest_status
 
     # doc-tools' pipeline writes only these three target stages through this route. `promoted`
     # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
@@ -9084,48 +9313,15 @@ async def update_ingest_stage(
     task_id = None
     task_status = None
     if req.stage == ingest_status.REVIEW:
-        # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
-        # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
-        # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
-        # registry, resolves to a None domain, and files a task no one can be entitled to.
-        kind_reg = content_kinds.by_kind(row.get("content_kind"))
-        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
-        if domain is None:
-            # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write. Writing
-            # update_status first and only then discovering there is no entitled audience
-            # strands the row at `review` with no task and no way back (a retry is 409).
-            raise HTTPException(status_code=422, detail={
-                "error": "no_declared_domain",
-                "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
-                           "which resolves to no registered domain -- refusing to open a "
-                           "promotion task with no audience.",
-            })
-        # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain (the same value the
-        # door writes into manifest.domain_type and doc-tools uses), but the Topaz grant key in
-        # policy/task_grants.yaml is UPPERCASE (document_promotion:SUSTAINMENT) -- uppercase it
-        # for both the audience and the payload so the resolved domain actually matches a grant.
-        domain = domain.upper()
-        audience = f"{promotion.KIND}:{domain}"
-        task_id = f"{promotion.KIND}:{ingest_id}"
-        if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
-            task_status = "ALREADY_FILED"
-        else:
-            try:
-                await run_in_threadpool(lambda: human_tasks.register_task(
-                    kind=promotion.KIND, task_id=task_id, audience=audience,
-                    title=f"Promote document {ingest_id}",
-                    summary=f"Review the extracted document {ingest_id} for promotion.",
-                    requested_by=caller, subject_ref=ingest_id,
-                    payload={"ingest_id": ingest_id, "domain": domain,
-                             "dropped_by": {"authz_id": row.get("submitted_by")}},
-                ))
-            except human_tasks.HumanTaskConfigError as exc:
-                raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
-            except human_tasks.NoEntitledRecipients as exc:
-                raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
-            except human_tasks.NoRequester as exc:
-                raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
-            task_status = "FILED"
+        # Find-or-file is the shared helper now (`_file_or_find_document_promotion_task`,
+        # also used by `ingest_retry_route`'s re-run of this same find-or-file) -- requested_by
+        # here is doc-tools' OWN service identity, since this is doc-tools' own transition INTO
+        # `review`, never a retrying caller's. Writing update_status first and only then
+        # discovering there is no entitled audience would strand the row at `review` with no
+        # task and no way back (a retry on a row already at `review` is 409), so this call --
+        # and everything it can raise -- happens before update_status below ever runs.
+        task_id, task_status = await _file_or_find_document_promotion_task(
+            ingest_id, row, requested_by=caller)
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised (nothing written) or produced a resolvable audience; only
