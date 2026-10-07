@@ -15,6 +15,7 @@ from unittest import mock
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
+httpx = pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway, human_tasks  # noqa: E402
@@ -27,6 +28,11 @@ class _FakeResp:
     def __init__(self, status_code, data=None):
         self.status_code = status_code
         self._data = data
+        # Measured live: an absent case/spec arrives as an EMPTY 200, not JSON `null` --
+        # `_restate_answer` reads `.content` before ever calling `.json()`. A 404 response's
+        # content is never read before the route's own status-code check, but is set
+        # consistently anyway.
+        self.content = b"" if data is None else b"x"
 
     def json(self):
         return self._data
@@ -38,10 +44,14 @@ class _FakeResp:
 
 class _FakeRestate:
     """Stands in for `httpx.AsyncClient` against the Restate ingress. `case=None` means the
-    `case` handler 404s (no such case); `spec1=None` means `instance_spec` 404s."""
+    `case` handler answers an empty 200 (no such case -- the realistic "absent" shape, measured
+    live); `spec1=None` means `instance_spec` answers an empty 200 the same way. `case_404=True`
+    forces a literal 404 from `/case` instead, for the (now secondary, but still real) arm where
+    Restate itself 404s."""
 
-    def __init__(self, case=None, spec1=None, boom=False):
+    def __init__(self, case=None, spec1=None, boom=False, case_404=False):
         self.case, self.spec1, self.boom = case, spec1, boom
+        self.case_404 = case_404
         self.posts = []
 
     def __call__(self, *a, **k):
@@ -58,9 +68,11 @@ class _FakeRestate:
         if self.boom:
             raise RuntimeError("restate ingress unreachable")
         if url.endswith("/case"):
-            return _FakeResp(200, self.case) if self.case is not None else _FakeResp(404)
+            if self.case is not None:
+                return _FakeResp(200, self.case)
+            return _FakeResp(404) if self.case_404 else _FakeResp(200, None)
         if url.endswith("/instance_spec"):
-            return _FakeResp(200, self.spec1) if self.spec1 is not None else _FakeResp(404)
+            return _FakeResp(200, self.spec1) if self.spec1 is not None else _FakeResp(200, None)
         raise AssertionError(f"unexpected Restate URL {url}")
 
 
@@ -120,6 +132,40 @@ _SPEC1 = {"trigger": {"domain_type": "SAFETY", "dropped_by": {"authz_id": "alice
 
 def test_no_such_case_is_404_case_not_found(client_for):
     c = client_for(_user("bob"), _FakeRestate(case=None))
+    resp = c.get("/cases/nope")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "case not found"
+
+
+class _RealWireRestate:
+    """Answers with REAL `httpx.Response` objects, so the parse under test is httpx's own, not a
+    double's. Measured live (roll #20, rev 176): `WorkflowRunner/<unknown>/case` answers 200
+    with an EMPTY body -- the handler returns `ctx.get("case")` = None, and Restate serialises
+    None as nothing. Both earlier doubles invented the absent answer (a 404; a `.json()` of
+    None), which is how GET /cases shipped answering 503 for an unknown case."""
+
+    def __call__(self, *a, **k):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, json=None, **kw):
+        return httpx.Response(200, content=b"", request=httpx.Request("POST", url))
+
+
+def test_no_such_case_on_the_real_wire_is_404_not_503(client_for):
+    c = client_for(_user("bob"), _RealWireRestate())
+    resp = c.get("/cases/nope")
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "case not found"
+
+
+def test_a_literal_404_from_the_runner_is_still_404(client_for):
+    c = client_for(_user("bob"), _FakeRestate(case=None, case_404=True))
     resp = c.get("/cases/nope")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "case not found"

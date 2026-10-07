@@ -27,6 +27,8 @@ WHAT THESE DEFEND:
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 httpx = pytest.importorskip("httpx")
@@ -508,15 +510,20 @@ def stub_restate_post(monkeypatch):
     class _Resp:
         def __init__(self):
             self.status_code = 200
+            self.content = b""
         def raise_for_status(self):
             if state["fail"]:
                 raise RuntimeError("boom: restate unreachable (stubbed)")
         def json(self):
+            # Measured live: an absent case/spec arrives as an EMPTY 200 body, not JSON
+            # `null` -- real httpx raises JSONDecodeError parsing that empty body, so this
+            # stub must too (`_restate_answer` reads `.content` before ever calling `.json()`,
+            # so this only fires if a caller still calls `.json()` directly on an empty body).
             # Default answer for the events door's repeat-detection lookup
-            # (`WorkflowRunner/{key}/case`): None = "no case yet", i.e. not a repeat. Tests
+            # (`WorkflowRunner/{key}/case`): "no case yet", i.e. not a repeat. Tests
             # exercising a repeat replace this fixture's AsyncClient outright (see the events
             # revision tests below) rather than overloading this one default.
-            return None
+            raise json.JSONDecodeError("Expecting value", "", 0)
 
     class _Client:
         def __init__(self, *a, **k): ...
@@ -947,6 +954,10 @@ def _stub_restate_routed(monkeypatch, *, case_body=None, case_error=None,
         def __init__(self, status_code, body):
             self.status_code = status_code
             self._body = body
+            # Mirrors the real wire fact: Restate answers a handler's `None` as an empty
+            # 200 body, never JSON `null` -- `_restate_answer` reads `.content` before
+            # parsing, so this stub needs a matching attribute.
+            self.content = b"" if body is None else b"x"
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise RuntimeError(f"boom: restate {self.status_code} (stubbed)")
@@ -1126,6 +1137,55 @@ def test_ingest_events_case_lookup_failure_is_503_and_opens_nothing(client, monk
     assert calls[0]["url"].endswith("/case"), calls
     assert received_calls == [], received_calls
     assert status_calls == [], status_calls
+
+
+# ── THE REAL WIRE: absence is an EMPTY 200 (measured live, roll #20) ─────────────────────────
+#
+# `WorkflowRunner/<new key>/case` answers 200 with b"" -- Restate serialises the handler's None
+# as nothing. These arms hand the door REAL `httpx.Response` objects, so the parse under test is
+# httpx's own: the stubs above once answered `.json()` with None, and a first-time event_id
+# shipped raising at the repeat lookup.
+
+def _stub_restate_real_wire(monkeypatch, *, case_content=b""):
+    calls: list[dict] = []
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            calls.append({"url": url, "json": json})
+            req = httpx.Request("POST", url)
+            if url.endswith("/case"):
+                return httpx.Response(200, content=case_content, request=req)
+            return httpx.Response(202, content=b'{"invocationId":"inv-1"}', request=req)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+    return calls
+
+
+def test_ingest_events_a_first_event_on_the_real_wire_opens_its_case(client, monkeypatch):
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_real_wire(monkeypatch)
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/run/send"), calls
+    assert r.json()["workflow"]["started"] is True
+    assert len(received_calls) == 1, received_calls
+
+
+def test_ingest_events_a_non_json_case_answer_is_503_not_500(client, monkeypatch):
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_real_wire(monkeypatch, case_content=b"<html>proxy error</html>")
+    r = _events_post(client)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "runner_unavailable", r.json()
+    assert len(calls) == 1, calls
+    assert received_calls == [] and status_calls == []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

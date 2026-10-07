@@ -8440,24 +8440,35 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str)
         return False
 
 
+def _restate_answer(resp: httpx.Response) -> Optional[dict]:
+    """Measured live: Restate serialises a handler's `None` return as an empty 200 body
+    (``b""``), not JSON `null` -- httpx's `.json()` raises `JSONDecodeError` on that empty
+    body, so treat an empty body as the handler's `None` before parsing."""
+    if not resp.content:
+        return None
+    return resp.json()
+
+
 async def _fetch_case(case_id: str) -> Optional[dict]:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/case` -- the shared ``case``
     handler (workflow_runner.py), synchronous (no `/send`), same calling idiom as
     `GroupedReview/.../get_batch` (~line 1256). Raises on an unreachable runner (the route
-    turns that into 503); returns ``None`` for "no such case" (runner reachable, case absent)."""
+    turns that into 503); returns ``None`` for "no such case" -- measured live, that normally
+    arrives as an empty 200 (not a 404; the 404 branch below is kept for defensiveness)."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case")
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
-    return resp.json()
+    return _restate_answer(resp)
 
 
 async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/instance_spec` with `{"n": 1}` --
     called on the CASE's own key (workflow_runner._run_instance calls it the same way: `await
     ctx.workflow_call(instance_spec, key=case_id, arg={"n": n})`). ``None`` iff instance 1 has
-    never been opened (``ctx.get`` returns falsy)."""
+    never been opened (``ctx.get`` returns falsy) -- measured live, that normally arrives as an
+    empty 200 (not a 404; the 404 branch below is kept for defensiveness)."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/instance_spec",
@@ -8466,7 +8477,7 @@ async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
-    return resp.json()
+    return _restate_answer(resp)
 
 
 @app.get("/cases/{case_id}")
@@ -8960,7 +8971,13 @@ async def ingest_event(
             status_code=503,
             detail={"error": "runner_unavailable", "code": case_resp.status_code},
         )
-    existing_case = case_resp.json()
+    try:
+        existing_case = _restate_answer(case_resp)
+    except Exception as exc:  # noqa: BLE001 — a non-empty, non-JSON body is a runner fault
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "message": str(exc)},
+        )
 
     if existing_case is not None:
         # A REVISION, not a duplicate: the same event_id, arriving again. Backfill the status
