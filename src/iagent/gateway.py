@@ -1863,13 +1863,21 @@ async def export_package(
     out = rr.json()
 
     if out.get("refused"):
-        return {
+        refusal = {
             "export_id": None,
             "status": "failed",
             "recipient_scope": recipient_scope,
             "reason": out.get("reason"),
             "outcome": out.get("outcome"),
         }
+        if out.get("outcome") == "unavailable":
+            # THE ENGINE COULD NOT BUILD, which is not an answer about this caller's export: a
+            # missing runtime, an unpinned loader, a dirty algorithm. engine-cost says so in a
+            # 200 envelope (its refusals are envelopes by design); the HTTP edge says it as a
+            # 503, so a caller retries a service rather than reading "failed" as a verdict on
+            # its request. Same body, carried as the detail -- the reason is the builder's own.
+            raise HTTPException(status_code=503, detail=refusal)
+        return refusal
 
     sha = out.get("artifact_sha256")
     filename = out.get("artifact_filename")
