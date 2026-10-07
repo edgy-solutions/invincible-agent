@@ -1,14 +1,15 @@
-# Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051)
+# Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051, ADR-0056)
 
-**Three questions, three different answer SHAPES.** That is the point of the set rather than an
-accident of coverage: one draws a card, one creates a TASK and draws nothing, and one REFUSES by
-asking for a slot. A walker who expects three cards will score two defects that are not there.
+**Four questions, three different answer SHAPES — Q4 reuses Q3's.** One draws a card, one
+creates a TASK and draws nothing, and two REFUSE by asking for a slot. A walker who expects four
+cards will score three defects that are not there.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
 | 1 | draft a risk assessment for HAZ-1003 | `draft_risk_assessment` | **a task in bob's queue**, not a card |
 | 2 | what hazards are unattended | `find_orphaned_hazards` | a `CONTRIBUTION_RANKING` card, 3 rows |
 | 3 | risk of deferring this work order | `assess_deferral_risk` | **a refusal** asking for `work_order_id` |
+| 4 | what failed on this part | `what_failed_on_this_part` | **a refusal** asking for `part_number` |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -252,6 +253,73 @@ Post `{"work_order_id": "WO-3001"}` and the captured answer is:
 different facts**, so a not-critical verdict must say how many items it was checked against. A
 card that shows "not safety critical" with no count is not distinguishable from one that checked
 nothing.
+
+---
+
+## Q4 — What failed on this part  ⚠ **expect a REFUSAL, same shape as Q3**
+
+> **"what failed on this part"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:whatFailedOnThisPart` → `engine-safety:/measure/what_failed_on_this_part`
+**Expected disposition:** `slot_required` — **this is a PASS**
+
+ADR-0056 Phase 1's own verb. The walk census only captures the refusal branch below, for the
+same reason Q3's census row stops at its refusal and never adds the "if the slot IS supplied"
+follow-on as a row of its own: a populated answer is a flat JSON object (`failures`, `platforms`,
+`systems_of_record_cited`), not a card, and no `rendersAs` binding or `ROW_KEY` archetype exists
+for `safety:FailureRecordSet` yet (confirmed: `src/iagent_pure/walk_census.py`'s `ROW_KEY` has no
+entry for it, and the ADR mints the class without ever proposing one). Capturing a `drawn`
+disposition for an archetype that is not wired would assert cortex-ui behaviour this engine has
+no part in yet — exactly the trap Q3's "KNOWN RESIDUALS" section below warns about from the other
+side. **If Phase 2 or a presentation increment wires a card for this verb, add the populated-path
+row here and to the census then — not before.**
+
+### The captured refusal
+
+```json
+{
+  "refused": true,
+  "reason": "missing required slot(s)",
+  "missing": ["part_number"],
+  "slots": [{"name": "part_number", "kind": "spoken-mandatory", "type": "str", "required": true,
+             "referent": "http://internal/sustainment/safety#SafetyCriticalItem"}]
+}
+```
+
+### Checks that distinguish
+
+- The refusal **names `part_number`** and says it is spoken-mandatory.
+- The referent is **`safety:SafetyCriticalItem`** — the already-owned class ADR-0056 §Decision-1
+  reuses rather than minting a new "Part" concept. If this ever reads as a bare string with no
+  referent, `agent_fleet/safety_agent/slots.py`'s `_REFERENT_KIND` lost its `part_number` entry.
+- **The surface ASKS the walker for a part number.** A refusal that renders as generalist prose,
+  or as "No content available", is the same defect named in Q3 — *nothing drew* is what both a
+  missing refusal and a missing card look like from the wire.
+
+### If the slot IS supplied — the follow-on, deliberately NOT a census row (see above)
+
+Post `{"part_number": "PN-8801"}` and the captured answer correlates across two programs and two
+systems of record (ADR-0056's whole reason to exist):
+
+```json
+{"refused": false, "part_number": "PN-8801", "critical_items_checked": 2, "failure_count": 2,
+ "platforms": ["PLT-ALPHA", "PLT-BRAVO"],
+ "systems_of_record_cited": ["relyence", "sor-events-a"],
+ "failures": [
+   {"record_id": "FR-6001", "platform": "PLT-ALPHA", "system_of_record": "sor-events-a",
+    "failure_mode": "Chafed wiring loom shorted the primary bus.", "observed_on": "2026-03-14",
+    "citation": "sor-events-a:EVT-55101"},
+   {"record_id": "FR-6002", "platform": "PLT-BRAVO", "system_of_record": "relyence",
+    "failure_mode": "Wiring harness chafe — FMEA failure mode WH-12.",
+    "observed_on": "2026-08-11", "citation": "relyence:FM-7734"}],
+ "note": "2 failure(s) for PN-8801 across 2 program(s) and 2 system(s) of record.",
+ "output_uri": "http://internal/sustainment/safety#FailureRecordSet"}
+```
+
+`critical_items_checked: 2` is the same load-bearing field Q3's follow-on carries, for the same
+reason: a part this verb has never seen fail and a part it cannot identify at all must not read
+as the same answer.
 
 ---
 

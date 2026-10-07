@@ -127,6 +127,31 @@ class WriteUp:
     reports_hazard_id: Optional[str]
 
 
+@dataclass(frozen=True)
+class FailureRecord:
+    """One failure, as a system of record holds it. ADR-0056 Phase 1.
+
+    `platform` is NOT a second hand-kept concept beside `Hazard.platform` above — it is the
+    SAME field, because FRACAS's "program" is this codebase's existing platform vocabulary
+    (`PLT-ALPHA` / `PLT-BRAVO` / `PLT-CHARLIE`). "What failed on this part across programs" is
+    answered by grouping this fixture on `platform`, not by inventing a parallel axis.
+    """
+    record_id: str
+    part_number: str
+    platform: str
+    #: Which system of record this came from. Two values only in Phase 1, both named in
+    #: ADR-0056: `"sor-events-a"` (placeholder — OpenDDIL's packet asks that the real name
+    #: behind it never be written here) and `"relyence"` (the commercial product's real name;
+    #: no customer identity hides behind it, so the packet's consistency-only reasoning for a
+    #: placeholder does not apply).
+    system_of_record: str
+    failure_mode: str
+    observed_on: str
+    #: Evidence travels; narrative does not (ADR-0051 §5's CLEARANCE-BOUNDED discipline applies
+    #: here too). A citation into the source system, never a free-text account.
+    citation: str
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # THE FIXTURE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +351,34 @@ WRITE_UPS: tuple[WriteUp, ...] = (
         reported_on="2026-06-08",
         reports_hazard_id="HAZ-1003",
     ),
+)
+
+FAILURE_RECORDS: tuple[FailureRecord, ...] = (
+    # PN-8801 fails TWICE, on TWO platforms, cited from TWO different systems of record.
+    # This pair IS the verb's reason to exist: a single system of record, or a single
+    # platform, would never show the correlation "what failed on this part across programs"
+    # is asking for.
+    FailureRecord(
+        record_id="FR-6001",
+        part_number="PN-8801",
+        platform="PLT-ALPHA",
+        system_of_record="sor-events-a",
+        failure_mode="Chafed wiring loom shorted the primary bus.",
+        observed_on="2026-03-14",
+        citation="sor-events-a:EVT-55101",
+    ),
+    FailureRecord(
+        record_id="FR-6002",
+        part_number="PN-8801",
+        platform="PLT-BRAVO",
+        system_of_record="relyence",
+        failure_mode="Wiring harness chafe — FMEA failure mode WH-12.",
+        observed_on="2026-08-11",
+        citation="relyence:FM-7734",
+    ),
+    # PN-8802 is on the critical items list and has NEVER failed — the discriminating
+    # control. A verb that cannot tell "no rows" from "unknown part" would answer this one
+    # the same way as a part number that was never on the list at all.
 )
 
 #: Part numbers on the critical items list, derived rather than restated — a

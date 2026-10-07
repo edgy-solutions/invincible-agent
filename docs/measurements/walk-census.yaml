@@ -215,6 +215,24 @@ rows:
     # cost rate-vintage row: that sheet states a two-chip menu as its expectation and this one
     # does not, so asserting a menu would be inventing a requirement its sheet never made.
 
+  - id: safety-what-failed-on-this-part
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 3
+    question: what failed on this part
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: what_failed_on_this_part
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    # ADR-0056 Phase 1. THE REFUSAL IS THE PASS, asking for `part_number` — same shape as
+    # safety-deferral-risk-refusal above, same reason: the question names no identifier. The
+    # POPULATED path (a part with recorded failures) is deliberately NOT a row here: it returns
+    # a flat JSON object, not a card, and no `rendersAs` binding or ROW_KEY archetype exists yet
+    # for `safety:FailureRecordSet` — see the sheet's Q4 for the full reasoning. Add that row
+    # when a presentation increment wires one, not before.
+
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   # THE SHEET IS A FILE AS OF 2026-09-19 — docs/measurements/finance-walk-sheet.md — so these
   # eight rows are DERIVED and the `blocked` on the brief is lifted.
