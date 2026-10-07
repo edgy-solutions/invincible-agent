@@ -395,3 +395,137 @@ def test_the_content_test_reads_the_key_engine_fin_ACTUALLY_EMITS():
         "engine-fin no longer emits `rows` under that key — `_has_content` can no longer tell "
         "empty from unsummarised, and both collapse to unsummarised silently."
     )
+
+
+# -- the artifact JOIN: the brief reads a key engine-fin must actually write ----------------
+#
+# `_fetch` reads `payload.get("artifact_id") or payload.get("id")`. Nothing in `run_measure`
+# wrote either key, so every live finding and ledger row carried `artifact: null` while the
+# tests above, built from hand-made payloads that always supplied `artifact_id`, stayed green
+# throughout. These seals are driven against the REAL engine-fin app — a hand-made payload
+# cannot catch a join defect between two sides that each individually test clean.
+
+def _engine():
+    from agent_fleet.finance_agent import main as m
+
+    return m
+
+
+def _program_id():
+    from agent_fleet.finance_agent.seed import PROGRAM_ID
+
+    return PROGRAM_ID
+
+
+@needs_langgraph
+def test_the_key_the_BRIEF_READS_for_its_artifact_is_a_key_engine_fin_WRITES():
+    """Call the REAL finance FastAPI app for each of the brief's three sources and require the
+    envelope to carry a non-empty `artifact_id` that the brief's own read expression resolves
+    to — not a hand-made payload standing in for it."""
+    from fastapi.testclient import TestClient
+
+    b = _brief()
+    engine = _engine()
+    program_id = _program_id()
+    with TestClient(engine.app) as client:
+        for fn, _label in b._SOURCES:
+            r = client.post(f"/measure/{fn}", json={"params": {"program_id": program_id}})
+            assert r.status_code == 200, f"{fn}: {r.text[:200]}"
+            payload = r.json()
+            assert payload.get("artifact_id"), (
+                f"{fn}: engine-fin's live envelope carries no artifact_id: {payload}"
+            )
+            artifact = payload.get("artifact_id") or payload.get("id")
+            assert artifact, f"{fn}: the brief's own read expression resolves to nothing"
+            assert artifact == payload["artifact_id"], (
+                f"{fn}: the brief's read expression did not resolve to the key engine-fin wrote"
+            )
+
+
+def _route_to_real_engine(monkeypatch, b, *, strip_artifact_id=False):
+    """Point the brief's `httpx.post` at the REAL finance app, via the same `TestClient` the
+    engine's own `tests/finance` suite drives it with — a raw `httpx.Client` over
+    `ASGITransport` has no SYNC transport in this httpx (0.28: `handle_async_request` only,
+    confirmed by `AttributeError: 'ASGITransport' object has no attribute '__enter__'`), which
+    is exactly the mismatch `TestClient` papers over for a synchronous caller.
+    `strip_artifact_id` builds the control: the same live envelope, minus the one key under
+    test."""
+    from fastapi.testclient import TestClient
+
+    engine = _engine()
+    client = TestClient(engine.app)
+
+    def _post(url, *, json=None, headers=None, timeout=None):
+        resp = client.post(url, json=json, headers=headers)
+        if not strip_artifact_id:
+            return resp
+        payload = resp.json()
+        payload.pop("artifact_id", None)
+        return _Resp(resp.status_code, payload)
+
+    monkeypatch.setattr(b.httpx, "post", _post)
+    return client
+
+
+@needs_langgraph
+def test_the_NP_MERIDIAN_brief_draw_cites_an_artifact_on_every_finding(monkeypatch):
+    """The end-to-end draw for NP-MERIDIAN, routed to the real engine-fin app. Three sources,
+    three verdicts (measures.VERDICT covers all of them on this seed), three findings — and
+    every one must carry the content-addressed artifact its own ledger row carries too."""
+    b = _brief()
+    program_id = _program_id()
+    with _route_to_real_engine(monkeypatch, b):
+        out = b.build().compile().invoke({"program_id": program_id, "identity": _IDENT})
+
+    findings = out["findings"]
+    assert len(findings) == 3, f"expected a finding per source, got {findings}"
+    rows_by_source = {r["row"]: r for r in out["rows"]}
+    for f in findings:
+        artifact = f.get("artifact")
+        assert isinstance(artifact, str) and artifact, f"{f['source']}: no artifact cited: {f}"
+        assert artifact.startswith(f"fin:{f['source']}:"), (
+            f"{f['source']}: artifact {artifact!r} is not content-addressed to its own verb"
+        )
+        assert rows_by_source[f["source"]]["artifact"] == artifact, (
+            f"{f['source']}: the finding and its ledger row disagree about the artifact"
+        )
+
+
+@needs_langgraph
+def test_an_envelope_without_an_artifact_id_still_yields_null(monkeypatch):
+    """THE CONTROL for the test above. Same live draw, same real app — strip only
+    `artifact_id` from the envelope on the way back, and every row must go back to
+    `artifact: None`, proving the seal discriminates on the KEY and not on the harness."""
+    b = _brief()
+    program_id = _program_id()
+    with _route_to_real_engine(monkeypatch, b, strip_artifact_id=True):
+        out = b.build().compile().invoke({"program_id": program_id, "identity": _IDENT})
+
+    assert out["findings"], "no findings at all — the draw itself broke, not only the artifact"
+    for f in out["findings"]:
+        assert f.get("artifact") is None, f"{f['source']}: artifact survived without the key"
+    for row in out["rows"]:
+        assert row.get("artifact") is None, f"{row['row']}: artifact survived without the key"
+
+
+def test_the_artifact_id_is_content_addressed():
+    """DETERMINISM, asserted both ways. Same verb/params/rows always hash to the same id — a
+    citation is checkable by re-running the measure — and a changed program_id or a mutated
+    rows list must change it, or two different answers would be indistinguishable by id."""
+    engine = _engine()
+    program_id = _program_id()
+    fn = "fin_burn_rate"
+    params = {"program_id": program_id}
+    rows = [{"period": "FY26-04", "amount": 100}]
+
+    id1 = engine._artifact_id(fn, params, rows)
+    id2 = engine._artifact_id(fn, dict(params), [dict(r) for r in rows])
+    assert id1 == id2, "identical measure/params/rows produced different ids"
+    assert id1.startswith(f"fin:{fn}:")
+
+    other_program = engine._artifact_id(fn, {"program_id": "OTHER"}, rows)
+    assert other_program != id1, "a different program_id did not change the id"
+
+    mutated_rows = rows + [{"period": "FY26-05", "amount": 200}]
+    other_rows = engine._artifact_id(fn, params, mutated_rows)
+    assert other_rows != id1, "a mutated rows list did not change the id"

@@ -333,6 +333,7 @@ def _record(**over):
         status="matched", subject_uri="S", subject_confidence=0.9, subject_instance_id="",
         subject_instance_label="", verb_iri="V", verb_confidence=0.8, classify_called=True,
         candidate_count=2, subject_candidates=[], fallback_reason="",
+        reason_code="classified_match",
         eligibility_excluded=[{"gate": "arity"}], acting_persona="P",
         acting_domains=["D"], sub_query="q",
         predicate={"endpoint": "http://iagent-engine-cost:8097/x"},

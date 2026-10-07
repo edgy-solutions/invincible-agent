@@ -158,7 +158,7 @@ def test_the_identity_list_is_not_merely_NON_EMPTY():
 
 # ── the route: refuse by name, and refuse EARLY ─────────────────────────────
 
-async def _seed(template_id=None, canvas_type="portfolio_planning"):
+async def _seed(template_id=None, canvas_type="portfolio_planning", bindings=None):
     """CALL THE REAL ROUTE. Nothing is faked but the request objects.
 
     The first version of the three tests below read the route's SOURCE and asserted the
@@ -181,7 +181,9 @@ async def _seed(template_id=None, canvas_type="portfolio_planning"):
     class _Req:
         headers = {"Authorization": "Bearer t"}
 
-    req = gw.CanvasSeedRequest(canvas_type=canvas_type, template_id=template_id)
+    req = gw.CanvasSeedRequest(
+        canvas_type=canvas_type, template_id=template_id, bindings=bindings
+    )
     try:
         await gw.canvas_seed(req, _Req(), _User())
     except HTTPException as exc:
@@ -221,50 +223,45 @@ async def test_an_UNSEEDABLE_template_refuses_BEFORE_the_clock_starts():
     assert "program_finance" in detail and "program" in detail and "nothing binds" in detail
 
 
-def test_the_501_branch_is_UNREACHABLE_TODAY_and_that_is_recorded():
-    """THE HONEST BOUND ON THE TEST ABOVE — and the branches have SWAPPED.
+@pytest.mark.asyncio
+async def test_the_501_branch_is_GONE_a_bound_template_reaches_the_per_panel_seeder(monkeypatch):
+    """THE 501 BRANCH IS DELETED, not merely unreachable.
 
-    This test used to record that the 409 (unbound shared slot) was unreachable, because every
-    ratified template declared none. R-005 changed the gate to key on what a panel CONSUMES, and
-    `program_finance` now declares `program` with all six panels consuming it, so the 409 is
-    reachable and IS asserted above by calling the route and naming the slot — the replacement
-    the old clause asked for, in its own words.
-
-    The same slot stays REFUSED on `portfolio`: its five planning verbs take `program_id` zero
-    times against the finance engine's twenty-six, so declaring it there would name a parameter
-    none of its panels accept AND move the one template that seeds into a refusal.
-
-    **AND THE DEFECT NOW POINTS THE OTHER WAY, which is why this test survives rather than being
-    deleted.** With `portfolio` seeding and `program_finance` stopping at the 409, NO RATIFIED
-    TEMPLATE REACHES THE 501 ANY MORE. That is precisely the shape recorded here before — a
-    guard nobody can reach, sitting behind a suite that looks like it covers it — with the two
-    branches exchanged.
-
-    Recorded rather than fixed, because the fix is increment (1) of the ordering: once the seeder
-    dispatches each panel's declared verb, a template will reach the 501 for a real reason, this
-    goes red, and it should then be replaced by a call that asserts 501 with its reason named.
-
-    ── COUPLED TO `policy/canvases/program_finance.yaml`. DO NOT SPLIT THEM. ──────────────────
-    This holds only while `program_finance` stops at the 409, which requires that template to
-    declare `program` AND have its panels consume it. On a tree where it still carries
-    `shared_slots: []` and no `consumes`, that template passes the 409, REACHES the 501, and this
-    test FAILS — verified against `origin/master` (consumes-count 0) on 2026-09-11 rather than
-    reasoned about.
-
-    So the template change and this assertion land in ONE commit and must be cherry-picked,
-    reverted or backported TOGETHER. Neither file said so until now, which is exactly how a pair
-    like this gets separated by someone doing a reasonable thing with half of it.
+    `canvas_seed` used to answer "ratified and not yet seedable" for every template but
+    `portfolio` — true while the seeder only knew how to run the portfolio phrase list. That
+    branch is gone: once a template's consumed shared slots are all bound, it reaches
+    `seed_template_canvas`, which dispatches each panel through the TEMPLATE's own declared
+    verb (ADR-0050 §2) rather than falling back to a phrase. `seed_template_canvas` is faked
+    here rather than let run live, because what this test is pinning is WHICH function gets
+    called and WHAT it is called with — not the live `/interview/stream` round trip, which
+    `tests/planning/test_program_finance_seeds_six_panels.py` covers.
     """
-    from iagent.canvas_template import load_template, ratified_template_ids
+    import iagent.gateway as gw
 
-    reaches_501 = [
-        tid for tid in ratified_template_ids()
-        if tid != "portfolio" and not any(p.consumes for p in load_template(tid).panels)
-    ]
-    assert not reaches_501, (
-        f"{reaches_501} now reach the 501 branch — it is exercisable at last. Replace this "
-        f"with one that CALLS the route for that template and asserts 501 with the "
-        f"not-yet-seedable reason named."
+    captured: dict = {}
+
+    async def _fake_seed_template_canvas(template, bindings, request, http_request, current_user):
+        captured["template_id"] = template.template_id
+        captured["bindings"] = dict(bindings)
+        n = len(template.panels)
+        return {
+            "session_id": "s",
+            "artifact_ids": [f"id-{i}" for i in range(n)],
+            "ordered_artifact_ids": [f"id-{i}" for i in range(n)],
+            "seeded": n,
+            "total": n,
+            "results": [{"slot": i, "status": "ok", "detail": None} for i in range(n)],
+        }
+
+    monkeypatch.setattr(gw, "seed_template_canvas", _fake_seed_template_canvas)
+
+    status, detail = await _seed(
+        template_id="program_finance", bindings={"program": "NP-MERIDIAN"}
+    )
+    assert status == 200, f"a bound non-portfolio template did not reach the seeder: {status} {detail}"
+    assert captured.get("template_id") == "program_finance"
+    assert captured.get("bindings") == {"program": "NP-MERIDIAN"}, (
+        "the bound value did not reach seed_template_canvas"
     )
 
 

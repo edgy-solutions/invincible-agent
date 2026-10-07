@@ -94,33 +94,44 @@ def test_every_routing_telemetry_records_whether_the_classifier_RAN():
     )
 
 
-def test_it_is_a_LITERAL_at_every_site_not_an_expression():
-    """The whole fix. A derived value is what was wrong; each site knows the answer because
-    each site IS the answer, so each must state it outright."""
+def test_short_circuits_are_a_LITERAL_the_classifier_call_site_READS_ENGINE_O():
+    """Every short-circuit site KNOWS it never called the classifier, so each states that
+    outright. The one site that actually calls `/classify_predicate` no longer may: an HTTP
+    200 is not engine-o SAYING it ran (`ClassifyPredicateResponse.classify_called`,
+    agent_fleet/ontology_service/main.py), so that site reads the variable fed by
+    `data.get("classify_called")` instead of restating the literal the response already
+    decided — the literal was exactly the inversion, overwriting engine-o's own `False`
+    short-circuits with a blanket `True`."""
     bad = {
         _pairs(d)["classify_called"] for d in _telemetry_dicts()
-        if _pairs(d).get("classify_called") not in ("True", "False")
+        if _pairs(d).get("classify_called") not in ("True", "False", "bool(classify_called)")
     }
-    assert not bad, f"classify_called is computed rather than stated at: {bad}"
+    assert not bad, f"classify_called is neither a short-circuit literal nor the read: {bad}"
 
 
-def test_exactly_one_site_says_True():
+def test_exactly_one_site_READS_the_classifier_field():
     """There is one path through this router that calls /classify_predicate. If a second
-    site starts claiming it ran, either a real second call appeared — or someone copied a
+    site starts reading the field, either a real second call appeared — or someone copied a
     telemetry dict and did not read what they copied."""
-    trues = [d for d in _telemetry_dicts() if _pairs(d).get("classify_called") == "True"]
-    assert len(trues) == 1, f"{len(trues)} sites claim the classifier ran"
+    reads = [
+        d for d in _telemetry_dicts()
+        if _pairs(d).get("classify_called") == "bool(classify_called)"
+    ]
+    assert len(reads) == 1, f"{len(reads)} sites read classify_called from the response"
 
 
-def test_the_site_that_says_True_is_the_one_holding_a_classifier_RESULT():
+def test_the_site_that_reads_it_is_the_one_holding_a_classifier_RESULT():
     """THE ASSERTION THAT PINS IT TO REALITY rather than to a count. The post-classify
     telemetry is the only dict whose verb_confidence is a variable — every short-circuit
     hard-codes 1.0 or 0.0 because no classifier produced a number for it."""
-    d = next(d for d in _telemetry_dicts() if _pairs(d).get("classify_called") == "True")
+    d = next(
+        d for d in _telemetry_dicts()
+        if _pairs(d).get("classify_called") == "bool(classify_called)"
+    )
     conf = _pairs(d)["verb_confidence"]
     assert not re.fullmatch(r"[0-9.]+", conf), (
-        f"the site claiming the classifier ran reports a hard-coded confidence ({conf}) — "
-        f"a literal means no classifier produced it"
+        f"the site reading the classifier's own field reports a hard-coded confidence "
+        f"({conf}) — a literal means no classifier produced it"
     )
 
 
@@ -181,6 +192,7 @@ def _record(**over):
         status="matched", subject_uri="S", subject_confidence=0.9, subject_instance_id="",
         subject_instance_label="", verb_iri="V", verb_confidence=0.8, classify_called=True,
         candidate_count=2, subject_candidates=[], fallback_reason="",
+        reason_code="classified_match",
         eligibility_excluded=[{"gate": "arity"}], acting_persona="P",
         acting_domains=["D"], sub_query="q",
         predicate={"endpoint": "http://iagent-engine-cost:8097/x"},

@@ -833,6 +833,9 @@ def _classify_route(
                     for v in _pre_arity_flagged
                 ],
                 "fallback_reason": None,
+                # NO /classify_predicate ON THIS PATH, carried from a prior turn's resolution
+                # — the same shape `direct_dispatch.py` records for a pre-resolved dispatch.
+                "reason_code": "pre_resolved",
                 "subject_instance_id": (
                     _pre_instance or (_promoted[0] if _promoted else "")
                 ),
@@ -930,6 +933,10 @@ def _classify_route(
             # See the fallback_reason enum vocabulary in the module
             # docstring — this is a closed-enum ADDITION, not a reuse.
             "fallback_reason": _fb_reason,
+            # THE ROUTE'S OWN VERDICT, same value as `_fb_reason` — it is already drawn from
+            # Engine O's closed abstention vocabulary (or `subject_unknown`), which is the
+            # same closed set `ROUTE_REASON_CODES` reuses rather than re-coining.
+            "reason_code": _fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
                 # No /classify_predicate on this path — recorded rather than inferred.
@@ -1125,6 +1132,9 @@ def _classify_route(
             "subject_candidates": subject_candidates,
             "eligibility_excluded": _eligibility_trace,
             "fallback_reason": fb_reason,
+            # `fb_reason` IS "no_compatible_verbs" OR "domain_scope_excluded" — both are
+            # already in the closed vocabulary, reused rather than re-coined.
+            "reason_code": fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
                 # No /classify_predicate on this path — recorded rather than inferred.
@@ -1177,6 +1187,12 @@ def _classify_route(
             "subject_candidates": subject_candidates,
             "eligibility_excluded": _eligibility_trace,
             "fallback_reason": "infra_error",
+            "reason_code": "infra_error",
+            # EXPLICIT, NOT OMITTED. This branch returns before /classify_predicate's
+            # response ever exists, so there is nothing to read `classify_called` off of —
+            # and an absent key here is exactly the gap `classify_called` taught this repo
+            # not to leave: the supervisor did not observe the classifier, and it says so.
+            "classify_called": False,
             "compatible_verb_iris": compatible_verb_iris,
             "error": str(exc),
         }
@@ -1186,6 +1202,20 @@ def _classify_route(
     verb_reason = str(data.get("reasoning") or "")
     predicate = data.get("predicate")
     candidates = list(data.get("candidate_verb_iris") or [])
+    # ENGINE-O'S OWN ANSWER, READ RATHER THAN RE-DERIVED. `ClassifyPredicateResponse.
+    # classify_called` (agent_fleet/ontology_service/main.py) is the ONLY layer that knows
+    # whether it ran — this call got an HTTP 200, which the old code treated as proof the
+    # classifier executed, and engine-o's own short-circuits (returning `classify_called:
+    # false`) were silently overwritten by that assumption. An ABSENT key is not evidence it
+    # ran either, so it is logged, not guessed past.
+    classify_called = data.get("classify_called")
+    if classify_called is None:
+        context.log.warning(
+            "classify_predicate response for query=%r omitted classify_called — "
+            "recording False; an absent field is not evidence the classifier ran",
+            user_query,
+        )
+        classify_called = False
 
     # Per-candidate semantic scores (Weaviate hybrid query→verb match) from
     # classify. Merge them into the compatible_verbs records by verb_iri so
@@ -1317,6 +1347,16 @@ def _classify_route(
         "fallback_reason": (
             None if verb_iri != "UNKNOWN" else "no_verb_classified"
         ),
+        # THE ROUTE'S OWN VERDICT. A matched route reports `classified_match` — the LLM
+        # picked the verb — and the classify-returned-UNKNOWN case reports the same code
+        # `fallback_reason` carries two lines up, so a reader never has to infer the route's
+        # answer from an excluded CANDIDATE's reason (`no_verb_in_scope`), which belongs to
+        # the gate, not the route.
+        "reason_code": (
+            # THE SAME CONDITION AS THE NO_MATCH RETURN BELOW (`verb_iri == "UNKNOWN" or not
+            # predicate`): a verb with no predicate to dispatch to did not match.
+            "classified_match" if (verb_iri != "UNKNOWN" and predicate) else "no_verb_classified"
+        ),
         # Resolved instance URN (e.g. urn:li:dataset:... for catalog
         # assets, urn:instance:... for maintenance instances) from
         # /resolve.provenance.instance_id. Empty string when no
@@ -1352,7 +1392,10 @@ def _classify_route(
         # `confidence: 0.92, classify_called: false` — a number only the classifier could
         # have produced, recorded next to a claim that it never ran. To a reader, "no verb
         # fits this subject" and "we never checked" are different answers.
-        "classify_called": True,
+        #
+        # READ ABOVE FROM `data.get("classify_called")`, not restated as a literal. An
+        # HTTP 200 is not engine-o SAYING it ran — only engine-o's own field is.
+        "classify_called": bool(classify_called),
         "verb_reasoning": verb_reason,
         "candidate_verbs": candidates,
     }
@@ -1956,6 +1999,11 @@ def _log_subtask_route_assets(
             candidate_count=len(telemetry.get("compatible_verb_iris") or []),
             subject_candidates=telemetry.get("subject_candidates"),
             fallback_reason=telemetry.get("fallback_reason"),
+            # REQUIRED, NOT `.get(...)`. Every telemetry site above sets it; a site that
+            # forgot would otherwise silently drop the route's own verdict a second time —
+            # the exact failure mode this field exists to end. Missing it here is a
+            # KeyError at the call, which is the point.
+            reason_code=telemetry["reason_code"],
             eligibility_excluded=telemetry.get("eligibility_excluded"),
             acting_persona=telemetry.get("acting_persona"),
             acting_domains=telemetry.get("acting_domains"),

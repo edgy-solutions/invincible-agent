@@ -487,6 +487,11 @@ def dispatch_pre_resolved(
         candidate_count=len(verbs or []),
         subject_candidates=[],
         fallback_reason="",
+        # NO CLASSIFIER RAN HERE, BY CONSTRUCTION — this function only executes a route the
+        # ask already established. The ASK/ABSTAIN outcomes further down are the SLOT
+        # disposition declining, not the subject/verb resolution; the resolution itself was
+        # pre_resolved regardless of what happens to the slots.
+        reason_code="pre_resolved",
         eligibility_excluded=_excluded(flagged),
         acting_persona=acting_persona,
         acting_domains=list(entitled_domains or []),
