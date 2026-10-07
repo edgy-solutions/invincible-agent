@@ -80,10 +80,51 @@ from pathlib import Path
 #:    say `to: the architect`, and a trailer permitted after a bare token would parse that as lane
 #:    `the` — turning six honest UNADDRESSED reports into six confident deliveries to a lane that
 #:    does not exist. A widened set with a stale description, where the new members are the junk.
-_QUALIFIED = (
-    r"`?[A-Za-z0-9][A-Za-z0-9-]*`?[ \t]*/[ \t]*`?seat/(?P<seat>[A-Za-z0-9][A-Za-z0-9-]*)`?"
-    r"|`?(?:ia-)?(?P<lane>[A-Za-z0-9][A-Za-z0-9-]*)`?[ \t]*/[ \t]*`?lane/[A-Za-z0-9-]+`?"
+#:
+#: 4. A QUALIFIED ADDRESS NAMES A REPO BEFORE IT NAMES A LANE OR A SEAT, and the repo was never
+#:    checked. `doc-tools/lane/7f` and `iagent-mesh-sdk/lane/ca` are real addresses in this inbox,
+#:    for real recipients in OTHER repos, and the old pattern threw the repo away: `(?:ia-)?` is
+#:    optional, so it matched zero characters and the whole hyphenated repo name — `doc-tools`,
+#:    `iagent-mesh-sdk` — fell into the lane group whole. The census enumerates lanes from
+#:    `origin/lane/*` in THIS repo, so an addressee named after a repo with no such branch here
+#:    printed nowhere — not even UNADDRESSED, because the address had parsed fine. So `lrepo`
+#:    and `srepo` below capture the WHOLE repo token, undecided, and `_addressed` is where
+#:    internal vs. external gets decided — see `_is_internal_repo`.
+def _is_internal_repo(token: str) -> bool:
+    """True iff `token` names THIS repo — `invincible-agent` itself, or any `ia-<x>` worktree
+    prefix (`ia-74`, `ia-eo`, `ia-cortex-60`, ...). Anything else — `doc-tools`,
+    `iagent-mesh-sdk`, `cortex-ui` — is another repo's address, and for that address the repo
+    IS the inbox: nobody in THIS tree can enumerate it, let alone mark it read, so it is reported
+    as its own kind rather than mis-filed under a lane this repo does not have.
+
+    DECIDED, NOT MEASURED: the qualified lane form used to let the leading `ia-` be optional, so
+    a bare `74/lane/74` (no prefix at all) would have parsed as lane `74` by the old rule. No
+    packet in this inbox is written that way — every in-repo address either carries `ia-` or
+    is the bare token form (`_BARE`, which never reaches here) — so requiring the `ia-` prefix
+    (or the literal repo name) costs nothing observed and is what keeps `doc-tools` from reading
+    as internal.
+    """
+    t = token.lower()
+    return t == "invincible-agent" or t.startswith("ia-")
+
+
+_SEAT = (
+    r"`?(?P<srepo>[A-Za-z0-9][A-Za-z0-9-]*)`?[ 	]*/[ 	]*`?seat/(?P<seat>[A-Za-z0-9][A-Za-z0-9-]*)`?"
 )
+_LANE = (
+    r"`?(?P<lrepo>[A-Za-z0-9][A-Za-z0-9-]*)`?[ 	]*/[ 	]*`?(?P<lsuffix>lane/[A-Za-z0-9-]+)`?"
+)
+#: `to: OpenDDIL's agent` — THE ONE PROSE FORM, ruled alongside the "external" kind. OpenDDIL
+#: has no repo and no branch in this tree at all; "their agent" is the only noun anyone here has
+#: for the recipient, and nine packets already say it this way. It is QUALIFIED like the seat and
+#: lane forms (may carry a trailing clause) because it is just as specific an address as they are
+#: — the alternative was to leave it prose forever, which is the UNADDRESSED defect with a name
+#: attached. NOT a general widening: only the exact `'s agent` suffix is accepted, so
+#: `the architect` and `whoever takes the shared master tree` — genuinely unaddressable prose
+#: — still fall through to UNADDRESSED, the control this module has carried since the
+#: bare-token rule.
+_PROSE_EXTERNAL = r"`?(?P<prose>[A-Za-z0-9][A-Za-z0-9-]*)`?'s[ 	]+agent"
+_QUALIFIED = rf"(?:{_SEAT})|(?:{_LANE})|(?:{_PROSE_EXTERNAL})"
 #: Only `— note`, `(note)`, `,` and `:` open a trailing clause. A bare space does not, so
 #: `to: ia-74/lane/74 from ia-32` is still refused — stated here because the accepted set is a
 #: claim, and the seal fires each of these rather than restating them.
@@ -111,6 +152,19 @@ _READ_BY = re.compile(
     re.M | re.I,
 )
 
+#: `from: ia-74/lane/74, 2026-09-23` — the SENDER, read by the SAME grammar as `to:` and
+#: `read-by:` rather than a second hand-written address regex: a sender address is exactly as
+#: qualified or as bare as a recipient address, and a drift between two copies of "what counts as
+#: an address" is how `_READ_BY` went stale before. Unlike `_TO`, a `from:` line in this inbox is
+#: often NOT one of these forms at all — `invincible-agent/master (Lane 1)`, `lane/saf
+#: (worktree ia-saf)` — and that is fine: `unanswered_over` treats an unparsed `from:` as
+#: UNDECIDED, not as absent, because "I cannot tell who sent this" is a different fact from "this
+#: was never addressed."
+_FROM = re.compile(
+    rf"^[ \t]*from:[ \t]*(?:(?:{_QUALIFIED}){_TRAILER}|{_BARE}[ \t]*)$",
+    re.M | re.I,
+)
+
 
 def _addressed(m) -> tuple[str, str]:
     """The (name, kind) a matched address names. ONE reader for both patterns, so the address form
@@ -123,10 +177,42 @@ def _addressed(m) -> tuple[str, str]:
     """
     seat = m.group("seat")
     if seat:
+        # A SEAT IS NEVER EXTERNAL, whatever repo prefix it carries. lane/74's ruled design
+        # (2026-09-26, comment above, "THE ADDRESS IS THE SEAT, NOT THE REPO") captures `<name>`
+        # and treats `<repo>` as only where the inbox lives, so `doc-tools/seat/architect` is the
+        # architect seat's packet. External applies to the LANE form with a foreign prefix and to
+        # `<Name>'s agent` only. The misses of a too-wide external rule land on the lane-less seat,
+        # whose only evidence of existing is a packet addressed to it: it would leave the seat's
+        # inbox and print under no seat row.
         return seat.lower(), "seat"
-    # QUALIFIED lane (`ia-74/lane/74`) or BARE token (`cortex-60`). They are separate groups
-    # because only the qualified form may carry a trailing clause — see `_TO`.
-    return (m.group("lane") or m.group("bare")).lower(), "lane"
+
+    lrepo = m.group("lrepo")
+    if lrepo:
+        if _is_internal_repo(lrepo):
+            # QUALIFIED lane (`ia-74/lane/74`): the repo is where the work happens, so only the
+            # worktree suffix survives as the name. `invincible-agent/lane/01` names no worktree,
+            # so its name is the branch's own suffix -- not the repo, which would file it under a
+            # lane called `invincible-agent` that no `origin/lane/*` branch matches.
+            if lrepo.lower().startswith("ia-"):
+                name = lrepo[3:]
+            else:
+                name = m.group("lsuffix").split("/", 1)[1]
+            return name.lower(), "lane"
+        # EXTERNAL LANE (`doc-tools/lane/7f`, `iagent-mesh-sdk/lane/ca`). Unlike a seat, a lane is
+        # owned by its repo -- `7f` here and `7f` in doc-tools are different branches -- so the repo
+        # is kept: it is the only registry this address lives in.
+        return f"{lrepo}/{m.group('lsuffix')}".lower(), "external"
+
+    prose = m.group("prose")
+    if prose:
+        # `OpenDDIL's agent` — no repo to keep, because the address never had one.
+        return prose.lower(), "external"
+
+    # BARE token (`cortex-60`, `openddil`). Not qualified, so it cannot carry a trailing clause
+    # — see `_TO` — and it is NEVER external: a bare word is pure lane-token syntax, with no repo
+    # segment to test, and widening it would undo the very control `_TO`'s tests pin (`the` must
+    # not become a lane).
+    return m.group("bare").lower(), "lane"
 
 #: The conventions already in the tree, read from the H1.
 _TITLE_FORMS = (
@@ -142,13 +228,23 @@ class Packet:
     addressee: str | None          # lane id ("91") or seat name ("architecture"); None = unattributable
     read_by: list = field(default_factory=list)   # names that stamped it, of either kind
     source: str = "none"           # how the addressee was found: to | title | none
-    #: WHICH REGISTRY the addressee is in — a lane (has a worktree and a branch) or a lane-less
-    #: seat. This is a SECOND AXIS and not another value of `source`: `source` answers how the
-    #: address was FOUND (explicit line, H1, nowhere) and `kind` answers what it NAMES. Folding
-    #: them into one field is the mistake `route_status` and the disposition vocabulary were kept
-    #: apart to avoid, and the cost is paid by the reader: the census enumerates lanes from
-    #: `origin/lane/*`, which cannot enumerate a seat, so it needs to ask this directly.
+    #: WHICH REGISTRY the addressee is in — a lane (has a worktree and a branch), a lane-less
+    #: seat, or (ruled alongside the "external" kind) a recipient in ANOTHER repo entirely, where
+    #: the addressee string is the full qualified address (`doc-tools/lane/7f`) because the repo
+    #: IS that recipient's only registry. This is a SECOND AXIS and not another value of `source`:
+    #: `source` answers how the address was FOUND (explicit line, H1, nowhere) and `kind` answers
+    #: what it NAMES. Folding them into one field is the mistake `route_status` and the
+    #: disposition vocabulary were kept apart to avoid, and the cost is paid by the reader: the
+    #: census enumerates lanes from `origin/lane/*`, which cannot enumerate a seat OR an external
+    #: recipient, so it needs to ask this directly.
     kind: str = "lane"
+    #: Who SENT this packet, by the same grammar `to:` and `read-by:` use (built via `_FROM`), and
+    #: its kind. Both are None/"lane" (the dataclass default) when `from:` is absent or does not
+    #: parse — which is NOT the same as "no sender": see `unanswered_over`, where an unparseable
+    #: `from:` blocks the reply test entirely and the packet goes to UNDECIDED rather than being
+    #: silently read as unanswered or as answered.
+    sender: str | None = None
+    sender_kind: str = "lane"
 
     @property
     def is_read(self) -> bool:
@@ -157,7 +253,7 @@ class Packet:
         An unaddressed packet can never be read, which is why UNADDRESSED is reported as its own
         state rather than folded in with unread — they need different repairs.
 
-        IDENTITY IS THE BARE NAME, ACROSS BOTH KINDS. A lane called `x` and a seat called `x` would
+        IDENTITY IS THE BARE NAME, ACROSS ALL KINDS (lane, seat, external). A lane called `x` and a seat called `x` would
         therefore read each other's packets. That is not defended here by qualifying the name —
         `read_by` is a list of bare names and a seal pins that shape — but by a seal asserting the
         two namespaces are DISJOINT, which fires when someone adds the colliding name, i.e. at the
@@ -185,7 +281,14 @@ def parse_packet(path: Path) -> Packet:
                 break
 
     read_by = [_addressed(r)[0] for r in _READ_BY.finditer(text)]
-    return Packet(path=path.as_posix(), addressee=addressee, read_by=read_by, source=source, kind=kind)
+
+    sender, sender_kind = None, "lane"
+    fm = _FROM.search(head)
+    if fm:
+        sender, sender_kind = _addressed(fm)
+
+    return Packet(path=path.as_posix(), addressee=addressee, read_by=read_by, source=source,
+                  kind=kind, sender=sender, sender_kind=sender_kind)
 
 
 def scan(sessions_dir: Path) -> list:
@@ -235,3 +338,86 @@ def unaddressed(packets) -> list:
     """Packets naming neither a lane nor a seat. A NAMED state, not a silent drop — an inbox that
     discards what it cannot attribute is the same silence this module exists to end."""
     return [p for p in packets if not p.addressee]
+
+
+def external_packets(packets) -> dict:
+    """addressee -> [packets addressed to it], for every recipient in ANOTHER repo.
+
+    SEPARATE FROM `unread_by_lane`/`unread_by_seat`, for the SAME reason `unread_by_seat` is
+    separate from `unread_by_lane`: an external recipient has no branch here to enumerate from, so
+    the population has to come FROM THE PACKETS. It differs from the seat case in one way that
+    matters enough to drop the "unread" framing entirely: a seat's `read-by` stamp lands in THIS
+    tree, where this module can see it, but an external recipient's stamp — if it ever wrote one —
+    would land in ITS OWN tree, which this module can never read. Reporting "N unread" here would
+    be a claim about silence on a channel we cannot listen to. All that can honestly be said is
+    what was SENT and how old it is, so this returns every packet addressed externally, not only
+    the unstamped ones — see the EXTERNAL block in `_lane_census.report_lanes`.
+    """
+    out: dict = {}
+    for p in packets:
+        if p.addressee and p.kind == "external":
+            out.setdefault(p.addressee, []).append(p)
+    return out
+
+
+def _later(a, b) -> bool:
+    """True if packet `b` is later than packet `a`: by filename date, then path order. A packet's
+    filename is `YYYY-MM-DD-slug.md`, so a plain string compare on the filename already sorts by
+    date first and then by the rest of the name (path order) — no second comparison is needed."""
+    return Path(b.path).name > Path(a.path).name
+
+
+def _replied(p, packets) -> bool:
+    """True if some LATER packet in `packets` answers `p`: sent by whoever `p` was addressed to,
+    and addressed back to whoever sent `p`. Both ends are read through `_addressed` — the same
+    (name, kind) comparison `is_read` and the lane/seat enumerations use — so a reply is recognised
+    in exactly the forms a `to:`/`from:` line can take, never by a second hand-matched rule.
+
+    Requires `p.sender`: a packet whose own `from:` cannot be resolved has no sender to check a
+    reply's `to:` against, so this is never called for one — see `unanswered_over`, which routes
+    that case to UNDECIDED before reaching here.
+    """
+    for q in packets:
+        if q is p or not _later(p, q):
+            continue
+        if (q.sender, q.sender_kind) == (p.addressee, p.kind) and \
+                (q.addressee, q.kind) == (p.sender, p.sender_kind):
+            return True
+    return False
+
+
+def unanswered_over(packets, *, now: float, age_of, hours: float = 48.0) -> tuple[dict, list]:
+    """(addressee -> [packets addressed to it, unanswered, older than `hours`], [(packet, reason)
+    UNDECIDED]), keyed by `(kind, addressee)` so a lane, a seat and an external recipient sharing a
+    bare name never share a bucket.
+
+    ANSWERED := stamped `read-by` by the addressee (`p.is_read`), OR a LATER packet that replies —
+    see `_replied`. A packet whose OWN `from:` line does not parse can never be tested for the
+    second half (there is nothing to check a reply's `to:` against), so it is neither answered nor
+    unanswered: it goes to the UNDECIDED list with a reason, rather than being silently counted as
+    either — a wrong "unanswered" sends someone chasing a reply that already happened off-grammar,
+    and a wrong "answered" hides a packet nobody actually replied to.
+
+    `age_of(path)` returns seconds-since-epoch for the packet's commit, or `None` if it is
+    uncommitted. `None` is THE THIRD STATE and is excluded here rather than treated as "fresh" —
+    an uncommitted packet has no age to compare against 48h, and reporting it as within the window
+    would be exactly the silence the third state already is; see the worktree walk in
+    `_lane_census.report_lanes` for where that state is actually surfaced. `now` and `age_of` are
+    both injected so a test can fix time without a real clock or a real commit.
+    """
+    by_addressee: dict = {}
+    undecided: list = []
+    for p in packets:
+        if not p.addressee or p.is_read:
+            continue
+        if not p.sender:
+            undecided.append((p, "from: line did not parse -- cannot test for a reply"))
+            continue
+        if _replied(p, packets):
+            continue
+        age_s = age_of(p.path)
+        if age_s is None:
+            continue  # uncommitted: the third state, not fresh -- never counted here
+        if (now - age_s) / 3600.0 > hours:
+            by_addressee.setdefault((p.kind, p.addressee), []).append(p)
+    return by_addressee, undecided
