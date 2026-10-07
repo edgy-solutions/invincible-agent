@@ -393,6 +393,29 @@ data:
   {{- if and .Values.meshRegistrar.enabled (not (hasKey (.Values.agentFleet.env | default dict) "MESH_REGISTRAR_URL")) }}
   MESH_REGISTRAR_URL: "http://{{ .Release.Name }}-mesh-registrar{{ include "invincible-agent.svcDomain" . }}:8090"
   {{- end }}
+  {{- /* R-089: an onBehalfOf principal is ASSERTED, not verified, this pass — the ruling's
+  own words. DELEGATE_ON_BEHALF_OF is that assertion, handed to the BFF as deploy
+  configuration: authzId (of every kind:delegate client over serviceClients +
+  extraServiceClients) -> the sorted list of its onBehalfOf users' nonInteractiveUsers email.
+  A client with no onBehalfOf gets no key. The base values.yaml declares no delegate client,
+  so it renders "{}" and still renders on its own. cortex-bff's _delegate_principals() reads
+  this env var fresh on every call. */}}
+  {{- $delegateMap := dict }}
+  {{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+  {{- $kind := $c.kind | default "service" }}
+  {{- if and (eq $kind "delegate") $c.onBehalfOf }}
+  {{- $emails := list }}
+  {{- range $o := $c.onBehalfOf }}
+  {{- range $u := $.Values.keycloak.nonInteractiveUsers }}
+  {{- if eq $u.username $o.user }}
+  {{- $emails = append $emails $u.email }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- $_ := set $delegateMap $c.authzId (sortAlpha $emails) }}
+  {{- end }}
+  {{- end }}
+  DELEGATE_ON_BEHALF_OF: {{ $delegateMap | toJson | quote }}
 {{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot

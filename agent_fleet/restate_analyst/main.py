@@ -2267,6 +2267,11 @@ async def _run_definition(
             _verb = approval.get("status")
             _out = {"status": _verb, "acted_by": approval.get("acted_by"),
                     "comments": approval.get("comments", ""), "decided_at": None}
+            if "acted_via" in approval:
+                # R-089: only when the resolved promise carried one (a delegated act) -- never
+                # add a None key to an existing entry, so in-flight journals and today's
+                # chain-equality arms don't shift.
+                _out["acted_via"] = approval["acted_via"]
             if step.approves or step.chooses_from:
                 # STAMPED ONLY ON A STEP THAT DECLARES WHAT ITS ANSWER MEANS. A new journal entry
                 # on every human_await would shift the journal of an in-flight multi-step instance
@@ -2310,6 +2315,9 @@ async def _run_definition(
                         "decision": "approved",
                         "decided_at": _out["decided_at"],
                         "decision_record_ref": f"{workflow_id}:{step.id}",
+                        # R-089: only when this approval was delegated -- never a None key, so
+                        # an in-flight journal and today's chain-equality arms don't shift.
+                        **({"acted_via": approval["acted_via"]} if "acted_via" in approval else {}),
                     })
                 else:
                     # A rejection or a deferral ENDS the proposal this chain was approving; the
@@ -2749,7 +2757,26 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     # as the default. Resolving a name nothing awaits wakes nothing, silently.
     promise_name = request.get("promise_name") or f"approval_{task_id}"
 
-    acted_by = await _authorize_resolution(ctx, promise_name, request.get("acted_by"))
+    # R-089: `acted_via` is the delegate that is resolving this on a principal's behalf —
+    # cortex-bff's act_on_human_task sends it only for a delegated act. ASSERTED, not
+    # verified, by this pass (the ruling's own words): we merely require it to be
+    # well-formed (non-blank, and not a no-op "acting via itself") before it is handed to
+    # the excludes check below. Validated BEFORE `_authorize_resolution` runs, so a
+    # malformed value fails fast on shape rather than after an audience lookup.
+    acted_by_raw = request.get("acted_by")
+    acted_via_raw = request.get("acted_via")
+    acted_via: Optional[str] = None
+    if acted_via_raw is not None:
+        acted_via = str(acted_via_raw).strip()
+        if not acted_via or acted_via.casefold() == str(acted_by_raw or "").strip().casefold():
+            raise restate.TerminalError(
+                f"acted_via {acted_via_raw!r} must be a non-blank string that differs "
+                f"(casefolded) from acted_by {acted_by_raw!r} — a delegate cannot act via "
+                "itself",
+                status_code=400,
+            )
+
+    acted_by = await _authorize_resolution(ctx, promise_name, acted_by_raw, acted_via)
 
     approval_payload = {
         "status": request.get("status", "APPROVED"),
@@ -2759,6 +2786,10 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
         # the identity the gate above just verified, not one the payload asserted.
         "acted_by": acted_by,
     }
+    if acted_via is not None:
+        # R-089: only present for a delegated act — a plain person's payload stays
+        # byte-identical to today's (no key at all, never a None value).
+        approval_payload["acted_via"] = acted_via
 
     await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
 
@@ -2769,12 +2800,17 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     }
 
 
-async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
+async def _authorize_resolution(ctx, promise_name: str, acted_by_raw, acted_via: Optional[str] = None) -> str:
     """THE AUTHORITY GATE, once: every handler that resolves an awaited promise goes through it.
 
     Factored out of ``_approve_impl`` unchanged when WorkflowRunner's ``signal`` became a second
     resolver -- a copy would have been a second enforcement point free to drift from the first.
-    Returns the verified actor."""
+    Returns the verified actor.
+
+    ``acted_via`` (R-089, optional): the delegate resolving this on ``acted_by``'s (the
+    principal's) behalf. It is checked against the excludes list ALONGSIDE acted_by below --
+    a delegate that seeded an artifact may not confirm it by speaking for someone else -- but
+    it is NEVER asked `can_act`: that question is about the principal only."""
     # ── AUTHORITY GATE (approval-bypass-bpmn-runner) ───────────────────────────
     # This handler resolves an APPROVAL — the promise the whole trust architecture
     # treats as the enforcement point. It is its own entry point, not merely the
@@ -2790,10 +2826,18 @@ async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
     # STRUCTURAL EXCLUSION, before `can_act`: the definition refused this actor by name, and no
     # grant overrides that. Compared casefolded, so a case variant of the same id is refused too.
     excluded = await ctx.get(_excluded_key(promise_name)) or []
-    if acted_by.casefold() in {str(x).casefold() for x in excluded}:
+    excluded_cf = {str(x).casefold() for x in excluded}
+    if acted_by.casefold() in excluded_cf:
         raise restate.TerminalError(
             f"caller {acted_by!r} is excluded from deciding promise {promise_name!r} by the "
             "definition (for example, an artifact's own dropper may not confirm its origin)",
+            status_code=403,
+        )
+    if acted_via and str(acted_via).casefold() in excluded_cf:
+        raise restate.TerminalError(
+            f"caller {acted_via!r}, acting via on behalf of {acted_by!r} (R-089), is excluded "
+            f"from deciding promise {promise_name!r} by the definition -- a delegate that "
+            "seeded an artifact may not confirm it by speaking for someone else",
             status_code=403,
         )
     audience = await ctx.get(_audience_key(promise_name))
