@@ -1,0 +1,130 @@
+{{/*
+  NetworkPolicy — one per fleet engine, egress-only.
+
+  WHY THIS IS OFF BY DEFAULT, AND WHY THAT IS DELIBERATE. `.Values.networkPolicy.enabled`
+  defaults to false, and this is not a hardening no-op you can flip on for free. Engines in
+  this fleet reach the stores (Postgres, Neo4j, Weaviate, Fuseki, Restate) DIRECTLY today; the
+  bypass this policy exists to close is a live, load-bearing path for callers that have not
+  been migrated onto the mesh yet. Enabling the gate before those callers move is a behavioural
+  change — it will break them, not just "harden" them. Two weaker controls hold the line in the
+  meantime, and neither is replaced by this file: the substrate-address lint
+  (`tests/test_substrate_address_lint.py`), which greps for a store address appearing somewhere
+  it should not, and the import seal, which bans the driver imports that would let an engine
+  reach a store directly. Both are static checks; this policy is the only one of the three that
+  actually blocks the packet.
+
+  THE OBJECT STORE IS NOT IN THIS CHART. It never appears as a Kubernetes Service here —
+  `templates/domain-broker.yaml:114` (`S3_ENDPOINT_URL`) and
+  `templates/minio-bucket-init-job.yaml:68` (`.Values.minioBucketInit.endpoint`) both take it as
+  an external endpoint out of values. A default-deny egress produced by this file therefore
+  cannot reach it through any rule below, by construction — there is no podSelector for it to
+  write. Whoever enables this gate must open it via `.Values.networkPolicy.extraEgress`
+  themselves; that is what rule 5 exists for, and it is the ONLY place an address may enter.
+
+  THERE ARE NO `Mesh*` SERVICES IN THIS CHART. `MeshGraph` and `MeshVectors`
+  (`iagent-mesh-sdk/iagent_mesh/interfaces.py`) are SDK Protocols — interfaces a Python object
+  satisfies, not Kubernetes workloads with a Service and a component label. Measured: zero
+  matches for either name anywhere under `helm/`. No rule in this file can select them, and a
+  rule that tried would parse, deploy cleanly, and select nothing while looking correct.
+
+  THE EMBEDDING GATEWAY IS THE LITELLM PROXY, NOT A SEPARATE SERVICE. `values.yaml` documents
+  `agent_fleet/utils/embed.py` reaching an embeddings endpoint on the same LiteLLM proxy engines
+  use for chat completions. Rule 4 below (component `litellm`, port 4000) is therefore both the
+  embedding gateway and the model proxy at once — there is no fourth service to add.
+
+  ⛔ AND IN SANDBOX RULE 4 SELECTS NOTHING, SO DO NOT READ IT AS COVERAGE. Measured 2026-09-28:
+  `litellm:` is ABSENT from `values-sandbox.yaml`, so it inherits `litellm.enabled: false`, and
+  both mentions of the in-cluster proxy in that file are COMMENTS. The endpoint the fleet actually
+  uses is set by `LLM_BASE_URL` to an OFF-CLUSTER host, which no podSelector can ever match — a
+  NetworkPolicy can only name pods. So enabling this gate against sandbox as shipped denies every
+  engine its model and embedding endpoint, and `extraEgress` — the only rule able to reach an
+  off-cluster host — defaults to empty. WHOEVER ENABLES THE GATE MUST POPULATE `extraEgress` WITH
+  THAT ENDPOINT FIRST. The failure would present as model timeouts, not as a policy error, which
+  is the same shape as the missing-DNS hazard: a default-deny egress does not announce what it
+  cut. Rule 4 is kept because it is correct for any deployment that runs the in-cluster proxy, and
+  it is sealed as a known-inert target rather than deleted.
+
+  A SELECTOR THAT MATCHES NO POD IS VALID YAML AND SILENTLY DENIES. It deploys, it shows no
+  error, and it simply never admits the traffic it was meant to admit. That is why every
+  component string below was taken from the chart's own engine list (`templates/engines.yaml`)
+  rather than from the prose names this fleet also uses for the same engines elsewhere, and why
+  a seal accompanies these templates rather than relying on review alone.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $engines := list
+  (dict "key" "engineO" "component" "engine-o" "values" .Values.engineO)
+  (dict "key" "engineA" "component" "engine-a" "values" .Values.engineA)
+  (dict "key" "engineB" "component" "engine-b" "values" .Values.engineB)
+  (dict "key" "engineC" "component" "engine-c" "values" .Values.engineC)
+  (dict "key" "engineD" "component" "engine-d" "values" .Values.engineD)
+  (dict "key" "enginePlanning" "component" "engine-p" "values" .Values.enginePlanning)
+  (dict "key" "engineFinance" "component" "engine-fin" "values" .Values.engineFinance)
+  (dict "key" "engineCost" "component" "engine-cost" "values" .Values.engineCost)
+  (dict "key" "engineSafety" "component" "engine-safety" "values" .Values.engineSafety)
+  (dict "key" "engineDocs" "component" "engine-docs" "values" .Values.engineDocs)
+  (dict "key" "graphHost" "component" "engine-lg" "values" .Values.graphHost)
+  (dict "key" "engineE" "component" "engine-e" "values" .Values.engineE)
+  (dict "key" "engineF" "component" "engine-f" "values" .Values.engineF)
+  (dict "key" "engineW" "component" "engine-w" "values" .Values.engineW)
+  (dict "key" "dataAnalyst" "component" "data-analyst" "values" .Values.dataAnalyst)
+  (dict "key" "centralGateway" "component" "central-gateway" "values" .Values.centralGateway)
+}}
+{{- range $engines }}
+{{- $eng := .values }}
+{{- if $eng.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-{{ .component }}-egress
+  labels:
+    {{- include "invincible-agent.labels" $ | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Chart.Name }}
+      app.kubernetes.io/component: {{ .component }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              app.kubernetes.io/component: cortex-bff
+      ports:
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              app.kubernetes.io/component: mesh-registrar
+      ports:
+        - protocol: TCP
+          port: 8090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              app.kubernetes.io/component: litellm
+      ports:
+        - protocol: TCP
+          port: 4000
+    {{- with $.Values.networkPolicy.extraEgress }}{{ toYaml . | nindent 4 }}{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,77 @@
+{{/*
+  NetworkPolicy — one per substrate store, ingress-only.
+
+  THIS POPULATION IS DERIVED, NOT CHOSEN. The six admitted podSelectors below are the
+  `SUBSTRATE_CLIENTS` allowlist in `tests/test_substrate_allowlist_exceptions_expire.py:78-84`,
+  translated from the agent names that allowlist uses into this chart's component names, plus
+  one exception (below). The translation, spelled out because it is exactly where this file
+  would most easily have gone wrong:
+
+    allowlist name      chart component
+    ------------------  ---------------
+    engine-o        ->  engine-o
+    mesh-registrar   ->  mesh-registrar
+    restate-analyst  ->  engine-a
+    weaviate-expert  ->  engine-w
+    neo4j-expert     ->  engine-e
+
+  FOUR OF THE SIX ADMITTED PODS ARE NAMED DIFFERENTLY BY THE ALLOWLIST THAN BY THE CHART. A
+  policy written in the allowlist's own vocabulary would have deployed cleanly and silently
+  denied `restate-analyst`, `weaviate-expert` and `neo4j-expert`, because
+  `app.kubernetes.io/component: restate-analyst` matches no pod this chart ever creates — the
+  component is `engine-a`. Said plainly so the next reader does not repeat the mistake this
+  comment exists to prevent.
+
+  `engine-f` (presentation-agent) IS THE EXCEPTION, NOT AN ALLOWLIST ENTRY. It reaches Weaviate
+  over `urllib.request` — no driver package, so no import-based ban can see it, which is the
+  third arm of the dependency rule. It is load-bearing today: removing this access before the
+  MeshVectors migration lands breaks the presentation path. It ends with that migration; the
+  recorded backstop is 2026-12-14. Admitting it here, explicitly, is what makes this policy
+  honest rather than aspirational — and the accompanying seal is expected to fail once the
+  backstop date passes while this grant is still present, which is the point: the failure is
+  the reminder to remove it.
+
+  INGRESS-ONLY IS DELIBERATE. Each object below says only who may open a connection TO the
+  store it names. It says nothing about, and does not constrain, that store's own egress.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $stores := list
+  (dict "component" "postgresql" "ports" (list 5432))
+  (dict "component" "keycloak" "ports" (list 8080))
+  (dict "component" "weaviate" "ports" (list 8080 50051))
+  (dict "component" "neo4j" "ports" (list 7474 7687))
+  (dict "component" "restate" "ports" (list 8080 9070))
+  (dict "component" "fuseki" "ports" (list 3030))
+}}
+{{- $admitted := list "engine-o" "mesh-registrar" "engine-a" "engine-w" "engine-e" "engine-f" }}
+{{- range $stores }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-{{ .component }}-ingress
+  labels:
+    {{- include "invincible-agent.labels" $ | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Chart.Name }}
+      app.kubernetes.io/component: {{ .component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range $admitted }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              app.kubernetes.io/component: {{ . }}
+        {{- end }}
+      ports:
+        {{- range .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+{{- end }}
+{{- end }}

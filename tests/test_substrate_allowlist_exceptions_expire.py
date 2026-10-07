@@ -1,11 +1,30 @@
 """Every substrate-access exception carries an expiry, and the seal reds when one passes.
 
-⛔ READ THIS FIRST: THE CHART CARRIES NO NETWORKPOLICY MANIFEST. Measured 2026-09-15:
+⛔ READ THIS FIRST: THE CHART NOW CARRIES NETWORKPOLICY MANIFESTS AND STILL ENFORCES NOTHING.
+Measured 2026-09-15, superseded 2026-09-28:
 
-    grep -rl "kind: NetworkPolicy" helm/ deploy/   ->  ZERO manifests   [REPO-LEVEL]
+    grep -rl "kind: NetworkPolicy" helm/ deploy/   ->  ZERO manifests   [2026-09-15, REPO-LEVEL]
+    grep -rl "kind: NetworkPolicy" helm/ deploy/   ->  TWO manifests    [2026-09-28, REPO-LEVEL]
+        templates/networkpolicy-engines.yaml   one egress policy per engine
+        templates/networkpolicy-stores.yaml    one ingress policy per store
 
-**That is the claim that carries, and it is deployment-independent: a chart with no manifest
-cannot apply a policy ANYWHERE.**
+**Both are gated on `.Values.networkPolicy.enabled`, which defaults to FALSE.** They render
+nothing until an operator sets it, and nothing in the chart sets it. So the old sentence — *a chart
+with no manifest cannot apply a policy anywhere* — has been replaced by a weaker one: the chart can
+apply a policy, and does not unless someone turns it on, which is not observable from here.
+
+⛔ **THE CONSEQUENCE FOR THIS FILE'S OWN SEAL, AND IT IS THE UNCOMFORTABLE PART.** The arm below
+asserts that a manifest EXISTS. That arm now XPASSES — and the perimeter it was standing in for is
+still open, because a default-off template protects nothing. **Presence is not enforcement.** The
+seal was honest about the claim it made (it says so in its own reason string: the repo-level claim,
+deliberately silent on any deployment) and satisfying it has nonetheless moved the file from
+"records a gap" to "records a manifest", which is a strictly smaller statement.
+
+That is worth naming as a shape and not just as a fact about this file: **a guard can be demoted by
+the very change it was asking for.** The fix is not to widen this arm into a claim about live
+traffic, which no offline test can make. It is to know that the arm's green means "the chart could
+enforce this" and never "the chart does", and to put the live half where live things are checked —
+the roll's verification legs, against a real namespace.
 
     kubectl get networkpolicy -A   ->  in SANDBOX: none in the namespace; one cluster-wide and
                                        it is Rancher's own cattle-fleet-system/default-allow-all,
@@ -23,11 +42,18 @@ as coverage for it.** Not stale — NEVER TRUE. `invincible-agent-28` found it w
 an SDK lint had inherited: the only occurrence of the word "NetworkPolicy" anywhere was this
 file's assertion that one exists.
 
-**THE EXCLUSION BELOW HAS NOTHING TO BE EXCLUDED FROM.** `presentation_agent` reaching Weaviate
-through `urllib.request` — the standard library, invisible to any package-name ban — is the case
-the policy exists for, and it is UNENFORCED today. The expiry still fires, and what it now means
-is "the control this exception assumes was never built", which is a louder finding than the
-exception it was written to time out.
+**THE EXCLUSION BELOW NOW HAS SOMETHING TO BE EXCLUDED FROM ON PAPER, AND STILL NOTHING IN
+EFFECT.** `presentation_agent` reaching Weaviate through `urllib.request` — the standard library,
+invisible to any package-name ban — is the case the policy exists for, and it is UNENFORCED today
+because the gate is off. What changed on 2026-09-28 is that the access is now written down as a
+grant: `templates/networkpolicy-stores.yaml` admits component `engine-f` to the stores explicitly,
+with this exception's reason and its backstop beside it.
+
+⚠ That is an improvement and it is also a new place for the grant to outlive its reason — a
+NetworkPolicy rule is a better hiding place for a permanent exception than a Python list is,
+because nobody greps a chart for a security decision. `tests/test_networkpolicy_admits_the_allowlist_by_component.py`
+is what ties them together: once this exception's backstop passes, the presence of `engine-f` in the
+chart is itself a failure, so the grant cannot outlive the exception that explains it.
 
 **AND THE ARGUMENT THAT RULED IT WAS ABOUT A DIFFERENT QUESTION.** The third arm was ruled on the
 ground that a package-name seal cannot see `httpx` and can never see `urllib.request`. That is
@@ -68,8 +94,14 @@ Run: uv run --frozen pytest tests/test_substrate_allowlist_exceptions_expire.py 
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
+
+#: The repository root. Added 2026-09-28, and its ABSENCE is the finding recorded in
+#: `test_THE_NETWORKPOLICY_MANIFEST_EXISTS` below: that arm referenced `_REPO` while neither this
+#: name nor `pathlib` was ever imported, so it raised NameError instead of reading the chart.
+_REPO = Path(__file__).resolve().parents[1]
 
 #: Pods that may open a substrate connection. From `invincible-agent-28`'s substrate read
 #: inventory (thirteen of thirteen query texts read). NOT AUTHORITATIVE ON ITS OWN — `ca`'s
@@ -170,25 +202,40 @@ def test_THE_ALLOWLIST_IS_PLURAL_AND_REASONED():
 
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "THE CHART CARRIES NO NetworkPolicy MANIFEST — zero in helm/ or deploy/ — so it "
-        "cannot apply one in ANY deployment of it. That is the repo-level claim and it is what "
-        "this asserts. It deliberately says nothing about whether some deployment has a policy "
-        "applied out-of-band: that is unobservable from here, and 'no enforcement anywhere' is "
-        "a much larger claim than the evidence. STRICT: the day a manifest lands this XPASSes, "
-        "the marker fails, and the account above is rewritten rather than left describing a "
-        "world that has moved."
-    ),
-)
 def test_THE_NETWORKPOLICY_MANIFEST_EXISTS():
     """The third arm of the dependency rule — the import is not the CONNECTION.
 
     A package ban cannot see `httpx`; nothing can see `urllib.request`. Only an egress control
-    can, and there is none. Asserted here rather than left implicit because the surrounding file
-    reads as though the control exists, and a reader arriving at the exception list would
-    reasonably conclude the allowlist it excludes from is real.
+    can. Asserted here rather than left implicit because the surrounding file reads as though the
+    control exists, and a reader arriving at the exception list would reasonably conclude the
+    allowlist it excludes from is real.
+
+    ── THE STRICT XFAIL THAT USED TO BE HERE IS GONE, 2026-09-28 ───────────────────────────
+    ⛔ AND THE ACCOUNT I FIRST WROTE HERE WAS WRONG, SO IT IS KEPT AS THE FINDING.
+    I removed the marker saying it "had done its job: it carried the gap for thirteen days and,
+    being `strict=True`, turned the suite red the moment the gap closed." **None of that was true,
+    and it is the more useful thing to record.** Measured 2026-09-28, by running the arm with the
+    marker off: it raised `NameError: name '_REPO' is not defined`. Neither `_REPO` nor `pathlib`
+    was ever imported into this module. The body below never reached a single file.
+
+    A strict xfail is satisfied by ANY failure, and a crash is a failure. So this arm reported the
+    expected red for thirteen days on an exception raised two lines before the question, and would
+    have gone on reporting it after the manifests landed — forever, and silently. It was not
+    carrying the gap; it was carrying a typo. The thing it was supposed to make impossible — the
+    surrounding prose quietly going stale — is exactly what it permitted, and the marker's removal
+    is what surfaced it, which is the reverse of the story I told above.
+
+    The general form, worth more than this instance: **a nonzero result is not a measurement.** An
+    arm that cannot reach its subject is indistinguishable, from the outside, from an arm that
+    reached it and found the expected answer — and `strict=True` converts that into a guarantee of
+    attention that was never being paid. The same reasoning applies to a mutant that crashes.
+
+    ⚠ WHAT THE MARKER'S REMOVAL MUST NOT BE READ AS. This arm asserts that a manifest EXISTS in
+    the chart. It does not assert that any policy is APPLIED, and it cannot: the templates are
+    gated off by default, and no offline test can see a namespace. So a green here means the chart
+    *could* enforce the ban, never that it does. The live half belongs to the roll's verification
+    legs. Keeping that distinction is the entire reason this docstring is longer than the
+    assertion it describes.
     """
     manifests = [
         p for d in ("helm", "deploy")

@@ -12,12 +12,27 @@ about. A hand-curated list of who MAY connect, with nothing deriving who DOES, b
 trusted with age rather than less. That is the stale-claim shape applied to a security
 declaration.
 
-── THIS IS A LINT — AND AS OF 2026-09-15 IT HAS NO ENFORCEMENT BEHIND IT ─────────────
+── THIS IS A LINT — AND IT STILL HAS NO ENFORCEMENT BEHIND IT ────────────────────────
 The allowlist seal opened "The NetworkPolicy allowlist names which pods may open a connection".
 **No such NetworkPolicy was ever built.** This file first recorded the question UNPROVEN; it is
 now decided. Per-claim provenance, because these are three different kinds of evidence:
 
-  CHECKED (this repo)     NetworkPolicy manifests in helm/ and deploy/ — ZERO. The only
+⚠ UPDATED 2026-09-28: THE MANIFESTS NOW EXIST AND THE ENFORCEMENT STILL DOES NOT. The chart
+carries `templates/networkpolicy-engines.yaml` and `templates/networkpolicy-stores.yaml`, so the
+first row below has changed from ZERO. **They are gated on `.Values.networkPolicy.enabled`, which
+defaults to FALSE, and nothing sets it.** So they render nothing, and the sentence this section
+exists to make — that the ban rests on this lint and the import seal — is as true as it was.
+
+  ⛔ SAY WHY THAT GAP IS THE INTERESTING PART, because a reader who greps for the manifest will
+  find it and stop. A rendered-nothing template is inert in exactly the way a values file nobody
+  passes is inert: its content is verifiable and its wiring is absent, and only the wiring decides
+  whether it fires. **A manifest in the chart is not a policy on a pod.** Whoever enables the gate
+  is making a traffic change — the engines that still read the stores directly are what the policy
+  exists to stop, so they break the moment it is on — and that is the decision this lint has been
+  standing in for. The manifest landing does not make it; it only makes it possible.
+
+  CHECKED (this repo)     NetworkPolicy manifests in helm/ and deploy/ — ZERO when this was
+                          written; TWO as of 2026-09-28, both default-off. The only
                           occurrence of the word was that sentence.
   CHECKED (live, by
   invincible-agent-28)    `kubectl get networkpolicy -A` — exactly one, and not ours:
@@ -29,8 +44,13 @@ now decided. Per-claim provenance, because these are three different kinds of ev
 
 **SCOPE LIMIT ON THE LIVE HALF.** That `kubectl` ran against SANDBOX. Other deployments of this
 chart are not visible from here and are not claimed either way. The deployment-independent fact
-is the first line: **the chart carries no NetworkPolicy, so it cannot apply one anywhere.**
-Whether some out-of-band mechanism applies one elsewhere is outside what this repo can see.
+used to be the first line — *the chart carries no NetworkPolicy, so it cannot apply one anywhere* —
+and that sentence has expired. **The deployment-independent fact is now narrower: the chart can
+apply one, and does not unless an operator turns the gate on.** Which deployments have turned it
+on is not observable from here, so no claim is made about enforcement anywhere, including sandbox
+after 2026-09-28. That is a real weakening of what this file can tell you, and it is recorded
+rather than papered over: the previous claim was strong because a missing template cannot be
+enabled, and the new one depends on a values key that any deployment may set.
 
 **CONSEQUENCE, AND IT INVERTS THIS FILE'S SCOPE.** The ruling that demoted the address scan to
 "a lint, not a second enforcement" rests on an enforcement that does not exist. So this is not
