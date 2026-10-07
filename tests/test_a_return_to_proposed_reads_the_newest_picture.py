@@ -35,7 +35,7 @@ import pytest
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     DOOR_BLOCK, R, _answer, _body, _Cluster, _Ctx, _Promise, _refused, main, restate, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixtures
-    ACK, DECIDE, REVIEW, TRIGGER, _event, _path, _real_policy, registered)
+    ACK, DECIDE, REVIEW, TRIGGER, _declared_walk_double, _event, _path, _real_policy, registered)
 
 import decision_table as dt  # noqa: E402 -- on sys.path via the runner test's import
 import iagent_mesh.ingest as sdk_ingest  # noqa: E402

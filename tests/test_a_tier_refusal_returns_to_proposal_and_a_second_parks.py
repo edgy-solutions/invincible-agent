@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     R, _answer, _body, _Cluster, _dump, _refused, main, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixture
-    ACK, DECIDE, _event, _path, _real_policy, _run, registered)
+    ACK, DECIDE, _declared_walk_double, _event, _path, _real_policy, _run, registered)
 
 TIER = "tier@x"
 

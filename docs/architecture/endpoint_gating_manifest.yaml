@@ -308,6 +308,19 @@ services:
         class: internal
         justification: "Serves ruleset Turtle. READ. Same closure condition as /resolve_instance."
       - method: POST
+        path: /declared_query
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [spo_step_executor.py]
+        class: internal
+        justification: >-
+          A declared-query verb served BY NAME. READ. The query text is engine-o's own baked
+          policy tree, never the request. Same closure condition as the other internal reads.
+          The capability gate (`can_invoke` on the verb's declared capability) is the CALLER's,
+          in spo_step_executor.execute_declared_query; engine-o does not repeat it, so any other
+          in-cluster caller reaches the verb ungated while the closure holds.
+      - method: POST
         path: /operable_subjects
         identity: "user_email in body — domain/can_view scope, not a transport gate"
         gate: domain-scope

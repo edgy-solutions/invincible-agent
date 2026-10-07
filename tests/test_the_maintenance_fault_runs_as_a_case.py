@@ -16,12 +16,17 @@ Run: uv run --frozen pytest tests/test_the_maintenance_fault_runs_as_a_case.py -
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
+import rdflib
 
 # One cluster double, the case runner's own -- not a second one free to drift from it.
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     R, _answer, _Cluster, _refused, main, restate, wd)
+
+import spo_step_executor as ex  # noqa: E402 -- the SAME module object main imports the call from
+from agent_fleet.utils.declared_query import build_selects, shape_selects
 
 TRIGGER = "maintenance_fault"
 OPTION_VERBS = ["replace_now", "replace_after_resupply", "defer_with_restriction",
@@ -29,6 +34,43 @@ OPTION_VERBS = ["replace_now", "replace_after_resupply", "defer_with_restriction
 
 #: An answer that never comes: the await's deadline wins the race.
 EXPIRE = object()
+
+#: The committed fixture the declared-query double runs every select against -- six sample S1000D
+#: data modules for MRAD-ARR-0417 (see tests/fixtures/s1000d_mrad/README.md for provenance).
+_MRAD_TTL = Path(__file__).resolve().parent / "fixtures" / "s1000d_mrad" / "mrad.ttl"
+
+
+class _Resp:
+    """A `requests.Response` stand-in for the declared-query HTTP seam -- status 200, so
+    `execute_declared_query` falls through its 401/403/4xx checks straight to `.json()["selects"]`."""
+    status_code, text = 200, ""
+
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+def _shaped_walk(verb_name, params):
+    """Runs the REAL verb declaration (read from the real policy tree, same as the runner would)
+    against the committed rdflib fixture: `build_selects` injects params, each select is queried
+    on a `Dataset(default_union=True)`, and `shape_selects` shapes the rows -- never a canned
+    dict standing in for the query."""
+    decl = wd.load_query_verbs()[verb_name]
+    built = build_selects(decl, params)
+    ds = rdflib.Dataset(default_union=True)
+    ds.parse(str(_MRAD_TTL), format="turtle")
+    rows_by_select = {}
+    for name, sparql in built.items():
+        res = ds.query(sparql)
+        cols = [str(v) for v in res.vars]
+        rows_by_select[name] = [
+            {v: (str(row[v]) if row[v] is not None else None) for v in cols} for row in res]
+    return decl, shape_selects(decl, rows_by_select)
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +85,30 @@ def _real_policy(monkeypatch):
         arms["expired"].close()
         return ("expired", None) if value is EXPIRE else ("approved", value)
     monkeypatch.setattr(restate, "select", _select)
+
+
+def install_declared_walk_double(monkeypatch):
+    """The declared-query path's HTTP seam, patched to run for real against the committed
+    fixture rather than a sandboxed engine-o. The capability gate is patched to allow (this test
+    exercises the query path, not the Topaz grant); the walk itself -- build_selects, the SPARQL,
+    shape_selects -- runs unmocked against tests/fixtures/s1000d_mrad/mrad.ttl.
+
+    A plain function so a file that drives this case from ONE arm can install it there, rather
+    than importing the autouse fixture below over every arm it has."""
+    monkeypatch.setattr(ex, "check_can_invoke", lambda cap, who, **kw: True)
+    monkeypatch.setattr(ex, "mint_case_runner_token", lambda **kw: "case-runner-token")
+
+    def _post(url, json, headers, timeout):
+        decl, shaped = _shaped_walk(json["verb"], json["params"])
+        return _Resp({"verb": decl.verb, "domain": decl.domain, "selects": shaped})
+    monkeypatch.setattr(ex.requests, "post", _post)
+
+
+@pytest.fixture(autouse=True)
+def _declared_walk_double(monkeypatch):
+    """Every arm here drives the openddil-lab case, whose walk is a declared query. A file that
+    imports this name gets it on every arm too."""
+    install_declared_walk_double(monkeypatch)
 
 
 @pytest.fixture
@@ -67,7 +133,7 @@ def _event(event_id="EV-1", me=False, kind="cm_discrepancy", nearest="row"):
     nearest_row = dict(_NEAREST) if nearest == "row" else nearest
     return {
         "event_id": event_id, "kind": kind, "asset_id": "AST-7", "owning_tier": "ORG",
-        "fault": {"item": "fuel-pump", "fault_code": "F-0417",
+        "fault": {"item": "fuel-pump", "fault_code": "MRAD-ARR-0417",
                   "observed_at": "2026-10-02T00:00:00Z"},
         "sources": [{"system": "bit"}],
         "picture": {"readiness": "PMC", "factors": ["fuel"], "lifecycle": "in_service",
@@ -223,8 +289,12 @@ async def test_EXACTLY_FOUR_OPTIONS_IN_ORDER_EACH_CITING_THE_MANUAL_AND_THE_SPAR
     for o in opts:
         assert o["task_refs"] and all("data_module_code" in r for r in o["task_refs"]), o
         assert o["spares"] == ev["picture"]["spares"], o
-    # THE WALK IS A STUB AND ITS CODES ARE NULL: an invented DMC would be cited on a work order.
-    assert {r["data_module_code"] for o in opts for r in o["task_refs"]} == {None}, opts
+    # THE WALK IS NOW REAL: every code is a genuine `rdfs:label` off the fixture graph, never
+    # invented -- fault_isolation (421A), remove+install (520A/720A) and planning (320A), the
+    # four distinct DMCs the four options' task_refs cite between them.
+    assert {r["data_module_code"] for o in opts for r in o["task_refs"]} == {
+        "ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
+        "ODMRAD-A-34-10-01-00A-720A-A", "ODMRAD-A-34-10-01-00A-320A-A"}, opts
     # THE RESUPPLY READS THE NEAREST ROW, WHOLE: the lead time beside the source that qualifies it.
     assert ["nearest_spare" in o for o in opts] == [False, True, False, False], opts
     assert opts[1]["nearest_spare"] == _NEAREST, opts[1]
@@ -240,18 +310,16 @@ _FIGURE = {"icn": "ICN-TEST-00001-A", "hotspot_id": "hs-007"}
 
 @pytest.fixture
 def walk_cites_a_figure(monkeypatch):
-    """The walk as 7f's parser will serve it: the IPD citation names the figure and the hotspot.
-    Patched on the SAME module object main loads stubs from, and only the two new keys differ."""
-    real = wd.load_stub_verbs
-
-    def _load():
-        out = real()
-        walk = out["s1000d_fault_walk"]
-        returns = copy.deepcopy(walk.returns)
-        returns["citations"]["ipd"].update(_FIGURE)
-        out["s1000d_fault_walk"] = walk.model_copy(update={"returns": returns})
-        return out
-    monkeypatch.setattr(wd, "load_stub_verbs", _load)
+    """The walk's IPD citation naming a hotspot the fixture graph itself has none of. Patched on
+    the SAME declared-query HTTP seam `_declared_walk_double` installs (overriding it for this
+    test only) -- the query still runs for real against the fixture; only the two new keys are
+    added to the shaped `ipd` select afterward, standing in for a hotspot a richer manual would
+    have supplied."""
+    def _post(url, json, headers, timeout):
+        decl, shaped = _shaped_walk(json["verb"], json["params"])
+        shaped["ipd"] = {**shaped["ipd"], **_FIGURE}
+        return _Resp({"verb": decl.verb, "domain": decl.domain, "selects": shaped})
+    monkeypatch.setattr(ex.requests, "post", _post)
 
 
 @pytest.mark.asyncio
@@ -267,14 +335,17 @@ async def test_A_PART_CARRIES_THE_WALKS_FIGURE_TO_THE_ACTION_RECORD(registered, 
 
 
 @pytest.mark.asyncio
-async def test_THE_STUB_WALK_NAMES_NO_FIGURE_AND_THE_CASE_STILL_CLOSES(registered):
-    """Until 7f's parser fills them: both keys PRESENT and null on every part, never an invented
-    figure, and the case releases -- a null is "not supplied", not a crash."""
+async def test_THE_WALK_NAMES_NO_HOTSPOT_AND_THE_CASE_STILL_CLOSES(registered):
+    """The fixture's IPD module genuinely has no hotspot markup (unlike `walk_cites_a_figure`'s
+    patched-in one): `icn` is the real walk's own citation off the graph, never invented, while
+    `hotspot_id` is PRESENT and null -- "the manual did not say", not a crash, and the case still
+    releases."""
     out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
     [rec] = _emitted(c)
     for p in [*(p for o in _options(c) for p in o["parts"]), *rec["work_order"]["parts"]]:
-        assert {k: p.get(k, "ABSENT") for k in _FIGURE} == {"icn": None, "hotspot_id": None}, p
+        assert {k: p.get(k, "ABSENT") for k in _FIGURE} == {
+            "icn": "ICN-ODMRAD-00001", "hotspot_id": None}, p
 
 
 # ── THE PATHS ───────────────────────────────────────────────────────────────────────────────

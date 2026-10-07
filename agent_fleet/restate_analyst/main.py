@@ -1713,22 +1713,36 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
 # into the run's context (`trigger.fault.item`, `outputs.<definition>.<step>.chosen`). The dotted
 # form used to fall outside this pattern and pass through LITERALLY, with no error, strict or not --
 # an audience declared as `maint:{trigger.owning_tier}` would have registered the braces.
-_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+#
+# A SEGMENT AFTER THE FIRST MAY ALSO BE PURELY NUMERIC (`[0-9]+`) -- `_resolve_path` reads it as a
+# LIST INDEX, never a dict key by coincidence of spelling, so a declared query's `values` select
+# (a list, in order) can be cited per-element (`remove_install.dmc.0`) without the runner computing
+# an index. The FIRST segment stays a name: a run's context is keyed by name at the top, never by
+# position.
+_PLACEHOLDER_RE = re.compile(
+    r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\}")
 
 # A NULL-SAFE STEP, ``?.``, IN A WHOLE PLACEHOLDER ONLY: ``{trigger.picture.nearest_spare?.site}``
 # is None where ``nearest_spare`` is PRESENT AND None, so a definition can copy a field per part out
 # of a row that may be null (ruled 2026-10-03, the resupply option's parts) without computing.
 # ABSENT IS STILL REFUSED: only a producer's stated None short-circuits, never a producer that did
 # not say. In an interpolated string it is refused, never passed through as literal braces.
-_NULL_SAFE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\??\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+_NULL_SAFE_RE = re.compile(
+    r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\??\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\}")
 
 _SCALAR = (str, int, float, bool)
 
 
 def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tuple[bool, object]":
-    """``(found, value)`` for a dotted path through nested mappings. FOUND IS SEPARATE FROM VALUE:
-    a field that is present and None (``picture.nearest_spare`` when no site has stock) is a
-    fact, and a field that is absent is a producer that did not say.
+    """``(found, value)`` for a dotted path through nested mappings AND lists. FOUND IS SEPARATE
+    FROM VALUE: a field that is present and None (``picture.nearest_spare`` when no site has
+    stock) is a fact, and a field that is absent is a producer that did not say.
+
+    A segment that is ALL DIGITS indexes a LIST at that position; an out-of-range index, or a
+    numeric segment where the node is not a list, is ABSENT -- refused exactly like any other
+    absent path, never treated as a literal dict key. A numeric segment where the node IS a dict
+    stays an ordinary key lookup (only present when that literal string is a key there); a list
+    is the only shape a numeric segment reads positionally.
 
     With ``null_safe``, a segment spelled ``name?`` that is present and None ends the walk as
     ``(True, None)``. Without it, ``name?`` is just a field no producer writes."""
@@ -1736,9 +1750,17 @@ def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tupl
     for seg in path.split("."):
         safe = null_safe and seg.endswith("?")
         seg = seg[:-1] if safe else seg
-        if not isinstance(node, dict) or seg not in node:
+        if isinstance(node, list):
+            if not seg.isdigit():
+                return False, None
+            idx = int(seg)
+            if idx >= len(node):
+                return False, None
+            node = node[idx]
+        elif isinstance(node, dict) and seg in node:
+            node = node[seg]
+        else:
             return False, None
-        node = node[seg]
         if safe and node is None:
             return True, None
     return True, node
@@ -2038,17 +2060,19 @@ async def _run_definition(
     """
     try:
         from workflow_definition import (  # type: ignore[no-redef]
-            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+            WorkflowDefinition, WorkflowDefinitionError, load_query_verbs, load_stub_verbs,
         )
         from spo_step_executor import (  # type: ignore[no-redef]
-            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+            StepFailAndRelease, dispatch_spo_step, execute_declared_query, execute_direct_call,
+            verify_spo_step,
         )
     except ImportError:
         from agent_fleet.restate_analyst.workflow_definition import (
-            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+            WorkflowDefinition, WorkflowDefinitionError, load_query_verbs, load_stub_verbs,
         )
         from agent_fleet.restate_analyst.spo_step_executor import (
-            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+            StepFailAndRelease, dispatch_spo_step, execute_declared_query, execute_direct_call,
+            verify_spo_step,
         )
 
     wf = WorkflowDefinition.model_validate(definition)  # validate the git-asserted def
@@ -2060,7 +2084,9 @@ async def _run_definition(
     # declare them would author its own approvals, so they are refused BEFORE the first step runs
     # rather than at the step -- a refusal after an earlier step's effect is a half-run.
     try:
-        stubs = load_stub_verbs() if any(s.kind == "spo_operation" for s in wf.steps) else {}
+        _has_spo = any(s.kind == "spo_operation" for s in wf.steps)
+        stubs = load_stub_verbs() if _has_spo else {}
+        queries = load_query_verbs() if _has_spo else {}
     except WorkflowDefinitionError as exc:
         raise restate.TerminalError(f"stub verb registry: {exc}", status_code=500) from exc
     if not from_registry:
@@ -2068,7 +2094,7 @@ async def _run_definition(
             s.id for s in wf.steps
             if s.kind in ("render", "signal_await", "wait", "emit")
             or (s.kind == "human_await" and (s.approves or s.chooses_from or s.role))
-            or (s.kind == "spo_operation" and s.verb in stubs)
+            or (s.kind == "spo_operation" and (s.verb in stubs or s.verb in queries))
         ]
         if authored:
             raise restate.TerminalError(
@@ -2341,6 +2367,39 @@ async def _run_definition(
             results.append({
                 "step_id": step.id, "kind": "spo_operation", "status": "STUB", "result": result,
                 "stub": {"verb": _stub.verb, "retired_by": _stub.retired_by},
+            })
+
+        elif step.kind == "spo_operation" and step.verb in queries:
+            # A DECLARED QUERY: a mesh READ whose question is DATA (`agent_fleet/utils/
+            # declared_query.py`). The runner renders its params strictly against the run's
+            # context, runs the read inside `ctx.run` (journaled, exactly like any other
+            # effectful call below), then renders `returns` from the shaped selects. Registry-only
+            # (refused above, like a stub). The declaration -- domain, selects, capability -- is
+            # engine-o's own; nothing here names what it reads.
+            _decl = queries[step.verb]
+            _params = {
+                k: _render(v, context, where=f"declared query {step.verb}.params.{k}")
+                for k, v in _decl.params.items()
+            }
+
+            def _do_query(decl=_decl, params=_params, ident=identity):
+                try:
+                    return execute_declared_query(decl, params, ident)
+                except StepFailAndRelease as e:
+                    # Denial -> TERMINAL (fail-and-release), never retry-and-park.
+                    raise restate.TerminalError(str(e), status_code=e.status_code)
+            _selects = await ctx.run(f"exec_{step.id}", _do_query)
+            result = _render(
+                _decl.returns, {"params": _params, **_selects},
+                where=f"declared query {step.verb}.returns",
+            )
+            outputs[wf.id][step.id] = result
+            results.append({
+                "step_id": step.id, "kind": "spo_operation", "status": "SUCCESS",
+                "result": result,
+                "declared": {
+                    "verb": _decl.verb, "capability": _decl.capability, "domain": _decl.domain,
+                },
             })
 
         elif step.kind == "spo_operation":
