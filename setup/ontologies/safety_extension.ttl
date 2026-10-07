@@ -150,6 +150,18 @@ safety:AcceptanceAuthority a owl:Class ;
 MINTED: S3000L's AuthorityToOperate is authority to OPERATE and SubtaskAcceptanceParameter is
 acceptance of a subtask; neither is the authority that takes on residual risk.""" .
 
+safety:FailureRecord a owl:Class ;
+    rdfs:label "Failure record" ;
+    rdfs:comment """ADR-0056 (FRACAS Phase 1). One failure of a safety-critical item, as a
+system of record holds it: which program it happened on, which system cited it, and the
+failure mode that system recorded. MINTED, after the same survey this file's other classes
+ran: S3000L's `FailureMode` is a taxonomy of causes, not a dated, cited occurrence from a
+system of record, and neither vendored source (`Maintenance.rdf`, `iof_mro.ttl`) nor
+`product_structure_extension.ttl` declares a failure-occurrence or nonconformance-record
+concept at all. A `FailureRecord` is never the cause taxonomy itself — `safety:hasCause`
+already binds a hazard to `s3kl:FailureMode` for that — it is the dated, sourced EVENT a
+system of record filed.""" .
+
 # ---------------------------------------------------------------------------
 # RESPONSE CLASSES — every verb's `output_uri`, DECLARED HERE BEFORE ANYTHING
 # REGISTERS.
@@ -206,6 +218,22 @@ acceptance audience that level implies. Carries acceptance_status `drafted` and 
 engine cannot write `accepted` (ADR-0051 §7), which is a HumanTask disposition by an entitled
 authority.""" .
 
+# Output of `whatFailedOnThisPart` — ADR-0056 Phase 1, added the same day the verb registers,
+# per this section's own header: a class minted only once something merges it into a sandbox
+# is the exact defect `test_output_classes_are_declared.py` exists to catch offline.
+#
+# NAMED WITHOUT CITING THE VERB, same discipline as the sibling classes above: the verb's
+# camelCase name repeats this engine's OWN labels (`FailedOnThisPart` contains no sibling
+# class name, but the definition below is still written to name no verb by its mesh IRI).
+safety:FailureRecordSet a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Failure Record Set" ;
+    rdfs:comment """Every failure recorded for one safety-critical item, across every program
+and every system of record this engine reads, each entry carrying its own system-of-record
+citation. An item on the critical items list with no recorded failure yields an explicit
+empty set — read-only, resolves no risk level and performs no per-caller filtering by
+program membership (named as an open question in ADR-0056, not decided here).""" .
+
 # ---------------------------------------------------------------------------
 # RELATIONSHIPS — the cause side points OUT of this file, on purpose
 # ---------------------------------------------------------------------------
@@ -227,6 +255,12 @@ safety:opensHazard a owl:ObjectProperty ;
     rdfs:label "opens hazard" ;
     rdfs:domain safety:SafetyCriticalItem ;
     rdfs:range safety:Hazard .
+
+safety:recordsFailureOf a owl:ObjectProperty ;
+    rdfs:label "records failure of" ;
+    rdfs:domain safety:FailureRecord ;
+    rdfs:range safety:SafetyCriticalItem ;
+    rdfs:comment "Binds one system-of-record's filed failure to the critical item it is about." .
 
 safety:reportsHazard a owl:ObjectProperty ;
     rdfs:label "reports hazard" ;
@@ -290,6 +324,21 @@ safety:acceptanceAuthorityLevel a owl:DatatypeProperty ;
     rdfs:domain safety:RiskAssessment ;
     rdfs:range xsd:string ;
     rdfs:comment "The level the drafted risk IMPLIES, resolved from the matrix. Records what the draft would require, not what anyone granted." .
+
+safety:filedBySystemOfRecord a owl:DatatypeProperty ;
+    rdfs:label "filed by system of record" ;
+    rdfs:domain safety:FailureRecord ;
+    rdfs:range xsd:string ;
+    rdfs:comment """ADR-0056. Which system of record filed this failure — an opaque system id,
+never the narrative. Phase 1 names two: `sor-events-a` (a placeholder OpenDDIL's packet asks
+be kept, never replaced with the real system behind it) and `relyence` (the commercial
+product's real name).""" .
+
+safety:failureCitation a owl:DatatypeProperty ;
+    rdfs:label "failure citation" ;
+    rdfs:domain safety:FailureRecord ;
+    rdfs:range xsd:string ;
+    rdfs:comment "An evidence reference INTO the system of record named above. Citations travel; narrative does not (ADR-0051 §5)." .
 
 # ---------------------------------------------------------------------------
 # PROVENANCE PREDICATES ON THE MATRIX ITSELF — declared 2026-09-14, and the reason

@@ -19,6 +19,8 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
     from entities import (
         BY_HAZARD_ID,
         CRITICAL_ITEMS,
+        CRITICAL_PART_NUMBERS,
+        FAILURE_RECORDS,
         HAZARDS,
         WORK_ORDERS,
         Hazard,
@@ -31,6 +33,8 @@ except ImportError:
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
         BY_HAZARD_ID,
         CRITICAL_ITEMS,
+        CRITICAL_PART_NUMBERS,
+        FAILURE_RECORDS,
         HAZARDS,
         WORK_ORDERS,
         Hazard,
@@ -433,6 +437,84 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
             "reason_required": ["accepted", "rejected"],
         },
     }
+    return out
+
+
+def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str, Any]:
+    """What failed on this part, across every program and every system of record FRACAS cites.
+
+    ADR-0056 Phase 1's first verb. READ-ONLY, exactly like its two siblings above: this function
+    opens no task, sets no acceptance, and writes nothing to any system of record. It answers one
+    question — "what failed on this part" — by citing every `FailureRecord` the fixture holds for
+    it, from EVERY platform (FRACAS's "program") and EVERY system of record, not just the one the
+    caller happened to ask from.
+
+    THE INPUT IS A SAFETY-CRITICAL ITEM, NOT A BARE STRING. `part_number` is checked against
+    `CRITICAL_PART_NUMBERS`, the same derived set `assessDeferralRisk` checks, because the verb's
+    declared input class is `safety:SafetyCriticalItem` — an already-declared, engine-owned class,
+    not a new "Part" class invented or mis-cited against a standard that does not define one
+    (ADR-0007). A part number outside that set is UNKNOWN to this verb, the same way an unknown
+    work order is unknown to `assessDeferralRisk`, and refuses for the same reason: answering
+    "no failures" for a part this verb cannot even identify would be indistinguishable from a
+    part it correctly identified and found clean.
+
+    "NO FAILURES" IS A NAMED, NON-REFUSED ANSWER, never conflated with "unknown part". A critical
+    item that has never failed returns an explicit empty `failures` list — the check ran and found
+    nothing, which is a different fact from the check never running at all.
+
+    CITATIONS, NOT NARRATIVE (ADR-0051 §5's CLEARANCE-BOUNDED discipline, carried over from
+    `draft_risk_assessment`). Every record names the system of record it came from and a citation
+    into that system; this verb invents no account of what happened beyond the failure mode the
+    source itself recorded.
+
+    TWO OPEN QUESTIONS THIS VERB DOES NOT ANSWER, NAMED RATHER THAN SILENTLY DECIDED — see
+    ADR-0056: (1) today's `SystemOfRecordConnector.lookup` returns at most one record per value,
+    a shape this one-to-many query does not fit, so Phase 1 reads the in-engine fixture only and
+    never calls `iagent_mesh.systems_of_record`'s real connector machinery; (2) this verb returns
+    every record it holds, tagged with its platform and citation, and performs NO per-caller
+    filtering by program membership — ADR-0039's "an engine computes facts and never chooses what
+    happens next" applies here exactly as it does to the acceptance ladder above.
+    """
+    if not part_number:
+        return {"refused": True, "reason": "which part?"}
+
+    if part_number not in CRITICAL_PART_NUMBERS:
+        # NOT the same as "no failures found", and reported differently on purpose — see
+        # assess_deferral_risk's identical distinction for an unknown work order.
+        return {"refused": True, "reason": f"unknown part '{part_number}'"}
+
+    records = [r for r in FAILURE_RECORDS if r.part_number == part_number]
+    platforms = sorted({r.platform for r in records})
+    systems = sorted({r.system_of_record for r in records})
+
+    out: Dict[str, Any] = {
+        "refused": False,
+        "part_number": part_number,
+        "critical_items_checked": len(CRITICAL_ITEMS),
+        "failure_count": len(records),
+        "platforms": platforms,
+        "systems_of_record_cited": systems,
+        "failures": [
+            {
+                "record_id": r.record_id,
+                "platform": r.platform,
+                "system_of_record": r.system_of_record,
+                "failure_mode": r.failure_mode,
+                "observed_on": r.observed_on,
+                "citation": r.citation,
+            }
+            for r in records
+        ],
+    }
+    out["note"] = (
+        f"No failure is recorded for {part_number} across the systems of record this engine "
+        "reads; the check ran and found none."
+        if not records
+        else (
+            f"{len(records)} failure(s) for {part_number} across {len(platforms)} program(s) "
+            f"and {len(systems)} system(s) of record."
+        )
+    )
     return out
 
 

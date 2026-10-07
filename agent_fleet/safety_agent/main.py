@@ -217,6 +217,34 @@ VERBS: List[Dict[str, Any]] = [
             "what hazards are unattended", "can we defer this work order",
         ],
     },
+    {
+        "fn": "what_failed_on_this_part",
+        "verb": "mesh:whatFailedOnThisPart",
+        "input_uri": SAFETY + "SafetyCriticalItem",
+        "output_uri": SAFETY + "FailureRecordSet",
+        "desc": (
+            "ADR-0056 Phase 1, FRACAS's first verb. Every recorded failure for one safety-"
+            "critical item, across every program and every system of record this engine "
+            "reads, each citing which system it came from. Answers WHAT FAILED ON THIS PART "
+            "ACROSS PROGRAMS. REFUSES a part number that is not on the safety-critical items "
+            "list, naming how many items it was checked against - the same shape as "
+            "assessDeferralRisk's unknown-work-order refusal, and for the same reason: a "
+            "part this verb cannot identify is a different fact from a part it identified "
+            "and found clean. A critical item with NO recorded failure returns an explicit "
+            "empty set, never conflated with unknown. READ-ONLY - resolves no risk level, "
+            "opens no acceptance, and writes to no system of record. OWNS the phrasings: "
+            "what failed on this part, failure history across programs, FRACAS lookup."
+        ),
+        "synonyms": [
+            "what failed on this part", "failure history for this part",
+            "what failures were recorded for this item", "FRACAS lookup",
+            "has this part failed on another program",
+        ],
+        "anti_synonyms": [
+            "what is the risk of deferring this work order", "assess this hazard",
+            "what hazards are unattended", "accept this risk",
+        ],
+    },
 ]
 
 BY_FN = {v["fn"]: v for v in VERBS}
