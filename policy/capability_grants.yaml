@@ -227,6 +227,18 @@ capabilities:
       - alice@example.com
       - bob@example.com
 
+  # The s1000d fault walk (policy/overlays/openddil-lab/verbs/s1000d_fault_walk.yaml). The verb
+  # declares a domain and no persona, so its invokers are every MAINTENANCE cell: groups.yaml grants
+  # MAINTENANCE to one group only.
+  mesh:s1000dFaultWalk:
+    granted_by: cnogradi
+    reason: >-
+      The verb declares domain MAINTENANCE and no persona; the only cell granting MAINTENANCE is
+      MECHANIC/MAINTENANCE, granted by maintenance-mechanics; alice is its only member (a fixture
+      grant, users.yaml).
+    grant_to:
+      - alice@example.com
+
   # origin.write (item B, 2026-10-03) — the single decider gating restate-analyst's
   # origin_record workflow's accept step (POST /internal/origin/write on the BFF). Same shape
   # as mesh:startReview above: the service INITIATES the write under its OWN entitled, auditable
