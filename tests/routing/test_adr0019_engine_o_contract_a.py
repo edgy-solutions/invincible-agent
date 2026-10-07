@@ -33,11 +33,10 @@ from pathlib import Path
 
 import pytest
 
-# INTEGRATION: needs a live Engine O. SKIPS when unreachable, RUNS AND FAILS when it is up
-# (tests/routing/conftest.py). Before this marker existed the module documented itself as
-# "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
-# environmental fact wearing a defect's clothes, ~32 per run, for months.
-pytestmark = pytest.mark.requires_engine_o
+# NOT an integration test: every dependency is stubbed and Engine O runs in-process (see
+# `ontology_main` fixture below). Measured 2026-10-07 (lane/gov): at baseline it PASSED with
+# no Engine O present, so `requires_engine_o` was always the wrong marker for this file — it
+# only made the new responder-identity probe VOID two tests that never needed the service.
 
 
 _REPO = Path(__file__).resolve().parents[2]

@@ -22,50 +22,83 @@ The second half is what keeps this from becoming a different lie. A guard that s
 anything goes wrong would convert every real regression into a silent pass — trading noise for
 blindness, which is the worse trade. So the probe asks exactly one question (is the service
 answering?) and never widens: a service that answers and then misbehaves produces a red, as it must.
+
+A THIRD STATE, added later: "is something listening" is not the same question as "is the right
+thing listening". A bare TCP connect passes just as happily for a FOREIGN service squatting on the
+same port (measured: an unrelated container's `/health` endpoint answering Prometheus text/plain on
+`localhost:8084`, where Engine O is expected) as it does for Engine O itself. That foreign service
+then answers the real requests too, with whatever status it happens to return (405, in the measured
+case), and the suite reports 36 reds that are actually a port collision — R-086's "a suite that
+could not run is void, not red" applies exactly: these tests never reached Engine O at all. The fix
+is not a richer liveness check; it is asking the one question a TCP connect cannot: does the body
+at `/health` match what Engine O's own handler produces? `tests/_responder_identity.py` answers
+that from the producer's actual response shape, so "absent" splits into "absent" and "foreign", and
+only "expected" counts as present.
 """
 from __future__ import annotations
 
 import os
-import socket
-from urllib.parse import urlparse
 
 import pytest
 
+from tests._responder_identity import Identity, is_engine_o, probe, routing_base_url, void_reason
+
 # The SAME env knob the routing modules already read, so the probe and the tests cannot disagree
-# about which service they mean.
-BASE_URL = os.getenv("ROUTING_TEST_BASE_URL", "http://localhost:8084")
+# about which service they mean. The default lives ONCE in `tests/_responder_identity.py`
+# (ruled by Chris 2026-10-06: a non-colliding port, http://localhost:18084, so the suite stops
+# depending on whatever else is bound to :8084 on this machine).
+BASE_URL = routing_base_url()
 
 _PROBE_TIMEOUT = float(os.getenv("ROUTING_TEST_PROBE_TIMEOUT", "1.5"))
-_cache: dict = {}
+
+#: Tests voided this session because nothing answered at BASE_URL, for the terminal summary.
+_voided_absent: list[str] = []
+
+#: Tests voided this session by a foreign responder, for the terminal summary.
+_voided_foreign: list[str] = []
+
+
+def _engine_o_identity() -> Identity:
+    return probe(BASE_URL, "/health", is_engine_o, timeout=_PROBE_TIMEOUT)
 
 
 def engine_o_reachable() -> bool:
-    """TCP-connectable, cached once per session.
+    """True only when the service at BASE_URL answers like Engine O itself.
 
-    Deliberately a CONNECT check and not an HTTP health call: the question is "is there a service
-    here at all", which is the environmental fact. Anything richer starts overlapping with what the
-    tests themselves assert, and a probe that duplicates the assertion can mask it.
+    Kept as a name (other modules may still import it) but its meaning narrowed: it used to mean
+    "TCP-connectable"; it now means state == "expected", because a TCP-connectable FOREIGN service
+    is not Engine O being reachable, it is a different thing holding the port.
     """
-    if "ok" in _cache:
-        return _cache["ok"]
-    parsed = urlparse(BASE_URL)
-    host, port = parsed.hostname or "localhost", parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT):
-            _cache["ok"] = True
-    except OSError:
-        _cache["ok"] = False
-    return _cache["ok"]
+    return _engine_o_identity().state == "expected"
 
 
+# Kept as a name (other modules may import it) in case anything still reads the plain
+# "absent" message directly; the fixture below now uses `_void_absent_reason()` instead, since
+# BOTH absent and foreign are VOID, not a quiet skip (see this module's header).
 SKIP_REASON = (
     f"Engine O is not reachable at {BASE_URL} — this is an ENVIRONMENT fact, not a defect. "
     f"These are integration tests and they need the service:\n"
-    f"    kubectl -n sandbox port-forward svc/iagent-engine-o 8084:8084 &\n"
+    f"    kubectl -n sandbox port-forward svc/iagent-engine-o 18084:8084 &\n"
     f"or point them elsewhere with ROUTING_TEST_BASE_URL=http://host:port\n"
     f"(They SKIP rather than FAIL on purpose: a red that only means 'no port-forward' teaches "
     f"readers to wave through red, and that immunity is what hides the one real failure.)"
 )
+
+
+def _void_absent_reason() -> str:
+    return (
+        f"VOID — nothing answers at {BASE_URL}. This is an ENVIRONMENT fact, not a defect:\n"
+        f"    kubectl -n sandbox port-forward svc/iagent-engine-o 18084:8084 &\n"
+        f"or point them elsewhere with ROUTING_TEST_BASE_URL=http://host:port\n"
+        f"A void run is not a green — it must be reported as no information, not as a pass."
+    )
+
+
+def _void_foreign_reason(detail: str) -> str:
+    return void_reason(BASE_URL, detail) + (
+        " (Engine O specifically: point these at the real service with "
+        "ROUTING_TEST_BASE_URL=http://host:port.)"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -76,9 +109,44 @@ def _engine_o_precondition(request):
     tests (`test_embed_contract`, `test_no_legacy_dns_references`) that need no service at all.
     Skipping those on an unrelated environmental fact would hide genuine defects — and at least one
     of them is currently red for a REAL reason.
+
+    BOTH absent and foreign are VOID (ruled by Chris 2026-10-06): a suite that could not run is
+    void, not red, regardless of WHICH way it could not run. Each gets its own skip reason and
+    its own terminal-summary tally, so a reader sees which kind of void it was.
     """
-    if request.node.get_closest_marker("requires_engine_o") and not engine_o_reachable():
-        pytest.skip(SKIP_REASON)
+    if not request.node.get_closest_marker("requires_engine_o"):
+        return
+    identity = _engine_o_identity()
+    if identity.state == "foreign":
+        _voided_foreign.append(request.node.nodeid)
+        pytest.skip(_void_foreign_reason(identity.detail))
+    if identity.state == "absent":
+        _voided_absent.append(request.node.nodeid)
+        pytest.skip(_void_absent_reason())
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print ONE loud line per VOID kind when the suite did not run against the real service.
+
+    A void hidden among ordinary skips reads as a clean negative — the same shape as "nothing
+    needed this service". These lines are what stop that: they say, unmissably, that tests did
+    not run because nothing (or the wrong thing) answered, not because nothing needed to run.
+    """
+    if _voided_absent:
+        terminalreporter.write_line(
+            f"ROUTING SUITE VOID: {len(_voided_absent)} test(s) did not run — "
+            f"nothing answers at {BASE_URL}",
+            red=True,
+            bold=True,
+        )
+    if _voided_foreign:
+        identity = _engine_o_identity()
+        terminalreporter.write_line(
+            f"ROUTING SUITE VOID: {len(_voided_foreign)} test(s) did not run — "
+            f"{BASE_URL} is answered by a foreign service ({identity.detail})",
+            red=True,
+            bold=True,
+        )
 
 
 def pytest_configure(config):
