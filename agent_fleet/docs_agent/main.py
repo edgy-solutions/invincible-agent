@@ -60,12 +60,14 @@ from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
+    import entitlement as entitlement_mod
     import explain as explain_mod
     import slots as slots_mod
     from body_store import BodyUnavailable, MinioBodyStore
     from ontology_reader import OntologyDocPageReader, ReaderUnavailable
     from reads import BodyStore, DocPageReader
 except ImportError:  # pragma: no cover — exercised by the flat-layout seal
+    from agent_fleet.docs_agent import entitlement as entitlement_mod
     from agent_fleet.docs_agent import explain as explain_mod
     from agent_fleet.docs_agent import slots as slots_mod
     from agent_fleet.docs_agent.body_store import BodyUnavailable, MinioBodyStore
@@ -336,11 +338,13 @@ def health() -> Dict[str, Any]:
 
 
 @app.post("/explain", tags=["mesh"])
-def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
+def explain_endpoint(req: ExplainRequest,
+                     caller: Any = Depends(_transport_auth(COMPONENT))) -> Dict[str, Any]:
     """Resolve the subject to a page, read its body, assert the sha, return the page.
 
-    THE ORDER IS THE CONTRACT: resolve, read, ASSERT, render. Nothing reaches a caller that has
-    not been checked against the sha the graph indexed.
+    THE ORDER IS THE CONTRACT: resolve, ENTITLE, read, ASSERT, render. Nothing reaches a caller
+    that has not been checked against the sha the graph indexed, and no body is read for a page
+    the asker may not see (`entitlement.py`; dark until ENABLE_AGENTIC_AUTH).
     """
     from fastapi import HTTPException
 
@@ -368,6 +372,28 @@ def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
         # because nobody writes a page for a task nobody has done.
         return explain_mod.abstain(subject)
 
+    # SERVE-TIME ENTITLEMENT, BEFORE ANY BODY IS READ. Off -> not consulted, and the response
+    # below is exactly what it was. On -> the verified asker must hold `can_invoke` on every
+    # verb a page explains; a withheld page is NAMED, never silently dropped, because a list
+    # quietly one page shorter is the silently-shorter-board failure again.
+    gate_on = entitlement_mod.ENABLE_AGENTIC_AUTH
+    withheld: List[dict] = []
+    if gate_on:
+        rows, withheld = entitlement_mod.partition(rows, entitlement_mod.asker_of(caller))
+        if not rows:
+            # NOT AN ABSTAIN. Pages explain this subject and the asker may read none of them;
+            # rendering that as "nothing explains it" would tell the asker the corpus is empty.
+            return {
+                "archetype": explain_mod.ARCHETYPE,
+                "subject": subject,
+                "refused": True,
+                "outcome": entitlement_mod.UNENTITLED,
+                "reason": entitlement_mod.WITHHELD_REASON,
+                "pages": [],
+                "page_count": 0,
+                "withheld": withheld,
+            }
+
     # EVERY SURVIVING ROW IS RENDERED. This took `rows[0]` and that was the defect: the reader
     # orders, and anything still tied after ordering is a tie the engine must SHOW rather than
     # break. Picking the first of several is a winner chosen on no evidence and indistinguishable
@@ -393,9 +419,12 @@ def explain_endpoint(req: ExplainRequest) -> Dict[str, Any]:
             # the reader cannot see what is missing, and the remaining pages look complete.
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return {
+    out = {
         "archetype": explain_mod.ARCHETYPE,
         "subject": subject,
         "pages": pages,
         "page_count": len(pages),
     }
+    if gate_on:
+        out["withheld"] = withheld
+    return out
