@@ -298,7 +298,7 @@ leaving it to the driver.
 
 **1. At `ingress-user/`, the path segment is a FORMAT, never a kind — rule 2 does not fire.**
 User drops land at `ingress-user/{format}/{sha256}/`, where `{format}` is a leaf of
-`mesh_system.ttl`'s ContentKind tree (`pdf`, `cad`) — what the bytes ARE, which the door can
+`mesh_system.ttl`'s ContentKind tree (`pdf`, `cad`, and `xml` from the 2026-10-07 amendment) — what the bytes ARE, which the door can
 determine. Rule 2 reads "the segment after `domain_type`" as a content kind; under `ingress-user/`
 that segment would be `pdf`, which is no registered kind. A path-derived kind here is therefore
 not a fallback but a guaranteed wrong answer, and it is **disabled for the `ingress-user/`
@@ -324,3 +324,26 @@ drop reads `received` forever, which is the gap this sentence names.
 gateway to read the registered kinds; until doc-tools exposes them (the proposed
 `GET /ingest/kinds`), the halt happens one step later, at the driver, and is visible as `failed`.
 When that route exists, the door refusal replaces it, and this item closes.
+
+## Amendment 2026-10-07 — a third format leaf, `xml`
+
+**1. `xml` is a format leaf, added for the document that needed it.** The ContentKind tree held
+`pdf` and `cad`, and its comment held back a third leaf until a real document needed one. S1000D
+data modules are that document: XML that no `pdf` label describes truthfully, and that doc-tools'
+PDF extraction would fail on. `mesh:XMLArtifact` joins the tree. `ingest_status.FILE_KINDS`
+(`pdf`, `cad`, `xml`) is what `POST /ingest` accepts, and the leaves are exactly that tuple,
+sealed both ways.
+
+**2. The registered kind rides under the format, unchanged.** A data module arrives as
+`kind=xml` with `content_kind=s1000d-data-module`. The format is the path segment
+(`ingress-user/xml/{sha256}/`) and the projection's `kind`. The registered kind goes to
+`manifest.metadata.content_kind` under rule 1, exactly as amendment 2026-09-30 §2 describes.
+
+**3. `event` is not a file kind.** `ingest_status.KINDS` also holds `event`, for the bytes-less
+rows of `POST /ingest/events`. Until this amendment the multipart door checked `KINDS`, so a
+file could be dropped as `event`. It now checks `FILE_KINDS`.
+
+**4. Open: nothing binds a registered kind to its format.** `kind=pdf` with
+`content_kind=s1000d-data-module` is still accepted at the door, then fails at extraction. The
+binding belongs on the registration: the SDK's `ContentKindRegistration` is `extra="forbid"`,
+so it needs a field there. It does not belong in a gateway table naming a deployment's kinds.

@@ -788,11 +788,14 @@ mesh:doc_kind a owl:DatatypeProperty ;
 # phantom unless it resolves to a declared class, and `ingress-user/<kind>/<sha>/`
 # (ADR-0041 §2) writes `<kind>` as one of these leaves.
 #
-# Two leaves only — PDF and CAD — because those are the two the drop-box ships
-# with (ADR-0041 §1: "a PCN or PDN lands in someone's inbox... they drop the PDF").
-# A THIRD LEAF IS A FUTURE COMMIT, NOT A WIDER ENUM HERE: adding one is exactly
-# the shape of change ADR-0021 §"naming correction" warns against pre-committing —
-# wait for a real document that needs it.
+# PDF and CAD are the two the drop-box shipped with (ADR-0041 §1: "a PCN or PDN
+# lands in someone's inbox... they drop the PDF"). This tree waited for a real
+# document before taking a third leaf (ADR-0021 §"naming correction" warns against
+# pre-committing one). XML is that leaf, added 2026-10-07 for S1000D data modules.
+# A leaf is a FILE FORMAT: the registered content kind (s1000d-data-module, pcn)
+# rides under it in `manifest.metadata.content_kind` and is not a class here.
+# The leaves are exactly ingest_status.FILE_KINDS, sealed both ways by
+# tests/test_ingest_content_kind_tree.py.
 # -----------------------------------------------------------------------------
 
 mesh:Artifact a owl:Class ;
@@ -809,3 +812,8 @@ mesh:CADArtifact a owl:Class ;
   rdfs:subClassOf mesh:Artifact ;
   rdfs:label "CAD Artifact" ;
   rdfs:comment "A CAD file dropped through the ingestion seam — the drop-box's second case, alongside PDF (ADR-0041 §8's `ContentKind` pairing). Same selection rule as the PDF kind: declared via `manifest.metadata.content_kind`, resolved to this class, never LLM-classified." .
+
+mesh:XMLArtifact a owl:Class ;
+  rdfs:subClassOf mesh:Artifact ;
+  rdfs:label "XML Artifact" ;
+  rdfs:comment "An XML file dropped through the ingestion seam — the third leaf, added for the first real document that needed it: S1000D data modules, which arrive as kind xml with the registered content kind s1000d-data-module riding under it. Same selection rule as the PDF and CAD kinds: declared at the door, resolved to this class, never LLM-classified." .

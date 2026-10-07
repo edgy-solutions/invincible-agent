@@ -8964,7 +8964,7 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
     (`object_ref`, `content_kind`, `domain_type`, `provenance`, `initiator`) with
     `metadata.content_kind` present ONLY when the caller declared a registered content kind
     (ADR-0021's precedence rule 1 / ADR-0041 §4) — never the route's own `kind` (file FORMAT,
-    pdf|cad), which rides separately as `media_kind`. Writing the file format into
+    pdf|cad|xml), which rides separately as `media_kind`. Writing the file format into
     `metadata.content_kind` was the prior defect: every user drop would HALT downstream as
     ContentKindUnregistered("pdf"). The provenance block rides BESIDE the bytes rather than
     embedded inside them — same "six fields ride beside" shape this repo already uses
@@ -9172,7 +9172,7 @@ async def ingest_document(
     that is a classifier-time concern, downstream of this seam, and is NOT implemented
     here.
 
-    FORMAT IS NOT KIND. `kind` (pdf|cad) is the FILE FORMAT — the `ingress-user/{kind}/`
+    FORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`
     path segment and the projection's `kind` column — never a registered content kind.
     `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
     kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
@@ -9190,10 +9190,10 @@ async def ingest_document(
 
     from . import content_kinds, ingest_status, origin_resolver, promotion, provenance
 
-    if kind not in ingest_status.KINDS:
+    if kind not in ingest_status.FILE_KINDS:
         raise HTTPException(
             status_code=400,
-            detail=f"kind must be one of {ingest_status.KINDS}, got {kind!r}",
+            detail=f"kind must be one of {ingest_status.FILE_KINDS}, got {kind!r}",
         )
     if on_behalf_of != current_user.authz_id:
         raise HTTPException(
@@ -9821,7 +9821,7 @@ async def _file_or_find_document_promotion_task(
     divergent copy.
 
     THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND: resolves the registry on
-    `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad) -- a lookup
+    `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad|xml) -- a lookup
     on the file format always misses the registry, resolves to a None domain, and files a task
     no one can be entitled to.
 
@@ -9894,7 +9894,7 @@ async def update_ingest_stage(
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
     carrying the ingest_id, the DECLARED content kind's domain (content_kinds.by_kind on the
-    row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad) and the
+    row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad|xml) and the
     original dropper (`dropped_by`, from the row's `submitted_by`). TASK FIRST, STATUS SECOND:
     for `review`, the task is filed (or found ALREADY_FILED) before `update_status` runs, so a
     422/503 refusal from the task step (no declared domain, no entitled recipients, no
@@ -9962,7 +9962,7 @@ async def update_ingest_stage(
     if req.stage == ingest_status.REVIEW:
         # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
-        # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
+        # kind), never on `kind` (pdf|cad|xml) -- a lookup on the file format always misses the
         # registry, resolves to a None domain, and files a task no one can be entitled to.
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
         # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):

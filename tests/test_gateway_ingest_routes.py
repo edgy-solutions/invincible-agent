@@ -28,6 +28,7 @@ WHAT THESE DEFEND:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import content_kinds as ck  # noqa: E402
+from src.iagent import content_kinds as _ck_real  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
@@ -113,6 +115,45 @@ def test_ingest_rejects_an_undeclared_kind_before_any_write(client, fake_s3, mon
     assert "kind" in str(r.json()["detail"])
     assert called["find"] is False, "an undeclared kind reached the dedupe/DB layer"
     assert fake_s3 == [], "an undeclared kind reached the object store"
+
+
+def test_ingest_refuses_event_as_a_file_kind_before_any_write(client, fake_s3, monkeypatch):
+    """`event` is in ingest_status.KINDS for POST /ingest/events' status rows, which carry no
+    bytes; the multipart door checks FILE_KINDS, so a file cannot arrive as `event`."""
+    called = {"find": False}
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda *a, **k: called.__setitem__("find", True))
+    r = client.post("/ingest", files={"file": ("fault.json", b"{}", "application/json")},
+                    data={"kind": "event", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 400, r.text
+    assert "kind must be one of" in str(r.json()["detail"])
+    assert called["find"] is False, "a file dropped as `event` reached the dedupe/DB layer"
+    assert fake_s3 == [], "a file dropped as `event` reached the object store"
+
+
+def test_ingest_accepts_an_s1000d_data_module_as_xml_under_its_registered_kind(
+        client, fake_s3, fake_create_node, monkeypatch):
+    """The six mock S1000D modules arrive as kind=xml, content_kind=s1000d-data-module. Read
+    against the REAL openddil-lab overlay, so the registration the deployment ships is the one
+    that resolves, not a stand-in."""
+    overlay = Path(__file__).resolve().parents[1] / "policy" / "overlays" / "openddil-lab" / "content_kinds"
+    monkeypatch.setattr(_ck_real, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(overlay))
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    received = {}
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: received.update(kw) or {"id": kw["ingest_id"], "status": "received"})
+    r = client.post("/ingest", files={"file": ("DMC-S1000DBIKE-AAA-D00-00-00-00AA-041A-A_001-00_EN-US.xml",
+                                               b"<dmodule/>", "application/xml")},
+                    data={"kind": "xml", "on_behalf_of": "alice@example.com",
+                          "content_kind": "s1000d-data-module"})
+    assert r.status_code == 200, r.text
+    assert r.json()["object_prefix"].startswith("ingress-user/xml/"), r.json()
+    manifest = json.loads(next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))["Body"])
+    assert manifest["media_kind"] == "xml"
+    assert manifest["metadata"] == {"content_kind": "s1000d-data-module"}
+    assert manifest["domain_type"] == "maintenance"
+    assert received["kind"] == "xml" and received["content_kind"] == "s1000d-data-module", received
+    assert fake_create_node[0]["kind"] == "xml"
 
 
 def test_ingest_refuses_an_on_behalf_of_that_is_not_the_caller(client, fake_s3, monkeypatch):
