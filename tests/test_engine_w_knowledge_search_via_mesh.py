@@ -32,8 +32,8 @@ _SERVICE = _REPO / "agent_fleet" / "weaviate_expert" / "service.py"
 _saved = sys.modules.get("baml_client")
 _stub = types.ModuleType("baml_client")
 _stub.b = types.SimpleNamespace(with_options=lambda **_k: None)
-sys.modules["baml_client"] = _stub
 try:
+    sys.modules["baml_client"] = _stub
     import agent_fleet.weaviate_expert.service as s  # noqa: E402
 finally:
     if _saved is None:

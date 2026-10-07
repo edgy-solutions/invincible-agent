@@ -35,8 +35,10 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
+from tests._responder_identity import routing_base_url
 
-_BASE = os.getenv("ROUTING_TEST_BASE_URL", "http://localhost:8084")
+
+_BASE = routing_base_url()
 _TIMEOUT_SEC = float(os.getenv("ROUTING_TEST_TIMEOUT_SEC", "15"))
 
 

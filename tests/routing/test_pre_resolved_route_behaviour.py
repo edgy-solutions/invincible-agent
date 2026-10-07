@@ -35,6 +35,7 @@ _VERB = "mesh:planCapabilityPath"
 
 
 _SUP_PATH = _REPO / "src" / "iagent" / "defs" / "dynamic_supervisor.py"
+_MOD_NAME = "dynamic_supervisor_pre_resolved_test"
 
 
 @pytest.fixture(scope="session")
@@ -64,10 +65,10 @@ def sup():
         if f and Path(f).resolve() == _SUP_PATH.resolve():
             return mod
     spec = importlib.util.spec_from_file_location(
-        "dynamic_supervisor_pre_resolved_test", str(_SUP_PATH),
+        _MOD_NAME, str(_SUP_PATH),
     )
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    sys.modules[_MOD_NAME] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -231,3 +232,17 @@ def test_a_verb_that_is_no_longer_compatible_ROUTES_THE_FULL_PATH(sup, monkeypat
         f"a stale verb was accepted without re-resolving — the ask's route is a cache with "
         f"no invalidation: {calls}"
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

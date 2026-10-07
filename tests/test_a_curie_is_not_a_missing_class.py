@@ -31,12 +31,14 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _REGISTRAR = _REPO / "agent_fleet" / "mesh_registrar" / "main.py"
+_MOD_NAME = "mesh_registrar_under_test"
 
 
 def _tracked(*globs: str) -> list[Path]:
@@ -58,9 +60,9 @@ def _load_registrar():
     import importlib.util, sys, types
     for name in ("neo4j", "fastapi", "pydantic"):
         pass  # real ones are installed; nothing to stub
-    spec = importlib.util.spec_from_file_location("mesh_registrar_under_test", _REGISTRAR)
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, _REGISTRAR)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    sys.modules[_MOD_NAME] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -467,3 +469,17 @@ def test_the_expansion_never_fails_a_registration():
     body = src[i:src.index("def _contract_d_check(", i)]
     assert "except Exception" in body, "an unreachable graph would fail the registration"
     assert body.count("return uri") >= 3, "not every uncertainty passes the value through"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

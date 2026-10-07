@@ -467,7 +467,7 @@ def test_threshold_default_loaded_from_env(monkeypatch):
     through to the supervisor's class default."""
     monkeypatch.setenv("PREDICATE_FALLBACK_SCORE_THRESHOLD", "0.65")
     _install_stubs()
-    sys.modules.pop("dynamic_supervisor_env_test", None)
+    monkeypatch.delitem(sys.modules, "dynamic_supervisor_env_test", raising=False)
     spec = importlib.util.spec_from_file_location(
         "dynamic_supervisor_env_test",
         str(_REPO / "src" / "iagent" / "defs" / "dynamic_supervisor.py"),

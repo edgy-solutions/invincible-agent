@@ -109,13 +109,17 @@ _WEAVIATE_BASE = os.getenv(
 # the leak — order-independent regardless of test-file ordering.
 try:
     import sys as _sys
-    _stashed = _sys.modules.pop("neo4j", None)
-    import neo4j as _real_neo4j  # noqa: WPS433
-    if _stashed is not None and not hasattr(_stashed, "__file__"):
-        # Stub was installed before us; restore it for sibling tests.
-        _sys.modules["neo4j"] = _stashed
-    else:
-        _sys.modules["neo4j"] = _real_neo4j
+    _stashed = None
+    try:
+        _stashed = _sys.modules.pop("neo4j", None)
+        import neo4j as _real_neo4j  # noqa: WPS433
+    finally:
+        # PUT BACK WHAT WAS THERE, whether the real import worked or not: a stub installed
+        # before us is restored for sibling tests, and so is a real module (this used to
+        # replace it with a second import of the same package). Only when nothing was there
+        # does the fresh import stay, because that is what an import does.
+        if _stashed is not None:
+            _sys.modules["neo4j"] = _stashed
     _NEO4J_GRAPH_DATABASE = _real_neo4j.GraphDatabase
 except ImportError:
     _NEO4J_GRAPH_DATABASE = None

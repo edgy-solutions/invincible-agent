@@ -35,21 +35,22 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-def _load(mod_name: str):
+def _load(mod_name: str, mp: pytest.MonkeyPatch):
     """Import a sibling test module for its constants without running its tests."""
     spec = importlib.util.spec_from_file_location(mod_name, _ROOT / "tests" / f"{mod_name}.py")
     assert spec and spec.loader, f"cannot load tests/{mod_name}.py"
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
+    mp.setitem(sys.modules, mod_name, mod)
     spec.loader.exec_module(mod)
     return mod
 
 
 @pytest.fixture(scope="module")
 def populations():
-    gating = _load("test_endpoint_gating_manifest")
-    transport = _load("test_transport_auth_applied_everywhere")
-    return gating, transport
+    with pytest.MonkeyPatch.context() as mp:
+        gating = _load("test_endpoint_gating_manifest", mp)
+        transport = _load("test_transport_auth_applied_everywhere", mp)
+        yield gating, transport
 
 
 def test_both_enumerations_are_inhabited(populations):

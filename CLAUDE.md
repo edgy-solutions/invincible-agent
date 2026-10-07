@@ -108,6 +108,19 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   value, and never decode a Secret's data into the transcript.
 - **Never commit infra detail** (IPs, Pi-hole, kube contexts) — that is what the out-of-repo
   handoff log is for.
+- **A stacked PR runs no CI gate.** `build-containers.yml` triggers only on PRs whose base is
+  `master`/`main`; a PR based on another lane's branch gets nothing but the path-filtered
+  `validate-canvas-templates.yml` (and only if it touches `policy/canvases/**` or
+  `src/iagent/canvas_template.py`). A green check on a stacked PR is not a build — say so
+  when you report one, and re-read the checks once it is rebased onto `master`.
+- **Show the values diff before a roll.** Before `scripts/upgrade-sandbox.sh` or
+  `scripts/roll-litany.sh`, render with `scripts/upgrade-sandbox.sh --dry-run` and diff the
+  effective values against the live release (`helm get values`); put the diff — not "no
+  change expected" — in front of whoever approves the roll. Secret-bearing keys appear by
+  length and hash prefix only (the rule above).
+- **Python through this worktree's venv only**: `uv run …` or `.venv/Scripts/python`. Never a
+  bare `python`/`py` from PATH, never another worktree's venv — a name on PATH is not the
+  program you mean. AGENTS.md:101–102 is the check that the venv imports this tree.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
   `docs/architecture/endpoint-gating-audit.md`, venvs and caches.
 - MCP: none. `.mcp.json` (its only server was `forge_extension` at `localhost:50415`) was removed

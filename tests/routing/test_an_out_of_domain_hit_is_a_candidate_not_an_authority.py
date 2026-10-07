@@ -54,15 +54,19 @@ if str(_OS) not in sys.path:
 # `rdflib` is an ontology_service dependency and is NOT in the root venv by design (the
 # dependency seal scopes to the root pyproject; engines declare their own), so the skip
 # names the command that supplies it rather than saying "not importable".
+_MOD_NAME = "ontology_service_main_under_test"
+#: recorded BEFORE the import-time write below; `_put_the_loaded_module_back` restores it.
+_PRIOR = (_MOD_NAME in sys.modules, sys.modules.get(_MOD_NAME))
 _spec = importlib.util.spec_from_file_location(
-    "ontology_service_main_under_test", str(_OS / "main.py"))
+    _MOD_NAME, str(_OS / "main.py"))
 if _spec is None or _spec.loader is None:  # pragma: no cover
     pytest.skip("ontology_service/main.py not found", allow_module_level=True)
 main = importlib.util.module_from_spec(_spec)
-sys.modules["ontology_service_main_under_test"] = main
+sys.modules[_MOD_NAME] = main
 try:
     _spec.loader.exec_module(main)
 except Exception as _exc:  # noqa: BLE001
+    sys.modules.pop(_MOD_NAME, None)
     pytest.skip(
         f"ontology_service not importable here ({type(_exc).__name__}: {_exc}). "
         f"Run: uv run --frozen --with rdflib pytest {Path(__file__).name}",
@@ -243,3 +247,16 @@ def test_the_unscoped_provider_is_LOGGED_BY_NAME_at_discovery(capsys, monkeypatc
     unscoped_line = next(line for line in out.splitlines() if "UNSCOPED" in line)
     assert "engine-fin" not in unscoped_line, \
         f"a declared provider was reported as unscoped: {unscoped_line!r}"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers, AT IMPORT TIME, a module it loaded by path
+    under a private name. The prior state was recorded before that write (`_PRIOR`), because a
+    fixture's own snapshot is taken after collection and would see the module already there."""
+    yield
+    had, prior = _PRIOR
+    if had:
+        sys.modules[_MOD_NAME] = prior
+    else:
+        sys.modules.pop(_MOD_NAME, None)
