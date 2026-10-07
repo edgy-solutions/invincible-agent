@@ -13,8 +13,9 @@ orchestration side and a Helm chart for the home-lab k3s sandbox.
 ## Handoffs — read this first
 
 Your handoff is the **newest `sessions/*handoff*` file in your own worktree** whose `to:` line
-names your worktree/branch. Read it whole, once — it carries your exact next step. Read inbox
-packets addressed to you the same way.
+names your `<repo>/<branch>` (ruled 2026-10-07: e.g. `invincible-agent/lane/gov`; the legacy
+`ia-<worktree>/lane/<branch>` form is still read, not written). Read it whole, once — it
+carries your exact next step. Read inbox packets addressed to you the same way.
 
 ## Repos and paths
 
@@ -83,8 +84,10 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
 
 ## Conventions and gotchas visible from the survey
 
-- **Worktree ↔ branch, never a session name.** `ia-NN` ↔ `lane/NN`. No lane's default view is
-  `master`. A bare session name addresses nothing.
+- **An address is `<repo>/<branch>`, never a worktree or a session name** (ruled 2026-10-07).
+  `ia-NN` ↔ `lane/NN` maps a worktree to its branch, but the branch is what a packet names;
+  another repo's lane is `cortex-ui/lane/cortex-60`, never `ia-cortex-60`. Seats stay
+  `<repo>/seat/<name>`. No lane's default view is `master`. A bare session name addresses nothing.
 - **Who pushes, who merges.** Lanes push their own branch on every commit (AGENTS.md:133–139).
   **Merging to master is the gated action** (AGENTS.md:133) — *the charter names no merger.*
   In practice Lane 1 (`ia-01`/`lane/01`) merges on the standard gate; that comes from the lanes'

@@ -25,6 +25,7 @@ for sub in ("src", "scripts"):
     if str(_REPO / sub) not in sys.path:
         sys.path.insert(0, str(_REPO / sub))
 
+from iagent_pure import lane_packets  # noqa: E402
 from iagent_pure.lane_packets import (  # noqa: E402
     external_packets,
     parse_packet,
@@ -237,3 +238,83 @@ def test_the_census_scans_a_tree_with_ITS_OWN_scanner_never_the_subjects(gitrepo
     assert r.returncode == 0, r.stderr
     assert "LANES: unavailable" not in r.stdout, r.stdout[-400:]
     assert "LANES:" in r.stdout, r.stdout[-400:]
+
+
+# ── the ruled address form `<repo>/<branch>` (2026-10-07) ───────────────────────────────────────
+
+#: (text, name, kind, form). ONE list drives `_TO`, `_READ_BY` and `_FROM`.
+RULED = [
+    ("invincible-agent/lane/gov", "gov", "lane", "repo"),
+    ("ia-74/lane/74-acceptance-and-docs-subject", "74-acceptance-and-docs-subject", "lane",
+     "worktree"),
+    ("cortex-ui/lane/cortex-60", "cortex-ui/lane/cortex-60", "external", "repo"),
+    ("ia-cortex-60/lane/cortex-60", "cortex-60", "lane", "worktree"),
+]
+
+
+@pytest.mark.parametrize("text,name,kind,form", RULED, ids=[r[0] for r in RULED])
+def test_the_ruled_form_is_named_by_its_BRANCH_and_records_its_form(tmp_path, text, name, kind, form):
+    """`ia-cortex-60/lane/cortex-60` is an INTERNAL lane `cortex-60`, NOT external: a legacy
+    `ia-<x>` prefix is a worktree, and the scanner must not guess that it belongs to another
+    repo. The ruled form is how a sender says "another repo" (`cortex-ui/lane/cortex-60`); the
+    census reports the legacy count so the sender can re-address."""
+    got = parse_packet(_w(tmp_path, "a.md", f"# P\n\nto: {text}\n"))
+    assert (got.addressee, got.kind, got.form) == (name, kind, form)
+
+
+@pytest.mark.parametrize("text,name,kind,form", RULED, ids=[r[0] for r in RULED])
+def test_the_ruled_form_parses_identically_through_TO_READ_BY_and_FROM(text, name, kind, form):
+    for label, pattern in (("to", lane_packets._TO), ("read-by", lane_packets._READ_BY),
+                           ("from", lane_packets._FROM)):
+        m = pattern.search(f"{label}: {text}")
+        assert m, f"`{label}: {text}` not accepted"
+        assert lane_packets._addressed(m) == (name, kind), label
+        assert lane_packets._form(m) == form, label
+
+
+def test_a_ruled_form_stamp_reads_a_legacy_form_packet(tmp_path):
+    got = parse_packet(_w(tmp_path, "a.md",
+                          "# P\n\nto: ia-91/lane/91\n\nread-by: invincible-agent/lane/91 2026-10-07\n"))
+    assert got.addressee == "91" and got.is_read
+
+
+def test_form_is_recorded_for_every_address_kind(tmp_path):
+    cases = {"invincible-agent/seat/architect": "seat", "OpenDDIL's agent": "prose",
+             "openddil": "bare", "ia-74/lane/74": "worktree"}
+    for i, (text, form) in enumerate(cases.items()):
+        assert parse_packet(_w(tmp_path, f"{i}.md", f"# P\n\nto: {text}\n")).form == form
+    assert parse_packet(_w(tmp_path, "t.md", "# Packet for lane 91\n\nbody\n")).form == "title"
+    assert parse_packet(_w(tmp_path, "n.md", "# P\n\nbody\n")).form == "none"
+
+
+def _census_subprocess(repo: Path) -> str:
+    r = subprocess.run([sys.executable, str(_REPO / "scripts" / "_lane_census.py"), str(repo)],
+                       capture_output=True, encoding="utf-8", errors="replace",
+                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+def test_the_census_prints_ADDRESS_FORM_with_counts_and_branchless_legacy_names(tmp_path):
+    s = tmp_path / "sessions"
+    s.mkdir()
+    _w(s, "2026-10-07-a.md", "# P\n\nto: ia-74/lane/74\n")
+    _w(s, "2026-10-07-b.md", "# P\n\nto: ia-cortex-60/lane/cortex-60\n")
+    _w(s, "2026-10-07-c.md", "# P\n\nto: openddil\n")
+    _w(s, "2026-10-07-d.md", "# P\n\nto: invincible-agent/lane/gov\n")
+    out = _census_subprocess(tmp_path)
+    assert ("ADDRESS FORM: 2 packet(s) addressed by worktree (ia-<w>/lane/<b>), 1 by bare token "
+            "-- the ruled form is <repo>/<branch> (2026-10-07).") in out, out
+    line = [ln for ln in out.splitlines() if "bare-addressed, no origin/lane/* branch" in ln]
+    assert line and all(n in line[0] for n in ("74", "cortex-60", "openddil")), out
+    assert "gov" not in line[0], "a ruled-form addressee is not legacy-addressed"
+
+
+def test_the_census_omits_ADDRESS_FORM_when_every_packet_is_ruled_form(tmp_path):
+    s = tmp_path / "sessions"
+    s.mkdir()
+    _w(s, "2026-10-07-a.md", "# P\n\nto: invincible-agent/lane/gov\n")
+    _w(s, "2026-10-07-b.md", "# P\n\nto: cortex-ui/lane/cortex-60\n")
+    _w(s, "2026-10-07-c.md", "# P\n\nto: invincible-agent/seat/architect\n")
+    out = _census_subprocess(tmp_path)
+    assert "LANES:" in out and "ADDRESS FORM" not in out, out
