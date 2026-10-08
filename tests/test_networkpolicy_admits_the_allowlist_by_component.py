@@ -105,13 +105,17 @@ def _text(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
-def _render(enabled: bool) -> list[dict]:
-    """Render the chart with DEFAULT values and return every NetworkPolicy document.
+def _render(enabled: bool, values: Path | None = None) -> list[dict]:
+    """Render the chart and return every NetworkPolicy document.
 
-    No values file is passed. That is deliberate: the question is what the CHART does, and a
-    sandbox values file would make the answer a property of one deployment.
+    With no `values` the chart renders with DEFAULT values. That is deliberate: the question is
+    what the CHART does, and a sandbox values file would make the answer a property of one
+    deployment. The directCallers arm passes the sandbox file as well, because that is where the
+    population lives.
     """
     cmd = ["helm", "template", "iagent", str(_CHART)]
+    if values is not None:
+        cmd += ["-f", str(values)]
     if enabled:
         cmd += ["--set", "networkPolicy.enabled=true"]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -284,24 +288,60 @@ def test_THE_GATE_ACTUALLY_OPENS():
     )
 
 
-@_NEEDS_HELM
-def test_THE_STORE_POLICY_ADMITS_EXACTLY_THE_ALLOWLIST_PLUS_THE_EXCEPTION():
-    """Set EQUALITY, in both directions. A subset check would miss an over-wide rule, which is the
-    failure that matters for a control whose whole purpose is to exclude."""
-    mod = _load_allowlist_module()
-    expected = {AGENT_TO_COMPONENT[a] for a in mod.SUBSTRATE_CLIENTS} | {"engine-f"}
+def _direct_callers(values: Path | None) -> dict[str, set[str]]:
+    """store component -> {caller components listing it}, READ FROM THE VALUES FILE (the chart's
+    values.yaml, overlaid by `values` if given). Never typed here: the population is the file's."""
+    merged = (yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8")) or {})
+    cfg = dict(((merged.get("networkPolicy") or {}).get("directCallers")) or {})
+    if values is not None:
+        over = yaml.safe_load(values.read_text(encoding="utf-8")) or {}
+        cfg = dict(((over.get("networkPolicy") or {}).get("directCallers")) or cfg)
+    out: dict[str, set[str]] = {}
+    for caller, entries in cfg.items():
+        for e in entries or []:
+            out.setdefault(e["store"], set()).add(caller)
+    return out
 
-    stores = [p for p in _render(enabled=True) if (p.get("spec") or {}).get("ingress")]
+
+def _assert_store_policies_admit_exactly(values: Path | None) -> None:
+    mod = _load_allowlist_module()
+    base = {AGENT_TO_COMPONENT[a] for a in mod.SUBSTRATE_CLIENTS} | {"engine-f"}
+    direct = _direct_callers(values)
+
+    stores = [p for p in _render(enabled=True, values=values) if (p.get("spec") or {}).get("ingress")]
     assert stores, "no NetworkPolicy with an ingress rule rendered; the store half is missing"
 
     for pol in stores:
         name = pol.get("metadata", {}).get("name", "<unnamed>")
+        store = (pol["spec"]["podSelector"]["matchLabels"])["app.kubernetes.io/component"]
+        expected = base | direct.get(store, set())
         got = _from_components(pol)
         assert got == expected, (
             f"{name} admits {sorted(got)}; expected exactly {sorted(expected)}. "
             f"Missing {sorted(expected - got)} would be denied silently; extra {sorted(got - expected)} "
-            f"is a wider grant than the allowlist records."
+            f"is a wider grant than the allowlist plus the directCallers entries record."
         )
+
+
+@_NEEDS_HELM
+def test_THE_STORE_POLICY_ADMITS_EXACTLY_THE_ALLOWLIST_PLUS_THE_EXCEPTION():
+    """Set EQUALITY, in both directions. A subset check would miss an over-wide rule, which is the
+    failure that matters for a control whose whole purpose is to exclude.
+
+    Expected per store = allowlist U {engine-f} U {components whose directCallers entry names the
+    store}, the last read from the values file. At chart defaults directCallers is empty, so this
+    arm is the original allowlist-plus-exception equality; the sandbox arm below is the same
+    equality with the population present."""
+    _assert_store_policies_admit_exactly(None)
+
+
+@_NEEDS_HELM
+def test_THE_STORE_POLICY_ADMITS_THE_ALLOWLIST_PLUS_THE_EXCEPTION_PLUS_THE_DIRECT_CALLERS():
+    """The same exact equality under values-sandbox.yaml, where directCallers is populated. A
+    population that is non-empty here is what makes the per-store union non-trivial."""
+    sandbox = _CHART / "values-sandbox.yaml"
+    assert any(_direct_callers(sandbox).values()), "values-sandbox.yaml carries no directCallers"
+    _assert_store_policies_admit_exactly(sandbox)
 
 
 @_NEEDS_HELM

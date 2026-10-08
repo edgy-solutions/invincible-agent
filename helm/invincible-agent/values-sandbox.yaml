@@ -1024,3 +1024,265 @@ userDeployments:
   dag-tools:
     image:
       digest: "sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61"
+
+# ==========================================================================
+# NetworkPolicy -- the gate-on roll PROPOSAL. The gate STAYS OFF here
+# (networkPolicy.enabled is not set, so it is false): this block renders nothing until a roll
+# turns it on. Source: docs/measurements/2026-10-08-the-networkpolicy-gate-cuts-the-callers-it-admits.md
+# tables A and B -- a CONFIGURATION census, not a traffic census; the flag-on census is the
+# traffic half, and a cut it names is a new row.
+#
+# Every entry expires 2026-12-14, the same backstop as the engine-f exception in
+# templates/networkpolicy-stores.yaml. The ban tightens by DELETING entries as callers move
+# onto the Mesh* services.
+#
+# NOT HERE, DELIBERATELY:
+#   - the model/embedding endpoint is OFF-CLUSTER: it goes in `networkPolicy.extraEgress` in the
+#     untracked secret values file (an ipBlock), never in this file, and has no address here.
+#   - MinIO and Redis are not components of this chart (no workload carries their label), so
+#     no podSelector can name them; they ride extraEgress too.
+#   - doc-tools, datahub-gms and engine-b are not rendered in this release (separate release
+#     or disabled), so no entry names them.
+# ==========================================================================
+networkPolicy:
+  # Keycloak admits the ingress controller's namespace (checked: it runs in kube-system).
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: kube-system
+  directCallers:
+    engine-o:  # table A: the ontology service reaches its own stores directly
+      - {store: neo4j, via: NEO4J_URI, expires: "2026-12-14"}
+      - {store: fuseki, via: JENA_SPARQL_ENDPOINT, expires: "2026-12-14"}
+      - {store: weaviate, via: WEAVIATE_HTTP_HOST, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-a:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-d:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-p:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-fin:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-cost:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-safety:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-docs:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-lg:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+      - {store: postgresql, via: LANGGRAPH_POSTGRES_URI, expires: "2026-12-14"}
+    engine-e:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-f:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    engine-w:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    data-analyst:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+      - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
+    central-gateway:  # table A "every engine" rows, expanded over the engines enabled in this file
+      - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
+      - {store: engine-a, via: RESTATE_ANALYST_URL, expires: "2026-12-14"}
+      - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
+      - {store: engine-e, via: NEO4J_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-f, via: PRESENTATION_AGENT_SVC_URL, expires: "2026-12-14"}
+      - {store: engine-w, via: WEAVIATE_EXPERT_SVC_URL, expires: "2026-12-14"}
+      - {store: data-analyst, via: ENGINE_DA_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-p, via: ENGINE_P_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-fin, via: ENGINE_FIN_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-cost, via: ENGINE_COST_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-safety, via: ENGINE_SAFETY_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-docs, via: ENGINE_DOCS_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+    cortex-bff:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DATABASE_URL, expires: "2026-12-14"}
+      - {store: neo4j, via: NEO4J_URI, expires: "2026-12-14"}
+      - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
+      - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
+    cortex-ui:  # table B: configured consumer the store policy did not admit
+      - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
+    dagster-daemon:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DAGSTER_POSTGRES_HOST, expires: "2026-12-14"}
+    dagster-user-code:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DAGSTER_POSTGRES_HOST, expires: "2026-12-14"}
+    dagster-webserver:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DAGSTER_POSTGRES_HOST, expires: "2026-12-14"}
+    projector:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: PROJECTOR_POSTGRES_DSN, expires: "2026-12-14"}
+    electric:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DATABASE_URL, expires: "2026-12-14"}
+    dag-tools:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DATABASE_URL, expires: "2026-12-14"}
+    pub-tools:  # table B: configured consumer the store policy did not admit
+      - {store: postgresql, via: DATABASE_URL, expires: "2026-12-14"}

@@ -44,6 +44,13 @@
   cut. Rule 4 is kept because it is correct for any deployment that runs the in-cluster proxy, and
   it is sealed as a known-inert target rather than deleted.
 
+  `networkPolicy.directCallers` ADDS ONE EGRESS RULE PER ENTRY for this engine, to the named
+  component, on that component's ports. The store template admits the same caller on the same
+  ports from the same entry (one population, two renderings), and the port table is the
+  `invincible-agent.networkPolicyStores` define for stores or the engine's own `.port`.
+  Non-engine workloads (cortex-bff, dagster-*, projector, ...) have no egress policy, so for
+  them an entry affects the store's ingress only.
+
   A SELECTOR THAT MATCHES NO POD IS VALID YAML AND SILENTLY DENIES. It deploys, it shows no
   error, and it simply never admits the traffic it was meant to admit. That is why every
   component string below was taken from the chart's own engine list (`templates/engines.yaml`)
@@ -69,6 +76,13 @@
   (dict "key" "dataAnalyst" "component" "data-analyst" "values" .Values.dataAnalyst)
   (dict "key" "centralGateway" "component" "central-gateway" "values" .Values.centralGateway)
 }}
+{{- /* DIRECT CALLERS. One port table for every target: the stores come from the SAME define the
+       store template reads; an engine target's port is its own `.port` value (the one
+       templates/engines.yaml puts in containerPort), never typed here. */}}
+{{- $targets := dict }}
+{{- range fromJsonArray (include "invincible-agent.networkPolicyStores" .) }}{{- $_ := set $targets .component .ports }}{{- end }}
+{{- range $engines }}{{- if .values.port }}{{- $_ := set $targets .component (list .values.port) }}{{- end }}{{- end }}
+{{- $direct := .Values.networkPolicy.directCallers | default dict }}
 {{- range $engines }}
 {{- $eng := .values }}
 {{- if $eng.enabled }}
@@ -124,6 +138,24 @@ spec:
       ports:
         - protocol: TCP
           port: 4000
+    {{- /* one rule per directCallers entry for THIS engine; a target the table does not know
+           renders nothing (tests/test_networkpolicy_direct_callers_join.py arm 4 refuses it). */}}
+    {{- $me := .component }}
+    {{- range (get $direct $me | default list) }}
+    {{- $ports := get $targets .store }}
+    {{- if $ports }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Chart.Name }}
+              app.kubernetes.io/component: {{ .store }}
+      ports:
+        {{- range $ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
     {{- with $.Values.networkPolicy.extraEgress }}{{ toYaml . | nindent 4 }}{{- end }}
 {{- end }}
 {{- end }}

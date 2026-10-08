@@ -31,20 +31,29 @@
   backstop date passes while this grant is still present, which is the point: the failure is
   the reminder to remove it.
 
+  `networkPolicy.directCallers` EXTENDS THE ADMITTED SET. Every component with an entry whose
+  `store` is this store is admitted in addition to the six above; networkpolicy-engines.yaml
+  renders the matching egress rule from the SAME entry, with the SAME ports (the
+  `invincible-agent.networkPolicyStores` define), so the two halves hold by construction.
+
   INGRESS-ONLY IS DELIBERATE. Each object below says only who may open a connection TO the
   store it names. It says nothing about, and does not constrain, that store's own egress.
 */}}
 {{- if .Values.networkPolicy.enabled }}
-{{- $stores := list
-  (dict "component" "postgresql" "ports" (list 5432))
-  (dict "component" "keycloak" "ports" (list 8080))
-  (dict "component" "weaviate" "ports" (list 8080 50051))
-  (dict "component" "neo4j" "ports" (list 7474 7687))
-  (dict "component" "restate" "ports" (list 8080 9070))
-  (dict "component" "fuseki" "ports" (list 3030))
-}}
+{{- /* The store -> ports table lives in ONE define, shared with networkpolicy-engines.yaml. */}}
+{{- $stores := fromJsonArray (include "invincible-agent.networkPolicyStores" .) }}
 {{- $admitted := list "engine-o" "mesh-registrar" "engine-a" "engine-w" "engine-e" "engine-f" }}
+{{- $direct := .Values.networkPolicy.directCallers | default dict }}
 {{- range $stores }}
+{{- $store := . }}
+{{- /* directCallers: every component whose entry names THIS store is admitted too (the same
+       population networkpolicy-engines.yaml renders as egress). */}}
+{{- $callers := $admitted }}
+{{- range $caller, $entries := $direct }}
+{{- range $entries }}
+{{- if eq .store $store.component }}{{- $callers = append $callers $caller }}{{- end }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -62,11 +71,17 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- range $admitted }}
+        {{- range ($callers | uniq) }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ $.Chart.Name }}
               app.kubernetes.io/component: {{ . }}
+        {{- end }}
+        {{- /* Keycloak only: the ingress controller's namespace, or every browser login is cut. */}}
+        {{- if and (eq .component "keycloak") $.Values.networkPolicy.ingressControllerNamespaceSelector }}
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
         {{- end }}
       ports:
         {{- range .ports }}

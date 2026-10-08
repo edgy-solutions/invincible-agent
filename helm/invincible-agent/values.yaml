@@ -98,9 +98,28 @@ global:
 # here; supply them in a local values file. Leaving this empty while
 # enabling the gate will cut the fleet off from both.
 # ==========================================================================
+#
+# directCallers: ONE population, rendered as BOTH halves of a direct caller's admission.
+#   directCallers:
+#     <chart component>:             # the CALLER, e.g. cortex-bff, engine-o, dagster-daemon
+#       - store: <component>         # what it calls: postgresql | keycloak | weaviate | neo4j |
+#                                    #   restate | fuseki | topaz | <engine component>
+#         via: <CONFIG_KEY>          # the env/config key that put the caller there (required)
+#         expires: "YYYY-MM-DD"      # the backstop by which it is on a Mesh* service (required)
+# networkpolicy-stores.yaml admits the caller to `store`; networkpolicy-engines.yaml adds the
+# matching egress rule when the caller is an engine. Both read the ports from the same define
+# (`invincible-agent.networkPolicyStores`) or, for an engine target, the engine's own `.port`.
+# Non-engine callers have no egress policy, so an entry for them affects store ingress only.
+# The ban tightens by DELETING entries; tests/test_networkpolicy_direct_callers_join.py refuses
+# an entry with no `via`, an expired `expires`, or a component the chart does not render.
+#
+# ingressControllerNamespaceSelector: a label map. When non-empty, Keycloak's ingress admits
+# that namespace (the ingress controller); without it the gate-on roll breaks every browser login.
 networkPolicy:
   enabled: false
   extraEgress: []
+  directCallers: {}
+  ingressControllerNamespaceSelector: {}
 
 # ==========================================================================
 # PostgreSQL
