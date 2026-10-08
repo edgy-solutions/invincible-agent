@@ -3152,6 +3152,32 @@ def _delegate_principals() -> dict[str, frozenset[str]]:
         return {}
 
 
+def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str, Optional[str]]:
+    """R-089: admit (or refuse) an `on_behalf_of` that names someone other than the caller.
+    Returns `(actor, via)`. `actor` is who the authorization questions and the record are
+    about; `via` is who authenticated, carried only so it can be recorded, never asked a
+    question. A blank `on_behalf_of`, or one equal to the caller's own authz_id, is the
+    unchanged non-delegated path: `(caller, None)`.
+
+    A mismatch is admitted only for a caller that is a declared delegate
+    (DELEGATE_ON_BEHALF_OF) and only for a principal declared for THAT delegate; a person
+    sending someone else's id is refused `not_a_delegate`. The assertion is trusted by
+    configuration this pass (R-089); token exchange replaces it."""
+    caller = current_user.authz_id
+    if not on_behalf_of or on_behalf_of == caller:
+        return caller, None
+    delegates = _delegate_principals()
+    if caller not in delegates:
+        raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
+    if on_behalf_of not in delegates[caller]:
+        raise HTTPException(status_code=403, detail={
+            "error": "principal_not_declared_for_delegate",
+            "delegate": caller,
+            "on_behalf_of": on_behalf_of,
+        })
+    return on_behalf_of, caller
+
+
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
@@ -3204,20 +3230,7 @@ async def act_on_human_task(
     # the lookups, the resolution, the resume) is about; `via` is who authenticated, carried
     # only so it can be recorded, never asked `can_act`. An `on_behalf_of` equal to the caller's
     # own authz_id is the unchanged, non-delegated path.
-    actor = current_user.authz_id
-    via: Optional[str] = None
-    if req.on_behalf_of and req.on_behalf_of != current_user.authz_id:
-        delegates = _delegate_principals()
-        if current_user.authz_id not in delegates:
-            raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
-        if req.on_behalf_of not in delegates[current_user.authz_id]:
-            raise HTTPException(status_code=403, detail={
-                "error": "principal_not_declared_for_delegate",
-                "delegate": current_user.authz_id,
-                "on_behalf_of": req.on_behalf_of,
-            })
-        actor = req.on_behalf_of
-        via = current_user.authz_id
+    actor, via = _admit_on_behalf_of(current_user, req.on_behalf_of)
 
     # NB the verb is validated PER KIND below, once the task's kind is known — not against a
     # hardcoded pair here. A triage task ("this notice could not be prepared") accepts
@@ -9022,7 +9035,7 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
 
 
 async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
-                     provenance_block: dict) -> bool:
+                     provenance_block: dict, seeded_by: Optional[str] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -9041,7 +9054,8 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
-                json={"trigger": trigger, "facts": facts, "provenance": provenance_block},
+                json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
+                      "seeded_by": seeded_by},
             )
         resp.raise_for_status()
         return True
@@ -9203,11 +9217,10 @@ async def ingest_document(
             status_code=400,
             detail=f"kind must be one of {ingest_status.FILE_KINDS}, got {kind!r}",
         )
-    if on_behalf_of != current_user.authz_id:
-        raise HTTPException(
-            status_code=403,
-            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
-        )
+    # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
+    # exchange replaces it. `actor` is the dropper of record; `via` is the authenticated delegate
+    # (None for a person), already recorded as the status row's `submitted_by`.
+    actor, via = _admit_on_behalf_of(current_user, on_behalf_of)
     declared_content_kind = content_kind
     if declared_content_kind is not None:
         declared_content_kind = declared_content_kind.strip()
@@ -9276,7 +9289,7 @@ async def ingest_document(
                 kind=kind,
                 object_prefix=existing["object_prefix"],
                 submitted_by=current_user.authz_id,
-                on_behalf_of=on_behalf_of,
+                on_behalf_of=actor,
                 source=file.filename,
                 original=existing,
                 content_kind=declared_content_kind,
@@ -9319,11 +9332,16 @@ async def ingest_document(
         "object_ref": object_prefix + safe_name,
         "content_kind": declared_content_kind,
         "domain_type": _registered_kind.domain if _registered_kind is not None else None,
-        "dropped_by": {"authz_id": current_user.authz_id},
+        "dropped_by": {"authz_id": actor, **({"via": via} if via else {})},
         "provenance": provenance_block,
-        # kind="person" is correct: the route above refuses any on_behalf_of other than the
-        # caller's own authz_id, so this is never a delegate or service identity.
-        "initiator": {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None},
+        # kind="person" for a person's own drop. A declared delegate's drop is the delegate
+        # acting for a declared principal: subject is the authenticated delegate, on_behalf_of
+        # the principal (R-089, asserted by configuration).
+        "initiator": (
+            {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None}
+            if via is None else
+            {"subject": via, "kind": "delegate", "on_behalf_of": actor}
+        ),
         "media_kind": kind,
         "sha256": sha256,
         "filename": file.filename,
@@ -9345,7 +9363,7 @@ async def ingest_document(
     row = await run_in_threadpool(
         lambda: ingest_status.record_received(
             ingest_id=ingest_id, sha256=sha256, kind=kind, object_prefix=object_prefix,
-            submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
+            submitted_by=current_user.authz_id, on_behalf_of=actor,
             source=file.filename, content_kind=declared_content_kind,
         )
     )
@@ -9359,8 +9377,8 @@ async def ingest_document(
             lambda: _create_ingest_node(
                 ingest_id=ingest_id, kind=kind, sha256=sha256,
                 object_ref=manifest["object_ref"], ingested_at=ingested_at,
-                subject=current_user.authz_id,
-                dropped_by_authz_id=current_user.authz_id,
+                subject=actor,
+                dropped_by_authz_id=actor,
             )
         )
     except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
@@ -9457,11 +9475,14 @@ async def ingest_event(
     """
     from . import content_kinds, provenance
 
-    if on_behalf_of_mismatch := (req.on_behalf_of != current_user.authz_id):
-        raise HTTPException(
-            status_code=403,
-            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
-        )
+    # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
+    # exchange replaces it. `actor` is the dropper of record; `via` the authenticated delegate.
+    actor, via = _admit_on_behalf_of(current_user, req.on_behalf_of)
+    # `seeded_by` (ADR-0041 §8.1): the authenticated caller, ONLY when it is a declared delegate
+    # (R-089); a person seeds nothing as a delegate, so None. The runner stamps it at `released`.
+    seeded_by: Optional[str] = (
+        current_user.authz_id if current_user.authz_id in _delegate_principals() else None
+    )
     _registered_kind = content_kinds.by_kind(req.content_kind)
     if _registered_kind is None or _registered_kind.branch != "event":
         raise HTTPException(
@@ -9511,7 +9532,7 @@ async def ingest_event(
         "ingest_id": ingest_id,
         "content_kind": req.content_kind,
         "domain_type": _registered_kind.domain,
-        "dropped_by": {"authz_id": current_user.authz_id},
+        "dropped_by": {"authz_id": actor, **({"via": via} if via else {})},
     }
     missing = [path for path in trigger.requires if not _dotted_present(facts, path)]
     if missing:
@@ -9618,7 +9639,7 @@ async def ingest_event(
             await run_in_threadpool(lambda: ingest_status.record_received(
                 ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
                 object_prefix="", submitted_by=current_user.authz_id,
-                on_behalf_of=req.on_behalf_of, source="events",
+                on_behalf_of=actor, source="events",
                 content_kind=req.content_kind,
             ))
             await run_in_threadpool(lambda: ingest_status.update_status(
@@ -9659,7 +9680,7 @@ async def ingest_event(
         await run_in_threadpool(lambda: ingest_status.record_received(
             ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
             object_prefix="", submitted_by=current_user.authz_id,
-            on_behalf_of=req.on_behalf_of, source="events",
+            on_behalf_of=actor, source="events",
             content_kind=req.content_kind,
         ))
     except Exception as exc:  # noqa: BLE001 — "no case without its record"
@@ -9670,7 +9691,7 @@ async def ingest_event(
 
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
-        ingest_id=ingest_id, provenance_block=provenance_block,
+        ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(

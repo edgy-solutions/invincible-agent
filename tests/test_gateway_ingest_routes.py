@@ -9,8 +9,8 @@ SQL (covered separately in tests/test_ingest_status_projection.py) or of a live 
 
 WHAT THESE DEFEND:
   * deny-by-default: no token -> refused before any DB/S3 touch.
-  * on_behalf_of must equal the caller -- no delegation in v1 (ADR-0041 §8 names the field,
-    not a delegation mechanism; the narrower reading wins).
+  * on_behalf_of must equal the caller unless the caller is a declared delegate acting for a
+    declared principal (R-089; see test_ingest_routes_admit_a_declared_delegate.py).
   * kind is validated against the closed ContentKind set BEFORE any write (never an
     LLM-classified or free-text kind reaching the object store).
   * level-1 dedupe: a sha256 hit returns the "already processed on <date> from <source>"
@@ -157,7 +157,7 @@ def test_ingest_accepts_an_s1000d_data_module_as_xml_under_its_registered_kind(
 
 
 def test_ingest_refuses_an_on_behalf_of_that_is_not_the_caller(client, fake_s3, monkeypatch):
-    """Deny-by-default, v1: no delegation mechanism exists, so on_behalf_of asserting a
+    """Deny-by-default: a PERSON (not a declared delegate) sending on_behalf_of asserting a
     DIFFERENT identity than the authenticated caller is refused, not merely unverified."""
     called = {"find": False}
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda *a, **k: called.__setitem__("find", True))
