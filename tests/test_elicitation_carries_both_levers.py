@@ -4,13 +4,13 @@ cortex's `validateAsk` reads both; a card with neither is drawn as a question ev
 abstain (cortex packet 2026-10-08, "elicitation status is dropped by its own row").
 """
 import importlib.util
-import sys
 import types
 from pathlib import Path
 
 import pytest
 
 from iagent_pure import slot_disposition as sd
+from tests.conftest import stub_modules
 
 _MAIN = Path(__file__).resolve().parents[1] / "agent_fleet" / "presentation_agent" / "main.py"
 
@@ -21,19 +21,14 @@ def mod():
         def __getattr__(self, name):  # noqa: D105
             return type(name, (), {"__getattr__": lambda s, n: None})()
 
-    installed = []
-    for name in ("baml_client", "baml_client.types", "baml_client.async_client"):
-        if name not in sys.modules:
-            sys.modules[name] = _Any(name)
-            installed.append(name)
-    try:
+    # Installed unconditionally and put back by the harness: a shim installed only when the name
+    # is absent is a bet on collection order (tests/test_the_stub_harness_puts_sys_modules_back.py).
+    names = ("baml_client", "baml_client.types", "baml_client.async_client")
+    with stub_modules({name: _Any(name) for name in names}):
         spec = importlib.util.spec_from_file_location("presentation_probe_levers", _MAIN)
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         yield m
-    finally:
-        for name in installed:
-            sys.modules.pop(name, None)
 
 
 def _disp(action):

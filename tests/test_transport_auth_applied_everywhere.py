@@ -155,6 +155,10 @@ def test_every_consuming_package_pins_the_sdk_to_a_tag(app: Path):
         )
     m = re.search(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<ref>[^"]+)"', pp.read_text(encoding="utf-8"))
     assert m, f"{app.parent.name}: consumes the SDK but does not pin it"
-    assert re.fullmatch(r"v\d+\.\d+\.\d+", m.group("ref")), (
-        f"{app.parent.name}: pins {m.group('ref')!r} — a ref, not a version"
+    # A sha is admitted only under its bounded exception, which carries the backstop and the
+    # same-transport_auth measurement; this arm reads that table rather than keeping its own.
+    from tests.test_lock_coherence import SHA_PINS_PENDING_TAG
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", m.group("ref")) or m.group("ref") in SHA_PINS_PENDING_TAG, (
+        f"{app.parent.name}: pins {m.group('ref')!r} — a ref, not a version, and not a sha "
+        f"under tests/test_lock_coherence.py SHA_PINS_PENDING_TAG"
     )
