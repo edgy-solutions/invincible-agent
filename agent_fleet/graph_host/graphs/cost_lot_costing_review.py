@@ -118,8 +118,11 @@ def _fetch(fn: str, label: str):
         payload = r.json()
         # engine-cost answers a missing/!invalid slot with a 200 REFUSAL BODY rather than a
         # status code, so status alone is not the check — read the body it actually returns.
-        if isinstance(payload, dict) and payload.get("refusal"):
-            raise RefusedInner(f"{fn} refused: {payload.get('refusal')} {payload.get('detail','')}")
+        # Its envelope is `refused: true` + `outcome` + `reason` (`cost_agent/main.py`'s
+        # `_refusal`). This line used to read a `refusal` key the engine never writes, so every
+        # refused view reached `review` as an answer and was headlined there.
+        if isinstance(payload, dict) and payload.get("refused"):
+            raise RefusedInner(f"{fn} refused: {payload.get('outcome')} {payload.get('reason', '')}")
         return {"views": [{"source": fn, "label": label, "payload": payload,
                            "artifact": payload.get("artifact_id") or payload.get("id")}],
                 "rows": [_fetch_row(fn, label, payload)]}
