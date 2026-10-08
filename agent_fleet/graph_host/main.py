@@ -55,6 +55,7 @@ try:
         register_engine_to_mesh,
         registration_is_ready,
         registration_status,
+        when_stores_answer,
     )
 except ImportError:  # pragma: no cover - exercised by the flat-layout seal
     from agent_fleet.utils.mesh_registration import (  # type: ignore[no-redef]
@@ -62,6 +63,7 @@ except ImportError:  # pragma: no cover - exercised by the flat-layout seal
         register_engine_to_mesh,
         registration_is_ready,
         registration_status,
+        when_stores_answer,
     )
 
 try:
@@ -216,6 +218,62 @@ def _saver_for(m: GraphManifest) -> Any:
     # would then be exercising an unscrubbed saver while claiming to cover the scrubbed one. Same
     # class either way, so an arm proves the mechanism rather than the deployment.
     return _SAVER if _SAVER is not None else _scrub.scrubbing_saver_class(InMemorySaver)()
+
+
+#: How long one reopen of the checkpointer may hold the retry thread. Past it the attempt counts
+#: as no answer and the next one waits for the open still in flight rather than starting another.
+_REOPEN_TIMEOUT_S = 30.0
+
+
+def _checkpointer_stores(stack: Any, loop: Any) -> dict:
+    """The store this engine's registration waits on, as `when_stores_answer` takes it.
+
+    THE SAVER WAS OPENED ONCE, AT BOOT, AND A MISS WAS KEPT FOR THE POD'S LIFE. `_open_saver`
+    caught the failure and set `_SAVER = None`; nothing tried again, `load_graphs` compiled every
+    stateful row against process memory, and the graphs registered anyway. The chart's readiness
+    probe reads `/health`, which answers 200 in that state, so the pod stayed in the Service and
+    served `checkpointer: true` rows from memory until something restarted it. Engine-o had the
+    same shape with Weaviate and Jena (2026-10-03); this is the same gate.
+
+    ANSWERED MEANS `checkpointer_readiness()` SAYS SO, not that the saver opened. The open sets
+    `durable`; only the reload compiles the rows against it, and readiness checks the compiled
+    graphs by identity. A probe keyed on `durable` would answer after a failed reload and register
+    graphs that still checkpoint to memory.
+
+    Gated only when a DSN is declared. Without one the refusal is configuration, `/ready` names
+    the variable, and the registration goes ahead as it always did. With no stateful row nothing
+    reads the saver, and readiness answers True for that already, so the probe answers at once.
+
+    The first call is the boot's own attempt, made just after `_open_saver` failed, so it reports
+    rather than opening a second time. Every later call reopens on the app's loop (the saver's
+    connection belongs to it), recompiles the rows, and is called from the retry thread.
+    """
+    if not _SAVER_STATUS.get("dsn_configured"):
+        return {}
+
+    boot = [True]
+    inflight: list = []
+
+    async def _reopen() -> None:
+        global _LOADED
+        if not _SAVER_STATUS.get("durable"):
+            await _open_saver(stack)
+        if _SAVER_STATUS.get("durable"):
+            _LOADED = load_graphs()
+
+    def answers() -> bool:
+        if checkpointer_readiness()[0]:
+            return True
+        if boot[0]:
+            boot[0] = False
+            return False
+        if inflight and not inflight[0].done():
+            return False
+        inflight[:] = [asyncio.run_coroutine_threadsafe(_reopen(), loop)]
+        inflight[0].result(timeout=_REOPEN_TIMEOUT_S)
+        return checkpointer_readiness()[0]
+
+    return {"checkpointer": answers}
 
 
 def checkpointer_readiness() -> tuple[bool, dict]:
@@ -425,8 +483,14 @@ async def lifespan(app: FastAPI):
               f"(durable={_SAVER_STATUS['durable']}, ready={_ok}) "
               f"{_detail.get('reason') or ''}".rstrip(), flush=True)
 
-        if os.getenv("MESH_REGISTER_ON_STARTUP", "false").lower() in ("1", "true", "yes"):
-            await asyncio.get_running_loop().run_in_executor(None, _register_all)
+        # REGISTERED WHEN THE CHECKPOINTER ANSWERS, and recovered in place when it did not at
+        # boot: see `_checkpointer_stores`. The gate runs whether or not this pod registers,
+        # because the reopen is the recovery and an unregistered pod still serves its rows.
+        register = os.getenv("MESH_REGISTER_ON_STARTUP", "false").lower() in ("1", "true", "yes")
+        loop = asyncio.get_running_loop()
+        stores = _checkpointer_stores(stack, loop)
+        await loop.run_in_executor(None, lambda: when_stores_answer(
+            f"{COMPONENT}:checkpointer", stores, _register_all if register else (lambda: None)))
         yield
         _LOADED = {}
 
