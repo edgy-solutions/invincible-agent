@@ -59,14 +59,18 @@ def sup():
     for mod in list(sys.modules.values()):
         f = getattr(mod, "__file__", None)
         if f and Path(f).resolve() == _SUP_PATH.resolve():
-            return mod
+            yield mod
+            return
     spec = importlib.util.spec_from_file_location(
         "dynamic_supervisor_reason_code_test", str(_SUP_PATH),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    try:
+        spec.loader.exec_module(mod)
+        yield mod
+    finally:
+        sys.modules.pop(spec.name, None)
 
 
 class _Log:
