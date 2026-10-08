@@ -120,3 +120,19 @@ SUBJECT was right. Control now lists four (test renamed ..._four_prompts), still
 red alone on tip; the test file is identical at 2b6fe0f6 where the sheet has 3 prompts (so green there).
 Ran alone (12 passed) and tests/safety/ + walk-census + two routing walk tests (348 passed, 3 skipped).
 Next: Lane 1 re-merges by sha, rolls, then sends the helm revision for the HAZ-1004 walk-census row.
+
+## ADR-0056 Q2 built (2026-10-07) -- commit 0b60e7e7
+
+Proposal 2 (per-caller program filter) accepted and built. Files: `policy/overlays/sample/platform_programs.yaml`
+(PLT-ALPHA->SANDBOX_PROGRAM_ALPHA, PLT-BRAVO->SANDBOX_PROGRAM_BRAVO; PLT-CHARLIE unmapped on purpose),
+`PLATFORM_PROGRAM_OVERLAY_DIRS` (loader in measures.py; chart default in `configmap.yaml`),
+`agent_fleet/utils/program_membership.py`, the gate `_visible_records` in `measures.py`, the 503 in
+`main.py`, `SANDBOX_PROGRAM_BRAVO` (alice) in `policy/program_members.yaml`.
+Seal: `tests/safety/test_fracas_program_filter.py` (15 arms, controls differing in membership / mapping
+row / Topaz state). Mutations: drop check -> 9 reds; unmapped-allow -> 2; swallow-to-empty -> 3;
+no-caller-allowed -> 1; first-program-only -> 3.
+DEPARTURES from the proposal (also in the packets): identity is `current_caller()`, not `user_email`;
+the engine uses its own copy of the Topaz check, not `human_tasks`.
+STILL TO DO BY A HUMAN / LANE 1: seed `SANDBOX_PROGRAM_BRAVO` in Topaz (program sync, a live write);
+roll engine-safety and the configmap. NOT VERIFIED LIVE: that dispatch carries the user's token for
+this verb; if it carries svc:supervisor the verb answers empty for everyone.
