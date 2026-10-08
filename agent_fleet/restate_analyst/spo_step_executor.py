@@ -108,6 +108,7 @@ def verify_spo_step(
     *,
     query_is_set: bool = False,
     engine_o_url: str = ENGINE_O_URL,
+    on_behalf_of: str = "",
 ) -> dict:
     """STAGE-2 STRUCTURAL VERIFIER (the enforcement point). Confirms the DECLARED
     ``verb_iri`` is in the caller's eligible set for ``subject`` (domain ∩ arity),
@@ -116,14 +117,25 @@ def verify_spo_step(
     workflow cannot execute a verb outside the caller's eligibility set.
 
     NOT NL: ``subject``/``verb_iri`` are resolved identifiers; this is the structural
-    half only. Permission composes downstream at dispatch (the engine's gate)."""
+    half only. Permission composes downstream at dispatch (the engine's gate).
+
+    ``on_behalf_of`` is the run's person (its ``authz_id``), sent only when set: engine-o
+    attributes its mesh reads to that person when ``COMPATIBLE_VERBS_VIA_MESH`` is on. A run
+    with no person (a case opened by an event) sends none, and with the flag on engine-o answers
+    400. A 4xx is a DENIAL, so it fails and releases like an ineligible verb; only a 5xx is
+    transient infra and retries."""
     if not subject or subject == "UNKNOWN":
         raise StepFailAndRelease(
             f"spo_operation step has no resolved subject ({subject!r})", status_code=400
         )
+    body: dict[str, Any] = {
+        "subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains,
+    }
+    if on_behalf_of:
+        body["on_behalf_of"] = on_behalf_of
     resp = requests.post(
         f"{engine_o_url}/find_compatible_verbs",
-        json={"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains},
+        json=body,
         timeout=30,
         # svc:engine-a — this process's own identity, named HERE. Transport only: the
         # ELIGIBILITY subject stays `entitled_domains` in the body, and permission is enforced
@@ -133,6 +145,13 @@ def verify_spo_step(
             client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
         ),
     )
+    if 400 <= resp.status_code < 500:
+        # A REFUSAL WON'T HEAL ON RETRY, and a retried denial parks the journal (Situation C).
+        raise StepFailAndRelease(
+            f"engine-o refused the eligibility read for subject {subject!r} "
+            f"({resp.status_code}); failing and releasing.",
+            status_code=resp.status_code,
+        )
     resp.raise_for_status()  # a 5xx is transient infra -> retry (NOT a denial)
     verbs = list(resp.json().get("verbs") or [])
     verbs = _filter_verbs_by_arity(verbs, query_is_set)

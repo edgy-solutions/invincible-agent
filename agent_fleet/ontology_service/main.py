@@ -369,9 +369,11 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 try:
     from mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS  # type: ignore[no-redef]
     from mesh_graph import Neo4jGraph  # type: ignore[no-redef]
+    from mesh_graph import required_args_list  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS
     from agent_fleet.ontology_service.mesh_graph import Neo4jGraph
+    from agent_fleet.ontology_service.mesh_graph import required_args_list
 
 
 def _jena_ontology_post(url: str, *, data: dict, headers: dict):
@@ -5715,8 +5717,8 @@ _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
 #: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
 #: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
-#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
-#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: on, LEG 3's read is made as someone for the first time (the flag-off read is a service and is
+#: refused) and its rows are NOT ADMITTED to the pool, so the answer is the flag-off answer.
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
     "COMPATIBLE_VERBS_VIA_MESH", "false"
@@ -5729,8 +5731,9 @@ def _compat_rows_via_mesh_sync(
     """The flag-on rows: LEG 1 from `Neo4jGraph.verbs_for`, LEGs 2 and 3 from the incumbent
     statement, every read as the person. Blocking; call via a thread.
 
-    THREE PLACES THIS DIFFERS FROM THE FLAG-OFF ROUTE, each a refusal or a 5xx, never a
-    different list:
+    THE SAME LIST AS THE FLAG-OFF ROUTE. LEG 3's rows are read and dropped (see `_NOT_ADMITTED`
+    below), and every row goes through the one `required_args` fold. THREE PLACES THIS DIFFERS,
+    each a refusal or a 5xx, never a different list:
 
     1. **Identity.** A blank `on_behalf_of` is a 400 before any read, as `/resolve`'s mesh arm
        refuses a blank `user_email`: `Initiator(subject="", kind="person")` passes the type and is
@@ -5784,8 +5787,20 @@ def _compat_rows_via_mesh_sync(
         raise HTTPException(
             status_code=503, detail=f"Neo4j compatibility query (LEGs 2 and 3) failed: {exc}"
         ) from exc
-    executed = "// LEG 1: MeshGraph.verbs_for, as the person\nUNION ALL\n" + cypher
+    rest = [r for r in rest if r.get("compatibility") not in _NOT_ADMITTED]
+    executed = (
+        "// LEG 1: MeshGraph.verbs_for, as the person\nUNION ALL\n" + cypher
+        + "\n// LEG 3: read as the person; its rows are not admitted to the pool"
+    )
     return [dict(r) for r in (coverage.rows or [])] + rest, executed
+
+
+#: THE LEG READ AND NOT ADMITTED. `mesh:explain` registers with `domains=[]`, so no entitled-domain
+#: filter can remove it, and once LEG 3 is read as a person it would join EVERY class subject's
+#: pool and every enum that pool feeds. Filtered by LEG, not by IRI: LEG 3 admits any verb whose
+#: required referent is flagged universal, and `mesh:explain` is only the first. The label is the
+#: leg's own `'universal' AS compatibility`. Admitting it is a ruling, not a flag flip.
+_NOT_ADMITTED = frozenset({"universal"})
 
 
 @app.post("/find_compatible_verbs", response_model=FindCompatibleVerbsResponse)
@@ -5880,12 +5895,9 @@ async def find_compatible_verbs(
     for row in rows:
         verb_domains = [d.upper() for d in (row.get("domains") or [])]
         # required_args: robust to native list (Neo4j array) OR comma-joined
-        # string (some registrars serialize lists as CSV for parity).
-        _raw_req = row.get("required_args")
-        if isinstance(_raw_req, str):
-            verb_required_args = [a.strip() for a in _raw_req.split(",") if a.strip()]
-        else:
-            verb_required_args = [str(a).strip() for a in (_raw_req or []) if str(a).strip()]
+        # string (some registrars serialize lists as CSV for parity). ONE FOLD, shared with
+        # `MeshGraph.verbs_for`, so the two paths cannot fold one value two ways.
+        verb_required_args = required_args_list(row.get("required_args"))
         # Scope filter: same semantics as /search_predicates. Empty entitled
         # = pass through; empty verb domains = domain-agnostic (always
         # keep); intersection > 0 = compatible.

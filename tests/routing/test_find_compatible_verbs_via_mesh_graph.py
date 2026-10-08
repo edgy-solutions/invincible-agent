@@ -8,13 +8,18 @@ and is refused before it is sent (`test_the_pool_reaches_the_universal_referent.
 
 WHAT THE FLAG MAY CHANGE, AND NOTHING ELSE:
 
-- the pool gains the universal leg's rows, because the explain read is finally made as someone;
+- WHO the reads are attributed to: the person, on LEG 1 and on LEG 3's Jena read;
 - a request with no person is a 400, and a hop bound `verbs_for` does not walk is a 400;
 - a substrate failure is a 503 rather than a 500.
 
-Every other verb, with the same rows in the store, is the same verb in the same order. The arm
-that says so runs both paths against one leg-aware double that answers each leg by what the
-statement it was handed contains, so a split that dropped or duplicated a leg answers differently.
+THE ANSWER IS THE SAME ANSWER. With the same rows in the store, every verb is the same verb in the
+same order, field for field. LEG 3 is read as the person and its rows are NOT ADMITTED (main.py's
+`_NOT_ADMITTED`): `mesh:explain` registers with no domains, so nothing else would keep it out of
+every class subject's pool. The identity arm runs both paths against one leg-aware double that
+answers each leg by what the statement it was handed contains, with Jena CONFIRMING the universal
+referent, so the filter has a row to remove and a split that dropped or duplicated a leg answers
+differently. `required_args` is folded by one function on both paths, and the double holds it in
+all three shapes the store does (comma-joined, absent, a list).
 
 `on_behalf_of` HERE IS THE GATEWAY'S WORD, NOT THE SDK'S. It names the person (the caller's
 authz_id), and the route mints `Initiator(subject=person, kind="person")`. The SDK's
@@ -85,7 +90,8 @@ def engine_o():
 # ── the doubles ──────────────────────────────────────────────────────────────────────────────
 
 
-def _row(verb: str, compatibility: str, *, hops: int = 1, domains=("COST",)) -> dict:
+def _row(verb: str, compatibility: str, *, hops: int = 1, domains=("COST",),
+         required_args=("lot,period")) -> dict:
     return {
         "verb_iri": f"http://invincible-agent/cost#{verb}",
         "verb_local": verb,
@@ -97,7 +103,7 @@ def _row(verb: str, compatibility: str, *, hops: int = 1, domains=("COST",)) -> 
         "cost_class": "fast",
         "requires_human_approval": False,
         "arity": None,
-        "required_args": "lot,period",
+        "required_args": required_args,
         "slots": "[]",
         "hops": hops,
         "compatibility": compatibility,
@@ -126,10 +132,13 @@ def _explain_row() -> dict:
 #: What the store holds, per leg. `costLotBreakdown` is reachable both ways (the dedupe's case);
 #: `fxRevalue` is outside COST, so the entitled-domain filter has something to remove.
 _LEG_ROWS = {
-    "subject": [_row("costLotBreakdown", "subject", hops=0), _row("costVariance", "subject")],
+    "subject": [
+        _row("costLotBreakdown", "subject", hops=0),
+        _row("costVariance", "subject", required_args=None),
+    ],
     "referent": [
         _row("costLotBreakdown", "referent"),
-        _row("lotYield", "referent"),
+        _row("lotYield", "referent", required_args=["lot", " "]),
         _row("fxRevalue", "referent", domains=("FIN",)),
     ],
     "universal": [_explain_row()],
@@ -281,14 +290,36 @@ def test_FLAG_OFF_IS_ONE_STATEMENT_AND_THE_EXPLAIN_READ_IS_STILL_REFUSED(engine_
     assert "mesh:explain" not in {v["verb_iri"] for v in without}
 
 
-# ── flag on: the same verbs, plus the leg that is finally read as someone ────────────────────
+# ── flag on: the same answer, read as the person ─────────────────────────────────────────────
 
 
-def test_FLAG_ON_ANSWERS_THE_SAME_VERBS_PLUS_ONLY_THE_UNIVERSAL_LEG(engine_o, monkeypatch):
-    off = _verbs(_Stage(engine_o, monkeypatch, flag=False).ask(on_behalf_of=PERSON))
-    on = _verbs(_Stage(engine_o, monkeypatch, flag=True).ask(on_behalf_of=PERSON))
-    assert [v for v in on if v["compatibility"] != "universal"] == off
-    assert [v["verb_iri"] for v in on if v["compatibility"] == "universal"] == ["mesh:explain"]
+@pytest.mark.parametrize("entitled", [[], ["COST"], ["DOCS"]], ids=["unscoped", "COST", "DOCS"])
+def test_FLAG_ON_IS_THE_FLAG_OFF_ANSWER_EXACTLY(engine_o, monkeypatch, entitled):
+    """THE IDENTITY SEAL. Jena confirms the universal referent, so LEG 3 runs and answers
+    `mesh:explain`; the flag-on answer is still the flag-off answer, field for field."""
+    off = _Stage(engine_o, monkeypatch, flag=False).ask(on_behalf_of=PERSON, entitled_domains=entitled)
+    s = _Stage(engine_o, monkeypatch, flag=True)
+    on = s.ask(on_behalf_of=PERSON, entitled_domains=entitled)
+    assert _verbs(on) == _verbs(off)
+    assert {k: v for k, v in on.json().items() if k != "cypher_executed"} == {
+        k: v for k, v in off.json().items() if k != "cypher_executed"}
+
+    # THE CONTROL: the filter had something to remove. LEG 3 was handed the confirmed referent,
+    # and the double answers that leg with `mesh:explain` whenever it is.
+    (_, _), (rest, params) = s.driver.statements
+    assert "universal" in _legs_in(rest) and params["universal_referents"] == [THING]
+    assert "mesh:explain" not in {v["verb_iri"] for v in _verbs(on)}
+
+    if entitled == ["DOCS"]:
+        # The scope where an admitted `mesh:explain` would be the WHOLE answer: no domains.
+        assert _verbs(on) == [], "a COST verb passed a DOCS-scoped filter"
+        return
+    # The fold ran on both paths, over all three shapes the store holds.
+    folded = {v["verb_local"]: v["required_args"] for v in _verbs(on)}
+    assert folded["costLotBreakdown"] == ["lot", "period"]
+    assert folded["costVariance"] == []
+    if "lotYield" in folded:
+        assert folded["lotYield"] == ["lot"]
 
 
 def test_FLAG_ON_WHEN_JENA_CONFIRMS_NOTHING_IS_THE_FLAG_OFF_ANSWER_EXACTLY(engine_o, monkeypatch):
@@ -322,7 +353,9 @@ def test_FLAG_ON_THE_EXPLAIN_LEG_IS_READ_AS_THE_PERSON(engine_o, monkeypatch):
     verbs = _verbs(s.ask(on_behalf_of=PERSON))
     assert [(i.subject, i.kind) for i in s.jena.initiators] == [(PERSON, "person")]
     assert s.post.calls, "the person's read never reached Jena"
-    assert ("mesh:explain", "universal") in {(v["verb_iri"], v["compatibility"]) for v in verbs}
+    # Read as the person, and not admitted: the leg's rows never reach the pool.
+    assert "universal" not in {v["compatibility"] for v in verbs}
+    assert "not admitted" in s.ask(on_behalf_of=PERSON).json()["cypher_executed"]
 
 
 # ── flag on: what it refuses ─────────────────────────────────────────────────────────────────
@@ -387,10 +420,12 @@ def test_verb_lookup_SENDS_on_behalf_of_ONLY_WHEN_SET(monkeypatch):
 
 _ROUTE_TAIL = "/find_compatible_verbs"
 
-#: Callers that post to the route as a service with no person in hand. With the flag on, each is
-#: refused (400), so THIS SET IS WHAT STANDS BETWEEN THE FLAG AND ITS DEFAULT. Each entry is
-#: checked to still lack `on_behalf_of`, so a caller that gains the person must leave the list.
-_NO_PERSON_YET = {
+#: Every module that posts to the route, and EVERY ONE NAMES THE PERSON. The spo callers left
+#: the old `_NO_PERSON_YET` register on 2026-10-08: the interview sends its author, the step
+#: verifier its run's `authz_id`. There is no exemption list to append to; a new poster that
+#: sends no person reds below, before the flag can 400 it.
+_POSTERS = {
+    "src/iagent/verb_lookup.py",
     "agent_fleet/restate_analyst/spo_interview.py",
     "agent_fleet/restate_analyst/spo_step_executor.py",
 }
@@ -408,22 +443,40 @@ def _posts_to_route(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and any(_url_text(a).endswith(_ROUTE_TAIL) for a in node.args)
 
 
-def _names_the_person(path: Path) -> bool:
-    """Whether a function that posts to the route sends `on_behalf_of`: the key as a string
-    constant, or a keyword of that name, anywhere in that function. Read from the AST, so a comment
-    or a docstring that mentions the word is not a body that carries it."""
-    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not any(_posts_to_route(n) for n in ast.walk(fn)):
-            continue
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Constant) and n.value == "on_behalf_of":
-                return True
-            if isinstance(n, ast.keyword) and n.arg == "on_behalf_of":
-                return True
-    return False
+def _names_the_person(source: str) -> bool:
+    """Whether EVERY function that posts to the route sends `on_behalf_of`: the key as a string
+    constant, or a keyword of that name, in that function's body. Read from the AST, so a comment
+    or a docstring that mentions the word is not a body that carries it. False when nothing posts.
+    """
+    tree = ast.parse(source)
+    posting = [
+        fn for fn in ast.walk(tree)
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(_posts_to_route(n) for n in ast.walk(fn))
+    ]
+
+    def carries(fn) -> bool:
+        body = [n for stmt in fn.body for n in ast.walk(stmt)]
+        if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(fn.body[0].value, ast.Constant):
+            docstring = fn.body[0].value
+            body = [n for n in body if n is not docstring]
+        return any(
+            (isinstance(n, ast.Constant) and n.value == "on_behalf_of")
+            or (isinstance(n, ast.keyword) and n.arg == "on_behalf_of")
+            for n in body
+        )
+
+    return bool(posting) and all(carries(fn) for fn in posting)
+
+
+#: THE DETECTOR'S NEGATIVE: posts to the route, and mentions the word only where a body does not
+#: carry it (a docstring, a comment, a parameter name it never sends).
+_SILENT_POSTER = '''
+def ask(subject, on_behalf_of=""):
+    """on_behalf_of"""
+    # on_behalf_of
+    return post(f"{URL}/find_compatible_verbs", json={"subject_uri": subject})
+'''
 
 
 def _posters() -> set[str]:
@@ -444,17 +497,20 @@ def _posters() -> set[str]:
     return found
 
 
-def test_EVERY_CALLER_OF_THE_ROUTE_IS_ACCOUNTED_FOR():
+def test_EVERY_CALLER_OF_THE_ROUTE_NAMES_THE_PERSON():
     posters = _posters()
     assert "src/iagent/verb_lookup.py" in posters, "the derivation no longer finds the known caller"
-    assert posters == {"src/iagent/verb_lookup.py"} | _NO_PERSON_YET, (
-        f"the route's callers changed: {sorted(posters)}. A new one must send on_behalf_of (via "
-        f"verb_lookup) or join _NO_PERSON_YET, which blocks the flag's default."
+    assert posters == _POSTERS, (
+        f"the route's callers changed: {sorted(posters)}. A new one must send on_behalf_of "
+        f"(through verb_lookup, or by itself) and join _POSTERS."
     )
-    assert _names_the_person(_REPO / "src/iagent/verb_lookup.py"), "the detector cannot see a sender"
-    for rel in sorted(_NO_PERSON_YET):
-        assert not _names_the_person(_REPO / rel), (
-            f"{rel} now sends on_behalf_of; take it off _NO_PERSON_YET")
+    assert not _names_the_person(_SILENT_POSTER), "the detector reads a docstring as a body"
+    assert _names_the_person(_SILENT_POSTER.replace(
+        '{"subject_uri": subject}', '{"subject_uri": subject, "on_behalf_of": on_behalf_of}'
+    )), "the detector cannot see a sender"
+    silent = [rel for rel in sorted(_POSTERS)
+              if not _names_the_person((_REPO / rel).read_text(encoding="utf-8", errors="replace"))]
+    assert silent == [], f"posts to the route without the person: {silent}"
 
 
 #: The wrappers between the person and `verb_lookup`, and the keyword each must be handed.
@@ -494,3 +550,101 @@ def test_THE_PERSON_IS_HANDED_DOWN_AT_EVERY_CALL_IN_src():
                 missing.append(f"{path.relative_to(_REPO).as_posix()}:{node.lineno} {name}")
     assert set(seen) == set(_THREADED), f"a wrapper has no call site left: {seen}"
     assert missing == [], f"calls that drop the person: {missing}"
+
+
+#: The spo wrappers, and what each call site in `restate_analyst/main.py` must hand them: the
+#: interview's AUTHOR, the run's `authz_id`. The VALUE is checked, not only the keyword, so a call
+#: that passes some other name (a service id, a literal) reds.
+_SPO_THREADED = {
+    "authorized_verbs": "caller_email",
+    "verify_spo_step": "ident['authz_id']",  # as ast.unparse spells it
+}
+
+
+def test_THE_PERSON_IS_HANDED_DOWN_AT_EVERY_SPO_CALL():
+    path = _REPO / "agent_fleet/restate_analyst/main.py"
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    seen: dict[str, int] = {}
+    wrong: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _callee(node)
+        if name not in _SPO_THREADED:
+            continue
+        seen[name] = seen.get(name, 0) + 1
+        sent = {k.arg: ast.unparse(k.value) for k in node.keywords}.get("on_behalf_of")
+        if sent != _SPO_THREADED[name]:
+            wrong.append(f"{node.lineno} {name} on_behalf_of={sent}")
+    assert set(seen) == set(_SPO_THREADED), f"an spo wrapper has no call site left: {seen}"
+    assert wrong == [], f"spo calls that do not hand down the person: {wrong}"
+
+
+# ── the spo callers send the person only when they have one ───────────────────────────────────
+
+
+class _SpoResp:
+    def __init__(self, status: int, payload: dict | None = None) -> None:
+        self.status_code = status
+        self._payload = payload or {"verbs": []}
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _spo(monkeypatch, module: str, client: str, status: int = 200, payload=None):
+    mod = pytest.importorskip(f"agent_fleet.restate_analyst.{module}")
+    sent: list[dict] = []
+
+    def post(url, *, json, timeout, headers):
+        assert url.endswith(_ROUTE_TAIL), url
+        sent.append(json)
+        return _SpoResp(status, payload)
+
+    monkeypatch.setattr(mod, client, type("_Client", (), {"post": staticmethod(post)}))
+    monkeypatch.setattr(mod, "outbound_auth_headers", lambda **_: {})
+    return mod, sent
+
+
+def test_THE_INTERVIEW_SENDS_ITS_AUTHOR_ONLY_WHEN_SET(monkeypatch):
+    si, sent = _spo(monkeypatch, "spo_interview", "httpx")
+    si.authorized_verbs(SUBJECT, workflow_domain="COST", engine_o_url="http://onto.invalid")
+    si.authorized_verbs(SUBJECT, workflow_domain="COST", engine_o_url="http://onto.invalid",
+                        on_behalf_of=PERSON)
+    assert "on_behalf_of" not in sent[0]
+    assert sent[1]["on_behalf_of"] == PERSON
+    assert {k: v for k, v in sent[1].items() if k != "on_behalf_of"} == sent[0]
+
+
+def test_THE_STEP_VERIFIER_SENDS_THE_RUNS_PERSON_ONLY_WHEN_SET(monkeypatch):
+    verb = {"verb_iri": "cost:costVariance", "arity": None}
+    ex, sent = _spo(monkeypatch, "spo_step_executor", "requests", payload={"verbs": [verb]})
+    assert ex.verify_spo_step(SUBJECT, "cost:costVariance", ["COST"]) == verb
+    assert ex.verify_spo_step(SUBJECT, "cost:costVariance", ["COST"], on_behalf_of=PERSON) == verb
+    assert "on_behalf_of" not in sent[0]
+    assert sent[1]["on_behalf_of"] == PERSON
+    assert {k: v for k, v in sent[1].items() if k != "on_behalf_of"} == sent[0]
+
+
+@pytest.mark.parametrize("status", [400, 403, 422])
+def test_A_REFUSED_ELIGIBILITY_READ_FAILS_AND_RELEASES(monkeypatch, status):
+    """A run with no person meets the flag-on route's 400. A refusal never heals on retry, so it
+    fails and releases with the code engine-o gave, as an ineligible verb does."""
+    ex, _ = _spo(monkeypatch, "spo_step_executor", "requests", status=status)
+    with pytest.raises(ex.StepFailAndRelease) as caught:
+        ex.verify_spo_step(SUBJECT, "cost:costVariance", ["COST"])
+    assert caught.value.status_code == status
+
+
+def test_A_5xx_ON_THE_ELIGIBILITY_READ_STILL_RETRIES(monkeypatch):
+    """The control: only a refusal is terminal. A 5xx is transient infra and must stay a plain
+    raise that Restate retries, never a fail-and-release."""
+    ex, _ = _spo(monkeypatch, "spo_step_executor", "requests", status=503)
+    with pytest.raises(Exception) as caught:
+        ex.verify_spo_step(SUBJECT, "cost:costVariance", ["COST"])
+    assert not isinstance(caught.value, ex.StepFailAndRelease)

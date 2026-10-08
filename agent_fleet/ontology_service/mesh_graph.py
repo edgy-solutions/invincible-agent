@@ -128,6 +128,20 @@ RETURN DISTINCT r.endpoint_url AS endpoint_url,
 """
 
 
+def required_args_list(raw: Any) -> list[str]:
+    """`required_args` as the list SDK 0.9.8's `verbs_for` row declares ("declared argument keys
+    ...; empty means unconstrained"), whatever the relationship holds.
+
+    Some registrars serialise the list as a comma-joined string; a verb that declares none holds
+    no property at all. ONE FOLD, TWO READERS: `verbs_for` answers through it and
+    `/find_compatible_verbs` builds every `CompatibleVerb` through it, so the flag-on and flag-off
+    paths cannot fold one value two ways.
+    """
+    if isinstance(raw, str):
+        return [a.strip() for a in raw.split(",") if a.strip()]
+    return [str(a).strip() for a in (raw or []) if str(a).strip()]
+
+
 def build_path_cypher(max_hops: int) -> str:
     """The hop range is TEMPLATED, not parameterised — Cypher does not allow it as a parameter.
 
@@ -246,16 +260,24 @@ class Neo4jGraph:
         and the edge read failing are one `failed`, never an empty list: the silent narrowing the
         `ancestors` docstring refuses is still refused.
 
-        **AS THE STORE HOLDS IT.** `required_args` comes back as the relationship carries it, which
-        for some registrars is a comma-joined string; the route folds that into a list, as it
-        always has. `domains` and `slots` are coalesced in the statement.
+        **`required_args` IS A LIST, AS THE SDK DECLARES IT.** The relationship holds it as some
+        registrar wrote it, which is sometimes a comma-joined string and sometimes nothing; it is
+        folded through `required_args_list`, the same function the route folds through, after the
+        statement and not in it, so the statement stays the route's LEG 1. `domains` and `slots`
+        are coalesced in the statement.
         """
         self._require_person(initiator, "verbs_for")
         lo, hi = PATH_HOP_BOUNDS
         if not isinstance(max_hops, int) or isinstance(max_hops, bool) or not lo <= max_hops <= hi:
             return MeshResult.failed(f"verbs_for: max_hops must be an int in [{lo}, {hi}]")
         cypher = VERBS_FOR_CYPHER.replace("$MAXHOPS$", str(max_hops))
-        return self._read("verbs_for", cypher, subject_uri=subject)
+        result = self._read("verbs_for", cypher, subject_uri=subject)
+        if not result.answered_ok:
+            return result
+        return MeshResult.answered([
+            {**row, "required_args": required_args_list(row.get("required_args"))}
+            for row in result.rows
+        ])
 
     def classes_with_a_verb(
         self, initiator: Initiator, domains: Sequence[str], *, include_referents: bool = False

@@ -183,14 +183,22 @@ def authorized_verbs(
     *,
     workflow_domain: Optional[str] = None,
     engine_o_url: str = ENGINE_O_URL_DEFAULT,
+    on_behalf_of: str = "",
 ) -> list[dict]:
     """Fetch the authorized VERB set for ``subject_uri`` — the predicate question the old
     interview never asked. Domain scope is the WORKFLOW's declared domain (Decision A):
-    NOT the author's entitlements. ``workflow_domain=None`` -> structural-only (all domains)."""
+    NOT the author's entitlements. ``workflow_domain=None`` -> structural-only (all domains).
+
+    ``on_behalf_of`` is the AUTHOR, whose interview this is: engine-o attributes its mesh reads
+    to that person when ``COMPATIBLE_VERBS_VIA_MESH`` is on, and refuses a request with none.
+    Sent only when set, so a caller with no author sends the body it always did. It does not
+    scope the answer: domain scope stays the workflow's."""
     if not subject_uri or subject_uri == "UNKNOWN":
         raise ValueError(f"cannot elicit verbs for an unresolved subject ({subject_uri!r})")
     body: dict[str, Any] = {"subject_uri": subject_uri, "max_hops": 5}
     body["entitled_domains"] = [workflow_domain] if workflow_domain else []
+    if on_behalf_of:
+        body["on_behalf_of"] = on_behalf_of
     # svc:engine-a — this process's own identity, named HERE. Structural query; domain scope
     # rides `entitled_domains` in the body and is the WORKFLOW's, not the author's.
     r = httpx.post(

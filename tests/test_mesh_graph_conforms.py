@@ -44,6 +44,7 @@ from agent_fleet.ontology_service.mesh_graph import (  # noqa: E402
     VERBS_FOR_CYPHER,
     Neo4jGraph,
     build_path_cypher,
+    required_args_list,
 )
 
 _MAIN = _REPO / "agent_fleet" / "ontology_service" / "main.py"
@@ -286,6 +287,38 @@ def test_verbs_for_IS_THE_ROUTES_LEG_1():
         f"verbs_for has drifted from the route's LEG 1.\n  main.py: "
         f"{_norm(_strip_comments(legs[0]))[:200]}\n  here   : {_norm(VERBS_FOR_CYPHER)[:200]}"
     )
+
+
+def test_verbs_for_ANSWERS_required_args_AS_THE_LIST_THE_SDK_DECLARES():
+    """"declared argument keys ...; empty means unconstrained": a list, whatever the relationship
+    holds. The three shapes the store holds, each folded."""
+    g = _graph(rows=[
+        {"verb_iri": "a", "required_args": "lot, period"},
+        {"verb_iri": "b", "required_args": None},
+        {"verb_iri": "c"},
+        {"verb_iri": "d", "required_args": ["lot", " ", "tag"]},
+    ])
+    r = g.verbs_for(PERSON, "idp:Table", max_hops=5)
+    assert r.outcome == "answered", r
+    assert [row["required_args"] for row in r.rows] == [["lot", "period"], [], [], ["lot", "tag"]]
+    assert [row["verb_iri"] for row in r.rows] == ["a", "b", "c", "d"], "the fold dropped a field"
+
+
+def test_THE_ROUTE_FOLDS_required_args_THROUGH_THE_SAME_FUNCTION():
+    """Two folds of one fact go out of agreement at the first edit nobody mirrored. The route
+    must call `required_args_list` and hold no fold of its own."""
+    tree = ast.parse(_MAIN.read_text(encoding="utf-8", errors="replace"))
+    (route,) = [n for n in ast.walk(tree)
+                if isinstance(n, ast.AsyncFunctionDef) and n.name == "find_compatible_verbs"]
+    calls = [n for n in ast.walk(route) if isinstance(n, ast.Call)]
+    assert any(getattr(c.func, "id", None) == "required_args_list" for c in calls), (
+        "the route no longer folds required_args through mesh_graph.required_args_list")
+    splits = [ast.unparse(c) for c in calls if getattr(c.func, "attr", None) == "split"]
+    assert splits == [], f"the route folds something itself: {splits}"
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                and (n.module or "").endswith("mesh_graph") for a in n.names}
+    assert "required_args_list" in imported
+    assert required_args_list("x,y") == ["x", "y"]
 
 
 def test_verbs_for_BOUNDS_THE_HOPS_BEFORE_IT_TEMPLATES_THEM():
