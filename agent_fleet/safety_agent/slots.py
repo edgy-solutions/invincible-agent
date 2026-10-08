@@ -71,6 +71,11 @@ _REFERENT_KIND = {
     # ADR-0056 §Decision-1: `what_failed_on_this_part`'s slot resolves against the ALREADY-OWNED
     # SafetyCriticalItem class, not a new Part concept — see that ADR's survey before reusing it.
     "part_number":   _SAFETY + "SafetyCriticalItem",
+    # ADR-0056, second verb: a platform is the FRACAS program. `safety:Platform` is minted (the
+    # survey found no platform class in any vendored ontology); members are DERIVED from the
+    # fixtures in instances.py. `platform_id`, not `platform`, so it cannot be mistaken for the
+    # `scope="platform"` pairing below.
+    "platform_id":   _SAFETY + "Platform",
 }
 
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing

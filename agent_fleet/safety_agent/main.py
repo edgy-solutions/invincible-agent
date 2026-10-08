@@ -245,6 +245,30 @@ VERBS: List[Dict[str, Any]] = [
             "what hazards are unattended", "accept this risk",
         ],
     },
+    {
+        "fn": "failure_trend_for_this_platform_by_month",
+        "verb": "mesh:failureTrendForThisPlatformByMonth",
+        "input_uri": SAFETY + "Platform",
+        "output_uri": SAFETY + "FailureTrend",
+        "desc": (
+            "ADR-0056 Phase 1, FRACAS second verb. How many failures were recorded on one "
+            "platform in each calendar month, counted on the date the failure was observed, "
+            "empty months included, each month citing the records behind it as "
+            "connector:record_id. Answers FAILURE TREND FOR THIS PLATFORM BY MONTH. REFUSES a "
+            "platform this engine does not know, which is a different fact from a known platform "
+            "with no failures (an explicit empty series). Results are limited to programs the "
+            "caller may view. READ-ONLY. OWNS the phrasings: failure trend for this platform by "
+            "month, failures per month on this platform, monthly failure count for this platform."
+        ),
+        "synonyms": [
+            "failure trend for this platform by month", "failures per month on this platform",
+            "monthly failure count for this platform", "how often does this platform fail",
+        ],
+        "anti_synonyms": [
+            "what failed on this part", "failure history for this part", "assess this hazard",
+            "what hazards are unattended",
+        ],
+    },
 ]
 
 BY_FN = {v["fn"]: v for v in VERBS}
@@ -717,6 +741,17 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
     # bug inside that measure, by name, with the params that reached it.
     try:
         result = fn(**req.params)
+    except measures.NoPerson:
+        # THE SERVICE IDENTITY / NO CALLER (the supervisor path when a turn has no user token):
+        # program membership belongs to a person, so the answer is a refusal, never an empty
+        # list. Shape: the sibling 503 below (`error`, `message`, `fn`), 422 as the gateway's
+        # `no_requester` is.
+        return JSONResponse(
+            status_code=422,
+            content={"error": "no_person",
+                     "message": "this verb answers for a person; the caller carries none",
+                     "fn": fn_name},
+        )
     except measures.ProgramAuthorizationUnavailable as exc:
         # THE ONE 5xx THIS HANDLER DELIBERATELY RETURNS (ADR-0056 Q2): "could not verify program
         # membership" must never collapse into an empty answer, which on a safety history would

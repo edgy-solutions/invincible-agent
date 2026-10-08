@@ -364,6 +364,15 @@ try:
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.mesh_ontology import JenaMeshOntology as _JenaMeshOntology
 
+# `Neo4jGraph` — the SDK's `MeshGraph` over this same Neo4j, for LEG 1 of `/find_compatible_verbs`
+# when `COMPATIBLE_VERBS_VIA_MESH` is on. Same flatten-aware shape.
+try:
+    from mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS  # type: ignore[no-redef]
+    from mesh_graph import Neo4jGraph  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS
+    from agent_fleet.ontology_service.mesh_graph import Neo4jGraph
+
 
 def _jena_ontology_post(url: str, *, data: dict, headers: dict):
     """Sync POST for `JenaMeshOntology`, carrying the SAME credential `_jena_client()` uses.
@@ -5349,6 +5358,12 @@ class FindCompatibleVerbsRequest(BaseModel):
     # (or are domain-agnostic). Mirrors the entitled_domains filter on
     # /search_predicates.
     entitled_domains: list[str] = Field(default_factory=list)
+    # THE PERSON THE ASK IS FOR, as the gateway names them (its `on_behalf_of`, the caller's
+    # authz_id). With `COMPATIBLE_VERBS_VIA_MESH` on, every read this route makes is attributed to
+    # this person, minted `kind="person"`, and a blank value is refused. NOT the SDK's
+    # `Initiator.on_behalf_of`, which makes a DELEGATE, and `MeshGraph`/`MeshOntology` reads refuse
+    # a delegate. With the flag off it is accepted and unused, so a caller can send it first.
+    on_behalf_of: str = ""
 
 
 class CompatibleVerb(BaseModel):
@@ -5452,6 +5467,10 @@ _UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
 # That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
 # it is exercised here rather than worked around — threading a real identity through this route
 # is a design decision for a person, not a substitute this pool should invent.
+#
+# THE GAP CLOSES BEHIND `COMPATIBLE_VERBS_VIA_MESH`. With the flag on, the request carries
+# `on_behalf_of` and the route hands `_universal_referent_iris` that person instead; this service
+# initiator remains what the flag-off route reads with, and it is still refused.
 _POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
 
 
@@ -5488,8 +5507,11 @@ def _confirms_universal_referent(rows, subject: str) -> bool:
     return is_class and carries_flag
 
 
-def _universal_referent_iris() -> list[str]:
+def _universal_referent_iris(initiator: Initiator | None = None) -> list[str]:
     """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
+
+    Read as `initiator` when one is given (the person, with `COMPATIBLE_VERBS_VIA_MESH` on), else
+    as `_POOL_READ_INITIATOR`, looked up at call time.
 
     NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
     documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
@@ -5501,7 +5523,7 @@ def _universal_referent_iris() -> list[str]:
     refusal_detail: str | None = None
     for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
         try:
-            result = _JENA_ONTOLOGY.construct(_POOL_READ_INITIATOR, subject=candidate)
+            result = _JENA_ONTOLOGY.construct(initiator or _POOL_READ_INITIATOR, subject=candidate)
         except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
             refusal_detail = f"{type(exc).__name__}: {exc}"
             continue
@@ -5684,6 +5706,87 @@ RETURN DISTINCT
     'universal'                   AS compatibility
 """
 
+# THE THREE LEGS, SPLIT WHERE THE STATEMENT JOINS THEM. With `COMPATIBLE_VERBS_VIA_MESH` on, LEG 1
+# is read through `MeshGraph.verbs_for` (whose statement the conformance test holds equal to
+# `_COMPAT_LEGS[0]`) and LEGs 2 and 3 run as written here. Split rather than re-declared, so the
+# flag-off statement above stays the only text either path runs.
+_COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
+_COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
+
+#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
+#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
+#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
+#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
+COMPATIBLE_VERBS_VIA_MESH = os.getenv(
+    "COMPATIBLE_VERBS_VIA_MESH", "false"
+).lower() in ("true", "1", "yes")
+
+
+def _compat_rows_via_mesh_sync(
+    subject_uri: str, max_hops: int, on_behalf_of: str
+) -> tuple[list[dict], str]:
+    """The flag-on rows: LEG 1 from `Neo4jGraph.verbs_for`, LEGs 2 and 3 from the incumbent
+    statement, every read as the person. Blocking; call via a thread.
+
+    THREE PLACES THIS DIFFERS FROM THE FLAG-OFF ROUTE, each a refusal or a 5xx, never a
+    different list:
+
+    1. **Identity.** A blank `on_behalf_of` is a 400 before any read, as `/resolve`'s mesh arm
+       refuses a blank `user_email`: `Initiator(subject="", kind="person")` passes the type and is
+       provenance nobody can be asked about. The incumbent route takes no identity at all.
+    2. **The hop bound.** `verbs_for` walks `_VERBS_FOR_HOP_BOUNDS`; the incumbent clamps to
+       0..10. A `max_hops` outside the bound is a 400 naming it, not a quiet clamp.
+    3. **The 503.** `failed` and `unreachable` from `verbs_for`, or a raise from the LEG 2/3
+       statement, is a 503, not the incumbent's 500. Both are 5xx to every caller.
+    """
+    person = (on_behalf_of or "").strip()
+    if not person:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "COMPATIBLE_VERBS_VIA_MESH is on and this request carries no on_behalf_of. The "
+                "mesh reads are attributed to a person or they are not made. Send the person the "
+                "ask is for, or run with the flag off."
+            ),
+        )
+    lo, hi = _VERBS_FOR_HOP_BOUNDS
+    if not lo <= max_hops <= hi:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"COMPATIBLE_VERBS_VIA_MESH is on and max_hops={max_hops} is outside the "
+                f"[{lo}, {hi}] MeshGraph.verbs_for walks."
+            ),
+        )
+    initiator = Initiator(subject=person, kind="person")
+    coverage = Neo4jGraph(driver=_NEO4J_DRIVER).verbs_for(initiator, subject_uri, max_hops=max_hops)
+    if coverage.outcome in ("failed", "unreachable"):
+        raise HTTPException(
+            status_code=503,
+            detail=f"MeshGraph.verbs_for did not answer ({coverage.outcome}): {coverage.detail}",
+        )
+    universal_referents = _universal_referent_iris(initiator)
+    cypher = (
+        _COMPAT_LEGS_AFTER_COVERAGE
+        .replace("$MAXHOPS$", str(max_hops))
+        .replace("$UNREACHABLE$", str(UNREACHABLE))
+    )
+    try:
+        with _NEO4J_DRIVER.session() as session:
+            rest = [
+                dict(r)
+                for r in session.run(
+                    cypher, subject_uri=subject_uri, universal_referents=universal_referents
+                )
+            ]
+    except Exception as exc:  # noqa: BLE001 - the substrate's failure, whatever shape it takes
+        raise HTTPException(
+            status_code=503, detail=f"Neo4j compatibility query (LEGs 2 and 3) failed: {exc}"
+        ) from exc
+    executed = "// LEG 1: MeshGraph.verbs_for, as the person\nUNION ALL\n" + cypher
+    return [dict(r) for r in (coverage.rows or [])] + rest, executed
+
 
 @app.post("/find_compatible_verbs", response_model=FindCompatibleVerbsResponse)
 async def find_compatible_verbs(
@@ -5710,34 +5813,39 @@ async def find_compatible_verbs(
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
     max_hops = max(0, min(10, int(request.max_hops or 5)))
-    cypher = (
-        _FIND_COMPAT_VERBS_CYPHER
-        .replace("$MAXHOPS$", str(max_hops))
-        .replace("$UNREACHABLE$", str(UNREACHABLE))
-    )
-    # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
-    # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
-    # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
-    universal_referents = await asyncio.to_thread(_universal_referent_iris)
+    if COMPATIBLE_VERBS_VIA_MESH:
+        rows, cypher = await asyncio.to_thread(
+            _compat_rows_via_mesh_sync, request.subject_uri, max_hops, request.on_behalf_of
+        )
+    else:
+        cypher = (
+            _FIND_COMPAT_VERBS_CYPHER
+            .replace("$MAXHOPS$", str(max_hops))
+            .replace("$UNREACHABLE$", str(UNREACHABLE))
+        )
+        # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
+        # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
+        # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
+        universal_referents = await asyncio.to_thread(_universal_referent_iris)
 
-    def _run() -> list[dict]:
-        with _NEO4J_DRIVER.session() as session:
-            return [
-                dict(r)
-                for r in session.run(
-                    cypher,
-                    subject_uri=request.subject_uri,
-                    universal_referents=universal_referents,
-                )
-            ]
+        def _run() -> list[dict]:
+            with _NEO4J_DRIVER.session() as session:
+                return [
+                    dict(r)
+                    for r in session.run(
+                        cypher,
+                        subject_uri=request.subject_uri,
+                        universal_referents=universal_referents,
+                    )
+                ]
 
-    try:
-        rows = await asyncio.to_thread(_run)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Neo4j compatibility query failed: {exc}",
-        ) from exc
+        try:
+            rows = await asyncio.to_thread(_run)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Neo4j compatibility query failed: {exc}",
+            ) from exc
 
     # ── DEDUPE THE TWO LEGS, SUBJECT WINNING ────────────────────────────────────────────
     #

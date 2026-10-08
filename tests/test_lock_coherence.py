@@ -33,6 +33,7 @@ AGAINST INSTANTIATING IT — ONLY GUARDS DO.
 from __future__ import annotations
 
 import re
+from datetime import date
 import shutil
 import subprocess
 from pathlib import Path
@@ -105,6 +106,59 @@ def test_every_declared_internal_dep_reaches_its_lock():
     )
 
 
+_TAG = re.compile(r"v\d+\.\d+\.\d+")
+_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+class _ShaPin:
+    """An engine pinned to an untagged SDK sha while it proves a release (caller-proves-then-tag).
+
+    Every field is checked by the arm below. The sha must still be pinned somewhere, or the entry
+    is stale. The backstop must not have passed. It must name the tag it shares transport_auth
+    with, because the broker arm compares the chart against the TAG and so cannot see a
+    sha-pinned engine.
+    """
+
+    def __init__(self, release: str, same_auth_as: str, why: str, ends_with: str, backstop: date):
+        self.release, self.same_auth_as, self.why = release, same_auth_as, why
+        self.ends_with, self.backstop = ends_with, backstop
+
+
+SHA_PINS_PENDING_TAG = {
+    "60e56c972b209617dbe85cff6ff606c957e120ad": _ShaPin(
+        release="0.9.9 (iagent-mesh-sdk lane/ca-0.9.9, untagged)",
+        # Measured 2026-10-08: `git diff --stat v0.9.8 60e56c97` touches ingest, interfaces,
+        # systems_of_record, workflow_case and tests -- not transport_auth.
+        same_auth_as="v0.9.8",
+        why="safety_agent needs SystemOfRecordQuery (ADR-0056 FRACAS phase 1, lane/saf 586c04c9)",
+        ends_with="ca tags 0.9.9 and the fleet bumps every pin, and meshSdkVersion, to it",
+        backstop=date(2026, 10, 29),
+    ),
+}
+
+
+def test_every_sha_pin_is_live_bounded_and_shares_the_fleet_auth():
+    pinned = set()
+    for pp in find_files(_ROOT, "pyproject.toml"):
+        pinned.update(re.findall(r'"iagent-mesh @ git\+[^"@]+\.git@([0-9a-f]{40})"',
+                                 pp.read_text(encoding="utf-8")))
+    stale = sorted(set(SHA_PINS_PENDING_TAG) - pinned)
+    assert not stale, f"SHA_PINS_PENDING_TAG names shas nothing pins any more; delete: {stale}"
+    values = (_ROOT / "helm" / "invincible-agent" / "values.yaml").read_text(encoding="utf-8")
+    chart = re.search(r"^\s*meshSdkVersion:\s*[\"']?(v\d+\.\d+\.\d+)", values, re.M).group(1)
+    today = date.today()
+    for sha, e in SHA_PINS_PENDING_TAG.items():
+        assert e.why and e.ends_with, f"{sha[:8]}: an exception with no reason or no end condition"
+        assert today <= e.backstop, (
+            f"{sha[:8]} ({e.release}) passed its backstop {e.backstop} and is still pinned. "
+            f"End condition: {e.ends_with}"
+        )
+        assert e.same_auth_as == chart, (
+            f"{sha[:8]} was measured to share transport_auth with {e.same_auth_as}, but the broker "
+            f"now installs {chart}. Re-measure against {chart} and update the entry"
+        )
+
+
 def test_domain_broker_sdk_version_matches_the_fleet_pin():
     """The broker installs the SDK at POD START, so its version lives in values.yaml.
 
@@ -124,15 +178,38 @@ def test_domain_broker_sdk_version_matches_the_fleet_pin():
     assert m, "domainBroker.meshSdkVersion is missing from values.yaml"
     chart_version = m.group("v")
 
-    pins = set()
+    pins, sha_pins, unparsed = set(), {}, []
     # The SECOND walk site in this file, and the reason the first fix looked complete when it
     # was not: collection stopped failing, 41 tests started running, and this one still raised
     # from inside a test body. A rglob-then-filter that is correct about its RESULT is still
     # wrong about its TRAVERSAL, everywhere it appears.
+    #
+    # THE MATCHER READS EVERY REF, NOT ONLY A TAG. Until 2026-10-08 it matched `@vX.Y.Z` alone, so
+    # lane/saf's sha pin (586c04c9) was invisible and the fleet split across two SDK builds with
+    # this arm green. A pin in any other form is refused rather than skipped.
     for pp in find_files(_ROOT, "pyproject.toml"):
-        for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<v>v\d+\.\d+\.\d+)"',
-                              pp.read_text(encoding="utf-8")):
-            pins.add(pm.group("v"))
+        text = pp.read_text(encoding="utf-8")
+        mentions = text.count('"iagent-mesh @')
+        found = 0
+        for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<ref>[^"]+)"', text):
+            found += 1
+            ref = pm.group("ref")
+            if _TAG.fullmatch(ref):
+                pins.add(ref)
+            elif _SHA.fullmatch(ref):
+                sha_pins.setdefault(ref, []).append(pp.parent.relative_to(_ROOT).as_posix())
+            else:
+                unparsed.append(f"{pp.relative_to(_ROOT).as_posix()}: @{ref}")
+        if found != mentions:
+            unparsed.append(f"{pp.relative_to(_ROOT).as_posix()}: {mentions - found} pin(s) "
+                            f"in a form this matcher does not read")
+    assert not unparsed, f"iagent-mesh pins neither a vX.Y.Z tag nor a full sha: {unparsed}"
+    unexcused = {sha: where for sha, where in sha_pins.items() if sha not in SHA_PINS_PENDING_TAG}
+    assert not unexcused, (
+        f"iagent-mesh pinned by sha with no entry in SHA_PINS_PENDING_TAG: {unexcused}. A sha pin "
+        f"is a caller proving an untagged release (caller-proves-then-tag); say which release, "
+        f"why, and when the tag replaces it"
+    )
     assert pins, "no iagent-mesh pyproject pin found — cannot check the broker against the fleet"
     assert len(pins) == 1, f"the fleet's own SDK pins disagree: {sorted(pins)}"
     fleet_version = pins.pop()

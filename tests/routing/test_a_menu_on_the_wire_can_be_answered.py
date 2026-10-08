@@ -174,7 +174,7 @@ def _option_bearing_cards():
         "_project_flat_archetype": _pf()._project_flat_archetype(
             "ELICITATION",
             _wrapper(expert_response={
-                "slot": "rate_vintage",
+                "slot": "rate_vintage", "disposition": "ask",
                 "options": [{"value": "2021-02-01", "label": "FY2021"}],
                 "option_source": "refusal",
             }),
@@ -295,7 +295,7 @@ def test_the_envelope_WINS_and_the_wrapper_only_fills_a_hole():
     both = _pf()._project_flat_archetype(
         "ELICITATION",
         _wrapper("THE WRAPPER PHRASE", expert_response={
-            "slot": "rate_vintage", "sub_query": "THE ENVELOPE PHRASE",
+            "slot": "rate_vintage", "disposition": "ask", "sub_query": "THE ENVELOPE PHRASE",
             "options": [{"value": "2021-02-01", "label": "FY2021"}],
         }),
         "PROGRAM_FINANCE_ANALYST",
@@ -308,7 +308,7 @@ def test_the_envelope_WINS_and_the_wrapper_only_fills_a_hole():
     hole = _pf()._project_flat_archetype(
         "ELICITATION",
         _wrapper("THE WRAPPER PHRASE", expert_response={
-            "slot": "rate_vintage",
+            "slot": "rate_vintage", "disposition": "ask",
             "options": [{"value": "2021-02-01", "label": "FY2021"}],
         }),
         "PROGRAM_FINANCE_ANALYST",

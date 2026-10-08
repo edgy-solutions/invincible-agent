@@ -205,6 +205,9 @@ def dispatch_pre_resolved(
     headers: Optional[Dict[str, str]] = None,
     post=None,
     on_stage=None,
+    #: The person the ask is for, handed to the verifier. Engine O refuses a blank one with
+    #: `COMPATIBLE_VERBS_VIA_MESH` on, and a refused verify falls back to the full run.
+    on_behalf_of: str = "",
 ) -> DirectOutcome:
     """Execute a route the ask already established.
 
@@ -229,7 +232,9 @@ def dispatch_pre_resolved(
 
     # ── 1. VERIFY. The invalidation, and it runs BEFORE anything is dispatched ──────────
     _stage(STAGE_VERIFYING, "started")
-    verbs, err = find_compatible_verbs(subject, entitled_domains, ontology_url=ontology_url)
+    verbs, err = find_compatible_verbs(
+        subject, entitled_domains, ontology_url=ontology_url, on_behalf_of=on_behalf_of,
+    )
     if err is not None:
         # COULD NOT CHECK is not NOTHING IS COMPATIBLE. Falling back to the run means the
         # question still gets answered, by the path that has its own handling for this.

@@ -59,6 +59,7 @@ _DOCUMENTED: dict[str, str] = {
     "examples/docker-compose.yml": "drop the langgraph-support service and the LANGGRAPH_SUPPORT_SVC_URL override",
     "helm/invincible-agent/templates/configmap.yaml": "drop LANGGRAPH_SUPPORT_SVC_URL — and the residue control in test_chart_renders_on_bare_defaults in the SAME change",
     "helm/invincible-agent/templates/engines.yaml": "drop the engineB row",
+    "helm/invincible-agent/templates/networkpolicy-engines.yaml": "drop the engineB row in $engines; delete WITH the engineB row in engines.yaml, since an egress policy for a pod the chart no longer renders selects nothing",
     "helm/invincible-agent/values-sandbox.yaml": "only the note explaining why the override is gone; delete with the block",
     "helm/invincible-agent/values.yaml": "THE BLOCK ITSELF — the last thing to go, and only after everything above",
     "src/iagent/defs/agent_routers.py": "the removal list and its coupling note; delete last, with this test",
