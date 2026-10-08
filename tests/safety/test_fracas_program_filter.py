@@ -53,10 +53,34 @@ def test_CONTROL_the_same_request_by_a_member_of_both_gets_both(monkeypatch):
     assert out["failure_count"] == 2 and out["platforms"] == ["PLT-ALPHA", "PLT-BRAVO"]
 
 
-def test_an_unresolved_caller_is_a_deny_not_a_service_read(monkeypatch):
-    asked = pf.install(monkeypatch, caller=None, members=pf.ALL_PROGRAMS)
-    out = measures.what_failed_on_this_part(part_number=PART)
-    assert out["failures"] == [] and asked == [], "no identity -> no records, Topaz not asked"
+@pytest.mark.parametrize("caller", [None, "svc:supervisor"])
+def test_a_caller_with_no_person_is_refused_not_answered_empty(monkeypatch, caller):
+    """DECISION: BOTH the service identity and no-resolved-caller refuse (neither carries a
+    person). Topaz is not asked."""
+    asked = pf.install(monkeypatch, caller=caller, members=pf.ALL_PROGRAMS)
+    with pytest.raises(measures.NoPerson):
+        measures.what_failed_on_this_part(part_number=PART)
+    assert asked == []
+
+
+def test_no_person_is_a_422_at_the_route_and_the_person_control_differs_only_in_kind(monkeypatch):
+    """CONTROL differs in ONE thing: the caller kind (svc vs a person with the same grants)."""
+    from fastapi.testclient import TestClient
+
+    from agent_fleet.safety_agent import main
+
+    body = {"query": "", "params": {"part_number": PART}}
+    members = {**pf.ALL_PROGRAMS, "svc:supervisor": {"SANDBOX_PROGRAM_ALPHA", "SANDBOX_PROGRAM_BRAVO"}}
+    pf.install(monkeypatch, caller="svc:supervisor", members=members)
+    with TestClient(main.app) as c:
+        r = c.post("/measure/what_failed_on_this_part", json=body)
+    assert r.status_code == 422, r.text
+    assert r.json() == {"error": "no_person", "fn": "what_failed_on_this_part",
+                        "message": "this verb answers for a person; the caller carries none"}
+    pf.install(monkeypatch, caller=pf.ALICE, members=members)
+    with TestClient(main.app) as c:
+        r = c.post("/measure/what_failed_on_this_part", json=body)
+    assert r.status_code == 200 and r.json()["failure_count"] == 2, r.text
 
 
 def test_the_empty_answer_cannot_be_told_from_a_clean_part_by_its_counts(monkeypatch):

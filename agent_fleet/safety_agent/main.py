@@ -717,6 +717,17 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
     # bug inside that measure, by name, with the params that reached it.
     try:
         result = fn(**req.params)
+    except measures.NoPerson:
+        # THE SERVICE IDENTITY / NO CALLER (the supervisor path when a turn has no user token):
+        # program membership belongs to a person, so the answer is a refusal, never an empty
+        # list. Shape: the sibling 503 below (`error`, `message`, `fn`), 422 as the gateway's
+        # `no_requester` is.
+        return JSONResponse(
+            status_code=422,
+            content={"error": "no_person",
+                     "message": "this verb answers for a person; the caller carries none",
+                     "fn": fn_name},
+        )
     except measures.ProgramAuthorizationUnavailable as exc:
         # THE ONE 5xx THIS HANDLER DELIBERATELY RETURNS (ADR-0056 Q2): "could not verify program
         # membership" must never collapse into an empty answer, which on a safety history would

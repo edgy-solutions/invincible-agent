@@ -229,12 +229,16 @@ holds no hazards). Captured from the provider:
 
 ### ⚠ KNOWN RESIDUALS — do not score these red
 
-- **`assessDeferralRisk` may not be registered at all.** Contract D refused it 422,
-  `missing: mro:MaintenanceWorkOrder`, because `agent_fleet/ontology_service/iof_mro.ttl` is on
+- **`assessDeferralRisk` IS registered; what is open is its SUBJECT SCOPE.** The engine declares
+  the verb (`mesh:assessDeferralRisk`, `agent_fleet/safety_agent/main.py`), and Contract D refused it
+  422, `missing: mro:MaintenanceWorkOrder` -- a refusal about the verb's SUBJECT CLASS, which it
+  could only give to a verb it had already read. `agent_fleet/ontology_service/iof_mro.ttl` is on
   disk and **not in the prime manifest** (`iof_mro` appears zero times in
-  `setup/prime_databases.py`). Naming the IOF class in the engine was necessary and NOT
-  sufficient. *If Q3 answers "unknown verb" or routes elsewhere entirely, this is why, and it is
-  the eo lane's manifest row — not a safety defect.*
+  `setup/prime_databases.py`), so whether the class `iof-constr:MaintenanceWorkOrderRecord` is in
+  the scope the router resolves against is UNMEASURED. Naming the IOF class in the engine was
+  necessary and NOT sufficient. *If Q3 answers "unknown verb", `no_compatible_verbs` or routes
+  elsewhere, read that as a subject-scope miss to be measured (the eo lane's manifest row is the
+  first suspect) -- not as the verb being unregistered, and not a safety defect.*
 - **Work-order resolution is Engine E's, by ruling.** Engine S abstains on `WO-3001` deliberately.
   If a named work order does not resolve, that is the referent wiring again, not this engine
   claiming a class it was told not to claim.
@@ -330,7 +334,7 @@ as the same answer.
 | `instance not found` for HAZ-1003 | routing / slot-referent wiring | the provider is registered and not consulted |
 | blank card, HUD says `payload-only` | prime | the `rendersAs` binding never reached the graph |
 | named archetype, nothing drawn | cortex-ui | the binding resolved and the component did not render |
-| `unknown verb` for Q3 | eo lane | `iof_mro.ttl` absent from the prime manifest |
+| `unknown verb` / `no_compatible_verbs` for Q3 | eo lane (suspected, unmeasured) | the verb is registered; its subject class may be outside the router's scope (`iof_mro.ttl` absent from the prime manifest) |
 | refusal renders as prose | cortex-ui | a designed refusal lost its shape on the way to the screen |
 | a 5xx anywhere | **stop** | this engine returns `200` with `refused: true`; a 5xx is discarded unread by the supervisor and means something upstream of the engine |
 

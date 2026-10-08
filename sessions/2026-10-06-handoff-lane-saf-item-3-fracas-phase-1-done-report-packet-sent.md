@@ -136,3 +136,12 @@ the engine uses its own copy of the Topaz check, not `human_tasks`.
 STILL TO DO BY A HUMAN / LANE 1: seed `SANDBOX_PROGRAM_BRAVO` in Topaz (program sync, a live write);
 roll engine-safety and the configmap. NOT VERIFIED LIVE: that dispatch carries the user's token for
 this verb; if it carries svc:supervisor the verb answers empty for everyone.
+
+## Update 2026-10-07 -- no_person refusal (supersedes "answers empty for everyone")
+The svc / no-caller case no longer answers empty: `what_failed_on_this_part` raises
+`measures.NoPerson`, `main.measure` answers 422
+`{"error":"no_person","message":"this verb answers for a person; the caller carries none","fn":"what_failed_on_this_part"}`.
+BOTH `svc:*` and an unresolved caller refuse; a real person with no membership still gets the empty 200.
+No pre-existing `no_person` exists anywhere in the fleet (grep of every worktree); the body copies the
+sibling 503 in the same handler, status 422 as the gateway's `no_requester`. Walk sheet residual
+corrected: assessDeferralRisk IS registered; its SUBJECT SCOPE is the open question.

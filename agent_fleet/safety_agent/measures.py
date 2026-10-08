@@ -451,6 +451,14 @@ class ProgramAuthorizationUnavailable(Exception):
     failures"."""
 
 
+class NoPerson(Exception):
+    """The request carries no PERSON: the service identity (`svc:supervisor`, minted when a turn
+    has no redeemed user token) or no resolved caller. Program membership is a property of a
+    person (ADR-0047 5.1: a `svc:` principal is never a member), so there is nothing to filter FOR.
+    main.measure turns this into a 422 `no_person`, NEVER an empty answer: an empty answer to a
+    caller who cannot be asked reads as "this part has no failures"."""
+
+
 def platform_programs() -> Dict[str, str]:
     """platform -> program key, merged from every `platform_programs.yaml` in
     PLATFORM_PROGRAM_OVERLAY_DIRS (os.pathsep-separated). Unset or unreadable means NO mapping,
@@ -495,11 +503,11 @@ def _can_view_program(program: str, caller_id: str) -> bool:
 
 def _visible_records(records: List[Any]) -> List[Any]:
     """Drop every record whose platform the caller may not view, BEFORE any grouping or counting
-    (gate-then-aggregate, the posture of neo4j_expert/service.py). Deny-by-default: no caller, an
-    unmapped platform, or a non-member drops the record. A Topaz failure raises."""
+    (gate-then-aggregate, the posture of neo4j_expert/service.py). Deny-by-default: no person (service identity or
+    no caller) REFUSES via NoPerson; an unmapped platform, or a non-member drops the record. A Topaz failure raises."""
     caller = _caller_authz_id()
-    if not caller:
-        return []
+    if not caller or caller.startswith("svc:"):
+        raise NoPerson(caller or "no resolved caller")
     mapping = platform_programs()
     verdicts: Dict[str, bool] = {}
     kept = []
