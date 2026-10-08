@@ -54,6 +54,35 @@ ORDER BY hops ASC
 RETURN scope.uri AS uri, scope.label AS label, hops
 """
 
+#: `verbs_for`'s one statement: LEG 1 (coverage) of `main.py`'s `_FIND_COMPAT_VERBS_CYPHER`, the
+#: route's own rule, so the route can move onto this method without changing an answer. The
+#: conformance test holds the two equal with comments stripped; `main.py` keeps the commentary.
+#: Returns the row SDK 0.9.8 declares for `verbs_for`, all fourteen fields, `verb_local` not
+#: `verb_type`.
+VERBS_FOR_CYPHER = """
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(scope:OntologyClass)
+WITH start, collect(DISTINCT scope) AS scopes
+UNWIND scopes AS scope
+MATCH (scope)-[r]->(o:OntologyClass)
+WHERE r.iri IS NOT NULL
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    scope.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
+    r.required_args               AS required_args,
+    coalesce(r.slots, '[]')       AS slots,
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops,
+    'subject'                     AS compatibility
+"""
+
 OPERABLE_SUBJECTS_CYPHER = """
 MATCH (s:OntologyClass)-[r]->()
 WHERE r.iri IS NOT NULL
@@ -209,30 +238,24 @@ class Neo4jGraph:
     def verbs_for(self, initiator: Initiator, subject: str, *, max_hops: int) -> MeshResult:
         """Predicates that can operate on `subject`, walking the ancestor chain.
 
-        Built on `ancestors` rather than repeating its walk: the compatibility rule is *a verb
-        registered against any class in the chain applies to the subject*, so the chain is the
-        input and a second copy of the traversal would be a second thing to keep correct.
+        **THE ROUTE'S ROW, AND THE ROUTE'S WALK.** SDK 0.9.8 widened this method's row to the
+        fourteen fields `/find_compatible_verbs` returns. This used to read `ancestors` first and
+        then the edges, and answered four fields with `verb_type`; it now runs `VERBS_FOR_CYPHER`,
+        which is that route's LEG 1 statement, so `hops` is the same shortest-path distance and the
+        route can read LEG 1 here without changing an answer. One statement, so the walk failing
+        and the edge read failing are one `failed`, never an empty list: the silent narrowing the
+        `ancestors` docstring refuses is still refused.
+
+        **AS THE STORE HOLDS IT.** `required_args` comes back as the relationship carries it, which
+        for some registrars is a comma-joined string; the route folds that into a list, as it
+        always has. `domains` and `slots` are coalesced in the statement.
         """
         self._require_person(initiator, "verbs_for")
-        chain = self.ancestors(initiator, subject, max_hops=max_hops)
-        if chain.outcome in ("failed", "unreachable"):
-            # THE CHAIN'S FAILURE IS THIS OPERATION'S FAILURE. Continuing with an empty chain is
-            # exactly the silent narrowing the `ancestors` docstring refuses.
-            return MeshResult.failed(f"verbs_for: ancestor chain unavailable — {chain.detail}")
-        scopes = [r.get("uri") for r in chain.rows if r.get("uri")]
-        if not scopes:
-            return MeshResult.empty()
-        return self._read(
-            "verbs_for",
-            """
-            UNWIND $scopes AS scope_uri
-            MATCH (scope:OntologyClass {uri: scope_uri})-[r]->(o:OntologyClass)
-            WHERE r.iri IS NOT NULL
-            RETURN DISTINCT r.iri AS verb_iri, type(r) AS verb_type,
-                            scope.uri AS input_uri, o.uri AS output_uri
-            """,
-            scopes=scopes,
-        )
+        lo, hi = PATH_HOP_BOUNDS
+        if not isinstance(max_hops, int) or isinstance(max_hops, bool) or not lo <= max_hops <= hi:
+            return MeshResult.failed(f"verbs_for: max_hops must be an int in [{lo}, {hi}]")
+        cypher = VERBS_FOR_CYPHER.replace("$MAXHOPS$", str(max_hops))
+        return self._read("verbs_for", cypher, subject_uri=subject)
 
     def classes_with_a_verb(
         self, initiator: Initiator, domains: Sequence[str], *, include_referents: bool = False
