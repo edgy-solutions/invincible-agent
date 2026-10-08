@@ -203,4 +203,83 @@ def test_sync_never_prunes_owner_or_user():
     assert owner_rel in client.relations, "must not prune owner relations (DataHub sync owns them)"
     assert DirObject("user", "dave@company.com") in client.objects
     assert DirObject("user", "dave@company.com") not in client.deleted_objects
-    assert MANAGED_GRANT_RELATIONS == [("dataset", "reader")]
+    assert MANAGED_GRANT_RELATIONS == [("dataset", "reader"), ("document", "reader")]
+
+
+# ---------------------------------------------------------------------------
+# document grants (`kind: document`)
+# ---------------------------------------------------------------------------
+_DOC = "TM-1H-130H-2-12-01"
+
+
+def _doc_grant(subject="alice@example.com", asset=_DOC):
+    return GrantRecord(subject, asset, "cnogradi", "r", kind="document")
+
+
+def test_absent_kind_stays_dataset():
+    grants, errors = load_grants({"grants": [
+        {"subject": "alice@example.com", "asset": _GOLD, "granted_by": "cnogradi"}]})
+    assert errors == [] and grants[0].kind == "dataset"
+    rel, = derive_grant_desired(grants).relations
+    assert rel.object_type == "dataset"
+
+
+def test_document_kind_derives_a_document_reader_relation():
+    grants, errors = load_grants({"grants": [
+        {"subject": "alice@example.com", "kind": "document", "asset": _DOC,
+         "granted_by": "cnogradi"}]})
+    assert errors == [] and grants[0].kind == "document"
+    rel, = derive_grant_desired(grants).relations
+    assert rel == DirRelation("document", _DOC, "reader", "user", "alice@example.com")
+
+
+def test_a_bad_kind_is_a_load_error():
+    grants, errors = load_grants({"grants": [
+        {"subject": "alice@example.com", "kind": "table", "asset": _DOC,
+         "granted_by": "cnogradi"}]})
+    assert grants == [] and len(errors) == 1 and "'table'" in errors[0]
+
+
+def test_a_document_asset_that_is_a_datahub_urn_is_a_load_error():
+    grants, errors = load_grants({"grants": [
+        {"subject": "alice@example.com", "kind": "document", "asset": _GOLD,
+         "granted_by": "cnogradi"}]})
+    assert grants == [] and len(errors) == 1 and "not a doc_id" not in errors[0]
+    assert "is a doc_id, not a DataHub URN" in errors[0]
+
+
+def test_a_document_is_not_dangling_and_is_created_when_absent():
+    client = _FakeTopaz()  # no document object
+    g = _doc_grant()
+    assert find_dangling(client, [g]) == []
+    sync_grants(client, [g])
+    assert DirObject("document", _DOC) in client.objects
+    assert DirRelation("document", _DOC, "reader", "user", "alice@example.com") in client.relations
+    assert readback_grants(client, [g]) == (1, 0)
+
+
+def test_a_dataset_grant_is_still_dangling_when_absent():
+    assert len(find_dangling(_FakeTopaz(), [GrantRecord("a@x", _GOLD, "c")])) == 1
+
+
+def test_document_prune_scope_revokes_what_git_dropped_and_keeps_what_it_holds():
+    client = _FakeTopaz()
+    stale = DirRelation("document", "gone-doc", "reader", "user", "carol@example.com")
+    client.relations.add(stale)
+    sync_grants(client, [_doc_grant()])
+    assert stale not in client.relations
+    kept = DirRelation("document", _DOC, "reader", "user", "alice@example.com")
+    assert kept in client.relations
+    sync_grants(client, [_doc_grant()])          # idempotent: a held grant survives a re-run
+    assert kept in client.relations
+
+
+def test_the_shipped_yaml_loads_clean_with_three_document_grants():
+    import yaml
+    raw = yaml.safe_load((Path(__file__).resolve().parent.parent / "policy"
+                          / "asset_grants.yaml").read_text(encoding="utf-8"))
+    grants, errors = load_grants(raw)
+    assert errors == []
+    assert sorted(g.asset for g in grants if g.kind == "document") == [
+        "TM-1H-130H-2-12-01", "mil#wpn-howtouse", "mil#wpn-m0004-1-1680-TNG"]
+    assert sum(g.kind == "dataset" for g in grants) == 3
