@@ -387,3 +387,8 @@ FAILURE_RECORDS: tuple[FailureRecord, ...] = (
 CRITICAL_PART_NUMBERS = frozenset(c.part_number for c in CRITICAL_ITEMS)
 
 BY_HAZARD_ID = {h.hazard_id: h for h in HAZARDS}
+
+#: Every platform (FRACAS "program") this engine knows, derived from the two fixtures that carry
+#: one. A platform no record and no hazard names is UNKNOWN to the failure trend verb, the same
+#: way an unlisted part is unknown to `what_failed_on_this_part`.
+PLATFORM_IDS = tuple(sorted({h.platform for h in HAZARDS} | {r.platform for r in FAILURE_RECORDS}))

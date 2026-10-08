@@ -57,7 +57,8 @@ def _worktrees(repo: Path) -> list:
     (e.g. `lane/74-sdk-revisions`) or None for a detached/bare entry. THE THIRD STATE block needs
     this twice: to know which directories to check for uncommitted packets, and to know which
     `origin/lane/*` branches have NO worktree at all -- the state that can never be enumerated
-    from here, per docs/measurements/2026-09-28-...-the-third-state-is-not-where-the-dispatch-put-it.md."""
+    from here, per
+    docs/measurements/2026-09-28-the-inbox-census-and-the-third-state-is-not-where-the-dispatch-put-it.md."""
     raw = _git(repo, "worktree", "list", "--porcelain")
     out: list = []
     path, branch = None, None
@@ -248,11 +249,15 @@ def report_lanes(repo: Path) -> None:
               f"one worktree.")
 
     worktree_branches = {b for _, b in worktrees if b}
+    # Named by its BRANCH (addressing ruling, 2026-10-07), never by a guessed `ia-<suffix>`
+    # worktree: the guess collided with a REAL worktree -- `ia-74` exists and holds
+    # lane/74-engine-w-mesh, while lane/74 itself is checked out nowhere -- so the line read as
+    # "ia-74 does not exist" beside a NOT COMMITTED row counting ia-74's 26 packets.
     for b in sorted(branches):
-        suffix = b.rsplit("/", 1)[-1]
-        if f"lane/{suffix}" not in worktree_branches:
-            print(f"        UNENUMERABLE  ia-{suffix}  no local worktree — its uncommitted "
-                  f"packets cannot be seen from here")
+        local = b[len("origin/"):]
+        if local not in worktree_branches:
+            print(f"        UNENUMERABLE  {local}  checked out in no worktree on this box — "
+                  f"its uncommitted packets cannot be seen from here")
 
     print("        This is STATE, printed every run, and does NOT change the exit code.")
 

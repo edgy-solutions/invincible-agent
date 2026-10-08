@@ -22,7 +22,7 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
         BY_HAZARD_ID,
         CRITICAL_ITEMS,
         CRITICAL_PART_NUMBERS,
-        FAILURE_RECORDS,
+        PLATFORM_IDS,
         HAZARDS,
         WORK_ORDERS,
         Hazard,
@@ -30,13 +30,14 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
         Scope,
         Severity,
     )
+    import failure_source
     from matrix import resolve_risk_level
 except ImportError:
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
         BY_HAZARD_ID,
         CRITICAL_ITEMS,
         CRITICAL_PART_NUMBERS,
-        FAILURE_RECORDS,
+        PLATFORM_IDS,
         HAZARDS,
         WORK_ORDERS,
         Hazard,
@@ -44,6 +45,7 @@ except ImportError:
         Scope,
         Severity,
     )
+    from agent_fleet.safety_agent import failure_source  # type: ignore[no-redef]
     from agent_fleet.safety_agent.matrix import resolve_risk_level  # type: ignore[no-redef]
 
 
@@ -451,6 +453,14 @@ class ProgramAuthorizationUnavailable(Exception):
     failures"."""
 
 
+class NoPerson(Exception):
+    """The request carries no PERSON: the service identity (`svc:supervisor`, minted when a turn
+    has no redeemed user token) or no resolved caller. Program membership is a property of a
+    person (ADR-0047 5.1: a `svc:` principal is never a member), so there is nothing to filter FOR.
+    main.measure turns this into a 422 `no_person`, NEVER an empty answer: an empty answer to a
+    caller who cannot be asked reads as "this part has no failures"."""
+
+
 def platform_programs() -> Dict[str, str]:
     """platform -> program key, merged from every `platform_programs.yaml` in
     PLATFORM_PROGRAM_OVERLAY_DIRS (os.pathsep-separated). Unset or unreadable means NO mapping,
@@ -495,11 +505,11 @@ def _can_view_program(program: str, caller_id: str) -> bool:
 
 def _visible_records(records: List[Any]) -> List[Any]:
     """Drop every record whose platform the caller may not view, BEFORE any grouping or counting
-    (gate-then-aggregate, the posture of neo4j_expert/service.py). Deny-by-default: no caller, an
-    unmapped platform, or a non-member drops the record. A Topaz failure raises."""
+    (gate-then-aggregate, the posture of neo4j_expert/service.py). Deny-by-default: no person (service identity or
+    no caller) REFUSES via NoPerson; an unmapped platform, or a non-member drops the record. A Topaz failure raises."""
     caller = _caller_authz_id()
-    if not caller:
-        return []
+    if not caller or caller.startswith("svc:"):
+        raise NoPerson(caller or "no resolved caller")
     mapping = platform_programs()
     verdicts: Dict[str, bool] = {}
     kept = []
@@ -548,13 +558,15 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     source itself recorded.
 
     TWO OPEN QUESTIONS THIS VERB DOES NOT ANSWER, NAMED RATHER THAN SILENTLY DECIDED — see
-    ADR-0056: (1) today's `SystemOfRecordConnector.lookup` returns at most one record per value,
-    a shape this one-to-many query does not fit, so Phase 1 reads the in-engine fixture only and
-    never calls `iagent_mesh.systems_of_record`'s real connector machinery; (2) this verb returns
+    ADR-0056: (1) [ANSWERED, SDK 0.9.9] the records now come through
+    `failure_source.gather`, which calls each connector's `SystemOfRecordQuery.query` (the
+    many-record sibling of `lookup`) and cites `<connector>:<record_id>`; the engine fixture is
+    just the sandbox's connectors; (2) this verb returns
     every record the CALLER MAY VIEW (answered and accepted: `_visible_records`, a per-record
-    program-membership gate applied before grouping and counting). A caller who may view none
+    program-membership gate applied before grouping and counting). A person who may view none
     gets the same well-formed "no failure recorded" answer a clean part gets; an unmapped
-    platform is dropped; Topaz down raises `ProgramAuthorizationUnavailable` (a 503).
+    platform is dropped; Topaz down raises `ProgramAuthorizationUnavailable` (a 503); no person
+    (service identity or no caller) raises `NoPerson` (a 422).
     """
     if not part_number:
         return {"refused": True, "reason": "which part?"}
@@ -564,7 +576,9 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
         # assess_deferral_risk's identical distinction for an unknown work order.
         return {"refused": True, "reason": f"unknown part '{part_number}'"}
 
-    records = _visible_records([r for r in FAILURE_RECORDS if r.part_number == part_number])
+    records = _visible_records(
+        sorted(failure_source.gather(failure_source.BY_PART, part_number),
+               key=lambda r: r.record_id))
     platforms = sorted({r.platform for r in records})
     systems = sorted({r.system_of_record for r in records})
 
@@ -599,4 +613,85 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     return out
 
 
+def _month(observed_on: str) -> Optional[str]:
+    """Calendar month `YYYY-MM` of an ISO date string, or None when it is not one."""
+    try:
+        d = _date.fromisoformat(observed_on)
+    except (TypeError, ValueError):
+        return None
+    return f"{d.year:04d}-{d.month:02d}"
 
+
+def _months_between(first: str, last: str) -> List[str]:
+    y, m = int(first[:4]), int(first[5:])
+    ly, lm = int(last[:4]), int(last[5:])
+    out = []
+    while (y, m) <= (ly, lm):
+        out.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def failure_trend_for_this_platform_by_month(state: Any = None, *, platform_id: str) -> Dict[str, Any]:
+    """Failures on one platform, counted by month (ADR-0056 Phase 1, second verb). READ-ONLY.
+
+    DECISIONS, STATED:
+      * BUCKET FIELD: `observed_on`, the only date a failure record carries (the date the failure
+        was observed). Not a filing date: the source does not give one.
+      * TIMEZONE: NONE. `observed_on` is a calendar DATE, not an instant, so the month is read off
+        the date as written; converting a date through a zone would invent a shift.
+      * EMPTY MONTHS APPEAR, zero-filled, across the contiguous range from the first to the last
+        month the CALLER MAY SEE. A gap is a fact (none that month), and a series with holes
+        cannot be charted honestly. The range comes from the VISIBLE records only, so it cannot
+        leak that a hidden record exists.
+      * A record whose date does not parse is NOT dropped and NOT bucketed: it is counted under
+        `undated` with its citation.
+
+    THE PROGRAM FILTER IS THE FIRST VERB'S, per record, BEFORE grouping (`_visible_records`), so a
+    non-member person gets the same empty well-formed answer a platform with no failures gets, an
+    unmapped platform is denied, no person raises `NoPerson` (422), Topaz down raises
+    `ProgramAuthorizationUnavailable` (503). Records come from the same `SystemOfRecordQuery`
+    connectors as `what_failed_on_this_part`, cited `<connector>:<record_id>`.
+
+    A platform nobody knows refuses (unknown platform), distinct from a known platform that
+    shows nothing.
+    """
+    if not platform_id:
+        return {"refused": True, "reason": "which platform?"}
+    if platform_id not in PLATFORM_IDS:
+        return {"refused": True, "reason": f"unknown platform '{platform_id}'"}
+
+    records = _visible_records(
+        sorted(failure_source.gather(failure_source.BY_PLATFORM, platform_id),
+               key=lambda r: r.record_id))
+    by_month: Dict[str, List[Any]] = {}
+    undated: List[Any] = []
+    for r in records:
+        mo = _month(r.observed_on)
+        (by_month.setdefault(mo, []) if mo else undated).append(r)
+    months = []
+    if by_month:
+        for mo in _months_between(min(by_month), max(by_month)):
+            rs = by_month.get(mo, [])
+            months.append({
+                "month": mo,
+                "failure_count": len(rs),
+                "failure_record_ids": [r.record_id for r in rs],
+                "citations": [r.citation for r in rs],
+            })
+    systems = sorted({r.system_of_record for r in records})
+    return {
+        "refused": False,
+        "platform_id": platform_id,
+        "bucket": "observed_on, calendar month (YYYY-MM), no timezone; empty months included",
+        "failure_count": len(records),
+        "months": months,
+        "undated": {"count": len(undated), "citations": [r.citation for r in undated]},
+        "systems_of_record_cited": systems,
+        "note": (
+            f"No failure is recorded for {platform_id} across the systems of record this engine "
+            "reads; the check ran and found none."
+            if not records
+            else f"{len(records)} failure(s) on {platform_id} over {len(months)} month(s)."
+        ),
+    }

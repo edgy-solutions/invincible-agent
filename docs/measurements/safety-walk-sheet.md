@@ -1,8 +1,8 @@
 # Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051, ADR-0056)
 
-**Four questions, three different answer SHAPES — Q4 reuses Q3's.** One draws a card, one
-creates a TASK and draws nothing, and two REFUSE by asking for a slot. A walker who expects four
-cards will score three defects that are not there.
+**Five questions, three different answer SHAPES — Q4 and Q5 reuse Q3's.** One draws a card, one
+creates a TASK and draws nothing, and three REFUSE by asking for a slot. A walker who expects five
+cards will score four defects that are not there.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
@@ -10,6 +10,7 @@ cards will score three defects that are not there.
 | 2 | what hazards are unattended | `find_orphaned_hazards` | a `CONTRIBUTION_RANKING` card, 3 rows |
 | 3 | risk of deferring this work order | `assess_deferral_risk` | **a refusal** asking for `work_order_id` |
 | 4 | what failed on this part | `what_failed_on_this_part` | **a refusal** asking for `part_number` |
+| 5 | failure trend for this platform by month | `failure_trend_for_this_platform_by_month` | **a refusal** asking for `platform_id` |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -229,12 +230,17 @@ holds no hazards). Captured from the provider:
 
 ### ⚠ KNOWN RESIDUALS — do not score these red
 
-- **`assessDeferralRisk` may not be registered at all.** Contract D refused it 422,
-  `missing: mro:MaintenanceWorkOrder`, because `agent_fleet/ontology_service/iof_mro.ttl` is on
-  disk and **not in the prime manifest** (`iof_mro` appears zero times in
-  `setup/prime_databases.py`). Naming the IOF class in the engine was necessary and NOT
-  sufficient. *If Q3 answers "unknown verb" or routes elsewhere entirely, this is why, and it is
-  the eo lane's manifest row — not a safety defect.*
+- **`assessDeferralRisk` IS registered; what fails is its SUBJECT SCOPE.** The engine declares the
+  verb (`mesh:assessDeferralRisk`, `agent_fleet/safety_agent/main.py`). The architect ruled on
+  2026-10-07 (recorded by lane/gov, read here from its packet, NOT re-measured by lane/saf) that
+  the router's subject scan excludes the subject's own domain: the scan spans `SUSTAINMENT` and
+  `MESH`, and `MaintenanceWorkOrderRecord` is a `MAINTENANCE` class, so the verb is visible and
+  its subject is not. That supersedes this sheet's earlier "`iof_mro` is not in the prime manifest"
+  explanation (`iof_mro.ttl` is still not in the prime manifest -- `iof_mro` appears zero times in
+  `setup/prime_databases.py` -- but lane/saf's
+  hypothesis that this was the cause was not borne out). *If Q3 answers `no_compatible_verbs`, read
+  it as the subject-scope exclusion and route it to Lane 1 -- not as the verb being unregistered,
+  and not a safety defect.*
 - **Work-order resolution is Engine E's, by ruling.** Engine S abstains on `WO-3001` deliberately.
   If a named work order does not resolve, that is the referent wiring again, not this engine
   claiming a class it was told not to claim.
@@ -323,6 +329,63 @@ as the same answer.
 
 ---
 
+## Q5 — Failure trend for this platform by month  ⚠ **expect a REFUSAL, same shape as Q3 and Q4**
+
+> **"failure trend for this platform by month"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:failureTrendForThisPlatformByMonth` → `engine-safety:/measure/failure_trend_for_this_platform_by_month`
+**Expected disposition:** `slot_required` — **this is a PASS**
+
+ADR-0056 Phase 1's second verb. THE CENSUS CAPTURES ONLY THE REFUSAL, by the same rule as Q4: the
+populated answer is a flat JSON object (`months`, `undated`, `systems_of_record_cited`), and no
+`rendersAs` binding or `ROW_KEY` archetype exists for `safety:FailureTrend` (it would want a
+time-series archetype, and none is wired). Capturing a `drawn` disposition for an archetype that
+is not wired would assert cortex-ui behaviour this engine has no part in. **When a presentation
+increment wires a card for this verb, add the populated-path row here and to the census then.**
+
+### The captured refusal
+
+```json
+{
+  "refused": true,
+  "reason": "missing required slot(s)",
+  "missing": ["platform_id"],
+  "slots": [{"name": "platform_id", "kind": "spoken-mandatory", "type": "str", "required": true,
+             "referent": "http://internal/sustainment/safety#Platform"}]
+}
+```
+
+### Checks that distinguish
+
+- The refusal **names `platform_id`** and says it is spoken-mandatory.
+- The referent is **`safety:Platform`**, a class minted for this verb (ADR-0056 amendment); its
+  members are `PLT-ALPHA`, `PLT-BRAVO`, `PLT-CHARLIE`, derived from the fixtures. A bare string with
+  no referent means `slots.py`'s `_REFERENT_KIND` lost its `platform_id` entry.
+- **The surface ASKS the walker for a platform.** Prose or "No content available" is the same
+  defect named in Q3.
+
+### If the slot IS supplied — the follow-on, deliberately NOT a census row
+
+The caller must be a PERSON. A `svc:` principal or no caller is refused **HTTP 422**
+`{"error": "no_person", ...}`; Topaz down is **503** `authorization_unavailable`; a person with no
+membership of the platform's program gets the empty series, not a refusal. For a member, post
+`{"platform_id": "PLT-ALPHA"}`:
+
+```json
+{"refused": false, "platform_id": "PLT-ALPHA", "failure_count": 1,
+ "bucket": "observed_on, calendar month (YYYY-MM), no timezone; empty months included",
+ "months": [{"month": "2026-03", "failure_count": 1, "failure_record_ids": ["FR-6001"],
+             "citations": ["sor-events-a:EVT-55101"]}],
+ "undated": {"count": 0, "citations": []},
+ "systems_of_record_cited": ["sor-events-a"]}
+```
+
+Months are counted on `observed_on` as written (no timezone); empty months between the first and
+last visible month appear with `failure_count: 0`.
+
+---
+
 ## What each failure shape MEANS — so a red is attributable
 
 | symptom | owner | why |
@@ -330,7 +393,7 @@ as the same answer.
 | `instance not found` for HAZ-1003 | routing / slot-referent wiring | the provider is registered and not consulted |
 | blank card, HUD says `payload-only` | prime | the `rendersAs` binding never reached the graph |
 | named archetype, nothing drawn | cortex-ui | the binding resolved and the component did not render |
-| `unknown verb` for Q3 | eo lane | `iof_mro.ttl` absent from the prime manifest |
+| `no_compatible_verbs` for Q3 | Lane 1 (routing scope; architect ruling 2026-10-07) | the verb is registered; the subject scan excludes the subject's MAINTENANCE domain |
 | refusal renders as prose | cortex-ui | a designed refusal lost its shape on the way to the screen |
 | a 5xx anywhere | **stop** | this engine returns `200` with `refused: true`; a 5xx is discarded unread by the supervisor and means something upstream of the engine |
 

@@ -41,6 +41,7 @@ from agent_fleet.ontology_service.mesh_graph import (  # noqa: E402
     PATH_HOP_BOUNDS,
     PATH_MAX_HOPS,
     VALID_COST_CLASSES,
+    VERBS_FOR_CYPHER,
     Neo4jGraph,
     build_path_cypher,
 )
@@ -236,12 +237,69 @@ def test_rows_come_back_as_plain_dicts():
 
 
 def test_verbs_for_FAILS_when_the_ancestor_chain_fails():
-    """`ancestors` REFUSES RATHER THAN DEGRADING, and `verbs_for` is built on it — so a chain it
-    could not walk must not become an empty verb list. That silent narrowing is the pre-ADR-0018
-    behaviour the whole chain exists to prevent."""
+    """A chain it could not walk must not become an empty verb list. That silent narrowing is the
+    pre-ADR-0018 behaviour the whole chain exists to prevent. `verbs_for` walks the chain and reads
+    the edges in one statement now, so the walk failing is that statement failing."""
     r = _graph(raises=RuntimeError("down")).verbs_for(PERSON, "idp:Table", max_hops=5)
     assert r.outcome == "failed", r
-    assert "ancestor chain unavailable" in r.detail
+    assert "verbs_for" in r.detail and "down" in r.detail
+
+
+# ── verbs_for: the route's row and the route's walk (SDK 0.9.8) ────────────────────────────
+
+
+def _sdk_verbs_for_fields() -> list[str]:
+    """The row SDK 0.9.8 declares for `verbs_for`, read from the Protocol's own table rather than
+    restated here: every `| ``name`` |` row of its docstring."""
+    return re.findall(r"^\s*\|\s*``([a-z_]+)``\s*\|", MeshGraph.verbs_for.__doc__ or "", re.M)
+
+
+def _returned_columns(cypher: str) -> list[str]:
+    return re.findall(r"\bAS ([a-z_]+)\s*(?:,|$)", cypher[cypher.index("RETURN DISTINCT"):], re.M)
+
+
+def _strip_comments(cypher: str) -> str:
+    return "\n".join(line for line in cypher.splitlines() if not line.strip().startswith("//"))
+
+
+def test_verbs_for_RETURNS_THE_ROW_THE_SDK_DECLARES():
+    declared = _sdk_verbs_for_fields()
+    assert len(declared) == 14 and "verb_local" in declared, (
+        f"the SDK's verbs_for table reads {declared!r}; this module pins 0.9.8's fourteen fields"
+    )
+    assert sorted(_returned_columns(VERBS_FOR_CYPHER)) == sorted(declared)
+    assert "verb_type" not in _returned_columns(VERBS_FOR_CYPHER), "0.9.8 renamed it; one fact, one name"
+
+
+def test_verbs_for_IS_THE_ROUTES_LEG_1():
+    """`/find_compatible_verbs` reads LEG 1 through `verbs_for` with `COMPATIBLE_VERBS_VIA_MESH`
+    on, and through its own `_FIND_COMPAT_VERBS_CYPHER` with it off. The two give one answer only
+    while they are one statement: comments aside, `verbs_for`'s must equal the route's first leg.
+    When the route's flag-off path is retired, delete this arm, not the assertion."""
+    src = _MAIN.read_text(encoding="utf-8", errors="replace")
+    route = _const(src, "_FIND_COMPAT_VERBS_CYPHER")
+    assert route is not None, "_FIND_COMPAT_VERBS_CYPHER is gone from main.py; re-point this arm"
+    legs = route.split("\nUNION ALL\n")
+    assert len(legs) == 3, f"the route's statement has {len(legs)} legs; this arm expects three"
+    assert "'subject'" in legs[0] and "AS compatibility" in legs[0]
+    assert _norm(_strip_comments(VERBS_FOR_CYPHER)) == _norm(_strip_comments(legs[0])), (
+        f"verbs_for has drifted from the route's LEG 1.\n  main.py: "
+        f"{_norm(_strip_comments(legs[0]))[:200]}\n  here   : {_norm(VERBS_FOR_CYPHER)[:200]}"
+    )
+
+
+def test_verbs_for_BOUNDS_THE_HOPS_BEFORE_IT_TEMPLATES_THEM():
+    lo, hi = PATH_HOP_BOUNDS
+    for bad in (0, hi + 1, -1, "5", True):
+        g = _graph(rows=[{"verb_iri": "x"}])
+        r = g.verbs_for(PERSON, "idp:Table", max_hops=bad)  # type: ignore[arg-type]
+        assert r.outcome == "failed" and "max_hops" in r.detail, (bad, r)
+        assert g._driver.session_obj.seen == [], f"a statement was sent for max_hops={bad!r}"
+    g = _graph(rows=[{"verb_iri": "x"}])
+    assert g.verbs_for(PERSON, "idp:Table", max_hops=hi).outcome == "answered"
+    ((cypher, params),) = g._driver.session_obj.seen
+    assert params == {"subject_uri": "idp:Table"}
+    assert f"*0..{hi}]" in cypher and "$MAXHOPS$" not in cypher
 
 
 def test_providers_for_HOLDS_NO_CACHE():

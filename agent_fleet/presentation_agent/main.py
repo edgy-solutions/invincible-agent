@@ -603,14 +603,25 @@ _DISPOSITIONS: frozenset = frozenset(
 #: be added must be a decision about THIS line rather than a value that arrives and is drawn.
 _HOLE_DISPOSITIONS: frozenset = frozenset({"unentitled"})
 
+#: ELICITATION's two levers: the wire `disposition` and the `status` that must agree with it.
+#: Mirrors `iagent_pure.slot_disposition.STATUS_BY_DISPOSITION` (this engine does not import
+#: iagent_pure); tests/test_elicitation_carries_both_levers.py asserts the two are equal.
+_ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
+    "ask": "slot_elicitation", "abstain": "slot_abstain",
+}
+
 _FLAT_ARCHETYPES: Dict[str, tuple] = {
     # Fields read from cortex-ui/src/components/elicitation/Elicitation.contract.ts, not
-    # invented here. `slot` is the only required one: which declaration is missing.
+    # invented here. `slot` (which declaration is missing) and `disposition` are required.
+    # `disposition` is required because a card that lost the abstain/ask lever is drawn as a
+    # question, even when it was an abstain. `status` travels so cortex's second lever is not
+    # stripped by this row (cortex packet 2026-10-08, "elicitation status is dropped by its
+    # own row").
     "ELICITATION": (
-        ("slot",),
+        ("slot", "disposition"),
         ("options", "option_source", "free_text_reason", "spoken", "found", "sub_query",
-         "accepted_slots", "message", "truncated_from", "total_count", "disposition",
-         "verb_iri", "reason"),
+         "accepted_slots", "message", "truncated_from", "total_count",
+         "verb_iri", "reason", "status"),
     ),
     # NAMED_HOLE, 2026-09-06. Fields read from
     # cortex-ui/src/components/registry/NamedHole.contract.ts, not invented here.
@@ -707,6 +718,25 @@ def _project_flat_archetype(
                 "render_ui: disposition %r is understood and does NOT draw a hole; another "
                 "surface owns it. This is a routing decision, not a defect — nothing to fix.",
                 disposition,
+            )
+            return None
+
+    if archetype == "ELICITATION":
+        disposition = str(resp.get("disposition") or "")
+        expected = _ELICITATION_STATUS_BY_DISPOSITION.get(disposition)
+        if expected is None:
+            logger.warning(
+                "render_ui: ELICITATION carries disposition %r, which is not in %s; refusing. "
+                "Unrecognised; fix the producer.",
+                disposition, sorted(_ELICITATION_STATUS_BY_DISPOSITION),
+            )
+            return None
+        status = resp.get("status")
+        if status not in (None, "") and status != expected:
+            logger.warning(
+                "render_ui: ELICITATION status %r disagrees with disposition %r (expected "
+                "%r); refusing. The two levers disagree; fix the producer.",
+                status, disposition, expected,
             )
             return None
 
@@ -1378,6 +1408,8 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": slot,
+        "disposition": "ask",
+        "status": "slot_elicitation",
         "options": _as_options(opts),
         **_reroute_fields(raw_data),
         # NAMES THE MECHANISM HONESTLY. Not `enumeration` — no enumerate provider was asked;
@@ -1404,6 +1436,11 @@ def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": "verb",
+        # A ROUTING abstain (no verb classified, with candidates) is drawn as an ASK by the
+        # 2026-09-17 ruling, so its wire disposition is `ask`. That is not
+        # `slot_disposition.ABSTAIN` (a slot abstain: nothing was run, nothing to choose).
+        "disposition": "ask",
+        "status": "slot_elicitation",
         "options": _as_options(cands),
         **_reroute_fields(raw_data),
         "option_source": "candidates",

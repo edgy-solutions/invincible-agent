@@ -89,6 +89,16 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "_classify_route", "<dict>", (FIELD,)),
     ("12 · into the Initiator the second migrated route mints",
      ENGINE_O, "_predicate_pool_via_mesh_sync", "Initiator", (FIELD,)),
+    # Hop 13: the THIRD migrated route, /find_compatible_verbs behind COMPATIBLE_VERBS_VIA_MESH.
+    # It also leaves from ``_classify_route`` (three call sites, all matched here). Past this hop
+    # the identity travels as ``on_behalf_of``, which this file's matcher does not read: those
+    # hops -- the supervisor's wrapper, ``verb_lookup``'s payload, the BFF's direct path -- are
+    # sealed by name in tests/routing/test_find_compatible_verbs_via_mesh_graph.py
+    # (``_THREADED``). The chain's END is sealed here, by the mint arm below. MEASURED: this hop's
+    # arm passes while ANY of the three sites forwards the value, so one site dropping the keyword
+    # is quiet here and red there (``test_THE_PERSON_IS_HANDED_DOWN_AT_EVERY_CALL_IN_src``).
+    ("13 · into the compatible-verbs lookup, the third migrated route",
+     SUPERVISOR, "_classify_route", "_find_compatible_verbs", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
@@ -438,7 +448,18 @@ def test_HOP_11_lands_in_the_POST_PAYLOAD_and_not_in_one_of_the_seven_other_dict
 #:
 #: This set is also the population of the mint arm just below, so naming a route here buys it both
 #: the subject assertion and the kind assertion rather than only the one the hop table covers.
-EXPECTED_MINTS: set[str] = {"_class_pool_via_mesh_sync", "_predicate_pool_via_mesh_sync"}
+#:
+#: Keyed route -> the PARAMETER that carries the identity into it. The third entry arrived the
+#: same way as the second, but only after it shipped: lane/74's 6b17ab11 added the mint and was
+#: pushed without this file in its consequence set, so the census was red on a pushed sha. Its
+#: parameter is ``on_behalf_of`` because the gateway names the person that way on the wire, and
+#: the mint takes a stripped copy of it -- which is why the arm below accepts a local derived
+#: from the parameter alone, and nothing else.
+EXPECTED_MINTS: dict[str, str] = {
+    "_class_pool_via_mesh_sync": FIELD,
+    "_predicate_pool_via_mesh_sync": FIELD,
+    "_compat_rows_via_mesh_sync": "on_behalf_of",
+}
 
 #: Mints OUTSIDE the chain, each one admitted only because it declares ``kind="service"`` as a
 #: literal, so the SDK's ``require_person`` refuses every read made with it. Arrived with master's
@@ -473,11 +494,26 @@ def test_the_MINT_declares_a_person_and_takes_its_subject_from_the_chain(route: 
         if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "Initiator"
     ]
     assert len(mints) == 1, f"expected exactly one Initiator mint in {route}, got {len(mints)}"
+    param = EXPECTED_MINTS[route]
+    params = [a.arg for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs]
+    assert param in params, f"{route} no longer takes {param!r} -- the chain has no way in"
     kwargs = {kw.arg: ast.unparse(kw.value) for kw in mints[0].keywords}
-    assert kwargs.get("subject") == FIELD, (
-        f"{route} mints its Initiator with subject={kwargs.get('subject')!r} rather "
-        f"than the threaded {FIELD!r} -- the chain sealed above then ends in nothing"
-    )
+    subject = kwargs.get("subject")
+    if subject != param:
+        # A LOCAL DERIVED FROM THE PARAMETER ALONE, assigned once: `person = (p or "").strip()`.
+        # Any other name it reads -- a constant table, a second argument, an env var -- would make
+        # the subject something the chain did not thread.
+        assigns = [
+            n for n in ast.walk(fn)
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == subject for t in n.targets)
+        ]
+        read = {n.id for a in assigns for n in ast.walk(a.value) if isinstance(n, ast.Name)}
+        assert len(assigns) == 1 and read == {param}, (
+            f"{route} mints its Initiator with subject={subject!r} rather than the threaded "
+            f"{param!r} or a local derived from it alone (assignments: "
+            f"{[ast.unparse(a) for a in assigns]}) -- the chain sealed above then ends in nothing"
+        )
     assert kwargs.get("kind") == "'person'", (
         f"the mint declares kind={kwargs.get('kind')!r}. A read on behalf of a person must say so "
         "at the mint; anything else here is either a service read wearing a person's subject or a "
@@ -504,9 +540,9 @@ def test_the_ENGINE_mints_an_Initiator_only_where_this_file_seals_the_chain() ->
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "Initiator":
             minters.setdefault(enclosing.get(id(node), "<module>"), []).append(node.lineno)
-    assert set(minters) == EXPECTED_MINTS | set(REFUSED_MINTS), (
+    assert set(minters) == set(EXPECTED_MINTS) | set(REFUSED_MINTS), (
         f"the set of Initiator mints in {ENGINE_O} changed: { {k: v for k, v in minters.items()} }\n"
-        f"  expected exactly: {sorted(EXPECTED_MINTS | set(REFUSED_MINTS))}\n"
+        f"  expected exactly: {sorted(set(EXPECTED_MINTS) | set(REFUSED_MINTS))}\n"
         "A new mint is a new identity boundary. Add its chain to HOPS and name it here; do not "
         "widen this set on its own, because a mint nothing threads is an anonymous read that every "
         "other arm in this file reports as healthy."

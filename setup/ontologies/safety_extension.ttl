@@ -150,6 +150,15 @@ safety:AcceptanceAuthority a owl:Class ;
 MINTED: S3000L's AuthorityToOperate is authority to OPERATE and SubtaskAcceptanceParameter is
 acceptance of a subtask; neither is the authority that takes on residual risk.""" .
 
+safety:Platform a owl:Class ;
+    rdfs:label "Platform" ;
+    rdfs:comment """ADR-0056 (FRACAS Phase 1). A platform, which FRACAS calls a PROGRAM: the unit
+a failure is recorded against and the unit program membership grants access to. MINTED, after the
+same survey: neither vendored source nor `product_structure_extension.ttl` declares a platform
+or fleet class this engine could bind (the engine platform has been a bare string on a hazard
+and a failure record). Members are the platform identifiers those two fixtures already carry
+(PLT-ALPHA, PLT-BRAVO, PLT-CHARLIE); nothing here invents a second platform vocabulary.""" .
+
 safety:FailureRecord a owl:Class ;
     rdfs:label "Failure record" ;
     rdfs:comment """ADR-0056 (FRACAS Phase 1). One failure of a safety-critical item, as a
@@ -231,8 +240,16 @@ safety:FailureRecordSet a owl:Class ;
     rdfs:comment """Every failure recorded for one safety-critical item, across every program
 and every system of record this engine reads, each entry carrying its own system-of-record
 citation. An item on the critical items list with no recorded failure yields an explicit
-empty set — read-only, resolves no risk level and performs no per-caller filtering by
-program membership (named as an open question in ADR-0056, not decided here).""" .
+empty set — read-only and resolving no risk level. Filtered per caller by program membership
+(ADR-0056 Q2, accepted): a record the caller may not view is absent, not redacted.""" .
+
+safety:FailureTrend a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Failure Trend" ;
+    rdfs:comment """Failures recorded on one platform, counted per calendar month of the date the
+failure was observed, empty months included, each month citing its records as
+connector:record_id. A platform with no visible failure yields an explicit empty series. Filtered
+per caller by program membership, the same gate as the failure record set.""" .
 
 # ---------------------------------------------------------------------------
 # RELATIONSHIPS — the cause side points OUT of this file, on purpose

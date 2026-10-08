@@ -107,6 +107,8 @@ def test_THE_REPO_INBOX_IS_FULLY_ADDRESSED():
     """
     stray = [Path(p.path).name for p in unaddressed(scan(_REPO / "sessions"))]
     assert not stray, (
-        f"packets naming no lane: {stray}. Add `to: ia-<lane>/lane/<lane>` — an unaddressed "
+        f"packets naming no lane: {stray}. Add `to: <repo>/<branch>` (e.g. "
+        f"`invincible-agent/lane/01`; a seat is `invincible-agent/seat/<name>`; ruled 2026-10-07) "
+        f"— an unaddressed "
         f"packet can never be read, so it is invisible to the very line that exists to surface it"
     )

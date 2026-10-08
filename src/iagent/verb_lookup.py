@@ -50,6 +50,7 @@ def find_compatible_verbs(
     ontology_url: str,
     max_hops: int = DEFAULT_MAX_HOPS,
     timeout: float = DEFAULT_TIMEOUT_S,
+    on_behalf_of: str = "",
 ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """Ask Engine O which predicates can operate on this subject, per Neo4j.
 
@@ -57,17 +58,24 @@ def find_compatible_verbs(
     ``error`` is a non-fatal message; the caller decides what a failed check means, because
     the two callers genuinely differ — the supervisor falls through to unconstrained
     classification, the direct path falls back to the full run.
+
+    ``on_behalf_of`` is the person the ask is for. Engine O reads as that person when
+    ``COMPATIBLE_VERBS_VIA_MESH`` is on and refuses a request without one; it is sent only when
+    set, so a caller with no person sends exactly the body it always did.
     """
     if not subject_uri or subject_uri == "UNKNOWN":
         return [], None
+    body: Dict[str, Any] = {
+        "subject_uri": subject_uri,
+        "max_hops": max_hops,
+        "entitled_domains": list(entitled_domains or []),
+    }
+    if on_behalf_of:
+        body["on_behalf_of"] = on_behalf_of
     try:
         resp = requests.post(
             f"{ontology_url}/find_compatible_verbs",
-            json={
-                "subject_uri": subject_uri,
-                "max_hops": max_hops,
-                "entitled_domains": list(entitled_domains or []),
-            },
+            json=body,
             timeout=timeout,
         )
         resp.raise_for_status()
