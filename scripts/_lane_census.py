@@ -166,13 +166,31 @@ def report_lanes(repo: Path) -> None:
             ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
             print(f"        {addressee:<28} {len(mine)} packet(s) ({ages})")
 
+    # ADDRESS FORM: STATE, printed every run. The ruled form is `<repo>/<branch>` (2026-10-07); a
+    # legacy `ia-<w>/lane/<b>` or bare token is still READ, and always as an INTERNAL lane -- the
+    # scanner never guesses that `ia-cortex-60` belongs to another repo. So a legacy addressee with
+    # no `origin/lane/*` branch here is listed, not reclassified: it MAY be another repo's lane,
+    # and only its sender can say so by re-addressing.
+    legacy = [p for p in packets if p.form == "worktree"]
+    bare = [p for p in packets if p.form == "bare"]
+    if legacy or bare:
+        print(f"\n        ADDRESS FORM: {len(legacy)} packet(s) addressed by worktree "
+              f"(ia-<w>/lane/<b>), {len(bare)} by bare token -- the ruled form is "
+              f"<repo>/<branch> (2026-10-07).")
+        nobranch = sorted({p.addressee for p in legacy + bare
+                           if p.kind == "lane" and p.addressee not in known_lanes})
+        if nobranch:
+            print(f"        legacy- or bare-addressed, no origin/lane/* branch here (another "
+                  f"repo's lane, or no lane at all; not guessed): {', '.join(nobranch)}")
+
     for p in unaddressed(packets):
         print(f"        UNADDRESSED  {Path(p.path).name}")
     if unaddressed(packets):
-        print("        A packet naming no recipient cannot be read by one. Add `to: ia-<lane>/lane/"
-              "<lane>`, or `to: <repo>/seat/<name>` for a lane-less seat; reported rather than "
-              "dropped, because an inbox that silently discards what it cannot attribute is the "
-              "same silence one layer down.")
+        print("        A packet naming no recipient cannot be read by one. Add `to: "
+              "invincible-agent/lane/<branch>` (`<repo>/<branch>` for another repo), or "
+              "`to: <repo>/seat/<name>` for a lane-less seat; reported rather than dropped, "
+              "because an inbox that silently discards what it cannot attribute is the same "
+              "silence one layer down.")
 
     if standing:
         print(f"        {standing} packet(s) unread for more than a day. Reading is an ACT: the "

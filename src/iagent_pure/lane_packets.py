@@ -42,7 +42,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-#: `to: ia-91/lane/91` — the explicit form, and the one a new packet should carry.
+#: `to: invincible-agent/lane/91` — the explicit form, and the one a new packet should carry:
+#: `<repo>/<branch>`, ruled 2026-10-07. A worktree name is not an address (`ia-74` is a directory;
+#: `lane/74-acceptance-and-docs-subject` is the branch), and the repo segment is how a sender says
+#: "another repo" (`cortex-ui/lane/cortex-60`). The legacy `to: ia-91/lane/91` is still READ and
+#: still names the lane, but its name now comes from the BRANCH suffix like the ruled form's.
 #:
 #: A LANE TOKEN MAY CARRY A HYPHEN. `cortex-60` is a real session address and the first
 #: character class here could not express it, so a packet addressed to that session could not
@@ -189,14 +193,16 @@ def _addressed(m) -> tuple[str, str]:
     lrepo = m.group("lrepo")
     if lrepo:
         if _is_internal_repo(lrepo):
-            # QUALIFIED lane (`ia-74/lane/74`): the repo is where the work happens, so only the
-            # worktree suffix survives as the name. `invincible-agent/lane/01` names no worktree,
-            # so its name is the branch's own suffix -- not the repo, which would file it under a
-            # lane called `invincible-agent` that no `origin/lane/*` branch matches.
-            if lrepo.lower().startswith("ia-"):
-                name = lrepo[3:]
-            else:
-                name = m.group("lsuffix").split("/", 1)[1]
+            # THE LANE NAME IS ALWAYS THE BRANCH SUFFIX (ruled 2026-10-07: a worktree name is
+            # not an address). `ia-74/lane/74-acceptance-and-docs-subject` is lane
+            # `74-acceptance-and-docs-subject`, not `74`; `invincible-agent/lane/01` is `01`,
+            # never `invincible-agent`, which no `origin/lane/*` branch matches.
+            #
+            # A LEGACY `ia-<x>` PREFIX IS INTERNAL, EVEN WHEN <x> LOOKS LIKE ANOTHER REPO'S
+            # LANE (`ia-cortex-60/lane/cortex-60` stays lane `cortex-60` here). The scanner
+            # must not guess: the ruled form is how a sender says "another repo", and the census
+            # reports the legacy count (ADDRESS FORM) so the sender can re-address.
+            name = m.group("lsuffix").split("/", 1)[1]
             return name.lower(), "lane"
         # EXTERNAL LANE (`doc-tools/lane/7f`, `iagent-mesh-sdk/lane/ca`). Unlike a seat, a lane is
         # owned by its repo -- `7f` here and `7f` in doc-tools are different branches -- so the repo
@@ -213,6 +219,18 @@ def _addressed(m) -> tuple[str, str]:
     # segment to test, and widening it would undo the very control `_TO`'s tests pin (`the` must
     # not become a lane).
     return m.group("bare").lower(), "lane"
+
+def _form(m) -> str:
+    """WHICH ADDRESS FORM matched: seat | repo (ruled `<repo>/lane/<b>`, internal or external) |
+    worktree (legacy `ia-<w>/lane/<b>`) | prose | bare. Read from the same named groups as
+    `_addressed`, so there is still one grammar and no second address regex."""
+    if m.group("seat"):
+        return "seat"
+    lrepo = m.group("lrepo")
+    if lrepo:
+        return "worktree" if lrepo.lower().startswith("ia-") else "repo"
+    return "prose" if m.group("prose") else "bare"
+
 
 #: The conventions already in the tree, read from the H1.
 _TITLE_FORMS = (
@@ -245,6 +263,10 @@ class Packet:
     #: silently read as unanswered or as answered.
     sender: str | None = None
     sender_kind: str = "lane"
+    #: Which address form the explicit `to:` used: repo | worktree | seat | prose | bare, or
+    #: `title` (H1 fallback) / `none`. Reported by the census so legacy worktree addressing can be
+    #: re-addressed; identity stays the bare name whatever the form.
+    form: str = "none"
 
     @property
     def is_read(self) -> bool:
@@ -266,18 +288,18 @@ def parse_packet(path: Path) -> Packet:
     text = path.read_text(encoding="utf-8", errors="replace")
     head = "\n".join(text.splitlines()[:40])
 
-    addressee, source, kind = None, "none", "lane"
+    addressee, source, kind, form = None, "none", "lane", "none"
     m = _TO.search(head)
     if m:
         addressee, kind = _addressed(m)
-        source = "to"
+        source, form = "to", _form(m)
     else:
         # THE TITLE FORMS NAME LANES ONLY, and deliberately stay that way: they exist to read
         # packets written before the inbox did, and no such packet addresses a seat.
-        for form in _TITLE_FORMS:
-            t = form.search(head)
+        for tform in _TITLE_FORMS:
+            t = tform.search(head)
             if t:
-                addressee, source = t.group(1).lower(), "title"
+                addressee, source, form = t.group(1).lower(), "title", "title"
                 break
 
     read_by = [_addressed(r)[0] for r in _READ_BY.finditer(text)]
@@ -288,7 +310,7 @@ def parse_packet(path: Path) -> Packet:
         sender, sender_kind = _addressed(fm)
 
     return Packet(path=path.as_posix(), addressee=addressee, read_by=read_by, source=source,
-                  kind=kind, sender=sender, sender_kind=sender_kind)
+                  kind=kind, sender=sender, sender_kind=sender_kind, form=form)
 
 
 def scan(sessions_dir: Path) -> list:
