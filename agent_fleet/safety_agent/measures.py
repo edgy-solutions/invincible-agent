@@ -582,8 +582,48 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     platforms = sorted({r.platform for r in records})
     systems = sorted({r.system_of_record for r in records})
 
+    # ── THE CONTRIBUTION_RANKING ROWS: ONE ROW PER FAILURE MODE, THE BAR IS HOW MANY TIMES ───
+    #
+    # The archetype ranks CONTRIBUTORS to a total, so the contributor here is the failure MODE
+    # and the magnitude is its occurrence count across everything the caller may view. One row
+    # per RECORD would make every contribution 1 and the "ranking" a list; one row per platform
+    # would answer a different question than the verb's name. Order and magnitude are the SAME
+    # quantity this time (count, descending), unlike `find_orphaned_hazards`, so the bars ARE
+    # monotonic with rank. Ties break on the mode's name so the order is deterministic.
+    #
+    # ROW FIELDS PASS THROUGH THE PROJECTOR VERBATIM, so the provenance rides inside each row:
+    # `record_ids` and `citations` are what keep the card CITATIONS-NOT-NARRATIVE (ADR-0051 §5).
+    # No `favourable` key, for the reason `find_orphaned_hazards` gives: a failure has no good
+    # direction. A part with no VISIBLE failure yields `rows: []` and the card says "no
+    # contributors recorded" - the same truth the `note` states, drawn by the renderer's own
+    # refusal vocabulary rather than a fabricated zero-row.
+    by_mode: Dict[str, List[Any]] = {}
+    for r in records:
+        by_mode.setdefault(r.failure_mode or "unrecorded failure mode", []).append(r)
+    total = len(records) or 1
+    ordered = sorted(by_mode.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    rows = [
+        {
+            "rank": i,
+            "entity_id": mode,
+            "entity_name": mode,
+            "contribution": len(rs),
+            "share_of_total": round(len(rs) / total, 4),
+            "platforms": sorted({r.platform for r in rs}),
+            "record_ids": [r.record_id for r in rs],
+            "citations": [r.citation for r in rs],
+        }
+        for i, (mode, rs) in enumerate(ordered, start=1)
+    ]
+
     out: Dict[str, Any] = {
         "refused": False,
+        # THE ARCHETYPE'S KEY AND ENVELOPE. `failures` stays beside `rows` because the seals and
+        # the one-record-per-failure reading consumers use read it by name.
+        "rows": rows,
+        "value_label": "failures",
+        "value_unit": "failures",
+        "scope_label": part_number,
         "part_number": part_number,
         "critical_items_checked": len(CRITICAL_ITEMS),
         "failure_count": len(records),
@@ -680,8 +720,29 @@ def failure_trend_for_this_platform_by_month(state: Any = None, *, platform_id: 
                 "citations": [r.citation for r in rs],
             })
     systems = sorted({r.system_of_record for r in records})
+    # ── THE MULTI_SERIES AXIS KEYS: `rows` KEYED BY `period`, `series` DECLARING THE NUMBER ──
+    #
+    # Same convention as cost_unit_price_trend: the domain list (`months`) keeps its name and the
+    # archetype gets its own keys beside it, because one word meaning two things in one payload is
+    # how a renderer draws the wrong half. `failure_count` is the single declared series; zero-
+    # filled months stay as real zeros (a gap is a fact), which the renderer's "a declared series
+    # appears in no row" test treats as present because 0 is a number. The unit is the noun
+    # "failures" - a count, not a currency - and the renderer prints an unknown unit bare.
+    rows = [
+        {
+            "period": m["month"],
+            "failure_count": m["failure_count"],
+            "failure_record_ids": m["failure_record_ids"],
+            "citations": m["citations"],
+        }
+        for m in months
+    ]
     return {
         "refused": False,
+        "rows": rows,
+        "series": [{"key": "failure_count", "label": "Failures", "unit": "failures"}],
+        "value_label": "Failures per month",
+        "scope_label": platform_id,
         "platform_id": platform_id,
         "bucket": "observed_on, calendar month (YYYY-MM), no timezone; empty months included",
         "failure_count": len(records),

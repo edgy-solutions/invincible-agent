@@ -1626,6 +1626,17 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     # this register is ours, and the two live in different repos.
     #
     # Fifteen entries remain, all `mesh:` subjects the frontend binds alone.
+    #
+    # ── TWO STAGED ENTRIES, ADDED 2026-10-08 (lane/saf) AND NOT RATIFICATION DEBT ────────────
+    #
+    # The two FRACAS output classes were declared in `capabilities.py` so their success path draws
+    # as a ranking and a series instead of the KNOWLEDGE_DOCUMENT fallback. cortex-ui's
+    # `DERIVED_BINDINGS` does not bind them yet, and a binding is cortex's to write (packet to
+    # cortex-ts). This is the staging step the seal's own message names. THE RATCHET BELOW REDDENS
+    # THE MOMENT CORTEX BINDS EITHER ONE, which is when its line must be deleted here. Backend-only,
+    # so until then a card chosen for these is drawn by the payload-only path.
+    (_SAFETY + "FailureRecordSet", _MESH + "ContributionRanking"),
+    (_SAFETY + "FailureTrend", _MESH + "MultiSeries"),
 }
 
 

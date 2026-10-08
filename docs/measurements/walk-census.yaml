@@ -249,6 +249,36 @@ rows:
     # binding or ROW_KEY archetype for `safety:FailureTrend`. Add the populated row when a
     # presentation increment wires one, not before.
 
+  # POPULATED PATHS FOR THE TWO FRACAS VERBS, 2026-10-08. These exist because the two output
+  # classes now have DECLARED bindings (capabilities.py: safety:FailureRecordSet ->
+  # CONTRIBUTION_RANKING, safety:FailureTrend -> MULTI_SERIES) and the engine shapes its payload to
+  # them; the refusal rows above keep the slot_required path. bob is a member of
+  # SANDBOX_PROGRAM_ALPHA only (policy/program_members.yaml), which is the sheet's caller, so the
+  # floor is ONE row: PN-8801's PLT-BRAVO failure is filtered out per record. NOT YET WALKED LIVE.
+  - id: safety-what-failed-on-this-part-populated
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 5
+    question: what failed on this part PN-8801
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: what_failed_on_this_part
+    expect_archetype: CONTRIBUTION_RANKING
+    min_rows: 1
+    dispositions: [drawn]
+
+  - id: safety-failure-trend-populated
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 6
+    question: failures per month on this platform PLT-ALPHA
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: failure_trend_for_this_platform_by_month
+    expect_archetype: MULTI_SERIES
+    min_rows: 1
+    dispositions: [drawn]
+
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   # THE SHEET IS A FILE AS OF 2026-09-19 — docs/measurements/finance-walk-sheet.md — so these
   # eight rows are DERIVED and the `blocked` on the brief is lifted.

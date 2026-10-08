@@ -27,6 +27,7 @@ from ._engine_extra import requires_rdflib
 
 _SHEET = Path(__file__).resolve().parents[2] / "docs" / "measurements" / "safety-walk-sheet.md"
 _PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
+_ID_TAIL = re.compile(r"^(?P<head>.+) (?P<id>PN-\d+|PLT-[A-Z]+)$")
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +51,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_five_prompts(sheet):
+def test_the_parser_finds_the_sheets_seven_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -61,6 +62,8 @@ def test_the_parser_finds_the_sheets_five_prompts(sheet):
         "risk of deferring this work order",
         "what failed on this part",
         "failure trend for this platform by month",
+        "what failed on this part PN-8801",
+        "failures per month on this platform PLT-ALPHA",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 
@@ -76,7 +79,13 @@ def test_every_prompt_is_a_declared_synonym_of_the_verb_it_names():
         stem = prompt.lower().split(" for ")[0]
         # A synonym may itself contain " for " (Q5); the whole prompt matching exactly is
         # STRICTER than the stem, so it is accepted first.
-        assert prompt.lower() in declared or stem in declared, (
+        # A declared synonym FOLLOWED BY ONE ENGINE IDENTIFIER (a part number or a platform id) is
+        # the populated twin of that synonym: the same phrasing plus the slot's value, as
+        # "for HAZ-1003" is. The identifier must LOOK like one of the engine's, so this accepts
+        # nothing a reworded question could slip through.
+        m = _ID_TAIL.match(prompt)
+        with_id = bool(m) and m.group("head").lower() in declared
+        assert prompt.lower() in declared or stem in declared or with_id, (
             f"{prompt!r} is not one of the engine's declared synonyms — the sheet is walking a "
             f"phrasing nothing routes on. Declared: {sorted(declared)}"
         )
@@ -237,4 +246,25 @@ def test_Q5s_follow_on_capture_is_what_a_member_gets(sheet, monkeypatch):
     out = measures.failure_trend_for_this_platform_by_month(platform_id="PLT-ALPHA")
     assert out["months"][0]["citations"] == ["sor-events-a:EVT-55101"]
     for claim in ('"month": "2026-03"', "sor-events-a:EVT-55101", "no_person"):
+        assert claim in sheet, f"the sheet no longer carries {claim!r}"
+
+
+# ---------------------------------------------------------------------------
+# Q6 / Q7 -- the populated twins, walked as bob (a member of ALPHA only)
+# ---------------------------------------------------------------------------
+
+def test_Q6_and_Q7_captures_are_what_bob_gets(sheet, monkeypatch):
+    from agent_fleet.safety_agent import measures
+
+    from . import _program_filter as pf
+
+    pf.install(monkeypatch, caller=pf.BOB, members={pf.BOB: {"SANDBOX_PROGRAM_ALPHA"}})
+    q6 = measures.what_failed_on_this_part(part_number="PN-8801")
+    assert len(q6["rows"]) == 1 and q6["failure_count"] == 1, "bob sees ONE program's record"
+    assert q6["rows"][0]["citations"] == ["sor-events-a:EVT-55101"]
+    q7 = measures.failure_trend_for_this_platform_by_month(platform_id="PLT-ALPHA")
+    assert [r["period"] for r in q7["rows"]] == ["2026-03"]
+    assert q7["series"] == [{"key": "failure_count", "label": "Failures", "unit": "failures"}]
+    for claim in ('"value_unit": "failures"', '"scope_label": "PN-8801"', '"period": "2026-03"',
+                  '"key": "failure_count"', "sor-events-a:EVT-55101"):
         assert claim in sheet, f"the sheet no longer carries {claim!r}"

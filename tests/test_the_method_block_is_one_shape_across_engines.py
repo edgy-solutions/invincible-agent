@@ -72,6 +72,14 @@ NO_BLOCK_YET = {
         "magnitude are different quantities here. Whether this producer should carry a block is a "
         "design question nobody has ruled on, which is a different state from not-done-yet"
     ),
+    "safety:FailureRecordSet": (
+        "engine-safety. A ranking of failure modes by how many times each was recorded; the "
+        "magnitude is a count of cited records, so there is no formula to show, and the "
+        "provenance a method block would carry is already in each row as `record_ids` and "
+        "`citations` (connector:record_id). A DECISION made 2026-10-08, not a gap: the count "
+        "IS its inputs. Whether the fleet wants a block on a pure count is the same unruled "
+        "design question the OrphanedHazardSet entry records"
+    ),
 }
 
 
@@ -116,7 +124,23 @@ def _safety_producers() -> dict[str, tuple]:
     # link is a sample of a population, and the partition arm below is what keeps this one honest.
     from agent_fleet.safety_agent import measures as safety
 
-    return {"safety:OrphanedHazardSet": (safety.find_orphaned_hazards, None, {})}
+    from tests.safety import _program_filter as pf
+
+    def _failures_as_a_member(part_number: str):
+        # The verb answers for a PERSON, so the call needs the two real seams doubled (the caller
+        # and Topaz); a member of both sandbox programs sees every record, which is the populated
+        # path the card draws. Undone in `finally` so no other arm sees the double.
+        mp = pytest.MonkeyPatch()
+        try:
+            pf.install(mp, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
+            return safety.what_failed_on_this_part(part_number=part_number)
+        finally:
+            mp.undo()
+
+    return {
+        "safety:OrphanedHazardSet": (safety.find_orphaned_hazards, None, {}),
+        "safety:FailureRecordSet": (_failures_as_a_member, None, {"part_number": "PN-8801"}),
+    }
 
 
 def _producers() -> dict[str, tuple]:

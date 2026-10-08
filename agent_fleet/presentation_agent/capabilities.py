@@ -549,6 +549,28 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
                             "share_of_total", "value_label", "value_unit", "scope_label"],
         "description": "Renders safety:OrphanedHazardSet as a CONTRIBUTION_RANKING - live hazards with no owned, field-verified mitigation. ORDER AND MAGNITUDE ARE DIFFERENT QUANTITIES and the legend is what keeps that honest: rows are ranked severity-first then age, which is the verb's claim about what matters, while the BAR is days open, because a ranking draws a magnitude and severity is an ordinal with no length. The bars are therefore not monotonic with rank. `favourable` is deliberately absent - an unattended hazard has no favourable direction, so the card shows 'no direction stated' rather than colouring rows against a claim nobody made",
     },
+    # ── THE TWO FRACAS OUTPUT CLASSES (ADR-0056 Phase 1), DECLARED 2026-10-08 ───────────────
+    #
+    # `safety:FailureRecordSet` and `safety:FailureTrend` were declared in the ontology and
+    # produced by engine-safety with NO row here, so their success path drew as the universal
+    # KNOWLEDGE_DOCUMENT treatment - the same registered-and-routable-and-drawable-by-nothing
+    # gap the OrphanedHazardSet note above records. The producers shape their payloads to these
+    # archetypes (`rows` + the envelope fields) in agent_fleet/safety_agent/measures.py.
+    {
+        "subject_uri": "safety:FailureRecordSet",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "value_label", "value_unit", "scope_label"],
+        "description": "Renders safety:FailureRecordSet as a CONTRIBUTION_RANKING - the failure modes recorded for one safety-critical item across every program and system of record the caller may view, most frequent first, each row carrying the platforms and the connector:record_id citations behind its count. Order and magnitude are the SAME quantity (occurrence count). `favourable` is deliberately absent - a failure has no good direction",
+    },
+    {
+        "subject_uri": "safety:FailureTrend",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders safety:FailureTrend as a MULTI_SERIES - failures recorded on one platform per calendar month (observed_on, no timezone), one declared series in the unit 'failures', empty months zero-filled so a gap reads as none rather than missing; the PERIOD is the month and each row carries the citations behind its count",
+    },
     # ── THE TWO BELOW ARE KNOWLEDGE_DOCUMENT BY RULING, NOT BY FIT ────────────────────────
     #
     # Both are single-subject statements rather than rankings or series, and no declared
