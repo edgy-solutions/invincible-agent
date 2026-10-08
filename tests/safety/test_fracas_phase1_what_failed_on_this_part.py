@@ -23,7 +23,19 @@ from pathlib import Path
 
 from agent_fleet.safety_agent import entities, measures
 
+import pytest
+
+from . import _program_filter as _pf
+
 _REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _a_caller_who_may_view_every_program(monkeypatch):
+    """These arms test the verb's CORRELATION, not the entitlement filter (that is
+    test_fracas_program_filter.py). Alice is a member of every mapped program, so the filter
+    is satisfied and the correlation is what is left to assert."""
+    _pf.install(monkeypatch, caller=_pf.ALICE, members=_pf.ALL_PROGRAMS)
 
 
 # ── 1. THE CROSS-PROGRAM CORRELATION — THE VERB'S REASON TO EXIST ──────────────────────────

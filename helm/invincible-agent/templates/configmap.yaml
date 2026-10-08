@@ -66,6 +66,12 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "GRAPH_OVERLAY_DIRS") }}
   GRAPH_OVERLAY_DIRS: "/app/policy/overlays/sample/graphs"
   {{- end }}
+  {{- /* PLATFORM_PROGRAM_OVERLAY_DIRS -- the platform -> program join the safety engine's FRACAS
+  per-caller filter reads (ADR-0056 Q2). UNSET denies every record, so it is set here to the sample
+  overlay that ships platform_programs.yaml. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "PLATFORM_PROGRAM_OVERLAY_DIRS") }}
+  PLATFORM_PROGRAM_OVERLAY_DIRS: "/app/policy/overlays/sample"
+  {{- end }}
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
   TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds"
   {{- end }}

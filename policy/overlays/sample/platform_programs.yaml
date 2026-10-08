@@ -1,0 +1,13 @@
+# platform -> program: which program key (policy/program_members.yaml, the Topaz `program`
+# object_id) a safety/FRACAS record's `platform` belongs to (ADR-0056 open question 2, accepted).
+#
+# FRACAS's "program" is the fixture's `platform` vocabulary (PLT-*), and program membership is
+# keyed on program keys that share no spelling with it, so this file is the join. A platform with
+# NO row here is DENIED, never visible-because-unknown (deny-by-default). PLT-CHARLIE is left
+# unmapped on purpose: it is the production-shaped example of that arm, until a program is named.
+#
+# Loaded from every directory in PLATFORM_PROGRAM_OVERLAY_DIRS (os.pathsep-separated; unset
+# means no mapping at all, i.e. every record is denied).
+platform_programs:
+  PLT-ALPHA: SANDBOX_PROGRAM_ALPHA
+  PLT-BRAVO: SANDBOX_PROGRAM_BRAVO

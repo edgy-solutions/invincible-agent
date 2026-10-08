@@ -31,3 +31,11 @@ programs:
     grant_to:
       - alice@example.com
       - bob@example.com
+  SANDBOX_PROGRAM_BRAVO:
+    granted_by: cnogradi
+    reason: >-
+      Second sandbox fixture program, so the FRACAS per-caller filter (ADR-0056 open question 2)
+      has a caller who sees one program but not the other: alice is a member of both ALPHA and
+      BRAVO, bob of ALPHA only, carol of neither. Not a claim about any real program's membership.
+    grant_to:
+      - alice@example.com
