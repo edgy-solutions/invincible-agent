@@ -35,6 +35,7 @@ from agent_fleet.planning_agent import measures
 from agent_fleet.planning_agent.seed import build_seed
 
 _CORTEX = Path(__file__).resolve().parents[3] / "cortex-ui" / "src" / "components" / "planning"
+_CORTEX_SRC = _CORTEX.parents[1]
 
 #: archetype -> (contract file, TS interface holding one cell/row)
 _CONTRACTS = {
@@ -48,7 +49,10 @@ _CONTRACTS = {
     # all: it enumerates from the projector's own table, so adding a projected archetype
     # without a producer case is caught here rather than by a blank card in a demo.
     "VARIANCE_TREE": ("VarianceTree.contract.ts", "VarianceNode"),
-    "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
+    # Moved into an ADR-0055 package (cortex 85bbf0f), so this entry names its own path rather
+    # than repointing `_CORTEX`, which every other entry here resolves against.
+    "CONTRIBUTION_RANKING": (_CORTEX_SRC / "archetypes" / "contribution-ranking" / "contract.ts",
+                             "ContributionRow"),
     "FORECAST_MEASURE": ("ForecastMeasure.contract.ts", "ForecastRow"),
     "MULTI_SERIES": ("MultiSeries.contract.ts", "MultiSeriesRow"),
 }
@@ -149,25 +153,9 @@ _MIRROR = {
     # would assert a contract cortex never made.
     "VARIANCE_TREE": {"level", "entity_id", "entity_name", "variance"},
     "CONTRIBUTION_RANKING": {"entity_id", "entity_name", "contribution"},
-    # FORECAST_MEASURE IS DELIBERATELY OUT OF STEP AS OF 2026-09-26, and this arm is EXPECTED
-    # RED until cortex lands its half. Ruling 5 renamed the producer's row key `method` →
-    # `method_label` (fleet-wide `method` names the method BLOCK object; this row carried a bare
-    # string under the same key). `ForecastMeasure.contract.ts` still declares
-    # `method: string;  /** MANDATORY */`, so the producer no longer emits a field the contract
-    # requires — which is precisely what this seal exists to report, and the ruling's own stated
-    # proof that the two halves move together.
-    #
-    # `method` IS LEFT HERE ON PURPOSE. This table is a MIRROR OF CORTEX'S CONTRACT, used when
-    # the sibling repo is absent and cross-checked against the parsed contract when it is
-    # present. Writing `method_label` here would assert that cortex has renamed it, which is
-    # false today — and would hide the red in exactly the environment (no cortex-ui checked out)
-    # where nothing else can catch it.
-    #
-    # WHAT RETIRES THIS NOTE: cortex renames `ForecastRow.method` → `method_label` and fixes
-    # `readMethod` so it stops accepting a row as a method block. Then change the line below to
-    # `{"method_label", "formula", "eac"}` and delete this comment. Do not "fix" the red by
-    # reverting the producer.
-    "FORECAST_MEASURE": {"method", "formula", "eac"},
+    # Ruling 5: the row key is `method_label` (fleet-wide `method` names the method BLOCK).
+    # Producer half 7da1f286; cortex's reader half d7d6593, pinned at bd782c5, no fallback.
+    "FORECAST_MEASURE": {"method_label", "formula", "eac"},
     # MULTI_SERIES declares only `period` structurally — the rest of the row is an index
     # signature, because WHICH keys carry numbers is declared per payload in `series`. The
     # real guard for this archetype is not a key list; it is
@@ -194,7 +182,7 @@ _MIRROR = {
 def _parse_required(archetype: str) -> set[str] | None:
     """Required field names of the archetype's cell interface, or None if unavailable."""
     fname, iface = _CONTRACTS[archetype]
-    path = _CORTEX / fname
+    path = fname if isinstance(fname, Path) else _CORTEX / fname
     if not path.is_file():
         return None
     src = path.read_text(encoding="utf-8")
