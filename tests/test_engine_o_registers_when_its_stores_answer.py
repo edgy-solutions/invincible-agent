@@ -137,7 +137,7 @@ def boot(mr, monkeypatch):
     configured and answers the ASK only while ``world["jena"]``; Weaviate connects only while
     ``world["weaviate"]``."""
     eo = _eo()
-    world = {"jena": True, "weaviate": True, "registered": []}
+    world = {"jena": True, "weaviate": True, "neo4j": True, "registered": []}
 
     def make():
         if not world["weaviate"]:
@@ -151,7 +151,8 @@ def boot(mr, monkeypatch):
 
     class _Neo:
         def verify_connectivity(self):
-            pass
+            if not world["neo4j"]:
+                raise ConnectionError("neo4j refused")
 
         def close(self):
             pass
@@ -177,6 +178,12 @@ def boot(mr, monkeypatch):
     return eo, world
 
 
+#: The two verbs engine-o registers. Each arm lists BOTH, in the order they register, so a verb
+#: held by the wrong store's gate shows up as a list that differs.
+R = "mesh:resolveInstance"
+N = "mesh:whichPartsDoesThisNoticeAffect"
+
+
 def _armed(mr, name):
     hits = [a for c, a in mr.armed if c == name]
     assert len(hits) == 1, mr.armed
@@ -187,7 +194,7 @@ def _armed(mr, name):
 async def test_STORES_UP_AT_BOOT_REGISTER_AT_BOOT(boot, mr):
     eo, world = boot
     await world["run"]()
-    assert world["registered"] == ["mesh:resolveInstance"] and mr.armed == []
+    assert world["registered"] == [R, N] and mr.armed == []
 
 
 @pytest.mark.asyncio
@@ -204,7 +211,7 @@ async def test_WEAVIATE_UNREACHABLE_AT_BOOT_IS_RECONNECTED_WHEN_IT_RETURNS(boot,
     assert reconnect() is True
     assert _uris(_read(eo)) == [_Weaviate.INDEXED["uri"]]
     # ...and it does not hold the verb, which never reads Weaviate.
-    assert world["registered"] == ["mesh:resolveInstance"]
+    assert world["registered"] == [R, N]
 
 
 def _read(eo):
@@ -246,15 +253,15 @@ async def test_JENA_UNREACHABLE_AT_BOOT_REGISTERS_ONCE_WHEN_IT_RETURNS(boot, mr)
     eo, world = boot
     world["jena"] = False
     await world["run"]()
-    assert world["registered"] == []
+    assert world["registered"] == [N]
     assert not mr.registration_is_ready()
     assert mr.registration_status()["last_error"] == (
         "engine_o_sustainment_resolve_instance:stores: no answer from jena")
     register = _armed(mr, "engine_o_sustainment_resolve_instance:stores")
-    assert register() is False and world["registered"] == []
+    assert register() is False and world["registered"] == [N]
     world["jena"] = True
     assert register() is True
-    assert world["registered"] == ["mesh:resolveInstance"]
+    assert world["registered"] == [N, R]
 
 
 @pytest.mark.asyncio
@@ -268,7 +275,7 @@ async def test_THE_JENA_PROBE_IS_NOT_ANSWERED_BY_THE_RDFLIB_FALLBACK(boot, mr, m
         return [{"s": "x"}]
     monkeypatch.setattr(eo, "execute_sparql", answers)
     await world["run"]()
-    assert world["registered"] == []
+    assert world["registered"] == [N]
 
 
 #: Each differs from an answer in ONE thing: a 503 whose body would otherwise pass, and a 200
@@ -280,7 +287,7 @@ async def test_A_JENA_THAT_DOES_NOT_ANSWER_THE_ASK_IS_SILENT(boot, mr, monkeypat
     eo, world = boot
     monkeypatch.setattr(eo, "_jena_ontology_post", lambda url, *, data, headers: resp)
     await world["run"]()
-    assert world["registered"] == []
+    assert world["registered"] == [N]
 
 
 @pytest.mark.asyncio
@@ -290,5 +297,23 @@ async def test_A_DEPLOYMENT_WITHOUT_JENA_REGISTERS_AT_BOOT(boot, mr, monkeypatch
     world["jena"] = False
     monkeypatch.setattr(eo, "_JENA_ENDPOINT", None)
     await world["run"]()
-    assert world["registered"] == ["mesh:resolveInstance"]
+    assert world["registered"] == [R, N]
     assert "engine_o_sustainment_resolve_instance:stores" not in [c for c, _ in mr.armed]
+
+
+@pytest.mark.asyncio
+async def test_NEO4J_UNREACHABLE_AT_BOOT_HOLDS_ONLY_THE_NOTICE_PARTS_READ(boot, mr):
+    """The notice-parts read is gated on Neo4j, the only store it reads. Until the graph answers,
+    it is held and named. resolveInstance, which never reads Neo4j, is not held. When the graph
+    answers, the read registers once."""
+    eo, world = boot
+    world["neo4j"] = False
+    await world["run"]()
+    assert world["registered"] == [R]
+    assert mr.registration_status()["last_error"] == (
+        "engine_o_which_parts_does_this_notice_affect:stores: no answer from neo4j")
+    register = _armed(mr, "engine_o_which_parts_does_this_notice_affect:stores")
+    assert register() is False and world["registered"] == [R]
+    world["neo4j"] = True
+    assert register() is True
+    assert world["registered"] == [R, N]

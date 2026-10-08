@@ -819,6 +819,14 @@ def _jena_answers() -> bool:
     return resp.status_code == 200 and isinstance(resp.json().get("boolean"), bool)
 
 
+def _neo4j_answers() -> bool:
+    """The graph ITSELF answers: the driver exists and its connectivity check passes."""
+    if _NEO4J_DRIVER is None:
+        return False
+    _NEO4J_DRIVER.verify_connectivity()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # FastAPI lifespan — verify connectivity on startup
 # ---------------------------------------------------------------------------
@@ -888,6 +896,59 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] pcn mesh:resolveInstance registration failed: {e}")
 
+    # THE SUSTAINMENT READ "which parts does <notice> affect" (notice_parts.py). Registered on the
+    # PARENT class so PCN and PDN both reach it by subClassOf, the same as proposeDisposition — the
+    # act verb whose anti-synonyms already named this read as the one it must not be taken for.
+    # GATED ON NEO4J, the only store it reads.
+    try:
+        _notice_parts_endpoint = os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + "/notice_parts"
+
+        def _register_notice_parts():
+            mr.register_engine_to_mesh(
+                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                name="engine_o_which_parts_does_this_notice_affect",
+                description=(
+                    "Lists the parts one sustainment notice (a PCN or PDN) affects, read from the "
+                    "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
+                    "the notice's provenance as the graph records it: how it was obtained, the ingest "
+                    "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
+                    "unknown notice id, which is a different fact from a known notice naming no part "
+                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
+                    "subject to this notice."
+                ),
+                verb=_notice_parts.VERB,
+                input_uri=_notice_parts.INPUT_URI,
+                output_uri=_notice_parts.OUTPUT_URI,
+                verb_synonyms=[
+                    "which parts does this notice affect", "which parts does it affect",
+                    "affected parts", "list the affected parts", "parts subject to this notice",
+                    "what parts are affected by this notice",
+                ],
+                verb_anti_synonyms=[
+                    "propose a disposition", "what should we do about this notice",
+                    "last time buy", "dispatch qualification",
+                ],
+                endpoint_url=_notice_parts_endpoint,
+                owner_persona="SUSTAINMENT_ENGINEER",
+                domains=[_notice_parts.DOMAIN],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_o_sustainment",
+                timeout_s=5.0,
+            )
+            print(f"[ontology-service] registered {_notice_parts.VERB} -> {_notice_parts_endpoint}")
+
+        mr.when_stores_answer(
+            "engine_o_which_parts_does_this_notice_affect:stores",
+            {"neo4j": _neo4j_answers},
+            _register_notice_parts,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] {_notice_parts.VERB} registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
@@ -912,6 +973,12 @@ try:
     from utils.mesh_vectors import WeaviateVectors  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.utils.mesh_vectors import WeaviateVectors
+
+# Sibling module, the same dual layout as `mesh_ontology` above.
+try:
+    import notice_parts as _notice_parts  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service import notice_parts as _notice_parts
 
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
@@ -5030,6 +5097,38 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
     return {"candidates": candidates}
+
+
+class NoticePartsRequest(BaseModel):
+    """The specialist dispatch body, read for the three fields this verb uses. Everything else the
+    supervisor sends is accepted and ignored."""
+    params: dict = Field(default_factory=dict)
+    resolved_instance_id: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+@app.post("/notice_parts")
+async def notice_parts_route(request: NoticePartsRequest) -> dict:
+    """`mesh:whichPartsDoesThisNoticeAffect` (matcher and shaping: notice_parts.py). READ.
+
+    DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
+    refused before the graph is read, so an empty scope can never read as "no parts"."""
+    if _notice_parts.DOMAIN not in (request.entitled_domains or []):
+        return {
+            "status": "refused",
+            "reason": "not_entitled",
+            "verb": _notice_parts.VERB,
+            "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
+            "parts": [],
+            "sources": [],
+        }
+    if _NEO4J_DRIVER is None:
+        raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
+    notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
+    try:
+        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

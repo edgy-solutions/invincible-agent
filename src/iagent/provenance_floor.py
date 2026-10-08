@@ -29,9 +29,11 @@ THE IDENTITY is the block's own `ingest_id` field (ruled 2026-09-30: a field on 
 ProvenanceBlock, not `derived_from`). `_ingest_id_of` is the one place that reads it.
 
 PURE. The caller hands in sources and the promoted set. Where either comes from is the
-retrieval path's and the promotion fact's business; no production path yet returns a
-provenance block with a retrieved row (census 2026-09-30: no reader of `obtained_via` outside
-provenance.py in src/, agent_fleet/ or cortex-ui/src).
+retrieval path's and the promotion fact's business. The census of 2026-09-30 found no
+production path returning a block with a retrieved row; SUPERSEDED 2026-10-08: engine-o's
+`notice_parts.py` (mesh:whichPartsDoesThisNoticeAffect) is the first, and it also copies the
+PROMOTION fact's `promoted_by` onto each source, which `promoted_ingest_ids` reads. Every other
+retrieval path still returns unstamped sources.
 """
 from __future__ import annotations
 
@@ -63,6 +65,21 @@ def _ingest_id_of(source: Any) -> Optional[str]:
     block = _block_of(source)
     iid = block.get("ingest_id") if isinstance(block, dict) else None
     return iid if isinstance(iid, str) and iid.strip() else None
+
+
+def promoted_ingest_ids(sources: Iterable[Any]) -> set:
+    """The promoted set, read off the sources themselves: the block's `ingest_id` of every source
+    that carries a `promoted_by`. The retrieval path copies `promoted_by` from the graph's
+    PROMOTION fact (engine-o's notice_parts.py), so a source with no promotion fact contributes
+    nothing and stays unverified. A `promoted_by` on a source with no ingest_id names nothing to
+    promote, and contributes nothing either."""
+    out = set()
+    for s in sources:
+        by = s.get("promoted_by") if isinstance(s, dict) else None
+        iid = _ingest_id_of(s)
+        if isinstance(by, str) and by.strip() and iid is not None:
+            out.add(iid)
+    return out
 
 
 def provenance_floor(sources: Iterable[Any], *, promoted: Collection[str] = ()) -> dict:
