@@ -11,7 +11,11 @@ the live gate from here, so this file seals:
   a gate with auth off, records a refusal as a datum, and records when its own search-then-gate
   disagrees with ``retrieve_gated_chunks``;
 * the census's SOURCE LABEL against the keys ``_gate_hits`` actually reads, out of service.py --
-  the run's cross-check compares positions and cannot see a label drift.
+  the run's cross-check compares positions and cannot see a label drift;
+* A CUT FLOW (added for the run after roll #21, the NetworkPolicy gate on): an embedding call that
+  fails falls back to bm25 on both paths, and a Topaz check that fails is dropped fail-closed --
+  neither raises, so the run records both per cell and the diff reds them. The recorders attach to
+  names in service.py, and those names are held to the calls the shipping paths make.
 
 Run: uv run --frozen pytest tests/test_engine_w_identity_census.py -v
 """
@@ -49,7 +53,8 @@ def _hits(*pairs):
 def _c(identity, kind, hits=(), refused=None):
     return {"identity": identity, "kind": kind, "domain": Q[0], "query": Q[1],
             "refused": refused, "hits": list(hits),
-            "agrees_with_live": None if refused else True}
+            "agrees_with_live": None if refused else True,
+            "embed_failed": None, "gate_errors": 0, "gate_error": None}
 
 
 def _pair():
@@ -170,6 +175,47 @@ def test_THE_DIFF_EXITS_ON_ITS_REDS(tmp_path, capsys):
     assert "RED   " in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("side", ["off", "on"])
+def test_AN_EMBEDDING_CALL_THAT_FAILED_IS_RED_NOT_BM25_PARITY(side):
+    """Both paths fall back to bm25 when the embedding call fails, so they still AGREE: without
+    this red a cut model endpoint diffs green."""
+    def m(off, on):
+        _cell(off if side == "off" else on, "real")["embed_failed"] = "ConnectError: refused"
+    reds = _red(m, f"on {side}, the embedding call failed in 1 of 3 cells (ConnectError: refused)")
+    assert len(reds) == 1, reds        # the decisions agreed: the cut is the only red
+
+
+@pytest.mark.parametrize("side", ["off", "on"])
+def test_A_GATE_THAT_COULD_NOT_ASK_TOPAZ_IS_RED_AND_SAYS_SO(side):
+    def m(off, on):
+        _cell(off if side == "off" else on, "deny").update(gate_errors=2,
+                                                           gate_error="ConnectTimeout: t")
+    _red(m, f"on {side}, the gate could not ask Topaz in 1 of 3 cells (ConnectTimeout: t)")
+
+
+def test_A_KEEP_NOTHING_CENSUS_WITH_A_CUT_GATE_NAMES_THE_WIRE_BESIDE_THE_POPULATION():
+    """The shape a cut Topaz leaves: every check fails closed, so nothing is kept. The population
+    red alone would send the reader to the grants."""
+    def m(off, on):
+        for doc in (off, on):
+            for c in doc["cells"]:
+                if c["kind"] in ("real", "deny"):
+                    c.update(gate_errors=len(c["hits"]), gate_error="ConnectError: cut")
+                    for h in c["hits"]:
+                        h["kept"] = False
+    reds = _red(m, "POPULATION: no real identity kept any shared source")
+    assert any("could not ask Topaz" in r and "not a missing grant" in r for r in reds), reds
+
+
+@pytest.mark.parametrize("side", ["off", "on"])
+@pytest.mark.parametrize("field", ["embed_failed", "gate_errors"])
+def test_A_FILE_WITH_NO_EMBED_OR_GATE_RECORD_IS_REFUSED(side, field):
+    def m(off, on):
+        del _cell(off if side == "off" else on, "real")[field]
+    reds = _red(m, f"the {side} file has no embed/gate record in 1 cell(s)")
+    assert len(reds) == 1, reds
+
+
 # -- the RUN half, against a stand-in for the container's service module -----------------------
 
 class _Obj:
@@ -177,29 +223,85 @@ class _Obj:
         self.properties = props
 
 
-def _service(flag, *, auth=True, granted=("a@x",), live_drift=False):
+class _Answer:
+    def __init__(self, status, check=False):
+        self.status_code, self._check = status, check
+
+    def json(self):
+        return {"check": self._check}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+_TOPAZ = "http://topaz.example"
+
+
+def _service(flag, *, auth=True, granted=("a@x",), live_drift=False, embed_down=False,
+             topaz=None, topaz_down_for=None):
     """A stand-in with service.py's surface. The gate reads ``source_url`` and lets a granted
-    caller read doc-a only. ``live_drift`` makes retrieve_gated_chunks keep every chunk -- a live
-    function the census's replication no longer speaks for."""
+    caller read doc-a only, ASKING its Topaz double over ``s.httpx.post`` and dropping fail-closed
+    on any error, as ``_can_read_document`` does. Each path calls its embedding function through
+    the module and falls back on failure, as the real paths do. ``live_drift`` makes
+    retrieve_gated_chunks keep every chunk -- a live function the census's replication no longer
+    speaks for. ``embed_down`` raises from both embedding calls; ``topaz`` is "down" (the post
+    raises) or an HTTP status the check answers with."""
     s = types.ModuleType("service")
     s.KNOWLEDGE_SEARCH_VIA_MESH = flag
     s.ENABLE_AGENTIC_AUTH = auth
+    s.TOPAZ_DIRECTORY_URL = _TOPAZ
     rows = [_Obj(source_url="doc-a"), _Obj(source_url="doc-b")]
     s.calls = []
 
+    def embedder(q):
+        if embed_down:
+            raise ConnectionError("model endpoint unreachable")
+        return [0.0]
+    s.embed_query = s.observe_query_embedding = embedder
+
+    def post(url, json=None, timeout=None):
+        s.calls.append(("post", url))
+        if not url.startswith(_TOPAZ):
+            return _Answer(200)
+        if topaz == "down" or json["subject_id"] == topaz_down_for:
+            raise ConnectionError("topaz unreachable")
+        if topaz:
+            return _Answer(topaz)
+        return _Answer(200, json["subject_id"] in granted and json["object_id"] == "doc-a")
+    s.httpx = types.SimpleNamespace(post=post, Timeout=object)
+
     def direct(client, coll, label, q, filters):
         s.calls.append(("direct", label))
+        try:
+            s.embed_query(q)
+        except Exception:
+            pass                                    # bm25, as _search_direct falls back
         return rows
 
     def mesh(client, coll, label, q, filters, caller):
         s.calls.append(("mesh", label))
         if not caller:
             raise ValueError("Initiator.subject is required")
+        try:
+            s.observe_query_embedding(q)
+        except Exception:
+            pass                                    # bm25, as the reader degrades
         return rows
 
+    def can_read(caller, source):
+        if not caller or not source:
+            return False
+        try:
+            r = s.httpx.post(f"{s.TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
+                             json={"subject_id": caller, "object_id": source}, timeout=5.0)
+            r.raise_for_status()
+            return bool(r.json().get("check", False))
+        except Exception:
+            return False                            # fail-closed, as _can_read_document does
+
     def gate(hits, caller):
-        kept = [(i, o) for i, o in enumerate(hits)
-                if caller in granted and o.properties["source_url"] == "doc-a"]
+        kept = [(i, o) for i, o in enumerate(hits) if can_read(caller, o.properties["source_url"])]
         return kept, len(hits) - len(kept)
 
     def live(client, *, collection_name, domain_label, semantic_query, metadata_filters,
@@ -238,7 +340,7 @@ def test_CONTROL_TWO_RUNS_OF_ONE_GATE_DIFF_GREEN(plant):
 def test_THE_RUN_SEARCHES_BY_THE_LABEL_THE_LIVE_HANDLER_DERIVES(plant):
     svc = plant(_service(False))
     C.run("off", ["a@x"], [("mainte-nance ops", "q")])
-    assert {label for _, label in svc.calls} == {"MAINTE_NANCE_OPS"}
+    assert {label for kind, label in svc.calls if kind != "post"} == {"MAINTE_NANCE_OPS"}
 
 
 def test_A_RUN_WHOSE_FLAG_IS_NOT_ITS_LABEL_REFUSES_TO_START(plant):
@@ -284,6 +386,74 @@ def test_THE_RUN_REFUSES_TO_BE_HANDED_ITS_OWN_CONTROLS(plant, capsys, ident):
         C.main(["run", "--label", "off", "--identity", ident])
     assert e.value.code == 2
     assert "added by the census itself" in capsys.readouterr().err
+
+
+def test_CONTROL_A_RUN_WITH_EVERY_FLOW_UP_RECORDS_NO_CUT(plant):
+    plant(_service(True))
+    on = C.run("on", ["a@x"], [Q])
+    assert [(c["embed_failed"], c["gate_errors"]) for c in on["cells"]] == [(None, 0)] * 3
+    assert any(kind == "post" for kind, _ in sys.modules["service"].calls), (
+        "the stand-in gate never asked Topaz: the gate arms below would be measuring nothing")
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_A_RUN_RECORDS_AN_EMBEDDING_CALL_THAT_FELL_BACK(plant, flag):
+    plant(_service(flag, embed_down=True))
+    doc = C.run("on" if flag else "off", ["a@x"], [Q])
+    searched = [c for c in doc["cells"] if not c["refused"]]
+    assert searched and all(c["embed_failed"] == "ConnectionError: model endpoint unreachable"
+                            for c in searched), doc["cells"]
+
+
+@pytest.mark.parametrize("topaz, error", [("down", "ConnectionError: topaz unreachable"),
+                                          (503, "HTTP 503")])
+def test_A_RUN_RECORDS_A_GATE_THAT_COULD_NOT_ASK_TOPAZ(plant, topaz, error):
+    plant(_service(False, topaz=topaz))
+    off = C.run("off", ["a@x"], [Q])
+    real = _cell(off, "real")
+    # two rows, each asked twice (the replication and the live function), each failing
+    assert (real["gate_errors"], real["gate_error"]) == (4, error), real
+    assert not any(h["kept"] for h in real["hits"]), "the double did not fail closed"
+    plant(_service(True, topaz=topaz))
+    reds, _ = C.diff(off, C.run("on", ["a@x"], [Q]))
+    assert any("could not ask Topaz" in r for r in reds), reds
+
+
+def test_A_FAILURE_IS_RECORDED_AGAINST_ITS_OWN_CELL_ONLY(plant):
+    """Topaz fails for the real identity alone: the deny cell, which follows it, asked Topaz and
+    was answered, so it must carry no gate error. A recorder that kept counting across cells
+    would put the real cell's cut on every cell after it."""
+    plant(_service(False, topaz_down_for="a@x"))
+    off = C.run("off", ["a@x"], [Q])
+    assert _cell(off, "real")["gate_errors"] == 4, _cell(off, "real")
+    assert (_cell(off, "deny")["gate_errors"], _cell(off, "deny")["gate_error"]) == (0, None)
+    assert any(url.startswith(_TOPAZ) for kind, url in sys.modules["service"].calls
+               if kind == "post"), "the control never asked Topaz"
+
+
+def test_A_POST_THAT_IS_NOT_TO_TOPAZ_IS_NOT_RECORDED(plant):
+    svc = plant(_service(False))
+    C.run("off", ["a@x"], [Q])
+    r = svc.httpx.post("http://elsewhere.example/x", json={})
+    assert r.status_code == 200
+    rec = C._Recorder()
+    wire = C._RecordingWire(types.SimpleNamespace(post=lambda url, **k: _Answer(500)), rec, _TOPAZ)
+    wire.post("http://elsewhere.example/x")
+    assert rec.gate == []
+    wire.post(f"{_TOPAZ}/api/v3/directory/check")
+    assert rec.gate == ["HTTP 500"]
+
+
+#: the four names the recorders replace, literal here so a script without them reds by name
+_ATTACH = ("embed_query", "observe_query_embedding", "httpx", "TOPAZ_DIRECTORY_URL")
+
+
+@pytest.mark.parametrize("name", _ATTACH)
+def test_A_SERVICE_WITHOUT_AN_ATTACH_POINT_REFUSES_TO_START(plant, name):
+    svc = plant(_service(False))
+    delattr(svc, name)
+    with pytest.raises(SystemExit, match=rf"service has no \['{name}'\]"):
+        C.run("off", ["a@x"], [Q])
 
 
 # -- the label against the gate it describes -----------------------------------------------------
@@ -336,3 +506,43 @@ def test_EVERY_TOOL_AN_AGENT_IS_HANDED_SEARCHES_THROUGH_THE_CENSUSED_FUNCTION():
                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
         assert "retrieve_gated_chunks" in calls, (
             f"the agent is handed {name!r}, which does not search through retrieve_gated_chunks")
+
+
+# -- the recorders' attach points against the calls service.py makes ---------------------------
+
+def _names(fn: ast.FunctionDef) -> set:
+    return {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+
+
+def test_EVERY_ATTACH_POINT_IS_A_NAME_THE_SHIPPING_PATH_LOOKS_UP_AT_CALL_TIME():
+    """The recorders replace module globals, so each must be a global the path reads WHEN IT RUNS.
+    A path that bound the function at import (``from x import f as g``, a default argument) would
+    call the original and the recorder would see nothing."""
+    assert tuple(C.ATTACH_POINTS) == _ATTACH
+    direct = _fn(_SERVICE, "_search_direct")
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id == "embed_query" for n in ast.walk(direct)), (
+        "_search_direct no longer calls embed_query by its module name")
+    mesh = _fn(_SERVICE, "_search_via_mesh")
+    assert any(isinstance(n, ast.keyword) and n.arg == "embed"
+               and isinstance(n.value, ast.Name) and n.value.id == "observe_query_embedding"
+               for n in ast.walk(mesh)), (
+        "_search_via_mesh no longer hands the reader observe_query_embedding by its module name")
+    can_read = _fn(_SERVICE, "_can_read_document")
+    posts = [n for n in ast.walk(can_read) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute) and n.func.attr == "post"
+             and isinstance(n.func.value, ast.Name) and n.func.value.id == "httpx"]
+    assert len(posts) == 1, "_can_read_document no longer asks Topaz through httpx.post"
+    url = posts[0].args[0]
+    assert isinstance(url, ast.JoinedStr) and isinstance(url.values[0], ast.FormattedValue) \
+        and isinstance(url.values[0].value, ast.Name) \
+        and url.values[0].value.id == "TOPAZ_DIRECTORY_URL", (
+            "the gate's post no longer starts with TOPAZ_DIRECTORY_URL: the wire recorder's "
+            "prefix would match nothing")
+    # and none of the four is shadowed by a local in the function that reads it
+    for fn, name in ((direct, "embed_query"), (mesh, "observe_query_embedding"),
+                     (can_read, "httpx"), (can_read, "TOPAZ_DIRECTORY_URL")):
+        local = {a.arg for a in fn.args.args + fn.args.kwonlyargs} | {
+            t.id for n in ast.walk(fn) if isinstance(n, ast.Assign)
+            for t in n.targets if isinstance(t, ast.Name)}
+        assert name not in local and name in _names(fn), (fn.name, name)
