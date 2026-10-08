@@ -114,3 +114,38 @@ admits, which is exactly the class in which every endpoint is verified and the j
   browser path passes.
 - Workloads outside this chart's namespace (doc-tools' own release is in the same namespace and is
   counted; other namespaces are not).
+
+## Addendum 2026-10-08 (after `directCallers` landed, 75879d32): the hook Jobs are callers nobody listed
+
+Tables A and B cover long-running workloads. The chart also runs ten Job and CronJob templates, and
+**nine of them put no `app.kubernetes.io/component` label on the pod template**. Several carry it on
+the Job object, which a podSelector never sees. No `directCallers` entry can admit a pod that has
+no label to select. Eight of those nine are helm hooks.
+
+The table below is a census of **mentions**, not measured connections. It records which store
+names appear anywhere in the template (`grep -o -i`).
+
+| template | pod label | helm hook | stores mentioned |
+| --- | --- | --- | --- |
+| prime-substrate-job | no | yes | dagster, fuseki, minio, neo4j, postgres, restate, weaviate |
+| jobs | no | yes | neo4j, postgres, redis, restate, weaviate |
+| demo-seed-job | no | yes | dagster, neo4j, weaviate |
+| ontology-seed-job | no | yes | dagster, neo4j, weaviate |
+| engine-reregister-job | no | yes | dagster, neo4j |
+| minio-bucket-init-job | no | yes | minio |
+| realm-reconcile-job | no | yes | keycloak, restate, topaz |
+| task-grant-sync-job | no | yes | keycloak, restate, topaz |
+| topaz-manifest-load-job | no | yes | restate, topaz |
+| topaz-seed-cronjob | **yes** (`topaz-seed`) | no | topaz |
+
+**Consequence if the gate turns on as seeded:** `prime-substrate` is a post-upgrade hook, and a
+failed hook fails the release (roll #21's rev 178 is the precedent). So the gate-on roll would
+most likely cut its own prime and record `failed`. The grant-sync, manifest-load and seed jobs
+would also lose Topaz, so grants would stop reconciling.
+
+**Preconditions for the gate-on roll, added to the proposal:**
+1. Every Job and CronJob pod template carries a component label.
+2. Every such component that reaches a store gets `directCallers` entries. Derive them from the
+   job's real connections (its env and config keys), never from this mention census.
+3. Extend the join seal's population to Job pods. Today it collects Deployments' components only,
+   and that is why its green could not see this.
