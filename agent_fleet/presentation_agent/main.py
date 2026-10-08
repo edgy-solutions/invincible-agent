@@ -634,6 +634,26 @@ _FLAT_ARCHETYPES: Dict[str, tuple] = {
         ("disposition",),
         ("reason", "panel_label", "verb_iri"),
     ),
+    # ILLUSTRATION and WORKFLOW_CASE, 2026-10-07. Fields read from
+    # cortex-ui/src/archetypes/illustration/contract.ts and .../workflow-case/contract.ts, not
+    # invented here. Each declares ONE required field, an object (`illustration`, `case`), and no
+    # optional ones, so the optional tuples are empty on purpose: the object travels whole, and
+    # its inner shape is the card's contract to check, not this table's.
+    #
+    # THIS TABLE, NOT _PROJECTED_ARCHETYPES, for NAMED_HOLE's reason: there is no list under a
+    # payload key, so the list projector would return None on every one and the card would
+    # degrade to KNOWLEDGE_DOCUMENT -- which is what they did until these rows existed.
+    #
+    # NO PRODUCER EMITS EITHER TODAY. Both contracts say so ("cortex-proposed; no producer route
+    # serves this yet"). These rows are the path, not a claim that anything walks it.
+    "ILLUSTRATION": (
+        ("illustration",),
+        (),
+    ),
+    "WORKFLOW_CASE": (
+        ("case",),
+        (),
+    ),
 }
 
 
