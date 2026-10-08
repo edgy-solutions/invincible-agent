@@ -751,7 +751,18 @@ cortexUi:
     # attestations); the abbreviated tag and this digest with its last hex altered both answer 404;
     # the 8935e6a control still resolves to c054ba50. Nothing under the Dockerfile,
     # docker-entrypoint.sh or .github changed since 8935e6a, so VITE_FEATURES is unchanged.
-    digest: "sha256:840d51145e75478caed2971a821cf66b27f6b9ff7d05596365c7b6d9fd84c9b3"
+    # 2026-10-08, pinned after roll #21 (rev 179): cortex-ui 942259f (adds four commits to bd782c5:
+    # xml as the third ingest file kind with its mirror and door seal, the approval and ingest
+    # status cards labelled for a11y, a CLAUDE.md conventions change, and a sessions packet)
+    # -> 401f76b3. PAIRING: the xml kind needs the producer's 086a9cf0, and the image's parity
+    # seals ran against PRODUCER_REF 5cf7d879. Both are ancestors of the rolled tag b16ae935.
+    # Measured before pinning: the FULL tag resolves to this digest (an OCI index, linux/amd64 +
+    # linux/arm64 + 2 attestations); the abbreviated tag, the full tag with its last hex altered,
+    # and this digest with its last hex altered all answer 404; the bd782c5 control still
+    # resolves to 840d5114. Since bd782c5 the Dockerfile and docker-entrypoint.sh are unchanged,
+    # and .github's one change (build.yml PRODUCER_REF -> 5cf7d879) selects the parity tests'
+    # checkout and is not a build arg, so VITE_FEATURES is unchanged.
+    digest: "sha256:401f76b3076fe694e58b347047f13e43fdbfbc9c88ab71455d35cbb2aeb5142e"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
