@@ -147,5 +147,6 @@ would also lose Topaz, so grants would stop reconciling.
 1. Every Job and CronJob pod template carries a component label.
 2. Every such component that reaches a store gets `directCallers` entries. Derive them from the
    job's real connections (its env and config keys), never from this mention census.
-3. Extend the join seal's population to Job pods. Today it collects Deployments' components only,
-   and that is why its green could not see this.
+3. Extend the seals' population to Job pods. The component-reality arm
+   (`tests/test_networkpolicy_direct_callers_join.py:172`) collects components from `Deployment`
+   and `StatefulSet` only, and that is why its green could not see this.
