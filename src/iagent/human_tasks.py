@@ -37,6 +37,16 @@ import httpx
 import psycopg2
 import psycopg2.extras
 
+try:
+    from agent_fleet.utils import program_membership as _program_membership
+except ImportError:  # pragma: no cover - run outside the repo root
+    import sys as _sys
+
+    _repo_root = Path(__file__).resolve().parents[2]
+    if str(_repo_root) not in _sys.path:
+        _sys.path.insert(0, str(_repo_root))
+    from agent_fleet.utils import program_membership as _program_membership
+
 logger = logging.getLogger(__name__)
 
 # The Electric-replicated Postgres — same DSN the projector uses.
@@ -237,20 +247,14 @@ def check_can_view_program(program: str, caller_id: str) -> bool:
     arguments or an unconfigured TOPAZ_DIRECTORY_URL are still a deny (False),
     same as the other two checks: that is a deployment that has declared no
     directory, not a request that attempted one and failed.
+
+    One question, one asker: the payload and the transport are
+    ``agent_fleet/utils/program_membership``'s, which the safety engine's FRACAS
+    program filter also calls -- so the gateway and the engine cannot drift apart.
     """
-    if not program or not caller_id or not _TOPAZ_DIRECTORY_URL:
-        return False
-    payload = {
-        "object_type": "program",
-        "object_id": program,
-        "relation": "can_view_program",
-        "subject_type": "user",
-        "subject_id": caller_id,
-    }
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
-        r = c.post("/api/v3/directory/check", json=payload)
-        r.raise_for_status()
-        return bool(r.json().get("check"))
+    return _program_membership.can_view_program(
+        program, caller_id, directory_url=_TOPAZ_DIRECTORY_URL
+    )
 
 
 def task_exists(task_id: str) -> bool:

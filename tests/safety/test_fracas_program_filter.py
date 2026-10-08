@@ -161,16 +161,57 @@ def test_a_caller_supplied_identity_param_is_refused_not_trusted(monkeypatch):
 
 # -- 6. the engine's check asks the SAME question as the gateway's -----------------------------
 
-def test_the_engine_payload_equals_the_gateways_payload():
-    """`src/iagent/human_tasks.check_can_view_program` cannot be imported by an engine
-    (psycopg2 at module top, no src/ in the image), so its payload is read from its source."""
+def test_the_gateway_asks_through_the_engines_asker(monkeypatch):
+    """`src/iagent/human_tasks.check_can_view_program` delegates to
+    `program_membership.can_view_program`, so the gateway and this engine send one payload
+    through one transport. Measured at the wire: the gateway's check posts exactly
+    `pm.check_payload` to the directory URL the gateway was configured with, and a transport
+    failure still raises (the route's 503) instead of reading as a deny."""
+    import httpx
+
+    import iagent.human_tasks as ht
+
+    sent = []
+
+    class _Client:
+        def __init__(self, *, base_url, timeout):
+            self.base_url = base_url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, path, json):
+            sent.append((self.base_url, path, json))
+            return httpx.Response(200, json={"check": True},
+                                  request=httpx.Request("POST", self.base_url + path))
+
+    monkeypatch.setattr(pm.httpx, "Client", _Client)
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "http://topaz.gateway.test")
+    assert ht.check_can_view_program("PROG", "WHO") is True
+    assert sent == [("http://topaz.gateway.test", "/api/v3/directory/check",
+                     pm.check_payload("PROG", "WHO"))]
+
+    # the gateway's URL decides, not the process env the engine would read
+    monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://topaz.env.test")
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    assert ht.check_can_view_program("PROG", "WHO") is False
+    assert len(sent) == 1
+
+    class _Down(_Client):
+        def post(self, path, json):
+            raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(pm.httpx, "Client", _Down)
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "http://topaz.gateway.test")
+    with pytest.raises(httpx.ConnectError):
+        ht.check_can_view_program("PROG", "WHO")
+
+    # one asker: the gateway's function holds no transport of its own
     src = (pf.REPO / "src" / "iagent" / "human_tasks.py").read_text("utf-8")
     fn = next(n for n in ast.parse(src).body
               if isinstance(n, ast.FunctionDef) and n.name == "check_can_view_program")
-    payload = next(a.value for a in ast.walk(fn)
-                   if isinstance(a, ast.Assign) and getattr(a.targets[0], "id", "") == "payload")
-    names = {"program": "PROG", "caller_id": "WHO"}
-    gateway = {k.value: (names[v.id] if isinstance(v, ast.Name) else v.value)
-               for k, v in zip(payload.keys, payload.values)}
-    assert pm.check_payload("PROG", "WHO") == gateway
-    assert "/api/v3/directory/check" in ast.get_source_segment(src, fn)
+    assert not any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                   and n.value.id == "httpx" for n in ast.walk(fn))
