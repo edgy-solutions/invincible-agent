@@ -71,10 +71,17 @@ def test_BOTH_LEVERS_ARRIVE(mod, action):
 
 
 @pytest.mark.parametrize("action", [sd.ASK, sd.ABSTAIN])
-def test_MISSING_DISPOSITION_IS_REFUSED(mod, action):
+def test_MISSING_DISPOSITION_IS_REFUSED(mod, action, monkeypatch):
+    # Refused BY THE ROW, not by the value check: the value check also refuses an absent
+    # disposition, so `is None` alone stays green with `disposition` moved back to optional
+    # (measured: that mutant survived the first version of this arm). The row's required tuple
+    # is the declaration cortex mirrors, so the arm names the refusal that fired.
+    said = []
+    monkeypatch.setattr(mod.logger, "warning", lambda msg, *a, **k: said.append(msg % a))
     card = _card(action)
     del card["disposition"]
     assert _project(mod, card) is None
+    assert any("missing required field" in m and "disposition" in m for m in said), said
 
 
 @pytest.mark.parametrize("action", [sd.ASK, sd.ABSTAIN])
