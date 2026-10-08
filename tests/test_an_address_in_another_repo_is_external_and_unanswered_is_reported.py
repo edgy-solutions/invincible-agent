@@ -199,8 +199,11 @@ def test_NO_BRANCH_row_for_a_lane_the_repo_does_not_have(gitrepo):
 def test_UNENUMERABLE_for_a_branch_with_no_worktree(gitrepo):
     main, _ = gitrepo
     out = _census(main)
-    assert "UNENUMERABLE  ia-zz" in out, out
-    assert "UNENUMERABLE  ia-ww" not in out, "lane/ww HAS a worktree"
+    assert "UNENUMERABLE  lane/zz" in out, out
+    assert "UNENUMERABLE  lane/ww" not in out, "lane/ww HAS a worktree"
+    # The branch is the name. A guessed `ia-<suffix>` worktree name collided with a real
+    # worktree holding a different branch (ia-74 / lane/74-engine-w-mesh, 2026-10-08).
+    assert "UNENUMERABLE  ia-" not in out, out
 
 
 @needs_git
