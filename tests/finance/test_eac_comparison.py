@@ -207,6 +207,43 @@ def test_IT_IS_BOUND_TO_COMPETING_MEASURES_AND_STILL_NOT_TO_FORECAST_MEASURE(sta
     )
 
 
+def test_EVERY_ROW_CARRIES_THE_KEYS_THE_CONTRACT_REQUIRES(state, program_id):
+    """The row-key half the minRows arm above never checked. COMPETING_MEASURES is exempt from
+    tests/planning/test_producers_speak_their_archetype.py on the strength of "its seals are
+    here", and until ruling 5 none of them read the row interface — so cortex renaming
+    `method` to `method_label` (d7d6593) would have been seen by nothing on this side.
+
+    The required set is PARSED from cortex's `CompetingMeasureRow` (non-optional members only),
+    never restated, so the next rename reds here rather than in a demo."""
+    import pathlib
+    import re
+
+    cortex_dir = pathlib.Path(__file__).resolve().parents[2].parent / "cortex-ui"
+    if not cortex_dir.is_dir():
+        pytest.skip("cortex-ui is not a sibling on disk; the contract half cannot run here")
+    src = _competing_measures_contract(cortex_dir).read_text(encoding="utf-8")
+    m = re.search(r"export interface CompetingMeasureRow \{(.*?)^\}", src, re.S | re.M)
+    assert m, "the contract no longer declares CompetingMeasureRow — the row keys are unchecked"
+    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    body = re.sub(r"//[^\n]*", "", body)
+    required = set(re.findall(r"^\s*(\w+)\s*:", body, re.M))
+    assert "method_label" in required, (
+        f"parsed {sorted(required)} — the parse missed the one key ruling 5 is about"
+    )
+
+    rows = measures.fin_eac_comparison(state, program_id=program_id)
+    assert rows, "no rows — the check would be vacuous"
+    for row in rows:
+        missing = required - set(row)
+        assert not missing, (
+            f"{row.get('method_label')!r} lacks {sorted(missing)}, which cortex's "
+            f"CompetingMeasureRow requires — the card refuses the row"
+        )
+        assert isinstance(row["method_label"], str) and row["method_label"], (
+            "method_label must be a non-empty string; cortex refuses a row without its name"
+        )
+
+
 def test_STRUCTURAL_NAMES_RIDE_BESIDE_THE_DOMAIN_ONES(state, program_id):
     """COMPETING_MEASURES is structurally named — three inflation indices want this card and
     none of them has an `eac`. cortex built an alias when my payload sent only domain names.
