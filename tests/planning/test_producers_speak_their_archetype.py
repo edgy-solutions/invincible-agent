@@ -48,13 +48,14 @@ _CONTRACTS = {
     # 2026-09-02 — this seal FAILED first and is the reason they have conformance cases at
     # all: it enumerates from the projector's own table, so adding a projected archetype
     # without a producer case is caught here rather than by a blank card in a demo.
-    "VARIANCE_TREE": ("VarianceTree.contract.ts", "VarianceNode"),
-    # Moved into an ADR-0055 package (cortex 85bbf0f), so this entry names its own path rather
-    # than repointing `_CORTEX`, which every other entry here resolves against.
+    # These three moved into ADR-0055 packages (cortex 85bbf0f, then f0da7f9 for VARIANCE_TREE
+    # and MULTI_SERIES), so each names its own path rather than repointing `_CORTEX`, which
+    # every other entry here resolves against.
+    "VARIANCE_TREE": (_CORTEX_SRC / "archetypes" / "variance-tree" / "contract.ts", "VarianceNode"),
     "CONTRIBUTION_RANKING": (_CORTEX_SRC / "archetypes" / "contribution-ranking" / "contract.ts",
                              "ContributionRow"),
     "FORECAST_MEASURE": ("ForecastMeasure.contract.ts", "ForecastRow"),
-    "MULTI_SERIES": ("MultiSeries.contract.ts", "MultiSeriesRow"),
+    "MULTI_SERIES": (_CORTEX_SRC / "archetypes" / "multi-series" / "contract.ts", "MultiSeriesRow"),
 }
 
 #: Projected archetypes with no producer case here, each with the reason. AN EXEMPTION IS A
