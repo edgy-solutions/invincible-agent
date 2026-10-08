@@ -34,6 +34,22 @@ from src.iagent import ingest_status as ist  # noqa: E402
 from src.iagent import promotion  # noqa: E402
 
 
+_RID = "sha256:" + "d" * 64
+
+
+def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
+    """Gives `row` its object_prefix and stubs the manifest read; returns the `extraction_ref` the
+    row carries (what the stage route recorded when it moved the row to review)."""
+    hex_ = row["id"].split(":", 1)[-1]
+    row["object_prefix"] = f"ingress-user/pdf/{hex_}/"
+    ref = f"{row['object_prefix']}generated/doc_pdf/doc-tools@61f74dc/manifest.json"
+    manifest = {"doc_id": "N-1", "filename": name, "source_key": row["object_prefix"] + name,
+                "pipeline_version": "doc-tools@61f74dc", "ingest_id": row["id"],
+                "provenance": {"standing": "supervised", "ingest_id": row["id"]}}
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
+    return ref
+
+
 @pytest.fixture
 def client():
     user = type("U", (), {"authz_id": "alice@example.com", "id": "alice@example.com",
@@ -118,19 +134,20 @@ def test_retry_document_row_in_pipeline_returns_409(client, monkeypatch, stage):
 
 
 def test_retry_review_row_with_no_task_files_it(client, monkeypatch):
-    row = {"id": "deadbeef", "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
+    row = {"id": _RID, "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
           "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
     _stub_domain(monkeypatch)
+    row["extraction_ref"] = _extraction_for(row, monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = client.post("/ingest/deadbeef/retry")
+    r = client.post(f"/ingest/{_RID}/retry")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body == {"ingest_id": "deadbeef", "stage": "review",
-                    "task_id": f"{promotion.KIND}:deadbeef", "task_status": "FILED"}
+    assert body == {"ingest_id": _RID, "stage": "review",
+                    "task_id": f"{promotion.KIND}:{_RID}", "task_status": "FILED"}
     assert len(registered) == 1, registered
     reg = registered[0]
     assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
@@ -171,7 +188,7 @@ def test_retry_review_row_domainless_content_kind_returns_422(client, monkeypatc
 def test_retry_on_behalf_of_caller_is_allowed(obo_client, monkeypatch):
     """The on_behalf_of PRINCIPAL (not the submitter) can retry their own row -- same caller
     scoping GET /ingest/{id}/status relies on."""
-    row = {"id": "deadbeef", "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
+    row = {"id": _RID, "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
           "submitted_by": "alice@example.com", "on_behalf_of": "bob@example.com"}
     captured = {}
     def _fake(ingest_id, *, caller_id):
@@ -179,11 +196,12 @@ def test_retry_on_behalf_of_caller_is_allowed(obo_client, monkeypatch):
         return row
     monkeypatch.setattr(ist, "get_status_for", _fake)
     _stub_domain(monkeypatch)
+    row["extraction_ref"] = _extraction_for(row, monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = obo_client.post("/ingest/deadbeef/retry")
+    r = obo_client.post(f"/ingest/{_RID}/retry")
     assert r.status_code == 200, r.text
     assert captured["caller_id"] == "bob@example.com"
     assert registered[0]["requested_by"] == "bob@example.com"

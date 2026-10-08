@@ -102,3 +102,9 @@ UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_d
 -- Electric rejects generated/typed columns the same way it rejects them elsewhere in this
 -- table. IDEMPOTENT (IF NOT EXISTS) -- a second run is a no-op.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
+
+-- 2026-10-08: extraction_ref -- NULLABLE. The versioned manifest key doc-tools' review POST names
+-- (`{base_dir}/generated/{base_name}/{pipeline_version}/manifest.json`); a retry re-derives the
+-- promotion task's payload from it. NULL for every row that reached review before this column
+-- existed. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;

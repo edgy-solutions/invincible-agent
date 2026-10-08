@@ -159,6 +159,12 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion 
 -- row written before this column existed. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS content_kind TEXT;
 
+-- 2026-10-08: extraction_ref -- NULLABLE. The versioned manifest key doc-tools' review POST names
+-- (`{base_dir}/generated/{base_name}/{pipeline_version}/manifest.json`); a retry re-derives the
+-- promotion task's payload from it. NULL for every row that reached review before this column
+-- existed. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;
+
 -- 2026-10-06 (roll #20 item 4): case_id -- NULLABLE. Set only once `POST /ingest/events` has
 -- confirmed the case runner actually opened the case (status moves received -> case_opened in
 -- the SAME write); NULL while a row sits at `received` and for every row the file-branch door
@@ -358,7 +364,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, content_kind
+                          created_at, updated_at, content_kind, extraction_ref
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -375,6 +381,7 @@ def update_status(
     extracted_total: Optional[int] = None,
     detail: Optional[str] = None,
     case_id: Optional[str] = None,
+    extraction_ref: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
@@ -389,7 +396,10 @@ def update_status(
 
     `case_id` is OPTIONAL and additive: omitted (None), the column is left as it was
     (COALESCE), same discipline as `detail`/`extracted_count`/`extracted_total` above --
-    a call that only moves the stage never has to restate a case_id it already wrote."""
+    a call that only moves the stage never has to restate a case_id it already wrote.
+
+    `extraction_ref` is the versioned manifest key doc-tools' review POST names; same discipline:
+    written only when given, never cleared by a call that omits it."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
@@ -404,9 +414,10 @@ def update_status(
                       SET status = %s, extracted_count = COALESCE(%s, extracted_count),
                           extracted_total = COALESCE(%s, extracted_total),
                           detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
-                          updated_at = %s
+                          extraction_ref = COALESCE(%s, extraction_ref), updated_at = %s
                     WHERE id = %s""",
-                (status, extracted_count, extracted_total, detail, case_id, now, ingest_id),
+                (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
+                 now, ingest_id),
             )
         conn.commit()
 
@@ -444,7 +455,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, origin_suggestion, content_kind, case_id
+                          created_at, updated_at, origin_suggestion, content_kind, case_id,
+                          extraction_ref
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),

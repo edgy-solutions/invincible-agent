@@ -1344,6 +1344,21 @@ def _stub_domain(monkeypatch, domain="sustainment", expected="pcn"):
     monkeypatch.setattr(ck, "by_kind", lambda kind: reg if kind == expected else None)
 
 
+def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
+    """Gives `row` its object_prefix and stubs the manifest read; returns the `extraction_ref` the
+    stage body must carry. The manifest is what doc-tools writes for a user drop (source_key,
+    versioned pipeline, the sidecar's provenance, the ingest_id), so the filed payload is DERIVED
+    from it exactly as in production."""
+    hex_ = row["id"].split(":", 1)[-1]
+    row["object_prefix"] = f"ingress-user/pdf/{hex_}/"
+    ref = f"{row['object_prefix']}generated/doc_pdf/doc-tools@61f74dc/manifest.json"
+    manifest = {"doc_id": "N-1", "filename": name, "source_key": row["object_prefix"] + name,
+                "pipeline_version": "doc-tools@61f74dc", "ingest_id": row["id"],
+                "provenance": {"standing": "supervised", "ingest_id": row["id"]}}
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
+    return ref
+
+
 def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "a" * 64, "status": "received", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
@@ -1373,7 +1388,7 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert len(registered) == 1, registered
     reg = registered[0]
@@ -1422,7 +1437,7 @@ def test_stage_review_resolves_domain_from_content_kind_never_from_file_format(
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert "pcn" in calls, calls
     assert "pdf" not in calls, calls
@@ -1452,7 +1467,7 @@ def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client
     """The row must NOT be stranded at `review` with no task: a 422 from register_task must
     leave update_status uncalled, so a retry sees the ORIGINAL stage (409, not a second 422
     against a row already moved)."""
-    row = {"id": "sha256:" + "h" * 64, "status": "extracting", "kind": "pdf",
+    row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     status_calls = []
@@ -1463,7 +1478,7 @@ def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client
     def _boom(**kw):
         raise ht.NoEntitledRecipients("no recipients for audience (stubbed)")
     monkeypatch.setattr(ht, "register_task", _boom)
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_entitled_recipients"
     assert status_calls == [], "update_status must not run when register_task refuses"
@@ -1473,7 +1488,7 @@ def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypa
     """TASK FIRST, STATUS SECOND (review-audience fix): record call order in one list so a
     regression that reorders these back -- update_status before register_task -- reds this
     exact fragment."""
-    row = {"id": "sha256:" + "i" * 64, "status": "extracting", "kind": "pdf",
+    row = {"id": "sha256:" + "2" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     order: list[str] = []
@@ -1485,7 +1500,7 @@ def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypa
         order.append("register_task")
         return {"task_id": kw["task_id"], "recipients": ["x"]}
     monkeypatch.setattr(ht, "register_task", _register)
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert order == ["register_task", "update_status"], order
 
@@ -1747,12 +1762,8 @@ def test_real_overlay_registry_resolves_pcn_pdn_s1000d_and_has_a_matching_grant(
 # route files {ingest_id, domain, dropped_by}; the act refuses 422 promotion_payload_invalid for
 # lack of object_ref, content_kind, pipeline_version, format_fingerprint, standing,
 # extraction_ref. So no document filed through POST /ingest/{id}/stage can be promoted or
-# rejected. STRICT xfail: once the filer carries the record's fields, this goes XPASS and
-# fails, and the marker comes off. The fix needs doc-tools' stage body to name its extraction
-# (packet to doc-tools/lane/7f, 2026-10-07).
-@pytest.mark.xfail(strict=True, raises=promotion.PromotionRefused,
-                   reason="stage route files a document_promotion payload the "
-                   "act refuses (promotion_payload_invalid); needs the extraction contract")
+# rejected. Fixed 2026-10-08: the payload is now DERIVED from the versioned manifest the stage
+# body's `extraction_ref` names (doc-tools #84), and this join is asserted.
 def test_the_payload_the_stage_route_files_is_one_the_act_accepts(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "e" * 64, "status": "extracting", "kind": "pdf",
            "content_kind": "pcn", "submitted_by": "alice@example.com"}
@@ -1763,7 +1774,7 @@ def test_the_payload_the_stage_route_files_is_one_the_act_accepts(doc_tools_clie
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert len(registered) == 1, registered
     subject = promotion.subject_from_payload(registered[0]["payload"])

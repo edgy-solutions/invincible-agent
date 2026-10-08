@@ -9795,7 +9795,8 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
 
     # Only `review` is left on the ladder here. The row is not moved -- it is already there.
     task_id, task_status = await _file_or_find_document_promotion_task(
-        ingest_id, row, requested_by=current_user.authz_id)
+        ingest_id, row, requested_by=current_user.authz_id,
+        extraction_ref=row.get("extraction_ref"))
 
     return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW, "task_id": task_id,
             "task_status": task_status}
@@ -9816,10 +9817,48 @@ class IngestStageUpdateRequest(_BaseModel):
     extracted_count: Optional[int] = None
     extracted_total: Optional[int] = None
     detail: Optional[str] = None
+    # doc-tools #84 names its VERSIONED manifest here (bare S3 key in `processing-artifacts`).
+    # Before this field existed Pydantic dropped it silently, and the promotion task was filed
+    # with a payload the act refused.
+    extraction_ref: Optional[str] = None
+
+
+def _read_extraction_manifest(key: str) -> dict:
+    """Read and parse the extraction manifest at `key` in the artifact bucket (sync; callers
+    run it in the threadpool). 422 `extraction_absent` when the store answers that the key is
+    not there, 503 `artifact_store_unreachable` for any other failure to read, 422
+    `extraction_unreadable` when the bytes are not a JSON object."""
+    import json as _j
+
+    try:
+        body = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_absent",
+                "message": f"no object at s3://{_ARTIFACT_BUCKET}/{key}; the store answered and "
+                           "said so, so extraction_ref is a bad pointer, not an outage"})
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer for {key!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    try:
+        doc = _j.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unreadable",
+            "message": f"the object at {key!r} is not a JSON object"})
+    return doc
 
 
 async def _file_or_find_document_promotion_task(
-    ingest_id: str, row: dict, *, requested_by: str,
+    ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
 ) -> tuple[Optional[str], str]:
     """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
     refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
@@ -9837,7 +9876,14 @@ async def _file_or_find_document_promotion_task(
     own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
     caller's own authz_id for a retry; this helper does not decide which, it only takes it.
 
-    Raises HTTPException for every refusal (422 `no_declared_domain`, 503
+    THE PAYLOAD IS DERIVED, NOT ASSERTED (ADR-0034): everything the act needs beyond the domain
+    and the dropper comes from the versioned extraction manifest `extraction_ref` names, read
+    here and turned into the payload by `promotion.payload_from_extraction`. An existing task
+    needs no manifest, so `ALREADY_FILED` is answered before any of that.
+
+    Raises HTTPException for every refusal (422 `no_declared_domain`, 422 `no_extraction_ref`,
+    422 `extraction_unbound`, 422 `extraction_absent`, 422 `extraction_unreadable`, 422
+    `extraction_unversioned`, 503 `artifact_store_unreachable`, 503
     `hitl_unconfigured`, 422 `no_entitled_recipients`, 422 `no_requester`) and never writes a
     task on any of them. Returns `(task_id, "FILED" | "ALREADY_FILED")` on success. Never
     moves the row itself -- callers that need the row moved do that themselves, in order
@@ -9865,14 +9911,36 @@ async def _file_or_find_document_promotion_task(
     task_id = f"{promotion.KIND}:{ingest_id}"
     if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
         return task_id, "ALREADY_FILED"
+
+    ref = str(extraction_ref or "").strip()
+    if not ref:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_extraction_ref",
+            "message": f"ingest {ingest_id} has no extraction_ref; the promotion payload is "
+                       "derived from the versioned extraction manifest it names.",
+        })
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix or not ref.startswith(prefix):
+        # BEFORE any read: never fetch a key outside this document's own directory.
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory "
+                       f"{prefix!r}.",
+        })
+    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    try:
+        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref)
+    except promotion.PromotionRefused as exc:
+        raise HTTPException(status_code=exc.status,
+                            detail={"error": exc.error, "message": str(exc)})
+    payload = {**derived, "domain": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
             title=f"Promote document {ingest_id}",
             summary=f"Review the extracted document {ingest_id} for promotion.",
             requested_by=requested_by, subject_ref=ingest_id,
-            payload={"ingest_id": ingest_id, "domain": domain,
-                     "dropped_by": {"authz_id": row.get("submitted_by")}},
+            payload=payload,
         ))
     except human_tasks.HumanTaskConfigError as exc:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
@@ -9901,6 +9969,9 @@ async def update_ingest_stage(
 
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
+    its payload derived from the versioned manifest the body's `extraction_ref` names (refusals
+    422 `no_extraction_ref` / `extraction_unbound` / `extraction_absent` / `extraction_unreadable`
+    / `extraction_unversioned`, 503 `artifact_store_unreachable`; nothing written on any), and
     carrying the ingest_id, the DECLARED content kind's domain (content_kinds.by_kind on the
     row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad|xml) and the
     original dropper (`dropped_by`, from the row's `submitted_by`). TASK FIRST, STATUS SECOND:
@@ -10011,16 +10082,18 @@ async def update_ingest_stage(
         # task and no way back (a retry on a row already at `review` is 409), so this call --
         # and everything it can raise -- happens before update_status below ever runs.
         task_id, task_status = await _file_or_find_document_promotion_task(
-            ingest_id, row, requested_by=caller)
+            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref)
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised (nothing written) or produced a resolvable audience; only
     # now does the row actually move, so a 422/503 above never strands the row at `review` with
     # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
+    # `extraction_ref` rides only on the move INTO review (where it was just validated).
+    _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
     try:
         await run_in_threadpool(lambda: ingest_status.update_status(
             ingest_id, req.stage, extracted_count=req.extracted_count,
-            extracted_total=req.extracted_total, detail=req.detail))
+            extracted_total=req.extracted_total, detail=req.detail, **_extra))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 
