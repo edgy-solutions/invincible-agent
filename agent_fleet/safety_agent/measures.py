@@ -12,7 +12,9 @@ hazard cannot be resolved instead of returning a clean "no hazard".
 """
 from __future__ import annotations
 
+import os as _os
 from datetime import date as _date
+from pathlib import Path as _Path
 from typing import Any, Dict, List, Optional
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIRST
@@ -440,6 +442,84 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PER-CALLER PROGRAM FILTER (ADR-0056 open question 2, accepted by the architect)
+# ─────────────────────────────────────────────────────────────────────────────
+class ProgramAuthorizationUnavailable(Exception):
+    """Topaz could not answer the program-membership question. main.measure turns this into a
+    503, NEVER an empty result: on a safety history, "could not tell" must not read as "no
+    failures"."""
+
+
+def platform_programs() -> Dict[str, str]:
+    """platform -> program key, merged from every `platform_programs.yaml` in
+    PLATFORM_PROGRAM_OVERLAY_DIRS (os.pathsep-separated). Unset or unreadable means NO mapping,
+    which denies every record (deny-by-default). Read per call: the file is tiny and the seal
+    swaps the env var. PyYAML arrives transitively with iagent-mesh (v0.9.5 declares it)."""
+    import yaml  # noqa: PLC0415
+
+    out: Dict[str, str] = {}
+    for d in (_os.getenv("PLATFORM_PROGRAM_OVERLAY_DIRS", "") or "").split(_os.pathsep):
+        if not d.strip():
+            continue
+        f = _Path(d.strip()) / "platform_programs.yaml"
+        if not f.is_file():
+            continue
+        rows = (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("platform_programs") or {}
+        for platform, program in rows.items():
+            if platform and program:
+                out[str(platform)] = str(program)
+    return out
+
+
+def _caller_authz_id() -> str:
+    """The caller of THIS request, from the mesh transport layer (the same source engine-cost
+    reads, `current_caller()`), never from a request parameter -- `params` is caller-supplied and
+    a spoofable identity would be no gate. Empty when no request is in scope or the caller did
+    not resolve, which denies."""
+    try:
+        from iagent_mesh.transport_auth import current_caller  # noqa: PLC0415
+    except ImportError:  # pragma: no cover
+        return ""
+    c = current_caller()
+    return (getattr(c, "authz_id", None) or "") if c else ""
+
+
+def _can_view_program(program: str, caller_id: str) -> bool:
+    try:
+        from utils.program_membership import can_view_program  # noqa: PLC0415
+    except ImportError:
+        from agent_fleet.utils.program_membership import can_view_program  # type: ignore[no-redef]
+    return can_view_program(program, caller_id)
+
+
+def _visible_records(records: List[Any]) -> List[Any]:
+    """Drop every record whose platform the caller may not view, BEFORE any grouping or counting
+    (gate-then-aggregate, the posture of neo4j_expert/service.py). Deny-by-default: no caller, an
+    unmapped platform, or a non-member drops the record. A Topaz failure raises."""
+    caller = _caller_authz_id()
+    if not caller:
+        return []
+    mapping = platform_programs()
+    verdicts: Dict[str, bool] = {}
+    kept = []
+    for r in records:
+        program = mapping.get(r.platform)
+        if not program:
+            continue
+        if program not in verdicts:
+            try:
+                verdicts[program] = _can_view_program(program, caller)
+            except Exception as exc:  # noqa: BLE001
+                raise ProgramAuthorizationUnavailable(
+                    f"program membership for {program!r} could not be verified: "
+                    f"{type(exc).__name__}"
+                ) from exc
+        if verdicts[program]:
+            kept.append(r)
+    return kept
+
+
 def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str, Any]:
     """What failed on this part, across every program and every system of record FRACAS cites.
 
@@ -471,9 +551,10 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     ADR-0056: (1) today's `SystemOfRecordConnector.lookup` returns at most one record per value,
     a shape this one-to-many query does not fit, so Phase 1 reads the in-engine fixture only and
     never calls `iagent_mesh.systems_of_record`'s real connector machinery; (2) this verb returns
-    every record it holds, tagged with its platform and citation, and performs NO per-caller
-    filtering by program membership — ADR-0039's "an engine computes facts and never chooses what
-    happens next" applies here exactly as it does to the acceptance ladder above.
+    every record the CALLER MAY VIEW (answered and accepted: `_visible_records`, a per-record
+    program-membership gate applied before grouping and counting). A caller who may view none
+    gets the same well-formed "no failure recorded" answer a clean part gets; an unmapped
+    platform is dropped; Topaz down raises `ProgramAuthorizationUnavailable` (a 503).
     """
     if not part_number:
         return {"refused": True, "reason": "which part?"}
@@ -483,7 +564,7 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
         # assess_deferral_risk's identical distinction for an unknown work order.
         return {"refused": True, "reason": f"unknown part '{part_number}'"}
 
-    records = [r for r in FAILURE_RECORDS if r.part_number == part_number]
+    records = _visible_records([r for r in FAILURE_RECORDS if r.part_number == part_number])
     platforms = sorted({r.platform for r in records})
     systems = sorted({r.system_of_record for r in records})
 

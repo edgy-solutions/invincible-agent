@@ -717,6 +717,15 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
     # bug inside that measure, by name, with the params that reached it.
     try:
         result = fn(**req.params)
+    except measures.ProgramAuthorizationUnavailable as exc:
+        # THE ONE 5xx THIS HANDLER DELIBERATELY RETURNS (ADR-0056 Q2): "could not verify program
+        # membership" must never collapse into an empty answer, which on a safety history would
+        # read as "no failures". Same shape the gateway answers for the origin path.
+        return JSONResponse(
+            status_code=503,
+            content={"error": "authorization_unavailable",
+                     "message": "could not verify program membership", "fn": fn_name},
+        )
     except Exception as exc:  # noqa: BLE001
         # ── A REFUSAL IS NEVER A 5xx, AND THIS ONE WAS ──────────────────────────────────────
         #
