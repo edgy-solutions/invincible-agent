@@ -139,6 +139,11 @@ class AnswerArtifactBundle:
     #: column was right and the read warned twice a second, forever. Written now, so the read
     #: is true and a second kind has somewhere to come from.
     kind: str = "answer"
+    #: The case that produced this artifact, when a workflow did (ADR-0041 §8.1). The runner's
+    #: `released` stamp finds the artifacts of a case by this property. OPTIONAL and written
+    #: ONLY when given. NO CALLER PASSES IT YET: no workflow produces a case-linked artifact
+    #: (tests/test_a_delegate_reads_what_it_seeded.py seals that state).
+    case_id: Optional[str] = None
     # Factual S·P headline composed at write time from the captured
     # routing facts (subject label · verb label; fallback → the
     # structured fallback_reason). Per ADR-0028 Decision 4 and the
@@ -547,6 +552,13 @@ class AnswerArtifactWriter:
             durability_status=durability_status,
             watermark=watermark,
         )
+
+        # Only when given: an artifact no case produced carries no `case_id` property at all.
+        if bundle.case_id:
+            tx.run(
+                "MATCH (a:AnswerArtifact {id: $id}) SET a.case_id = $case_id",
+                id=bundle.id, case_id=bundle.case_id,
+            )
 
         # PRODUCED_BY edge → Actor node. MERGE on (actor_type, actor_id)
         # so two artifacts produced by the same agent share an Actor

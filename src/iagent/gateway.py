@@ -5114,23 +5114,10 @@ def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
 # naming of what was dropped is already built.
 
 
-_ARTIFACT_BY_ID_CYPHER = """
-MATCH (a:AnswerArtifact {id: $artifact_id})
-OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
-OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
-RETURN a.id                    AS id,
-       a.status                AS status,
-       a.summary               AS summary,
-       a.question_text         AS question_text,
-       a.valid_as_of           AS valid_as_of,
-       a.duration_ms           AS duration_ms,
-       a.resolved_intent       AS resolved_intent,
-       a.routing_inline        AS routing_inline,
-       parent.id               AS derived_from,
-       owner IS NOT NULL       AS is_owner,
-       a.origin_owner_domain   AS origin_owner_domain,
-       a.origin_program        AS origin_program
-"""
+# The statement lives beside the MeshArtifacts implementation that reads it; it now also returns
+# `seeded_by` (ADR-0041 §8.1). `_resolve_export_answers` still reads it owner-only: an export is a
+# disclosure act, and ADR-0047 §5.1's seeding-delegate rule is a READ rule, not an export one.
+from .artifact_reads import ARTIFACT_BY_ID_CYPHER as _ARTIFACT_BY_ID_CYPHER  # noqa: E402
 
 # ── Origin entitlement (architect ruling, 2026-10-02) ──────────────────────────────
 #
@@ -5273,11 +5260,23 @@ async def get_artifact(
     if not _uid:
         # Honest-absent identity denies rather than reading broadly.
         raise HTTPException(status_code=403, detail="no caller identity on this request")
+    # ADR-0041 §8.1: a delegate reads what its workflows produced; ADR-0047 §5.1 as amended:
+    # a svc: delegate is a recipient only as the seeding delegate. The gate is
+    # GatewayArtifacts.get (the MeshArtifacts Protocol, iagent-mesh 0.9.9): owner OR seeding
+    # delegate answers; anything else is `empty`, indistinguishable from an absent id. R-089: the
+    # delegate map is asserted by configuration this pass.
+    from starlette.concurrency import run_in_threadpool
+    from .artifact_reads import ANSWER_ARTIFACT_KIND, GatewayArtifacts
+    from iagent_mesh import Initiator
+
+    _artifacts = GatewayArtifacts(neo4j_driver, _delegate_principals)
     try:
-        with neo4j_driver.session() as session:
-            rec = session.run(
-                _ARTIFACT_BY_ID_CYPHER, artifact_id=artifact_id, user_id=_uid
-            ).single()
+        _result = await run_in_threadpool(
+            lambda: _artifacts.get(
+                Initiator(subject=_uid, kind="person"), kind=ANSWER_ARTIFACT_KIND,
+                id=artifact_id, authz_id=current_user.authz_id,
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("artifact read failed for %s: %s", artifact_id, exc)
         raise HTTPException(status_code=503, detail="artifact store unavailable")
@@ -5296,7 +5295,9 @@ async def get_artifact(
     # discriminator goes to the LOG, where it is useful to an operator and reaches nobody
     # else. That asymmetry is the whole point: the distinction is valuable to us and
     # dangerous to them.
-    if not rec or not rec.get("is_owner"):
+    if _result.outcome == "answered":
+        rec = _result.rows[0]
+    else:
         # ── ORIGIN ENTITLEMENT (architect ruling, 2026-10-02: "ORIGIN, not audience") ──
         #
         # A non-owner may still read this artifact if it carries a RECORDED origin
@@ -5306,6 +5307,13 @@ async def get_artifact(
         # caller` returns False without a Topaz call, and the dropper/owner-only 404
         # below is exactly today's behaviour. Raises straight through (503) if Topaz
         # cannot answer — that is reported, never swallowed into this 404.
+        # `empty` hides absent-vs-refused from the caller of `get`; this route's own origin
+        # branch (not part of the Protocol) re-reads the row to ask the origin question.
+        try:
+            rec = await run_in_threadpool(lambda: _artifacts.read_row(artifact_id, _uid))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("artifact read failed for %s: %s", artifact_id, exc)
+            raise HTTPException(status_code=503, detail="artifact store unavailable")
         _origin_ok = False
         if rec is not None:
             _origin_ok = await _origin_visible_to_caller(rec, current_user)
@@ -10216,6 +10224,49 @@ async def write_origin_route(
         dropper_is_program_member=dropper_is_program_member,
     )
     return {"status": result["status"], "reason": result.get("reason")}
+
+
+_SEEDED_BY_STAMP_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) "
+    "SET a.seeded_by = $seeded_by RETURN count(a) AS n"
+)
+
+
+class SeededByStampRequest(_BaseModel):
+    seeded_by: str
+
+
+@app.post("/internal/cases/{case_id}/seeded-by")
+async def stamp_seeded_by_route(
+    case_id: str,
+    req: SeededByStampRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The runner stamps the seeding delegate on a case's artifacts at `released` (ADR-0041 §8.1,
+    RULED 2026-10-08). SERVICE-ONLY: only `svc:case-runner` may call this, same gate as
+    `/internal/origin/write`. `n == 0` is a 200, not an error: no producer writes case-linked
+    artifacts yet. Only a declared delegate can be a seeding delegate: anything else is 422.
+    R-089: the delegate map is asserted by configuration this pass."""
+    from starlette.concurrency import run_in_threadpool
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/seeded-by is callable only by the case "
+                       "runner's own service identity.",
+        })
+    if req.seeded_by not in _delegate_principals():
+        raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+
+    def _stamp() -> int:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _SEEDED_BY_STAMP_CYPHER, case_id=case_id, seeded_by=req.seeded_by
+            ).single()
+        return int(rec["n"]) if rec is not None else 0
+
+    return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
 
 
 # ════════════════════════════════════════════════════════════════════

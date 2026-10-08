@@ -663,6 +663,11 @@ def collect_placeholders(node: object) -> set:
     return found
 
 
+def bff_base_url() -> str:
+    """cortex-bff's base URL -- the one `config_bindings` builds its BFF endpoints from."""
+    return os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+
+
 def config_bindings() -> dict:
     """Runtime CONFIG placeholders — the deployment's own wiring, not per-request data.
 
@@ -670,7 +675,7 @@ def config_bindings() -> dict:
     disagree with the supervised one about where engine-o lives.
     """
     engine_o = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084").rstrip("/")
-    bff = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+    bff = bff_base_url()
     return {
         # The disposition write engine-a already performs on the SUPERVISED path
         # (`dispatch_driver`: f"{ENGINE_O_URL}/write_item_state"). Same endpoint, same source.

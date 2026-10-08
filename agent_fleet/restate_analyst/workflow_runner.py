@@ -69,6 +69,42 @@ def _routing():
     return _r
 
 
+#: The outcome at which the runner stamps `seeded_by` on the case's artifacts: `released`, the
+#: `tier_ack` outcome that closes the case in
+#: `policy/overlays/openddil-lab/decisions/maint_release_chaining.yaml`. RULED 2026-10-08 (Chris):
+#: `seeded_by` is stamped at `released` by the runner, not at open.
+SEEDED_BY_STAMP_OUTCOME = "released"
+
+
+def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
+    """POST `{bff}/internal/cases/{case_id}/seeded-by`, as `svc:case-runner` (the same credential
+    `spo_step_executor` mints for its own gateway calls). A non-2xx is TERMINAL: the case fails
+    visibly rather than silently skipping the stamp. A transport error or a credential that cannot
+    be minted is left to raise plainly, so Restate retries it."""
+    try:
+        import requests
+        try:
+            import spo_step_executor as _spo  # type: ignore[no-redef]
+            import workflow_definition as _wd  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst import spo_step_executor as _spo
+            from agent_fleet.restate_analyst import workflow_definition as _wd
+    except ImportError as exc:  # pragma: no cover
+        raise restate.TerminalError(f"cannot stamp seeded_by: {exc}", status_code=500) from exc
+    token = _spo.mint_case_runner_token()
+    resp = requests.post(
+        f"{_wd.bff_base_url()}/internal/cases/{case_id}/seeded-by",
+        json={"seeded_by": seeded_by},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_spo.STEP_HTTP_TIMEOUT,
+    )
+    if not 200 <= resp.status_code < 300:
+        raise restate.TerminalError(
+            f"stamping seeded_by on case {case_id!r} was refused: HTTP {resp.status_code}",
+            status_code=502)
+    return {"stamped": True}
+
+
 def _terminal(fn, status_code: int):
     """Run a routing call; a routing failure is TERMINAL inside ``ctx.run`` (a retry of an
     untailored table produces the same gap in thirty seconds)."""
@@ -133,8 +169,15 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     trig = R.Trigger.model_validate(intake["trigger"])
     flat, episode = intake["flat"], intake["episode"]
 
+    # ADR-0041 §8.1: the declared delegate whose door seeded this case (None for a person's). Stamped
+    # on the case's artifacts at SEEDED_BY_STAMP_OUTCOME; carried on the record from the open.
+    seeded_by = request.get("seeded_by")
+    if seeded_by is not None and (not isinstance(seeded_by, str) or not seeded_by.strip()):
+        raise restate.TerminalError(
+            f"seeded_by must be a non-blank string or absent; got {seeded_by!r}", status_code=400)
+
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
-                  "episode": episode, "instances": [], "transitions": []}
+                  "episode": episode, "instances": [], "transitions": [], "seeded_by": seeded_by}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
@@ -203,6 +246,9 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=step.get("acted_by") or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME and case["seeded_by"]:
+                await ctx.run(f"stamp_seeded_by_{n}",
+                              lambda: _stamp_seeded_by(case_id, case["seeded_by"]))
             if nxt["terminal"]:
                 case["terminal"] = nxt["then"]
                 ctx.set("case", case)

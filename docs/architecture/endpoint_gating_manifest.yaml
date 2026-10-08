@@ -1729,6 +1729,19 @@ services:
           derived from the approval_chain's steward entry, never taken from the caller (422 when
           absent). A refused write answers 200 with its reason; only the caller gate (403) and
           the missing steward (422) are HTTP errors.
+      - method: POST
+        path: /internal/cases/{case_id}/seeded-by
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (stamps seeded_by at the `released` outcome)]
+        class: gated
+        justification: >-
+          ADR-0041 section 8.1: stamps the seeding delegate on the AnswerArtifacts of a case, so
+          GET /artifacts/{id} can admit that delegate as a reader. One SERVICE identity is
+          accepted, checked before the body is used. A seeded_by that is not a declared delegate
+          (DELEGATE_ON_BEHALF_OF) is 422. A case with no case-linked artifact stamps zero and
+          answers 200: no workflow produces one yet.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
