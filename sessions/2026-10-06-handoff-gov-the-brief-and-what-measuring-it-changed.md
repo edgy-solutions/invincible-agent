@@ -158,16 +158,42 @@ Merge is Lane 1's gate.
   - The SDK packets are untracked and already addressed `iagent-mesh-sdk/lane/ca`.
   - The dag-tools packet is `dag-tools/seat/owner`.
 
+## 2026-10-08 dispatch (architect): three items
+
+1. **Numbered draft list:** placed at
+   `invincible-agent/sessions/2026-10-08-packet-to-lane-01-numbered-draft-list-r-090-to-r-119.md`.
+   - It proposes R-090..R-119 in chronological order, holding #19 (domain collision), with the
+     source file:line per row. A locator re-checked 29/29 sources by term match.
+   - The 10-07 packet's count is corrected in place: 29 + 2 = 31, not 30 + 2.
+   - It carries the R-055 grep re-run (55..89: 12 cited nowhere, 20 with no enforcing file;
+     whole register: 37 and 57) and the census.
+   - Census fix: UNENUMERABLE now names the BRANCH. It had guessed `ia-<suffix>`, which collided
+     with the real `ia-74`. Mutant M6 reds the arm.
+   - Found: `lane/ca`, `lane/cortex-ui` and `lane/cortex-60` in legacy addresses are not
+     branches of this repo. That is reported, not mapped.
+2. **Reds:** placed at
+   `invincible-agent/sessions/2026-10-08-packet-to-architect-gov-the-reds-on-master-by-name-none-is-environment.md`.
+   - Master `5b66fdc3` has **11** reds, not 16 (Lane 1's gate5). The SDK re-pin cleared 5.
+   - **None is environment, so nothing is VOIDed.** The WSL relay was already VOID (`705cedea`).
+     The cortex-ui drift is real at the deployed `bd782c5`. #11 (`ia-np` trailer) VOIDed would
+     retire R-058.
+   - gov fixed its own part: the census docs citation (#9 drops to 4 paths) and the inbox seal's
+     message (#4 now recommends `<repo>/<branch>`). It has not re-addressed the 13 committed
+     packets: 9 derivable addresses are offered and await authorisation.
+3. **`make gate`:**
+   - Files: `scripts/suite-gate.sh` plus a `Makefile` (`make` is not installed on this box; run
+     the script) plus `tests/test_suite_gate.py` (10 arms, PATH stubs).
+   - Behaviour: lock `$HOME/.iagent-suite-gate.lock`; BUSY = 2 on the lock or any pytest
+     process; REFUSED = 3 under `FLOOR_MB=2048` or on a non-integer probe; no bypass; the log
+     goes to `$HOME/iagent-gate-logs/`; `REAL_EXIT` comes from PIPESTATUS.
+   - Mutants M1–M5 (process check, `-le` floor, integer check, tee exit, trap) are each red at
+     the named arm.
+
 ## Next step
 
-1. Wait for the architect's ruling on the SDK fork. To redo the re-pin:
-   - `sed` root pyproject lines 66 and 138 from `@012a24fb…` to `@v0.9.8`;
-   - `uv lock`, then `uv sync --extra agent-fleet`;
-   - re-run the 48 `iagent_mesh` files gated (one suite machine-wide, refuse under 2 GB free
-     commit).
-   - If the ruling is "fleet to v0.9.8", the 16 `agent_fleet/*/pyproject.toml`, their `uv.lock`s
-     and `values.yaml` `meshSdkVersion` move too. The broker change is live on the next roll, so
-     the values diff goes in front of whoever approves it.
-2. `test_domain_broker_sdk_version_matches_the_fleet_pin` cannot see a sha pin. Reported, not
-   edited: its owner should decide whether a sha pin is a disagreement.
-3. Otherwise the brief is complete pending Lane 1's merge of lane/gov.
+1. Lane 1's merge of lane/gov: the gate, the census label and citation fix, and the inbox seal
+   message.
+2. Await Lane 1's numbers (or refusals) for R-090..R-119, and the authorisation, or not, to
+   re-address the 9 derivable packets.
+3. The SDK fork is resolved by Lane 1 (fleet to v0.9.8, `b3cacd17` and `5b66fdc3`). The old
+   re-pin steps above are superseded.
