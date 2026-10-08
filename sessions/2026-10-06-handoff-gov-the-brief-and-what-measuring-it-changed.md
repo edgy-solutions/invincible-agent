@@ -143,6 +143,20 @@ Merge is Lane 1's gate.
 - **Unanswered by Chris:** what to do about the implementer's routing run, which overlapped Lane 1's
   ia-01-roll21 suite (09:47 vs 09:44). Stopping it and messaging the implementer were both refused
   by permission. Do not pursue either by another route.
+- **Deferral-risk supersession (architect, 2026-10-07): recorded and routed.**
+  - The record is `sessions/2026-10-07-record-gov-deferral-risk-diagnosis-supersedes-saf-hypothesis.md`.
+  - The scope question went to Lane 1 in
+    `invincible-agent/sessions/2026-10-07-packet-to-lane-01-deferral-risk-which-fix-is-a-scope-question.md`
+    (placed). gov does not rule the entitlement.
+  - The numbering packet now carries a 32nd draft.
+  - The stale committed residual `docs/measurements/safety-walk-sheet.md:231-236` is lane/saf's
+    to correct.
+- **CLAUDE.md packets.** Re-checked against the addressing ruling; nothing needed re-addressing.
+  - doc-tools/lane/7f committed theirs in doc-tools #85 (`6c9a7d2`) and answered:
+    `2026-10-07-report-to-gov-read-by-7f-three-rules-committed.md`.
+  - cortex-ui committed theirs, still using the legacy address.
+  - The SDK packets are untracked and already addressed `iagent-mesh-sdk/lane/ca`.
+  - The dag-tools packet is `dag-tools/seat/owner`.
 
 ## Next step
 
