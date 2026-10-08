@@ -744,7 +744,14 @@ cortexUi:
     # VITE_MOCK_GROUNDING (3d44ee0), sanitised and empty by default, and this chart does not set
     # it. .github's one change (build.yml PRODUCER_REF -> 3e6d9e9f) selects the parity tests'
     # checkout and is not a build arg, so VITE_FEATURES is unchanged.
-    digest: "sha256:c054ba50f22e36f1389ba996e22625168869ee341889f2841ac0d99215c7fef6"
+    # 2026-10-07 roll #21, RE-PINNED before it fired: c054ba50 was never rolled. cortex-ui bd782c5
+    # (adds four commits to 8935e6a: rows read method_label, the SDK parity pin to v0.9.8, the
+    # illustration test settles on the SVG, and a sessions packet) -> 840d5114. Measured before
+    # pinning: the FULL tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2
+    # attestations); the abbreviated tag and this digest with its last hex altered both answer 404;
+    # the 8935e6a control still resolves to c054ba50. Nothing under the Dockerfile,
+    # docker-entrypoint.sh or .github changed since 8935e6a, so VITE_FEATURES is unchanged.
+    digest: "sha256:840d51145e75478caed2971a821cf66b27f6b9ff7d05596365c7b6d9fd84c9b3"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
