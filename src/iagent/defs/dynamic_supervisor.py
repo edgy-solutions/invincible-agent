@@ -508,6 +508,7 @@ def _find_compatible_verbs(
     context,
     subject_uri: str,
     entitled_domains: List[str],
+    user_email: str = "",
 ) -> tuple[list[dict] | None, str | None]:
     """ADR-0018 addendum (proper SPO). Ask Engine O which predicates can
     operate on this subject according to Neo4j (the compatibility
@@ -526,6 +527,7 @@ def _find_compatible_verbs(
     # unconstrained classification, the direct path falls back to the full run.
     verbs, err = _lookup_compatible_verbs(
         subject_uri, list(entitled_domains or []), ontology_url=ONTOLOGY_SVC_URL,
+        on_behalf_of=user_email,
     )
     if err is not None:
         context.log.warning(
@@ -716,7 +718,7 @@ def _classify_route(
         _pre_subject = str(pre_resolved["subject_uri"])
         _pre_verb = str(pre_resolved["verb_iri"])
         _pre_verbs, _pre_err = _find_compatible_verbs(
-            context, _pre_subject, list(entitled_domains)
+            context, _pre_subject, list(entitled_domains), user_email=user_email,
         )
         # THE ARITY GATE RUNS HERE TOO, and forgetting it is the enumeration law biting a
         # site I added myself. `needs_instance` is not a property of the verb record as
@@ -964,7 +966,7 @@ def _classify_route(
         }
 
     compatible_verbs, find_err = _find_compatible_verbs(
-        context, subject_uri, entitled_domains,
+        context, subject_uri, entitled_domains, user_email=user_email,
     )
 
     # ARITY GATE (query-shape eligibility, ADR-0008 follow-up). Query-arity
@@ -1108,7 +1110,7 @@ def _classify_route(
         fb_reason = "no_compatible_verbs"
         if entitled_domains:
             unscoped_verbs, _unscoped_err = _find_compatible_verbs(
-                context, subject_uri, entitled_domains=[],
+                context, subject_uri, entitled_domains=[], user_email=user_email,
             )
             if unscoped_verbs:
                 fb_reason = "domain_scope_excluded"
