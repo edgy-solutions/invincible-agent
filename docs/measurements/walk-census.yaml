@@ -233,6 +233,22 @@ rows:
     # for `safety:FailureRecordSet` — see the sheet's Q4 for the full reasoning. Add that row
     # when a presentation increment wires one, not before.
 
+  - id: safety-failure-trend-for-this-platform
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 4
+    question: failure trend for this platform by month
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: failure_trend_for_this_platform_by_month
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [slot_required]
+    # ADR-0056 Phase 1, second verb. REFUSAL PATH ONLY, by the first verb's rule: the question
+    # names no platform, and the populated answer is a flat JSON object with no `rendersAs`
+    # binding or ROW_KEY archetype for `safety:FailureTrend`. Add the populated row when a
+    # presentation increment wires one, not before.
+
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   # THE SHEET IS A FILE AS OF 2026-09-19 — docs/measurements/finance-walk-sheet.md — so these
   # eight rows are DERIVED and the `blocked` on the brief is lifted.

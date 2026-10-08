@@ -50,7 +50,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_four_prompts(sheet):
+def test_the_parser_finds_the_sheets_five_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -60,6 +60,7 @@ def test_the_parser_finds_the_sheets_four_prompts(sheet):
         "what hazards are unattended",
         "risk of deferring this work order",
         "what failed on this part",
+        "failure trend for this platform by month",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 
@@ -73,7 +74,9 @@ def test_every_prompt_is_a_declared_synonym_of_the_verb_it_names():
     for prompt in _PROMPT_RE.findall(_SHEET.read_text(encoding="utf-8")):
         # The HAZ-1003 prompt carries an instance the synonym cannot; compare the stem.
         stem = prompt.lower().split(" for ")[0]
-        assert stem in declared, (
+        # A synonym may itself contain " for " (Q5); the whole prompt matching exactly is
+        # STRICTER than the stem, so it is accepted first.
+        assert prompt.lower() in declared or stem in declared, (
             f"{prompt!r} is not one of the engine's declared synonyms — the sheet is walking a "
             f"phrasing nothing routes on. Declared: {sorted(declared)}"
         )
@@ -210,3 +213,28 @@ def test_the_sheet_still_marks_the_iof_manifest_gap_as_a_RESIDUAL(sheet):
     marker, not the gap, that this seal is about."""
     assert "KNOWN RESIDUAL" in sheet
     assert "iof_mro.ttl" in sheet and "prime manifest" in sheet
+
+
+# ---------------------------------------------------------------------------
+# Q5 -- the failure trend's designed refusal
+# ---------------------------------------------------------------------------
+
+def test_Q5_REFUSES_and_names_the_platform_slot(client, sheet):
+    body = _measure(client, "failure_trend_for_this_platform_by_month", {})
+    assert body["refused"] is True
+    assert body["missing"] == ["platform_id"]
+    assert body["slots"][0]["kind"] == "spoken-mandatory"
+    assert body["slots"][0]["referent"] == "http://internal/sustainment/safety#Platform"
+    assert "slot_required" in sheet and "platform_id" in sheet
+
+
+def test_Q5s_follow_on_capture_is_what_a_member_gets(sheet, monkeypatch):
+    from agent_fleet.safety_agent import measures
+
+    from . import _program_filter as pf
+
+    pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
+    out = measures.failure_trend_for_this_platform_by_month(platform_id="PLT-ALPHA")
+    assert out["months"][0]["citations"] == ["sor-events-a:EVT-55101"]
+    for claim in ('"month": "2026-03"', "sor-events-a:EVT-55101", "no_person"):
+        assert claim in sheet, f"the sheet no longer carries {claim!r}"

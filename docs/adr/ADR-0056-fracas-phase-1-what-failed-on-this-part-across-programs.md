@@ -150,3 +150,19 @@ own edge — is explicitly deferred and **waits on OpenDDIL's dry run**, per the
   is amended rather than re-litigated, the same way `ADR-0051` was.
 - A caller legitimately needs program-scoped visibility before Phase 2's connector lands: open
   question 2 stops being deferrable and this ADR gets its first real ruling.
+
+## Amendment 2026-10-08 -- connector shape, program filtering, no_person, and the second verb
+
+- **Open question 1 is answered by the SDK.** iagent-mesh-sdk 0.9.9 ships `SystemOfRecordQuery`
+  (`query(value) -> Iterable[dict]`, citation `<connector>:<record_id>`), the many-record sibling
+  of `lookup`. The engine pins the SDK at `60e56c97` and both FRACAS verbs read through
+  `failure_source.gather`; the in-engine fixture is the sandbox's connectors.
+- **Open question 2 is answered (accepted).** Results are filtered per record by program
+  membership before any grouping; an unmapped platform is denied; Topaz down is 503. A caller
+  that is not a person (`svc:*` or none) is refused 422 `no_person` rather than answered empty.
+- **Second verb: `failure_trend_for_this_platform_by_month`** (`mesh:failureTrendForThisPlatformByMonth`,
+  output `safety:FailureTrend`). Input class `safety:Platform`, minted after a survey that found no
+  platform class in any vendored ontology; members are derived from the fixtures. Buckets on
+  `observed_on` (the only date a record carries), calendar month, no timezone (it is a date, not an
+  instant), empty months included between the first and last month the caller may see, unparseable
+  dates counted under `undated`. Read-only; same filter and citations as the first verb.
