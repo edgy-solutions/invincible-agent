@@ -34,11 +34,12 @@ import re
 from typing import Any, Dict, List, Optional
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
-    from entities import CRITICAL_ITEMS, HAZARDS, WRITE_UPS
+    from entities import CRITICAL_ITEMS, HAZARDS, PLATFORM_IDS, WRITE_UPS
 except ImportError:  # pragma: no cover
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
         CRITICAL_ITEMS,
         HAZARDS,
+        PLATFORM_IDS,
         WRITE_UPS,
     )
 
@@ -71,6 +72,7 @@ def _members() -> Dict[str, List[Dict[str, str]]]:
             {"identifier": c.csi_id, "label": f"{c.part_number} — {c.description}"}
             for c in CRITICAL_ITEMS
         ],
+        SAFETY + "Platform": [{"identifier": p, "label": p} for p in PLATFORM_IDS],
         SAFETY + "WriteUp": [
             {"identifier": w.write_up_id, "label": w.narrative} for w in WRITE_UPS
         ],

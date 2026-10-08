@@ -245,6 +245,30 @@ VERBS: List[Dict[str, Any]] = [
             "what hazards are unattended", "accept this risk",
         ],
     },
+    {
+        "fn": "failure_trend_for_this_platform_by_month",
+        "verb": "mesh:failureTrendForThisPlatformByMonth",
+        "input_uri": SAFETY + "Platform",
+        "output_uri": SAFETY + "FailureTrend",
+        "desc": (
+            "ADR-0056 Phase 1, FRACAS second verb. How many failures were recorded on one "
+            "platform in each calendar month, counted on the date the failure was observed, "
+            "empty months included, each month citing the records behind it as "
+            "connector:record_id. Answers FAILURE TREND FOR THIS PLATFORM BY MONTH. REFUSES a "
+            "platform this engine does not know, which is a different fact from a known platform "
+            "with no failures (an explicit empty series). Results are limited to programs the "
+            "caller may view. READ-ONLY. OWNS the phrasings: failure trend for this platform by "
+            "month, failures per month on this platform, monthly failure count for this platform."
+        ),
+        "synonyms": [
+            "failure trend for this platform by month", "failures per month on this platform",
+            "monthly failure count for this platform", "how often does this platform fail",
+        ],
+        "anti_synonyms": [
+            "what failed on this part", "failure history for this part", "assess this hazard",
+            "what hazards are unattended",
+        ],
+    },
 ]
 
 BY_FN = {v["fn"]: v for v in VERBS}

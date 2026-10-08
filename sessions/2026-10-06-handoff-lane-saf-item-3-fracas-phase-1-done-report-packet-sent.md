@@ -145,3 +145,20 @@ BOTH `svc:*` and an unresolved caller refuse; a real person with no membership s
 No pre-existing `no_person` exists anywhere in the fleet (grep of every worktree); the body copies the
 sibling 503 in the same handler, status 422 as the gateway's `no_requester`. Walk sheet residual
 corrected: assessDeferralRisk IS registered; its SUBJECT SCOPE is the open question.
+
+## Update 2026-10-08 -- SystemOfRecordQuery consumer + second FRACAS verb
+- SDK: safety engine pyproject pinned by full sha 60e56c972b209617dbe85cff6ff606c957e120ad (same git+https
+  style as every engine and the root pin; root pyproject UNTOUCHED, still 012a24fb, so the root venv lacks
+  `SystemOfRecordQuery` and the one Protocol arm skips there; it passes under `uv run --with` the pinned sha).
+  safety_agent/uv.lock: 2-line change (iagent-mesh source rev only).
+- `failure_source.py`: connectors implementing the Protocol (fixture = the sandbox connectors), `gather(by,value)`
+  cites `<connector>:<record_id>`; `measures` no longer holds FAILURE_RECORDS. All first-verb seals unchanged and green.
+- Verb 2 `failure_trend_for_this_platform_by_month`: bucket `observed_on`, calendar month, no timezone, empty months
+  zero-filled between first/last VISIBLE month, unparseable dates under `undated`. New class safety:Platform (+ instances,
+  slot `platform_id`), safety:FailureTrend. Registries touched: entities.PLATFORM_IDS, main.VERBS, measures, slots,
+  instances, safety_extension.ttl, walk-census row (refusal-only: no rendersAs/ROW_KEY for FailureTrend), walk sheet Q5,
+  sheet-test expected list, ADR-0056 amendment.
+- Stale claims fixed: ttl FailureRecordSet comment said "no per-caller filtering".
+- STILL BLOCKED: HAZ-1004 walk row (needs Lane 1 roll packet naming revision with my shas).
+- Walk-sheet residual re-corrected: the architect's 2026-10-07 ruling (via lane/gov packet) is a subject-scan DOMAIN exclusion
+  (MAINTENANCE class outside the SUSTAINMENT+MESH scan), superseding lane/saf's manifest hypothesis.
