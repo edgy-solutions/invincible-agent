@@ -4488,10 +4488,14 @@ def _project_sources(mat: dict) -> list[dict] | None:
         # validating — UI's TypeScript shape ignores unknown keys.
         # `provenance` added for the provenance floor (ADR-0041 §7, section 5 of the
         # ingest/origin seam): a ProvenanceBlock an engine attaches to a source must survive
-        # projection for provenance_floor() to read it at the SSE emission site below — no
-        # production engine attaches one yet (provenance_floor.py's own docstring), so this
-        # is dormant passthrough until one does, same as matched_for's own history.
-        for extra in ("matched_for", "provenance"):
+        # projection for provenance_floor() to read it at the SSE emission site below.
+        # engine-o's notice_parts.py is the first production engine to attach one (2026-10-08);
+        # every other engine's sources still arrive unstamped.
+        # `obtained_via`, `ingest_id`, `dropped_by`, `promoted_by`: the graph's provenance as a
+        # retrieval path copies it onto each source (engine-o's notice_parts.py is the first);
+        # `promoted_by` is what the floor's promoted set is read from below.
+        for extra in ("matched_for", "provenance", "obtained_via", "ingest_id", "dropped_by",
+                      "promoted_by"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
@@ -4570,8 +4574,8 @@ def _sources_event_payload(mat: dict) -> tuple[list[dict] | None, dict | None]:
     loop so the floor's wiring is directly testable without driving the whole streaming
     generator (which needs a live Dagster run, routing, and more).
 
-    UNFILTERED: an unstamped source (no production path attaches a provenance block yet,
-    per provenance_floor.py's own docstring) is weaker than user-drop and must pull the
+    UNFILTERED: an unstamped source (every engine but engine-o's notice_parts.py still
+    returns one) is weaker than user-drop and must pull the
     floor down, never be skipped — "skipping is the laundering this field exists to
     prevent."
     """
@@ -4584,7 +4588,12 @@ def _sources_event_payload(mat: dict) -> tuple[list[dict] | None, dict | None]:
     # its label-pattern heuristic.
     _enrich_sources_with_has_figures(projected_sources)
     from . import provenance_floor as _provenance_floor_mod
-    floor = _provenance_floor_mod.provenance_floor(projected_sources)
+    # A PROMOTED DROP READS user-drop AND LEAVES `ingest_ids`. The promoted set is read off the
+    # sources' own `promoted_by`, which the retrieval path copied from the graph's PROMOTION fact.
+    floor = _provenance_floor_mod.provenance_floor(
+        projected_sources,
+        promoted=_provenance_floor_mod.promoted_ingest_ids(projected_sources),
+    )
     return projected_sources, floor
 
 

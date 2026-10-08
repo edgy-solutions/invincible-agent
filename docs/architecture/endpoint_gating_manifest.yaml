@@ -300,6 +300,19 @@ services:
           condition is restated rather than assumed, and it EXPIRES at a shared cluster. Its
           expiry is the trigger on [[engine-o-internal-hardening]].
       - method: POST
+        path: /notice_parts
+        identity: "entitled_domains (scope)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: >-
+          mesh:whichPartsDoesThisNoticeAffect (notice_parts.py), declared 2026-10-08 with the
+          route. READ session only; changes no state. Refuses before the graph is read unless
+          SUSTAINMENT is among the caller's entitled_domains, so an empty scope never reads as
+          "no parts". SECONDARY GAP, the same as /classify_predicate's: domain-scope, not per-IRI
+          can_view, so within SUSTAINMENT it answers for any notice id it is handed.
+      - method: POST
         path: /policy_rules
         identity: none
         gate: none
