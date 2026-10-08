@@ -1,8 +1,9 @@
 # Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051, ADR-0056)
 
-**Five questions, three different answer SHAPES — Q4 and Q5 reuse Q3's.** One draws a card, one
-creates a TASK and draws nothing, and three REFUSE by asking for a slot. A walker who expects five
-cards will score four defects that are not there.
+**Seven questions, three different answer SHAPES — Q4 and Q5 reuse Q3's, Q6 and Q7 are their
+populated twins.** Three draw a card (Q2, Q6, Q7), one creates a TASK and draws nothing, and three
+REFUSE by asking for a slot. A walker who expects seven cards will score four defects that are not
+there.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
@@ -11,6 +12,8 @@ cards will score four defects that are not there.
 | 3 | risk of deferring this work order | `assess_deferral_risk` | **a refusal** asking for `work_order_id` |
 | 4 | what failed on this part | `what_failed_on_this_part` | **a refusal** asking for `part_number` |
 | 5 | failure trend for this platform by month | `failure_trend_for_this_platform_by_month` | **a refusal** asking for `platform_id` |
+| 6 | what failed on this part PN-8801 | `what_failed_on_this_part` | a `CONTRIBUTION_RANKING` card, 1 row (bob sees one program) |
+| 7 | failures per month on this platform PLT-ALPHA | `failure_trend_for_this_platform_by_month` | a `MULTI_SERIES` card, 1 period (bob sees one program) |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -270,16 +273,9 @@ nothing.
 **Verb:** `mesh:whatFailedOnThisPart` → `engine-safety:/measure/what_failed_on_this_part`
 **Expected disposition:** `slot_required` — **this is a PASS**
 
-ADR-0056 Phase 1's own verb. The walk census only captures the refusal branch below, for the
-same reason Q3's census row stops at its refusal and never adds the "if the slot IS supplied"
-follow-on as a row of its own: a populated answer is a flat JSON object (`failures`, `platforms`,
-`systems_of_record_cited`), not a card, and no `rendersAs` binding or `ROW_KEY` archetype exists
-for `safety:FailureRecordSet` yet (confirmed: `src/iagent_pure/walk_census.py`'s `ROW_KEY` has no
-entry for it, and the ADR mints the class without ever proposing one). Capturing a `drawn`
-disposition for an archetype that is not wired would assert cortex-ui behaviour this engine has
-no part in yet — exactly the trap Q3's "KNOWN RESIDUALS" section below warns about from the other
-side. **If Phase 2 or a presentation increment wires a card for this verb, add the populated-path
-row here and to the census then — not before.**
+ADR-0056 Phase 1's own verb. THIS SECTION IS THE REFUSAL BRANCH; the populated branch is **Q6**,
+which is a census row of its own now that `safety:FailureRecordSet` is a declared `CONTRIBUTION_RANKING`
+binding (it was refusal-only until 2026-10-08, when no `rendersAs`/`ROW_KEY` archetype existed for it).
 
 ### The captured refusal
 
@@ -303,10 +299,12 @@ row here and to the census then — not before.**
   or as "No content available", is the same defect named in Q3 — *nothing drew* is what both a
   missing refusal and a missing card look like from the wire.
 
-### If the slot IS supplied — the follow-on, deliberately NOT a census row (see above)
+### If the slot IS supplied — the follow-on, which Q6 walks as a census row
 
-Post `{"part_number": "PN-8801"}` and the captured answer correlates across two programs and two
-systems of record (ADR-0056's whole reason to exist):
+Post `{"part_number": "PN-8801"}` AS A MEMBER OF BOTH PROGRAMS (alice) and the captured answer
+correlates across two programs and two systems of record (ADR-0056's whole reason to exist). The
+`rows`/`value_*`/`scope_label` keys that make it a card are shown under Q6; this block is the
+flat record list that sits beside them:
 
 ```json
 {"refused": false, "part_number": "PN-8801", "critical_items_checked": 2, "failure_count": 2,
@@ -337,12 +335,8 @@ as the same answer.
 **Verb:** `mesh:failureTrendForThisPlatformByMonth` → `engine-safety:/measure/failure_trend_for_this_platform_by_month`
 **Expected disposition:** `slot_required` — **this is a PASS**
 
-ADR-0056 Phase 1's second verb. THE CENSUS CAPTURES ONLY THE REFUSAL, by the same rule as Q4: the
-populated answer is a flat JSON object (`months`, `undated`, `systems_of_record_cited`), and no
-`rendersAs` binding or `ROW_KEY` archetype exists for `safety:FailureTrend` (it would want a
-time-series archetype, and none is wired). Capturing a `drawn` disposition for an archetype that
-is not wired would assert cortex-ui behaviour this engine has no part in. **When a presentation
-increment wires a card for this verb, add the populated-path row here and to the census then.**
+ADR-0056 Phase 1's second verb. THIS SECTION IS THE REFUSAL BRANCH; the populated branch is **Q7**,
+a census row of its own now that `safety:FailureTrend` is a declared `MULTI_SERIES` binding.
 
 ### The captured refusal
 
@@ -365,7 +359,7 @@ increment wires a card for this verb, add the populated-path row here and to the
 - **The surface ASKS the walker for a platform.** Prose or "No content available" is the same
   defect named in Q3.
 
-### If the slot IS supplied — the follow-on, deliberately NOT a census row
+### If the slot IS supplied — the follow-on, which Q7 walks as a census row
 
 The caller must be a PERSON. A `svc:` principal or no caller is refused **HTTP 422**
 `{"error": "no_person", ...}`; Topaz down is **503** `authorization_unavailable`; a person with no
@@ -383,6 +377,93 @@ membership of the platform's program gets the empty series, not a refusal. For a
 
 Months are counted on `observed_on` as written (no timezone); empty months between the first and
 last visible month appear with `failure_count: 0`.
+
+---
+
+## Q6 — What failed on this part, WITH the part named  ⚠ **expect a CARD, one row**
+
+> **"what failed on this part PN-8801"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT` (a member of `SANDBOX_PROGRAM_ALPHA` only)
+**Verb:** `mesh:whatFailedOnThisPart` → `engine-safety:/measure/what_failed_on_this_part`
+**Expected disposition:** `drawn` — a `CONTRIBUTION_RANKING` card
+
+The populated twin of Q4. The card ranks **failure modes** by how many times each was recorded across
+what the caller may view; the bar is that count, so order and magnitude are the SAME quantity (unlike
+Q2). **Bob sees one row, not two:** PN-8801 failed on `PLT-ALPHA` (his program) and on `PLT-BRAVO`
+(not his), and the per-record program filter drops the second *before* counting. Two rows, or a
+`failure_count` of 2, is the filter not running and is a **finding**.
+
+### The captured payload, as bob (`{"part_number": "PN-8801"}`), trimmed to what a walker compares
+
+```json
+{"refused": false,
+ "rows": [{"rank": 1, "entity_id": "Chafed wiring loom shorted the primary bus.",
+           "entity_name": "Chafed wiring loom shorted the primary bus.",
+           "contribution": 1, "share_of_total": 1.0, "platforms": ["PLT-ALPHA"],
+           "record_ids": ["FR-6001"], "citations": ["sor-events-a:EVT-55101"]}],
+ "value_label": "failures", "value_unit": "failures", "scope_label": "PN-8801",
+ "failure_count": 1, "systems_of_record_cited": ["sor-events-a"]}
+```
+
+### Checks that distinguish
+
+- **The card is a ranking, not "No content available".** That fallback is what the success path
+  drew before the binding existed. If it returns, the `PRESENTATION_CAPABILITIES` row for
+  `safety:FailureRecordSet` is not primed, or cortex-ui has not bound the class (see below).
+- **One row, one citation:** `sor-events-a:EVT-55101`. No `relyence:` citation — that record is on
+  `PLT-BRAVO`.
+- **The legend reads "failures".** There is no colour on the row and no direction stated.
+- **A single row draws a single full bar (share 1.0).** That is correct for one failure mode.
+
+### ⚠ What this row does NOT establish — read before scoring
+
+- **cortex-ui does not bind `safety:FailureRecordSet` yet.** Until it does, the backend advertises a
+  row the frontend has never heard of (the mirror seal carries it as a *staged* gap). The walk can
+  still score `drawn` only if the payload-only path chooses the archetype; a `knowledge-document`
+  card here is the missing frontend binding, not an engine defect. Owner: cortex-ts.
+- **Whether the utterance's `PN-8801` fills `part_number` is a ROUTING question this engine cannot
+  answer.** Q1 does the same with `HAZ-1003` and works; the part referent resolves against
+  `safety:SafetyCriticalItem`. If the walk answers `slot_required` instead, that is the instance
+  resolver not consulting the class, and is Lane 1's, not this verb's. Not walked live by this lane.
+
+---
+
+## Q7 — Failures per month on this platform, WITH the platform named  ⚠ **expect a CARD, one period**
+
+> **"failures per month on this platform PLT-ALPHA"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT` (a member of `SANDBOX_PROGRAM_ALPHA` only)
+**Verb:** `mesh:failureTrendForThisPlatformByMonth` → `engine-safety:/measure/failure_trend_for_this_platform_by_month`
+**Expected disposition:** `drawn` — a `MULTI_SERIES` card
+
+The populated twin of Q5: failures counted by calendar month of `observed_on`, one declared series
+(`failure_count`, unit "failures"), empty months zero-filled between the first and last visible
+month. The fixture holds one visible record for PLT-ALPHA, so the card is **one period**; a line
+with one point is correct here, not a rendering fault.
+
+### The captured payload, as bob (`{"platform_id": "PLT-ALPHA"}`), trimmed
+
+```json
+{"refused": false,
+ "rows": [{"period": "2026-03", "failure_count": 1, "failure_record_ids": ["FR-6001"],
+           "citations": ["sor-events-a:EVT-55101"]}],
+ "series": [{"key": "failure_count", "label": "Failures", "unit": "failures"}],
+ "value_label": "Failures per month", "scope_label": "PLT-ALPHA", "failure_count": 1}
+```
+
+### Checks that distinguish
+
+- **A series card, not "No content available".** Same reading as Q6.
+- **Exactly one declared series, one period `2026-03`, value 1.**
+- **No `reference`, no `verdict`.** The trend states no target; a card showing one has invented it.
+- The unit is the noun **"failures"** — a count, not a currency. A `$` anywhere is a finding.
+
+### ⚠ What this row does NOT establish
+
+Same two caveats as Q6: cortex-ui does not bind `safety:FailureTrend` yet (a `knowledge-document`
+card is the missing binding), and whether the utterance's `PLT-ALPHA` fills `platform_id` is the
+instance resolver's question (`safety:Platform` members: `PLT-ALPHA`, `PLT-BRAVO`, `PLT-CHARLIE`).
 
 ---
 
