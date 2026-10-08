@@ -162,3 +162,19 @@ corrected: assessDeferralRisk IS registered; its SUBJECT SCOPE is the open quest
 - STILL BLOCKED: HAZ-1004 walk row (needs Lane 1 roll packet naming revision with my shas).
 - Walk-sheet residual re-corrected: the architect's 2026-10-07 ruling (via lane/gov packet) is a subject-scan DOMAIN exclusion
   (MAINTENANCE class outside the SUSTAINMENT+MESH scan), superseding lane/saf's manifest hypothesis.
+
+## 2026-10-08 -- rendering bindings for the two FRACAS verbs (3e8d5435)
+
+- Item 1 (HAZ-1004 row / persona answer): NO qualifying Lane 1 packet. Checked invincible-agent/sessions,
+  ia-01/sessions and origin/lane/01 sessions/ for `to:` naming saf: only the older walk-sheet-control
+  packet (already acted on) and a 7f report (not Lane 1; its cause is the architect's subject-scan
+  exclusion). No roll names my shas, no persona answer. Live row NOT run.
+- Bindings: capabilities.py rows safety:FailureRecordSet -> CONTRIBUTION_RANKING, safety:FailureTrend
+  -> MULTI_SERIES (precedent: OrphanedHazardSet row, cost:UnitPriceTrend row). Engine payloads reshaped
+  in measures.py; old keys kept. Seal: tests/safety/test_fracas_cards_conform.py.
+- Staged: two entries in _MIRROR_GAPS_AT_RATIFICATION until cortex-ui DERIVED_BINDINGS binds the
+  classes (cortex-ui 916610f has no row). The ratchet reddens when it does; delete the lines then.
+- Pre-existing reds (identical before my change): 4 seals still read cortex-ui's OLD contract
+  paths (components/planning/*.contract.ts, now src/archetypes/*/contract.ts) or its archetype set.
+- Census rows safety-what-failed-on-this-part-populated / safety-failure-trend-populated: written,
+  NOT walked live. Open: does the utterance's PN-8801 / PLT-ALPHA fill the slot (instance resolver).
