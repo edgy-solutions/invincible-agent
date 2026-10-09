@@ -58,6 +58,17 @@ from typing import Any, Callable, Optional, Protocol
 
 from .decision_record import build_decision_record, make_check
 
+try:
+    from agent_fleet.utils.format_fingerprint import format_fingerprint_from_manifest
+except ImportError:  # pragma: no cover - run outside the repo root
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _repo_root = _Path(__file__).resolve().parents[2]
+    if str(_repo_root) not in _sys.path:
+        _sys.path.insert(0, str(_repo_root))
+    from agent_fleet.utils.format_fingerprint import format_fingerprint_from_manifest
+
 KIND = "document_promotion"
 PROMOTED, REJECTED = "promoted", "rejected"
 VERBS = (PROMOTED, REJECTED)
@@ -174,6 +185,74 @@ def object_prefix_for(ingest_id: str, object_ref: str) -> Optional[str]:
             and parts[2] == ingest_id.split(":", 1)[-1]):
         return "/".join(parts[:3]) + "/"
     return None
+
+
+_UNSTAMPED = frozenset({"", "unset", "unstamped", "unknown", "none"})
+
+
+def payload_from_extraction(ingest_id: str, row: dict, manifest: Any, extraction_ref: str) -> dict:
+    """The promotion task's payload, DERIVED from the extraction manifest rather than asserted.
+
+    ADR-0034: a caller may not assert `pipeline_version` or `format_fingerprint`; a decision
+    record that says what was reviewed must read it from the artifact that was reviewed. The
+    stage route's body is the caller, so it contributes only the pointer (`extraction_ref`);
+    everything else comes from here. Pure: the caller reads the manifest.
+
+    Sources: `ingest_id` the argument; `object_ref` the manifest's `source_key` (checked to be
+    this document's own key); `content_kind` the ingest row's (set at the seam); `pipeline_version`
+    the manifest's; `format_fingerprint` `format_fingerprint_from_manifest`; `standing` the
+    manifest's frozen `provenance.standing`; `extraction_ref` the argument; `notice_id` the
+    manifest's `doc_id`. The result is passed through `subject_from_payload` so anything the act
+    would refuse is refused at filing time with the act's own error.
+    """
+    def refuse(error: str, message: str):
+        raise PromotionRefused(error, message, status=422)
+
+    if not isinstance(manifest, dict):
+        refuse("extraction_unreadable",
+               f"the manifest at {extraction_ref!r} is a {type(manifest).__name__}, not an object")
+    prefix = str((row or {}).get("object_prefix") or "")
+    ref = str(extraction_ref or "").strip()
+    if not ref or not prefix or not ref.startswith(prefix):
+        refuse("extraction_unbound",
+               f"extraction_ref {ref!r} is not under this document's directory {prefix!r}")
+    if manifest.get("ingest_id") != ingest_id:
+        refuse("extraction_unbound",
+               f"the manifest's ingest_id {manifest.get('ingest_id')!r} is not {ingest_id!r}")
+    prov = manifest.get("provenance")
+    if isinstance(prov, dict) and "ingest_id" in prov and prov["ingest_id"] != ingest_id:
+        refuse("extraction_unbound",
+               f"the manifest's provenance ingest_id {prov['ingest_id']!r} is not {ingest_id!r}")
+    source_key = manifest.get("source_key")
+    if (not isinstance(source_key, str) or object_prefix_for(ingest_id, source_key) is None
+            or not source_key.startswith(prefix)):
+        refuse("extraction_unbound",
+               f"the manifest's source_key {source_key!r} is not a key under {prefix!r}")
+    version = str(manifest.get("pipeline_version") or "").strip()
+    low = version.lower()
+    if low in _UNSTAMPED or low.rsplit("@", 1)[-1] in _UNSTAMPED:
+        refuse("extraction_unversioned",
+               f"the manifest's pipeline_version {version!r} names no pipeline version; a record "
+               f"must say what produced the extraction it vouches for")
+    standing = prov.get("standing") if isinstance(prov, dict) else None
+    if not isinstance(standing, str) or not standing.strip():
+        refuse("extraction_unbound", "the manifest's provenance carries no standing")
+    content_kind = (row or {}).get("content_kind")
+    if not isinstance(content_kind, str) or not content_kind.strip():
+        refuse("extraction_unbound", f"the ingest row's content_kind is {content_kind!r}")
+
+    payload = {
+        "ingest_id": ingest_id,
+        "object_ref": source_key,
+        "content_kind": content_kind,
+        "pipeline_version": version,
+        "format_fingerprint": format_fingerprint_from_manifest(manifest),
+        "standing": standing,
+        "extraction_ref": ref,
+        "notice_id": str(manifest.get("doc_id") or ""),
+    }
+    subject_from_payload(payload)
+    return payload
 
 
 def ruleset_ref(declaration: dict) -> str:

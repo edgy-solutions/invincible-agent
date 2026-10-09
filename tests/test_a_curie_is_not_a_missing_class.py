@@ -31,12 +31,14 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _REGISTRAR = _REPO / "agent_fleet" / "mesh_registrar" / "main.py"
+_MOD_NAME = "mesh_registrar_under_test"
 
 
 def _tracked(*globs: str) -> list[Path]:
@@ -58,9 +60,9 @@ def _load_registrar():
     import importlib.util, sys, types
     for name in ("neo4j", "fastapi", "pydantic"):
         pass  # real ones are installed; nothing to stub
-    spec = importlib.util.spec_from_file_location("mesh_registrar_under_test", _REGISTRAR)
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, _REGISTRAR)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    sys.modules[_MOD_NAME] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -140,8 +142,17 @@ _EXACT_MATCH_WAIVERS: dict[str, str] = {
 #: `missing` and sent an operator to the prime. `_FIND_COMPAT_VERBS_CYPHER` in particular is
 #: the eligibility verifier the pre-resolved re-ask calls, and changing it belongs with that
 #: work rather than bundled into a fix for a different service.
+#:
+#: `mesh_graph.py` JOINED 2026-10-08, AND IT IS THE SAME SITE, NOT A THIRD SERVICE. Behind
+#: `COMPATIBLE_VERBS_VIA_MESH`, `/find_compatible_verbs` reads its coverage leg through
+#: `Neo4jGraph.verbs_for`, handing it the same `request.subject_uri` main.py's `_FIND_COMPAT_
+#: VERBS_CYPHER` receives, unmodified; `test_verbs_for_IS_THE_ROUTES_LEG_1` holds the two statements
+#: equal. Expanding or canonicalising on the flag-on path alone would make the two paths answer a
+#: CURIE differently, which the flag on/off seal forbids. The module's other exact-match
+#: operations (`ancestors`, `operable_subjects`) still have no caller; the register is per file.
 _KNOWN_OPEN_RUNTIME_SITES = {
     "agent_fleet/ontology_service/main.py",
+    "agent_fleet/ontology_service/mesh_graph.py",
 }
 
 #: `v2_substrate.py` LEFT this register in the same change that protected it, which is the
@@ -176,13 +187,11 @@ _PROTECTED_BY_BOUNDARY = {
 #: anything imports the module the arm reds and the entry must move to the state its new
 #: caller puts it in — because a debt entry that outlives its debt is a monument nobody can
 #: tell apart from a live one, which is the lesson `v2_substrate.py` left two registers above.
-_NOT_YET_WIRED = {
-    "agent_fleet/ontology_service/mesh_graph.py": (
-        "eo's Neo4jGraph, merged 2026-09-19. Duplicates main.py's Cypher by design (see "
-        "test_THE_DUPLICATED_CYPHER_STILL_AGREES_WITH_MAIN) and inherits its exact-match "
-        "shape, but nothing imports it yet — measured, zero importers outside its own test."
-    ),
-}
+#:
+#: EMPTY SINCE 2026-10-08: `mesh_graph.py` was its only member and main.py now imports it, so the
+#: arm below retired it into `_KNOWN_OPEN_RUNTIME_SITES` exactly as designed. The arm is kept
+#: parametrised over an empty set rather than deleted; the next unwired module re-arms it.
+_NOT_YET_WIRED: dict[str, str] = {}
 
 
 def _cypher_literals(tree, source: str):
@@ -293,9 +302,10 @@ def test_the_known_open_list_has_not_silently_grown():
     """A known-open list is a debt register, and a debt register that anyone may append to
     without noticing is a waiver list wearing a different name. If a third runtime service
     starts matching exactly, that is a decision someone should have to make on purpose."""
-    assert len(_KNOWN_OPEN_RUNTIME_SITES) == 1, (
-        f"the known-open set changed: {sorted(_KNOWN_OPEN_RUNTIME_SITES)}"
-    )
+    assert _KNOWN_OPEN_RUNTIME_SITES == {
+        "agent_fleet/ontology_service/main.py",
+        "agent_fleet/ontology_service/mesh_graph.py",
+    }, f"the known-open set changed: {sorted(_KNOWN_OPEN_RUNTIME_SITES)}"
 
 
 def test_the_known_open_sites_still_exist():
@@ -467,3 +477,17 @@ def test_the_expansion_never_fails_a_registration():
     body = src[i:src.index("def _contract_d_check(", i)]
     assert "except Exception" in body, "an unreachable graph would fail the registration"
     assert body.count("return uri") >= 3, "not every uncertainty passes the value through"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

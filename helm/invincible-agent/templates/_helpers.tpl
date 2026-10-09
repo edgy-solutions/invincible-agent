@@ -475,3 +475,31 @@ http://{{ .Release.Name }}-dagster.{{ .Release.Namespace }}.svc.cluster.local:{{
 {{ .Values.externalDagster.url }}
 {{- end -}}
 {{- end }}
+
+{{/*
+  invincible-agent.networkPolicyStores — THE ONE store -> ports table.
+
+  Returns a JSON list of {component, ports}: every store that gets an ingress policy
+  (templates/networkpolicy-stores.yaml) AND the ports an engine's egress rule opens to it
+  (templates/networkpolicy-engines.yaml, for a `networkPolicy.directCallers` entry). Both
+  templates read THIS define, so the two halves of a direct caller's admission cannot disagree
+  about a port. Duplicating the table in either template is the defect this define removes.
+
+  A component belongs here only if the chart renders it with the standard
+  `app.kubernetes.io/component` label. Redis and MinIO are NOT chart components (measured by
+  rendering values-sandbox.yaml), so a policy for either would select no pod while looking right.
+  Topaz is one: 9393 is the directory port TOPAZ_DIRECTORY_URL names.
+
+  Consume with: fromJsonArray (include "invincible-agent.networkPolicyStores" .)
+*/}}
+{{- define "invincible-agent.networkPolicyStores" -}}
+{{- list
+  (dict "component" "postgresql" "ports" (list 5432))
+  (dict "component" "keycloak" "ports" (list 8080))
+  (dict "component" "weaviate" "ports" (list 8080 50051))
+  (dict "component" "neo4j" "ports" (list 7474 7687))
+  (dict "component" "restate" "ports" (list 8080 9070))
+  (dict "component" "fuseki" "ports" (list 3030))
+  (dict "component" "topaz" "ports" (list 9393))
+| toJson -}}
+{{- end }}

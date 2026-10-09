@@ -30,7 +30,10 @@ def test_sdk_is_pinned_to_a_tag(path: Path):
     m = _SDK.search(src)
     assert m, f"{path} does not pin iagent-mesh at all — a floating dep on the auth package"
     ref = m.group("ref")
-    assert re.fullmatch(r"v\d+\.\d+\.\d+", ref), (
+    # A sha is admitted only while it is a bounded, reasoned entry in SHA_PINS_PENDING_TAG
+    # (tests/test_lock_coherence.py), whose own arm refuses it once stale or past its backstop.
+    from tests.test_lock_coherence import SHA_PINS_PENDING_TAG
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", ref) or ref in SHA_PINS_PENDING_TAG, (
         f"{path} pins {ref!r} — that is a REF, not a version. Branches move; releases do not."
     )
 

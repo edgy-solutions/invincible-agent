@@ -1,47 +1,37 @@
 # PROGRAM FINANCE CANVAS — the second ratified template (ADR-0050 §9.2's second registry row).
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────
-# ⚠ THIS TEMPLATE CANNOT SEED TODAY, AND THAT IS A PROPERTY OF THE VERBS, NOT AN OVERSIGHT.
+# THIS TEMPLATE SEEDS WHEN `program` IS BOUND, AND REFUSES OTHERWISE — BY NAME.
 #
 # Every one of the six finance verbs takes `program_id` as a REQUIRED keyword with NO DEFAULT
-# (`agent_fleet/finance_agent/measures.py`, verified 2026-09-08). `finEacCalculation` takes a
-# second one — `method: EACMethod`, whose docstring says in as many words *"There is no
-# default"*, and which ADR-0045 makes spoken-mandatory: a bare "what's the EAC" is refused with
-# "which method?".
+# (`agent_fleet/finance_agent/measures.py`, verified 2026-09-08), which is why `program` is
+# declared as a shared slot and every panel consumes it (§3's worked case, "six cards from one
+# ask"). `name: program` is the ask's identity — the word a caller binds in `/canvas/seed`'s
+# `bindings` — and `param: program_id` is the dispatch identity, because that is the keyword the
+# verbs actually declare (26 occurrences in the finance engine against ZERO in planning, which is
+# why this same slot is REFUSED on `portfolio`: a shared slot is a parameter the panels' verbs
+# actually take, not a statement that the panels are about the same thing).
 #
-# `portfolio.yaml` could declare its verbs' defaults and be TRUE today because every planning
-# verb defaults to portfolio-wide. **Finance has no such defaults to declare.** A template that
-# named these verbs with empty slots and looked seedable would merge, pass every check, and
-# refuse on all six panels at seed time — the exact shape ADR-0050 acceptance 1 exists to catch
-# and that a file-only check cannot see.
+# UNBOUND → 409, NAMED. A request for `program_finance` with no `bindings` entry for `program`
+# gets `panel(s) consuming shared slot(s) ['program'] that nothing binds yet ... supply it in
+# `bindings``. That is the honest ADR-0050 §3 carry, not a fault in the template.
 #
-# So this file is ratified, schema-valid, and **deliberately not yet seedable**. Its job today is
-# to be the SECOND ROW that ADR-0050 §9.2 needs in order to decide whether a second registry
-# should exist at all. Do not wire it into a seed path expecting cards.
-#
-# `program` IS NOW DECLARED, 2026-09-11, and this template states its true shape for the first
-# time: one shared slot, six panels consuming it — §3's "six cards from one ask", and these six
-# verbs are exactly why that section names `program` specifically. All six take `program_id`
-# (26 occurrences in the finance engine against ZERO in planning, which is why the same slot is
-# REFUSED on `portfolio`: a shared slot is a parameter the panels' verbs actually take, not a
-# statement that the panels are about the same thing).
-#
-# WHAT DECLARING IT DOES TODAY: the seed route answers 409 — *"panel(s) consuming shared slot(s)
-# ['program'] that nothing binds yet"* (R-005). That is the ADR-0050 §3 carry reported honestly,
-# and it is BETTER than the previous state, where the truth lived only in this comment while the
-# machine-readable artifact said `shared_slots: []`. The template is now the record; the refusal
-# names the real reason. It was already unseedable behind the 501 gate, so nothing operational
-# changed.
+# BOUND → SIX PANELS, ONE PER VERB, DISPATCHED THROUGH THE TEMPLATE'S OWN DECLARATION. The
+# seeder (`seed_template_canvas`) never builds a phrase; it sends each panel's verb and slots
+# straight through `/interview/stream`'s `seed_panel`, which rebuilds the route from THIS file,
+# never from the caller — see the stream-side gate in `src/iagent/gateway.py` for what that
+# refuses.
 #
 # `finEacCalculation`'s `method` stays PANEL-LOCAL and must not be promoted here — it is a
 # per-panel choice, not a board subject, and asking it once would answer a different question.
 #
-# ── COUPLED TO tests/planning/test_seed_canvas_takes_the_template_as_a_slot.py. ──────────────
-# Reverting `shared_slots`/`consumes` here makes this template reach the 501 branch again, which
-# REDS `test_the_501_branch_is_UNREACHABLE_TODAY_and_that_is_recorded` — and reds the 409
-# assertion in `test_an_UNSEEDABLE_template_refuses_BEFORE_the_clock_starts`, which expects 409
-# EXACTLY. The two files land, revert and backport together. Said on both sides on purpose: a
-# coupling noted in only one direction is found by whoever edits the other one.
+# ── COUPLED TO tests/planning/test_program_finance_seeds_six_panels.py AND
+# tests/planning/test_seed_canvas_takes_the_template_as_a_slot.py. ───────────────────────────
+# Reverting `shared_slots`/`consumes`/`param` here makes `program_finance` stop seeding and
+# REDS the six-panel seal, and reds the 409 assertion in
+# `test_an_UNSEEDABLE_template_refuses_BEFORE_the_clock_starts`, which expects 409 EXACTLY when
+# no binding is sent. The three land, revert and backport together. Said on both sides on
+# purpose: a coupling noted in only one direction is found by whoever edits the other one.
 #
 # ── VERB EXISTENCE, CHECKED FROM THE MESH ────────────────────────────────────────────────────
 # All six verbs verified 2026-09-08 against the live sandbox mesh — present as Neo4j
@@ -54,6 +44,12 @@
 ---
 template_id: program_finance
 title: Program finance status
+# ITEM 3 — this template IS the package definition for a program-office disclosure.
+# `recipient_scope_for` reads `audience` plus whichever shared slot below is bound, so the
+# scope is `program_office.<program>` — NEVER hand-typed, and NEVER a second place that could
+# disagree with the seeder about what this board is.
+package:
+  audience: program_office
 description: >-
   Funding status anchoring the top, with burn rate and performance indices beneath it, then the
   variance decomposition, its ranked drivers, and the estimate at completion. The six
@@ -68,6 +64,12 @@ shared_slots:
       Which program this board is about. Asked ONCE at load and bound into all six panels —
       ADR-0050 3's worked case, and the reason that section names `program` specifically.
     required: true
+    # THE ASK IS "program"; THE VERBS TAKE "program_id". `name` is what the menu offers and
+    # what a caller binds against in `/canvas/seed`'s `bindings`; `param` is the keyword every
+    # one of these six verbs actually declares. Without this split the seeder would have to
+    # either rename the ask to the verb's own vocabulary (losing the human word §3 names) or
+    # splat `program` at a verb that does not accept it.
+    param: program_id
 
 panels:
   # ── SLOT 0 — the anchor ────────────────────────────────────────────────────────────────────
@@ -75,6 +77,11 @@ panels:
     role: anchor
     slots: {}
     consumes: [program]
+    # SUBJECT = finance_agent's own VERBS catalogue `input_uri` for `fin_funding_status`
+    # (agent_fleet/finance_agent/main.py) — the full IRI, not a lookup. `dispatch_pre_resolved`'s
+    # `find_compatible_verbs` call CONFIRMS this against the live mesh on every dispatch; the
+    # template only declares it.
+    subject: http://invincible-agent/fin#FundingLine
     note: >-
       REQUIRES program_id, which has no default — this panel cannot seed until `program` is a
       bindable shared slot. `window` defaults to None, meaning the full span. Output is
@@ -85,6 +92,9 @@ panels:
     role: pair
     slots: {}
     consumes: [program]
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_burn_rate's own
+    # input_uri, confirmed by the mesh on every dispatch, never looked up here.
+    subject: http://invincible-agent/fin#PerformanceMeasurementBaseline
     note: >-
       REQUIRES program_id, no default. `window` defaults to None. Counts cash leaving, NOT value
       claimed — deliberately paired with finPerformanceIndices, which asks whether the money
@@ -95,6 +105,9 @@ panels:
     role: pair
     slots: {}
     consumes: [program]
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_performance_indices's
+    # own input_uri, confirmed by the mesh on every dispatch, never looked up here.
+    subject: http://invincible-agent/fin#PerformanceMeasurementBaseline
     note: >-
       REQUIRES program_id, no default. `ca_id` and `window` default to None — program-wide, full
       span. A series rather than a point, by design: 0.84 falling from 0.95 is a different
@@ -104,6 +117,9 @@ panels:
   - verb: mesh:finVarianceAnalysis
     role: pair
     consumes: [program]
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_variance_analysis's own
+    # input_uri, confirmed by the mesh on every dispatch, never looked up here.
+    subject: http://invincible-agent/fin#Program
     slots:
       variance_kind: cost
       materiality: 0.05
@@ -118,6 +134,9 @@ panels:
   - verb: mesh:finVarianceDrivers
     role: pair
     consumes: [program]
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_variance_drivers's own
+    # input_uri, confirmed by the mesh on every dispatch, never looked up here.
+    subject: http://invincible-agent/fin#ControlAccount
     slots:
       variance_kind: cost
       level: control_account
@@ -131,6 +150,9 @@ panels:
   - verb: mesh:finEacCalculation
     role: pair
     consumes: [program]
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_eac_calculation's own
+    # input_uri, confirmed by the mesh on every dispatch, never looked up here.
+    subject: http://invincible-agent/fin#Program
     slots:
       method: CPI
     note: >-

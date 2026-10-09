@@ -85,6 +85,10 @@ ROUTED = "routed"
 ASK = "ask"
 ABSTAIN = "abstain"
 FALL_BACK = "fall_back"
+# The reason text of the FALL_BACK that means the caller's cell cannot see the verb. The
+# gateway reads it to type the seed_panel cause; one constant so the producer and the
+# classifier cannot drift.
+VERB_NO_LONGER_COMPATIBLE = "no longer compatible"
 
 #: THE STAGES THIS PATH ACTUALLY RUNS, and the list is short because the path is short.
 #: The Dagster stream's five kinds describe a decomposition, a resolution and a
@@ -205,6 +209,9 @@ def dispatch_pre_resolved(
     headers: Optional[Dict[str, str]] = None,
     post=None,
     on_stage=None,
+    #: The person the ask is for, handed to the verifier. Engine O refuses a blank one with
+    #: `COMPATIBLE_VERBS_VIA_MESH` on, and a refused verify falls back to the full run.
+    on_behalf_of: str = "",
 ) -> DirectOutcome:
     """Execute a route the ask already established.
 
@@ -229,7 +236,9 @@ def dispatch_pre_resolved(
 
     # ── 1. VERIFY. The invalidation, and it runs BEFORE anything is dispatched ──────────
     _stage(STAGE_VERIFYING, "started")
-    verbs, err = find_compatible_verbs(subject, entitled_domains, ontology_url=ontology_url)
+    verbs, err = find_compatible_verbs(
+        subject, entitled_domains, ontology_url=ontology_url, on_behalf_of=on_behalf_of,
+    )
     if err is not None:
         # COULD NOT CHECK is not NOTHING IS COMPATIBLE. Falling back to the run means the
         # question still gets answered, by the path that has its own handling for this.
@@ -287,7 +296,7 @@ def dispatch_pre_resolved(
         # The ask's verb is no longer eligible — revoked, retired, re-primed, or this picker
         # has a different persona from the asker. Recomputing is the correct answer.
         _stage(STAGE_VERIFYING, "failed")
-        return DirectOutcome(FALL_BACK, f"verb {verb} no longer compatible with {subject}")
+        return DirectOutcome(FALL_BACK, f"verb {verb} {VERB_NO_LONGER_COMPATIBLE} with {subject}")
 
     _stage(STAGE_VERIFYING, "completed")
     predicate = predicate_from_compat_record(truth)
@@ -487,6 +496,11 @@ def dispatch_pre_resolved(
         candidate_count=len(verbs or []),
         subject_candidates=[],
         fallback_reason="",
+        # NO CLASSIFIER RAN HERE, BY CONSTRUCTION — this function only executes a route the
+        # ask already established. The ASK/ABSTAIN outcomes further down are the SLOT
+        # disposition declining, not the subject/verb resolution; the resolution itself was
+        # pre_resolved regardless of what happens to the slots.
+        reason_code="pre_resolved",
         eligibility_excluded=_excluded(flagged),
         acting_persona=acting_persona,
         acting_domains=list(entitled_domains or []),

@@ -56,12 +56,15 @@ def _trigger(level="High", hazard="HAZ-9001", **extra):
 
 async def _run(trigger, answers):
     """Drive one case; `answers` are (promise name, verb) in instance order, one per instance.
-    The safety awaits DECLARE `promise_name`, so the promise is not `approval_{step id}`."""
+    The safety awaits DECLARE `promise_name`, so the promise is not `approval_{step id}`.
+
+    AS THE GATEWAY SENDS IT: ``{trigger, facts}`` and no ``provenance`` (gateway's safety
+    opener). The trigger declares no episode, so the case keeps no revision chain and runs."""
     key = trigger["acceptance_id"]
     c = _Cluster({(f"{key}~{n}", step): _answer(verb, "u@x", f"why {n}")
                   for n, (step, verb) in enumerate(answers, start=1)})
     try:
-        out = await c.start(key, ar.SAFETY_TRIGGER, trigger)
+        out = await c.start(key, ar.SAFETY_TRIGGER, trigger, provenance=None)
     except Exception as exc:  # noqa: BLE001 -- a case that did not CLOSE is the arm's red
         raise AssertionError(
             f"the case ended in {type(exc).__name__}: {exc}; case={c.case(key)}") from exc
@@ -82,6 +85,17 @@ def test_THE_TRIGGER_THE_GATEWAY_SENDS_IS_DECLARED_AND_KEYED_ON_THE_ACCEPTANCE_I
     assert t.key == "acceptance_id", t
     assert trig["acceptance_id"] == ar.acceptance_workflow_id("HAZ-9001", "high"), trig
     R.check_intake(t, R.flatten(trig), trig["acceptance_id"])
+
+
+@pytest.mark.asyncio
+async def test_A_CASE_WITH_NO_EPISODE_OPENS_WITHOUT_A_PROVENANCE_AND_KEEPS_NO_CHAIN(registered):
+    """The safety trigger declares no episode, so it has no chain to keep and needs no
+    provenance; its instances see no ``input`` revision. The MAINTENANCE trigger's refusal of
+    the same omission is sealed in tests/test_a_return_to_proposed_reads_the_newest_picture.py."""
+    assert R.load_trigger(ar.SAFETY_TRIGGER).episode == []
+    out, case = await _run(_trigger(), [("concurrence", "concurred"), ("acceptance", "accepted")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "risk_accepted"), out
+    assert "input_revisions" not in case, case.get("input_revisions")
 
 
 @pytest.mark.asyncio

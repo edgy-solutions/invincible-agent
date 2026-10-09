@@ -36,7 +36,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from pydantic import Field
+from pydantic import Field, model_validator
+
+# THE REVISION VOCABULARY IS THE SDK'S (0.9.7+): a revision is an ``ArtifactRevision``, a pull is a
+# ``RefreshSpec``, a revision's provenance is a ``ProvenanceBlock``. No local copy of either shape.
+from iagent_mesh.ingest import ArtifactRevision, RefreshSpec
+from iagent_mesh.provenance import ProvenanceBlock
 
 try:
     import decision_table as _dt  # type: ignore[no-redef]
@@ -82,9 +87,32 @@ class Trigger(_Declared):
     #: requiring them would refuse exactly the events the case exists for. Only an ABSENT key is
     #: refused here: the producer did not say. Lists live here too: a list is never a flat fact.
     carries: list[str] = Field(default_factory=list)
-    #: the STUB VERB that pulls this event's newest picture from its source, read by a chaining
-    #: row's ``refresh_input`` beside the revisions the source pushed. Absent: pushed only.
-    pull: Optional[str] = Field(default=None, min_length=1)
+    #: WHERE TO PULL a newer revision of this event -- the SDK's ``RefreshSpec``, whose one
+    #: placeholder names ``key``, as ``ContentKindRegistration`` requires of ``identity_field``.
+    #: Absent: pushed revisions only. DECLARED IS REFUSED TODAY: the pull is made with the
+    #: seeding delegate's credential, and this runner holds none, so a declared refresh would read
+    #: pushes only while the row said it pulled. ``refresh_url`` is the pure half, sealed now.
+    refresh: Optional[RefreshSpec] = None
+
+    @model_validator(mode="after")
+    def _refresh_names_the_key_and_is_not_yet_honoured(self) -> "Trigger":
+        if self.refresh is None:
+            return self
+        _refresh_names(self.refresh, self.key, where=f"trigger {self.trigger!r}")
+        raise ValueError(
+            f"trigger {self.trigger!r} declares a refresh, and this runner cannot pull: "
+            f"auth {self.refresh.auth!r} needs the seeding delegate's credential, which the case "
+            "runner does not hold. Declare it when the delegate transport lands.")
+
+
+def _refresh_names(spec: RefreshSpec, key: str, *, where: str) -> None:
+    """The SDK checks a ``RefreshSpec`` has ONE placeholder; that it names the key is the
+    owner's check (``ContentKindRegistration`` makes it against ``identity_field``)."""
+    want = "{" + key + "}"
+    if want not in spec.url_template:
+        raise ValueError(
+            f"{where}: refresh.url_template must carry {want} -- the key that identifies the "
+            f"event a pull revises; got {spec.url_template!r}")
 
 
 # ── WHERE TRIGGERS LIVE ─────────────────────────────────────────────────────────────────────
@@ -305,10 +333,9 @@ def check_revision(trigger: Trigger, facts: Any, case_key: str,
     return flat
 
 
-def received_at(revision: Any) -> datetime:
-    """A revision's ``received_at`` as an aware instant, or a refusal: ordering is by it, and a
-    naive time cannot be ordered against an aware one without inventing a zone."""
-    at = revision.get("received_at") if isinstance(revision, dict) else None
+def _instant(at: Any) -> datetime:
+    """``at`` as an aware instant, or a refusal: a chain's ``received_at`` must not run backwards,
+    and a naive time cannot be compared with an aware one without inventing a zone."""
     try:
         when = datetime.fromisoformat(at) if isinstance(at, str) else None
     except ValueError:
@@ -319,48 +346,72 @@ def received_at(revision: Any) -> datetime:
     return when
 
 
-def _same_revision(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-    return all(a.get(k) == b.get(k) for k in ("rev", "received_at", "facts"))
+def provenance_block(block: Any) -> ProvenanceBlock:
+    """The SDK's ``ProvenanceBlock`` for a revision, or a refusal naming what is wrong. Every
+    revision carries its OWN provenance -- a push and a pull of one event were obtained apart."""
+    if isinstance(block, ProvenanceBlock):
+        return block
+    try:
+        return ProvenanceBlock.model_validate(block)
+    except ValueError as exc:
+        raise CaseRoutingError(f"an input revision carries a `provenance` block: {exc}") from exc
 
 
-def _order(revision: Any) -> tuple:
-    """Where a revision sorts: ``(received_at, pulled, rev)``. Refuses one without an integer
-    ``rev``, the event's ``facts`` and an orderable ``received_at``."""
-    rev = revision.get("rev") if isinstance(revision, dict) else None
-    if not isinstance(rev, int) or isinstance(rev, bool) or not isinstance(revision.get("facts"), dict):
+def first_revision(received_at: Any, provenance: Any) -> ArtifactRevision:
+    """Revision 1: the event the case opened on. It supersedes nothing."""
+    _instant(received_at)
+    return ArtifactRevision(rev=1, received_at=received_at,
+                            provenance=provenance_block(provenance))
+
+
+def next_revision(head: Any, received_at: Any, provenance: Any) -> ArtifactRevision:
+    """The revision after ``head``: ``rev`` one more, superseding ``head.rev``.
+
+    ORDER IS THE CHAIN'S, AND ``received_at`` MAY NOT RUN BACKWARDS ALONG IT. Ruled 2026-10-03:
+    the newest received picture wins; the chain encodes that by refusing to append one received
+    BEFORE its head, so ``rev`` order and receipt order never disagree and the reader needs no
+    sort. One clock tick is not "before": two arrivals at one instant are both appended, in order.
+    A pull answered after a kept push is appended after it, so it wins -- the ruled tie-break."""
+    try:
+        head = head if isinstance(head, ArtifactRevision) else ArtifactRevision.model_validate(head)
+    except ValueError as exc:
+        raise CaseRoutingError(f"the chain's head is not an ArtifactRevision: {exc}") from exc
+    if _instant(received_at) < _instant(head.received_at):
         raise CaseRoutingError(
-            f"an input revision carries an integer `rev` and the event's `facts`; got {revision!r}")
-    return (received_at(revision), revision.get("provenance") == "pulled", rev)
+            f"a revision received at {received_at!r} would follow rev {head.rev}, received at "
+            f"{head.received_at!r}; a chain's receipts do not run backwards")
+    return ArtifactRevision(rev=head.rev + 1, received_at=received_at,
+                            provenance=provenance_block(provenance), supersedes=head.rev)
 
 
-def newest_revision(current: Dict[str, Any], candidates: list) -> Optional[Dict[str, Any]]:
-    """The candidate that sorts newest, if it sorts after ``current`` (the revision the case is
-    on, ``rev``/``received_at``/``provenance``/``facts``); else None.
+def newer_revision(current_rev: int, kept: Any) -> Optional[Dict[str, Any]]:
+    """What the episode kept, if it is further along the case's chain than ``current_rev``.
 
-    ORDERED BY ``received_at``, ruled 2026-10-03: pushed and pulled pictures are revisions of the
-    same artifact, so this is an ordering rule, not a merge -- the winner replaces the input whole.
-    ON A TIE THE PULLED ONE WINS, because it was asked for. THEN ``rev``, ruled the same day: two
-    revisions received in one clock tick still have an order, because ``keep_revision`` counts
-    ``rev`` on arrival, so the later push is read. ``rev`` comes AFTER the pulled flag: a pulled
-    revision's ``rev`` is its own source's count, not comparable with a pushed one, and putting it
-    first would let a push beat a pull at the same instant.
+    ``kept`` is ``{"revision": <ArtifactRevision>, "facts": <the event>}``; it is re-validated
+    here because the object that holds it is reachable on the ingress."""
+    if kept is None:
+        return None
+    if not isinstance(kept, dict) or not isinstance(kept.get("facts"), dict):
+        raise CaseRoutingError(
+            f"a kept revision carries an ArtifactRevision and the event's `facts`; got {kept!r}")
+    try:
+        rev = ArtifactRevision.model_validate(kept.get("revision"))
+    except ValueError as exc:
+        raise CaseRoutingError(f"a kept revision is not an ArtifactRevision: {exc}") from exc
+    if rev.rev <= current_rev:
+        return None
+    return {"revision": rev.model_dump(), "facts": kept["facts"]}
 
-    THE SAME REVISION REACHED TWICE IS NOT A TIE (ruled 2026-10-03). The shipped pull stub returns
-    the kept revision itself, so it ties every push; letting "pulled" win that would record every
-    pushed picture as pulled. A candidate identical (``rev``, ``received_at``, ``facts``) to
-    another keeps the pushed provenance, and one identical to ``current`` is not newer."""
-    floor = _order(current)
-    best, best_key = None, None
-    for c in candidates:
-        if c is None:
-            continue
-        key = _order(c)
-        if key <= floor or _same_revision(current, c):
-            continue
-        if best is not None and _same_revision(best, c):
-            if best.get("provenance") == "pulled":   # whichever order they came in
-                best, best_key = c, key
-            continue
-        if best is None or key > best_key:
-            best, best_key = c, key
-    return best
+
+def refresh_url(spec: RefreshSpec, key: str, identity_value: Any) -> str:
+    """The URL a pull of an event's newer revision is sent to: ``spec``'s one placeholder, which
+    must name ``key``, filled by the event's value of it. Refuses a blank value -- a pull for no
+    event would read some other artifact's picture, or none."""
+    try:
+        _refresh_names(spec, key, where="refresh")
+    except ValueError as exc:
+        raise CaseRoutingError(str(exc)) from exc
+    value = "" if identity_value is None else str(identity_value)
+    if not value.strip():
+        raise CaseRoutingError(f"a pull needs the event's {key!r}; got {identity_value!r}")
+    return spec.url_template.replace("{" + key + "}", value)

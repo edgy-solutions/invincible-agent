@@ -69,6 +69,8 @@ PERSON = Initiator(subject="lane-seal-universal-referent", kind="person")
 
 # ── reading the query text, the same convention the parameterisation seal uses ────────────────
 
+_MOD_NAME = "engine_o_main__universal_referent_test"
+
 
 def _cypher() -> str:
     src = _ONTO.read_text(encoding="utf-8")
@@ -223,17 +225,16 @@ def engine_o_module():
 
     import importlib.util
 
-    mod_name = "engine_o_main__universal_referent_test"
-    cached = sys.modules.get(mod_name)
+    cached = sys.modules.get(_MOD_NAME)
     if cached is not None:
         return cached
-    spec = importlib.util.spec_from_file_location(mod_name, svc_dir / "main.py")
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, svc_dir / "main.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
+    sys.modules[_MOD_NAME] = mod
     try:
         spec.loader.exec_module(mod)
     except Exception:
-        sys.modules.pop(mod_name, None)
+        sys.modules.pop(_MOD_NAME, None)
         raise
     return mod
 
@@ -547,3 +548,17 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
         "the Jena-confirmed set did not reach the Cypher call as `universal_referents` - the "
         "wiring between `_universal_referent_iris` and the query params is broken"
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

@@ -47,7 +47,8 @@ def _outcome(kind=dd.ROUTED, engine_response=None):
         status="matched", subject_uri=_SUBJ, subject_confidence=1.0,
         subject_instance_id="urn:lot:4", subject_instance_label="Lot 4", verb_iri=_VERB,
         verb_confidence=1.0, classify_called=False, candidate_count=1,
-        subject_candidates=[], fallback_reason="", eligibility_excluded=[],
+        subject_candidates=[], fallback_reason="", reason_code="pre_resolved",
+        eligibility_excluded=[],
         acting_persona="COST_ANALYST", acting_domains=["PRODUCTION_COST"],
         sub_query="where did the money go", predicate=predicate,
     )

@@ -145,21 +145,39 @@ identities for users, and it was written before the delegate ruling existed.
   legs. This entitlement is the second check, and both fail closed
   ([R-088](../rulings/README.md#r-088--releasability-across-the-openddil-seam-is-decided-twice-and-each-decision-fails-closed)).
 
-**OPEN — routed to the architect, not resolved here: ADR-0047 §5.1.** §5.1 was ratified on
-2026-09-14. It says a `svc:` principal is never a disclosure recipient, and
-`validate_policy.py::service_identity_recipients` refuses one in asset grants, task grants and
-ontology compartments. Its reason is the confused deputy: a service serves every caller.
+**RESOLVED 2026-10-08 (Chris) by an amendment to ADR-0047 §5.1.** A declared delegate is a
+disclosure recipient only as the seeding delegate of the artifact (`seeded_by`); every other `svc:`
+recipient is still refused. Three mechanics:
 
-A delegate is a service identity. If it is the producer-for identity, or is placed in
-`recipient_scope` by a subscription, it is a disclosure recipient, which is exactly what §5.1
-forbids. ADR-0047 itself says that delegation "must be settled as [a design decision], not by a
-grant to the service."
+1. **`seeded_by` is stamped at `released`** by the case runner, through the case-runner-gated
+   `POST /internal/cases/{case_id}/seeded-by`, onto the AnswerArtifacts carrying that `case_id`.
+2. **The `/ingest` and `/ingest/events` routes admit a declared delegate's `on_behalf_of`** (the
+   principal must be declared for that delegate); a person still may not act for another. The
+   authenticated delegate rides as `via`, and `/ingest/events` passes it to the case as `seeded_by`.
+3. **`GET /artifacts/{id}` admits the seeding delegate** (owner or seeding declared delegate), read
+   through the `MeshArtifacts` Protocol; an unentitled caller is answered as an absent id.
 
-One candidate reconciliation: the delegate is not a confused deputy, because its own gate
-re-decides releasability for each recipient (R-088). That reasoning is Lane 1's, offered as a
-proposal and not ruled. Until §5.1 is amended, or this amendment is narrowed, the delegate-read
-half of this rule is **not built**. The rest (one visibility rule, a subscription extending
-scope) applies to person principals and is built.
+**No workflow produces a case-linked artifact yet** (nothing passes `case_id` to the answer-artifact
+writer), so the stamp matches nothing and the delegate-read path has an empty population until one
+does.
+
+> **SUPERSEDED 2026-10-08, kept as written:**
+>
+> **OPEN — routed to the architect, not resolved here: ADR-0047 §5.1.** §5.1 was ratified on
+> 2026-09-14. It says a `svc:` principal is never a disclosure recipient, and
+> `validate_policy.py::service_identity_recipients` refuses one in asset grants, task grants and
+> ontology compartments. Its reason is the confused deputy: a service serves every caller.
+>
+> A delegate is a service identity. If it is the producer-for identity, or is placed in
+> `recipient_scope` by a subscription, it is a disclosure recipient, which is exactly what §5.1
+> forbids. ADR-0047 itself says that delegation "must be settled as [a design decision], not by a
+> grant to the service."
+>
+> One candidate reconciliation: the delegate is not a confused deputy, because its own gate
+> re-decides releasability for each recipient (R-088). That reasoning is Lane 1's, offered as a
+> proposal and not ruled. Until §5.1 is amended, or this amendment is narrowed, the delegate-read
+> half of this rule is **not built**. The rest (one visibility rule, a subscription extending
+> scope) applies to person principals and is built.
 
 ## Rulings this ADR records rather than defaults
 

@@ -61,7 +61,7 @@ def seed(monkeypatch):
     """
     import iagent.gateway as gw
 
-    async def _go(seeded: int, total: int, details: list[str]):
+    async def _go(seeded: int, total: int, details: list[str], causes: list | None = None):
         async def _inner(inner_req, http_request, current_user):
             return {
                 "seeded": seeded,
@@ -72,6 +72,14 @@ def seed(monkeypatch):
                         "slot": i,
                         "status": "ok" if i < seeded else "failed",
                         "detail": None if i < seeded else details[i - seeded],
+                        "failure": (
+                            None if (i < seeded or causes is None)
+                            else (
+                                None if causes[i - seeded] is None
+                                else {"event": "pipeline_error", "kind": "verifying_route",
+                                      "cause": causes[i - seeded]}
+                            )
+                        ),
                     }
                     for i in range(total)
                 ],
@@ -92,7 +100,55 @@ async def test_nothing_seeded_because_UNENTITLED_is_403(seed):
     names the cell rather than leaving a reader to infer it from five identical log lines."""
     status, detail = await seed(0, 5, ["HTTP 403"] * 5)
     assert status == 403, f"a fully-refused seed returned {status}"
-    assert "0 of 5" in detail and "entitled" in detail
+    assert detail["error"] == "cell_cannot_see_verbs"
+    assert "0 of 5" in detail["message"] and "entitled" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_nothing_seeded_because_the_CELL_CANNOT_SEE_THE_VERBS_is_a_named_403(seed):
+    """THE 2026-10-08 CASE. Six panels, every one a pipeline_error whose typed cause says the
+    verb is out of the caller's view: that is the caller's answer, named, not a 502 whose
+    body says only 'pipeline_error'."""
+    status, detail = await seed(
+        0, 6, ["pipeline_error"] * 6, ["seed_panel_verb_not_visible"] * 6)
+    assert status == 403, f"an entitlement-caused seed returned {status}"
+    assert detail["error"] == "cell_cannot_see_verbs"
+    assert detail["causes"] == ["seed_panel_verb_not_visible"]
+
+
+@pytest.mark.asyncio
+async def test_nothing_seeded_for_MIXED_causes_is_a_502_that_NAMES_them(seed):
+    """One non-entitlement cause among entitlement ones is ours to fix: 502, and the body
+    lists every cause so the reader does not have to infer it from the logs."""
+    status, detail = await seed(
+        0, 3, ["pipeline_error"] * 3,
+        ["seed_panel_verb_not_visible", "dagster_run_failed", "seed_panel_verb_not_visible"])
+    assert status == 502, f"a mixed-cause seed returned {status}"
+    assert detail["error"] == "seed_upstream_failed"
+    assert detail["causes"] == ["dagster_run_failed", "seed_panel_verb_not_visible"]
+
+
+@pytest.mark.asyncio
+async def test_an_UNRECORDED_cause_is_never_entitlement(seed):
+    """A failure that recorded no cause is 502 and says 'unrecorded' -- absence of a reason
+    must not read as the caller's permissions."""
+    status, detail = await seed(0, 2, ["pipeline_error"] * 2, ["unrecorded", "unrecorded"])
+    assert status == 502
+    assert detail["error"] == "seed_upstream_failed"
+    assert detail["causes"] == ["unrecorded"]
+
+
+def test_the_entitlement_set_is_exactly_the_cause_the_producer_emits():
+    """The classifier's set and the producer's cause must be the same string; a rename on
+    one side would turn every entitlement refusal back into a 502."""
+    import iagent.gateway as gw
+    assert gw._SEED_ENTITLEMENT_CAUSES == frozenset({"seed_panel_verb_not_visible"})
+    out = gw._seed_failure_from_data(' {"message": "m", "kind": "verifying_route", '
+                                     '"cause": "seed_panel_verb_not_visible"}')
+    assert out == {"event": "pipeline_error", "kind": "verifying_route",
+                   "cause": "seed_panel_verb_not_visible"}
+    assert gw._seed_failure_from_data(None)["cause"] == "unrecorded"
+    assert gw._seed_failure_from_data("not json")["cause"] == "unrecorded"
 
 
 @pytest.mark.asyncio
@@ -103,7 +159,7 @@ async def test_nothing_seeded_for_MIXED_reasons_is_502(seed):
     status, detail = await seed(0, 5, ["HTTP 500", "HTTP 403", "HTTP 500", "HTTP 500",
                                        "HTTP 500"])
     assert status == 502, f"a mixed-cause total failure returned {status}"
-    assert "403" in detail and "500" in detail, (
+    assert "403" in detail["message"] and "500" in detail["message"], (
         "the refusal does not carry what actually happened upstream"
     )
 

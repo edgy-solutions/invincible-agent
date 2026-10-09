@@ -37,6 +37,16 @@ import httpx
 import psycopg2
 import psycopg2.extras
 
+try:
+    from agent_fleet.utils import program_membership as _program_membership
+except ImportError:  # pragma: no cover - run outside the repo root
+    import sys as _sys
+
+    _repo_root = Path(__file__).resolve().parents[2]
+    if str(_repo_root) not in _sys.path:
+        _sys.path.insert(0, str(_repo_root))
+    from agent_fleet.utils import program_membership as _program_membership
+
 logger = logging.getLogger(__name__)
 
 # The Electric-replicated Postgres — same DSN the projector uses.
@@ -237,20 +247,14 @@ def check_can_view_program(program: str, caller_id: str) -> bool:
     arguments or an unconfigured TOPAZ_DIRECTORY_URL are still a deny (False),
     same as the other two checks: that is a deployment that has declared no
     directory, not a request that attempted one and failed.
+
+    One question, one asker: the payload and the transport are
+    ``agent_fleet/utils/program_membership``'s, which the safety engine's FRACAS
+    program filter also calls -- so the gateway and the engine cannot drift apart.
     """
-    if not program or not caller_id or not _TOPAZ_DIRECTORY_URL:
-        return False
-    payload = {
-        "object_type": "program",
-        "object_id": program,
-        "relation": "can_view_program",
-        "subject_type": "user",
-        "subject_id": caller_id,
-    }
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
-        r = c.post("/api/v3/directory/check", json=payload)
-        r.raise_for_status()
-        return bool(r.json().get("check"))
+    return _program_membership.can_view_program(
+        program, caller_id, directory_url=_TOPAZ_DIRECTORY_URL
+    )
 
 
 def task_exists(task_id: str) -> bool:
@@ -473,6 +477,33 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
             )
             row = cur.fetchone()
     return dict(row) if row else None
+
+
+def list_tasks_for_workflows(workflow_ids: "list[str]") -> list[dict[str, Any]]:
+    """Every row whose `workflow_id` is one of `workflow_ids` -- UNSCOPED by recipient_id.
+
+    For `GET /cases/{case_id}` (case_projection.project_approvals): the case's approvals are
+    not one caller's queue, they are every instance's human_await task, across whichever
+    actors were entitled -- there is no single `recipient_id` to filter on the way
+    `list_tasks_for`/`get_task_resolution` do. Safe to leave unscoped here because the ROUTE
+    gates on the case's own entitlement check before this is ever called; this function makes
+    no viewability decision of its own; it only reads rows, as `project_approvals` collapses
+    the per-recipient duplicates into one entry per task_id.
+
+    Returns `[]` for an empty/falsy `workflow_ids` rather than running a query with an empty
+    `IN ()`, which some drivers refuse."""
+    ids = [w for w in (workflow_ids or []) if w]
+    if not ids:
+        return []
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment
+                     FROM human_task_projection
+                    WHERE workflow_id = ANY(%s)""",
+                (ids,),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
 
 # WHICH VERBS EACH TASK SPECIES ACCEPTS. A task kind's verbs are part of its meaning, not

@@ -9,8 +9,8 @@ SQL (covered separately in tests/test_ingest_status_projection.py) or of a live 
 
 WHAT THESE DEFEND:
   * deny-by-default: no token -> refused before any DB/S3 touch.
-  * on_behalf_of must equal the caller -- no delegation in v1 (ADR-0041 §8 names the field,
-    not a delegation mechanism; the narrower reading wins).
+  * on_behalf_of must equal the caller unless the caller is a declared delegate acting for a
+    declared principal (R-089; see test_ingest_routes_admit_a_declared_delegate.py).
   * kind is validated against the closed ContentKind set BEFORE any write (never an
     LLM-classified or free-text kind reaching the object store).
   * level-1 dedupe: a sha256 hit returns the "already processed on <date> from <source>"
@@ -27,6 +27,9 @@ WHAT THESE DEFEND:
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 httpx = pytest.importorskip("httpx")
@@ -34,6 +37,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import content_kinds as ck  # noqa: E402
+from src.iagent import content_kinds as _ck_real  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
@@ -113,8 +117,47 @@ def test_ingest_rejects_an_undeclared_kind_before_any_write(client, fake_s3, mon
     assert fake_s3 == [], "an undeclared kind reached the object store"
 
 
+def test_ingest_refuses_event_as_a_file_kind_before_any_write(client, fake_s3, monkeypatch):
+    """`event` is in ingest_status.KINDS for POST /ingest/events' status rows, which carry no
+    bytes; the multipart door checks FILE_KINDS, so a file cannot arrive as `event`."""
+    called = {"find": False}
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda *a, **k: called.__setitem__("find", True))
+    r = client.post("/ingest", files={"file": ("fault.json", b"{}", "application/json")},
+                    data={"kind": "event", "on_behalf_of": "alice@example.com"})
+    assert r.status_code == 400, r.text
+    assert "kind must be one of" in str(r.json()["detail"])
+    assert called["find"] is False, "a file dropped as `event` reached the dedupe/DB layer"
+    assert fake_s3 == [], "a file dropped as `event` reached the object store"
+
+
+def test_ingest_accepts_an_s1000d_data_module_as_xml_under_its_registered_kind(
+        client, fake_s3, fake_create_node, monkeypatch):
+    """The six mock S1000D modules arrive as kind=xml, content_kind=s1000d-data-module. Read
+    against the REAL openddil-lab overlay, so the registration the deployment ships is the one
+    that resolves, not a stand-in."""
+    overlay = Path(__file__).resolve().parents[1] / "policy" / "overlays" / "openddil-lab" / "content_kinds"
+    monkeypatch.setattr(_ck_real, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(overlay))
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    received = {}
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: received.update(kw) or {"id": kw["ingest_id"], "status": "received"})
+    r = client.post("/ingest", files={"file": ("DMC-S1000DBIKE-AAA-D00-00-00-00AA-041A-A_001-00_EN-US.xml",
+                                               b"<dmodule/>", "application/xml")},
+                    data={"kind": "xml", "on_behalf_of": "alice@example.com",
+                          "content_kind": "s1000d-data-module"})
+    assert r.status_code == 200, r.text
+    assert r.json()["object_prefix"].startswith("ingress-user/xml/"), r.json()
+    manifest = json.loads(next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))["Body"])
+    assert manifest["media_kind"] == "xml"
+    assert manifest["metadata"] == {"content_kind": "s1000d-data-module"}
+    assert manifest["domain_type"] == "maintenance"
+    assert received["kind"] == "xml" and received["content_kind"] == "s1000d-data-module", received
+    assert fake_create_node[0]["kind"] == "xml"
+
+
 def test_ingest_refuses_an_on_behalf_of_that_is_not_the_caller(client, fake_s3, monkeypatch):
-    """Deny-by-default, v1: no delegation mechanism exists, so on_behalf_of asserting a
+    """Deny-by-default: a PERSON (not a declared delegate) sending on_behalf_of asserting a
     DIFFERENT identity than the authenticated caller is refused, not merely unverified."""
     called = {"find": False}
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda *a, **k: called.__setitem__("find", True))
@@ -335,6 +378,21 @@ def test_status_route_passes_through_the_rows_origin_suggestion(client, monkeypa
     assert r.json()["origin_suggestion"] == sugg
 
 
+def test_status_route_includes_case_id_when_present(client, monkeypatch):
+    """Requirement 1 (roll #20 item 4), the status-route half: once a row has moved to
+    case_opened, GET /ingest/{id}/status surfaces case_id -- not just the gateway's own
+    in-process response to the original POST."""
+    monkeypatch.setattr(
+        ist, "get_status_for",
+        lambda ingest_id, *, caller_id: {"id": ingest_id, "status": "case_opened",
+                                        "kind": "event", "sha256": "deadbeef",
+                                        "created_at": 1, "updated_at": 2,
+                                        "case_id": "evt-001"})
+    r = client.get("/ingest/deadbeef/status")
+    assert r.status_code == 200
+    assert r.json()["case_id"] == "evt-001"
+
+
 def test_status_of_a_duplicate_row_reports_the_ORIGINALS_current_stage(client, monkeypatch):
     rows = {
         "new-uuid": {"id": "new-uuid", "status": "duplicate", "duplicate_of": "deadbeef",
@@ -493,9 +551,20 @@ def stub_restate_post(monkeypatch):
     class _Resp:
         def __init__(self):
             self.status_code = 200
+            self.content = b""
         def raise_for_status(self):
             if state["fail"]:
                 raise RuntimeError("boom: restate unreachable (stubbed)")
+        def json(self):
+            # Measured live: an absent case/spec arrives as an EMPTY 200 body, not JSON
+            # `null` -- real httpx raises JSONDecodeError parsing that empty body, so this
+            # stub must too (`_restate_answer` reads `.content` before ever calling `.json()`,
+            # so this only fires if a caller still calls `.json()` directly on an empty body).
+            # Default answer for the events door's repeat-detection lookup
+            # (`WorkflowRunner/{key}/case`): "no case yet", i.e. not a repeat. Tests
+            # exercising a repeat replace this fixture's AsyncClient outright (see the events
+            # revision tests below) rather than overloading this one default.
+            raise json.JSONDecodeError("Expecting value", "", 0)
 
     class _Client:
         def __init__(self, *a, **k): ...
@@ -644,11 +713,36 @@ def test_ingest_document_kind_starts_no_workflow(
 # trigger's own `requires:` (read from the REAL file via `case_routing.load_trigger`, no env
 # override -- same discipline as tests/test_the_maintenance_fault_runs_as_a_case.py) is the
 # validatable schema; a payload failing it is refused before any case is opened.
+#
+# roll #20 item 4: the door now also (a) writes an ingest_status row (received -> case_opened)
+# around the open, and (b) asks the runner whether `case_id` already exists before opening --
+# so EVERY test below that reaches that point stubs `ist.record_received`/`ist.update_status`
+# (via `_stub_event_status_writes`) and now sees TWO restate POSTs (the `/case` lookup, then
+# `/run/send`), not one.
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _stub_event_status_writes(monkeypatch):
+    """Stand in for the real ingest_status writes the events door now makes around opening a
+    case -- these tests are about the DOOR's own routing/translation (same split
+    test_gateway_ingest_routes.py's own docstring draws for the multipart door), not about
+    ingest_status.py's SQL (covered in tests/test_ingest_status_projection.py)."""
+    received_calls: list[dict] = []
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        ist, "record_received",
+        lambda **kw: received_calls.append(kw) or {"id": kw["ingest_id"], "status": "received"},
+    )
+    monkeypatch.setattr(
+        ist, "update_status",
+        lambda *a, **kw: status_calls.append((a, kw)),
+    )
+    return received_calls, status_calls
+
 
 def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
         client, monkeypatch, stub_restate_post):
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -666,13 +760,22 @@ def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert len(calls) == 1, calls
-    sent = calls[0]
+    # TWO restate calls now: the repeat-detection lookup (`/case`), then `/run/send`.
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    sent = calls[1]
     assert sent["json"]["trigger"] == "maintenance_fault"
     assert sent["json"]["facts"]["asset_id"] == "ASSET-1"
     assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
     assert sent["json"]["facts"]["dropped_by"] == {"authz_id": "alice@example.com"}
     assert body["workflow"]["started"] is True
+    # Requirement 1: first arrival writes received then case_opened with case_id.
+    assert len(received_calls) == 1, received_calls
+    assert received_calls[0]["kind"] == "event"
+    assert len(status_calls) == 1, status_calls
+    args, kw = status_calls[0]
+    assert args[1] == ist.CASE_OPENED
+    assert kw["case_id"] == body["workflow"]["case_id"]
 
 
 def test_ingest_events_the_case_key_is_one_the_runner_accepts(
@@ -684,6 +787,7 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     from urllib.parse import unquote
     from agent_fleet.restate_analyst import case_routing as cr
     calls, _state = stub_restate_post
+    _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -701,8 +805,9 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     })
     # THE CONTRACT (ruled 2026-10-05): 200 with workflow.case_id, never the spec's 202.
     assert r.status_code == 200, r.text
-    assert len(calls) == 1, calls
-    url, sent = calls[0]["url"], calls[0]["json"]
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    url, sent = calls[1]["url"], calls[1]["json"]
     head, sep, tail = url.partition("/WorkflowRunner/")
     assert sep and tail.endswith("/run/send"), url
     key = unquote(tail[: -len("/run/send")])
@@ -711,6 +816,14 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     # MUTANT (the 2026-10-05 key): `case_id = f"{seeds_workflow}:{ingest_id}"` reds here with
     # the runner's own message, "case key ... is not the event's event_id".
     cr.check_intake(trig, cr.flatten(sent["facts"]), key, facts=sent["facts"])
+    # REVISION 1: the maintenance trigger keeps a chain (it declares an episode), so the runner
+    # refuses a case opened without the event's provenance. The door's block goes through the
+    # runner's REAL builder; it is `direct` -- the producer posted it -- and names this ingest.
+    assert trig.episode, trig
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.rev, rev.supersedes) == (1, None)
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id,
+            rev.provenance.standing) == ("direct", r.json()["ingest_id"], "supervised"), rev
 
 
 def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
@@ -720,6 +833,7 @@ def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
     see it. The door now runs the runner's own check_intake first."""
     import copy
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -742,6 +856,9 @@ def test_ingest_events_a_payload_the_runner_would_refuse_is_refused_at_the_door(
     assert r.json()["detail"]["error"] == "payload_refused_by_trigger", r.json()
     assert "picture.spares" in r.json()["detail"]["message"], r.json()
     assert calls == [], "a payload the runner refuses reached the workflow-seeding POST"
+    # Requirement 3: every existing 4xx refusal writes no status row.
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_identity_field_and_trigger_key_must_agree(
@@ -749,6 +866,7 @@ def test_ingest_events_identity_field_and_trigger_key_must_agree(
     """Two declarations, two dedupes: the door's (`identity_field`) and the runner's (the
     trigger's `key`). A kind whose two disagree is refused before any case opens."""
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -767,12 +885,15 @@ def test_ingest_events_identity_field_and_trigger_key_must_agree(
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "trigger_unconfigured", r.json()
     assert calls == [], "a kind whose dedupes disagree reached the workflow-seeding POST"
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(
         client, monkeypatch, stub_restate_post):
     import copy
     calls, _state = stub_restate_post
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -796,6 +917,8 @@ def test_ingest_events_a_payload_failing_the_trigger_schema_is_refused(
     assert r.status_code == 422, r.text
     assert "fault.fault_code" in r.json()["detail"]["missing"], r.json()
     assert calls == [], "a schema-failing payload reached the workflow-seeding POST"
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
 
 
 def test_ingest_events_restate_error_still_returns_200_with_started_false(
@@ -805,6 +928,7 @@ def test_ingest_events_restate_error_still_returns_200_with_started_false(
     outage is logged and swallowed, not raised."""
     calls, state = stub_restate_post
     state["fail"] = True
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(
@@ -821,8 +945,302 @@ def test_ingest_events_restate_error_still_returns_200_with_started_false(
         "payload": _VALID_EVENT_PAYLOAD,
     })
     assert r.status_code == 200, r.text
-    assert len(calls) == 1
+    # calls[0] is the repeat-detection lookup (`.../case`, not a repeat here); calls[1] is
+    # `_open_case`'s own POST, which raise_for_status() turns into the swallowed RuntimeError.
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
     assert r.json()["workflow"]["started"] is False
+    # Requirement 2: the row was written `received` (record_received DID run, before the case
+    # open attempt) but NEVER moved to case_opened -- `_open_case` returning False must leave it
+    # exactly where a reader would expect "not started yet" to leave it.
+    assert len(received_calls) == 1, received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_status_write_failure_refuses_503_and_never_opens_the_case(
+        client, monkeypatch, stub_restate_post):
+    """Requirement 4, "no case without its record": if `record_received` itself raises (status
+    substrate unavailable), the door answers 503 and the case is never opened -- `_open_case`'s
+    own POST (`/run/send`) must never follow the failed write."""
+    calls, _state = stub_restate_post
+
+    def _boom(**kw):
+        raise ist.IngestStatusConfigError("PROJECTOR_POSTGRES_DSN is unset")
+
+    monkeypatch.setattr(ist, "record_received", _boom)
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+    r = client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": _VALID_EVENT_PAYLOAD,
+    })
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "status_unavailable", r.json()
+    # Only the repeat-detection lookup ran -- record_received's own failure happens before
+    # `_open_case` would make its own `/run/send` POST, so a second call here would BE
+    # `_open_case` having fired anyway.
+    assert len(calls) == 1, calls
+    assert calls[0]["url"].endswith("/case"), calls
+
+
+def _stub_restate_routed(monkeypatch, *, case_body=None, case_error=None,
+                          revise_status=200, revise_body=None):
+    """A routed stand-in for httpx.AsyncClient, for the repeat-detection tests below: unlike
+    `stub_restate_post` (one answer for every POST), these tests need `/case` and `/revise` to
+    disagree -- e.g. `/case` answers a non-null record (a repeat) while `/revise` answers 409."""
+    calls: list[dict] = []
+
+    class _Resp:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+            # Mirrors the real wire fact: Restate answers a handler's `None` as an empty
+            # 200 body, never JSON `null` -- `_restate_answer` reads `.content` before
+            # parsing, so this stub needs a matching attribute.
+            self.content = b"" if body is None else b"x"
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"boom: restate {self.status_code} (stubbed)")
+        def json(self):
+            return self._body
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            calls.append({"url": url, "json": json})
+            if url.endswith("/case"):
+                if case_error is not None:
+                    raise case_error
+                return _Resp(200, case_body)
+            if url.endswith("/revise"):
+                return _Resp(revise_status, revise_body)
+            return _Resp(200, None)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+    return calls
+
+
+def _events_post(client, payload=None):
+    return client.post("/ingest/events", json={
+        "content_kind": "maintenance-fault-event",
+        "on_behalf_of": "alice@example.com",
+        "payload": payload or _VALID_EVENT_PAYLOAD,
+    })
+
+
+def _register_maintenance_fault(monkeypatch):
+    for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(
+        _ck, "by_kind",
+        lambda kind: _fake_registration(kind=kind, branch="event",
+                                        domain="maintenance-bridge",
+                                        seeds_workflow="maintenance_fault",
+                                        identity_field="event_id")
+        if kind == "maintenance-fault-event" else None,
+    )
+
+
+def test_ingest_events_repeat_calls_revise_not_open_case(client, monkeypatch):
+    """Requirement 5: a non-null `/case` answer is a repeat -- the door calls `revise` with the
+    same facts dict a first arrival would have built, answers 200 with `rev`, and never calls
+    `_open_case` (no `/run/send` POST)."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})  # row already exists
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 2},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rev"] == 2, body
+    assert body["workflow"] == {"case_id": "evt-001", "started": False}, body
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/revise"), calls
+    # keep_revision refuses a revision without its own provenance (400 -> 422 here), so the
+    # door must send one: measured at the roll #21 merge, where master's door (facts only) met
+    # the worker's runner (provenance required) and every repeat would have 422'd.
+    assert set(calls[1]["json"]) == {"facts", "provenance"}, calls[1]["json"]
+    prov = calls[1]["json"]["provenance"]
+    assert prov["obtained_via"] == "direct", prov
+    assert prov["ingest_run"].startswith("event:") and prov["ingest_id"], prov
+    assert calls[1]["json"]["facts"]["asset_id"] == "ASSET-1"
+    assert not any(c["url"].endswith("/run/send") for c in calls), \
+        "_open_case must not run on a repeat"
+    # row already existed (get_row stubbed non-None) -- no backfill write on this path.
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_revise_400_is_422_payload_refused(client, monkeypatch):
+    """Requirement 6a: the runner's own check_revision refusal (its `check_intake` reran and
+    failed) surfaces as 422 payload_refused_by_trigger, same vocabulary as a first-arrival
+    refusal."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=400, revise_body={"message": "carries key missing"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "payload_refused_by_trigger", r.json()
+    assert "carries key missing" in r.json()["detail"]["message"], r.json()
+
+
+def test_ingest_events_revise_409_is_409_revision_not_kept(client, monkeypatch):
+    """Requirement 6b: the runner refuses to keep the revision (not the episode holder, or no
+    episode at all) -- surfaced as 409 revision_not_kept, never swallowed as a generic error."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=409, revise_body={"message": "not the episode holder"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "revision_not_kept", r.json()
+
+
+def test_ingest_events_revise_404_is_also_409_revision_not_kept(client, monkeypatch):
+    """A 404 from `revise` (no case/episode at all, despite `/case` having just answered
+    non-null -- a race) maps to the SAME 409 revision_not_kept as a 409, per spec: both are "the
+    revision was not kept", not "not found" (which would mis-imply the repeat detection was
+    wrong)."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id})
+    _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=404, revise_body={"message": "no such episode"},
+    )
+    r = _events_post(client)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "revision_not_kept", r.json()
+
+
+def test_ingest_events_repeat_with_no_row_backfills_received_then_case_opened(
+        client, monkeypatch):
+    """Requirement 7a: a repeat for an ingest_id this seam has never written a row for (the
+    pre-roll case -- the case opened before this status seam existed) backfills
+    received -> case_opened with case_id, same as a first arrival, before calling revise."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: None)  # no row exists yet
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 3},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert r.json()["rev"] == 3, r.json()
+    assert len(received_calls) == 1, received_calls
+    assert received_calls[0]["kind"] == "event"
+    assert len(status_calls) == 1, status_calls
+    args, kw = status_calls[0]
+    assert args[1] == ist.CASE_OPENED
+    assert kw["case_id"] == "evt-001"
+
+
+def test_ingest_events_repeat_with_an_existing_row_leaves_its_stage(client, monkeypatch):
+    """Requirement 7b: a repeat for an ingest_id that already has a row (the ordinary case --
+    the first arrival already moved it to case_opened) leaves that row's stage alone; the door
+    is not the place to rewrite history for an id it already has an opinion about."""
+    _register_maintenance_fault(monkeypatch)
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: {"id": ingest_id, "status": "case_opened"})
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    _stub_restate_routed(
+        monkeypatch, case_body={"case_id": "evt-001"},
+        revise_status=200, revise_body={"case_id": "evt-001", "revision": 4},
+    )
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert r.json()["rev"] == 4, r.json()
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
+
+
+def test_ingest_events_case_lookup_failure_is_503_and_opens_nothing(client, monkeypatch):
+    """Requirement 8: the repeat-detection lookup itself failing (Restate unreachable) must not
+    be guessed at either way -- 503 runner_unavailable, no status write, no case open, no
+    revise."""
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_routed(
+        monkeypatch, case_error=RuntimeError("boom: restate unreachable (stubbed)"),
+    )
+    r = _events_post(client)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "runner_unavailable", r.json()
+    assert len(calls) == 1, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert received_calls == [], received_calls
+    assert status_calls == [], status_calls
+
+
+# ── THE REAL WIRE: absence is an EMPTY 200 (measured live, roll #20) ─────────────────────────
+#
+# `WorkflowRunner/<new key>/case` answers 200 with b"" -- Restate serialises the handler's None
+# as nothing. These arms hand the door REAL `httpx.Response` objects, so the parse under test is
+# httpx's own: the stubs above once answered `.json()` with None, and a first-time event_id
+# shipped raising at the repeat lookup.
+
+def _stub_restate_real_wire(monkeypatch, *, case_content=b""):
+    calls: list[dict] = []
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            calls.append({"url": url, "json": json})
+            req = httpx.Request("POST", url)
+            if url.endswith("/case"):
+                return httpx.Response(200, content=case_content, request=req)
+            return httpx.Response(202, content=b'{"invocationId":"inv-1"}', request=req)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+    return calls
+
+
+def test_ingest_events_a_first_event_on_the_real_wire_opens_its_case(client, monkeypatch):
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_real_wire(monkeypatch)
+    r = _events_post(client)
+    assert r.status_code == 200, r.text
+    assert len(calls) == 2, calls
+    assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/run/send"), calls
+    assert r.json()["workflow"]["started"] is True
+    assert len(received_calls) == 1, received_calls
+
+
+def test_ingest_events_a_non_json_case_answer_is_503_not_500(client, monkeypatch):
+    _register_maintenance_fault(monkeypatch)
+    received_calls, status_calls = _stub_event_status_writes(monkeypatch)
+    calls = _stub_restate_real_wire(monkeypatch, case_content=b"<html>proxy error</html>")
+    r = _events_post(client)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "runner_unavailable", r.json()
+    assert len(calls) == 1, calls
+    assert received_calls == [] and status_calls == []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -861,7 +1279,15 @@ def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
     assert len(recorded) == 1, recorded
     assert recorded[0][1] == _SUGGESTION, recorded
     assert len(calls) == 1, calls
-    assert calls[0]["json"] == {"trigger": "origin_suggestion", "facts": _SUGGESTION}
+    sent = calls[0]["json"]
+    assert {k: sent[k] for k in ("trigger", "facts")} == {
+        "trigger": "origin_suggestion", "facts": _SUGGESTION}, sent
+    # REVISION 1'S PROVENANCE IS THE DROP'S OWN BLOCK -- the one the manifest carries -- and the
+    # runner's real revision builder accepts it. MUTANT: `obtained_via=DIRECT` here reds the first.
+    from agent_fleet.restate_analyst import case_routing as cr
+    rev = cr.first_revision("2026-10-06T00:00:00+00:00", sent["provenance"])
+    assert (rev.provenance.obtained_via, rev.provenance.ingest_id) == (
+        "user-drop", body["ingest_id"]), sent["provenance"]
     assert body["origin_suggestion"] == _SUGGESTION, body
 
 
@@ -918,6 +1344,21 @@ def _stub_domain(monkeypatch, domain="sustainment", expected="pcn"):
     monkeypatch.setattr(ck, "by_kind", lambda kind: reg if kind == expected else None)
 
 
+def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
+    """Gives `row` its object_prefix and stubs the manifest read; returns the `extraction_ref` the
+    stage body must carry. The manifest is what doc-tools writes for a user drop (source_key,
+    versioned pipeline, the sidecar's provenance, the ingest_id), so the filed payload is DERIVED
+    from it exactly as in production."""
+    hex_ = row["id"].split(":", 1)[-1]
+    row["object_prefix"] = f"ingress-user/pdf/{hex_}/"
+    ref = f"{row['object_prefix']}generated/doc_pdf/doc-tools@61f74dc/manifest.json"
+    manifest = {"doc_id": "N-1", "filename": name, "source_key": row["object_prefix"] + name,
+                "pipeline_version": "doc-tools@61f74dc", "ingest_id": row["id"],
+                "provenance": {"standing": "supervised", "ingest_id": row["id"]}}
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
+    return ref
+
+
 def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "a" * 64, "status": "received", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
@@ -947,7 +1388,7 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert len(registered) == 1, registered
     reg = registered[0]
@@ -996,7 +1437,7 @@ def test_stage_review_resolves_domain_from_content_kind_never_from_file_format(
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert "pcn" in calls, calls
     assert "pdf" not in calls, calls
@@ -1026,7 +1467,7 @@ def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client
     """The row must NOT be stranded at `review` with no task: a 422 from register_task must
     leave update_status uncalled, so a retry sees the ORIGINAL stage (409, not a second 422
     against a row already moved)."""
-    row = {"id": "sha256:" + "h" * 64, "status": "extracting", "kind": "pdf",
+    row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     status_calls = []
@@ -1037,7 +1478,7 @@ def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client
     def _boom(**kw):
         raise ht.NoEntitledRecipients("no recipients for audience (stubbed)")
     monkeypatch.setattr(ht, "register_task", _boom)
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_entitled_recipients"
     assert status_calls == [], "update_status must not run when register_task refuses"
@@ -1047,7 +1488,7 @@ def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypa
     """TASK FIRST, STATUS SECOND (review-audience fix): record call order in one list so a
     regression that reorders these back -- update_status before register_task -- reds this
     exact fragment."""
-    row = {"id": "sha256:" + "i" * 64, "status": "extracting", "kind": "pdf",
+    row = {"id": "sha256:" + "2" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "pcn", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     order: list[str] = []
@@ -1059,7 +1500,7 @@ def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypa
         order.append("register_task")
         return {"task_id": kw["task_id"], "recipients": ["x"]}
     monkeypatch.setattr(ht, "register_task", _register)
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 200, r.text
     assert order == ["register_task", "update_status"], order
 
@@ -1084,6 +1525,143 @@ def test_stage_backwards_move_gets_409(doc_tools_client, monkeypatch):
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "extracting"})
     assert r.status_code == 409, r.text
     assert calls == [], "a backwards move must write nothing"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /ingest/{ingest_id}/stage -- `awaiting_origin` (architect ruling 2026-10-02): a
+# registration can declare `domain` EXPLICITLY as null ("origin resolved by evidence, not
+# kind" -- pdf/engineering-document/doors-export), which must be told apart from a registration
+# that never mentioned `domain` at all. REAL overlay fixtures, not the plain-attribute `_Reg`
+# stub `_stub_domain` uses above -- the thing under test IS pydantic's `model_fields_set`
+# behaviour on a row `iagent_mesh.ingest.compose` actually built, which a hand-built stub
+# object cannot exercise either way.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_no_task(
+        doc_tools_client, monkeypatch, tmp_path):
+    (tmp_path / "test-domainless-kind.yaml").write_text(
+        'kind: test-domainless-kind\n'
+        'passes: ["x.baml::Y"]\n'
+        'outputs: ["mfg:X"]\n'
+        'domain: null\n',
+        encoding="utf-8",
+    )
+    # "before AND after": the setattr/setenv calls themselves plus monkeypatch's automatic
+    # revert on teardown -- same idiom as test_real_overlay_registry_resolves_... above.
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(tmp_path))
+
+    row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "test-domainless-kind", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
+    task_exists_calls = []
+    register_calls = []
+    monkeypatch.setattr(ht, "task_exists",
+                        lambda task_id: task_exists_calls.append(task_id) or False)
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ingest_id": row["id"], "stage": "awaiting_origin",
+                        "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
+    assert task_exists_calls == [], "no task lookup for a deliberately domainless kind"
+    assert register_calls == [], "no task filed for a deliberately domainless kind"
+    assert status_calls == [(row["id"], ist.AWAITING_ORIGIN,
+                             {"extracted_count": None, "extracted_total": None,
+                              "detail": "origin resolved by evidence, not kind (ruling 2026-10-02)"})]
+
+
+def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting_origin(
+        doc_tools_client, monkeypatch, tmp_path):
+    """CONTROL for the test above, differing in exactly one thing: this YAML OMITS `domain`
+    entirely rather than writing `domain: null`. `model_fields_set` is what tells the two
+    rows apart -- a discriminator that collapsed to `reg.domain is None` alone could not, and
+    would route this row to `awaiting_origin` too, which is exactly the collision the ruling
+    is about."""
+    (tmp_path / "test-domain-omitted-kind.yaml").write_text(
+        'kind: test-domain-omitted-kind\n'
+        'passes: ["x.baml::Y"]\n'
+        'outputs: ["mfg:X"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(tmp_path))
+
+    row = {"id": "sha256:" + "2" * 64, "status": "extracting", "kind": "pdf",
+          "content_kind": "test-domain-omitted-kind", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
+    task_exists_calls = []
+    monkeypatch.setattr(ht, "task_exists",
+                        lambda task_id: task_exists_calls.append(task_id) or False)
+    register_calls = []
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "no_declared_domain"
+    assert status_calls == [], "a 422 with no declared domain must write nothing"
+    assert task_exists_calls == [], "no task lookup once there is no domain to resolve"
+    assert register_calls == []
+
+
+# The ruling's set (architect, 2026-10-02): "engineering-document, doors-export, pdf -> none".
+_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export"}
+_OPENDDIL_CONTENT_KINDS = (Path(__file__).resolve().parents[1]
+                           / "policy" / "overlays" / "openddil-lab" / "content_kinds")
+
+
+def _real_overlay_domainless(monkeypatch) -> set[str]:
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(_OPENDDIL_CONTENT_KINDS))
+    return {r.kind for r in ck.registrations()
+            if r.domain is None and "domain" in r.model_fields_set}
+
+
+def test_the_real_overlay_writes_domain_null_on_exactly_the_ruled_kinds(monkeypatch):
+    """The join between the overlay's YAML and the stage route's discriminator. The route
+    sends a row to `awaiting_origin` only if `domain` is in the composed row's
+    `model_fields_set`. The arms above prove that logic on tmp fixtures; this arm proves the
+    rows the sandbox actually composes take it, and no others."""
+    assert _real_overlay_domainless(monkeypatch) == _RULED_DOMAINLESS
+
+
+@pytest.mark.parametrize("content_kind", sorted(_RULED_DOMAINLESS))
+def test_stage_review_on_a_real_format_level_kind_goes_to_awaiting_origin(
+        doc_tools_client, monkeypatch, content_kind):
+    _real_overlay_domainless(monkeypatch)
+    row = {"id": "sha256:" + "4" * 64, "status": "extracting", "kind": "pdf",
+           "content_kind": content_kind, "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    status_calls = []
+    monkeypatch.setattr(ist, "update_status",
+                        lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage)))
+    register_calls = []
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
+
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    assert r.status_code == 200, r.text
+    assert r.json()["stage"] == "awaiting_origin"
+    assert status_calls == [(row["id"], ist.AWAITING_ORIGIN)]
+    assert register_calls == []
+
+
+def test_stage_move_out_of_awaiting_origin_gets_409(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "3" * 64, "status": ist.AWAITING_ORIGIN, "kind": "pdf",
+          "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    calls = []
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: calls.append((a, kw)))
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage",
+                              json={"stage": "failed", "detail": "irrelevant"})
+    assert r.status_code == 409, r.text
+    assert calls == [], "a move off awaiting_origin (terminal) must write nothing"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1175,3 +1753,29 @@ def test_real_overlay_registry_resolves_pcn_pdn_s1000d_and_has_a_matching_grant(
     # key doc-tools' review actually resolves a recipient against -- a kind with no matching
     # grant key here has no recipient and 422s at review time.
     assert "document_promotion:SUSTAINMENT" in audiences, sorted(audiences)
+
+
+# THE JOIN BETWEEN THE FILER AND THE ACTOR (found live 2026-10-07, PCN26-119 on roll #19). Each
+# side is sealed alone: the stage route's arms above assert the payload it files, and
+# test_a_document_is_promoted_on_the_approval_plane asserts what `promotion.subject_from_payload`
+# requires. Nothing asserted that the first satisfies the second, and it does not. The stage
+# route files {ingest_id, domain, dropped_by}; the act refuses 422 promotion_payload_invalid for
+# lack of object_ref, content_kind, pipeline_version, format_fingerprint, standing,
+# extraction_ref. So no document filed through POST /ingest/{id}/stage can be promoted or
+# rejected. Fixed 2026-10-08: the payload is now DERIVED from the versioned manifest the stage
+# body's `extraction_ref` names (doc-tools #84), and this join is asserted.
+def test_the_payload_the_stage_route_files_is_one_the_act_accepts(doc_tools_client, monkeypatch):
+    row = {"id": "sha256:" + "e" * 64, "status": "extracting", "kind": "pdf",
+           "content_kind": "pcn", "submitted_by": "alice@example.com"}
+    monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
+    _stub_domain(monkeypatch)
+    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
+    registered = []
+    monkeypatch.setattr(ht, "register_task",
+                        lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": []})
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
+    assert r.status_code == 200, r.text
+    assert len(registered) == 1, registered
+    subject = promotion.subject_from_payload(registered[0]["payload"])
+    assert subject.ingest_id == row["id"]

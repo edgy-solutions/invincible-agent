@@ -1,0 +1,124 @@
+# PROVENANCE: six sample S1000D data modules (MRAD-ARR-0417, the array-module fault), produced by
+# doc-tools PR #63 (head 4a6df088, open/unmerged at copy time) over six sample MRAD XML data
+# modules. This is a SAMPLE corpus, not the full MRAD manual -- regenerate it from PR #63's parser
+# output when that PR's parsing rules change, rather than hand-editing the triples below.
+@prefix mil: <http://edgy-solutions.com/ontology/mil#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-040A-A a mil:DataModule,
+        mil:DescriptiveDataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-040A-A" ;
+    mil:hasInfoCode "040" ;
+    mil:hasSNS "34" .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-320A-A a mil:DataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-320A-A" ;
+    mil:hasInfoCode "320" ;
+    mil:hasPlanningInterval mil:interval-DMC-ODMRAD-A-34-10-01-00A-320A-A_001-00_EN-US.xml-Periodic_Array_Inspection ;
+    mil:hasSNS "34" ;
+    mil:refersToDataModule mil:dmc-ODMRAD-A-34-10-01-00A-520A-A,
+        mil:dmc-ODMRAD-A-34-10-01-00A-720A-A .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-421A-A a mil:DataModule,
+        mil:FaultIsolationDataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-421A-A" ;
+    mil:hasFaultCode mil:faultcode-DMC-ODMRAD-A-34-10-01-00A-421A-A_001-00_EN-US.xml-MRAD-ARR-0417 ;
+    mil:hasInfoCode "421" ;
+    mil:hasSNS "34" ;
+    mil:refersToDataModule mil:dmc-ODMRAD-A-34-10-01-00A-520A-A,
+        mil:dmc-ODMRAD-A-34-10-01-00A-720A-A .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-941A-A a mil:DataModule,
+        mil:IllustratedPartsDataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-941A-A" ;
+    mil:hasCatalogItem mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0001,
+        mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0002,
+        mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0003 ;
+    mil:hasFigure mil:fig-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001 ;
+    mil:hasInfoCode "941" ;
+    mil:hasPart mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-AM-0001,
+        mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-GS-0002,
+        mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-SC-0003 ;
+    mil:hasSNS "34" .
+
+mil:faultcode-DMC-ODMRAD-A-34-10-01-00A-421A-A_001-00_EN-US.xml-MRAD-ARR-0417 a mil:FaultCode ;
+    rdfs:label "MRAD-ARR-0417" ;
+    mil:hasFaultCodeText "Array module fault, section 3." ;
+    mil:hasFaultCodeValue "MRAD-ARR-0417" .
+
+mil:fig-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001 a mil:Figure ;
+    rdfs:label "Array Module Assembly" ;
+    mil:hasCatalogItem mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0001,
+        mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0002,
+        mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0003 ;
+    mil:hasICN "ICN-ODMRAD-00001" .
+
+mil:interval-DMC-ODMRAD-A-34-10-01-00A-320A-A_001-00_EN-US.xml-Periodic_Array_Inspection a mil:PlanningInterval ;
+    rdfs:label "180 days" ;
+    mil:hasIntervalUnit "days" ;
+    mil:hasIntervalValue "180" .
+
+mil:part-DMC-ODMRAD-A-34-10-01-00A-720A-A_001-00_EN-US.xml-ODM-AM-0001 a mil:Part ;
+    rdfs:label "ODM-AM-0001" ;
+    mil:hasPartNumber "ODM-AM-0001" .
+
+mil:tool-DMC-ODMRAD-A-34-10-01-00A-520A-A_001-00_EN-US.xml-ODM-SE-0001 a mil:Tool ;
+    rdfs:label "ODM-SE-0001" ;
+    mil:hasPartNumber "ODM-SE-0001" .
+
+mil:tool-DMC-ODMRAD-A-34-10-01-00A-720A-A_001-00_EN-US.xml-ODM-SE-0001 a mil:Tool ;
+    rdfs:label "ODM-SE-0001" ;
+    mil:hasPartNumber "ODM-SE-0001" .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-520A-A a mil:DataModule,
+        mil:ProcedureDataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-520A-A" ;
+    mil:hasInfoCode "520" ;
+    mil:hasSNS "34" ;
+    mil:requiresTool mil:tool-DMC-ODMRAD-A-34-10-01-00A-520A-A_001-00_EN-US.xml-ODM-SE-0001 .
+
+mil:dmc-ODMRAD-A-34-10-01-00A-720A-A a mil:DataModule,
+        mil:ProcedureDataModule ;
+    rdfs:label "ODMRAD-A-34-10-01-00A-720A-A" ;
+    mil:hasInfoCode "720" ;
+    mil:hasPart mil:part-DMC-ODMRAD-A-34-10-01-00A-720A-A_001-00_EN-US.xml-ODM-AM-0001 ;
+    mil:hasSNS "34" ;
+    mil:refersToDataModule mil:dmc-ODMRAD-A-34-10-01-00A-941A-A ;
+    mil:requiresTool mil:tool-DMC-ODMRAD-A-34-10-01-00A-720A-A_001-00_EN-US.xml-ODM-SE-0001 .
+
+mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0001 a mil:CatalogItem ;
+    rdfs:label "array module" ;
+    mil:hasItemNumber "0001" ;
+    mil:hasManufacturerCode "ODM" ;
+    mil:hasPart mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-AM-0001 ;
+    mil:hasPartNumber "ODM-AM-0001" ;
+    mil:hasQuantity 1 .
+
+mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0002 a mil:CatalogItem ;
+    rdfs:label "connector gasket" ;
+    mil:hasItemNumber "0002" ;
+    mil:hasManufacturerCode "ODM" ;
+    mil:hasPart mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-GS-0002 ;
+    mil:hasPartNumber "ODM-GS-0002" ;
+    mil:hasQuantity 1 .
+
+mil:item-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ICN-ODMRAD-00001-0003 a mil:CatalogItem ;
+    rdfs:label "screw" ;
+    mil:hasItemNumber "0003" ;
+    mil:hasManufacturerCode "ODM" ;
+    mil:hasPart mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-SC-0003 ;
+    mil:hasPartNumber "ODM-SC-0003" ;
+    mil:hasQuantity 2 .
+
+mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-AM-0001 a mil:Part ;
+    rdfs:label "ODM-AM-0001" ;
+    mil:hasPartNumber "ODM-AM-0001" .
+
+mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-GS-0002 a mil:Part ;
+    rdfs:label "ODM-GS-0002" ;
+    mil:hasPartNumber "ODM-GS-0002" .
+
+mil:part-DMC-ODMRAD-A-34-10-01-00A-941A-A_001-00_EN-US.xml-ODM-SC-0003 a mil:Part ;
+    rdfs:label "ODM-SC-0003" ;
+    mil:hasPartNumber "ODM-SC-0003" .

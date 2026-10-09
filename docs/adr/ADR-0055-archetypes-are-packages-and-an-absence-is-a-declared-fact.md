@@ -531,6 +531,61 @@ seal stays correctly RED rather than green over a card that cannot draw.** A red
 gap is the honest state; a green over an undrawable card is the failure this ADR's whole seal set
 exists to refuse.
 
+## AMENDMENT 2026-10-08 — a declared no-absence is a declared absence fact
+
+**Source.** The 2026-10-08 cortex dispatch, item 2, as quoted in cortex-ui's packet
+`2026-10-08-packet-to-lane-1-adr-0055-needs-a-no-absence-amendment.md`: *"SHORTFALL_GRID and DELTA_SET
+packages: seal on 'no absence to declare' explicitly (a package with no absence field is still a
+package)."* That dispatch conflicted with this ADR's text in two places:
+- §1: "only the declared-absence mechanism is mandatory";
+- the §2 `fixtures/` row: every fixture flips at least one declared absence.
+
+Recorded here at origin so that the packages and the ADR say the same thing.
+
+### RULED: "none" is a VALUE of the mechanism, declared and checked, never a field left out
+
+- **The mechanism stays mandatory.** A package declares its absences, or it declares
+  `noAbsence: { reason }`. Doing neither, or both, is a defect.
+  - An empty `absences` without `noAbsence` is refused.
+  - `noAbsence` with an empty reason is refused.
+- **`noAbsence` is a claim about the card's whole population**, so it is sealed over the
+  population and not the instance (the 2026-09-18 ruling, applied to its own negative):
+  - Render every fixture and every named capture.
+  - Assert that no `data-*` attribute is present on some cards and absent on others.
+  - The day one is, the seal is red with "declare it in absences and drop noAbsence".
+  - Attributes that only an interaction produces are excluded by name. This is the first
+    2026-09-18 (step 1 complete) ruling, unchanged.
+- **The §2 `fixtures/` rule ("each flips at least one") applies when `absences` is non-empty.** A
+  `noAbsence` package's fixtures each declare `[]`. They discriminate through the population seal
+  above, not through a flip.
+- **The 2026-09-18 clause stands.** A card with a claim no attribute names may not be packaged
+  until it declares one. `noAbsence` *is* the claim that no such decision exists, and the
+  population seal is what checks it. It does not exempt a card from that clause.
+- **A package with no capture** (DELTA_SET today) carries an arrival arm. It goes red when a capture
+  of its archetype lands outside the package's named capture list, so the first real payload
+  joins the population instead of passing it by.
+
+### What counts as "a claim no attribute names": the card's own BRANCH, not the content it shows
+
+This answers cortex's open question about SHORTFALL_GRID's `verdict` column. The test is checkable
+and is not a judgment about that one card:
+- **A value the card displays as it arrived is the producer's claim, not the card's.** A `verdict`
+  string rendered in a cell is payload content. The producer owns it, and the producer's own
+  seals answer for it.
+- **A value the card BRANCHES on is the card's claim**, so it needs an attribute. That covers
+  colouring, sorting, hiding, grouping, a different element, or a different message.
+  - If SHORTFALL_GRID's render branches on `verdict`, it declares an absence for that branch, and
+    `noAbsence` does not apply.
+  - If it only prints the value, `noAbsence` stands.
+- Cortex can read this off the component source. The population seal also catches the
+  attribute-bearing case automatically the day the branch is added.
+
+### Indicator we got this wrong
+
+A `noAbsence` package later turns out to have a reader-relevant branch, and no capture had shown
+it varying. The population was too small to be a population. The fix is captures, not a weaker
+seal.
+
 ## Non-goals
 
 - **Not an artifact-level surface class** (§4) — that wakes on a second instance.

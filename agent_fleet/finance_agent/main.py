@@ -25,21 +25,28 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import export
     import measures
-    from entities import FISCAL_PERIODS, MethodRequired, NotInModel
+    from entities import FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
 except ImportError:
+    from agent_fleet.finance_agent import export
     from agent_fleet.finance_agent import measures
-    from agent_fleet.finance_agent.entities import FISCAL_PERIODS, MethodRequired, NotInModel
+    from agent_fleet.finance_agent.entities import (
+        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled,
+    )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
         missing_mandatory, refusal_for, slots_for, with_live_vocabularies,
@@ -70,6 +77,91 @@ OWNER_PERSONA = "PROGRAM_FINANCE_ANALYST"
 #: The notional model. Read-only for the life of the process — no verb here mutates it, which
 #: is ADR-0045 Decision 1 expressed in the one place it cannot be argued with.
 STATE = build_seed()
+
+
+def _artifact_id(fn: str, params: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    """Mint a CONTENT-ADDRESSED id for one measure's answer — never a pointer into a store.
+
+    Nothing is persisted here. The same verb, the same params and the same rows always hash to
+    the same id, so a citation built from it is checkable by RE-RUNNING the measure rather than
+    by dereferencing something this engine kept. Callers (the brief, a card) must never describe
+    it as a stored artifact — there is no store behind it.
+    """
+    digest = hashlib.sha256(
+        json.dumps({"measure": fn, "params": params, "rows": rows},
+                   sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()[:16]
+    return f"fin:{fn}:{digest}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# packageExport (item 3) — where this deployment can build one, and from where it is served
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# SAME SHAPE AS ENGINE-COST'S (`cost_agent/measures.py` lines 33-134), carried over rather
+# than reinvented: `_repo_root` is a MARKER walk, never arithmetic on `__file__`'s parents — the
+# `parents[2]` defect that 500'd every deployed cost pod is exactly what a marker walk cannot
+# reproduce, because it asks "is what I need here" at every level rather than counting levels
+# and trusting the count.
+
+import pathlib  # noqa: E402
+import sys as _sys  # noqa: E402
+
+_BUILDER_REL = pathlib.Path("scripts") / "build_fin_package.py"
+_RUNTIME_DIR = ".pyodide-cache"
+
+
+def _can_build_a_package_here(root: pathlib.Path) -> bool:
+    """Both halves this engine's builder needs, on THIS candidate root."""
+    return (root / _BUILDER_REL).is_file() and (root / _RUNTIME_DIR).is_dir()
+
+
+def _repo_root() -> Optional[pathlib.Path]:
+    """The checkout holding this engine's packager and the pinned runtime, or None.
+
+    NONE IS A FIRST-CLASS ANSWER — "I am not in a checkout" is a true statement about a
+    flattened image, and the input to a NAMED refusal rather than an untyped crash.
+    """
+    here = pathlib.Path(__file__).resolve()
+    for candidate in here.parents:
+        if _can_build_a_package_here(candidate):
+            return candidate
+    return None
+
+
+def _dist_dir(root: pathlib.Path) -> pathlib.Path:
+    """THE ONE PLACE the artifact directory is named, so a test can redirect every
+    writer and reader by monkeypatching this function alone."""
+    return root / "dist"
+
+
+def _in_a_checkout(root: pathlib.Path) -> bool:
+    """Whether `root` is a real git checkout, as distinct from "can build a package here" —
+    the deployed pod can satisfy `_can_build_a_package_here` and still have no `.git` and no
+    `git` executable on PATH (measured for cost; the same two facts hold for this image)."""
+    return (root / ".git").exists()
+
+
+def _baked_algorithm_sha() -> Optional[str]:
+    """The commit the shipped modules come from, WITHOUT requiring `git` — the image's own
+    `IAGENT_GIT_SHA`, baked at build time. None when neither a checkout nor a baked sha is
+    available, so a caller refuses by name rather than receiving a package with a guessed
+    `algorithm_sha`."""
+    baked = (os.getenv("IAGENT_GIT_SHA") or "").strip()
+    return baked if baked and baked != "unknown" else None
+
+
+#: Same env var the registration above reads for `base` — never a second name, which is the
+#: ENGINE_P_URL mistake this module's own registration comment already warns about.
+_PUBLIC_BASE_ENV = "ENGINE_FIN_PUBLIC_URL"
+_DEFAULT_BASE = "http://iagent-engine-fin:8096"
+
+
+def _artifact_uri(filename: str) -> str:
+    """The fetchable URI for a produced artifact. A PATH IS NOT A URI — the caller cannot
+    open a filesystem path, and handing one over leaks this deployment's layout."""
+    base = (os.getenv(_PUBLIC_BASE_ENV) or _DEFAULT_BASE).rstrip("/")
+    return f"{base}/artifact/{filename}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,10 +206,12 @@ VERBS: list[dict[str, Any]] = [
         "desc": (
             "All three recognised estimate-at-completion methods computed on one program at "
             "once, each with its own formula, and the spread between them stated as a figure. "
-            "Answers WHICH FORECAST SHOULD I BELIEVE and HOW MUCH DO THE METHODS DISAGREE. "
-            "NOT a single forecast under a named method - that is finEacCalculation, which "
-            "REFUSES without one because choosing silently is choosing an answer. This verb "
-            "exists precisely because no choice is being made: it shows all of them. OWNS the "
+            "Answers ONLY a question that ASKS FOR THE COMPARISON: which forecast should I "
+            "believe, how much do the methods disagree, show all of them. NOT a bare request "
+            "for the EAC or the estimate at completion that names no method - that belongs to "
+            "finEacCalculation, whose refusal naming the three methods IS the answer to it; "
+            "answering it here would hand over a comparison nobody asked for. NOT a single "
+            "forecast under a named method either - that is also finEacCalculation. OWNS the "
             "phrasings: compare the EAC methods, how much do the forecasts differ, show all "
             "three estimates, which method should we use, what is the spread."
         ),
@@ -136,7 +230,10 @@ VERBS: list[dict[str, Any]] = [
             "the formula and the inputs it consumed, plus the variance at completion and the "
             "estimate to complete. THE METHOD IS MANDATORY AND HAS NO DEFAULT: the formulas "
             "disagree materially on the same program, so a bare request is refused with the "
-            "choice named. Answers what the finish will cost. NOT what has been spent so far "
+            "choice named - and that refusal is this verb's answer, so a question asking for "
+            "the EAC or the estimate at completion WITHOUT naming a method still belongs HERE, "
+            "never to finEacComparison, which answers only a question that asks to compare "
+            "the methods. Answers what the finish will cost. NOT what has been spent so far "
             "or how fast - that is finBurnRate. NOT why the current variance exists - that is "
             "finVarianceAnalysis. OWNS the phrasings: estimate at completion, EAC, what will "
             "this cost when it is done, forecast at completion, where will we land."
@@ -482,6 +579,7 @@ async def lifespan(app: FastAPI):
 # posture nothing can observe.
 from iagent_mesh.transport_auth import announce as _announce_transport_auth  # noqa: E402
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs  # noqa: E402
+from iagent_mesh.transport_auth import current_caller as _current_caller  # noqa: E402
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth  # noqa: E402
 
 _announce_transport_auth(component="engine-fin")
@@ -563,9 +661,15 @@ def list_verbs() -> dict[str, Any]:
     ]}
 
 
-@app.post("/measure/{fn}")
-def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any]:
-    """Execute one verb.
+def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Execute one verb and build the envelope `/measure/{fn}` serves.
+
+    THE ONE PLACE A VERB IS RUN AND SHAPED. Item 3's rule — "seeding and packageExport read
+    the same thing" — has a counterpart on this engine's own side: `package_export` below
+    calls this function once per panel, so the envelopes a package carries (including their
+    `artifact_id`s) are byte-for-byte the ones an ordinary `/measure/{fn}` caller would have
+    received for the same params. Two implementations that happened to agree is exactly what
+    this split exists to foreclose.
 
     The response carries `output_uri` and rows and NOTHING about presentation. What archetype
     draws this is `select_presentation`'s decision, made from the payload against the caller's
@@ -577,8 +681,6 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
     func = getattr(measures, fn, None)
     if func is None:  # pragma: no cover — OUTPUT_URI and the module agree by construction
         raise HTTPException(status_code=500, detail=f"measure {fn!r} declared but not implemented")
-
-    params = dict(req.params)
 
     # ── THE DECLARED REFUSAL, FIRED FROM THE DECLARATION ─────────────────────────────────
     #
@@ -619,6 +721,9 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
     return {
         "measure": fn,
         "output_uri": measures.OUTPUT_URI[fn],
+        # THE KEY THE BRIEF CITES (`fin_program_brief.py` reads `artifact_id`). Absent, every
+        # finding carried `artifact: null`. Content-addressed — see `_artifact_id`.
+        "artifact_id": _artifact_id(fn, params, rows),
         # DECLARED, NEVER INFERRED. A verb absent from VALUE_UNIT emits no such key and the
         # renderer keeps showing a bare number rather than guessing a currency this payload
         # never sent — which is why `fin_performance_indices` has none: CPI is a ratio, and
@@ -653,6 +758,201 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
         ),
         "rows": rows,
     }
+
+
+@app.post("/measure/{fn}")
+def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
+    """The ordinary route. A THIN WRAPPER — `_measure_envelope` is the one place a verb is
+    run and shaped; this route and `package_export` below are its only two callers."""
+    return _measure_envelope(fn, dict(req.params))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /package_export (item 3) — mirrors engine-cost's /measure/package_export
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# NOT A MESH VERB. A finance disclosure is built from a RATIFIED TEMPLATE's panels, handed
+# in explicitly by the caller (gateway.py's `/export/package`), never routed to by a phrase —
+# the same posture cost's packageExport takes for its own six-panel disclosure.
+
+#: verb -> fn, DERIVED from VERBS so a verb added above is immediately packageable and this
+#: map cannot itself name a verb the catalogue does not hold.
+VERB_TO_FN: dict[str, str] = {v["verb"]: v["fn"] for v in VERBS}
+
+
+class PackagePanel(BaseModel):
+    """One panel of a disclosure — SAME SHAPE `canvas_template.panel_dispatch` produces:
+    `verb` is the mesh verb (not the python fn), and `params` carries its slots."""
+    panel: int
+    verb: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PackageCanvas(BaseModel):
+    template_id: str
+    template_hash: str
+    panels: list[PackagePanel] = Field(default_factory=list)
+
+
+class PackageExportRequest(BaseModel):
+    recipient_scope: str
+    canvas: PackageCanvas
+
+
+@app.post("/package_export")
+def package_export(body: PackageExportRequest) -> dict[str, Any]:
+    """Build one recipient's self-contained validation package.
+
+    FOUR ORDERED REFUSALS, each before the next is even asked:
+      1. an unknown recipient scope — 403, never 404 (ADR-0049 Ruling 4: "no such recipient"
+         and "this recipient has nothing" must not look alike, and this is the former).
+      2. an empty panel list — 422, nothing to disclose.
+      3. a panel naming a verb this engine does not serve — 422, named by verb.
+      4. a panel whose own `program_id` disagrees with the recipient's program — 403, because
+         a program embedded in a package another program's recipient can open is exactly the
+         cross-program leak the scope exists to prevent.
+
+    Only once all four pass does this call `_measure_envelope` — THE SAME FUNCTION
+    `/measure/{fn}` calls — once per panel, then hand the served envelopes to
+    `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
+    second way.
+    """
+    try:
+        program_id = export.program_for_recipient(body.recipient_scope)
+    except Unentitled as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if not body.canvas.panels:
+        raise HTTPException(status_code=422, detail="a package needs at least one panel")
+
+    panels: list[dict[str, Any]] = []
+    for p in body.canvas.panels:
+        fn = VERB_TO_FN.get(p.verb)
+        if fn is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"panel {p.panel} names {p.verb!r}, which engine-fin does not serve; "
+                       f"known verbs are {sorted(VERB_TO_FN)}",
+            )
+        if p.params.get("program_id") != program_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"panel {p.panel} ({p.verb}) is scoped to program "
+                       f"{p.params.get('program_id')!r}, not {program_id!r} — "
+                       f"{body.recipient_scope!r} may only disclose its own program",
+            )
+        envelope = _measure_envelope(fn, dict(p.params))
+        panels.append({
+            "panel": p.panel, "verb": p.verb, "fn": fn, "params": dict(p.params),
+            "artifact_id": envelope["artifact_id"], "rows": envelope["rows"],
+        })
+
+    root = _repo_root()
+    if root is None:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment cannot build a package — the builder and the pinned "
+                   "Pyodide runtime are both absent from this image",
+        )
+
+    if _in_a_checkout(root):
+        try:
+            sys_path_added = str(root / "scripts") not in _sys.path
+            if sys_path_added:
+                _sys.path.insert(0, str(root / "scripts"))
+            from build_cost_package import algorithm_sha as _algorithm_sha
+            sha = _algorithm_sha()
+        except SystemExit as exc:
+            raise HTTPException(status_code=503, detail=f"cannot attest the algorithm: {exc}") from exc
+    else:
+        sha = _baked_algorithm_sha()
+        if sha is None:
+            raise HTTPException(
+                status_code=503,
+                detail="this deployment can neither read git nor find a baked commit sha — "
+                       "a package cannot be attested",
+            )
+
+    html_name, duckdb_name = export.artifact_filenames(body.recipient_scope)
+    dist = _dist_dir(root)
+    try:
+        if str(root / "scripts") not in _sys.path:
+            _sys.path.insert(0, str(root / "scripts"))
+        import build_fin_package as _builder
+        result = _builder.build(
+            recipient_scope=body.recipient_scope, program_id=program_id, state=STATE,
+            template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
+            panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
+            html_path=dist / html_name, duckdb_path=dist / duckdb_name,
+        )
+    except SourceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ImportError as exc:
+        # `build_fin_package` imports duckdb lazily, so an image without it fails HERE, and
+        # unnamed that is a bare 500 indistinguishable from a bug.
+        raise HTTPException(
+            status_code=503,
+            detail=f"this deployment cannot build a package — the builder's dependency "
+                   f"{exc.name or exc!s} is not installed",
+        ) from exc
+    except SystemExit as exc:
+        # cost's `embedded_runtime` (read by `build_html`) refuses a missing or unpinned
+        # Pyodide runtime with SystemExit, which is a script's exit and not a server's answer.
+        raise HTTPException(
+            status_code=503, detail=f"the package builder refused: {exc}",
+        ) from exc
+
+    manifest = result["manifest"]
+    audit = export.audit_line(manifest, disclosed_by="engine-fin")
+    print(f"[engine-fin] packageExport disclosed: {json.dumps(audit)}")
+
+    return {
+        "artifact_filename": html_name,
+        "artifact_sha256": result["html_sha256"],
+        "artifact_bytes": result["html_bytes"],
+        "artifact_uri": _artifact_uri(html_name),
+        "duckdb_filename": duckdb_name,
+        "duckdb_sha256": result["duckdb_sha256"],
+        "duckdb_uri": _artifact_uri(duckdb_name),
+        "algorithm_sha": sha,
+        "recipient_scope": body.recipient_scope,
+        "program_id": program_id,
+        "template_id": body.canvas.template_id,
+        "panels": [p["panel"] for p in panels],
+    }
+
+
+@app.get("/artifact/{filename}")
+def get_artifact(filename: str) -> FileResponse:
+    """Serve a produced package file — CLOSED SET, then ENTITLEMENT, mirroring
+    `agent_fleet/cost_agent/main.py`'s own `/artifact/{filename}` route exactly, because the
+    two engines' packages are indistinguishable risks to whoever fetches them.
+    """
+    scope = export.scope_of_artifact(filename)
+    if scope is None:
+        # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
+        # unrecognised name with 403 would confirm that SOME package exists under it.
+        raise HTTPException(status_code=404, detail="no such artifact")
+
+    caller = _current_caller()
+    readers = export.readers_for_recipient(scope)
+    if caller is None or caller.authz_id not in readers:
+        # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
+        raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
+
+    root = _repo_root()
+    if root is None:
+        raise HTTPException(status_code=404, detail="no such artifact")
+    path = _dist_dir(root) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no such artifact")
+
+    media = "text/html" if filename.endswith(".html") else "application/octet-stream"
+    # NO STARLETTE FALLBACK: `FileResponse` comes from `fastapi.responses` (imported at the
+    # top of this module), never from `starlette.responses` directly — the same dependency
+    # seal cost's route holds, because the two classes are not guaranteed interchangeable
+    # across a FastAPI/Starlette version pair this fleet has not pinned together.
+    return FileResponse(path, media_type=media, filename=filename)
 
 
 # ---------------------------------------------------------------------------

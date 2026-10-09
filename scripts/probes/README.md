@@ -42,6 +42,7 @@ which makes it the more dangerous of the two. **Recover by allowlist; never by d
 | `fire_invocation.py` | Drive one Restate invocation, for manufacturing a replay on purpose. |
 | `require_matrix.py` | The REQUIRE-posture matrix, run inside a throwaway pod: exempt `/health` → 200, gated route → 401 absent / 403 invalid, minted token admitted. |
 | `cost_canvas_pages_open.py` | Does a canvas-composed cost page still verify and render in a real browser when sections are cut? Opens the full page and one page per section in headless Edge. 7/7 green on 2026-09-30, and it caught all five pages broken when one `HAS` guard was removed. |
+| `engine_w_identity_census.py` | Does Engine W's per-chunk gate keep the same sources for the same identity whether `KNOWLEDGE_SEARCH_VIA_MESH` is off or on? Two halves: `run` inside the Engine W container once per flag value (piped on stdin to the image's python, flag set through `env`), then `diff off.json on.json` anywhere. Adds its own deny-identity and empty-caller controls, and reds on a census that shared no source or kept nothing. Each cell also records an embedding call that fell back to bm25 and a Topaz check that failed (both silent in the service), and the diff reds either by name -- so a flow cut by the NetworkPolicy gate reads as a cut, not as parity or a missing grant. Written 2026-10-06 for after roll #20, extended 2026-10-07 for the flag-on run after roll #21; sealed in `tests/test_engine_w_identity_census.py`. |
 
 ## Running them
 

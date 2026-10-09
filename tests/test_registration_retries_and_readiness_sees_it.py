@@ -40,7 +40,7 @@ _SRC = _MOD_PATH.read_text(encoding="utf-8")
 
 
 @pytest.fixture()
-def mr():
+def mr(monkeypatch):
     """The real module, with only the SDK transport stubbed.
 
     Stubbed because it lives in a sibling repo; everything under test here is this module's
@@ -49,8 +49,9 @@ def mr():
     pkg = types.ModuleType("iagent_mesh")
     tr = types.ModuleType("iagent_mesh.registration_transport")
     tr.register_with_mesh = lambda *a, **k: None
-    sys.modules.setdefault("iagent_mesh", pkg)
-    sys.modules["iagent_mesh.registration_transport"] = tr
+    if "iagent_mesh" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "iagent_mesh", pkg)
+    monkeypatch.setitem(sys.modules, "iagent_mesh.registration_transport", tr)
     spec = importlib.util.spec_from_file_location("mesh_registration_under_test", _MOD_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

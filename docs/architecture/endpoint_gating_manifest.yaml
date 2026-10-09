@@ -300,6 +300,19 @@ services:
           condition is restated rather than assumed, and it EXPIRES at a shared cluster. Its
           expiry is the trigger on [[engine-o-internal-hardening]].
       - method: POST
+        path: /notice_parts
+        identity: "entitled_domains (scope)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: >-
+          mesh:whichPartsDoesThisNoticeAffect (notice_parts.py), declared 2026-10-08 with the
+          route. READ session only; changes no state. Refuses before the graph is read unless
+          SUSTAINMENT is among the caller's entitled_domains, so an empty scope never reads as
+          "no parts". SECONDARY GAP, the same as /classify_predicate's: domain-scope, not per-IRI
+          can_view, so within SUSTAINMENT it answers for any notice id it is handed.
+      - method: POST
         path: /policy_rules
         identity: none
         gate: none
@@ -307,6 +320,19 @@ services:
         consumers: [policy_rules_client.py]
         class: internal
         justification: "Serves ruleset Turtle. READ. Same closure condition as /resolve_instance."
+      - method: POST
+        path: /declared_query
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [spo_step_executor.py]
+        class: internal
+        justification: >-
+          A declared-query verb served BY NAME. READ. The query text is engine-o's own baked
+          policy tree, never the request. Same closure condition as the other internal reads.
+          The capability gate (`can_invoke` on the verb's declared capability) is the CALLER's,
+          in spo_step_executor.execute_declared_query; engine-o does not repeat it, so any other
+          in-cluster caller reaches the verb ungated while the closure holds.
       - method: POST
         path: /operable_subjects
         identity: "user_email in body — domain/can_view scope, not a transport gate"
@@ -1197,6 +1223,51 @@ services:
           unsupported over notional entities so an elicitation can offer a menu; members carry
           instance_id and label. Same identity gap and the same incidental bound as resolve
           above — the menu bound of 8 truncates larger classes to a count, which is not a gate."
+      - method: POST
+        path: /package_export
+        identity: none
+        gate: "transport auth (OBSERVE) + a closed recipient-scope set + per-panel program match; NO caller authorization in this engine"
+        exposes: object-store-write
+        consumers: ["cortex-bff /export/package (template route and mesh:packageExport route)"]
+        class: delegates
+        justification: >-
+          THE PRODUCTION HALF OF A FINANCE DISCLOSURE (8bcf9fb7). Builds one recipient's
+          package (an .html page plus a .duckdb) from the same _measure_envelope that
+          /measure/{fn} serves, and WRITES it to the shared dist directory. The caller's
+          authorization is DECIDED AT THE GATEWAY, not here: cortex-bff's /export/package
+          requires get_current_user and refuses a caller who is not a reader of the derived
+          recipient_scope (403), so this route is delegates, not gated. THIS ENGINE DOES NOT
+          READ THE CALLER'S IDENTITY ON THIS ROUTE, unlike /artifact/{filename} below, and
+          that is a real difference worth stating: anything that can reach the engine on the
+          cluster network can ask it to write any recipient's package. What it does enforce
+          is structural: an unknown recipient_scope is 403 (never 404), an empty panel list
+          is 422, an unserved verb is 422, and a panel whose program_id disagrees with the
+          recipient's program is 403, so a request cannot put one program's rows into
+          another program's package. Revisit as ungated_by_accident if the gateway stops
+          being the only caller; it is the row to re-examine when the data stops being
+          notional. 503 (named) when the build cannot run in the image: that behaviour is
+          deliberate and stays.
+      - method: GET
+        path: /artifact/{filename}
+        identity: "caller authz_id, checked against the recipient's reader list"
+        gate: "AUTHORIZATION on the caller (export.readers_for_recipient) + a DERIVED filename allow-list; transport auth (OBSERVE)"
+        exposes: the-whole-disclosure-package
+        consumers: ["cortex-bff /export/package/artifact/{filename}", the recipient the package was built for]
+        class: gated
+        justification: >-
+          Serves a produced finance validation package, every figure the recipient's program
+          was willing to disclose, in one file. Mirrors engine-cost's /artifact/{filename}
+          row above and the same posture: a name outside the closed set derived from
+          export.artifact_filenames is a 404 BEFORE any entitlement check (a 403 there would
+          confirm that some package exists under it), then the caller's authz_id must be in
+          export.readers_for_recipient(scope) or the answer is 403 naming the package and
+          never its readers. No service identity is entitled (a card action through cortex-bff
+          carries the person's identity, ADR-0044). Traversal is refused structurally by
+          comparison against the closed set, never by cleaning input into a path.
+          THE READER LIST IS SEED DATA (export.RECIPIENT_READERS), not policy: a real
+          deployment reads that relation from the grant rail where it can be reviewed and
+          revoked. 404 in a deployed pod where the builder and runtime are absent from the
+          image, since nothing is written there.
 
   docs_agent:
     file: agent_fleet/docs_agent/main.py
@@ -1568,7 +1639,7 @@ services:
           (Depends(get_current_user)), and `on_behalf_of` must equal the authenticated
           caller — the ADR names the field but not a delegation mechanism, so the narrower
           reading wins until one exists. `kind` is validated against the closed
-          ingest_status.KINDS set (pdf|cad) BEFORE any write, never LLM-classified
+          ingest_status.FILE_KINDS set (pdf|cad|xml) BEFORE any write, never LLM-classified
           (ADR-0021's precedence). sha256 is computed at the door; a hit against
           ingest_status.find_primary_by_sha is level-1 dedupe (same bytes, full stop) and
           writes NOTHING to the object store — only a `duplicate` row recording the
@@ -1596,6 +1667,30 @@ services:
           (ingest_status.get_status_for), and a caller who is neither the submitter nor
           the on_behalf_of principal gets a plain 404 — indistinguishable from "no such
           ingest" — never a 403 that would confirm another caller's upload exists.
+      - method: POST
+        path: /ingest/{ingest_id}/retry
+        identity: keycloak-jwt
+        gate: "get_current_user + the status route's own scoping (submitted_by OR on_behalf_of = caller); a stranger and a missing row get the identical 404"
+        exposes: action
+        consumers: [ingestion seam UI (ADR-0041 §8), the dropper un-stranding their own row]
+        class: gated
+        justification: >-
+          The dropper's own retry (roll #20). The visibility rule and the 404 are the status
+          route's, so this adds no new existence oracle. The only effect is re-running the
+          find-or-file of the document_promotion task, and only for a row already at review.
+          Terminal rows, event rows at received and documents still in doc-tools' pipeline are
+          refused 409 and nothing is written.
+      - method: GET
+        path: /cases/{case_id}
+        identity: keycloak-jwt
+        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; otherwise the identical 404"
+        exposes: gated-content
+        consumers: [cortex-ui case view (WorkflowCasePayload)]
+        class: gated
+        justification: >-
+          Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
+          case and one the caller may not read answer the same 404. A runner that cannot be
+          reached is a different fact and answers 503 runner_unavailable, not 404.
       - method: POST
         path: /ingest/events
         identity: keycloak-jwt
@@ -1647,6 +1742,19 @@ services:
           derived from the approval_chain's steward entry, never taken from the caller (422 when
           absent). A refused write answers 200 with its reason; only the caller gate (403) and
           the missing steward (422) are HTTP errors.
+      - method: POST
+        path: /internal/cases/{case_id}/seeded-by
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (stamps seeded_by at the `released` outcome)]
+        class: gated
+        justification: >-
+          ADR-0041 section 8.1: stamps the seeding delegate on the AnswerArtifacts of a case, so
+          GET /artifacts/{id} can admit that delegate as a reader. One SERVICE identity is
+          accepted, checked before the body is used. A seeded_by that is not a declared delegate
+          (DELEGATE_ON_BEHALF_OF) is 422. A case with no case-linked artifact stamps zero and
+          answers 200: no workflow produces one yet.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt

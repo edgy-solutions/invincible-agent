@@ -40,11 +40,57 @@ def _age(epoch: str) -> str:
     return f"{int(days)}d"
 
 
+def _commit_epoch(repo: Path, path: str) -> float | None:
+    """Seconds-since-epoch for `path`'s last commit in `repo`, or None if it has never been
+    committed there. This is `unanswered_over`'s `age_of` -- an untracked file has no commit log
+    at all, so `_git` returns "" and this returns None rather than guessing a time, which is what
+    keeps an uncommitted packet from being measured as "fresh" (see that function's docstring)."""
+    out = _git(repo, "log", "-1", "--format=%ct", "--", path)
+    try:
+        return float(out) if out else None
+    except ValueError:
+        return None
+
+
+def _worktrees(repo: Path) -> list:
+    """[(path, branch)] from `git worktree list --porcelain`; `branch` is the local branch name
+    (e.g. `lane/74-sdk-revisions`) or None for a detached/bare entry. THE THIRD STATE block needs
+    this twice: to know which directories to check for uncommitted packets, and to know which
+    `origin/lane/*` branches have NO worktree at all -- the state that can never be enumerated
+    from here, per
+    docs/measurements/2026-09-28-the-inbox-census-and-the-third-state-is-not-where-the-dispatch-put-it.md."""
+    raw = _git(repo, "worktree", "list", "--porcelain")
+    out: list = []
+    path, branch = None, None
+    for line in raw.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path = line[len("worktree "):].strip()
+        elif line.startswith("branch "):
+            ref = line[len("branch "):].strip()
+            branch = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+        elif not line:
+            if path:
+                out.append((path, branch))
+            path, branch = None, None
+    return out
+
+
 def report_lanes(repo: Path) -> None:
     """Print the LANES block. Never raises and never changes the caller's exit code."""
     try:
-        sys.path.insert(0, str(repo / "src"))
-        from iagent_pure.lane_packets import scan, unaddressed, unread_by_lane, unread_by_seat
+        # The scanner comes from THIS script's tree, never from the tree being scanned: the
+        # instrument and the subject must not share a surface. Importing from `repo / "src"`
+        # made a census of master fail outright (master's scanner predates external_packets),
+        # and once merged it would measure every tree with that tree's own scanner.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from iagent_pure.lane_packets import (
+            external_packets,
+            scan,
+            unaddressed,
+            unanswered_over,
+            unread_by_lane,
+            unread_by_seat,
+        )
     except Exception as exc:  # noqa: BLE001 — a census must not die on its own reporting
         print(f"\nLANES: unavailable ({type(exc).__name__}) — NOT a claim that lanes are current.")
         return
@@ -60,6 +106,7 @@ def report_lanes(repo: Path) -> None:
               "the same as nothing being wrong.")
 
     standing = 0
+    known_lanes = {b.rsplit("/", 1)[-1].lower() for b in branches}
     for b in sorted(branches):
         lane = b.rsplit("/", 1)[-1].lower()
         last = _git(repo, "log", "-1", "--format=%ct", b)
@@ -77,6 +124,22 @@ def report_lanes(repo: Path) -> None:
             if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
                 standing += 1
 
+    # NO BRANCH: the general case of the `doc-tools`/`iagent-mesh-sdk` defect. Any lane-kind
+    # addressee this repo's `_TO` grammar accepts but whose name matches no `origin/lane/*` branch
+    # here is counted in `unread` above and printed by NOTHING in the per-branch loop -- the same
+    # gap the seat form closed for seats, one layer up, for an unknown prefix rather than a known
+    # one. This is not limited to the two names that were measured; it fires for ANY future lane
+    # token with no branch in this tree.
+    for lane, mine in sorted(unread.items()):
+        if lane in known_lanes:
+            continue
+        ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+        print(f"        NO BRANCH  {lane:<12} {len(mine)} unread ({ages}) — addressed to a lane "
+              f"this repo does not have")
+        for p in mine:
+            if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
+                standing += 1
+
     # SEATS: the lane-less ones, ruled 2026-09-26. Enumerated from the PACKETS, because a seat owns
     # no worktree and so has no `origin/lane/*` branch to be enumerated from. Without this block the
     # seat form would have been strictly worse than leaving those packets unaddressed: an addressed
@@ -90,17 +153,119 @@ def report_lanes(repo: Path) -> None:
             if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
                 standing += 1
 
+    # EXTERNAL: recipients in ANOTHER repo -- `doc-tools/lane/7f`, `openddil`'s agent. This is NOT
+    # a delivery report. An external inbox lives in a tree this repo cannot read, so there is no
+    # "unread" to claim and no branch to be missing one; all this can honestly say is what WE SENT
+    # and how old it is. A long age here means "we are still waiting to hear back", not "it sat
+    # unread" -- that distinction is the whole reason this is its own block and not folded into
+    # the lane rows above.
+    externals = external_packets(packets)
+    if externals:
+        print(f"\n        EXTERNAL: {len(externals)} recipient(s) in other repos -- what we sent, "
+              f"not what they read.")
+        for addressee, mine in sorted(externals.items()):
+            ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+            print(f"        {addressee:<28} {len(mine)} packet(s) ({ages})")
+
+    # ADDRESS FORM: STATE, printed every run. The ruled form is `<repo>/<branch>` (2026-10-07); a
+    # legacy `ia-<w>/lane/<b>` or bare token is still READ, and always as an INTERNAL lane -- the
+    # scanner never guesses that `ia-cortex-60` belongs to another repo. So a legacy addressee with
+    # no `origin/lane/*` branch here is listed, not reclassified: it MAY be another repo's lane,
+    # and only its sender can say so by re-addressing.
+    legacy = [p for p in packets if p.form == "worktree"]
+    bare = [p for p in packets if p.form == "bare"]
+    if legacy or bare:
+        print(f"\n        ADDRESS FORM: {len(legacy)} packet(s) addressed by worktree "
+              f"(ia-<w>/lane/<b>), {len(bare)} by bare token -- the ruled form is "
+              f"<repo>/<branch> (2026-10-07).")
+        nobranch = sorted({p.addressee for p in legacy + bare
+                           if p.kind == "lane" and p.addressee not in known_lanes})
+        if nobranch:
+            print(f"        legacy- or bare-addressed, no origin/lane/* branch here (another "
+                  f"repo's lane, or no lane at all; not guessed): {', '.join(nobranch)}")
+
     for p in unaddressed(packets):
         print(f"        UNADDRESSED  {Path(p.path).name}")
     if unaddressed(packets):
-        print("        A packet naming no recipient cannot be read by one. Add `to: ia-<lane>/lane/"
-              "<lane>`, or `to: <repo>/seat/<name>` for a lane-less seat; reported rather than "
-              "dropped, because an inbox that silently discards what it cannot attribute is the "
-              "same silence one layer down.")
+        print("        A packet naming no recipient cannot be read by one. Add `to: "
+              "invincible-agent/lane/<branch>` (`<repo>/<branch>` for another repo), or "
+              "`to: <repo>/seat/<name>` for a lane-less seat; reported rather than dropped, "
+              "because an inbox that silently discards what it cannot attribute is the same "
+              "silence one layer down.")
 
     if standing:
         print(f"        {standing} packet(s) unread for more than a day. Reading is an ACT: the "
               f"recipient commits `read-by: ia-<lane>/lane/<lane> <date>` — or `read-by: "
               f"<repo>/seat/<name> <date>` — to the packet. Delivery is the inbox, reading is the "
               f"stamp, and both are on the rail.")
+
+    # UNANSWERED >48h: a stamp is one way a packet gets closed; a REPLY is another, and until now
+    # nothing watched for either taking too long. Grouped by (kind, addressee) so a lane and a
+    # seat sharing a bare name never share a row -- see `unanswered_over`.
+    unanswered, undecided = unanswered_over(
+        packets, now=time.time(),
+        age_of=lambda path: _commit_epoch(repo, path),
+    )
+    if unanswered:
+        print(f"\n        UNANSWERED >48h: {sum(len(v) for v in unanswered.values())} packet(s), "
+              f"{len(unanswered)} addressee(s). Answered = a `read-by` stamp OR a later reply; "
+              f"neither has happened yet.")
+        for (kind, addressee), mine in sorted(unanswered.items())[:15]:
+            ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+            print(f"        {kind}/{addressee:<24} {len(mine)} unanswered ({ages})")
+        if len(unanswered) > 15:
+            print(f"        ... and {len(unanswered) - 15} more addressee(s)")
+    if undecided:
+        print(f"\n        UNDECIDED: {len(undecided)} packet(s) whose `from:` line does not parse "
+              f"-- cannot be tested for a reply, so not counted as answered OR unanswered.")
+        for p, reason in undecided[:15]:
+            print(f"        {Path(p.path).name}: {reason}")
+        if len(undecided) > 15:
+            print(f"        ... and {len(undecided) - 15} more")
+
+    # THE THIRD STATE: a packet that was never COMMITTED -- not an unparseable `to:` line, an
+    # untracked sessions/*.md sitting in some worktree. A census run from one tree reads another
+    # worktree's uncommitted packets as a clean zero; see docs/measurements/2026-09-28-the-inbox-
+    # census-and-the-third-state-is-not-where-the-dispatch-put-it.md §1 and §3. Never printed as a
+    # zero: a branch with no local worktree gets its own UNENUMERABLE line instead of silence.
+    worktrees = _worktrees(repo)
+    seen: dict = {}
+    first = True
+    for wt_path, _branch in worktrees:
+        try:
+            files = [f for f in _git(Path(wt_path), "ls-files", "--others", "--exclude-standard",
+                                      "sessions/").splitlines() if f]
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if files:
+            lead = "\n        " if first else "        "
+            print(f"{lead}NOT COMMITTED  {wt_path}  {len(files)} packet(s)")
+            first = False
+            for f in files:
+                seen.setdefault(f, set()).add(wt_path)
+    if seen:
+        only_one = sum(1 for wts in seen.values() if len(wts) == 1)
+        print(f"        {len(seen)} distinct uncommitted packet(s), {only_one} present in only "
+              f"one worktree.")
+
+    worktree_branches = {b for _, b in worktrees if b}
+    # Named by its BRANCH (addressing ruling, 2026-10-07), never by a guessed `ia-<suffix>`
+    # worktree: the guess collided with a REAL worktree -- `ia-74` exists and holds
+    # lane/74-engine-w-mesh, while lane/74 itself is checked out nowhere -- so the line read as
+    # "ia-74 does not exist" beside a NOT COMMITTED row counting ia-74's 26 packets.
+    for b in sorted(branches):
+        local = b[len("origin/"):]
+        if local not in worktree_branches:
+            print(f"        UNENUMERABLE  {local}  checked out in no worktree on this box — "
+                  f"its uncommitted packets cannot be seen from here")
+
     print("        This is STATE, printed every run, and does NOT change the exit code.")
+
+
+if __name__ == "__main__":
+    # Normally called only from version_census.py's main(), which hardcodes its own repo root.
+    # This guard exists so the block can be exercised directly against any repo -- e.g. a census
+    # of invincible-agent's own sessions/ run from this worktree -- without going through that
+    # caller. Defaulting to this file's own repo keeps `uv run python scripts/_lane_census.py`
+    # with no argument working exactly as it always has.
+    report_lanes(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1])

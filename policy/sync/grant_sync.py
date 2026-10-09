@@ -46,11 +46,14 @@ from dataclasses import dataclass
 from topaz_sync import DirObject, DirRelation, DesiredState  # noqa: E402
 
 
-# THIS sync's prune scope: dataset `reader` relations only. Excludes `user`
+# THIS sync's prune scope: dataset and document `reader` relations only. Excludes `user`
 # (ensured-present, never pruned — ADR-0026 sync owns it) and `owner` (DataHub
 # sync owns it). Disjoint from the other two tools' managed sets.
 MANAGED_GRANT_OBJECT_TYPES: list[str] = []          # owns no object type outright
-MANAGED_GRANT_RELATIONS = [("dataset", "reader")]
+MANAGED_GRANT_RELATIONS = [("dataset", "reader"), ("document", "reader")]
+
+#: The object types a grant may name. `dataset` is the default (an absent `kind:`).
+GRANT_KINDS = ("dataset", "document")
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,7 @@ class GrantRecord:
     asset: str
     granted_by: str
     reason: str = ""
+    kind: str = "dataset"      # Topaz object type of `asset`: dataset (URN) | document (doc_id)
 
 
 def load_grants(raw: dict) -> tuple[list[GrantRecord], list[str]]:
@@ -79,6 +83,11 @@ def load_grants(raw: dict) -> tuple[list[GrantRecord], list[str]]:
         subject = (entry or {}).get("subject") or ""
         asset = (entry or {}).get("asset") or ""
         granted_by = (entry or {}).get("granted_by") or ""
+        kind = (entry or {}).get("kind", "dataset")
+        if kind not in GRANT_KINDS:
+            errors.append(f"grant[{i}] MALFORMED: kind {kind!r} is not one of "
+                          f"{', '.join(GRANT_KINDS)} — {entry!r}")
+            continue
         missing = [
             k for k, v in (("subject", subject), ("asset", asset), ("granted_by", granted_by))
             if not str(v).strip()
@@ -86,8 +95,12 @@ def load_grants(raw: dict) -> tuple[list[GrantRecord], list[str]]:
         if missing:
             errors.append(f"grant[{i}] MALFORMED: missing {', '.join(missing)} — {entry!r}")
             continue
+        if kind == "document" and str(asset).startswith("urn:li:"):
+            errors.append(f"grant[{i}] MALFORMED: a document grant's asset is a doc_id, not a "
+                          f"DataHub URN (that is a dataset; drop `kind: document`) — {entry!r}")
+            continue
         grants.append(GrantRecord(subject=subject, asset=asset, granted_by=granted_by,
-                                  reason=(entry or {}).get("reason") or ""))
+                                  reason=(entry or {}).get("reason") or "", kind=kind))
     return grants, errors
 
 
@@ -102,7 +115,7 @@ def derive_grant_desired(grants: list[GrantRecord]) -> DesiredState:
         state.objects.add(DirObject("user", g.subject))
         state.relations.add(
             DirRelation(
-                object_type="dataset",
+                object_type=g.kind,
                 object_id=g.asset,
                 relation="reader",
                 subject_type="user",
@@ -128,6 +141,12 @@ def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
     exists: dict[str, bool] = {}
     dangling: list[str] = []
     for g in grants:
+        if g.kind == "document":
+            # Topaz has no authority over which documents exist: a document's existence
+            # is attested by the corpus, so it is ENSURED by sync_grants, never refused
+            # here. The Engine W identity census is what measures whether a grant reaches
+            # a retrievable source.
+            continue
         if g.asset not in exists:
             exists[g.asset] = client.object_exists("dataset", g.asset)
         if not exists[g.asset]:
@@ -139,7 +158,7 @@ def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
 
 
 def snapshot_grants(client) -> DesiredState:
-    """This sync's managed live state: dataset `reader` relations ONLY.
+    """This sync's managed live state: dataset and document `reader` relations ONLY.
     Excludes `user` (ensure-not-prune) and `owner` (other sync's). The
     exclusion is what makes plan_diff never emit a user or owner deletion."""
     live = DesiredState()
@@ -160,6 +179,11 @@ def sync_grants(client, grants: list[GrantRecord], *, prune: bool = True):
     # Ensure grantee users exist (the reader relation's subject). Never pruned.
     for u in {o for o in desired.objects if o.type == "user"}:
         client.set_object(u)
+
+    # Ensure granted DOCUMENT objects exist (idempotent, never pruned): the corpus attests
+    # a document exists; Topaz holds no authority over it, so there is nothing to dangle.
+    for d in sorted({g.asset for g in grants if g.kind == "document"}):
+        client.set_object(DirObject("document", d))
 
     # Managed diff over reader relations only (no objects managed here — the
     # dataset objects belong to the DataHub sync; users to the ADR-0026 sync).
@@ -183,7 +207,7 @@ def readback_grants(client, grants: list[GrantRecord]) -> tuple[int, int]:
     checked = failures = 0
     for g in grants:
         checked += 1
-        if not client.check("dataset", g.asset, "can_read", g.subject):
+        if not client.check(g.kind, g.asset, "can_read", g.subject):
             print(f"  [FAIL] {g.subject} can_read {g.asset}")
             failures += 1
     return checked, failures

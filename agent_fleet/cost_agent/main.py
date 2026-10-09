@@ -22,6 +22,8 @@ created — all three measured on Engine F. Ask the GRAPH, by name (runbook §9)
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from decimal import Decimal
@@ -529,6 +531,25 @@ def _refusal(kind: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"refused": True, "outcome": kind, "reason": message, **extra}
 
 
+def _artifact_id(fn_name: str, params: dict[str, Any], out: dict[str, Any]) -> str:
+    """Mint a CONTENT-ADDRESSED id for one measure's answer — never a pointer into a store.
+
+    THE KEY A CONSUMER CITES. The costing review reads `artifact_id` off each envelope, and
+    this engine wrote none, so every cost finding cited `artifact: null` — the defect engine-fin
+    fixed for itself with the same form (`fin:<fn>:<sha256[:16]>`).
+
+    Nothing is persisted. The same verb, the same ACCEPTED params and the same answer hash to
+    the same id, so a citation is checkable by RE-RUNNING the measure, not by dereferencing
+    something this engine kept. Minted only for an answer: a refusal is not an artifact, and an
+    id on one would let a consumer cite a figure that was never produced.
+    """
+    digest = hashlib.sha256(
+        json.dumps({"measure": fn_name, "params": params, "answer": out},
+                   sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()[:16]
+    return f"cost:{fn_name}:{digest}"
+
+
 @app.post("/measure/{fn_name}")
 async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
     """Run one declared verb.
@@ -583,7 +604,8 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
 
     try:
         out = fn(STATE, **accepted)
-        return {"refused": False, **out, **({"ignored_params": ignored} if ignored else {})}
+        return {"refused": False, **out, "artifact_id": _artifact_id(fn_name, accepted, out),
+                **({"ignored_params": ignored} if ignored else {})}
     except VintageRequired as e:
         # THE SLOT TRAVELS WITH ITS MENU. `available` is a list of values for SOMETHING,
         # and a consumer that has to infer which slot from the verb name is re-deriving a

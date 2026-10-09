@@ -72,7 +72,7 @@ then established that the target already has a name, an ADR and a stated precond
 ruling is the DESTINATION and the ADR owns the PATH.
 
 
-## TWO NAMED CONSEQUENCES OF THE FLIP — not table rows
+## THREE NAMED CONSEQUENCES OF THE FLIP — not table rows
 
 ### 1. The audit trail silently becomes partial
 
@@ -102,6 +102,27 @@ of the 12 undeclared routes awaiting gate-class judgment. Its 401 is classed **t
 Cross-noted in `endpoint-gating-undeclared-routes-recommendation.md`. **Neither fix is complete
 without the other**, and a defect visible from two items is one that gets fixed twice or not at
 all.
+
+### 3. engine-docs withholds every how-to page that names a verb — from every caller
+
+Added 2026-10-01 with the serve-time gate (`agent_fleet/docs_agent/entitlement.py`, ADR-0037:179).
+Under this flag the verified asker must hold `can_invoke` on every verb a page `explains`. Two
+preconditions live outside engine-docs, and each one alone makes the flip read as "docs went
+dark":
+
+1. **The asker never reaches engine-docs.** `explain` is not in `_CALLER_IDENTITY_VERBS`
+   (`src/iagent/defs/dynamic_supervisor.py`), so the supervisor dispatches it as
+   `svc:supervisor` and the gate decides for the service. Adding it is one line, but it is live
+   the moment it ships, flag or no flag: a vault redemption failure then fails a docs answer
+   loudly. It has to land before the flip and be watched on its own.
+2. **No mesh verb a page explains is in the capability namespace.** `capability_grant_sync`
+   carries the direct_call grants and `mesh:startReview`. `can_invoke(mesh:seedCanvas)` is
+   not-found, which is a deny, for every caller.
+
+The gate refuses correctly in both cases. It names each withheld page and returns `unentitled`
+when all are withheld, never an abstain. So the symptom is a legible refusal, not a silent
+gap. It is still a refusal of every verb-bearing page, and it must be cleared before the flip,
+not discovered after.
 
 ## Established by reading the code (2026-08-07)
 

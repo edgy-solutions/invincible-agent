@@ -12,6 +12,7 @@
 # an anonymous or unexplained grant is REFUSED by the sync (prove-the-negative
 # on the grant path). `subject` is the entitlement key (email, matching the
 # seeded `user` objects); `asset` is the dataset URN; the relation is `reader`.
+# An optional `kind: document` makes `asset` a document id (doc_id), not a URN.
 #
 # Add a grant DELIBERATELY (a chosen, reviewed decision), NOT reactively when
 # someone hits a denial — the honest denial + a reviewed grant is the model;
@@ -47,3 +48,32 @@ grants:
     granted_by: cnogradi
     reason: >-
       Demo: alice reads the p_cage dataset for testing.
+  # Document grants (`kind: document`): the asset is a doc_id the corpus attests.
+  - subject: alice@example.com
+    kind: document
+    asset: "TM-1H-130H-2-12-01"
+    granted_by: cnogradi
+    reason: >-
+      Fixture grant: alice reads one retrievable C-130H manual so the Engine W
+      identity census measures parity on an identity that keeps something (roll
+      #21 census kept 0 of 60). bob and carol hold no document grant and are
+      the census's deny side. Remove when the census no longer needs a granted
+      reader.
+  - subject: alice@example.com
+    kind: document
+    asset: "mil#wpn-howtouse"
+    granted_by: cnogradi
+    reason: >-
+      Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
+      reproduced. Folded so the new document prune scope does not revoke it
+      silently. No DocumentChunk carries this doc_id (measured 2026-10-08), so
+      it is retained, not exercised.
+  - subject: alice@example.com
+    kind: document
+    asset: "mil#wpn-m0004-1-1680-TNG"
+    granted_by: cnogradi
+    reason: >-
+      Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
+      reproduced. Folded so the new document prune scope does not revoke it
+      silently. No DocumentChunk carries this doc_id (measured 2026-10-08), so
+      it is retained, not exercised.

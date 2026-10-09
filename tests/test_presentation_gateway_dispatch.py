@@ -358,3 +358,17 @@ def test_a_declared_live_view_DOES_reach_the_wire(monkeypatch):
         recomputes=True,
     )
     assert cap["manifest"]["recomputes"] is True
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

@@ -337,7 +337,9 @@ async def test_AN_EXCLUSION_THAT_BINDS_TO_NOBODY_FAILS_BEFORE_ANYTHING_IS_RESOLV
 @pytest.mark.asyncio
 async def test_A_STEP_THAT_DECLARES_NO_EXCLUSION_JOURNALS_NONE(registered, monkeypatch):
     """Every other human_await replays unchanged: the key is written only when declared."""
-    from tests.test_the_maintenance_fault_runs_as_a_case import _event
+    from tests.test_the_maintenance_fault_runs_as_a_case import (
+        _event, install_declared_walk_double)
+    install_declared_walk_double(monkeypatch)  # the case's walk is a declared query
 
     async def _select(**arms):  # the deadline race, answered: the approval wins
         value = await arms["approved"]

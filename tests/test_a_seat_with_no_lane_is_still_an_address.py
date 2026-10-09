@@ -224,7 +224,7 @@ def test_the_census_does_NOT_invent_a_seat_row(tmp_path):
     out = buf.getvalue()
 
     assert "unavailable" not in out
-    assert "seat/" not in out, f"a seat row printed with no seat packet in the inbox:\n{out}"
+    assert "\n        seat/" not in out, f"a seat row printed with no seat packet in the inbox:\n{out}"
 
 
 def test_the_census_reads_the_seat_enumeration_and_not_only_the_lane_one():

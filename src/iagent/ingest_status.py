@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Optional
@@ -73,13 +74,51 @@ _DETAIL_REQUIRED_STAGES = (REJECTED, FAILED)
 # STAGES so a caller walking the ladder in order does not have to reason about a branch that
 # isn't one.
 DUPLICATE = "duplicate"
-ALL_STATUSES = STAGES + (DUPLICATE,)
+
+# 2026-10-06 (roll #20 item 4): CASE_OPENED -- the EVENT branch's own next step after
+# `received` (POST /ingest/events opens a case directly; it never extracts/reviews/promotes).
+# OUT OF BAND LIKE DUPLICATE, for the same reason: STAGES mirrors ca's `INGEST_STAGES` exactly
+# (test_the_stage_vocabulary_matches_the_sdk_directly seals that), and case_opened is not in
+# ca's SDK -- it is this repo's own event-branch extension. Keeping it out of STAGES keeps that
+# seal intact; it is still a legal `update_status` target via ALL_STATUSES below.
+CASE_OPENED = "case_opened"
+# Out-of-band terminal, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
+# registration declares `domain` EXPLICITLY as null (`pdf`, `engineering-document`,
+# `doors-export` -- "origin resolved by evidence, not kind") never enters `review`'s task-filing
+# step at all, so it does not belong on the STAGES ladder either -- it is a different fact
+# (no audience exists to file a task against), recorded once and done, same as a duplicate
+# arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
+# 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
+AWAITING_ORIGIN = "awaiting_origin"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
-# declared-at-the-door, never LLM-classified (ADR-0021's precedence). Two today; a third is a
-# future commit (see mesh_system.ttl's comment on the tree), not a wider enum here.
-PDF, CAD = "pdf", "cad"
-KINDS = (PDF, CAD)
+# declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
+# third leaf, added for the document that needed it: S1000D data modules, which arrive as
+# kind=xml with content_kind=s1000d-data-module (the registered kind rides under the format).
+# FILE_KINDS is what POST /ingest accepts; each member is a leaf, sealed both ways by
+# tests/test_ingest_content_kind_tree.py.
+PDF, CAD, XML = "pdf", "cad", "xml"
+FILE_KINDS = (PDF, CAD, XML)
+# EVENT (roll #20 item 4): not a file format and not a ContentKind leaf -- POST /ingest/events
+# never carries bytes, so there is no `ingress-user/<kind>/<sha256>/` object prefix for it
+# (the route passes object_prefix=""). Added to KINDS anyway because `record_received`'s own
+# `kind` validation is the only gate this value passes through; widening the TUPLE the comment
+# above warns against would be the ContentKind registry (`content_kind` column, a separate
+# channel) -- this is the file-format/arrival-shape column instead. The multipart door checks
+# FILE_KINDS, not KINDS, so a file cannot be dropped as `event`. KINDS spells its names out
+# rather than `FILE_KINDS + (EVENT,)` because cortex-ui's parity test parses this tuple by name.
+EVENT = "event"
+KINDS = (PDF, CAD, XML, EVENT)
+
+# 2026-10-06 (roll #20 item 4): the event branch's own id shape -- gateway.py mints
+# `"evt-" + sha256(f"{content_kind}:{identity_value}").hexdigest()` for POST /ingest/events
+# (NOT `promotion.ingest_id_for`'s `sha256:<64 hex>`, since an event is never a document
+# `document_promotion` would sweep -- it carries no bytes and is never promoted through that
+# path). `record_received`'s own id-shape check below is validated against THIS pattern when
+# `kind == EVENT`, never against INGEST_ID_RE -- an event id can never satisfy that pattern by
+# construction, so checking it there would refuse every real event-door call.
+EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
 
 _MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS ingest_status_projection (
@@ -114,11 +153,23 @@ UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_d
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
 
 -- 2026-10-06: content_kind (review-audience fix) -- NULLABLE. `kind` stays the FILE FORMAT
--- (pdf|cad); this column carries the DECLARED, registry-level content kind (the `content_kind`
+-- (pdf|cad|xml); this column carries the DECLARED, registry-level content kind (the `content_kind`
 -- form field on POST /ingest) so a later stage move can resolve the promotion audience's domain
 -- from the registry rather than from the file format. NULL for undeclared drops and for every
 -- row written before this column existed. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS content_kind TEXT;
+
+-- 2026-10-08: extraction_ref -- NULLABLE. The versioned manifest key doc-tools' review POST names
+-- (`{base_dir}/generated/{base_name}/{pipeline_version}/manifest.json`); a retry re-derives the
+-- promotion task's payload from it. NULL for every row that reached review before this column
+-- existed. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;
+
+-- 2026-10-06 (roll #20 item 4): case_id -- NULLABLE. Set only once `POST /ingest/events` has
+-- confirmed the case runner actually opened the case (status moves received -> case_opened in
+-- the SAME write); NULL while a row sits at `received` and for every row the file-branch door
+-- writes (a document never opens a case). IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 """
 
 
@@ -174,20 +225,35 @@ def record_received(
     source: Optional[str] = None,
     content_kind: Optional[str] = None,
 ) -> dict[str, Any]:
-    """A genuinely new arrival: one row, id = ingest_id. `ingest_id` must be
-    `promotion.ingest_id_for(body)` — the SAME derivation `document_promotion` requires
+    """A genuinely new arrival: one row, id = ingest_id. For `kind in (PDF, CAD)`, `ingest_id`
+    must be `promotion.ingest_id_for(body)` — the SAME derivation `document_promotion` requires
     (`promotion.INGEST_ID_RE`) — so a seam-minted document is never refused promotion for a
     spelling mismatch. This is a DIFFERENT spelling from `sha256` (bare hex): the row keeps
     `sha256` as its own column (the dedupe key, and the `ingress-user/{kind}/{sha256}/` object
     prefix) while `id` carries the `sha256:<64 hex>` form. status = received.
 
+    For `kind == EVENT` (roll #20 item 4), `ingest_id` is instead gateway.py's own
+    `"evt-" + sha256(...)` mint (`EVENT_INGEST_ID_RE`) — an event is never a document
+    `document_promotion` would sweep (no bytes, no promotion path), so `INGEST_ID_RE` is not
+    the right shape to check it against; checking it there would refuse every real event-door
+    call.
+
     `content_kind` is the DECLARED, registry-level kind (POST /ingest's `content_kind` form
-    field) — None when undeclared. `kind` stays the file format, unchanged."""
+    field) — None when undeclared. `kind` stays the file format, unchanged.
+
+    ON CONFLICT (id) DO NOTHING (2026-10-06, roll #20 item 4): a repeat `POST /ingest/events`
+    for an event_id already holding a row would otherwise crash this write on the PRIMARY KEY
+    rather than leave the existing row alone -- the caller (the events door's repeat/backfill
+    path) already checked `get_row` first, so this is a race guard, not the normal path. Returns
+    the row ACTUALLY in the table afterwards (the existing one on a conflict, the one just
+    inserted otherwise) rather than the attempted dict, so a caller never gets back a row
+    that disagrees with what a concurrent writer actually landed."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
-    if not INGEST_ID_RE.match(ingest_id or ""):
+    _id_re = EVENT_INGEST_ID_RE if kind == EVENT else INGEST_ID_RE
+    if not _id_re.match(ingest_id or ""):
         raise ValueError(
-            f"ingest_id must match {INGEST_ID_RE.pattern!r}, got {ingest_id!r} — a "
+            f"ingest_id must match {_id_re.pattern!r}, got {ingest_id!r} — a "
             f"mis-spelled id is one `document_promotion` refuses to sweep")
     now = int(time.time() * 1000)
     row = {
@@ -207,10 +273,30 @@ def record_received(
                    VALUES (%(id)s, %(sha256)s, %(kind)s, %(object_prefix)s, %(submitted_by)s,
                            %(on_behalf_of)s, %(source)s, %(status)s, %(extracted_count)s,
                            %(extracted_total)s, %(duplicate_of)s, %(detail)s,
-                           %(created_at)s, %(updated_at)s, %(content_kind)s)""",
+                           %(created_at)s, %(updated_at)s, %(content_kind)s)
+                   ON CONFLICT (id) DO NOTHING""",
                 row,
             )
+            # rowcount == 0 means ON CONFLICT DO NOTHING actually fired -- a row for this id
+            # already existed (the race the docstring above describes). Re-fetch and return
+            # what is REALLY there instead of the attempted (and not written) dict -- a caller
+            # must never be told its own write landed when a concurrent one got there first.
+            conflicted = cur.rowcount == 0
+            if conflicted:
+                cur2 = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                with cur2:
+                    cur2.execute(
+                        """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of,
+                                  source, status, extracted_count, extracted_total,
+                                  duplicate_of, detail, created_at, updated_at, content_kind,
+                                  case_id
+                             FROM ingest_status_projection WHERE id = %s""",
+                        (ingest_id,),
+                    )
+                    existing = cur2.fetchone()
         conn.commit()
+    if conflicted:
+        return dict(existing) if existing else row
     return row
 
 
@@ -278,7 +364,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, content_kind
+                          created_at, updated_at, content_kind, extraction_ref
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -294,15 +380,26 @@ def update_status(
     extracted_count: Optional[int] = None,
     extracted_total: Optional[int] = None,
     detail: Optional[str] = None,
+    case_id: Optional[str] = None,
+    extraction_ref: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
-    promoted|rejected|failed). Not called by the ingest route itself (which only ever writes
-    `received`) — this is the seam the classifier/extraction/review pipeline and the
-    document_promotion fulfillment call as a document progresses.
+    promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
+    the ingest route itself for a DOCUMENT arrival (which only ever writes `received`) — this is
+    the seam the classifier/extraction/review pipeline and the document_promotion fulfillment
+    call as a document progresses. The EVENT door (`POST /ingest/events`) is the one caller that
+    moves a row to `case_opened`, carrying `case_id` (roll #20 item 4).
 
     `detail` is REQUIRED (non-blank) on `rejected`/`failed` — ca's IngestStatus rule: a
     terminal state with no reason reaches an operator as "something happened" and is
-    unactionable."""
+    unactionable.
+
+    `case_id` is OPTIONAL and additive: omitted (None), the column is left as it was
+    (COALESCE), same discipline as `detail`/`extracted_count`/`extracted_total` above --
+    a call that only moves the stage never has to restate a case_id it already wrote.
+
+    `extraction_ref` is the versioned manifest key doc-tools' review POST names; same discipline:
+    written only when given, never cleared by a call that omits it."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
@@ -316,9 +413,11 @@ def update_status(
                 """UPDATE ingest_status_projection
                       SET status = %s, extracted_count = COALESCE(%s, extracted_count),
                           extracted_total = COALESCE(%s, extracted_total),
-                          detail = COALESCE(%s, detail), updated_at = %s
+                          detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
+                          extraction_ref = COALESCE(%s, extraction_ref), updated_at = %s
                     WHERE id = %s""",
-                (status, extracted_count, extracted_total, detail, now, ingest_id),
+                (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
+                 now, ingest_id),
             )
         conn.commit()
 
@@ -356,7 +455,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, origin_suggestion, content_kind
+                          created_at, updated_at, origin_suggestion, content_kind, case_id,
+                          extraction_ref
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),

@@ -600,6 +600,19 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
                             "acceptance_audience", "citations"],
         "description": "Renders safety:RiskAssessmentDraft as a KNOWLEDGE_DOCUMENT - a DRAFTED severity and probability with the matrix cell that produced the level and the audience whose acceptance it would require. Prose is the honest treatment for a draft that is explicitly not a decision: no archetype should make it look like one",
     },
+    # ── mesh:NoticePartSet (Lane 1, roll #23, 2026-10-08). Runbook site 4. ────────────────
+    # "which parts does PCN26-184 affect" (engine-o, mesh:whichPartsDoesThisNoticeAffect). On rev
+    # 181 nothing bound this subject, so the answer drew as a KNOWLEDGE_DOCUMENT of its own JSON.
+    # Paired with cortex-ui's DERIVED_BINDINGS row of the same subject and object; the fleet
+    # mirror seal holds the two together. `expected_fields` is what the projector requires
+    # (`rows`) plus what the view cannot draw without (`title`, `columns`).
+    {
+        "subject_uri": "mesh:NoticePartSet",
+        "object_uri": "mesh:InstancesByProperty",
+        "archetype": "INSTANCES_BY_PROPERTY",
+        "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
+        "description": "Renders mesh:NoticePartSet as an INSTANCES_BY_PROPERTY table - one row per part a sustainment notice affects, identified by the part's IRI and labelled by its P/N",
+    },
 ]
 
 

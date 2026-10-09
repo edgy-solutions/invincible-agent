@@ -147,11 +147,28 @@ def test_no_placeholder_namespace_residue(neo4j_driver):
 # stores and is a separate test to add once the two-store consistency
 # invariants are spec'd.
 
-WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
+# THIS TEST ONLY — not a production default. Ruled by Chris 2026-10-06, same reasoning as
+# Engine O's ROUTING_TEST_BASE_URL (tests/_responder_identity.py): a non-colliding port, so
+# this test stops depending on whatever else is bound to :8080 on this machine. Port-forward:
+#   kubectl -n sandbox port-forward svc/iagent-weaviate 18080:8080
+WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:18080")
 
 
 def _weaviate_count(input_uri_filter_text: str) -> int:
     """Run an Aggregate count over Predicate.input_uri with a Like filter."""
+    from tests._responder_identity import is_weaviate, probe, void_reason
+
+    identity = probe(WEAVIATE_URL, "/v1/meta", is_weaviate, timeout=10)
+    if identity.state == "absent":
+        pytest.skip(
+            f"VOID — nothing answers at {WEAVIATE_URL}. This is an ENVIRONMENT fact, not a "
+            f"defect:\n    kubectl -n sandbox port-forward svc/iagent-weaviate 18080:8080 &\n"
+            f"or point it elsewhere with WEAVIATE_URL=http://host:port\n"
+            f"A void run is not a green — it must be reported as no information, not as a pass."
+        )
+    if identity.state == "foreign":
+        pytest.skip(void_reason(WEAVIATE_URL, identity.detail))
+
     try:
         import requests
     except ImportError:

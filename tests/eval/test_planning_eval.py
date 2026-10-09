@@ -124,7 +124,7 @@ def test_soft_phrasings_are_MARKED_so_the_prediction_is_checkable():
 
 # ── THE NUMBER-CHECK, IN SITU ──────────────────────────────────────────────
 
-def test_the_number_check_boundary_cases_behave_as_the_rule_says():
+def test_the_number_check_boundary_cases_behave_as_the_rule_says(monkeypatch):
     """The checker is the last gate every demo answer passes through, so the eval
     exercises it here and not only in its unit arms."""
     import importlib.util
@@ -133,7 +133,7 @@ def test_the_number_check_boundary_cases_behave_as_the_rule_says():
     src = _REPO / "agent_fleet" / "planning_agent" / "number_check.py"
     spec = importlib.util.spec_from_file_location("number_check__eval", src)
     nc = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = nc
+    monkeypatch.setitem(sys.modules, spec.name, nc)
     spec.loader.exec_module(nc)
 
     failures = []

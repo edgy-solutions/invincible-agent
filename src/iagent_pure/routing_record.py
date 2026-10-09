@@ -38,7 +38,43 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-__all__ = ["routing_record", "graph_trace_record", "ROUTING_LABELS", "GRAPH_TRACE_LABELS"]
+__all__ = [
+    "routing_record", "graph_trace_record", "ROUTING_LABELS", "GRAPH_TRACE_LABELS",
+    "ROUTE_REASON_CODES",
+]
+
+
+#: THE CLOSED VOCABULARY FOR WHY A ROUTE ENDED WHERE IT DID — read from the producer, never
+#: inferred at the render seam. `classify_called` taught this repo that a reader will infer
+#: a verdict from whatever's nearby when the verdict itself carries no code; a matched route
+#: used to emit `fallback_reason: None` and nothing else, so the only "reason" a reader could
+#: find was an EXCLUDED candidate's `no_verb_in_scope` — not the route's own answer.
+#:
+#: POSITIVE CODES say the route matched and HOW: `classified_match` (the LLM picked the verb
+#: via `/classify_predicate`) or `pre_resolved` (dispatched directly from a prior turn's
+#: resolution — `direct_dispatch.py`, including seed-panel turns — no classifier call at all).
+#:
+#: NEGATIVE CODES are the existing `fallback_reason` vocabulary, reused verbatim rather than
+#: re-coined — `dynamic_supervisor.py`'s short-circuits and `/classify_predicate`'s own
+#: abstention, plus the two reasons `_call_engine_a_fallback` is invoked with.
+ROUTE_REASON_CODES = frozenset({
+    # positive
+    "classified_match",
+    "pre_resolved",
+    # negative — subject never grounded (ADR-0019 Contract B and its abstention-gate arc)
+    "subject_unknown",
+    "instance_not_found",
+    # negative — subject grounded, nothing in the registry answers it
+    "no_compatible_verbs",
+    "domain_scope_excluded",
+    # negative — subject grounded, verbs existed, the classifier declined among them
+    "no_verb_classified",
+    # negative — /classify_predicate (or the graph it depends on) could not be reached
+    "infra_error",
+    # negative — ADR-0008 generalist-fallback reasons
+    "no_predicate_matched",
+    "low_confidence",
+})
 
 
 def _provider_from_endpoint(predicate: Dict[str, Any]) -> str:
@@ -63,6 +99,7 @@ def routing_record(
     candidate_count: int,
     subject_candidates: Optional[List[Any]],
     fallback_reason: str,
+    reason_code: str,
     eligibility_excluded: Optional[List[Any]],
     acting_persona: str,
     acting_domains: Optional[List[str]],
@@ -74,9 +111,21 @@ def routing_record(
     `predicate` is None only when there was nothing to dispatch to — an unrouted turn. Its
     four fields are then absent rather than blank, which is the run's existing behaviour and
     the honest one: no handler is not the same as a handler with no name.
+
+    `reason_code` IS REQUIRED, WITH NO DEFAULT, AND CHECKED AGAINST A CLOSED ENUM. The route's
+    own verdict used to have no code at all — `fallback_reason` is `None` on every matched
+    route — so this is the builder standing in as the class defence: a caller that forgets the
+    code fails loudly at the call, rather than shipping a record a reader has to infer from its
+    neighbours.
     """
+    if reason_code not in ROUTE_REASON_CODES:
+        raise ValueError(
+            f"reason_code={reason_code!r} is not in ROUTE_REASON_CODES "
+            f"({sorted(ROUTE_REASON_CODES)})"
+        )
     record: Dict[str, Any] = {
         "route_status": status,
+        "reason_code": reason_code,
         "subject_uri": subject_uri or "UNKNOWN",
         "subject_confidence": float(subject_confidence or 0.0),
         "subject_instance_id": subject_instance_id or "",
@@ -147,6 +196,7 @@ ROUTING_LABELS = frozenset(
         status="", subject_uri="", subject_confidence=0.0, subject_instance_id="",
         subject_instance_label="", verb_iri="", verb_confidence=0.0, classify_called=False,
         candidate_count=0, subject_candidates=None, fallback_reason="",
+        reason_code="classified_match",
         eligibility_excluded=None, acting_persona="", acting_domains=None, sub_query="",
     )
 )

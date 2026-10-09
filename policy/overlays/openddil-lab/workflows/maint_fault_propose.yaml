@@ -47,7 +47,12 @@ steps:
         task: "Remove and replace {trigger.fault.item} from local stock"
         task_refs:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
-          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"}
+          # The walk's `remove_install.dmc` is a LIST: this manual has separate remove and
+          # install procedure modules. It is ordered by LABEL (`ORDER BY ?dmc`), not by the
+          # manual's sequence; here 520A (remove) sorts before 720A (install). A walk that
+          # finds fewer than two refuses `.1` rather than citing a blank.
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.0}"}
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.1}"}
         parts:
           - item: "{trigger.fault.item}"
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"
@@ -67,7 +72,9 @@ steps:
         task: "Order {trigger.fault.item} and replace on receipt"
         task_refs:
           - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"}
-          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"}
+          # REMOVE then INSTALL: see the matching comment on `replace_now` above.
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.0}"}
+          - {graph_uri: null, data_module_code: "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.1}"}
         parts:
           - item: "{trigger.fault.item}"
             part_ref: "{outputs.maint_fault_propose.walk.citations.ipd.part_number}"

@@ -1713,22 +1713,36 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
 # into the run's context (`trigger.fault.item`, `outputs.<definition>.<step>.chosen`). The dotted
 # form used to fall outside this pattern and pass through LITERALLY, with no error, strict or not --
 # an audience declared as `maint:{trigger.owning_tier}` would have registered the braces.
-_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+#
+# A SEGMENT AFTER THE FIRST MAY ALSO BE PURELY NUMERIC (`[0-9]+`) -- `_resolve_path` reads it as a
+# LIST INDEX, never a dict key by coincidence of spelling, so a declared query's `values` select
+# (a list, in order) can be cited per-element (`remove_install.dmc.0`) without the runner computing
+# an index. The FIRST segment stays a name: a run's context is keyed by name at the top, never by
+# position.
+_PLACEHOLDER_RE = re.compile(
+    r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\}")
 
 # A NULL-SAFE STEP, ``?.``, IN A WHOLE PLACEHOLDER ONLY: ``{trigger.picture.nearest_spare?.site}``
 # is None where ``nearest_spare`` is PRESENT AND None, so a definition can copy a field per part out
 # of a row that may be null (ruled 2026-10-03, the resupply option's parts) without computing.
 # ABSENT IS STILL REFUSED: only a producer's stated None short-circuits, never a producer that did
 # not say. In an interpolated string it is refused, never passed through as literal braces.
-_NULL_SAFE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\??\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}")
+_NULL_SAFE_RE = re.compile(
+    r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\??\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\}")
 
 _SCALAR = (str, int, float, bool)
 
 
 def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tuple[bool, object]":
-    """``(found, value)`` for a dotted path through nested mappings. FOUND IS SEPARATE FROM VALUE:
-    a field that is present and None (``picture.nearest_spare`` when no site has stock) is a
-    fact, and a field that is absent is a producer that did not say.
+    """``(found, value)`` for a dotted path through nested mappings AND lists. FOUND IS SEPARATE
+    FROM VALUE: a field that is present and None (``picture.nearest_spare`` when no site has
+    stock) is a fact, and a field that is absent is a producer that did not say.
+
+    A segment that is ALL DIGITS indexes a LIST at that position; an out-of-range index, or a
+    numeric segment where the node is not a list, is ABSENT -- refused exactly like any other
+    absent path, never treated as a literal dict key. A numeric segment where the node IS a dict
+    stays an ordinary key lookup (only present when that literal string is a key there); a list
+    is the only shape a numeric segment reads positionally.
 
     With ``null_safe``, a segment spelled ``name?`` that is present and None ends the walk as
     ``(True, None)``. Without it, ``name?`` is just a field no producer writes."""
@@ -1736,9 +1750,17 @@ def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tupl
     for seg in path.split("."):
         safe = null_safe and seg.endswith("?")
         seg = seg[:-1] if safe else seg
-        if not isinstance(node, dict) or seg not in node:
+        if isinstance(node, list):
+            if not seg.isdigit():
+                return False, None
+            idx = int(seg)
+            if idx >= len(node):
+                return False, None
+            node = node[idx]
+        elif isinstance(node, dict) and seg in node:
+            node = node[seg]
+        else:
             return False, None
-        node = node[seg]
         if safe and node is None:
             return True, None
     return True, node
@@ -2038,17 +2060,19 @@ async def _run_definition(
     """
     try:
         from workflow_definition import (  # type: ignore[no-redef]
-            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+            WorkflowDefinition, WorkflowDefinitionError, load_query_verbs, load_stub_verbs,
         )
         from spo_step_executor import (  # type: ignore[no-redef]
-            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+            StepFailAndRelease, dispatch_spo_step, execute_declared_query, execute_direct_call,
+            verify_spo_step,
         )
     except ImportError:
         from agent_fleet.restate_analyst.workflow_definition import (
-            WorkflowDefinition, WorkflowDefinitionError, load_stub_verbs,
+            WorkflowDefinition, WorkflowDefinitionError, load_query_verbs, load_stub_verbs,
         )
         from agent_fleet.restate_analyst.spo_step_executor import (
-            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+            StepFailAndRelease, dispatch_spo_step, execute_declared_query, execute_direct_call,
+            verify_spo_step,
         )
 
     wf = WorkflowDefinition.model_validate(definition)  # validate the git-asserted def
@@ -2060,7 +2084,9 @@ async def _run_definition(
     # declare them would author its own approvals, so they are refused BEFORE the first step runs
     # rather than at the step -- a refusal after an earlier step's effect is a half-run.
     try:
-        stubs = load_stub_verbs() if any(s.kind == "spo_operation" for s in wf.steps) else {}
+        _has_spo = any(s.kind == "spo_operation" for s in wf.steps)
+        stubs = load_stub_verbs() if _has_spo else {}
+        queries = load_query_verbs() if _has_spo else {}
     except WorkflowDefinitionError as exc:
         raise restate.TerminalError(f"stub verb registry: {exc}", status_code=500) from exc
     if not from_registry:
@@ -2068,7 +2094,7 @@ async def _run_definition(
             s.id for s in wf.steps
             if s.kind in ("render", "signal_await", "wait", "emit")
             or (s.kind == "human_await" and (s.approves or s.chooses_from or s.role))
-            or (s.kind == "spo_operation" and s.verb in stubs)
+            or (s.kind == "spo_operation" and (s.verb in stubs or s.verb in queries))
         ]
         if authored:
             raise restate.TerminalError(
@@ -2267,6 +2293,11 @@ async def _run_definition(
             _verb = approval.get("status")
             _out = {"status": _verb, "acted_by": approval.get("acted_by"),
                     "comments": approval.get("comments", ""), "decided_at": None}
+            if "acted_via" in approval:
+                # R-089: only when the resolved promise carried one (a delegated act) -- never
+                # add a None key to an existing entry, so in-flight journals and today's
+                # chain-equality arms don't shift.
+                _out["acted_via"] = approval["acted_via"]
             if step.approves or step.chooses_from:
                 # STAMPED ONLY ON A STEP THAT DECLARES WHAT ITS ANSWER MEANS. A new journal entry
                 # on every human_await would shift the journal of an in-flight multi-step instance
@@ -2310,6 +2341,9 @@ async def _run_definition(
                         "decision": "approved",
                         "decided_at": _out["decided_at"],
                         "decision_record_ref": f"{workflow_id}:{step.id}",
+                        # R-089: only when this approval was delegated -- never a None key, so
+                        # an in-flight journal and today's chain-equality arms don't shift.
+                        **({"acted_via": approval["acted_via"]} if "acted_via" in approval else {}),
                     })
                 else:
                     # A rejection or a deferral ENDS the proposal this chain was approving; the
@@ -2333,6 +2367,39 @@ async def _run_definition(
             results.append({
                 "step_id": step.id, "kind": "spo_operation", "status": "STUB", "result": result,
                 "stub": {"verb": _stub.verb, "retired_by": _stub.retired_by},
+            })
+
+        elif step.kind == "spo_operation" and step.verb in queries:
+            # A DECLARED QUERY: a mesh READ whose question is DATA (`agent_fleet/utils/
+            # declared_query.py`). The runner renders its params strictly against the run's
+            # context, runs the read inside `ctx.run` (journaled, exactly like any other
+            # effectful call below), then renders `returns` from the shaped selects. Registry-only
+            # (refused above, like a stub). The declaration -- domain, selects, capability -- is
+            # engine-o's own; nothing here names what it reads.
+            _decl = queries[step.verb]
+            _params = {
+                k: _render(v, context, where=f"declared query {step.verb}.params.{k}")
+                for k, v in _decl.params.items()
+            }
+
+            def _do_query(decl=_decl, params=_params, ident=identity):
+                try:
+                    return execute_declared_query(decl, params, ident)
+                except StepFailAndRelease as e:
+                    # Denial -> TERMINAL (fail-and-release), never retry-and-park.
+                    raise restate.TerminalError(str(e), status_code=e.status_code)
+            _selects = await ctx.run(f"exec_{step.id}", _do_query)
+            result = _render(
+                _decl.returns, {"params": _params, **_selects},
+                where=f"declared query {step.verb}.returns",
+            )
+            outputs[wf.id][step.id] = result
+            results.append({
+                "step_id": step.id, "kind": "spo_operation", "status": "SUCCESS",
+                "result": result,
+                "declared": {
+                    "verb": _decl.verb, "capability": _decl.capability, "domain": _decl.domain,
+                },
             })
 
         elif step.kind == "spo_operation":
@@ -2749,7 +2816,26 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     # as the default. Resolving a name nothing awaits wakes nothing, silently.
     promise_name = request.get("promise_name") or f"approval_{task_id}"
 
-    acted_by = await _authorize_resolution(ctx, promise_name, request.get("acted_by"))
+    # R-089: `acted_via` is the delegate that is resolving this on a principal's behalf —
+    # cortex-bff's act_on_human_task sends it only for a delegated act. ASSERTED, not
+    # verified, by this pass (the ruling's own words): we merely require it to be
+    # well-formed (non-blank, and not a no-op "acting via itself") before it is handed to
+    # the excludes check below. Validated BEFORE `_authorize_resolution` runs, so a
+    # malformed value fails fast on shape rather than after an audience lookup.
+    acted_by_raw = request.get("acted_by")
+    acted_via_raw = request.get("acted_via")
+    acted_via: Optional[str] = None
+    if acted_via_raw is not None:
+        acted_via = str(acted_via_raw).strip()
+        if not acted_via or acted_via.casefold() == str(acted_by_raw or "").strip().casefold():
+            raise restate.TerminalError(
+                f"acted_via {acted_via_raw!r} must be a non-blank string that differs "
+                f"(casefolded) from acted_by {acted_by_raw!r} — a delegate cannot act via "
+                "itself",
+                status_code=400,
+            )
+
+    acted_by = await _authorize_resolution(ctx, promise_name, acted_by_raw, acted_via)
 
     approval_payload = {
         "status": request.get("status", "APPROVED"),
@@ -2759,6 +2845,10 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
         # the identity the gate above just verified, not one the payload asserted.
         "acted_by": acted_by,
     }
+    if acted_via is not None:
+        # R-089: only present for a delegated act — a plain person's payload stays
+        # byte-identical to today's (no key at all, never a None value).
+        approval_payload["acted_via"] = acted_via
 
     await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
 
@@ -2769,12 +2859,17 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
     }
 
 
-async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
+async def _authorize_resolution(ctx, promise_name: str, acted_by_raw, acted_via: Optional[str] = None) -> str:
     """THE AUTHORITY GATE, once: every handler that resolves an awaited promise goes through it.
 
     Factored out of ``_approve_impl`` unchanged when WorkflowRunner's ``signal`` became a second
     resolver -- a copy would have been a second enforcement point free to drift from the first.
-    Returns the verified actor."""
+    Returns the verified actor.
+
+    ``acted_via`` (R-089, optional): the delegate resolving this on ``acted_by``'s (the
+    principal's) behalf. It is checked against the excludes list ALONGSIDE acted_by below --
+    a delegate that seeded an artifact may not confirm it by speaking for someone else -- but
+    it is NEVER asked `can_act`: that question is about the principal only."""
     # ── AUTHORITY GATE (approval-bypass-bpmn-runner) ───────────────────────────
     # This handler resolves an APPROVAL — the promise the whole trust architecture
     # treats as the enforcement point. It is its own entry point, not merely the
@@ -2790,10 +2885,18 @@ async def _authorize_resolution(ctx, promise_name: str, acted_by_raw) -> str:
     # STRUCTURAL EXCLUSION, before `can_act`: the definition refused this actor by name, and no
     # grant overrides that. Compared casefolded, so a case variant of the same id is refused too.
     excluded = await ctx.get(_excluded_key(promise_name)) or []
-    if acted_by.casefold() in {str(x).casefold() for x in excluded}:
+    excluded_cf = {str(x).casefold() for x in excluded}
+    if acted_by.casefold() in excluded_cf:
         raise restate.TerminalError(
             f"caller {acted_by!r} is excluded from deciding promise {promise_name!r} by the "
             "definition (for example, an artifact's own dropper may not confirm its origin)",
+            status_code=403,
+        )
+    if acted_via and str(acted_via).casefold() in excluded_cf:
+        raise restate.TerminalError(
+            f"caller {acted_via!r}, acting via on behalf of {acted_by!r} (R-089), is excluded "
+            f"from deciding promise {promise_name!r} by the definition -- a delegate that "
+            "seeded an artifact may not confirm it by speaking for someone else",
             status_code=403,
         )
     audience = await ctx.get(_audience_key(promise_name))

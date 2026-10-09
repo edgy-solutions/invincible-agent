@@ -68,6 +68,8 @@ from typing import Optional
 import pytest
 import requests
 
+from tests._responder_identity import routing_base_url
+
 # INTEGRATION: needs a live Engine O. SKIPS when unreachable, RUNS AND FAILS when it is up
 # (tests/routing/conftest.py). Before this marker existed the module documented itself as
 # "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
@@ -89,7 +91,7 @@ except Exception:
 # Configuration
 # ---------------------------------------------------------------------------
 
-_BASE = os.getenv("ROUTING_TEST_BASE_URL", "http://localhost:8084")
+_BASE = routing_base_url()
 _TIMEOUT_SEC = float(os.getenv("ROUTING_TEST_TIMEOUT_SEC", "45"))
 
 

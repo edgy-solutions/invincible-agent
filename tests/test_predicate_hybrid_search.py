@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import stub_modules
+
 
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
@@ -31,16 +33,17 @@ if str(_REPO) not in sys.path:
 # ---------------------------------------------------------------------------
 # Stubs to avoid pulling rdflib / weaviate / baml_client at import time
 # ---------------------------------------------------------------------------
-def _install_stubs():
+def _stub_doubles() -> dict[str, object]:
     """Stub the heavy deps Engine O's ``main.py`` imports at module load,
     so the test file can load the module without an agent-fleet environment."""
+    doubles: dict[str, object] = {}
     if "rdflib" not in sys.modules:
         rdflib = types.ModuleType("rdflib")
         class _NS:
             def __init__(self, *_a, **_kw): pass
         rdflib.Namespace = _NS
         rdflib.Graph = type("Graph", (), {})
-        sys.modules["rdflib"] = rdflib
+        doubles["rdflib"] = rdflib
 
     # Always overwrite weaviate AND weaviate.classes. Other test modules
     # (notably test_ontology_routing.py) install MagicMock() for both
@@ -50,7 +53,7 @@ def _install_stubs():
     # imported ontology_main does `import weaviate.classes as wvc`.
     # Force-replace both with real ModuleTypes so our stub wins.
     wv = types.ModuleType("weaviate")
-    sys.modules["weaviate"] = wv
+    doubles["weaviate"] = wv
     wvc = types.ModuleType("weaviate.classes")
     class _Q:
         class Filter:
@@ -77,7 +80,7 @@ def _install_stubs():
         class Property:
             def __init__(self, *a, **kw): pass
     wvc.config = _CCfg
-    sys.modules["weaviate.classes"] = wvc
+    doubles["weaviate.classes"] = wvc
     # Also expose .classes on the weaviate module — `import weaviate.classes`
     # binds via sys.modules but `weaviate.classes` attribute access (as may
     # happen indirectly via __init__-driven submodule registration) wants
@@ -89,42 +92,43 @@ def _install_stubs():
     if "neo4j" not in sys.modules:
         n = types.ModuleType("neo4j")
         n.GraphDatabase = type("GraphDatabase", (), {"driver": staticmethod(lambda *a, **k: None)})
-        sys.modules["neo4j"] = n
+        doubles["neo4j"] = n
 
     if "baml_client" not in sys.modules:
         bc = types.ModuleType("baml_client")
         bc.b = object()
-        sys.modules["baml_client"] = bc
+        doubles["baml_client"] = bc
     if "baml_client.types" not in sys.modules:
         t = types.ModuleType("baml_client.types")
         class _R: pass
         t.SemanticResolution = _R
-        sys.modules["baml_client.types"] = t
+        doubles["baml_client.types"] = t
     if "baml_client.type_builder" not in sys.modules:
         tb = types.ModuleType("baml_client.type_builder")
         class _TB:
             def __init__(self): pass
         tb.TypeBuilder = _TB
-        sys.modules["baml_client.type_builder"] = tb
+        doubles["baml_client.type_builder"] = tb
 
     if "utils" not in sys.modules:
-        sys.modules["utils"] = types.ModuleType("utils")
+        doubles["utils"] = types.ModuleType("utils")
     if "utils.weaviate_utils" not in sys.modules:
         m = types.ModuleType("utils.weaviate_utils")
         m.create_weaviate_client = lambda *a, **k: None
-        sys.modules["utils.weaviate_utils"] = m
+        doubles["utils.weaviate_utils"] = m
+    return doubles
 
 
 @pytest.fixture(scope="module")
 def ontology_main():
-    _install_stubs()
-    spec = importlib.util.spec_from_file_location(
-        "ontology_main_hybrid_test",
-        str(_REPO / "agent_fleet" / "ontology_service" / "main.py"),
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    with stub_modules(_stub_doubles()):
+        spec = importlib.util.spec_from_file_location(
+            "ontology_main_hybrid_test",
+            str(_REPO / "agent_fleet" / "ontology_service" / "main.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        yield mod
 
 
 # ---------------------------------------------------------------------------

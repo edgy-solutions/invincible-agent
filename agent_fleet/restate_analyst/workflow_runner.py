@@ -69,6 +69,42 @@ def _routing():
     return _r
 
 
+#: The outcome at which the runner stamps `seeded_by` on the case's artifacts: `released`, the
+#: `tier_ack` outcome that closes the case in
+#: `policy/overlays/openddil-lab/decisions/maint_release_chaining.yaml`. RULED 2026-10-08 (Chris):
+#: `seeded_by` is stamped at `released` by the runner, not at open.
+SEEDED_BY_STAMP_OUTCOME = "released"
+
+
+def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
+    """POST `{bff}/internal/cases/{case_id}/seeded-by`, as `svc:case-runner` (the same credential
+    `spo_step_executor` mints for its own gateway calls). A non-2xx is TERMINAL: the case fails
+    visibly rather than silently skipping the stamp. A transport error or a credential that cannot
+    be minted is left to raise plainly, so Restate retries it."""
+    try:
+        import requests
+        try:
+            import spo_step_executor as _spo  # type: ignore[no-redef]
+            import workflow_definition as _wd  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst import spo_step_executor as _spo
+            from agent_fleet.restate_analyst import workflow_definition as _wd
+    except ImportError as exc:  # pragma: no cover
+        raise restate.TerminalError(f"cannot stamp seeded_by: {exc}", status_code=500) from exc
+    token = _spo.mint_case_runner_token()
+    resp = requests.post(
+        f"{_wd.bff_base_url()}/internal/cases/{case_id}/seeded-by",
+        json={"seeded_by": seeded_by},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_spo.STEP_HTTP_TIMEOUT,
+    )
+    if not 200 <= resp.status_code < 300:
+        raise restate.TerminalError(
+            f"stamping seeded_by on case {case_id!r} was refused: HTTP {resp.status_code}",
+            status_code=502)
+    return {"stamped": True}
+
+
 def _terminal(fn, status_code: int):
     """Run a routing call; a routing failure is TERMINAL inside ``ctx.run`` (a retry of an
     untailored table produces the same gap in thirty seconds)."""
@@ -118,27 +154,48 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
         trig = R.load_trigger(name)
         flat = R.flatten(facts)
         R.check_intake(trig, flat, case_id, facts=facts)
-        return {"trigger": trig.model_dump(), "flat": flat, "episode": R.episode_key(trig, flat)}
+        # REVISION 1'S PROVENANCE comes with the event, from the door that received it. A trigger
+        # with an episode keeps a revision chain, so it needs one; without, it is kept if sent.
+        block = request.get("provenance")
+        if block is None and trig.episode:
+            raise R.CaseRoutingError(
+                f"trigger {name!r} keeps a revision chain (it declares an episode), so a case "
+                "opens on the event's `provenance` as well as its facts; got none")
+        prov = None if block is None else R.provenance_block(block).model_dump()
+        return {"trigger": trig.model_dump(), "flat": flat, "episode": R.episode_key(trig, flat),
+                "provenance": prov}
 
     intake = await ctx.run("intake", _terminal(_intake, 400))
     trig = R.Trigger.model_validate(intake["trigger"])
     flat, episode = intake["flat"], intake["episode"]
 
+    # ADR-0041 §8.1: the declared delegate whose door seeded this case (None for a person's). Stamped
+    # on the case's artifacts at SEEDED_BY_STAMP_OUTCOME; carried on the record from the open.
+    seeded_by = request.get("seeded_by")
+    if seeded_by is not None and (not isinstance(seeded_by, str) or not seeded_by.strip()):
+        raise restate.TerminalError(
+            f"seeded_by must be a non-blank string or absent; got {seeded_by!r}", status_code=400)
+
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
-                  "episode": episode, "instances": [], "transitions": []}
+                  "episode": episode, "instances": [], "transitions": [], "seeded_by": seeded_by}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
-    # THE ORIGINAL EVENT IS REVISION 1. A refresh appends; the instance sees the newest.
-    case["input_revisions"] = [{"rev": 1, "event_id": case_id,
-                                "received_at": case["transitions"][-1]["at"],
-                                "provenance": "pushed"}]
-    current = {"revision": 1, "event_id": case_id, "provenance": "pushed",
-               "received_at": case["input_revisions"][0]["received_at"]}
+    # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
+    # chain as THIS CASE READ it: a refresh appends what it read; the instance sees the newest.
+    current: Optional[dict] = None
+    rev1: Optional[dict] = None
+    if intake["provenance"] is not None:
+        rev1 = _terminal(lambda: R.first_revision(
+            case["transitions"][-1]["at"], intake["provenance"]).model_dump(), 400)()
+        case["input_revisions"] = [rev1]
+        current = _input_of(rev1, case_id)
     ctx.set("case", case)
 
     # ── TRIAGE: one open case per episode ───────────────────────────────────────────────────
     if episode:
-        owner = await ctx.object_call(claim, key=episode, arg={"case_id": case_id})
+        # The holder's claim plants revision 1 as the chain's head, so a push appends after it.
+        owner = await ctx.object_call(claim, key=episode, arg={
+            "case_id": case_id, "head": {"revision": rev1, "facts": facts}})
         if owner != case_id:
             await _record(ctx, case, frm="received", outcome="duplicate", to="attached",
                           by="system", reason=f"episode {episode} is open in case {owner}",
@@ -164,7 +221,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             ctx.set(f"instance:{n}", {"definition_id": definition_id, "trigger": facts,
                                       "outputs": outputs, "approval_chain": chain,
                                       "case": {"case_id": case_id, "trigger": name},
-                                      "input": dict(current)})
+                                      "input": dict(current or {})})
             case["instances"].append({"n": n, "instance_id": instance,
                                       "definition_id": definition_id})
             ctx.set("case", case)
@@ -189,6 +246,9 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=step.get("acted_by") or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME and case["seeded_by"]:
+                await ctx.run(f"stamp_seeded_by_{n}",
+                              lambda: _stamp_seeded_by(case_id, case["seeded_by"]))
             if nxt["terminal"]:
                 case["terminal"] = nxt["then"]
                 ctx.set("case", case)
@@ -213,52 +273,41 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             "transitions": case["transitions"], "approval_chain": chain}
 
 
-async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: dict, facts: dict,
-                   n: int) -> Optional[dict]:
-    """The input revision received after ``current``, newest of both sources, or None.
+def _input_of(revision: dict, case_id: str) -> dict:
+    """What an instance sees of the revision it reads: ``input.revision`` is the chain's ``rev``."""
+    return {"revision": revision["rev"], "event_id": case_id,
+            "received_at": revision["received_at"], "supersedes": revision["supersedes"],
+            "provenance": revision["provenance"]}
 
-    PUSHED FIRST: the revision the source sent again, kept on the episode. PULLED SECOND: the
-    trigger's ``pull`` stub verb, rendered with ``{kept}`` in its context -- declared now, so the
-    real picture endpoint retires a stub rather than adding a second mechanism. The newest
-    ``received_at`` wins, a tie goes to the pulled one, then the higher ``rev``
-    (``case_routing.newest_revision``). The winner passes intake again and must stay in the case's episode:
-    ``keep_revision`` is reachable on the ingress as well as through ``revise``, so what was kept
-    is never trusted as checked, and neither is what a pull returns."""
+
+async def _refresh(ctx, trig, case: dict, episode: Optional[str], current: Optional[dict],
+                   facts: dict, n: int) -> Optional[dict]:
+    """The revision further along the case's chain than ``current``, or None.
+
+    THE CHAIN IS ONE LIST, HELD ON THE EPISODE: the holder's claim planted revision 1, and every
+    push (``keep_revision``) appends the next ``ArtifactRevision`` after the head. So the newest
+    is the head, by ``rev`` -- no sort, no tie-break: ``next_revision`` refuses a receipt earlier
+    than the head's, so chain order IS receipt order (the ordering ruled 2026-10-03). A pull, when
+    a trigger can declare one (``Trigger.refresh``), appends the same way. The revision read passes
+    intake again and must stay in the case's episode: ``keep_revision`` is reachable on the
+    ingress, so what was kept is never trusted as checked."""
     R = _routing()
     case_id = case["case_id"]
+    if current is None:
+        raise restate.TerminalError(
+            f"a row refreshes the input of case {case_id!r}, whose trigger {case['trigger']!r} "
+            "keeps no revision chain", status_code=500)
     kept = (await ctx.object_call(newest_revision, key=episode, arg={"case_id": case_id})
             if episode else None)
-
-    def _pull():
-        if not trig.pull:
-            return None
-        try:
-            from workflow_definition import load_stub_verbs  # type: ignore[no-redef]
-        except ImportError:  # pragma: no cover — import path differs by runtime
-            from agent_fleet.restate_analyst.workflow_definition import load_stub_verbs
-        stub = load_stub_verbs().get(trig.pull)
-        if stub is None:
-            raise restate.TerminalError(
-                f"trigger {trig.trigger!r} pulls with {trig.pull!r}, which no stub verb declares",
-                status_code=500)
-        got = _main()._render(stub.returns, {"kept": kept}, where=f"pull verb {trig.pull}")
-        return None if got is None else {**got, "provenance": "pulled", "verb": trig.pull}
-
-    pulled = await ctx.run(f"pull_{n}", _pull)
-    on = {"rev": current["revision"], "received_at": current["received_at"],
-          "provenance": current["provenance"], "facts": facts}
     best = await ctx.run(f"newest_{n}", _terminal(
-        lambda: R.newest_revision(on, [kept, pulled]), 500))
+        lambda: R.newer_revision(current["revision"], kept), 500))
     if best is None:
         return None
     flat = await ctx.run(f"refresh_{n}", _terminal(
         lambda: R.check_revision(trig, best["facts"], case_id, episode), 422))
-    case["input_revisions"].append({k: best.get(k) for k in
-                                    ("rev", "event_id", "received_at", "provenance")})
+    case["input_revisions"].append(best["revision"])
     return {"facts": best["facts"], "flat": flat,
-            "current": {"revision": best["rev"], "event_id": best.get("event_id"),
-                        "provenance": best.get("provenance"),
-                        "received_at": best.get("received_at")}}
+            "current": _input_of(best["revision"], case_id)}
 
 
 # ── ONE INSTANCE ────────────────────────────────────────────────────────────────────────────
@@ -355,7 +404,10 @@ async def signal(ctx: WorkflowSharedContext, request: dict) -> dict:
         raise restate.TerminalError(
             f"signal {name!r} answered {status!r} needs a reason (the definition's "
             "`reason_required`); the case carries it onto the next hop", status_code=400)
-    acted_by = await m._authorize_resolution(ctx, name, request.get("acted_by"))
+    # R-089: no caller sends `acted_via` into a signal today (it answers a system, not a
+    # delegated human act), but the field is wired through so the one authority gate stays
+    # one enforcement point rather than drifting between its two callers.
+    acted_by = await m._authorize_resolution(ctx, name, request.get("acted_by"), request.get("acted_via"))
     await ctx.promise(name, type_hint=dict).resolve(
         {"status": status, "comments": request.get("comments", ""), "acted_by": acted_by})
     return {"signal": name, "status": status}
@@ -385,11 +437,17 @@ async def revise(ctx: WorkflowSharedContext, request: dict) -> dict:
             f"case {case_id!r}'s trigger declares no episode, so a revision has nowhere to be kept",
             status_code=409)
     facts = request.get("facts")
-    await ctx.run("revise_intake", _terminal(lambda: R.check_revision(
-        R.load_trigger(case["trigger"]), facts, case_id, case["episode"]), 400))
+
+    def _intake():
+        R.check_revision(R.load_trigger(case["trigger"]), facts, case_id, case["episode"])
+    await ctx.run("revise_intake", _terminal(_intake, 400))
     at = await ctx.run("revise_at", _main()._now_iso)
+    # THIS revision's own provenance (a push is obtained apart from the event it revises) is
+    # validated where the chain is kept: keep_revision refuses a bad block with the same 400.
+    # Validating it here too was measured redundant (2026-10-06: no arm could tell).
     return await ctx.object_call(keep_revision, key=case["episode"], arg={
-        "case_id": case_id, "event_id": case_id, "facts": facts, "received_at": at})
+        "case_id": case_id, "facts": facts, "received_at": at,
+        "provenance": request.get("provenance")})
 
 
 @workflow_runner.handler()
@@ -401,18 +459,20 @@ async def outbox(ctx: WorkflowSharedContext, request: dict) -> list:
 
 @case_episode.handler()
 async def claim(ctx: ObjectContext, request: dict) -> str:
-    """The open case for this episode: the caller's, if none was open."""
+    """The open case for this episode: the caller's, if none was open. The caller that becomes
+    the holder plants its revision 1 as the head of the episode's chain."""
     cur = await ctx.get("open")
     if cur:
         return cur
     ctx.set("open", request["case_id"])
+    ctx.set("revision", request.get("head"))
     return request["case_id"]
 
 
 @case_episode.handler()
 async def release(ctx: ObjectContext, request: dict) -> None:
-    """Close the episode -- only by the case that holds it -- and drop its kept revision, which
-    belongs to that case: the next case on this episode opens on its own event."""
+    """Close the episode -- only by the case that holds it -- and drop its chain, which belongs
+    to that case: the next case on this episode opens on its own event, as revision 1."""
     if await ctx.get("open") == request.get("case_id"):
         ctx.clear("open")
         ctx.clear("revision")
@@ -420,27 +480,35 @@ async def release(ctx: ObjectContext, request: dict) -> None:
 
 @case_episode.handler()
 async def keep_revision(ctx: ObjectContext, request: dict) -> dict:
-    """Keep a pushed revision for the case holding this episode. A closed case, or another
-    case's event, keeps nothing: its refresh would never read it, or would read the wrong one.
-    A ``received_at`` the refresh could not order is refused HERE: this handler is reachable on
-    the ingress, and the same value refused at the refresh would fail the case instead."""
+    """Append a pushed revision to the chain of the case holding this episode, as the SDK's
+    ``ArtifactRevision`` after the head. A closed case, or another case's event, keeps nothing:
+    its refresh would never read it, or would read the wrong one. A ``received_at`` before the
+    head's, a missing provenance or facts that are not the event are refused HERE: this handler
+    is reachable on the ingress, and the same value refused at the refresh would fail the case."""
     holder = await ctx.get("open")
     if not holder or holder != request.get("case_id"):
         raise restate.TerminalError(
             f"case {request.get('case_id')!r} does not hold this episode (open: {holder!r}); "
             "a revision is kept only for the open case", status_code=409)
-    _terminal(lambda: _routing().received_at(request), 400)()
-    prev = await ctx.get("revision")
-    kept = {"rev": (prev["rev"] if prev else 1) + 1, "event_id": request["event_id"],
-            "received_at": request["received_at"], "provenance": "pushed",
-            "facts": request["facts"]}
-    ctx.set("revision", kept)
-    return {"case_id": holder, "revision": kept["rev"]}
+    head = await ctx.get("revision")
+    if not head or not head.get("revision"):
+        raise restate.TerminalError(
+            f"case {holder!r} holds this episode with no revision 1 to append after",
+            status_code=409)
+    if not isinstance(request.get("facts"), dict):
+        raise restate.TerminalError(
+            f"a revision carries the event's facts; got {type(request.get('facts')).__name__}",
+            status_code=400)
+    rev = _terminal(lambda: _routing().next_revision(
+        head["revision"], request.get("received_at"), request.get("provenance")), 400)()
+    ctx.set("revision", {"revision": rev.model_dump(), "facts": request["facts"]})
+    return {"case_id": holder, "revision": rev.rev}
 
 
 @case_episode.handler()
 async def newest_revision(ctx: ObjectContext, request: dict) -> Optional[dict]:
-    """The newest revision kept on this episode, else None. IT IS THE HOLDER'S BY CONSTRUCTION:
-    only the holder keeps one (``keep_revision``), ``release`` drops it with the episode, and only
-    the holder refreshes -- an attached case returns before it runs anything."""
+    """The head of this episode's chain (``{revision, facts}``), else None. IT IS THE HOLDER'S
+    BY CONSTRUCTION: only the holder plants or appends one (``claim``, ``keep_revision``),
+    ``release`` drops it with the episode, and only the holder refreshes -- an attached case
+    returns before it runs anything."""
     return await ctx.get("revision")

@@ -1,0 +1,12 @@
+# OVERLAY layer (ADR-0036). The deployment overlay is the authoritative registry for a content
+# kind's domain (architect ruling 2026-10-06). `passes`/`outputs` MIRROR doc-tools' generated
+# `registry/content_kinds/engineering-document.yaml`. A FORMAT-LEVEL kind: `domain` is null ON PURPOSE
+# (architect ruling 2026-10-02, "origin resolved by evidence, not kind"). It is written
+# explicitly, because an omitted key is a defect and an explicit null is the ruling
+# (doc-tools #86's domainless split).
+kind: engineering-document
+domain: null
+passes:
+  - identity.document_identity
+outputs:
+  - mesh:EngineeringDocumentArtifact

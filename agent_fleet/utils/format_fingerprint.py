@@ -46,13 +46,21 @@ import os
 import re
 from typing import Optional
 
-__all__ = ["format_fingerprint", "canonical_vendor", "load_vendor_aliases",
+__all__ = ["format_fingerprint", "format_fingerprint_from_manifest", "ATTESTING_SOURCES",
+           "canonical_vendor", "load_vendor_aliases",
            "parse_vendor_aliases", "VendorAliasesInvalid", "UNKNOWN_SEGMENT"]
 
 # The value each segment takes when the artifact did not identify it. Deliberately the SAME token on
 # both segments, and deliberately implausible as a real vendor or doc type, so an unidentified
 # artifact stands out in the corpus instead of blending in — the property the sentinel rule keys on.
 UNKNOWN_SEGMENT = "unknown"
+
+# The doc_type_source values that attest the doc_type was read from the document. "title" is
+# doc-tools' document-derived read of the title and replaced "extraction", which is retired but kept
+# so the back-corpus still reads as it did. "title-ambiguous" (the title contradicts itself -- the
+# case the value exists to flag), "no-title-evidence" and "defaulted" do NOT attest. Ruled by Lane 1
+# 2026-10-08 on doc-tools/lane/7f's R1.
+ATTESTING_SOURCES = frozenset({"extraction", "title"})
 
 _VENDOR_ALIASES_FILE = os.getenv("VENDOR_ALIASES_FILE", "policy/vendor_aliases.yaml")
 _WS = re.compile(r"\s+")
@@ -158,23 +166,51 @@ def format_fingerprint(review: dict, *, aliases: Optional[dict] = None) -> str:
         if isinstance(it, dict) and it.get("field_path") == "header.mfr":
             mfr = str(it.get("value") or "")
             break
-    vendor = canonical_vendor(mfr, aliases=aliases)
 
-    # DOC TYPE — trusted only when the ARTIFACT ATTESTS it was extracted.
+    # DOC TYPE — trusted only when the ARTIFACT ATTESTS it was read from the document.
     #
     # Two ways this segment can be uninformative, and both must collapse to the sentinel:
     #   1. `doc_type` absent from review.json entirely (older artifacts);
     #   2. `doc_type` PRESENT but DEFAULTED — doc-tools emits `header_d.get("doc_type") or "PCN"`,
     #      so an unextracted notice carries a perfectly plausible `PCN`.
     # (2) is invisible from the value alone, which is exactly why this segment was unguardable. The
-    # producer now emits `doc_type_source` ("extraction" | "defaulted") — a provenance-bearing
-    # field, the same shape as `review_state_source` — and the classification field keeps its usable
-    # value for the disposition proposer, which needs it.
+    # producer emits `doc_type_source` ("title" | "title-ambiguous" | "no-title-evidence" |
+    # "defaulted"; the retired "extraction" is still read) — a provenance-bearing field, the same
+    # shape as `review_state_source` — and the classification field keeps its usable value for the
+    # disposition proposer, which needs it.
     #
     # ABSENT ATTESTATION IS TREATED AS UNKNOWN, not as extracted: every artifact written before the
     # producer emitted it is exactly the population whose doc_type cannot be trusted, so the
     # conservative reading is the correct one for the back-corpus too.
     raw = review or {}
-    attested = str(raw.get("doc_type_source") or "").strip().lower() == "extraction"
-    doc_type = _normalise(str(raw.get("doc_type") or "")) if attested else ""
-    return f"{vendor}/{doc_type or UNKNOWN_SEGMENT}/v1"
+    return _compose(mfr, raw.get("doc_type"), raw.get("doc_type_source"), aliases=aliases)
+
+
+def _compose(raw_mfr, doc_type, doc_type_source, *, aliases: Optional[dict]) -> str:
+    """The one place the key is assembled, so the review.json reader and the manifest reader cannot
+    drift: vendor canonicalised, doc_type kept only when its source attests it."""
+    vendor = canonical_vendor(str(raw_mfr or ""), aliases=aliases)
+    attested = str(doc_type_source or "").strip().lower() in ATTESTING_SOURCES
+    seg = _normalise(str(doc_type or "")) if attested else ""
+    return f"{vendor}/{seg or UNKNOWN_SEGMENT}/v1"
+
+
+def format_fingerprint_from_manifest(manifest, *, aliases: Optional[dict] = None) -> str:
+    """The fingerprint derived from the VERSIONED extraction manifest.
+
+    The manifest named by the review stage's ``extraction_ref`` is the artifact a promotion's
+    fingerprint is derived from: review.json is unversioned, sustainment-only and editable by the
+    review UI, so a fingerprint read from it can describe a document changed after the record was
+    written. Reads ``manifest["format_identity"]`` -- ``manufacturer``, ``doc_type``,
+    ``doc_type_source``. An absent or non-dict manifest or block yields ``unknown/unknown/v1``,
+    never raises.
+
+    doc-tools does not yet write ``format_identity``; until it does every manifest fingerprints
+    ``unknown/unknown/v1``, which the decision record accepts and ``trust_table`` bars above
+    ``supervised`` -- the safe direction, and legible as unknown.
+    """
+    block = manifest.get("format_identity") if isinstance(manifest, dict) else None
+    if not isinstance(block, dict):
+        block = {}
+    return _compose(block.get("manufacturer"), block.get("doc_type"),
+                    block.get("doc_type_source"), aliases=aliases)

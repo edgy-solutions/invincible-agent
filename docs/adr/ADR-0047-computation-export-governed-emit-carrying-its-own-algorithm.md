@@ -252,6 +252,17 @@ behalf. Today the acting human rides separately (`X-Originator-Email`, and the `
 keyed on that). Formalising that delegation is an open design decision — and the point of this
 amendment is that it must be settled as one, **not by a grant to the service.**
 
+**AMENDMENT, RULED 2026-10-08 (Chris): THE SEEDING DELEGATE IS A RECIPIENT OF WHAT IT SEEDED.** A
+`svc:` principal that is a **declared delegate** (`DELEGATE_ON_BEHALF_OF`) may be a disclosure
+recipient of an artifact **only as that artifact's seeding delegate** (`seeded_by`). The confused-deputy
+reason above does not apply there: the read is scoped to what that delegate's own workflows
+produced, not to whatever the service can reach for any caller. **Every other `svc:` recipient is
+still refused.** The read gate is `GatewayArtifacts.get` (`src/iagent/artifact_reads.py`), reached
+from the `get_artifact` route (`GET /artifacts/{id}`); it admits the owner or the seeding declared
+delegate and answers everyone else exactly as it answers an absent id.
+`policy/sync/validate_policy.py::service_identity_recipients` is **unchanged**, because it governs
+*grants*, and a seeding is not a grant. See ADR-0041 §8.1.
+
 ---
 
 ## §6 — The package is a `PublishedArtifact`

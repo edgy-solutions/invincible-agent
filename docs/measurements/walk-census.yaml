@@ -279,6 +279,25 @@ rows:
     min_rows: 1
     dispositions: [drawn]
 
+  # ── SUSTAINMENT (74, engine-o) ─────────────────────────────────────────────────────────────
+  # Rev 180 answered this question from the generalist (`no_verb_classified`). It is DERIVED from
+  # docs/measurements/sustainment-walk-sheet.md, whose question is one of the verb's own declared
+  # synonyms with the notice id filled in.
+  - id: sustainment-which-parts-does-pcn26-182-affect
+    sheet: docs/measurements/sustainment-walk-sheet.md
+    sheet_index: 0
+    question: which parts does PCN26-182 affect
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: which_parts_does_this_notice_affect
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [drawn]
+    # The verb is the claim. This runner cannot see the sources' provenance or the envelope's
+    # provenance_floor. The sheet's checks name both, and tests/test_notice_parts_provenance.py
+    # seals them offline on the rev-180 fixture.
+
   # ── FINANCE (91) ───────────────────────────────────────────────────────────────────────────
   # THE SHEET IS A FILE AS OF 2026-09-19 — docs/measurements/finance-walk-sheet.md — so these
   # eight rows are DERIVED and the `blocked` on the brief is lifted.

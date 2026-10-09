@@ -50,16 +50,22 @@ import importlib.util
 import pytest
 
 
-def _load_module_by_path(alias: str, path, *, reason: str):
+_MOD_NAME = "finance_agent_main_under_test"
+#: recorded BEFORE the import-time write below; `_put_the_loaded_module_back` restores it.
+_PRIOR = (_MOD_NAME in sys.modules, sys.modules.get(_MOD_NAME))
+
+
+def _load_module_by_path(path, *, reason: str):
     """Import `path` under `alias`, or skip — never binding the bare module name."""
-    spec = importlib.util.spec_from_file_location(alias, str(path))
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, str(path))
     if spec is None or spec.loader is None:
         pytest.skip(reason)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = mod
+    sys.modules[_MOD_NAME] = mod
     try:
         spec.loader.exec_module(mod)
     except Exception as exc:  # noqa: BLE001 — an absent engine dep is a skip, not a red
+        sys.modules.pop(_MOD_NAME, None)
         pytest.skip(f"{reason} ({type(exc).__name__}: {exc})")
     return mod
 
@@ -74,7 +80,7 @@ if str(_FIN) not in sys.path:
 # whichever ran first, so in a full-suite run one of the two seals silently exercises the
 # OTHER engine — 11 reds that are not about the code. Same shape as the dagster stub that
 # broke the standalone CI job: a shared module name in sys.modules, resolved by import order.
-main = _load_module_by_path("finance_agent_main_under_test", _FIN / "main.py",
+main = _load_module_by_path(_FIN / "main.py",
                             reason="finance_agent not importable here")
 
 
@@ -155,3 +161,16 @@ def test_CONTROL_a_digit_DOES_resolve_once_the_caller_supplies_the_class():
         f"CONTROL FAILED: '4' scoped to {uri} resolves to nothing. The fix has gone further "
         f"than ruled — a digit is refused as a NAME, not as an INDEX into a named class."
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers, AT IMPORT TIME, a module it loaded by path
+    under a private name. The prior state was recorded before that write (`_PRIOR`), because a
+    fixture's own snapshot is taken after collection and would see the module already there."""
+    yield
+    had, prior = _PRIOR
+    if had:
+        sys.modules[_MOD_NAME] = prior
+    else:
+        sys.modules.pop(_MOD_NAME, None)

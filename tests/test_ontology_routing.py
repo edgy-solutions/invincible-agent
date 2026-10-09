@@ -63,17 +63,16 @@ def engine_o_module():
     # named main.py, and the previous `del sys.modules["main"]` + import_module("main") both
     # EVICTED whatever another test had cached and left its own behind — that eviction is what
     # made tests/security/test_effect_write_gate.py fail its nine in-suite while passing alone.
-    mod_name = "engine_o_main__ontology_routing_test"
-    cached = sys.modules.get(mod_name)
+    cached = sys.modules.get(_MOD_NAME)
     if cached is not None:
         return cached
-    spec = importlib.util.spec_from_file_location(mod_name, svc_dir / "main.py")
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, svc_dir / "main.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
+    sys.modules[_MOD_NAME] = mod
     try:
         spec.loader.exec_module(mod)
     except Exception:
-        sys.modules.pop(mod_name, None)
+        sys.modules.pop(_MOD_NAME, None)
         raise
     return mod
 
@@ -136,6 +135,8 @@ def test_find_tool_returns_503_when_driver_not_ready(engine_o_module, client):
     )
     assert r.status_code == 503
     assert "Neo4j" in r.json()["detail"]
+
+_MOD_NAME = "engine_o_main__ontology_routing_test"
 
 
 def test_find_tool_happy_path(engine_o_module, client):
@@ -346,3 +347,17 @@ def test_find_path_propagates_neo4j_errors_as_500(engine_o_module, client):
     )
     assert r.status_code == 500
     assert "graph offline" in r.json()["detail"]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME,)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

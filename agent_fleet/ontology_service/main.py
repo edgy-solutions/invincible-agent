@@ -364,6 +364,15 @@ try:
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.mesh_ontology import JenaMeshOntology as _JenaMeshOntology
 
+# `Neo4jGraph` — the SDK's `MeshGraph` over this same Neo4j, for LEG 1 of `/find_compatible_verbs`
+# when `COMPATIBLE_VERBS_VIA_MESH` is on. Same flatten-aware shape.
+try:
+    from mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS  # type: ignore[no-redef]
+    from mesh_graph import Neo4jGraph  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.mesh_graph import PATH_HOP_BOUNDS as _VERBS_FOR_HOP_BOUNDS
+    from agent_fleet.ontology_service.mesh_graph import Neo4jGraph
+
 
 def _jena_ontology_post(url: str, *, data: dict, headers: dict):
     """Sync POST for `JenaMeshOntology`, carrying the SAME credential `_jena_client()` uses.
@@ -810,6 +819,14 @@ def _jena_answers() -> bool:
     return resp.status_code == 200 and isinstance(resp.json().get("boolean"), bool)
 
 
+def _neo4j_answers() -> bool:
+    """The graph ITSELF answers: the driver exists and its connectivity check passes."""
+    if _NEO4J_DRIVER is None:
+        return False
+    _NEO4J_DRIVER.verify_connectivity()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # FastAPI lifespan — verify connectivity on startup
 # ---------------------------------------------------------------------------
@@ -879,6 +896,59 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] pcn mesh:resolveInstance registration failed: {e}")
 
+    # THE SUSTAINMENT READ "which parts does <notice> affect" (notice_parts.py). Registered on the
+    # PARENT class so PCN and PDN both reach it by subClassOf, the same as proposeDisposition — the
+    # act verb whose anti-synonyms already named this read as the one it must not be taken for.
+    # GATED ON NEO4J, the only store it reads.
+    try:
+        _notice_parts_endpoint = os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + "/notice_parts"
+
+        def _register_notice_parts():
+            mr.register_engine_to_mesh(
+                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                name="engine_o_which_parts_does_this_notice_affect",
+                description=(
+                    "Lists the parts one sustainment notice (a PCN or PDN) affects, read from the "
+                    "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
+                    "the notice's provenance as the graph records it: how it was obtained, the ingest "
+                    "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
+                    "unknown notice id, which is a different fact from a known notice naming no part "
+                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
+                    "subject to this notice."
+                ),
+                verb=_notice_parts.VERB,
+                input_uri=_notice_parts.INPUT_URI,
+                output_uri=_notice_parts.OUTPUT_URI,
+                verb_synonyms=[
+                    "which parts does this notice affect", "which parts does it affect",
+                    "affected parts", "list the affected parts", "parts subject to this notice",
+                    "what parts are affected by this notice",
+                ],
+                verb_anti_synonyms=[
+                    "propose a disposition", "what should we do about this notice",
+                    "last time buy", "dispatch qualification",
+                ],
+                endpoint_url=_notice_parts_endpoint,
+                owner_persona="SUSTAINMENT_ENGINEER",
+                domains=[_notice_parts.DOMAIN],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_o_sustainment",
+                timeout_s=5.0,
+            )
+            print(f"[ontology-service] registered {_notice_parts.VERB} -> {_notice_parts_endpoint}")
+
+        mr.when_stores_answer(
+            "engine_o_which_parts_does_this_notice_affect:stores",
+            {"neo4j": _neo4j_answers},
+            _register_notice_parts,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] {_notice_parts.VERB} registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
@@ -903,6 +973,12 @@ try:
     from utils.mesh_vectors import WeaviateVectors  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.utils.mesh_vectors import WeaviateVectors
+
+# Sibling module, the same dual layout as `mesh_ontology` above.
+try:
+    import notice_parts as _notice_parts  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service import notice_parts as _notice_parts
 
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
@@ -5023,6 +5099,38 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     return {"candidates": candidates}
 
 
+class NoticePartsRequest(BaseModel):
+    """The specialist dispatch body, read for the three fields this verb uses. Everything else the
+    supervisor sends is accepted and ignored."""
+    params: dict = Field(default_factory=dict)
+    resolved_instance_id: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+@app.post("/notice_parts")
+async def notice_parts_route(request: NoticePartsRequest) -> dict:
+    """`mesh:whichPartsDoesThisNoticeAffect` (matcher and shaping: notice_parts.py). READ.
+
+    DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
+    refused before the graph is read, so an empty scope can never read as "no parts"."""
+    if _notice_parts.DOMAIN not in (request.entitled_domains or []):
+        return {
+            "status": "refused",
+            "reason": "not_entitled",
+            "verb": _notice_parts.VERB,
+            "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
+            "parts": [],
+            "sources": [],
+        }
+    if _NEO4J_DRIVER is None:
+        raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
+    notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
+    try:
+        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
+
+
 # ---------------------------------------------------------------------------
 # Disposition state — the dispatch effect's graph write + the step-5 read query.
 # State lives in SUSTAINMENT_INSTANCES (DECIDED: runtime state with the instances);
@@ -5287,6 +5395,58 @@ async def policy_rules(request: PolicyRulesRequest) -> dict:
             "graph": request.graph, "ruleset_label": request.ruleset_label}
 
 
+# ---------------------------------------------------------------------------
+# POST /declared_query — a declared-query verb, served by NAME (ADR-0046-adjacent; see
+# `agent_fleet/utils/declared_query.py`). A mesh read whose question is DATA: the caller names a
+# verb and passes parameter values, and engine-o loads the declaration from its OWN baked policy
+# tree. THE QUERY TEXT NEVER CROSSES THE WIRE — a route that executed caller-supplied SPARQL would
+# let any holder of a service token read any graph, and leave the domain scoping to the caller.
+# ---------------------------------------------------------------------------
+try:  # pragma: no cover - import path differs by runtime
+    from utils.declared_query import (  # type: ignore[no-redef]
+        DeclaredQueryError, build_selects, load_query_verbs, policy_root, shape_selects, verb_dirs,
+    )
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    from agent_fleet.utils.declared_query import (
+        DeclaredQueryError, build_selects, load_query_verbs, policy_root, shape_selects, verb_dirs,
+    )
+
+
+class DeclaredQueryRequest(BaseModel):
+    verb: str
+    params: dict[str, str] = Field(default_factory=dict)
+
+
+@app.post("/declared_query")
+async def declared_query_route(request: DeclaredQueryRequest) -> dict:
+    """Load the named verb from the registry, bind its params, run its selects and shape the
+    rows. Unknown verb -> 404 (nothing to serve); bad params or an unshapeable answer ->
+    422 (the caller's request); a registry that fails to load -> 500 (engine-o's own tree, not the
+    caller's). Each select runs through the SAME `execute_sparql` scope wrap every other route
+    uses, so a substrate outage surfaces exactly as it does at `/instances_by_property` — a raise
+    that reaches the caller as a 5xx, never a quiet `[]`."""
+    try:
+        verbs = load_query_verbs(verb_dirs(policy_root()))
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=500, detail=f"declared-query registry: {exc}") from exc
+    decl = verbs.get(request.verb)
+    if decl is None:
+        raise HTTPException(
+            status_code=404, detail=f"no declared-query verb named {request.verb!r}")
+    try:
+        built = build_selects(decl, request.params)
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rows_by_select: dict[str, list[dict]] = {}
+    for name, q in built.items():
+        rows_by_select[name] = await execute_sparql(q, domain=decl.domain)
+    try:
+        selects = shape_selects(decl, rows_by_select)
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"verb": decl.verb, "domain": decl.domain, "selects": selects}
+
+
 class FindCompatibleVerbsRequest(BaseModel):
     subject_uri: str
     # How many subClassOf hops to walk. 0 = direct edges only;
@@ -5297,6 +5457,12 @@ class FindCompatibleVerbsRequest(BaseModel):
     # (or are domain-agnostic). Mirrors the entitled_domains filter on
     # /search_predicates.
     entitled_domains: list[str] = Field(default_factory=list)
+    # THE PERSON THE ASK IS FOR, as the gateway names them (its `on_behalf_of`, the caller's
+    # authz_id). With `COMPATIBLE_VERBS_VIA_MESH` on, every read this route makes is attributed to
+    # this person, minted `kind="person"`, and a blank value is refused. NOT the SDK's
+    # `Initiator.on_behalf_of`, which makes a DELEGATE, and `MeshGraph`/`MeshOntology` reads refuse
+    # a delegate. With the flag off it is accepted and unused, so a caller can send it first.
+    on_behalf_of: str = ""
 
 
 class CompatibleVerb(BaseModel):
@@ -5400,6 +5566,10 @@ _UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
 # That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
 # it is exercised here rather than worked around — threading a real identity through this route
 # is a design decision for a person, not a substitute this pool should invent.
+#
+# THE GAP CLOSES BEHIND `COMPATIBLE_VERBS_VIA_MESH`. With the flag on, the request carries
+# `on_behalf_of` and the route hands `_universal_referent_iris` that person instead; this service
+# initiator remains what the flag-off route reads with, and it is still refused.
 _POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
 
 
@@ -5436,8 +5606,11 @@ def _confirms_universal_referent(rows, subject: str) -> bool:
     return is_class and carries_flag
 
 
-def _universal_referent_iris() -> list[str]:
+def _universal_referent_iris(initiator: Initiator | None = None) -> list[str]:
     """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
+
+    Read as `initiator` when one is given (the person, with `COMPATIBLE_VERBS_VIA_MESH` on), else
+    as `_POOL_READ_INITIATOR`, looked up at call time.
 
     NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
     documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
@@ -5449,7 +5622,7 @@ def _universal_referent_iris() -> list[str]:
     refusal_detail: str | None = None
     for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
         try:
-            result = _JENA_ONTOLOGY.construct(_POOL_READ_INITIATOR, subject=candidate)
+            result = _JENA_ONTOLOGY.construct(initiator or _POOL_READ_INITIATOR, subject=candidate)
         except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
             refusal_detail = f"{type(exc).__name__}: {exc}"
             continue
@@ -5632,6 +5805,87 @@ RETURN DISTINCT
     'universal'                   AS compatibility
 """
 
+# THE THREE LEGS, SPLIT WHERE THE STATEMENT JOINS THEM. With `COMPATIBLE_VERBS_VIA_MESH` on, LEG 1
+# is read through `MeshGraph.verbs_for` (whose statement the conformance test holds equal to
+# `_COMPAT_LEGS[0]`) and LEGs 2 and 3 run as written here. Split rather than re-declared, so the
+# flag-off statement above stays the only text either path runs.
+_COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
+_COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
+
+#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
+#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
+#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
+#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
+COMPATIBLE_VERBS_VIA_MESH = os.getenv(
+    "COMPATIBLE_VERBS_VIA_MESH", "false"
+).lower() in ("true", "1", "yes")
+
+
+def _compat_rows_via_mesh_sync(
+    subject_uri: str, max_hops: int, on_behalf_of: str
+) -> tuple[list[dict], str]:
+    """The flag-on rows: LEG 1 from `Neo4jGraph.verbs_for`, LEGs 2 and 3 from the incumbent
+    statement, every read as the person. Blocking; call via a thread.
+
+    THREE PLACES THIS DIFFERS FROM THE FLAG-OFF ROUTE, each a refusal or a 5xx, never a
+    different list:
+
+    1. **Identity.** A blank `on_behalf_of` is a 400 before any read, as `/resolve`'s mesh arm
+       refuses a blank `user_email`: `Initiator(subject="", kind="person")` passes the type and is
+       provenance nobody can be asked about. The incumbent route takes no identity at all.
+    2. **The hop bound.** `verbs_for` walks `_VERBS_FOR_HOP_BOUNDS`; the incumbent clamps to
+       0..10. A `max_hops` outside the bound is a 400 naming it, not a quiet clamp.
+    3. **The 503.** `failed` and `unreachable` from `verbs_for`, or a raise from the LEG 2/3
+       statement, is a 503, not the incumbent's 500. Both are 5xx to every caller.
+    """
+    person = (on_behalf_of or "").strip()
+    if not person:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "COMPATIBLE_VERBS_VIA_MESH is on and this request carries no on_behalf_of. The "
+                "mesh reads are attributed to a person or they are not made. Send the person the "
+                "ask is for, or run with the flag off."
+            ),
+        )
+    lo, hi = _VERBS_FOR_HOP_BOUNDS
+    if not lo <= max_hops <= hi:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"COMPATIBLE_VERBS_VIA_MESH is on and max_hops={max_hops} is outside the "
+                f"[{lo}, {hi}] MeshGraph.verbs_for walks."
+            ),
+        )
+    initiator = Initiator(subject=person, kind="person")
+    coverage = Neo4jGraph(driver=_NEO4J_DRIVER).verbs_for(initiator, subject_uri, max_hops=max_hops)
+    if coverage.outcome in ("failed", "unreachable"):
+        raise HTTPException(
+            status_code=503,
+            detail=f"MeshGraph.verbs_for did not answer ({coverage.outcome}): {coverage.detail}",
+        )
+    universal_referents = _universal_referent_iris(initiator)
+    cypher = (
+        _COMPAT_LEGS_AFTER_COVERAGE
+        .replace("$MAXHOPS$", str(max_hops))
+        .replace("$UNREACHABLE$", str(UNREACHABLE))
+    )
+    try:
+        with _NEO4J_DRIVER.session() as session:
+            rest = [
+                dict(r)
+                for r in session.run(
+                    cypher, subject_uri=subject_uri, universal_referents=universal_referents
+                )
+            ]
+    except Exception as exc:  # noqa: BLE001 - the substrate's failure, whatever shape it takes
+        raise HTTPException(
+            status_code=503, detail=f"Neo4j compatibility query (LEGs 2 and 3) failed: {exc}"
+        ) from exc
+    executed = "// LEG 1: MeshGraph.verbs_for, as the person\nUNION ALL\n" + cypher
+    return [dict(r) for r in (coverage.rows or [])] + rest, executed
+
 
 @app.post("/find_compatible_verbs", response_model=FindCompatibleVerbsResponse)
 async def find_compatible_verbs(
@@ -5658,34 +5912,39 @@ async def find_compatible_verbs(
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
     max_hops = max(0, min(10, int(request.max_hops or 5)))
-    cypher = (
-        _FIND_COMPAT_VERBS_CYPHER
-        .replace("$MAXHOPS$", str(max_hops))
-        .replace("$UNREACHABLE$", str(UNREACHABLE))
-    )
-    # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
-    # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
-    # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
-    universal_referents = await asyncio.to_thread(_universal_referent_iris)
+    if COMPATIBLE_VERBS_VIA_MESH:
+        rows, cypher = await asyncio.to_thread(
+            _compat_rows_via_mesh_sync, request.subject_uri, max_hops, request.on_behalf_of
+        )
+    else:
+        cypher = (
+            _FIND_COMPAT_VERBS_CYPHER
+            .replace("$MAXHOPS$", str(max_hops))
+            .replace("$UNREACHABLE$", str(UNREACHABLE))
+        )
+        # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
+        # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
+        # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
+        universal_referents = await asyncio.to_thread(_universal_referent_iris)
 
-    def _run() -> list[dict]:
-        with _NEO4J_DRIVER.session() as session:
-            return [
-                dict(r)
-                for r in session.run(
-                    cypher,
-                    subject_uri=request.subject_uri,
-                    universal_referents=universal_referents,
-                )
-            ]
+        def _run() -> list[dict]:
+            with _NEO4J_DRIVER.session() as session:
+                return [
+                    dict(r)
+                    for r in session.run(
+                        cypher,
+                        subject_uri=request.subject_uri,
+                        universal_referents=universal_referents,
+                    )
+                ]
 
-    try:
-        rows = await asyncio.to_thread(_run)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Neo4j compatibility query failed: {exc}",
-        ) from exc
+        try:
+            rows = await asyncio.to_thread(_run)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Neo4j compatibility query failed: {exc}",
+            ) from exc
 
     # ── DEDUPE THE TWO LEGS, SUBJECT WINNING ────────────────────────────────────────────
     #

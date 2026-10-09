@@ -37,6 +37,7 @@ _SRC = _REPO / "agent_fleet" / "mesh_registrar" / "main.py"
 # main.py and `import main` returns whichever was cached FIRST, which has
 # already turned a security suite red purely from collection order.
 _MOD_NAME = "mesh_registrar_main__presentation_species_test"
+_UUID_MOD_NAME = "mesh_registrar_v2_substrate__species_test"
 
 
 def _mod():
@@ -217,15 +218,15 @@ def test_a_presentation_carries_no_endpoint_property():
 
 def _uuid_mod():
     spec = importlib.util.spec_from_file_location(
-        "mesh_registrar_v2_substrate__species_test",
+        _UUID_MOD_NAME,
         _REPO / "agent_fleet" / "mesh_registrar" / "v2_substrate.py",
     )
     m = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = m
+    sys.modules[_UUID_MOD_NAME] = m
     try:
         spec.loader.exec_module(m)
     except Exception as exc:  # noqa: BLE001
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(_UUID_MOD_NAME, None)
         pytest.skip(f"v2_substrate not importable: {type(exc).__name__}: {exc}")
     return m
 
@@ -257,3 +258,17 @@ def test_the_KNOWN_deferral_is_real_and_asserted_not_assumed():
         "the documented collision no longer reproduces — the row key changed; "
         "update docs/plans/registrar-models-presentation-triples.md 'Known deferral'"
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _put_the_loaded_module_back():
+    """PUT sys.modules BACK. This file registers a module it loaded by path under a private
+    name; left behind it is a name every later file can resolve to this file's copy. The prior
+    state -- present OR absent -- is recorded before the first test and restored after the last."""
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in (_MOD_NAME, _UUID_MOD_NAME)}
+    yield
+    for n, (had, prior) in saved.items():
+        if had:
+            sys.modules[n] = prior
+        else:
+            sys.modules.pop(n, None)

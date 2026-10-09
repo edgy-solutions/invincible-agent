@@ -603,14 +603,25 @@ _DISPOSITIONS: frozenset = frozenset(
 #: be added must be a decision about THIS line rather than a value that arrives and is drawn.
 _HOLE_DISPOSITIONS: frozenset = frozenset({"unentitled"})
 
+#: ELICITATION's two levers: the wire `disposition` and the `status` that must agree with it.
+#: Mirrors `iagent_pure.slot_disposition.STATUS_BY_DISPOSITION` (this engine does not import
+#: iagent_pure); tests/test_elicitation_carries_both_levers.py asserts the two are equal.
+_ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
+    "ask": "slot_elicitation", "abstain": "slot_abstain",
+}
+
 _FLAT_ARCHETYPES: Dict[str, tuple] = {
     # Fields read from cortex-ui/src/components/elicitation/Elicitation.contract.ts, not
-    # invented here. `slot` is the only required one: which declaration is missing.
+    # invented here. `slot` (which declaration is missing) and `disposition` are required.
+    # `disposition` is required because a card that lost the abstain/ask lever is drawn as a
+    # question, even when it was an abstain. `status` travels so cortex's second lever is not
+    # stripped by this row (cortex packet 2026-10-08, "elicitation status is dropped by its
+    # own row").
     "ELICITATION": (
-        ("slot",),
+        ("slot", "disposition"),
         ("options", "option_source", "free_text_reason", "spoken", "found", "sub_query",
-         "accepted_slots", "message", "truncated_from", "total_count", "disposition",
-         "verb_iri", "reason"),
+         "accepted_slots", "message", "truncated_from", "total_count",
+         "verb_iri", "reason", "status"),
     ),
     # NAMED_HOLE, 2026-09-06. Fields read from
     # cortex-ui/src/components/registry/NamedHole.contract.ts, not invented here.
@@ -633,6 +644,26 @@ _FLAT_ARCHETYPES: Dict[str, tuple] = {
     "NAMED_HOLE": (
         ("disposition",),
         ("reason", "panel_label", "verb_iri"),
+    ),
+    # ILLUSTRATION and WORKFLOW_CASE, 2026-10-07. Fields read from
+    # cortex-ui/src/archetypes/illustration/contract.ts and .../workflow-case/contract.ts, not
+    # invented here. Each declares ONE required field, an object (`illustration`, `case`), and no
+    # optional ones, so the optional tuples are empty on purpose: the object travels whole, and
+    # its inner shape is the card's contract to check, not this table's.
+    #
+    # THIS TABLE, NOT _PROJECTED_ARCHETYPES, for NAMED_HOLE's reason: there is no list under a
+    # payload key, so the list projector would return None on every one and the card would
+    # degrade to KNOWLEDGE_DOCUMENT -- which is what they did until these rows existed.
+    #
+    # NO PRODUCER EMITS EITHER TODAY. Both contracts say so ("cortex-proposed; no producer route
+    # serves this yet"). These rows are the path, not a claim that anything walks it.
+    "ILLUSTRATION": (
+        ("illustration",),
+        (),
+    ),
+    "WORKFLOW_CASE": (
+        ("case",),
+        (),
     ),
 }
 
@@ -687,6 +718,25 @@ def _project_flat_archetype(
                 "render_ui: disposition %r is understood and does NOT draw a hole; another "
                 "surface owns it. This is a routing decision, not a defect — nothing to fix.",
                 disposition,
+            )
+            return None
+
+    if archetype == "ELICITATION":
+        disposition = str(resp.get("disposition") or "")
+        expected = _ELICITATION_STATUS_BY_DISPOSITION.get(disposition)
+        if expected is None:
+            logger.warning(
+                "render_ui: ELICITATION carries disposition %r, which is not in %s; refusing. "
+                "Unrecognised; fix the producer.",
+                disposition, sorted(_ELICITATION_STATUS_BY_DISPOSITION),
+            )
+            return None
+        status = resp.get("status")
+        if status not in (None, "") and status != expected:
+            logger.warning(
+                "render_ui: ELICITATION status %r disagrees with disposition %r (expected "
+                "%r); refusing. The two levers disagree; fix the producer.",
+                status, disposition, expected,
             )
             return None
 
@@ -918,6 +968,22 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # refused inner call RAISES there and the two hole terms are unreachable BY CONTRACT.
     # Nothing here may key on which dispositions are present.
     "SOURCE_LEDGER": ("rows", ("summary",)),
+
+    # ── INSTANCES_BY_PROPERTY (Lane 1, roll #23, 2026-10-08). Runbook site 2. ─────────────
+    #
+    # Bound for `mesh:NoticePartSet` ("which parts does PCN26-184 affect"). Before this line
+    # the archetype had NO server path at all: it sat in the projector seal's "hardened" set,
+    # but no BAML renderer serves it either, so the only INSTANCES_BY_PROPERTY a card ever drew
+    # was one a gateway feeder hand-built. A verb bound to it degraded to KNOWLEDGE_DOCUMENT
+    # and drew its own JSON in a code block (rev 181, measured).
+    #
+    # THE PASSTHROUGH IS THE VIEW'S DESTRUCTURE, read from cortex-ui's InstancesByPropertyView
+    # (`{ title, columns, rows, target, row_identity, state_vocabulary }`) and types.ts, not
+    # chosen. `columns` is required by the view (it maps over it), so a producer that omits it
+    # is a card that throws. The producer's conformance case is
+    # tests/test_notice_parts_renders_as_instances_by_property.py.
+    "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
+                                       "state_vocabulary")),
 }
 
 
@@ -1358,6 +1424,8 @@ def _render_refusal_menu(ref: Dict[str, Any], opts: "list", slot: str,
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": slot,
+        "disposition": "ask",
+        "status": "slot_elicitation",
         "options": _as_options(opts),
         **_reroute_fields(raw_data),
         # NAMES THE MECHANISM HONESTLY. Not `enumeration` — no enumerate provider was asked;
@@ -1384,6 +1452,11 @@ def _render_abstain_menu(abst: Dict[str, Any], cands: "list",
         "archetype": "ELICITATION",
         "source_persona": persona,
         "slot": "verb",
+        # A ROUTING abstain (no verb classified, with candidates) is drawn as an ASK by the
+        # 2026-09-17 ruling, so its wire disposition is `ask`. That is not
+        # `slot_disposition.ABSTAIN` (a slot abstain: nothing was run, nothing to choose).
+        "disposition": "ask",
+        "status": "slot_elicitation",
         "options": _as_options(cands),
         **_reroute_fields(raw_data),
         "option_source": "candidates",

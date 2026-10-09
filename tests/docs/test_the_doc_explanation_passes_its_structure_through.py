@@ -1,7 +1,7 @@
 """engine-docs' KNOWLEDGE_DOCUMENT payload must reach cortex-ui as STRUCTURE, not markdown alone.
 
 THE CONTRACT OWNER is cortex-ui (`../cortex-ui` commit a425186,
-`src/components/registry/knowledgeDocumentView.ts`): it draws structure when the card carries a
+`src/archetypes/knowledge-document/knowledgeDocumentView.ts`): it draws structure when the card carries a
 NON-EMPTY `pages` list, or when `abstained` is literally `True` -- anything else falls back to
 `markdown_content`. `_render_document_deterministic` composed markdown from `summary` /
 `summary_text` / `structured_data` only (see `test_the_doc_explanation_renders_its_body.py`,

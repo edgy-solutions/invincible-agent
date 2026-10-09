@@ -43,8 +43,10 @@ carries:
   - picture.spares
   - picture.nearest_spare
 
-# THE PICTURE IS RE-READ WHEN A CASE RETURNS TO PROPOSED, from both sources in order: the bridge
-# PUSHES a newer picture as the same event_id again (kept as revision k on the episode), and this
-# verb PULLS one. Declared as a stub that returns the newest kept revision, so the real picture
-# endpoint retires a stub, not a design. See verbs/maintenance_picture_read.yaml.
-pull: maintenance_picture_read
+# THE PICTURE IS RE-READ WHEN A CASE RETURNS TO PROPOSED. Each newer picture is the next SDK
+# `ArtifactRevision` on the event's chain (rev 1 is the event this case opened on), appended on
+# the episode after the head; the case reads the head. Today the chain grows by PUSH only: the
+# bridge sends the same event_id again. A PULL is declared as the SDK's `RefreshSpec` --
+# `refresh: {url_template: ".../{event_id}", method: GET, auth: seeding-delegate}` -- and the
+# runner refuses one until it holds the seeding delegate's credential, so none is declared here.
+# (The `pull: maintenance_picture_read` stub it replaces returned the kept push and added nothing.)

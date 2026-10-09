@@ -663,6 +663,11 @@ def collect_placeholders(node: object) -> set:
     return found
 
 
+def bff_base_url() -> str:
+    """cortex-bff's base URL -- the one `config_bindings` builds its BFF endpoints from."""
+    return os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+
+
 def config_bindings() -> dict:
     """Runtime CONFIG placeholders — the deployment's own wiring, not per-request data.
 
@@ -670,7 +675,7 @@ def config_bindings() -> dict:
     disagree with the supervised one about where engine-o lives.
     """
     engine_o = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084").rstrip("/")
-    bff = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+    bff = bff_base_url()
     return {
         # The disposition write engine-a already performs on the SUPERVISED path
         # (`dispatch_driver`: f"{ENGINE_O_URL}/write_item_state"). Same endpoint, same source.
@@ -744,18 +749,50 @@ def verb_dirs() -> "list[Path]":
 
 
 def load_stub_verbs() -> "dict[str, StubVerb]":
-    """Every declared stub, keyed by verb. TWO DECLARATIONS OF ONE VERB ARE REFUSED -- name order
-    would otherwise pick which canned answer a run sees."""
+    """Every declared stub, keyed by verb. A YAML doc with no ``stub`` key is some OTHER verb
+    kind's (a declared-query verb shares this same ``verbs/`` layout) and is skipped here, never
+    validated as a stub. TWO DECLARATIONS OF ONE VERB ARE REFUSED -- name order would otherwise
+    pick which canned answer a run sees."""
     out: dict[str, StubVerb] = {}
     for d in verb_dirs():
         if not d.is_dir():
             continue
         for p in sorted(d.glob("*.yaml")):
             try:
-                v = StubVerb.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
-            except (OSError, yaml.YAMLError, ValidationError) as exc:
+                doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError) as exc:
+                raise WorkflowDefinitionError(f"{p}: unreadable verb: {exc}") from exc
+            if not (isinstance(doc, dict) and "stub" in doc):
+                continue
+            try:
+                v = StubVerb.model_validate(doc)
+            except ValidationError as exc:
                 raise WorkflowDefinitionError(f"{p}: invalid stub verb:\n{exc}") from exc
             if v.verb in out:
                 raise WorkflowDefinitionError(f"{p}: stub verb {v.verb!r} is declared twice")
             out[v.verb] = v
     return out
+
+
+def load_query_verbs() -> "dict[str, 'QueryVerb']":
+    """Every declared-query verb (``agent_fleet/utils/declared_query.py``), over the SAME
+    ``verb_dirs()`` the stub registry shares. A verb declared as both a stub and a declared query
+    is refused here -- exactly the stub registry's own "declared twice" reasoning, one layer up:
+    the runner would otherwise have two canned answers for one verb and name order would choose."""
+    try:  # pragma: no cover - import path differs by runtime
+        from utils.declared_query import (  # type: ignore[no-redef]
+            DeclaredQueryError, load_query_verbs as _load_query_verbs,
+        )
+    except ImportError:  # pragma: no cover
+        from agent_fleet.utils.declared_query import (
+            DeclaredQueryError, load_query_verbs as _load_query_verbs,
+        )
+    try:
+        queries = _load_query_verbs(verb_dirs())
+    except DeclaredQueryError as exc:
+        raise WorkflowDefinitionError(f"declared-query verb registry: {exc}") from exc
+    clash = sorted(set(queries) & set(load_stub_verbs()))
+    if clash:
+        raise WorkflowDefinitionError(
+            f"verb(s) {clash} are declared as both a stub and a declared query")
+    return queries

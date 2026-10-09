@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS ingest_status_projection (
     -- key: a second arrival with the same sha256 is the SAME bytes, full stop.
     sha256 TEXT NOT NULL,
 
-    -- ContentKind leaf (ADR-0041 §8's ContentKind tree, mesh_system.ttl): 'pdf' | 'cad' today.
+    -- ContentKind leaf (ADR-0041 §8's ContentKind tree, mesh_system.ttl): 'pdf' | 'cad' | 'xml' for a file,
+    -- 'event' for POST /ingest/events (ingest_status.KINDS).
     -- DECLARED at the door (multipart field), never LLM-classified — ADR-0021's precedence.
     kind TEXT NOT NULL,
 
@@ -101,3 +102,9 @@ UPDATE ingest_status_projection SET status = 'review' WHERE status = 'awaiting_d
 -- Electric rejects generated/typed columns the same way it rejects them elsewhere in this
 -- table. IDEMPOTENT (IF NOT EXISTS) -- a second run is a no-op.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion TEXT;
+
+-- 2026-10-08: extraction_ref -- NULLABLE. The versioned manifest key doc-tools' review POST names
+-- (`{base_dir}/generated/{base_name}/{pipeline_version}/manifest.json`); a retry re-derives the
+-- promotion task's payload from it. NULL for every row that reached review before this column
+-- existed. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;

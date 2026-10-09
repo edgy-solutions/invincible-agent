@@ -13,8 +13,9 @@ orchestration side and a Helm chart for the home-lab k3s sandbox.
 ## Handoffs — read this first
 
 Your handoff is the **newest `sessions/*handoff*` file in your own worktree** whose `to:` line
-names your worktree/branch. Read it whole, once — it carries your exact next step. Read inbox
-packets addressed to you the same way.
+names your `<repo>/<branch>` (ruled 2026-10-07: e.g. `invincible-agent/lane/gov`; the legacy
+`ia-<worktree>/lane/<branch>` form is still read, not written). Read it whole, once — it
+carries your exact next step. Read inbox packets addressed to you the same way.
 
 ## Repos and paths
 
@@ -83,8 +84,10 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
 
 ## Conventions and gotchas visible from the survey
 
-- **Worktree ↔ branch, never a session name.** `ia-NN` ↔ `lane/NN`. No lane's default view is
-  `master`. A bare session name addresses nothing.
+- **An address is `<repo>/<branch>`, never a worktree or a session name** (ruled 2026-10-07).
+  `ia-NN` ↔ `lane/NN` maps a worktree to its branch, but the branch is what a packet names;
+  another repo's lane is `cortex-ui/lane/cortex-60`, never `ia-cortex-60`. Seats stay
+  `<repo>/seat/<name>`. No lane's default view is `master`. A bare session name addresses nothing.
 - **Who pushes, who merges.** Lanes push their own branch on every commit (AGENTS.md:133–139).
   **Merging to master is the gated action** (AGENTS.md:133) — *the charter names no merger.*
   In practice Lane 1 (`ia-01`/`lane/01`) merges on the standard gate; that comes from the lanes'
@@ -108,6 +111,19 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   value, and never decode a Secret's data into the transcript.
 - **Never commit infra detail** (IPs, Pi-hole, kube contexts) — that is what the out-of-repo
   handoff log is for.
+- **A stacked PR runs no CI gate.** `build-containers.yml` triggers only on PRs whose base is
+  `master`/`main`; a PR based on another lane's branch gets nothing but the path-filtered
+  `validate-canvas-templates.yml` (and only if it touches `policy/canvases/**` or
+  `src/iagent/canvas_template.py`). A green check on a stacked PR is not a build — say so
+  when you report one, and re-read the checks once it is rebased onto `master`.
+- **Show the values diff before a roll.** Before `scripts/upgrade-sandbox.sh` or
+  `scripts/roll-litany.sh`, render with `scripts/upgrade-sandbox.sh --dry-run` and diff the
+  effective values against the live release (`helm get values`); put the diff — not "no
+  change expected" — in front of whoever approves the roll. Secret-bearing keys appear by
+  length and hash prefix only (the rule above).
+- **Python through this worktree's venv only**: `uv run …` or `.venv/Scripts/python`. Never a
+  bare `python`/`py` from PATH, never another worktree's venv — a name on PATH is not the
+  program you mean. AGENTS.md:101–102 is the check that the venv imports this tree.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
   `docs/architecture/endpoint-gating-audit.md`, venvs and caches.
 - MCP: none. `.mcp.json` (its only server was `forge_extension` at `localhost:50415`) was removed

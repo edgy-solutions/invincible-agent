@@ -63,7 +63,7 @@ dependencies = [
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut. Pinned past v0.9.5 to lane/ca's
     # c5fec43 (branch only, no tag yet) for write_node on MeshGraphWriter — the ingest node's
     # move off raw Cypher MERGE needs it now.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@012a24fb4f287ca8dc60cd29e3bb72af3f86f1af",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@60e56c972b209617dbe85cff6ff606c957e120ad",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -135,7 +135,7 @@ dev = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@012a24fb4f287ca8dc60cd29e3bb72af3f86f1af",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@60e56c972b209617dbe85cff6ff606c957e120ad",
     "provenance-telemetry==0.1.0",
 ]
 

@@ -650,6 +650,11 @@ class HumanTaskActRequest(_BaseModel):
     # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
     # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
     overrides: Optional[dict] = None
+    # R-089: the PRINCIPAL a delegate caller asserts it is acting for. iagent RECORDS this
+    # claim and does not verify it this pass (the ruling's own words) — trusted only because
+    # DELEGATE_ON_BEHALF_OF (deploy configuration) says this caller may speak for this
+    # principal. Absent, or equal to the caller's own authz_id, is the unchanged person path.
+    on_behalf_of: Optional[str] = None
 
 
 class AccessRequestRequest(_BaseModel):
@@ -1688,6 +1693,10 @@ async def plan_state_version(
 # a name nobody sets is the ENGINE_P_URL mistake (two lines up) happening a second time.
 _ENGINE_COST_URL = os.getenv("ENGINE_COST_PUBLIC_URL", "http://iagent-engine-cost:8097")
 
+# SAME NAME THE FINANCE ENGINE REGISTERS WITH (`finance_agent/main.py`'s own
+# `_PUBLIC_BASE_ENV`/`_DEFAULT_BASE`), never a second one — the ENGINE_P_URL mistake again.
+_ENGINE_FIN_URL = os.getenv("ENGINE_FIN_PUBLIC_URL", "http://iagent-engine-fin:8096")
+
 # The engine's own sha256-locator shape (`measures.package_export`'s `artifact_sha256`):
 # "sha256:" + 64 lowercase hex digits. A response missing this, or carrying something that
 # merely looks like it, is not a verifiable artifact and must not be reported as one.
@@ -1707,9 +1716,79 @@ def _export_recipients_for(user: "User") -> list[str]:
     )
 
 
+def _fin_export_recipients_for(user: "User") -> list[str]:
+    """`_export_recipients_for`'s exact shape, read against engine-fin's own
+    `export.RECIPIENT_SCOPES`/`readers_for_recipient` instead of cost's — the two engines'
+    disclosures are entitled independently, and this is why there are two functions rather
+    than one parameterised by module: a caller reading the wrong engine's scopes would grant
+    access this gateway never meant to."""
+    from agent_fleet.finance_agent import export as _fin_export
+    return sorted(
+        s for s in _fin_export.RECIPIENT_SCOPES
+        if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
+    )
+
+
 def _user_bearer(request: Request) -> str:
     """The caller's raw bearer, exactly as the disposition route reads it above."""
     return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+
+
+def _shape_export_package_response(
+    out: dict, *, recipient_scope: str, template_id: Optional[str],
+    extra: Optional[dict] = None,
+) -> dict:
+    """The one place a producing engine's `package_export` response becomes this gateway's
+    own response shape — read by BOTH the cost path and the finance-template path, so the two
+    cannot drift into reporting "exists" under different rules. `extra` carries whatever a
+    given engine's response has beyond the shared fields (cost's `lots_disclosed`/`sections`;
+    finance has none today). `template_id` is placed after them, which is the order the cost
+    route emitted before this helper existed.
+
+    An engine that refuses in-band (`refused: true`, cost's empty-disclosure outcome) is shaped
+    here too, so the refusal shape is also one rule rather than one per route.
+    """
+    if out.get("refused"):
+        refusal = {
+            "export_id": None,
+            "status": "failed",
+            "recipient_scope": recipient_scope,
+            "reason": out.get("reason"),
+            "outcome": out.get("outcome"),
+        }
+        if out.get("outcome") == "unavailable":
+            # THE ENGINE COULD NOT BUILD, which is not an answer about this caller's export: a
+            # missing runtime, an unpinned loader, a dirty algorithm. engine-cost says so in a
+            # 200 envelope (its refusals are envelopes by design); the HTTP edge says it as a
+            # 503, so a caller retries a service rather than reading "failed" as a verdict on
+            # its request. Same body, carried as the detail -- the reason is the builder's own.
+            raise HTTPException(status_code=503, detail=refusal)
+        return refusal
+    sha = out.get("artifact_sha256")
+    filename = out.get("artifact_filename")
+    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
+    export_status = "exists" if exists else "failed"
+    reason = None if exists else "engine returned no verifiable artifact hash"
+    shaped = {
+        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
+        # with the same inputs reports the same export_id.
+        "export_id": sha if exists else None,
+        "status": export_status,
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
+        # the engine directly, which this route's own authorization check would then be
+        # bypassable around.
+        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
+        "artifact_sha256": sha,
+        "artifact_bytes": out.get("artifact_bytes"),
+        "artifact_filename": filename,
+        "algorithm_sha": out.get("algorithm_sha"),
+    }
+    if extra:
+        shaped.update(extra)
+    shaped["template_id"] = template_id
+    return shaped
 
 
 class ExportAnswer(_BaseModel):
@@ -1721,9 +1800,16 @@ class ExportPackageRequest(_BaseModel):
     # ADR-0047 §1: no default recipient. A disclosure verb that can be invoked without naming
     # its recipient is one keystroke from disclosing the wrong program to the wrong party.
     recipient_scope: Optional[str] = None
-    # Accepted and echoed back on the response; NOT used to select a template or to shape the
-    # engine call. No template surface exists yet on either side of this hop.
+    # ITEM 3: a ratified, packageable template id (today, only `program_finance`) DRIVES the
+    # export when given — the panels and the recipient come from the template and `bindings`,
+    # not from `answers`/`recipient_scope`. Absent, this request takes the ORIGINAL cost path,
+    # where this field is echoed back only. The two inputs are mutually exclusive with
+    # `answers` (checked in `export_package`), never silently combined.
     template_id: Optional[str] = None
+    # KEYED BY SHARED SLOT `name` — the SAME shape `/canvas/seed`'s own `bindings` take (see
+    # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
+    # functions that call reads. Ignored on the cost path.
+    bindings: Optional[dict[str, Any]] = None
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -1782,6 +1868,126 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     }
 
 
+async def _export_package_from_template(
+    body: "ExportPackageRequest", request: Request, current_user: "User",
+) -> dict:
+    """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
+    `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
+    this function and `canvas_seed` both call `validate_bindings`, and both reach each panel's
+    `(verb, params)` through the identical `panel_dispatch` ("Seeding and packageExport read
+    the same thing" — `canvas_template.py`).
+
+    Ordered gates, each refusing before the next is even attempted:
+      1. unknown template id -> 400
+      2. the template declares no `package` -> 422
+      3. R-005's three binding outcomes -> 422 / 422 / 409 (`validate_bindings`)
+      4. an explicit `recipient_scope` that disagrees with the one the template+bindings
+         derive -> 409 (two names for the same disclosure is the hazard this rejects)
+      5. the caller not entitled to the derived recipient -> 403
+      6. the engine unreachable, or the engine's own refusal, forwarded verbatim
+
+    Only `program_finance` is wired to an engine today (engine-fin). A second packageable
+    template would need its own dispatch here — this function does not invent one.
+    """
+    from .canvas_template import (
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, load_template,
+        panel_dispatch, ratified_template_ids, recipient_scope_for, template_ref,
+        validate_bindings,
+    )
+
+    template_id = (body.template_id or "").strip()
+    try:
+        template = load_template(template_id)
+    except (KeyError, ValueError) as exc:
+        # SAME REFUSAL SHAPE as `canvas_seed`'s own unknown-template 400 (~L2736-2744).
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"no ratified canvas template {template_id!r} "
+                f"(ratified: {ratified_template_ids()}) — {exc}"
+            ),
+        )
+
+    if template.package is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"template {template_id!r} declares no package; it cannot be exported",
+        )
+
+    try:
+        bindings = validate_bindings(template, body.bindings or {})
+    except UndeclaredConsumption as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except UnknownBinding as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except UnboundRequiredSlot as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    # `validate_bindings` already guarantees every slot this template's panels CONSUME is
+    # bound, so `recipient_scope_for` cannot raise here in practice — this still catches it
+    # rather than let a future template shape turn into an uncaught 500.
+    try:
+        recipient_scope = recipient_scope_for(template, bindings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    requested_scope = (body.recipient_scope or "").strip()
+    if requested_scope and requested_scope != recipient_scope:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "recipient_scope_disagrees_with_canvas_audience",
+                "derived": recipient_scope,
+            },
+        )
+
+    if recipient_scope not in _fin_export_recipients_for(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": "not_a_recipient_you_may_export_to",
+                "recipient_scope": recipient_scope,
+            },
+        )
+
+    panels = []
+    for idx, _panel in enumerate(template.panels):
+        verb, _subject, params = panel_dispatch(template, idx, bindings)
+        panels.append({"panel": idx, "verb": verb, "params": params})
+
+    canvas = {
+        "template_id": template.template_id,
+        "template_hash": template_ref(template),
+        "panels": panels,
+    }
+
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/package_export",
+                json={"recipient_scope": recipient_scope, "canvas": canvas},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=template.template_id,
+    )
+
+
 @app.post("/export/package")
 async def export_package(
     body: ExportPackageRequest,
@@ -1794,12 +2000,31 @@ async def export_package(
     writes to disk inline, in the same request, so there is no async job to poll. A caller
     gets `"exists"` or `"failed"` in the same response that asked for the build.
 
-    Four hard stops, in order, each refusing before the next is even attempted:
+    `template_id` and `answers` are MUTUALLY EXCLUSIVE — a canvas template's own panels decide
+    what is exported, so naming one while also handing over cost `answers` is ambiguous about
+    which governs, and is refused rather than guessed at (422). Given `template_id`, this
+    dispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.
+
+    Absent `template_id`, four hard stops, in order, each refusing before the next is even
+    attempted:
       1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
       4. the engine unreachable, or the engine's own refusal, forwarded verbatim
     """
+    if body.template_id and body.answers:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "template_id and answers are mutually exclusive — a canvas template's own "
+                "panels decide what is exported; naming cost answers alongside one does not "
+                "say which governs."
+            ),
+        )
+
+    if body.template_id:
+        return await _export_package_from_template(body, request, current_user)
+
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
     recipient_scope = (body.recipient_scope or "").strip()
@@ -1861,41 +2086,10 @@ async def export_package(
         raise HTTPException(status_code=rr.status_code, detail=detail)
 
     out = rr.json()
-
-    if out.get("refused"):
-        return {
-            "export_id": None,
-            "status": "failed",
-            "recipient_scope": recipient_scope,
-            "reason": out.get("reason"),
-            "outcome": out.get("outcome"),
-        }
-
-    sha = out.get("artifact_sha256")
-    filename = out.get("artifact_filename")
-    exists = bool(sha and _SHA256_LOCATOR_RE.match(sha) and filename)
-    export_status = "exists" if exists else "failed"
-    reason = None if exists else "engine returned no verifiable artifact hash"
-
-    return {
-        # A CONTENT ADDRESS, not a job id: the sha IS the export's identity, so a second call
-        # with the same inputs reports the same export_id.
-        "export_id": sha if exists else None,
-        "status": export_status,
-        "recipient_scope": recipient_scope,
-        "reason": reason,
-        # THE GATEWAY PATH, never the engine's own `out["artifact_uri"]` — that one points at
-        # the engine directly, which this route's own authorization check would then be
-        # bypassable around.
-        "artifact_uri": f"/export/package/artifact/{filename}" if filename else None,
-        "artifact_sha256": sha,
-        "artifact_bytes": out.get("artifact_bytes"),
-        "artifact_filename": filename,
-        "algorithm_sha": out.get("algorithm_sha"),
-        "lots_disclosed": out.get("lots_disclosed"),
-        "sections": out.get("sections"),
-        "template_id": body.template_id,
-    }
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=body.template_id,
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
+    )
 
 
 @app.get("/export/package/artifact/{filename}")
@@ -1911,20 +2105,35 @@ async def export_package_artifact(
     since the engine sits behind the mesh and is not itself reachable from a browser.
     """
     from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
 
+    # THE CLOSED SET, over BOTH engines' producible names. Checked in a fixed order — cost
+    # first, then finance — which is safe only because the two engines' filename sets are
+    # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
+    # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
     scope = _cost_seed.scope_of_artifact(filename)
-    if scope is None:
-        # THE CLOSED SET. Same structural traversal defence as the engine's own route: a
-        # filename this engine could not have produced is refused outright rather than
-        # sanitized and forwarded.
-        raise HTTPException(
-            status_code=404,
-            detail=f"{filename!r} is not an export artifact this gateway serves",
-        )
+    if scope is not None:
+        engine_url = _ENGINE_COST_URL
+        recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    else:
+        scope = _fin_export.scope_of_artifact(filename)
+        if scope is not None:
+            engine_url = _ENGINE_FIN_URL
+            recipients_fn = _fin_export_recipients_for
+            engine_label = "fin"
+        else:
+            # Same structural traversal defence as either engine's own route: a filename
+            # neither engine could have produced is refused outright rather than sanitized
+            # and forwarded.
+            raise HTTPException(
+                status_code=404,
+                detail=f"{filename!r} is not an export artifact this gateway serves",
+            )
 
-    if scope not in _export_recipients_for(current_user):
+    if scope not in recipients_fn(current_user):
         # NAMES THE PACKAGE, NOT ITS READERS — same wording and reasoning as the engine's own
-        # /artifact 403 (cost_agent/main.py ~700-716).
+        # /artifact 403 (cost_agent/main.py ~700-716; finance_agent/main.py's analog).
         raise HTTPException(
             status_code=403,
             detail=(
@@ -1938,12 +2147,12 @@ async def export_package_artifact(
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             rr = await client.get(
-                f"{_ENGINE_COST_URL}/artifact/{filename}",
+                f"{engine_url}/artifact/{filename}",
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail={
-            "error": "cost_engine_unreachable", "message": str(exc),
+            "error": f"{engine_label}_engine_unreachable", "message": str(exc),
         })
 
     if rr.status_code >= 400:
@@ -2251,6 +2460,39 @@ class SeedPortfolioCanvasRequest(_BaseModel):
     active_domains: Optional[list] = None
 
 
+# `pipeline_error` causes that mean "the caller's cell cannot see what the seed asked for",
+# as opposed to "the seed could not be performed". Decided by reading every `_perror(...)`
+# producer's `cause=`:
+#   seed_panel_verb_not_visible -- the seed_panel FALL_BACK whose reason is
+#       direct_dispatch.VERB_NO_LONGER_COMPATIBLE: the declared verb is not in the verifier's
+#       compatible set for this caller (revoked, retired, or a persona/domain that cannot see
+#       it). Emitted where the seed_panel turn falls back (the `seed_panel_fell_back` site).
+# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason, e.g. "verifier
+#   unreachable", is OURS), seed_panel_unroutable (template declares no subject),
+#   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
+#   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
+#   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
+#   faults of the seed/pipeline, not of the caller's grants. An absent cause is "unrecorded"
+#   and is never entitlement.
+_SEED_ENTITLEMENT_CAUSES = frozenset({"seed_panel_verb_not_visible"})
+
+
+def _seed_failure_from_data(data: str | None) -> dict:
+    """The typed failure of one seeded ask: `{event, kind, cause}` from the pipeline_error
+    payload `_perror` wrote. A missing or unparseable payload records `cause: "unrecorded"`."""
+    kind = None
+    cause = None
+    if data:
+        try:
+            payload = json.loads(data.strip())
+            if isinstance(payload, dict):
+                kind = payload.get("kind") or None
+                cause = payload.get("cause") or None
+        except (ValueError, TypeError):
+            pass
+    return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+
+
 @app.post("/seed/portfolio_canvas")
 async def seed_portfolio_canvas(
     request: SeedPortfolioCanvasRequest,
@@ -2298,6 +2540,7 @@ async def seed_portfolio_canvas(
         }
         status = "failed"
         detail = None
+        failure: dict | None = None
         try:
             # SEQUENTIAL BY CONSTRUCTION: awaited inside the loop. Gathering
             # these would be one line and would deadlock the run queue.
@@ -2313,15 +2556,23 @@ async def seed_portfolio_canvas(
                     else:
                         saw_final = False
                         saw_error = False
+                        _awaiting_error_data = False
                         async for line in resp.aiter_lines():
                             if line.startswith("event: final_payload"):
                                 saw_final = True
                             elif line.startswith("event: pipeline_error"):
                                 saw_error = True
+                                _awaiting_error_data = True
+                            elif _awaiting_error_data and line.startswith("data:"):
+                                _awaiting_error_data = False
+                                if failure is None:
+                                    failure = _seed_failure_from_data(line[5:])
                         # A non-200 never reaches here; an error EVENT is a
                         # different failure and must not read as success.
                         status = "ok" if (saw_final and not saw_error) else "failed"
                         detail = None if status == "ok" else "pipeline_error"
+                        if status != "ok" and failure is None:
+                            failure = _seed_failure_from_data(None)
         except Exception as exc:  # noqa: BLE001 - one bad ask must not lose the rest
             detail = (type(exc).__name__ + ": " + str(exc))[:160]
 
@@ -2334,6 +2585,7 @@ async def seed_portfolio_canvas(
             "artifact_id": artifact_id if status == "ok" else None,
             "status": status,
             "detail": detail,
+            "failure": failure,
             "elapsed_s": round(time.time() - started, 1),
         })
         logger.info(
@@ -2355,6 +2607,109 @@ async def seed_portfolio_canvas(
     }
 
 
+async def seed_template_canvas(
+    template: "CanvasTemplate",
+    bindings: dict,
+    request: "CanvasSeedRequest",
+    http_request: Request,
+    current_user: User,
+):
+    """Seed every panel of a RATIFIED, NON-PORTFOLIO template through its own declared verb.
+
+    Mirrors `seed_portfolio_canvas` on purpose — sequential (never gathered), slot-aligned
+    `artifact_ids` with null holes on a failed panel, the same SSE success detection — but it
+    never builds a phrase. Each panel already names its verb and its slots (ADR-0050 §2); this
+    function's only job is to hand `/interview/stream` the panel's INDEX and the caller's
+    `bindings` as `seed_panel`, so the stream rebuilds the dispatch route from the TEMPLATE'S
+    own declaration, never from whatever `message` says. `message` here is a label for logs and
+    traces — never parsed, never classified.
+    """
+    auth = http_request.headers.get("Authorization", "")
+    base = "http://localhost:8090"
+    session_id = "canvas-seed-" + uuid.uuid4().hex[:8]
+    frontend_id = "cortex-ui-desktop"
+    bound_desc = ", ".join(f"{k}={v}" for k, v in bindings.items())
+
+    results: list = []
+    artifact_ids: list = [None] * len(template.panels)
+
+    for i, panel in enumerate(template.panels):
+        artifact_id = (
+            "urn:li:answerArtifact:" + session_id + "-seed" + str(i) + "-" + uuid.uuid4().hex[:8]
+        )
+        started = time.time()
+        payload = {
+            "message": f"Seed panel {i} of {template.template_id}: {panel.verb} for {bound_desc}",
+            "session_id": session_id + "-seed" + str(i),
+            "frontend_id": frontend_id,
+            "artifact_id": artifact_id,
+            "active_persona": request.active_persona,
+            "active_domains": request.active_domains,
+            "seed_panel": {"template_id": template.template_id, "panel": i, "bindings": bindings},
+        }
+        status = "failed"
+        detail = None
+        failure: dict | None = None
+        try:
+            # SEQUENTIAL BY CONSTRUCTION, same reason as `seed_portfolio_canvas`: gathering
+            # these would be one line and would deadlock the run queue.
+            async with httpx.AsyncClient(timeout=900.0) as client:
+                async with client.stream(
+                    "POST",
+                    base + "/interview/stream",
+                    json=payload,
+                    headers={"Authorization": auth} if auth else {},
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = "HTTP " + str(resp.status_code)
+                    else:
+                        saw_final = False
+                        saw_error = False
+                        _awaiting_error_data = False
+                        async for line in resp.aiter_lines():
+                            if line.startswith("event: final_payload"):
+                                saw_final = True
+                            elif line.startswith("event: pipeline_error"):
+                                saw_error = True
+                                _awaiting_error_data = True
+                            elif _awaiting_error_data and line.startswith("data:"):
+                                _awaiting_error_data = False
+                                if failure is None:
+                                    failure = _seed_failure_from_data(line[5:])
+                        status = "ok" if (saw_final and not saw_error) else "failed"
+                        detail = None if status == "ok" else "pipeline_error"
+                        if status != "ok" and failure is None:
+                            failure = _seed_failure_from_data(None)
+        except Exception as exc:  # noqa: BLE001 - one bad panel must not lose the rest
+            detail = (type(exc).__name__ + ": " + str(exc))[:160]
+
+        if status == "ok":
+            artifact_ids[i] = artifact_id
+        results.append({
+            "slot": i,
+            "verb": panel.verb,
+            "artifact_id": artifact_id if status == "ok" else None,
+            "status": status,
+            "detail": detail,
+            "failure": failure,
+            "elapsed_s": round(time.time() - started, 1),
+        })
+        logger.info(
+            "seed_template_canvas: template=%s panel=%s verb=%s status=%s %.1fs",
+            template.template_id, i, panel.verb, status, time.time() - started,
+        )
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "session_id": session_id,
+        "artifact_ids": artifact_ids,
+        "ordered_artifact_ids": [a for a in artifact_ids if a],
+        "seeded": ok,
+        "total": len(template.panels),
+        "results": results,
+    }
+
+
 class CanvasSeedRequest(_BaseModel):
     """A canvas TYPE or a ratified `template_id`, and nothing else.
 
@@ -2365,9 +2720,21 @@ class CanvasSeedRequest(_BaseModel):
     `requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds
     the new field would break the live client for a rename, so both are accepted and the
     resolution below is explicit rather than a silent precedence.
+
+    `bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,
+    which is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by
+    `name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`
+    exists to resolve on the dispatch side.
+
+    `active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`
+    lets the stream fall back to the caller's own default cell exactly as a hand-typed turn
+    would, rather than this route inventing a cell on the caller's behalf.
     """
     canvas_type: str = "portfolio_planning"
     template_id: Optional[str] = None
+    bindings: Optional[dict[str, str]] = None
+    active_persona: Optional[str] = None
+    active_domains: Optional[list[str]] = None
 
 
 @app.post("/canvas/seed")
@@ -2454,51 +2821,39 @@ async def canvas_seed(
     # A SharedSlot's answer "binds into every panel that CONSUMES it". So a declared slot no
     # panel consumes cannot refuse anything, and must not gate anything. The population the
     # seeder demands values for is the CONSUMED set, never the declared set.
-    _declared = {s.name for s in _template.shared_slots}
-    _consumed = {c for p in _template.panels for c in p.consumes}
-
-    # TWO DIFFERENT FAULTS, KEPT APART. A panel consuming a slot the template never declared is
-    # a broken TEMPLATE and no amount of binding fixes it; a declared-and-consumed slot with
-    # nothing to bind it is the ADR-0050 §3 carry. Collapsing them into one 409 told a reader
-    # to wait for a carry that would never satisfy a typo.
-    _undeclared = sorted(_consumed - _declared)
-    if _undeclared:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
-                f"{_undeclared} that the template does not declare. This is a fault in the "
-                f"template, not a missing binding — declaring them is the fix."
-            ),
-        )
-
-    _unbound = sorted(_consumed)
-    if _unbound:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"template {_template.template_id!r} has panel(s) consuming shared slot(s) "
-                f"{_unbound} that nothing binds yet, so those panels would refuse. This is "
-                f"the ADR-0050 §3 carry, not a fault in the template or the request."
-            ),
-        )
-    if _template.template_id != "portfolio":
-        # HONEST BOUND, NOT A SILENT ONE. Seeding still runs the portfolio PHRASE list; the
-        # per-panel pre-resolved dispatch that would make any template seedable is the next
-        # increment and is deliberately not implied by this registration.
-        raise HTTPException(
-            status_code=501,
-            detail=(
-                f"template {_template.template_id!r} is ratified and not yet seedable: the "
-                f"seeder still runs a phrase list rather than the template's declared verbs. "
-                f"Only 'portfolio' seeds today."
-            ),
-        )
-
-    inner = SeedPortfolioCanvasRequest(
-        session_id="canvas-seed-" + uuid.uuid4().hex[:8],
+    # THE THREE R-005 OUTCOMES, ONE FUNCTION — item 3 factored this block out into
+    # `canvas_template.validate_bindings` so packageExport's own gates (below, `/export/package`)
+    # read the SAME checks rather than a second copy that could drift from this one. Messages
+    # and status codes are unchanged; only where they are computed moved.
+    from .canvas_template import (
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, validate_bindings,
     )
-    result = await seed_portfolio_canvas(inner, http_request, current_user)
+
+    try:
+        _bindings = validate_bindings(_template, request.bindings or {})
+    except UndeclaredConsumption as _terr:
+        raise HTTPException(status_code=422, detail=str(_terr))
+    except UnknownBinding as _terr:
+        raise HTTPException(status_code=422, detail=str(_terr))
+    except UnboundRequiredSlot as _terr:
+        raise HTTPException(status_code=409, detail=str(_terr))
+
+    if _template.template_id == "portfolio":
+        inner = SeedPortfolioCanvasRequest(
+            session_id="canvas-seed-" + uuid.uuid4().hex[:8],
+        )
+        result = await seed_portfolio_canvas(inner, http_request, current_user)
+    else:
+        # EVERY RATIFIED TEMPLATE BUT `portfolio` SEEDS THROUGH ITS OWN DECLARED VERBS now that
+        # every shared slot it consumes is bound (checked above). `portfolio` keeps calling
+        # `seed_portfolio_canvas` UNCHANGED — that seeder's RULING_A seal
+        # (tests/planning/test_seed_portfolio_canvas.py) requires its body to go through the
+        # interview-stream path and never call an engine's measure endpoint directly, and
+        # folding it into the new per-panel path would be touching a function that seal is
+        # sealing.
+        result = await seed_template_canvas(
+            _template, _bindings, request, http_request, current_user
+        )
 
     seeded, total = result.get("seeded"), result.get("total")
 
@@ -2552,27 +2907,46 @@ async def canvas_seed(
         # From the inner route's own per-slot record — `results` is not a local here, and
         # reaching for it as one is how this refusal would 500 on the path it exists to
         # report. Each entry carries `status` and a `detail` like "HTTP 403".
-        _codes = {
-            str(r.get("detail") or "")
-            for r in (result.get("results") or [])
-            if r.get("status") != "ok"
-        }
-        _all_403 = bool(_codes) and all("403" in c for c in _codes)
+        _failed = [r for r in (result.get("results") or []) if r.get("status") != "ok"]
+        _codes = {str(r.get("detail") or "") for r in _failed}
+        _causes = sorted({
+            (r["failure"].get("cause") or "unrecorded")
+            for r in _failed if r.get("failure") is not None
+        })
+
+        def _entitlement_shaped(r: dict) -> bool:
+            f = r.get("failure")
+            if f is not None:
+                return (f.get("cause") or "unrecorded") in _SEED_ENTITLEMENT_CAUSES
+            return "403" in str(r.get("detail") or "")
+
+        _all_entitlement = bool(_failed) and all(_entitlement_shaped(r) for r in _failed)
         logger.warning(
-            "canvas_seed: NOTHING seeded (0/%s) — refusing with %s. Upstream: %s",
-            total, 403 if _all_403 else 502, sorted(_codes)[:5],
+            "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
+            total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
         )
+        if _all_entitlement:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "cell_cannot_see_verbs",
+                    "message": (
+                        f"seeded 0 of {total} panels; every ask was refused -- the caller is "
+                        "not entitled to the cell these panels' subjects live in, or the "
+                        "caller's cell cannot see the panels' verbs"
+                    ),
+                    "causes": _causes or sorted(_codes)[:5],
+                },
+            )
         raise HTTPException(
-            status_code=403 if _all_403 else 502,
-            detail=(
-                f"seeded 0 of {total} panels; "
-                + (
-                    "every ask was refused (403) — the caller is not entitled to the cell "
-                    "these panels' subjects live in"
-                    if _all_403
-                    else f"upstream failures: {sorted(_codes)[:5]}"
-                )
-            ),
+            status_code=502,
+            detail={
+                "error": "seed_upstream_failed",
+                "message": (
+                    f"seeded 0 of {total} panels; upstream failures: {sorted(_codes)[:5]}"
+                ),
+                "causes": _causes or sorted(_codes)[:5],
+            },
         )
 
     if seeded != total:
@@ -2822,6 +3196,60 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+def _delegate_principals() -> dict[str, frozenset[str]]:
+    """R-089: the asserted delegate -> {principal authz_ids} map, read fresh from
+    DELEGATE_ON_BEHALF_OF (deploy configuration, see helm configmap.yaml) ON EVERY CALL — never
+    cached at import time — so a test can monkeypatch.setenv and so a chart re-render is live
+    without a process restart.
+
+    Unset or blank is `{}` (no delegate may act for anyone). Malformed JSON or the wrong shape
+    is logged and answered as `{}` too: FAILS CLOSED, because an unreadable map must refuse
+    every delegated act rather than guess. This never raises — a parse failure here must not
+    become a 500 for a caller who never asked to delegate."""
+    raw = os.environ.get("DELEGATE_ON_BEHALF_OF")
+    if not raw or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"DELEGATE_ON_BEHALF_OF is a {type(parsed).__name__}, not an object")
+        out: dict[str, frozenset[str]] = {}
+        for k, v in parsed.items():
+            if not isinstance(k, str) or not isinstance(v, list) or not all(isinstance(e, str) for e in v):
+                raise ValueError(f"DELEGATE_ON_BEHALF_OF[{k!r}] is not a list of strings")
+            out[k] = frozenset(v)
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail closed, never raise out of this helper
+        logger.error("DELEGATE_ON_BEHALF_OF unreadable, failing closed (no delegate can act): %s", exc)
+        return {}
+
+
+def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str, Optional[str]]:
+    """R-089: admit (or refuse) an `on_behalf_of` that names someone other than the caller.
+    Returns `(actor, via)`. `actor` is who the authorization questions and the record are
+    about; `via` is who authenticated, carried only so it can be recorded, never asked a
+    question. A blank `on_behalf_of`, or one equal to the caller's own authz_id, is the
+    unchanged non-delegated path: `(caller, None)`.
+
+    A mismatch is admitted only for a caller that is a declared delegate
+    (DELEGATE_ON_BEHALF_OF) and only for a principal declared for THAT delegate; a person
+    sending someone else's id is refused `not_a_delegate`. The assertion is trusted by
+    configuration this pass (R-089); token exchange replaces it."""
+    caller = current_user.authz_id
+    if not on_behalf_of or on_behalf_of == caller:
+        return caller, None
+    delegates = _delegate_principals()
+    if caller not in delegates:
+        raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
+    if on_behalf_of not in delegates[caller]:
+        raise HTTPException(status_code=403, detail={
+            "error": "principal_not_declared_for_delegate",
+            "delegate": caller,
+            "on_behalf_of": on_behalf_of,
+        })
+    return on_behalf_of, caller
+
+
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
@@ -2867,16 +3295,26 @@ async def act_on_human_task(
     foundation validates the gate + resolution bookkeeping."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
+
+    # R-089: `on_behalf_of` is ASSERTED, not verified, this pass — the ruling's own words. This
+    # runs FIRST, before any lookup, so a refused delegation never leaks whether the task_id
+    # exists, who its audience is, or anything else. `actor` is who the gate (`check_can_act`,
+    # the lookups, the resolution, the resume) is about; `via` is who authenticated, carried
+    # only so it can be recorded, never asked `can_act`. An `on_behalf_of` equal to the caller's
+    # own authz_id is the unchanged, non-delegated path.
+    actor, via = _admit_on_behalf_of(current_user, req.on_behalf_of)
+
     # NB the verb is validated PER KIND below, once the task's kind is known — not against a
     # hardcoded pair here. A triage task ("this notice could not be prepared") accepts
     # acknowledge/re-drive and must REFUSE approve/reject, because storing "approved" on an
     # extraction failure writes a decision the task's semantics cannot represent, and
     # ADR-0034's decision records would archive it immutably as promotion evidence.
     # Look up the task's audience (from any of the caller's recipient rows) to
-    # re-check. Keyed on authz_id — same as the replication filter.
+    # re-check. Keyed on authz_id — same as the replication filter. ON THE ACTOR
+    # (the principal, for a delegated act; R-089): the delegate itself holds no audience row.
     try:
         rows = await run_in_threadpool(
-            lambda: human_tasks.list_tasks_for(current_user.authz_id, status="pending")
+            lambda: human_tasks.list_tasks_for(actor, status="pending")
         )
     except human_tasks.HumanTaskConfigError:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
@@ -2892,7 +3330,7 @@ async def act_on_human_task(
         # is scoped to recipient_id = caller, so it can never become an existence
         # oracle for another audience's queue; a non-recipient still gets 404.
         settled = await run_in_threadpool(
-            lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+            lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
         )
         if settled and settled.get("status") != "pending":
             raise HTTPException(status_code=409, detail={
@@ -2906,9 +3344,24 @@ async def act_on_human_task(
             })
         raise HTTPException(status_code=404, detail={"error": "task_not_found"})
     audience = match["audience"]
-    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
+    # can_act is asked about the ACTOR (the principal for a delegated act; R-089) — NEVER about
+    # the delegate. A delegate speaks only as far as the principal it names is itself entitled.
+    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+
+    if via is not None:
+        # R-089: a delegated act is supported ONLY for a workflow-backed resume whose kind is
+        # neither document_promotion nor grouped_review — AFTER the authz check above, BEFORE
+        # any write below. Those two branches build stores (document_promotion: the decision
+        # record/ledger/graph/objects via `_promotion_stores`) or grants (grouped_review: the
+        # GroupedReview.submit_decision call) AS THE PERSON, and are out of scope for this pass.
+        # access_request too: its fulfilment below writes a reader grant whose `granted_by` is
+        # the authenticated caller, so a delegated act would grant in the DELEGATE's name.
+        if not match.get("workflow_id") or match.get("kind") in (
+                "document_promotion", "grouped_review", "access_request"):
+            raise HTTPException(status_code=409, detail={
+                "error": "delegated_act_unsupported", "kind": match.get("kind")})
 
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
@@ -2976,11 +3429,11 @@ async def act_on_human_task(
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment))
         logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
-                    current_user.authz_id)
+                    actor)
 
         # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
         # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
@@ -3092,7 +3545,7 @@ async def act_on_human_task(
             # deterministic boolean). Same shape as the pre-submit 409 above, so the UI
             # has ONE conflict outcome to handle regardless of which path detected it.
             settled = await run_in_threadpool(
-                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
             ) or {}
             raise HTTPException(status_code=409, detail={
                 "error": "task_already_resolved",
@@ -3116,12 +3569,12 @@ async def act_on_human_task(
         # rows — the request would appear to succeed while the task stayed pending forever.
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment, workflow_id=wf,
             )
         )
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
-                    task_id, wf, current_user.authz_id, sub.get("resolved_count"))
+                    task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
@@ -3193,18 +3646,23 @@ async def act_on_human_task(
                     f"{_RESTATE_INGRESS_URL}/{service}/{_restate_key(match['workflow_id'])}/approve",
                     # `acted_by` is REQUIRED by the handler as of approval-bypass-bpmn-runner:
                     # it re-checks can_act itself rather than trusting that this gate ran.
-                    # Threaded from `current_user.authz_id` — the identity can_act was just
-                    # checked against above — so the handler re-asks the same question about
-                    # the same subject and must reach the same answer. Omitting it here would
-                    # turn the ONE correctly-gated path into the only refused one.
+                    # Threaded from `actor` (R-089: the PRINCIPAL, for a delegated act — the
+                    # identity can_act was just checked against above) — so the handler
+                    # re-asks the same question about the same subject and must reach the
+                    # same answer. Omitting it here would turn the ONE correctly-gated path
+                    # into the only refused one.
                     #
                     # `promise_name` rides the row (set by `_register_human_task` for a
                     # definition-driven step) so the handler resolves the promise THIS run is
                     # actually awaiting rather than guessing `approval_{task_id}` — None for
                     # legacy rows, which is the handler's own documented default.
+                    #
+                    # `acted_via` (R-089) is added ONLY when this act is delegated — a plain
+                    # person's payload stays byte-identical to today's.
                     json={"task_id": task_id, "status": status, "comments": req.comment,
-                          "acted_by": current_user.authz_id,
-                          "promise_name": match.get("promise_name")},
+                          "acted_by": actor,
+                          "promise_name": match.get("promise_name"),
+                          **({"acted_via": via} if via is not None else {})},
                 )
             resumed = rr.status_code == 200
         except Exception as exc:  # noqa: BLE001 — network/timeout; reported below, not swallowed
@@ -3216,7 +3674,7 @@ async def act_on_human_task(
             # so. Check for a teammate's settle first (the same multiplayer race the pre-lookup
             # 409 above already accounts for) before reporting a resume failure.
             settled = await run_in_threadpool(
-                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
             )
             if settled and settled.get("status") != "pending":
                 raise HTTPException(status_code=409, detail={
@@ -3245,19 +3703,21 @@ async def act_on_human_task(
         # `_register_human_task`'s composite task_id now closes at the write end too).
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision,
+                task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment, workflow_id=match["workflow_id"],
             )
         )
     else:
         # NO WORKFLOW_ID -> NO SUSPENDED DEFINITION. Today's direct-resolve behaviour, unchanged.
+        # (A delegated act never reaches here — it is refused above, since the 409 check
+        # requires a workflow_id.)
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+                task_id, caller_id=actor, decision=req.decision, comment=req.comment
             )
         )
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
-                task_id, current_user.authz_id, req.decision, n)
+                task_id, actor, req.decision, n)
 
     # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
     # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
@@ -3412,6 +3872,17 @@ class InterviewRequest(BaseModel):
     # graph by naming one, and a fabricated ancestor is worse than no ancestor: the rail would
     # collapse two cards into one on a lineage nobody produced.
     answering_artifact_id: str | None = None
+    # ADR-0050 §3's carry. `seed_template_canvas` sends exactly this — never a phrase — for one
+    # panel of a ratified template: `{"template_id": str, "panel": int, "bindings": dict}`.
+    # `orchestrate()` validates it (template known, panel in range, panel declares a `subject`,
+    # every consumed shared slot bound) BEFORE the stream opens, and
+    # `_generate_dagster_stream_inner` rebuilds the dispatch route from the TEMPLATE's own
+    # declaration — `panel.verb`, `panel.subject` as `subject_uri`, `panel.slots` merged with the
+    # bound shared slots — never from this request re-parsed. THE TEMPLATE STATES THE SUBJECT;
+    # THE MESH CONFIRMS IT ON EVERY DISPATCH: `dispatch_pre_resolved`'s own
+    # `find_compatible_verbs` call still runs against the live mesh, so a declared `subject` the
+    # mesh no longer agrees with is `FALL_BACK` — a visible failure, never a silent route.
+    seed_panel: dict | None = None
 
 
 class BPMNTask(BaseModel):
@@ -3970,6 +4441,7 @@ def _project_route_decision(mat: dict) -> dict | None:
                 "endpoint_url": handler_endpoint or None,
             },
             "route_status": route_status,
+            "reason_code": md.get("reason_code") or None,
             "fallback": False,
             "acting": acting,
             # The candidates the winner beat — the visualizer shows the
@@ -4025,6 +4497,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             "endpoint_url": None,
         },
         "route_status": route_status,
+        "reason_code": md.get("reason_code") or None,
         "fallback": True,
         "acting": acting,
         "fallback_reason": fallback_reason,
@@ -4087,10 +4560,14 @@ def _project_sources(mat: dict) -> list[dict] | None:
         # validating — UI's TypeScript shape ignores unknown keys.
         # `provenance` added for the provenance floor (ADR-0041 §7, section 5 of the
         # ingest/origin seam): a ProvenanceBlock an engine attaches to a source must survive
-        # projection for provenance_floor() to read it at the SSE emission site below — no
-        # production engine attaches one yet (provenance_floor.py's own docstring), so this
-        # is dormant passthrough until one does, same as matched_for's own history.
-        for extra in ("matched_for", "provenance"):
+        # projection for provenance_floor() to read it at the SSE emission site below.
+        # engine-o's notice_parts.py is the first production engine to attach one (2026-10-08);
+        # every other engine's sources still arrive unstamped.
+        # `obtained_via`, `ingest_id`, `dropped_by`, `promoted_by`: the graph's provenance as a
+        # retrieval path copies it onto each source (engine-o's notice_parts.py is the first);
+        # `promoted_by` is what the floor's promoted set is read from below.
+        for extra in ("matched_for", "provenance", "obtained_via", "ingest_id", "dropped_by",
+                      "promoted_by"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
@@ -4169,8 +4646,8 @@ def _sources_event_payload(mat: dict) -> tuple[list[dict] | None, dict | None]:
     loop so the floor's wiring is directly testable without driving the whole streaming
     generator (which needs a live Dagster run, routing, and more).
 
-    UNFILTERED: an unstamped source (no production path attaches a provenance block yet,
-    per provenance_floor.py's own docstring) is weaker than user-drop and must pull the
+    UNFILTERED: an unstamped source (every engine but engine-o's notice_parts.py still
+    returns one) is weaker than user-drop and must pull the
     floor down, never be skipped — "skipping is the laundering this field exists to
     prevent."
     """
@@ -4183,7 +4660,12 @@ def _sources_event_payload(mat: dict) -> tuple[list[dict] | None, dict | None]:
     # its label-pattern heuristic.
     _enrich_sources_with_has_figures(projected_sources)
     from . import provenance_floor as _provenance_floor_mod
-    floor = _provenance_floor_mod.provenance_floor(projected_sources)
+    # A PROMOTED DROP READS user-drop AND LEAVES `ingest_ids`. The promoted set is read off the
+    # sources' own `promoted_by`, which the retrieval path copied from the graph's PROMOTION fact.
+    floor = _provenance_floor_mod.provenance_floor(
+        projected_sources,
+        promoted=_provenance_floor_mod.promoted_ingest_ids(projected_sources),
+    )
     return projected_sources, floor
 
 
@@ -4517,6 +4999,72 @@ def _pre_resolved_from_ask(artifact_id: str, user_id: str) -> dict:
     }
 
 
+def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
+    """The (subject, verb) ADR-0050 §3's per-panel seed declares, plus the slots to dispatch
+    with — `({}, {})` on anything that cannot be rebuilt.
+
+    THE TEMPLATE STATES THE SUBJECT; THE MESH CONFIRMS IT ON EVERY DISPATCH. `panel.subject` is
+    handed straight through as `subject_uri`, verbatim — no ontology lookup runs here, because
+    none exists (nothing in the fleet maps verb_iri -> input_uri; every path runs subject ->
+    verbs). The declaration is sealed against the producing engine's own VERBS catalogue by
+    `tests/planning/test_program_finance_seeds_six_panels.py`. `dispatch_pre_resolved`'s `find_compatible_verbs` call is what verifies this
+    against the LIVE mesh, same as it would for any other pre-resolved route — a declared
+    `subject` the mesh no longer agrees with comes back `FALL_BACK`, and the caller
+    (`_generate_dagster_stream_inner`) is responsible for turning that into a visible failure
+    for a seed_panel turn rather than letting it fall through to the classified path, because
+    unlike an ordinary pick-answer there is no NL question underneath this one to route instead.
+
+    `orchestrate()` 422s every one of unknown template, out-of-range panel and a no-`subject`
+    panel BEFORE the stream opens (ADR-0050 §3's own validation, mirroring `canvas_seed`'s own
+    gates). This function re-checks the same three defensively rather than trusting the caller
+    validated — a second line, not the first.
+    """
+    from .canvas_template import load_template, panel_dispatch
+
+    template_id = str(seed_panel.get("template_id") or "")
+    panel_idx = seed_panel.get("panel")
+    try:
+        template = load_template(template_id)
+        panel = template.panels[panel_idx]  # type: ignore[index]
+    except (KeyError, ValueError, IndexError, TypeError):
+        return {}, {}
+    if not panel.subject:
+        return {}, {}
+
+    # `bindings` IS KEYED BY THE SHARED SLOT'S `name` — the ask's own identity, exactly as
+    # `/canvas/seed`'s own `bindings` are (see `seed_template_canvas`) — and `bind_as` (never
+    # `name`) is what lands in the dispatch payload, the same split `SharedSlot.bind_as` exists
+    # to resolve on every other path.
+    #
+    # THE DISPATCH ITSELF IS `panel_dispatch` — ITEM 3's rule: seeding and packageExport read
+    # the SAME function for a panel's (verb, subject, params), never two that happen to agree.
+    bindings = dict(seed_panel.get("bindings") or {})
+    verb, subject, params = panel_dispatch(template, panel_idx, bindings)
+
+    by_name = {s.name: s for s in template.shared_slots}
+    subject_instance_id = ""
+    for slot_name in panel.consumes:
+        slot = by_name.get(slot_name)
+        if slot is None:
+            continue
+        value = bindings.get(slot_name)
+        if value in (None, ""):
+            continue
+        # THE FIRST CONSUMED, BOUND SLOT IS THE SUBJECT INSTANCE. Every ratified
+        # program_finance panel consumes exactly one shared slot (`program`), so "first" is not
+        # yet a real choice — but the loop is written to not assume that stays true.
+        if not subject_instance_id:
+            subject_instance_id = str(value)
+
+    return {
+        "subject_uri": subject,
+        "subject_instance_id": subject_instance_id,
+        "subject_instance_label": "",
+        "verb_iri": verb,
+        "owner_persona": "",
+    }, params
+
+
 def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
     """Does this artifact EXIST and belong to this caller? Existence, never routability.
 
@@ -4647,23 +5195,10 @@ def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
 # naming of what was dropped is already built.
 
 
-_ARTIFACT_BY_ID_CYPHER = """
-MATCH (a:AnswerArtifact {id: $artifact_id})
-OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
-OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
-RETURN a.id                    AS id,
-       a.status                AS status,
-       a.summary               AS summary,
-       a.question_text         AS question_text,
-       a.valid_as_of           AS valid_as_of,
-       a.duration_ms           AS duration_ms,
-       a.resolved_intent       AS resolved_intent,
-       a.routing_inline        AS routing_inline,
-       parent.id               AS derived_from,
-       owner IS NOT NULL       AS is_owner,
-       a.origin_owner_domain   AS origin_owner_domain,
-       a.origin_program        AS origin_program
-"""
+# The statement lives beside the MeshArtifacts implementation that reads it; it now also returns
+# `seeded_by` (ADR-0041 §8.1). `_resolve_export_answers` still reads it owner-only: an export is a
+# disclosure act, and ADR-0047 §5.1's seeding-delegate rule is a READ rule, not an export one.
+from .artifact_reads import ARTIFACT_BY_ID_CYPHER as _ARTIFACT_BY_ID_CYPHER  # noqa: E402
 
 # ── Origin entitlement (architect ruling, 2026-10-02) ──────────────────────────────
 #
@@ -4806,11 +5341,23 @@ async def get_artifact(
     if not _uid:
         # Honest-absent identity denies rather than reading broadly.
         raise HTTPException(status_code=403, detail="no caller identity on this request")
+    # ADR-0041 §8.1: a delegate reads what its workflows produced; ADR-0047 §5.1 as amended:
+    # a svc: delegate is a recipient only as the seeding delegate. The gate is
+    # GatewayArtifacts.get (the MeshArtifacts Protocol, iagent-mesh 0.9.9): owner OR seeding
+    # delegate answers; anything else is `empty`, indistinguishable from an absent id. R-089: the
+    # delegate map is asserted by configuration this pass.
+    from starlette.concurrency import run_in_threadpool
+    from .artifact_reads import ANSWER_ARTIFACT_KIND, GatewayArtifacts
+    from iagent_mesh import Initiator
+
+    _artifacts = GatewayArtifacts(neo4j_driver, _delegate_principals)
     try:
-        with neo4j_driver.session() as session:
-            rec = session.run(
-                _ARTIFACT_BY_ID_CYPHER, artifact_id=artifact_id, user_id=_uid
-            ).single()
+        _result = await run_in_threadpool(
+            lambda: _artifacts.get(
+                Initiator(subject=_uid, kind="person"), kind=ANSWER_ARTIFACT_KIND,
+                id=artifact_id, authz_id=current_user.authz_id,
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("artifact read failed for %s: %s", artifact_id, exc)
         raise HTTPException(status_code=503, detail="artifact store unavailable")
@@ -4829,7 +5376,9 @@ async def get_artifact(
     # discriminator goes to the LOG, where it is useful to an operator and reaches nobody
     # else. That asymmetry is the whole point: the distinction is valuable to us and
     # dangerous to them.
-    if not rec or not rec.get("is_owner"):
+    if _result.outcome == "answered":
+        rec = _result.rows[0]
+    else:
         # ── ORIGIN ENTITLEMENT (architect ruling, 2026-10-02: "ORIGIN, not audience") ──
         #
         # A non-owner may still read this artifact if it carries a RECORDED origin
@@ -4839,6 +5388,13 @@ async def get_artifact(
         # caller` returns False without a Topaz call, and the dropper/owner-only 404
         # below is exactly today's behaviour. Raises straight through (503) if Topaz
         # cannot answer — that is reported, never swallowed into this 404.
+        # `empty` hides absent-vs-refused from the caller of `get`; this route's own origin
+        # branch (not part of the Protocol) re-reads the row to ask the origin question.
+        try:
+            rec = await run_in_threadpool(lambda: _artifacts.read_row(artifact_id, _uid))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("artifact read failed for %s: %s", artifact_id, exc)
+            raise HTTPException(status_code=503, detail="artifact store unavailable")
         _origin_ok = False
         if rec is not None:
             _origin_ok = await _origin_visible_to_caller(rec, current_user)
@@ -5619,11 +6175,41 @@ async def _generate_dagster_stream_inner(
     # leak into the second, so `_answers_something` is named again here rather than inherited
     # through `_answering_artifact_id` — the two gates now differ, and relying on the id alone
     # would silently re-join them the day anyone widened the lineage arm again.
-    _pre_resolved = (
-        _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
-        if pre_resolved_route_allowed(answers_something=_answers_something)
-        else {}
-    )
+    # ── ADR-0050 §3's SEED_PANEL ROUTE — THE TEMPLATE STATES THE SUBJECT; THE MESH CONFIRMS
+    # IT ON EVERY DISPATCH. A seed_panel turn never names an ask (there is no card to answer —
+    # it is the FIRST dispatch of this panel), so it is mutually exclusive with the ask-derived
+    # route below BY CONSTRUCTION: `request.seed_panel` and `_answering_artifact_id` are never
+    # both meaningful on the same turn, and this branches on both rather than trusting that.
+    _is_seed_panel_turn = bool(request.seed_panel) and not _answering_artifact_id
+    _seed_panel_bound_slots: dict = {}
+    if _is_seed_panel_turn:
+        _pre_resolved, _seed_panel_bound_slots = _pre_resolved_from_seed_panel(
+            request.seed_panel  # type: ignore[arg-type]
+        )
+    else:
+        _pre_resolved = (
+            _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
+            if pre_resolved_route_allowed(answers_something=_answers_something)
+            else {}
+        )
+
+    # A SEED_PANEL TURN HAS NO QUESTION UNDERNEATH IT TO FALL BACK TO. Every other route to
+    # `{}` here means "route the ordinary way, merely slower" — correct, because an ordinary
+    # NL question or an ask's pick both have a classified path that still answers them. A
+    # seed_panel turn has no phrase to classify (`seed_template_canvas` never built one; see
+    # its own docstring) — `orchestrate()` already 422s an unroutable seed_panel before the
+    # stream opens, so reaching `{}` here means that validation and this rebuild disagree, and
+    # the honest answer is a visible failure, never a silent slide into `/route_intent` on a
+    # message that was only ever a label for logs.
+    if _is_seed_panel_turn and not _pre_resolved:
+        yield _perror(
+            "this template's panel declares no subject, so it cannot be dispatched directly",
+            kind="understanding",
+            retryable=False,
+            cause="seed_panel_unroutable",
+        )
+        yield _sse("stream_end", "{}")
+        return
     if _pre_resolved:
         logger.info(
             "pre-resolved route for run %s from ask %s: subject=%s verb=%s "
@@ -5957,7 +6543,15 @@ async def _generate_dagster_stream_inner(
                 functools.partial(
                     dispatch_pre_resolved,
                     pre_resolved=_pre_resolved,
-                    bound_slots=request.bound_slots or {},
+                    # SEED_PANEL'S SLOTS ARE THE TEMPLATE'S, NEVER THE REQUEST'S OWN
+                    # `bound_slots` — a seed_panel turn carries no pick-menu answer, it carries
+                    # the panel's declared `slots` merged with the bound shared slots
+                    # (`_pre_resolved_from_seed_panel`'s `params`), under the verb's own
+                    # parameter names (`bind_as`).
+                    bound_slots=(
+                        _seed_panel_bound_slots if _is_seed_panel_turn
+                        else (request.bound_slots or {})
+                    ),
                     # Read from the graph under the caller's ownership edge, never from the
                     # request body — the same rule as `pre_resolved`, because it is the same
                     # kind of fact: something an earlier ask established in THIS caller's
@@ -5970,6 +6564,7 @@ async def _generate_dagster_stream_inner(
                     acting_persona=user_persona,
                     ontology_url=_DAGSONTOLOGY_SVC_URL,
                     accept_slots=accept_slots,
+                    on_behalf_of=user_email or "",
                     # THE CALLER'S OWN TOKEN, not a minted service identity. On the run path
                     # this is what the identity vault exists to carry INTO Dagster; here the
                     # browser's credential is already in hand, so the engine sees the same
@@ -6041,6 +6636,31 @@ async def _generate_dagster_stream_inner(
             _detail = {"outcome": _direct.kind, "reason": _direct.reason}
             yield _stage(direct_dispatch.STAGE_FELL_BACK, "started", detail=_detail)
             yield _stage(direct_dispatch.STAGE_FELL_BACK, "completed", detail=_detail)
+            if _is_seed_panel_turn:
+                # A SEED_PANEL TURN HAS NO PHRASE UNDERNEATH IT TO FALL BACK TO. Every other
+                # fall-back correctly re-routes through the classified path because an ordinary
+                # question or an ask's pick both have a real phrase to classify; this one's
+                # `message` is only ever a label for logs (`seed_template_canvas`'s own
+                # docstring), so "route the full path" would dispatch whatever `/route_intent`
+                # makes of that label — a DIFFERENT question than the panel named, answered
+                # silently in place of the one the caller actually asked for. THE TEMPLATE
+                # STATED THE SUBJECT; THE MESH JUST DISAGREED (`_detail["reason"]`) — that
+                # disagreement must reach the caller as a visible failure, never get laundered
+                # through the classifier guessing at a label.
+                _artifact_bundle["status"] = "failed"
+                yield _perror(
+                    f"seed_panel's declared route is no longer valid: {_detail['reason']}",
+                    kind="verifying_route",
+                    retryable=True,
+                    cause=(
+                        "seed_panel_verb_not_visible"
+                        if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                        else "seed_panel_fell_back"
+                    ),
+                )
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
             _direct = None
 
     if _direct is not None:
@@ -7525,6 +8145,101 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         current_user.entitlement_source,
     )
 
+    # ── ADR-0050 §3's SEED_PANEL — VALIDATED BEFORE THE STREAM OPENS, NEVER MID-STREAM ────
+    #
+    # `seed_template_canvas` is the only caller today, but this gate is the contract for
+    # `seed_panel` itself, not for that one caller — any client naming a template/panel pair
+    # gets the same refusals. Mirrors `canvas_seed`'s own gates (same two faults, same status
+    # codes) because they are the same faults: an unknown id or an out-of-range index is a
+    # caller mistake (422), a consumed shared slot with nothing binding it is a request the
+    # panel cannot answer yet (422, named), and — new here — a panel with no declared
+    # `subject` cannot be dispatched directly AT ALL, because `_pre_resolved_from_seed_panel`
+    # has nothing to hand `dispatch_pre_resolved` as `subject_uri`. All of this runs BEFORE
+    # the stream opens so the caller gets one clean HTTP status rather than a pipeline_error
+    # buried inside an SSE body it already started reading.
+    if request.seed_panel is not None:
+        from .canvas_template import load_template, ratified_template_ids
+
+        # A SEED IS NOT AN ANSWER. The stream honours `seed_panel` only when no ask is being
+        # answered, so a turn carrying both would silently drop the seed and route the
+        # ordinary way — a seeded panel answering a different question. Refused here, by name.
+        if request.answering_artifact_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "seed_panel and answering_artifact_id cannot be sent together: a seeded "
+                    "panel answers no ask. Send one or the other."
+                ),
+            )
+
+        _sp = request.seed_panel
+        _sp_template_id = str(_sp.get("template_id") or "")
+        try:
+            _sp_template = load_template(_sp_template_id)
+        except (KeyError, ValueError) as _sp_terr:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"seed_panel names template_id {_sp_template_id!r}, which is not a "
+                    f"ratified template (ratified: {ratified_template_ids()}) — {_sp_terr}"
+                ),
+            )
+
+        _sp_panel_idx = _sp.get("panel")
+        if not isinstance(_sp_panel_idx, int) or not (
+            0 <= _sp_panel_idx < len(_sp_template.panels)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"seed_panel names panel {_sp_panel_idx!r}, out of range for template "
+                    f"{_sp_template_id!r} (has {len(_sp_template.panels)} panel(s))."
+                ),
+            )
+        _sp_panel = _sp_template.panels[_sp_panel_idx]
+
+        # A PANEL WITH NO DECLARED `subject` CANNOT BE DISPATCHED DIRECTLY. `portfolio`'s
+        # panels are the ratified example (ADR-0050 §3's carry has not landed there) — naming
+        # one here is a caller mistake, not the ADR-0050 §3 carry gap (that is the 409 below).
+        if not _sp_panel.subject:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "this template's panel declares no subject, so it cannot be dispatched "
+                    "directly"
+                ),
+            )
+
+        _sp_declared = {s.name for s in _sp_template.shared_slots}
+        _sp_bindings = {
+            k: v for k, v in (_sp.get("bindings") or {}).items() if v not in (None, "")
+        }
+
+        # A BINDING NAMING A SLOT THE TEMPLATE NEVER DECLARED — the same typo-shaped fault
+        # `canvas_seed` names on the request side.
+        _sp_unknown = sorted(set(_sp_bindings) - _sp_declared)
+        if _sp_unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"template {_sp_template_id!r} does not declare shared slot(s) "
+                    f"{_sp_unknown} named in seed_panel's `bindings`."
+                ),
+            )
+
+        # A CONSUMED SLOT WITH NOTHING BINDING IT — this panel, specifically, not the whole
+        # template: a caller asking for panel 0 must not be refused over panel 5's slot.
+        _sp_unbound = sorted(set(_sp_panel.consumes) - set(_sp_bindings))
+        if _sp_unbound:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
+                    f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
+                    f"`bindings`."
+                ),
+            )
+
     return StreamingResponse(
         _keepalive_wrap(
             generate_dagster_stream(
@@ -8364,7 +9079,7 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
     (`object_ref`, `content_kind`, `domain_type`, `provenance`, `initiator`) with
     `metadata.content_kind` present ONLY when the caller declared a registered content kind
     (ADR-0021's precedence rule 1 / ADR-0041 §4) — never the route's own `kind` (file FORMAT,
-    pdf|cad), which rides separately as `media_kind`. Writing the file format into
+    pdf|cad|xml), which rides separately as `media_kind`. Writing the file format into
     `metadata.content_kind` was the prior defect: every user drop would HALT downstream as
     ContentKindUnregistered("pdf"). The provenance block rides BESIDE the bytes rather than
     embedded inside them — same "six fields ride beside" shape this repo already uses
@@ -8413,7 +9128,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
                       ingested_at=ingested_at, dropped_by_authz_id=dropped_by_authz_id)
 
 
-async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str) -> bool:
+async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
+                     provenance_block: dict, seeded_by: Optional[str] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -8423,12 +9139,17 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str)
     status row) already happened by the time this runs, so a Restate outage here is logged
     (WARNING, naming `ingest_id`) and swallowed, never raised -- an otherwise-successful upload
     must not 500 because the case runner is unreachable. Returns True iff the POST succeeded.
+
+    `provenance_block` IS REVISION 1'S PROVENANCE (SDK `ArtifactRevision.provenance`): the case
+    runner opens the event's revision chain on it, and refuses a trigger with an episode -- one
+    whose event can be revised -- that arrives without one.
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
-                json={"trigger": trigger, "facts": facts},
+                json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
+                      "seeded_by": seeded_by},
             )
         resp.raise_for_status()
         return True
@@ -8438,6 +9159,112 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str)
             ingest_id, case_id, trigger, type(exc).__name__, exc,
         )
         return False
+
+
+def _restate_answer(resp: httpx.Response) -> Optional[dict]:
+    """Measured live: Restate serialises a handler's `None` return as an empty 200 body
+    (``b""``), not JSON `null` -- httpx's `.json()` raises `JSONDecodeError` on that empty
+    body, so treat an empty body as the handler's `None` before parsing."""
+    if not resp.content:
+        return None
+    return resp.json()
+
+
+async def _fetch_case(case_id: str) -> Optional[dict]:
+    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/case` -- the shared ``case``
+    handler (workflow_runner.py), synchronous (no `/send`), same calling idiom as
+    `GroupedReview/.../get_batch` (~line 1256). Raises on an unreachable runner (the route
+    turns that into 503); returns ``None`` for "no such case" -- measured live, that normally
+    arrives as an empty 200 (not a 404; the 404 branch below is kept for defensiveness)."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return _restate_answer(resp)
+
+
+async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
+    """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/instance_spec` with `{"n": 1}` --
+    called on the CASE's own key (workflow_runner._run_instance calls it the same way: `await
+    ctx.workflow_call(instance_spec, key=case_id, arg={"n": n})`). ``None`` iff instance 1 has
+    never been opened (``ctx.get`` returns falsy) -- measured live, that normally arrives as an
+    empty 200 (not a 404; the 404 branch below is kept for defensiveness)."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/instance_spec",
+            json={"n": 1},
+        )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return _restate_answer(resp)
+
+
+@app.get("/cases/{case_id}")
+async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
+    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
+
+    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
+    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
+    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
+    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
+
+    The pure projection and the entitlement gate live in `case_projection`; this route only
+    fetches runner/DB state and calls them.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
+        WorkflowDefinitionError, get_workflow_definition,
+    )
+
+    from . import case_projection, human_tasks
+
+    try:
+        case = await _fetch_case(case_id)
+    except Exception as exc:  # noqa: BLE001 — connect errors, timeouts, 5xx via raise_for_status
+        raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+    if not case:
+        raise HTTPException(status_code=404, detail="case not found")
+
+    instance1_spec = None
+    if case.get("instances"):
+        try:
+            instance1_spec = await _fetch_instance1_spec(case_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+
+    definition_ids = sorted({inst.get("definition_id") for inst in (case.get("instances") or [])
+                             if inst.get("definition_id")})
+    definitions: dict = {}
+    try:
+        for wf_id in definition_ids:
+            definitions[wf_id] = await run_in_threadpool(get_workflow_definition, wf_id)
+    except WorkflowDefinitionError as exc:
+        # A definition the case already chose is not shipped in THIS runtime -- a deploy fault,
+        # not an authz question or a missing case. Same 503 family as the runner itself: the
+        # caller cannot distinguish "the runner is down" from "the runner's definitions aren't"
+        # and must not be told their case doesn't exist over a config gap.
+        raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+
+    caller_domains = [c.domain for c in current_user.entitlements.cells]
+    if not case_projection.can_view_case(
+        case, instance1_spec, definitions,
+        caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
+    ):
+        raise HTTPException(status_code=404, detail="case not found")
+
+    instance_ids = [inst.get("instance_id") for inst in (case.get("instances") or [])
+                    if inst.get("instance_id")]
+    try:
+        task_rows = await run_in_threadpool(human_tasks.list_tasks_for_workflows, instance_ids)
+    except human_tasks.HumanTaskConfigError:
+        task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
+                        # the case itself is readable without it.
+
+    return case_projection.project_workflow_case(case, definitions, task_rows)
 
 
 @app.post("/ingest")
@@ -8461,7 +9288,7 @@ async def ingest_document(
     that is a classifier-time concern, downstream of this seam, and is NOT implemented
     here.
 
-    FORMAT IS NOT KIND. `kind` (pdf|cad) is the FILE FORMAT — the `ingress-user/{kind}/`
+    FORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`
     path segment and the projection's `kind` column — never a registered content kind.
     `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
     kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
@@ -8479,16 +9306,15 @@ async def ingest_document(
 
     from . import content_kinds, ingest_status, origin_resolver, promotion, provenance
 
-    if kind not in ingest_status.KINDS:
+    if kind not in ingest_status.FILE_KINDS:
         raise HTTPException(
             status_code=400,
-            detail=f"kind must be one of {ingest_status.KINDS}, got {kind!r}",
+            detail=f"kind must be one of {ingest_status.FILE_KINDS}, got {kind!r}",
         )
-    if on_behalf_of != current_user.authz_id:
-        raise HTTPException(
-            status_code=403,
-            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
-        )
+    # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
+    # exchange replaces it. `actor` is the dropper of record; `via` is the authenticated delegate
+    # (None for a person), already recorded as the status row's `submitted_by`.
+    actor, via = _admit_on_behalf_of(current_user, on_behalf_of)
     declared_content_kind = content_kind
     if declared_content_kind is not None:
         declared_content_kind = declared_content_kind.strip()
@@ -8557,7 +9383,7 @@ async def ingest_document(
                 kind=kind,
                 object_prefix=existing["object_prefix"],
                 submitted_by=current_user.authz_id,
-                on_behalf_of=on_behalf_of,
+                on_behalf_of=actor,
                 source=file.filename,
                 original=existing,
                 content_kind=declared_content_kind,
@@ -8600,11 +9426,16 @@ async def ingest_document(
         "object_ref": object_prefix + safe_name,
         "content_kind": declared_content_kind,
         "domain_type": _registered_kind.domain if _registered_kind is not None else None,
-        "dropped_by": {"authz_id": current_user.authz_id},
+        "dropped_by": {"authz_id": actor, **({"via": via} if via else {})},
         "provenance": provenance_block,
-        # kind="person" is correct: the route above refuses any on_behalf_of other than the
-        # caller's own authz_id, so this is never a delegate or service identity.
-        "initiator": {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None},
+        # kind="person" for a person's own drop. A declared delegate's drop is the delegate
+        # acting for a declared principal: subject is the authenticated delegate, on_behalf_of
+        # the principal (R-089, asserted by configuration).
+        "initiator": (
+            {"subject": current_user.authz_id, "kind": "person", "on_behalf_of": None}
+            if via is None else
+            {"subject": via, "kind": "delegate", "on_behalf_of": actor}
+        ),
         "media_kind": kind,
         "sha256": sha256,
         "filename": file.filename,
@@ -8626,7 +9457,7 @@ async def ingest_document(
     row = await run_in_threadpool(
         lambda: ingest_status.record_received(
             ingest_id=ingest_id, sha256=sha256, kind=kind, object_prefix=object_prefix,
-            submitted_by=current_user.authz_id, on_behalf_of=on_behalf_of,
+            submitted_by=current_user.authz_id, on_behalf_of=actor,
             source=file.filename, content_kind=declared_content_kind,
         )
     )
@@ -8640,8 +9471,8 @@ async def ingest_document(
             lambda: _create_ingest_node(
                 ingest_id=ingest_id, kind=kind, sha256=sha256,
                 object_ref=manifest["object_ref"], ingested_at=ingested_at,
-                subject=current_user.authz_id,
-                dropped_by_authz_id=current_user.authz_id,
+                subject=actor,
+                dropped_by_authz_id=actor,
             )
         )
     except Exception as exc:  # noqa: BLE001 — logged, never fails an otherwise-durable upload
@@ -8667,7 +9498,7 @@ async def ingest_document(
         )
         await _open_case(
             case_id=origin_suggestion["suggestion_id"], trigger="origin_suggestion",
-            facts=origin_suggestion, ingest_id=ingest_id,
+            facts=origin_suggestion, ingest_id=ingest_id, provenance_block=provenance_block,
         )
     return {
         "ingest_id": row["id"], "stage": row["status"], "detail": None,
@@ -8736,13 +9567,16 @@ async def ingest_event(
     holds the case under (the trigger's key, i.e. the producer's own identity field), and the
     door only answers 200 once the runner's own intake check has accepted the payload.
     """
-    from . import content_kinds
+    from . import content_kinds, provenance
 
-    if on_behalf_of_mismatch := (req.on_behalf_of != current_user.authz_id):
-        raise HTTPException(
-            status_code=403,
-            detail="on_behalf_of must match the authenticated caller (no delegation in v1)",
-        )
+    # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
+    # exchange replaces it. `actor` is the dropper of record; `via` the authenticated delegate.
+    actor, via = _admit_on_behalf_of(current_user, req.on_behalf_of)
+    # `seeded_by` (ADR-0041 §8.1): the authenticated caller, ONLY when it is a declared delegate
+    # (R-089); a person seeds nothing as a delegate, so None. The runner stamps it at `released`.
+    seeded_by: Optional[str] = (
+        current_user.authz_id if current_user.authz_id in _delegate_principals() else None
+    )
     _registered_kind = content_kinds.by_kind(req.content_kind)
     if _registered_kind is None or _registered_kind.branch != "event":
         raise HTTPException(
@@ -8792,7 +9626,7 @@ async def ingest_event(
         "ingest_id": ingest_id,
         "content_kind": req.content_kind,
         "domain_type": _registered_kind.domain,
-        "dropped_by": {"authz_id": current_user.authz_id},
+        "dropped_by": {"authz_id": actor, **({"via": via} if via else {})},
     }
     missing = [path for path in trigger.requires if not _dotted_present(facts, path)]
     if missing:
@@ -8825,7 +9659,10 @@ async def ingest_event(
     case_id = str(identity_value)
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
-    # answered 200 must not be refused 123 ms later where the producer cannot see it.
+    # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
+    # BOTH a first arrival and a repeat below -- `check_intake` is a pure facts/schema check with
+    # no notion of "does a case already exist", so a repeat's facts pass through it unchanged
+    # (the runner's `revise` handler runs the same check itself, via `check_revision`).
     try:
         check_intake(trigger, flatten(facts), case_id, facts=facts)
     except CaseRoutingError as exc:
@@ -8833,10 +9670,126 @@ async def ingest_event(
             status_code=422,
             detail={"error": "payload_refused_by_trigger", "message": str(exc)},
         )
-    started = await _open_case(
-        case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
+
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    sha256_hex = hashlib.sha256(
+        json.dumps(req.payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    # THIS ARRIVAL'S PROVENANCE -- revision 1's on a first arrival, the revision's own on a
+    # repeat (keep_revision refuses a revision without one) -- built at this door like the drop door builds a drop's: who owns
+    # the truth is not confirmed at intake, the truth-date is not in the contract, and the
+    # standing is born-supervised. It differs in HOW: the producer posted the event to this
+    # route itself, so it is `direct`, not a hand-carried `user-drop` (ruled 2026-10-06).
+    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    provenance_block = provenance.make_provenance(
+        authoritative_source=_AUTHORITATIVE_SOURCE_UNCONFIRMED,
+        obtained_via=provenance.DIRECT,
+        as_of=provenance.AS_OF_UNKNOWN,
+        ingested_at=ingested_at,
+        ingest_run=f"event:{ingest_id}",
+        standing="supervised",
         ingest_id=ingest_id,
     )
+
+    # REPEAT DETECTION (section B, roll #20 item 4): ask the RUNNER, not only our own status
+    # table -- the first live event on OpenDDIL opened its case before this status seam existed,
+    # so a row-only check would call that case "new" and crash straight into the runner's own
+    # key-reuse refusal. `case` is a shared, no-input handler (workflow_runner.py) that answers
+    # the case record or null; a non-null answer is a repeat.
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            case_resp = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/case",
+            )
+    except Exception as exc:  # noqa: BLE001 — unreachable runner; do not guess at the answer
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "message": str(exc)},
+        )
+    if case_resp.status_code != 200:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "code": case_resp.status_code},
+        )
+    try:
+        existing_case = _restate_answer(case_resp)
+    except Exception as exc:  # noqa: BLE001 — a non-empty, non-JSON body is a runner fault
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "runner_unavailable", "message": str(exc)},
+        )
+
+    if existing_case is not None:
+        # A REVISION, not a duplicate: the same event_id, arriving again. Backfill the status
+        # row ONLY when this ingest_id has never been seen here -- the pre-roll case has no row
+        # at all; a row that already exists keeps its own stage (it is not this route's place to
+        # rewrite history for an id it already has an opinion about).
+        existing_row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if existing_row is None:
+            await run_in_threadpool(lambda: ingest_status.record_received(
+                ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+                object_prefix="", submitted_by=current_user.authz_id,
+                on_behalf_of=actor, source="events",
+                content_kind=req.content_kind,
+            ))
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/revise",
+                    json={"facts": facts, "provenance": provenance_block},
+                )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "runner_error", "message": str(exc)},
+            )
+        if rr.status_code == 200:
+            return {
+                "ingest_id": ingest_id, "rev": rr.json().get("revision"),
+                "workflow": {"case_id": case_id, "started": False},
+            }
+        if rr.status_code == 400:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "payload_refused_by_trigger",
+                        "message": _restate_refusal_message(rr)},
+            )
+        if rr.status_code in (404, 409):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "revision_not_kept", "message": _restate_refusal_message(rr)},
+            )
+        raise HTTPException(status_code=502, detail={"error": "runner_error"})
+
+    # FIRST ARRIVAL: write the status row BEFORE opening the case -- "no case without its
+    # record" -- so a write failure here must refuse rather than open a case nobody has a
+    # status row for.
+    try:
+        await run_in_threadpool(lambda: ingest_status.record_received(
+            ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+            object_prefix="", submitted_by=current_user.authz_id,
+            on_behalf_of=actor, source="events",
+            content_kind=req.content_kind,
+        ))
+    except Exception as exc:  # noqa: BLE001 — "no case without its record"
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "status_unavailable", "message": str(exc)},
+        )
+
+    started = await _open_case(
+        case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
+        ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
+    )
+    if started:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.CASE_OPENED, case_id=case_id))
     return {
         "ingest_id": ingest_id, "workflow": {"case_id": case_id, "started": started},
     }
@@ -8893,7 +9846,75 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "updated_at": row.get("updated_at"),
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
+        "case_id": row.get("case_id"),
     }
+
+
+@app.post("/ingest/{ingest_id}/retry")
+async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """POST /ingest/<id>/retry -- let the dropper un-strand their own row without a hand write
+    (roll #20 item 3).
+
+    SAME caller scoping as GET /ingest/{ingest_id}/status just above (visible iff
+    submitted_by == caller OR on_behalf_of == caller): reuses that route's own
+    `ingest_status.get_status_for` lookup/predicate rather than writing a second, divergent
+    one, and refuses with the SAME plain 404 body a stranger or a missing row gets from
+    status -- existence-oracle-safe for the same reason.
+
+    Dispatch on the row:
+      * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
+        nothing to retry.
+      * an EVENT row, which by this point can only be sitting at `received` (its own only
+        non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
+        through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
+        hash, so the fix is to resend the same event, not to retry here.
+      * a DOCUMENT row at `received`/`extracting` -- 409 `in_pipeline`: extraction runs in
+        doc-tools' own pipeline (ingress_user_sensor); a retry here cannot advance it.
+      * a DOCUMENT row at `review` -- the one stage this CAN move: re-runs the
+        `document_promotion` find-or-file via the SAME helper `update_ingest_stage` uses
+        (`_file_or_find_document_promotion_task`) so the two routes share one implementation.
+        `requested_by` is THIS caller (the retrying party), never doc-tools' service identity.
+        The row itself is NOT moved -- it is already at `review`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+
+    stage = row["status"]
+    _terminal_stages = (
+        ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
+    )
+    if stage in _terminal_stages:
+        raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
+
+    if row.get("kind") == ingest_status.EVENT:
+        raise HTTPException(status_code=409, detail={
+            "error": "resend_the_event",
+            "message": "the row holds only the payload hash; resend the same event to "
+                       "POST /ingest/events, which is idempotent on event_id",
+        })
+
+    if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
+        raise HTTPException(status_code=409, detail={
+            "error": "in_pipeline", "pipeline": "doc-tools", "stage": stage,
+            "message": "extraction runs in doc-tools' pipeline (ingress_user_sensor); a retry "
+                       "here cannot advance it",
+        })
+
+    # Only `review` is left on the ladder here. The row is not moved -- it is already there.
+    task_id, task_status = await _file_or_find_document_promotion_task(
+        ingest_id, row, requested_by=current_user.authz_id,
+        extraction_ref=row.get("extraction_ref"))
+
+    return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW, "task_id": task_id,
+            "task_status": task_status}
 
 
 # doc-tools' own transport identity (policy/users.yaml: `svc:doc-tools`, "semantic-linker
@@ -8911,6 +9932,138 @@ class IngestStageUpdateRequest(_BaseModel):
     extracted_count: Optional[int] = None
     extracted_total: Optional[int] = None
     detail: Optional[str] = None
+    # doc-tools #84 names its VERSIONED manifest here (bare S3 key in `processing-artifacts`).
+    # Before this field existed Pydantic dropped it silently, and the promotion task was filed
+    # with a payload the act refused.
+    extraction_ref: Optional[str] = None
+
+
+def _read_extraction_manifest(key: str) -> dict:
+    """Read and parse the extraction manifest at `key` in the artifact bucket (sync; callers
+    run it in the threadpool). 422 `extraction_absent` when the store answers that the key is
+    not there, 503 `artifact_store_unreachable` for any other failure to read, 422
+    `extraction_unreadable` when the bytes are not a JSON object."""
+    import json as _j
+
+    try:
+        body = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_absent",
+                "message": f"no object at s3://{_ARTIFACT_BUCKET}/{key}; the store answered and "
+                           "said so, so extraction_ref is a bad pointer, not an outage"})
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer for {key!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    try:
+        doc = _j.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unreadable",
+            "message": f"the object at {key!r} is not a JSON object"})
+    return doc
+
+
+async def _file_or_find_document_promotion_task(
+    ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
+) -> tuple[Optional[str], str]:
+    """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
+    refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
+    block (review-audience fix's domain resolution, task_exists-before-register_task, and the
+    503/422/422 exception mapping), now shared with `ingest_retry_route`'s re-run of the same
+    find-or-file on a row already at `review` (roll #20 item 3) -- ONE helper, not a second,
+    divergent copy.
+
+    THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND: resolves the registry on
+    `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad|xml) -- a lookup
+    on the file format always misses the registry, resolves to a None domain, and files a task
+    no one can be entitled to.
+
+    `requested_by` is the caller each route should be attributing the task to -- doc-tools'
+    own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
+    caller's own authz_id for a retry; this helper does not decide which, it only takes it.
+
+    THE PAYLOAD IS DERIVED, NOT ASSERTED (ADR-0034): everything the act needs beyond the domain
+    and the dropper comes from the versioned extraction manifest `extraction_ref` names, read
+    here and turned into the payload by `promotion.payload_from_extraction`. An existing task
+    needs no manifest, so `ALREADY_FILED` is answered before any of that.
+
+    Raises HTTPException for every refusal (422 `no_declared_domain`, 422 `no_extraction_ref`,
+    422 `extraction_unbound`, 422 `extraction_absent`, 422 `extraction_unreadable`, 422
+    `extraction_unversioned`, 503 `artifact_store_unreachable`, 503
+    `hitl_unconfigured`, 422 `no_entitled_recipients`, 422 `no_requester`) and never writes a
+    task on any of them. Returns `(task_id, "FILED" | "ALREADY_FILED")` on success. Never
+    moves the row itself -- callers that need the row moved do that themselves, in order
+    (TASK FIRST, STATUS SECOND): a 422/503 from here must never strand the row.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, promotion
+
+    kind_reg = content_kinds.by_kind(row.get("content_kind"))
+    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    if domain is None:
+        # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write.
+        raise HTTPException(status_code=422, detail={
+            "error": "no_declared_domain",
+            "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
+                       "which resolves to no registered domain -- refusing to open a "
+                       "promotion task with no audience.",
+        })
+    # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain, but the Topaz grant
+    # key in policy/task_grants.yaml is UPPERCASE -- uppercase it below for both the audience
+    # and the payload so the resolved domain actually matches a grant.
+    domain = domain.upper()
+    audience = f"{promotion.KIND}:{domain}"
+    task_id = f"{promotion.KIND}:{ingest_id}"
+    if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+        return task_id, "ALREADY_FILED"
+
+    ref = str(extraction_ref or "").strip()
+    if not ref:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_extraction_ref",
+            "message": f"ingest {ingest_id} has no extraction_ref; the promotion payload is "
+                       "derived from the versioned extraction manifest it names.",
+        })
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix or not ref.startswith(prefix):
+        # BEFORE any read: never fetch a key outside this document's own directory.
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory "
+                       f"{prefix!r}.",
+        })
+    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    try:
+        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref)
+    except promotion.PromotionRefused as exc:
+        raise HTTPException(status_code=exc.status,
+                            detail={"error": exc.error, "message": str(exc)})
+    payload = {**derived, "domain": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
+    try:
+        await run_in_threadpool(lambda: human_tasks.register_task(
+            kind=promotion.KIND, task_id=task_id, audience=audience,
+            title=f"Promote document {ingest_id}",
+            summary=f"Review the extracted document {ingest_id} for promotion.",
+            requested_by=requested_by, subject_ref=ingest_id,
+            payload=payload,
+        ))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    return task_id, "FILED"
 
 
 @app.post("/ingest/{ingest_id}/stage")
@@ -8924,23 +10077,32 @@ async def update_ingest_stage(
     authenticated or not, gets 403.
 
     Enforces the forward order received -> extracting -> review, plus `failed` from any
-    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed) is
-    refused 409, same as a lateral or backwards move within the non-terminal ladder.
-    `rejected`/`detail`-required is `ingest_status.update_status`'s own existing rule.
+    non-terminal stage; any move from an already-terminal stage (promoted/rejected/failed/
+    awaiting_origin) is refused 409, same as a lateral or backwards move within the
+    non-terminal ladder. `rejected`/`detail`-required is `ingest_status.update_status`'s own
+    existing rule.
 
     On the transition INTO `review`, opens the `document_promotion` task idempotently (one per
     ingest_id, the same `task_exists`-before-`register_task` pattern `/triage_tasks` uses),
+    its payload derived from the versioned manifest the body's `extraction_ref` names (refusals
+    422 `no_extraction_ref` / `extraction_unbound` / `extraction_absent` / `extraction_unreadable`
+    / `extraction_unversioned`, 503 `artifact_store_unreachable`; nothing written on any), and
     carrying the ingest_id, the DECLARED content kind's domain (content_kinds.by_kind on the
-    row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad) and the
+    row's `content_kind` -- NEVER the row's `kind`, which is the file format, pdf|cad|xml) and the
     original dropper (`dropped_by`, from the row's `submitted_by`). TASK FIRST, STATUS SECOND:
     for `review`, the task is filed (or found ALREADY_FILED) before `update_status` runs, so a
     422/503 refusal from the task step (no declared domain, no entitled recipients, no
     requester, HITL unconfigured) leaves the row exactly where it was -- never stranded at
     `review` with no task and no way back (a retry on a row already at `review` is 409).
+
+    EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
+    2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
+    filed at all (there is no fixed audience to file one against) and the row moves straight
+    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import content_kinds, human_tasks, ingest_status, promotion
+    from . import content_kinds, ingest_status
 
     # doc-tools' pipeline writes only these three target stages through this route. `promoted`
     # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
@@ -8949,7 +10111,10 @@ async def update_ingest_stage(
     # STAGES' own order.
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED)
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
+    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
+                        ingest_status.AWAITING_ORIGIN)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -8991,55 +10156,59 @@ async def update_ingest_stage(
     if req.stage == ingest_status.REVIEW:
         # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
-        # kind), never on `kind` (pdf|cad) -- a lookup on the file format always misses the
+        # kind), never on `kind` (pdf|cad|xml) -- a lookup on the file format always misses the
         # registry, resolves to a None domain, and files a task no one can be entitled to.
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
-        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
-        if domain is None:
-            # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write. Writing
-            # update_status first and only then discovering there is no entitled audience
-            # strands the row at `review` with no task and no way back (a retry is 409).
-            raise HTTPException(status_code=422, detail={
-                "error": "no_declared_domain",
-                "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
-                           "which resolves to no registered domain -- refusing to open a "
-                           "promotion task with no audience.",
-            })
-        # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain (the same value the
-        # door writes into manifest.domain_type and doc-tools uses), but the Topaz grant key in
-        # policy/task_grants.yaml is UPPERCASE (document_promotion:SUSTAINMENT) -- uppercase it
-        # for both the audience and the payload so the resolved domain actually matches a grant.
-        domain = domain.upper()
-        audience = f"{promotion.KIND}:{domain}"
-        task_id = f"{promotion.KIND}:{ingest_id}"
-        if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
-            task_status = "ALREADY_FILED"
-        else:
-            try:
-                await run_in_threadpool(lambda: human_tasks.register_task(
-                    kind=promotion.KIND, task_id=task_id, audience=audience,
-                    title=f"Promote document {ingest_id}",
-                    summary=f"Review the extracted document {ingest_id} for promotion.",
-                    requested_by=caller, subject_ref=ingest_id,
-                    payload={"ingest_id": ingest_id, "domain": domain,
-                             "dropped_by": {"authz_id": row.get("submitted_by")}},
-                ))
-            except human_tasks.HumanTaskConfigError as exc:
-                raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
-            except human_tasks.NoEntitledRecipients as exc:
-                raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
-            except human_tasks.NoRequester as exc:
-                raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
-            task_status = "FILED"
+        # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
+        # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
+        # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a
+        # different fact from a kind that never said anything about a domain at all. Pydantic's
+        # `model_fields_set` is what tells the two apart: a YAML row that WROTE `domain: null`
+        # has "domain" in its fields_set (even though the value equals the field's own default,
+        # None); a row that OMITTED the key entirely does not. `reg.domain is None` alone sees
+        # only the value and cannot discriminate -- that is the collision section 4 of the
+        # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
+        # domained registration (the common case, and the only shape existing tests' plain stub
+        # objects carry) never has to support `model_fields_set` at all.
+        # Decided HERE, in the stage route, before the shared find-or-file helper: a retry never
+        # meets this case, because `awaiting_origin` is terminal and a row only reaches it
+        # through this branch.
+        deliberately_domainless = (
+            kind_reg is not None and not kind_reg.domain
+            and "domain" in getattr(kind_reg, "model_fields_set", frozenset())
+            and kind_reg.domain is None)
+
+        if deliberately_domainless:
+            # NO TASK -- there is no fixed audience to file one against; the origin_record
+            # case (section 6) resolves this artifact's audience per-artifact, from evidence,
+            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, ingest_status.AWAITING_ORIGIN,
+                extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+            return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
+                    "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
+
+        # Find-or-file is the shared helper now (`_file_or_find_document_promotion_task`,
+        # also used by `ingest_retry_route`'s re-run of this same find-or-file) -- requested_by
+        # here is doc-tools' OWN service identity, since this is doc-tools' own transition INTO
+        # `review`, never a retrying caller's. Writing update_status first and only then
+        # discovering there is no entitled audience would strand the row at `review` with no
+        # task and no way back (a retry on a row already at `review` is 409), so this call --
+        # and everything it can raise -- happens before update_status below ever runs.
+        task_id, task_status = await _file_or_find_document_promotion_task(
+            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref)
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised (nothing written) or produced a resolvable audience; only
     # now does the row actually move, so a 422/503 above never strands the row at `review` with
     # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
+    # `extraction_ref` rides only on the move INTO review (where it was just validated).
+    _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
     try:
         await run_in_threadpool(lambda: ingest_status.update_status(
             ingest_id, req.stage, extracted_count=req.extracted_count,
-            extracted_total=req.extracted_total, detail=req.detail))
+            extracted_total=req.extracted_total, detail=req.detail, **_extra))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 
@@ -9141,6 +10310,49 @@ async def write_origin_route(
         dropper_is_program_member=dropper_is_program_member,
     )
     return {"status": result["status"], "reason": result.get("reason")}
+
+
+_SEEDED_BY_STAMP_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) "
+    "SET a.seeded_by = $seeded_by RETURN count(a) AS n"
+)
+
+
+class SeededByStampRequest(_BaseModel):
+    seeded_by: str
+
+
+@app.post("/internal/cases/{case_id}/seeded-by")
+async def stamp_seeded_by_route(
+    case_id: str,
+    req: SeededByStampRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The runner stamps the seeding delegate on a case's artifacts at `released` (ADR-0041 §8.1,
+    RULED 2026-10-08). SERVICE-ONLY: only `svc:case-runner` may call this, same gate as
+    `/internal/origin/write`. `n == 0` is a 200, not an error: no producer writes case-linked
+    artifacts yet. Only a declared delegate can be a seeding delegate: anything else is 422.
+    R-089: the delegate map is asserted by configuration this pass."""
+    from starlette.concurrency import run_in_threadpool
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/seeded-by is callable only by the case "
+                       "runner's own service identity.",
+        })
+    if req.seeded_by not in _delegate_principals():
+        raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+
+    def _stamp() -> int:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                _SEEDED_BY_STAMP_CYPHER, case_id=case_id, seeded_by=req.seeded_by
+            ).single()
+        return int(rec["n"]) if rec is not None else 0
+
+    return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
 
 
 # ════════════════════════════════════════════════════════════════════
