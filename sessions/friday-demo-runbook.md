@@ -120,3 +120,15 @@ review instead:
 
 ---
 overnight status lines (Lane 1 appends below)
+
+- **182a is live** (2026-10-09 16:39:51Z).
+  - cortex-ui `415e5e6` at `ghcr.io/edgy-solutions/cortex-ui/frontend@sha256:e06fbeb277588f7b8b9dddc56a30fccff1f1c9de04f10a4d7baf6ec4da71651b`.
+  - Verified in GHCR before the swap: the full-sha tag resolves to that index digest. The short tag and a fake sha both 404.
+  - `set image` on `iagent-cortex-ui` only, ready `1/1`. Fleet `8861eb20`, `helm history` still 182.
+  - The §0 check should now print the `e06fbeb2…` digest. **Hard-refresh every cortex tab.**
+- **PCN26-185 is parked at review** (2026-10-09, as alice on 182a).
+  - These are new bytes (`duplicate: null`).
+  - Ingest id `sha256:034fe9f1b3e18edb406fbed93654c7f830edb1b1e0f975664e0c97a785f328f8`.
+  - Stages `received` 16:40:17Z → `extracting` 16:41:02Z → `review` 16:41:49Z.
+  - bob's task `document_promotion:sha256:034fe9f1…`, audience `document_promotion:SUSTAINMENT`, status `pending`, not acted on.
+  - §4 starts from here.
