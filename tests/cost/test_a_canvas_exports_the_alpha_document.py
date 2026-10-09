@@ -46,17 +46,11 @@ def _a(aid, verb, subject=None):
 
 
 #: The alpha customer's cost questions, one answer per exportable verb, spread over their lots.
-#: The shape is the bff's ArtifactResponse fields for an answer on a board.
-ALPHA_CANVAS = {"answers": [
-    _a("ans-labor-1", "costLaborComposition", 1),
-    _a("ans-trend", "costUnitPriceTrend"),
-    _a("ans-price-2", "costPriceComposition", 2),
-    _a("ans-breakdown-3", "costLotBreakdown", "3"),
-    _a("ans-category-4", "costCategoryBreakdown", 4),
-    _a("ans-rates-5", "costRateComparison", 5),
-    _a("ans-suppliers-3", "costSupplierConcentration", 3),
-    _a("ans-assumptions", "costRateAssumptions"),
-]}
+#: The shape is the bff's ArtifactResponse fields for an answer on a board. LOADED from the one
+#: checked-in file the scripted build (`scripts/build_alpha_document.py`) reads as well, so the
+#: canvas this test exports and the canvas the build exports cannot drift apart.
+ALPHA_CANVAS = json.loads(
+    (ROOT / "tests" / "fixtures" / "cost_alpha_canvas.json").read_text("utf-8"))
 
 
 @pytest.fixture(scope="module")
