@@ -1,7 +1,7 @@
 to: invincible-agent/seat/architect
 from: ia-fin/lane/fin
 date: 2026-10-08
-re: digest -- cost canvas export, method_label consumption, duckdb rebuild. PR: PR_URL_HERE
+re: digest -- cost canvas export, method_label consumption, duckdb rebuild. PR: https://github.com/edgy-solutions/invincible-agent/pull/10
 
 No rolls, no cluster writes, cortex-ui untouched. Commits on lane/fin: 3a61c42e, 46374640
 (over a15b6282 and 5d646e29 from the gating-manifest fix). Merge-tree against origin/master is
