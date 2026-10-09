@@ -1754,7 +1754,24 @@ services:
           GET /artifacts/{id} can admit that delegate as a reader. One SERVICE identity is
           accepted, checked before the body is used. A seeded_by that is not a declared delegate
           (DELEGATE_ON_BEHALF_OF) is 422. A case with no case-linked artifact stamps zero and
-          answers 200: no workflow produces one yet.
+          answers 200. CORRECTED 2026-10-09: the maintenance case's ActionRecord, written by
+          POST /internal/cases/{case_id}/action-record before this stamp, is such an artifact.
+      - method: POST
+        path: /internal/cases/{case_id}/action-record
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (writes the maintenance case's ActionRecord at the `released` outcome)]
+        class: gated
+        justification: >-
+          The maintenance case's ActionRecord (R-114, an iagent-side output artifact), written at
+          `released` as one AnswerArtifact carrying the case_id and, when given, the seeding
+          delegate. One SERVICE identity is accepted, checked before the body is used, so no end
+          user can write a case's record. The artifact's owner is the on_behalf_of the runner
+          names (the seeding delegate's person, else the last approver), never the caller. The
+          record's provenance.case_id must equal the path's case_id (422 before any write); a
+          seeded_by that is not a declared delegate (DELEGATE_ON_BEHALF_OF) is 422. The artifact
+          id is derived from case_id and action_id, so a retry writes nothing twice.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt

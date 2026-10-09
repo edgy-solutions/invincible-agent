@@ -99,6 +99,11 @@ def install_declared_walk_double(monkeypatch):
     monkeypatch.setattr(ex, "mint_case_runner_token", lambda **kw: "case-runner-token")
 
     def _post(url, json, headers, timeout):
+        if "/internal/cases/" in url:
+            # The runner's own writes at `released` (the action record, the seeded_by stamp):
+            # accepted here; tests/test_the_runner_writes_the_action_record_at_released.py records
+            # and asserts them.
+            return _Resp({})
         decl, shaped = _shaped_walk(json["verb"], json["params"])
         return _Resp({"verb": decl.verb, "domain": decl.domain, "selects": shaped})
     monkeypatch.setattr(ex.requests, "post", _post)
@@ -316,6 +321,8 @@ def walk_cites_a_figure(monkeypatch):
     added to the shaped `ipd` select afterward, standing in for a hotspot a richer manual would
     have supplied."""
     def _post(url, json, headers, timeout):
+        if "/internal/cases/" in url:
+            return _Resp({})
         decl, shaped = _shaped_walk(json["verb"], json["params"])
         shaped["ipd"] = {**shaped["ipd"], **_FIGURE}
         return _Resp({"verb": decl.verb, "domain": decl.domain, "selects": shaped})

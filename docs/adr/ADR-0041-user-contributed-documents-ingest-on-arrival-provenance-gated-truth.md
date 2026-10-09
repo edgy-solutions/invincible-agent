@@ -157,9 +157,16 @@ recipient is still refused. Three mechanics:
 3. **`GET /artifacts/{id}` admits the seeding delegate** (owner or seeding declared delegate), read
    through the `MeshArtifacts` Protocol; an unentitled caller is answered as an absent id.
 
-**No workflow produces a case-linked artifact yet** (nothing passes `case_id` to the answer-artifact
+~~**No workflow produces a case-linked artifact yet** (nothing passes `case_id` to the answer-artifact
 writer), so the stamp matches nothing and the delegate-read path has an empty population until one
-does.
+does.~~
+
+> **CORRECTED 2026-10-09:** the maintenance case now produces one. At `released` the runner reads the
+> `maintenance_action` ActionRecord off the instance and writes it, BEFORE the `seeded_by` stamp,
+> through the case-runner-gated `POST /internal/cases/{case_id}/action-record`: one AnswerArtifact
+> (`kind: maintenance-action-record`, `case_id`, `seeded_by` when the case has one) whose owner is the
+> person the runner acts for. The artifact id derives from `case_id` and `action_id`, so a retry writes
+> nothing twice.
 
 > **SUPERSEDED 2026-10-08, kept as written:**
 >
