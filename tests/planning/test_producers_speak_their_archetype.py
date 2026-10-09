@@ -132,6 +132,14 @@ _EXEMPT = {
     # Conformance lives beside the engine that emits it, in
     # tests/graph_host/test_the_projector_carries_the_ledger.py, which reads the SAME cortex
     # contract file this one would have and asserts the mirror against it there.
+    # INSTANCES_BY_PROPERTY, 2026-10-08 (Lane 1, roll #23). Exempt here for SOURCE_LEDGER's two
+    # reasons: its producer is engine-o's notice_parts, not a planning measure, and its cortex
+    # type lives in components/InstancesByProperty, which `_CORTEX` does not resolve.
+    "INSTANCES_BY_PROPERTY": (
+        "no PLANNING producer emits it - engine-o's notice_parts does, and its cortex type is "
+        "in components/InstancesByProperty rather than components/planning. Conformance is in "
+        "tests/test_notice_parts_renders_as_instances_by_property.py"
+    ),
     "SOURCE_LEDGER": (
         "no PLANNING producer emits a ledger - engine-lg's fin_program_brief and "
         "cost_lot_costing_review do, and they are graphs rather than measures so this file's "

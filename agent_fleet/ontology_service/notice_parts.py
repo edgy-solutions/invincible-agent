@@ -148,6 +148,35 @@ def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, An
         "message": message,
         "data": message,
         "sources": sources,
+        **instances_by_property(notice_id, sources),
+    }
+
+
+#: The INSTANCES_BY_PROPERTY envelope's fixed parts. Field names are cortex-ui's
+#: `src/components/InstancesByProperty/types.ts`, not invented here; the projector carries them
+#: verbatim (`_PROJECTED_ARCHETYPES["INSTANCES_BY_PROPERTY"]` in presentation_agent/main.py).
+IBP_COLUMNS = [
+    {"key": "instance", "label": "Part", "from": "row_identity"},
+    {"key": "mpn", "label": "P/N"},
+]
+IBP_ROW_IDENTITY = {"key": "instance", "iri": True, "display_from_local_name": True}
+
+
+def instances_by_property(notice_id: str, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The answer in the shape `mesh:NoticePartSet` renders as (INSTANCES_BY_PROPERTY).
+
+    ADDITIVE: every key the verb already answered with is untouched. `rows` is one per source, so
+    the table and the provenance cannot disagree about which parts there are. A notice that names
+    no part answers `rows: []`, and the projector reads an empty list as nothing to draw and
+    degrades to the document card, which says so in prose. No state vocabulary: this answer is
+    not filtered by a state, so it draws no filter tabs.
+    """
+    return {
+        "title": f"Parts affected by {notice_id}",
+        "target": {"domain": DOMAIN, "class": "pcn:Component"},
+        "columns": [dict(c) for c in IBP_COLUMNS],
+        "row_identity": dict(IBP_ROW_IDENTITY),
+        "rows": [{"instance": s["uri"], "mpn": s["mpn"]} for s in sources],
     }
 
 

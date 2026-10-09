@@ -1324,8 +1324,11 @@ def test_every_archetype_cortex_can_draw_has_SOME_projector_path():
     projected = set(_projector_passthrough()) | set(_flat_archetypes())
     hardened = {"CHART_WIDGET", "KNOWLEDGE_DOCUMENT", "PROCESS_TOPOLOGY",
                 "HAZARD_DECLARATION", "ASSET_STATE_METRIC", "GROUPED_REVIEW",
-                "APPROVAL_TASK", "WORKFLOW_OBSERVATION", "INSTANCES_BY_PROPERTY",
+                "APPROVAL_TASK", "WORKFLOW_OBSERVATION",
                 "DECISION_RECORD", "CANVAS_SEED"}
+    # INSTANCES_BY_PROPERTY LEFT THIS SET 2026-10-08 (roll #23). It was never hardened: no BAML
+    # renderer serves it, and the only one drawn came from a gateway feeder that hand-sets the
+    # archetype. It is now in _PROJECTED_ARCHETYPES, so the excuse would only hide its removal.
     orphans = sorted(set(declared) - projected - hardened)
     assert not orphans, (
         f"{len(orphans)} archetype(s) cortex declares with NO backend projection path: "

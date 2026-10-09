@@ -968,6 +968,22 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # refused inner call RAISES there and the two hole terms are unreachable BY CONTRACT.
     # Nothing here may key on which dispositions are present.
     "SOURCE_LEDGER": ("rows", ("summary",)),
+
+    # ── INSTANCES_BY_PROPERTY (Lane 1, roll #23, 2026-10-08). Runbook site 2. ─────────────
+    #
+    # Bound for `mesh:NoticePartSet` ("which parts does PCN26-184 affect"). Before this line
+    # the archetype had NO server path at all: it sat in the projector seal's "hardened" set,
+    # but no BAML renderer serves it either, so the only INSTANCES_BY_PROPERTY a card ever drew
+    # was one a gateway feeder hand-built. A verb bound to it degraded to KNOWLEDGE_DOCUMENT
+    # and drew its own JSON in a code block (rev 181, measured).
+    #
+    # THE PASSTHROUGH IS THE VIEW'S DESTRUCTURE, read from cortex-ui's InstancesByPropertyView
+    # (`{ title, columns, rows, target, row_identity, state_vocabulary }`) and types.ts, not
+    # chosen. `columns` is required by the view (it maps over it), so a producer that omits it
+    # is a card that throws. The producer's conformance case is
+    # tests/test_notice_parts_renders_as_instances_by_property.py.
+    "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
+                                       "state_vocabulary")),
 }
 
 
