@@ -85,6 +85,10 @@ ROUTED = "routed"
 ASK = "ask"
 ABSTAIN = "abstain"
 FALL_BACK = "fall_back"
+# The reason text of the FALL_BACK that means the caller's cell cannot see the verb. The
+# gateway reads it to type the seed_panel cause; one constant so the producer and the
+# classifier cannot drift.
+VERB_NO_LONGER_COMPATIBLE = "no longer compatible"
 
 #: THE STAGES THIS PATH ACTUALLY RUNS, and the list is short because the path is short.
 #: The Dagster stream's five kinds describe a decomposition, a resolution and a
@@ -292,7 +296,7 @@ def dispatch_pre_resolved(
         # The ask's verb is no longer eligible — revoked, retired, re-primed, or this picker
         # has a different persona from the asker. Recomputing is the correct answer.
         _stage(STAGE_VERIFYING, "failed")
-        return DirectOutcome(FALL_BACK, f"verb {verb} no longer compatible with {subject}")
+        return DirectOutcome(FALL_BACK, f"verb {verb} {VERB_NO_LONGER_COMPATIBLE} with {subject}")
 
     _stage(STAGE_VERIFYING, "completed")
     predicate = predicate_from_compat_record(truth)

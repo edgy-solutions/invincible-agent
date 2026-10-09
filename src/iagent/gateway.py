@@ -2460,6 +2460,39 @@ class SeedPortfolioCanvasRequest(_BaseModel):
     active_domains: Optional[list] = None
 
 
+# `pipeline_error` causes that mean "the caller's cell cannot see what the seed asked for",
+# as opposed to "the seed could not be performed". Decided by reading every `_perror(...)`
+# producer's `cause=`:
+#   seed_panel_verb_not_visible -- the seed_panel FALL_BACK whose reason is
+#       direct_dispatch.VERB_NO_LONGER_COMPATIBLE: the declared verb is not in the verifier's
+#       compatible set for this caller (revoked, retired, or a persona/domain that cannot see
+#       it). Emitted where the seed_panel turn falls back (the `seed_panel_fell_back` site).
+# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason, e.g. "verifier
+#   unreachable", is OURS), seed_panel_unroutable (template declares no subject),
+#   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
+#   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
+#   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
+#   faults of the seed/pipeline, not of the caller's grants. An absent cause is "unrecorded"
+#   and is never entitlement.
+_SEED_ENTITLEMENT_CAUSES = frozenset({"seed_panel_verb_not_visible"})
+
+
+def _seed_failure_from_data(data: str | None) -> dict:
+    """The typed failure of one seeded ask: `{event, kind, cause}` from the pipeline_error
+    payload `_perror` wrote. A missing or unparseable payload records `cause: "unrecorded"`."""
+    kind = None
+    cause = None
+    if data:
+        try:
+            payload = json.loads(data.strip())
+            if isinstance(payload, dict):
+                kind = payload.get("kind") or None
+                cause = payload.get("cause") or None
+        except (ValueError, TypeError):
+            pass
+    return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+
+
 @app.post("/seed/portfolio_canvas")
 async def seed_portfolio_canvas(
     request: SeedPortfolioCanvasRequest,
@@ -2507,6 +2540,7 @@ async def seed_portfolio_canvas(
         }
         status = "failed"
         detail = None
+        failure: dict | None = None
         try:
             # SEQUENTIAL BY CONSTRUCTION: awaited inside the loop. Gathering
             # these would be one line and would deadlock the run queue.
@@ -2522,15 +2556,23 @@ async def seed_portfolio_canvas(
                     else:
                         saw_final = False
                         saw_error = False
+                        _awaiting_error_data = False
                         async for line in resp.aiter_lines():
                             if line.startswith("event: final_payload"):
                                 saw_final = True
                             elif line.startswith("event: pipeline_error"):
                                 saw_error = True
+                                _awaiting_error_data = True
+                            elif _awaiting_error_data and line.startswith("data:"):
+                                _awaiting_error_data = False
+                                if failure is None:
+                                    failure = _seed_failure_from_data(line[5:])
                         # A non-200 never reaches here; an error EVENT is a
                         # different failure and must not read as success.
                         status = "ok" if (saw_final and not saw_error) else "failed"
                         detail = None if status == "ok" else "pipeline_error"
+                        if status != "ok" and failure is None:
+                            failure = _seed_failure_from_data(None)
         except Exception as exc:  # noqa: BLE001 - one bad ask must not lose the rest
             detail = (type(exc).__name__ + ": " + str(exc))[:160]
 
@@ -2543,6 +2585,7 @@ async def seed_portfolio_canvas(
             "artifact_id": artifact_id if status == "ok" else None,
             "status": status,
             "detail": detail,
+            "failure": failure,
             "elapsed_s": round(time.time() - started, 1),
         })
         logger.info(
@@ -2606,6 +2649,7 @@ async def seed_template_canvas(
         }
         status = "failed"
         detail = None
+        failure: dict | None = None
         try:
             # SEQUENTIAL BY CONSTRUCTION, same reason as `seed_portfolio_canvas`: gathering
             # these would be one line and would deadlock the run queue.
@@ -2621,13 +2665,21 @@ async def seed_template_canvas(
                     else:
                         saw_final = False
                         saw_error = False
+                        _awaiting_error_data = False
                         async for line in resp.aiter_lines():
                             if line.startswith("event: final_payload"):
                                 saw_final = True
                             elif line.startswith("event: pipeline_error"):
                                 saw_error = True
+                                _awaiting_error_data = True
+                            elif _awaiting_error_data and line.startswith("data:"):
+                                _awaiting_error_data = False
+                                if failure is None:
+                                    failure = _seed_failure_from_data(line[5:])
                         status = "ok" if (saw_final and not saw_error) else "failed"
                         detail = None if status == "ok" else "pipeline_error"
+                        if status != "ok" and failure is None:
+                            failure = _seed_failure_from_data(None)
         except Exception as exc:  # noqa: BLE001 - one bad panel must not lose the rest
             detail = (type(exc).__name__ + ": " + str(exc))[:160]
 
@@ -2639,6 +2691,7 @@ async def seed_template_canvas(
             "artifact_id": artifact_id if status == "ok" else None,
             "status": status,
             "detail": detail,
+            "failure": failure,
             "elapsed_s": round(time.time() - started, 1),
         })
         logger.info(
@@ -2854,27 +2907,46 @@ async def canvas_seed(
         # From the inner route's own per-slot record — `results` is not a local here, and
         # reaching for it as one is how this refusal would 500 on the path it exists to
         # report. Each entry carries `status` and a `detail` like "HTTP 403".
-        _codes = {
-            str(r.get("detail") or "")
-            for r in (result.get("results") or [])
-            if r.get("status") != "ok"
-        }
-        _all_403 = bool(_codes) and all("403" in c for c in _codes)
+        _failed = [r for r in (result.get("results") or []) if r.get("status") != "ok"]
+        _codes = {str(r.get("detail") or "") for r in _failed}
+        _causes = sorted({
+            (r["failure"].get("cause") or "unrecorded")
+            for r in _failed if r.get("failure") is not None
+        })
+
+        def _entitlement_shaped(r: dict) -> bool:
+            f = r.get("failure")
+            if f is not None:
+                return (f.get("cause") or "unrecorded") in _SEED_ENTITLEMENT_CAUSES
+            return "403" in str(r.get("detail") or "")
+
+        _all_entitlement = bool(_failed) and all(_entitlement_shaped(r) for r in _failed)
         logger.warning(
-            "canvas_seed: NOTHING seeded (0/%s) — refusing with %s. Upstream: %s",
-            total, 403 if _all_403 else 502, sorted(_codes)[:5],
+            "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
+            total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
         )
+        if _all_entitlement:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "cell_cannot_see_verbs",
+                    "message": (
+                        f"seeded 0 of {total} panels; every ask was refused -- the caller is "
+                        "not entitled to the cell these panels' subjects live in, or the "
+                        "caller's cell cannot see the panels' verbs"
+                    ),
+                    "causes": _causes or sorted(_codes)[:5],
+                },
+            )
         raise HTTPException(
-            status_code=403 if _all_403 else 502,
-            detail=(
-                f"seeded 0 of {total} panels; "
-                + (
-                    "every ask was refused (403) — the caller is not entitled to the cell "
-                    "these panels' subjects live in"
-                    if _all_403
-                    else f"upstream failures: {sorted(_codes)[:5]}"
-                )
-            ),
+            status_code=502,
+            detail={
+                "error": "seed_upstream_failed",
+                "message": (
+                    f"seeded 0 of {total} panels; upstream failures: {sorted(_codes)[:5]}"
+                ),
+                "causes": _causes or sorted(_codes)[:5],
+            },
         )
 
     if seeded != total:
@@ -6580,7 +6652,11 @@ async def _generate_dagster_stream_inner(
                     f"seed_panel's declared route is no longer valid: {_detail['reason']}",
                     kind="verifying_route",
                     retryable=True,
-                    cause="seed_panel_fell_back",
+                    cause=(
+                        "seed_panel_verb_not_visible"
+                        if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                        else "seed_panel_fell_back"
+                    ),
                 )
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)

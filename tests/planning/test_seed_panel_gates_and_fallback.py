@@ -261,3 +261,29 @@ async def test_the_CONTROL_an_ordinary_FALL_BACK_still_reaches_the_classified_pa
         "an ordinary (non-seed) FALL_BACK must still route the full path — this is the control "
         "that proves the branch above discriminates on seed_panel, not on the FALL_BACK itself"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_seed_panel_FALL_BACK_because_the_verb_is_not_visible_carries_the_entitlement_cause(
+    stubbed_stream, monkeypatch,
+):
+    """The reason `direct_dispatch` gives when the caller's cell cannot see the verb types the
+    pipeline_error, so `/canvas/seed` can answer 403 `cell_cannot_see_verbs`."""
+    def _incompatible(**kwargs):
+        return gw.direct_dispatch.DirectOutcome(
+            kind=gw.direct_dispatch.FALL_BACK,
+            reason=f"verb mesh:finX {gw.direct_dispatch.VERB_NO_LONGER_COMPATIBLE} with fin#Y",
+        )
+
+    monkeypatch.setattr(gw, "dispatch_pre_resolved", _incompatible)
+    req = gw.InterviewRequest(
+        message="irrelevant label",
+        session_id="s-seed-fb-2",
+        seed_panel={
+            "template_id": "program_finance", "panel": 0,
+            "bindings": {"program": "NP-MERIDIAN"},
+        },
+    )
+    blob = "".join([ev async for ev in gw._generate_dagster_stream_inner(req)])
+    assert "seed_panel_verb_not_visible" in blob, blob
+    assert "seed_panel_fell_back" not in blob
