@@ -762,7 +762,18 @@ cortexUi:
     # resolves to 840d5114. Since bd782c5 the Dockerfile and docker-entrypoint.sh are unchanged,
     # and .github's one change (build.yml PRODUCER_REF -> 5cf7d879) selects the parity tests'
     # checkout and is not a build arg, so VITE_FEATURES is unchanged.
-    digest: "sha256:401f76b3076fe694e58b347047f13e43fdbfbc9c88ab71455d35cbb2aeb5142e"
+    # 2026-10-08, pinned for roll #23: cortex-ui 3d5a0e1 (master plus the row, cortex's choice (a)):
+    # the DERIVED_BINDINGS row mesh:NoticePartSet -> mesh:InstancesByProperty, paired with this
+    # repo's capabilities.py row and _PROJECTED_ARCHETYPES["INSTANCES_BY_PROPERTY"]; it also
+    # carries c582803 (the notice-parts sources trail), f0da7f9 and f358cc6 (four archetype
+    # packages) and 0e8c998 (a Playwright dry run). -> 83366dd5. Measured before pinning: the
+    # FULL tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations);
+    # the abbreviated tag, the full tag with its last hex altered, and this digest with its last
+    # hex altered all answer 404; the 942259f control still resolves to 401f76b3. The image sets
+    # no org.opencontainers.image.revision label, so the sha binding is the tag's, not the
+    # image's. Since 942259f the Dockerfile, docker-entrypoint.sh and .github are unchanged
+    # (PRODUCER_REF still 5cf7d879, an ancestor here), so VITE_FEATURES is unchanged.
+    digest: "sha256:83366dd5fc614d431c320574d0b77685b63574b6d53f3c15846d894c1dd63243"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
