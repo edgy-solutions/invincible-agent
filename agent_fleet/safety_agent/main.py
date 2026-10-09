@@ -761,6 +761,17 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
             content={"error": "authorization_unavailable",
                      "message": "could not verify program membership", "fn": fn_name},
         )
+    except measures.failure_source.SourceUnavailable as exc:
+        # A SYSTEM OF RECORD COULD NOT BE READ (or answered with an unusable hit). Decided, not
+        # a bug in a measure: 200 + `refused`, discriminated by `outcome` like `engine_fault`
+        # beside it (the supervisor drops a 5xx unread). NEVER an empty answer: on a failure
+        # history "could not read" must not read as "no failures".
+        return JSONResponse(
+            status_code=200,
+            content={"refused": True, "outcome": "source_unavailable",
+                     "reason": f"a system of record could not be read: {exc.connector}",
+                     "connector": exc.connector, "fn": fn_name},
+        )
     except Exception as exc:  # noqa: BLE001
         # ── A REFUSAL IS NEVER A 5xx, AND THIS ONE WAS ──────────────────────────────────────
         #
