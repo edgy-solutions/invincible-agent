@@ -254,7 +254,8 @@ def embedded_runtime(runtime_dir: pathlib.Path) -> tuple[dict, str]:
 def build_html(recipient: str, runtime_dir: pathlib.Path,
                duckdb_path: pathlib.Path | None = None, *, state=None,
                lots: tuple[int, ...] | None = None, sections: tuple[str, ...] | None = None,
-               canvas_answers: list[str] | None = None, sha: str | None = None) -> str:
+               canvas_answers: list[str] | None = None, sha: str | None = None,
+               as_of: str | None = None) -> str:
     """Build the page. `state` is the engine's SERVED state when `package_export` calls this.
 
     It used to call `build_state()` here unconditionally, so the verb's own state never
@@ -281,7 +282,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
             raise SystemExit(
                 "REFUSING TO BUILD: lots and sections narrow the slice-2 page only; the "
                 "slice-1 page carries neither")
-        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
+        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha,
+                                    **({"as_of": as_of} if as_of is not None else {}))
     else:
         # SLICE 2. The .duckdb ships BESIDE this file; the page embeds the same rows and the
         # manifest carries both hashes, so a recipient holding only the HTML still gets a
@@ -291,7 +293,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         package = X.build_dataset_package(
             state, recipient_scope=recipient, algorithm_sha=sha,
             duckdb_path=str(duckdb_path), duckdb_hash=file_hash(duckdb_path),
-            lots=lots, sections=sections, canvas_answers=canvas_answers)
+            lots=lots, sections=sections, canvas_answers=canvas_answers,
+            **({"as_of": as_of} if as_of is not None else {}))
         # FROM THE ENGINE, NOT A LITERAL. This read `"0.92"` and meant "the field's default",
         # while the page treated it as "the scenario's identity point" — two meanings for one
         # number, and the untouched scenario came out $732k below the baseline it sat next to.
