@@ -42,7 +42,8 @@ _CONTRACTS = {
     "THRESHOLD_GRID": ("ThresholdGrid.contract.ts", "ThresholdCell"),
     "MATRIX_GRID": ("MatrixGrid.contract.ts", "MatrixCell"),
     "INTERVAL_TIMELINE": ("IntervalTimeline.contract.ts", "IntervalRow"),
-    "SHORTFALL_GRID": ("ShortfallGrid.contract.ts", "ShortfallCell"),
+    # Moved into an ADR-0055 package; names its own path like the three below.
+    "SHORTFALL_GRID": (_CORTEX_SRC / "archetypes" / "shortfall-grid" / "contract.ts", "ShortfallCell"),
     "PERIOD_SERIES": ("PeriodSeries.contract.ts", "PeriodSeriesRow"),
     # ENGINE F (finance), ADR-0045. Added when the three were put into the projector
     # 2026-09-02 — this seal FAILED first and is the reason they have conformance cases at

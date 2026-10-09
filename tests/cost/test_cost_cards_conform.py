@@ -28,12 +28,15 @@ from agent_fleet.presentation_agent.capabilities import (
 
 ROOT = Path(__file__).resolve().parents[2]
 _CORTEX = ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
+_ARCHETYPES = ROOT.parent / "cortex-ui" / "src" / "archetypes"
 
 _CONTRACTS = {
     "STEP_LADDER": ("StepLadder.contract.ts", "StepLadderRow"),
-    "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
-    "MULTI_SERIES": ("MultiSeries.contract.ts", "MultiSeriesRow"),
-    "DELTA_SET": ("DeltaSet.contract.ts", "DeltaEffect"),
+    # These three moved into ADR-0055 packages (cortex 85bbf0f, f0da7f9); each names its own
+    # path because `_CORTEX` resolves the directory STEP_LADDER still lives in.
+    "CONTRIBUTION_RANKING": (_ARCHETYPES / "contribution-ranking" / "contract.ts", "ContributionRow"),
+    "MULTI_SERIES": (_ARCHETYPES / "multi-series" / "contract.ts", "MultiSeriesRow"),
+    "DELTA_SET": (_ARCHETYPES / "delta-set" / "contract.ts", "DeltaEffect"),
 }
 
 _MIRROR = {
@@ -123,7 +126,7 @@ def test_every_cost_bound_subject_is_a_MEASURE_or_is_EXCLUDED_WITH_A_REASON():
 
 def _parse_required(archetype: str) -> set[str] | None:
     fname, iface = _CONTRACTS[archetype]
-    path = _CORTEX / fname
+    path = fname if isinstance(fname, Path) else _CORTEX / fname
     if not path.is_file():
         return None
     src = path.read_text(encoding="utf-8")
@@ -133,6 +136,33 @@ def _parse_required(archetype: str) -> set[str] | None:
     body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
     body = re.sub(r"//.*", "", body)
     return {n for n, opt in re.findall(r"^\s*(\w+)(\??):", body, re.M) if not opt}
+
+
+#: FOUND BY THE CONTROL BELOW, NOT FIXED HERE. cortex's StepLadder.contract.ts no longer exports
+#: `StepLadderRow`; its row interface is `LadderStep` with camelCase `runningTotal` and a
+#: REQUIRED `rate`/`basis`, against this file's snake_case mirror with those two optional.
+#: Repointing the interface name would turn that into a red on the mirror cross-check, which
+#: is a decision about the wire vocabulary, not a path repair. Until then STEP_LADDER's
+#: required keys come from `_MIRROR` alone.
+_KNOWN_UNPARSED = {"STEP_LADDER"}
+
+
+def test_the_contracts_are_actually_being_read():
+    """Positive control. `required_keys` falls back to `_MIRROR` when a contract does not
+    parse, so a stale path would quietly turn this module into a hand-written list checked
+    against itself. Every referenced contract must exist and parse; if the sibling repo is
+    absent this skips out loud, but a PRESENT repo with a missing file FAILS."""
+    if not _ARCHETYPES.parent.parent.is_dir():
+        pytest.skip(f"cortex-ui not checked out beside this repo ({_ARCHETYPES}) - mirror in use")
+    for archetype, (fname, _iface) in _CONTRACTS.items():
+        path = fname if isinstance(fname, Path) else _CORTEX / fname
+        assert path.is_file(), f"{archetype}: contract path does not exist: {path}"
+        if archetype in _KNOWN_UNPARSED:
+            # Asserted STILL unparsed, so fixing it fails here and forces the entry's removal.
+            assert _parse_required(archetype) is None, (
+                f"{archetype} now parses - delete it from _KNOWN_UNPARSED")
+            continue
+        assert _parse_required(archetype), f"could not parse {archetype}'s cell interface"
 
 
 def required_keys(archetype: str) -> set[str]:
