@@ -312,3 +312,46 @@ def test_producible_artifact_names_is_the_union_of_artifact_filenames():
     for scope in seed.RECIPIENT_SCOPES:
         expected.update(seed.artifact_filenames(scope))
     assert _producible_artifact_names() == expected
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A CANVAS OF ALL CARDS, end to end across the join
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_canvas_of_every_cost_card_reaches_the_engine_whole_and_discloses_every_section(
+    client, stub_engine, monkeypatch,
+):
+    """The gateway forwards ALL the canvas's answers, in order, and the engine's own
+    `canvas.resolve` reads exactly that forwarded canvas into every page section and every
+    lot the recipient is entitled to. The two halves are each tested alone elsewhere; the
+    JOIN (what one emits is what the other accepts) is asserted only here.
+
+    The verbs are derived from the engine's EXPORTABLE table, not typed, so a ninth card added
+    there is a ninth answer this test sends."""
+    from agent_fleet.cost_agent import canvas as C
+    from agent_fleet.cost_agent.seed import lots_for_recipient
+
+    scope = "notional-customer-alpha"
+    verbs = list(C.EXPORTABLE)
+    lots = list(lots_for_recipient(scope))
+
+    def _resolved(ids, user_id):
+        out = []
+        for i, (aid, verb) in enumerate(zip(ids, verbs)):
+            spans = C.EXPORTABLE[verb]["spans"]
+            out.append({"id": aid, "verb_iri": f"mesh:{verb}",
+                        "subject_instance_id": str(lots[i % len(lots)]) if spans == "lot" else None})
+        return out
+
+    monkeypatch.setattr(gateway, "_resolve_export_answers", _resolved)
+    ids = [f"card-{i}" for i in range(len(verbs))]
+    r = client.post("/export/package", json={
+        "recipient_scope": scope, "answers": [{"artifact_id": i} for i in ids]})
+    assert r.status_code == 200, r.text
+
+    sent = stub_engine["post"]["json"]["params"]["canvas"]
+    assert [a["id"] for a in sent["answers"]] == ids        # none dropped, order kept
+    composed = C.resolve(sent, recipient_scope=scope, entitled_lots=lots)
+    assert composed["sections"] == C.SECTIONS               # every card's section is on the page
+    assert composed["lots"] == tuple(lots)
+    assert composed["answers"] == ids
