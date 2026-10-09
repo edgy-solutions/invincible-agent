@@ -3481,6 +3481,8 @@ Measured: `docs/measurements/2026-09-28-roll-6-fired-and-the-cluster-cannot-auth
 
 ## R-083 — AN AGGREGATE THAT REPEATS IS NOT EVIDENCE THAT THE SYSTEM REPEATS
 
+**PROPOSED — status not recorded at registration; evidence: none found.** Numbered into the register in 17bb2064 (2026-09-28) from the seat's own measurements; neither this entry nor the measurement it cites states RULED or PROPOSED.
+
 The docs census was fired three times at a fixed tree and a uniform fleet. All three reported
 `0 pass, 5 fail, 0 blocked`. **Three of the five rows reported a different cause each time.** The
 route-miss diagnosis sat on `docs-how-do-i-add-an-engine` in fire 1, on
@@ -3516,6 +3518,8 @@ Measured: `docs/measurements/2026-09-28-morning-report-roll-6-landed-and-the-cen
 
 ## R-084 — A BEFORE-READING NOT TAKEN CANNOT BE RECONSTRUCTED ONCE THE SUBJECT MOVES — REPORT IT NON-COMPUTABLE
 
+**PROPOSED — status not recorded at registration; evidence: none found.** Numbered into the register in 17bb2064 (2026-09-28) from the seat's own measurements; neither this entry nor the measurement it cites states RULED or PROPOSED.
+
 Item 3's dispatch asked for a recall delta across MAINTENANCE, before and after. The after-half
 was measured on three fires. The before-half had never been taken, and by the time the question
 was asked the pre-fix code was no longer deployed. Recovering it would have meant rolling the
@@ -3541,6 +3545,8 @@ Measured: `docs/measurements/2026-09-28-item-3-measured-on-the-deployed-payload-
 ---
 
 ## R-085 — A DECLARATION'S CONTENT AND ITS WIRING ARE TWO CLAIMS, AND ONLY THE WIRING DECIDES WHETHER IT FIRES
+
+**PROPOSED — status not recorded at registration; evidence: none found.** Numbered into the register in 17bb2064 (2026-09-28) from the seat's own measurements; neither this entry nor the measurement it cites states RULED or PROPOSED.
 
 `helm/invincible-agent/values-roll-frontend-digest.yaml` exists to carry a roll's cross-repo image
 digests. It is 170 lines and its verification is close to exemplary: a positive control on the tag
@@ -3576,6 +3582,8 @@ Measured: commit `3809d5ab`.
 
 ## R-086 — A SUITE THAT COULD NOT RUN IS VOID, NOT RED
 
+**PROPOSED — status not recorded at registration; evidence: none found.** Numbered into the register in 17bb2064 (2026-09-28) from the seat's own measurements; neither this entry nor the measurement it cites states RULED or PROPOSED.
+
 A run that never reached its subject reports in the same vocabulary as one that reached it and
 found a defect. A crashed collection, an exhausted paging file, a missing fixture, a stubber that
 never restored — each produces a nonzero exit, and a nonzero exit reads as a finding.
@@ -3596,6 +3604,8 @@ Measured: `docs/measurements/2026-09-27-overnight-the-lineage-split-and-a-stub-h
 ---
 
 ## R-087 — `IfNotPresent` MAKES A REGISTRY FAILURE LATENT UNTIL A CACHE MISS — A CACHE IS NOT A DEPENDENCY
+
+**PROPOSED — status not recorded at registration; evidence: none found.** Numbered into the register in 17bb2064 (2026-09-28) from the seat's own measurements; neither this entry nor the measurement it cites states RULED or PROPOSED.
 
 The frontend bump of 2026-09-28 was blocked by a `pre-upgrade` hook, `iagent-minio-bucket-init`,
 whose image is `quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z` with `imagePullPolicy:
