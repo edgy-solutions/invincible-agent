@@ -9267,6 +9267,68 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     return case_projection.project_workflow_case(case, definitions, task_rows)
 
 
+from pydantic import ConfigDict as _ConfigDict  # noqa: E402
+
+
+class CaseSignalRequest(_BaseModel):
+    """Body of `POST /cases/{case_id}/signals/{signal}`. `extra="forbid"`: the actor is never
+    a body field -- an `acted_by` (or anything else) the caller supplies is a 422."""
+    model_config = _ConfigDict(extra="forbid")
+    status: str
+    comments: str = ""
+
+
+@app.post("/cases/{case_id}/signals/{signal}")
+async def answer_case_signal(
+    case_id: str,
+    signal: str,
+    req: CaseSignalRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
+    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    a cortex action (architect ruling 2026-10-10).
+
+    GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
+    engine-a's `WorkflowRunner.signal` checks `accepts`, `reason_required` and the authority
+    gate (`_authorize_resolution`: actor present, not excluded, audience journalled, `can_act`).
+    The actor is `current_user.authz_id`, never the body.
+
+    Not checked here: the audience / `can_act` (the `case` projection does not expose the
+    awaiting signal's audience, so the BFF cannot re-check it without inventing a read).
+    """
+    acted_by = (current_user.authz_id or "").strip()
+    if not acted_by:
+        raise HTTPException(status_code=401, detail={
+            "error": "no_actor",
+            "message": "a case signal needs an authenticated caller with an authz_id",
+        })
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            rr = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/signal",
+                json={"signal": signal, "status": req.status, "comments": req.comments,
+                      "acted_by": acted_by},
+            )
+    except Exception as exc:  # noqa: BLE001 — connect errors, timeouts
+        raise HTTPException(status_code=502, detail={
+            "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
+    sc = rr.status_code
+    if sc == 200:
+        return {"case_id": case_id, "signal": signal, "status": req.status, "acted_by": acted_by}
+    msg = _restate_refusal_message(rr)
+    if sc == 400:
+        raise HTTPException(status_code=400, detail={"error": "signal_refused", "message": msg})
+    if sc in (401, 403):
+        # The caller IS authenticated: a refusal here is authority, not authentication.
+        raise HTTPException(status_code=403, detail={
+            "error": "not_authorized_to_act", "code": sc, "message": msg})
+    if sc == 404:
+        raise HTTPException(status_code=404, detail="case not found")
+    raise HTTPException(status_code=502, detail={
+        "error": "signal_failed", "code": sc, "message": msg})
+
+
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
