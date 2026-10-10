@@ -181,7 +181,7 @@ def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_clien
     p = reg["payload"]
     for f in promotion.PAYLOAD_FIELDS:
         assert p[f], f
-    assert p["domain"] == "SUSTAINMENT"
+    assert p["review_pool"] == "SUSTAINMENT"
     assert p["dropped_by"] == {"authz_id": "alice@example.com"}
     assert p["extraction_ref"] == REF and p["pipeline_version"] == "doc-tools@61f74dc"
     promotion.subject_from_payload(p)
