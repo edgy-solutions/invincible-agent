@@ -677,6 +677,12 @@ move Q2's count of three.
 - **The census has a `refused` disposition**: the verb returned a named refusal. `abstained`
   keeps its own meaning (no page explains the subject). Q9 and Q11 use `refused`.
 - **An open Low hazard, HAZ-1008, exists** so the Low audience stays walked (Q12).
+- **A walk row expects exactly one disposition; Q6/Q7 keep expecting elicitation** while the
+  sandbox fixture is the failure source. When Lane 1 sets `FAILURE_SOURCE_CONNECTORS` to real
+  connectors, Q6/Q7 are updated in the same roll (architect, 2026-10-10). No rows change now.
+- **A critical item naming a hazard the plane does not hold is refused**: `assess_deferral_risk`
+  returns `refused` / `outcome: unknown_hazard` (with `hazard_id` and `reason`), no `assessment`
+  key and no task, in the `hazard_closed` shape. It replaces the old `assessment: not_assessed`.
 
 ## What each failure shape MEANS — so a red is attributable
 

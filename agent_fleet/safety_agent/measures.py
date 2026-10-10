@@ -258,12 +258,16 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
         # The critical item names a hazard the plane does not hold. NAMED, not
         # swallowed: an unresolvable reference is a data defect somebody must fix,
         # and returning a clean "no hazard" would hide it.
-        out["assessment"] = "not_assessed"
-        out["note"] = (
-            f"Critical item {csi.csi_id} names hazard {csi.opens_hazard_id}, "
-            "which is not present in the graph."
-        )
-        return out
+        # A decided, NAMED refusal in the hazard_closed shape: no `assessment`, no task.
+        return {
+            "refused": True,
+            "outcome": "unknown_hazard",
+            "hazard_id": csi.opens_hazard_id,
+            "reason": (
+                f"Critical item {csi.csi_id} names hazard {csi.opens_hazard_id}, "
+                "which is not held by this engine; no assessment is drafted."
+            ),
+        }
 
     out["reopens_hazard_id"] = hazard.hazard_id
     out["reopens_hazard"] = hazard.description
