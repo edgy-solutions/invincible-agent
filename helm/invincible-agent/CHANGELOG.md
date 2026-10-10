@@ -1,6 +1,8 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.40 — 2026-10-10
+## 0.4.41 — 2026-10-10
+
+Renumbered from 0.4.40: rev 186 takes 0.4.39 and lane/01-oidc-roundtrip moves to 0.4.40.
 
 NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
 OFF in the sandbox; nothing rolled.

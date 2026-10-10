@@ -73,7 +73,7 @@ Keycloak only). Whether each is a flow the pod really opens is the traffic half 
 store table renders an ingress policy, which would fence dagster-webserver against every other caller)
 nor an engine (no `.port` value). `directCallers` could not express it, so
 `invincible-agent.networkPolicyEgressOnlyTargets` (`_helpers.tpl`) adds a target table that only the
-engine egress template reads: an egress rule, and no ingress policy. Chart 0.4.38 -> 0.4.40 (0.4.39 is reserved for lane/01-oidc-roundtrip).
+engine egress template reads: an egress rule, and no ingress policy. Chart 0.4.38 -> 0.4.40 at measurement; renumbered 0.4.41 on 2026-10-10 (rev 186 takes 0.4.39, lane/01-oidc-roundtrip 0.4.40).
 
 **Not cuts, but not nameable.** MinIO (`iagent-minio:9000`) and DataHub GMS (`datahub-datahub-gms:8080`)
 are in-namespace in reality but not Services of this render, and no workload in it carries their
