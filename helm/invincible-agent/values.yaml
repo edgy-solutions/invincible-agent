@@ -649,6 +649,14 @@ engineSafety:
     tag: ""
   port: 8099
   env: {}
+  # FAILURE_SOURCE_CONNECTORS (agent_fleet/safety_agent/failure_source.py; saf B2): the FRACAS
+  # source seam's real connectors, comma-separated `name=module:callable`. EMPTY = the sandbox
+  # fixture; SET = ONLY the named connectors, and the fixture never mixes in. Rendered into the
+  # shared ConfigMap only when non-empty (an explicit agentFleet.env entry wins). No connector
+  # module ships in any image yet (saf B1), so a value here on a cluster without the overlay
+  # image refuses EVERY FRACAS question with `source_unavailable`. Leave it empty until a
+  # deployment's overlay image carries the classes it names.
+  failureSourceConnectors: ""
   resources:
     requests:
       cpu: 100m

@@ -72,6 +72,14 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "PLATFORM_PROGRAM_OVERLAY_DIRS") }}
   PLATFORM_PROGRAM_OVERLAY_DIRS: "/app/policy/overlays/sample"
   {{- end }}
+  {{- /* FAILURE_SOURCE_CONNECTORS -- the safety engine's FRACAS source seam (saf B2). Rendered
+  ONLY when engineSafety.failureSourceConnectors is non-empty: the engine reads an absent variable
+  as "use the sandbox fixture", so an empty value renders no key at all. */}}
+  {{- with ((.Values.engineSafety | default dict).failureSourceConnectors) }}
+  {{- if not (hasKey ($.Values.agentFleet.env | default dict) "FAILURE_SOURCE_CONNECTORS") }}
+  FAILURE_SOURCE_CONNECTORS: {{ . | quote }}
+  {{- end }}
+  {{- end }}
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "TASK_KIND_OVERLAY_DIRS") }}
   TASK_KIND_OVERLAY_DIRS: "/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds"
   {{- end }}

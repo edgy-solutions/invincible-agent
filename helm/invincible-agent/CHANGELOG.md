@@ -1,5 +1,20 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.37 — 2026-10-10
+
+Rev 183.
+
+### Added
+
+- **`engineSafety.failureSourceConnectors`** (default `""`) renders `FAILURE_SOURCE_CONNECTORS` into
+  the shared `-config` ConfigMap only when non-empty; an explicit `agentFleet.env` entry wins. The
+  sandbox leaves it empty (the FRACAS fixture): no connector module ships in any image yet.
+
+### Changed
+
+- Sandbox `cortexUi.image.digest` -> `1985ce7f` (cortex-ui 9bf8063: the `refusal` reader, the
+  stale-tab guard, the FRACAS bindings). Replaces the 182a hand-set image (`e06fbeb2`, 415e5e6).
+
 ## 0.4.36 — 2026-10-08
 
 OIDC brokering to the OpenDDIL realm, and one identity claim for every species. Not rolled.
