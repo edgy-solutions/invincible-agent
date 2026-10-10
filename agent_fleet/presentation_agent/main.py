@@ -387,6 +387,22 @@ def _render_document_deterministic(
     return {"components": [component]}
 
 
+def _with_document_refusal(card: Dict[str, Any], raw_data: Any) -> Dict[str, Any]:
+    """Name a refused body's refusal on its KNOWLEDGE_DOCUMENT card.
+
+    The document path rendered before any refusal check, so a refused draft (safety's
+    RiskAssessmentDraft on a closed hazard) reached cortex as a document and the census as
+    `drawn`. It lives outside `_render_document_deterministic` because that composer's read-set
+    is sealed to the envelope keys; the refusal is the card's envelope, not the composer's input.
+    """
+    body = _extract_agent_response(raw_data)
+    if isinstance(body, dict) and body.get("refused") is True:
+        for c in card.get("components") or []:
+            if isinstance(c, dict) and c.get("archetype") == "KNOWLEDGE_DOCUMENT":
+                c[REFUSAL_FIELD] = _refusal_envelope(body)
+    return card
+
+
 def _degrade_edgeless_topology_to_document(
     raw_data: Any, persona: str
 ) -> Optional[Dict[str, Any]]:
@@ -1720,11 +1736,11 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             )
             if archetype == "KNOWLEDGE_DOCUMENT":
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _with_selection_provenance(_render_document_deterministic(
+                return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                     request.raw_data,
                     effective_persona,
                     subject_concept=request.output_uri,
-                ), _sel_prov)
+                ), request.raw_data), _sel_prov)
             hardened, handled = await _render_archetype_hardened(
                 archetype, str_raw_data, effective_persona,
                 raw_data=request.raw_data,
