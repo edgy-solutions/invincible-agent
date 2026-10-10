@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.41 — 2026-10-10
+
+Next-roll staging (`lane/01-prep-next`). Not rolled. Numbered past 0.4.39 (`lane/01-oidc-roundtrip`)
+and 0.4.40 (`lane/01-netpol`), both open, so no two branches publish one number.
+
+### Changed
+
+- **`meshSdkVersion` -> `v0.9.9`** (tag object `112a649f`, commit `3c1f9084`). Every engine's
+  pyproject and lock pin the tag; `SHA_PINS_PENDING_TAG` is empty again.
+- Carries lane 74's PR #16 (an empty required slot is asked, never routed) and PR #17 (mpn and
+  notice_id reach the sources event). Neither changes the chart.
+
 ## 0.4.38 — 2026-10-10
 
 Rev 184. Realm-reconcile repairs its own stale mappers.
