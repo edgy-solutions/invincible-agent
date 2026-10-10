@@ -1692,6 +1692,19 @@ services:
           case and one the caller may not read answer the same 404. A runner that cannot be
           reached is a different fact and answers 503 runner_unavailable, not 404.
       - method: POST
+        path: /cases/{case_id}/signals/{signal}
+        identity: keycloak-jwt
+        gate: "get_current_user (authz_id required, else 401); the actor is the token's authz_id, never the body; engine-a's WorkflowRunner.signal is the authority (accepts, reason_required, excluded, journalled audience, Topaz can_act)"
+        exposes: gated-content
+        consumers: [cortex-ui case view (a person answers a human-audience signal, e.g. tier_ack)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-10: a human acknowledgment is a cortex action. Generic over the
+          signal name, gated by the audience the runner journalled when it awaited the signal. The
+          BFF does not re-check can_act itself (the case projection does not expose the audience);
+          a runner refusal (401/403) is 403, a bad status or missing reason 400, an unknown case
+          404, an unreachable or failing runner 502. A refusal is never a 200.
+      - method: POST
         path: /ingest/events
         identity: keycloak-jwt
         gate: "get_current_user + on_behalf_of must equal the caller's own authz_id; content_kind must be registered with branch == event (else 422)"
