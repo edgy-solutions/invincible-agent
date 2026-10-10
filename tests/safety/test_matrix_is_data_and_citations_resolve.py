@@ -152,15 +152,16 @@ def test_the_draft_cites_every_figure_it_states():
 def test_an_unassessed_hazard_states_the_gap_and_invents_nothing():
     """SEAL 11's other half, and the one a lazy implementation fails.
 
-    HAZ-1006 has no severity and no probability. The draft must say so, resolve NO risk level and
-    imply NO authority — not reach for the bottom of the matrix, which reads as assessed and
-    negligible, and not borrow a neighbouring hazard's figures.
+    HAZ-1006 has no severity and no probability. RULED 2026-10-09: the verb REFUSES
+    (`outcome: not_assessed`) rather than drafting. The refusal must name the gap, resolve NO risk
+    level and imply NO authority -- not reach for the bottom of the matrix, which reads as assessed
+    and negligible, and not borrow a neighbouring hazard's figures.
     """
     draft = measures.draft_risk_assessment(hazard_id="HAZ-1006")
-    assert draft["assessment"] == "not_assessed"
-    assert draft["severity"] is None and draft["probability"] is None
+    assert draft["refused"] is True and draft["outcome"] == "not_assessed"
     assert "risk_level" not in draft, "a level was resolved for a hazard with no severity"
     assert "acceptance_audience" not in draft, "an authority was implied with no assessed risk"
+    assert "review_request" not in draft
     assert "severity" in draft["gap"]
 
 
