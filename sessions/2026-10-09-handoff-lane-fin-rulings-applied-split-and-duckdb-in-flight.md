@@ -19,7 +19,19 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## In flight at the time of writing
+## Update 2026-10-10: everything below is now a PR. Read this first
+
+- **#11** `fin/cost-reproducible-build` @ `b9792711`: open.
+  - Master's `0374249f` is #11's `bf01618f`, rebased (same patch-id). As a result, #11 add/add-conflicts with master at `tests/cost/test_the_alpha_build_is_idempotent.py` L26.
+  - `git rebase origin/master` drops `bf01618f` and fixes this. The rebase is not pushed: the classifier refused the history rewrite. Digest Q4 asks who does it.
+- **#18** `fin/duckdb-extra-skip-reasons` @ `bc2e730b`: open. It MUST merge after #11. Measured: on master + #18, the census arm reds on the bare skip at L26 that `0374249f` brought in, and #11's `b9792711` fixes that site.
+- **#21** `fin/export-per-engine-split` @ `a224129a`: open, worktree `ia-fin-export-split`. Measured: master + #11(rebased) + #18 + #21 gives 155 passed, 18 skipped (Pyodide VOIDs), exit 0.
+- **Packets placed (untracked):**
+  - the digest: `invincible-agent/sessions/2026-10-10-packet-to-lane-01-fin-digest-split-pr21-duckdb-pr18-merge-order-11-then-18.md`. Questions 1–4: engine-fin ad-hoc path; fin recipient on a mixed board; refusal section at the response level; who rebases #11.
+  - cortex-ui: `cortex-ui/sessions/2026-10-10-packet-to-cortex-ui-a-mixed-board-export-answers-per-engine-documents.md`. It covers `documents[]`; today's button shows `partial` with no link.
+- **Next:** wait for rulings on Q1–Q4 and for the `dist/` ACL fix, which is what the `--like` check of the dist page needs.
+
+## In flight at the time of writing (2026-10-09, superseded by the update above)
 
 1. **#11** (`fin/cost-reproducible-build`, worktree `ia-fin-cost-reproducible-build`): an implementer is adding the part #10 had and #11 lacked.
    - The slice-1 branch of `build_html` dropped `as_of`.
