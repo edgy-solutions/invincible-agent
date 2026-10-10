@@ -4423,6 +4423,18 @@ def _decode_declarations(raw: Any) -> list[dict]:
     return [d for d in raw if isinstance(d, dict) and d.get("name")]
 
 
+def _is_empty_slot_value(value: Any) -> bool:
+    """Mirror of iagent_pure.slot_acceptance.is_empty_value, for the reason above: None, a
+    blank string, or an empty collection names nothing; `0` and `False` are answers."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return not value
+    return False
+
+
 def _anchor_period(declarations: list[dict], today: str = "") -> str:
     """Which fiscal period contains today — the ANCHOR that makes "this quarter" answerable.
 
@@ -4538,6 +4550,13 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         decl = by_name.get(name)
         if decl is None:
             refused.append(f"{name} (not declared by {request.verb_iri})")
+            continue
+        if decl.get("kind") == "spoken-mandatory" and _is_empty_slot_value(value):
+            # A REQUIRED SLOT NEVER TAKES THE SAFE-EMPTY VALUE. Accepted, `""` is PRESENT, and
+            # the supervisor's `ask` fires only on an ABSENT mandatory slot; on a referent slot
+            # it would go on to `resolveInstance("")`, whose `empty` is an ABSTAIN, not an ask.
+            # Left absent with no resolution, the disposition asks for it (`slot-unfilled`).
+            refused.append(f"{name}={value!r} (required; empty is never its answer, so it is asked)")
             continue
         values = decl.get("values")
         if values:

@@ -124,17 +124,9 @@ class _ShaPin:
         self.ends_with, self.backstop = ends_with, backstop
 
 
-SHA_PINS_PENDING_TAG = {
-    "60e56c972b209617dbe85cff6ff606c957e120ad": _ShaPin(
-        release="0.9.9 (iagent-mesh-sdk lane/ca-0.9.9, untagged)",
-        # Measured 2026-10-08: `git diff --stat v0.9.8 60e56c97` touches ingest, interfaces,
-        # systems_of_record, workflow_case and tests -- not transport_auth.
-        same_auth_as="v0.9.8",
-        why="safety_agent needs SystemOfRecordQuery (ADR-0056 FRACAS phase 1, lane/saf 586c04c9)",
-        ends_with="ca tags 0.9.9 and the fleet bumps every pin, and meshSdkVersion, to it",
-        backstop=date(2026, 10, 29),
-    ),
-}
+# Empty since v0.9.9 was tagged (112a649f) and every pin moved to it. The mechanism stays: a future
+# sha pin must add a bounded, reasoned entry here or the arms that read it refuse the pin.
+SHA_PINS_PENDING_TAG: dict = {}
 
 
 def test_every_sha_pin_is_live_bounded_and_shares_the_fleet_auth():
