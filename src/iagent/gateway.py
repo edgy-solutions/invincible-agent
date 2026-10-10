@@ -1609,6 +1609,7 @@ async def plan_measure(
     fn: str,
     body: PlanMeasureBody,
     x_frontend_id: Optional[str] = Header(default=None, alias="X-Frontend-Id"),
+    x_frontend_version: Optional[str] = Header(default=None, alias="X-Frontend-Version"),
     current_user: User = Depends(get_current_user),
 ):
     try:
@@ -1640,6 +1641,7 @@ async def plan_measure(
         "state_version": out.get("state_version"),
         "rows": out.get("rows"),
         "frontend_id": x_frontend_id,
+        "frontend_version": x_frontend_version,
     }
 
 
@@ -3804,6 +3806,9 @@ class InterviewRequest(BaseModel):
     # non-UI callers (curl, scripts) keep working; they resolve to the LABELLED default
     # menu rather than being special-cased.
     frontend_id: str | None = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's old bundle names its own
+    # version and is served that menu. Absent -> the newest registered version.
+    frontend_version: str | None = None
     # Required: identifies the chat thread / DagsterRunTracker key. A missing
     # session_id used to be silently filled with a fresh UUID per request,
     # which defeated the tracker's per-key dedup and caused back-to-back
@@ -5447,6 +5452,7 @@ async def _launch_supervisor_job(
     # the archetype is chosen from THAT client's registered menu. Empty is not an error --
     # Engine F falls back to its global table, i.e. today's behaviour.
     frontend_id: str = "",
+    frontend_version: str = "",
     # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
     # runConfig key so the generalist-fallback subtask can hand it to
     # Engine D's query_metadata for the Topaz can_view ask.
@@ -5536,6 +5542,7 @@ async def _launch_supervisor_job(
         "user_email": user_email,
         # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
         "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
         # ADR-0009 Step F'.2 additions:
         "user_persona": user_persona,
         "entitled_domains": entitled_domains,
@@ -6669,6 +6676,7 @@ async def _generate_dagster_stream_inner(
             bundle=_artifact_bundle,
             session_id=session_id,
             frontend_id=(request.frontend_id or ""),
+            frontend_version=(request.frontend_version or ""),
             user_persona=user_persona or "",
         ):
             yield _ev
@@ -6709,6 +6717,7 @@ async def _generate_dagster_stream_inner(
         # ADR-0017 amendment: read straight off the request -- the UI names itself, and an
         # absent value is a NON-UI caller (curl, script), not an error.
         frontend_id=(request.frontend_id or ""),
+        frontend_version=(request.frontend_version or ""),
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
@@ -7375,6 +7384,7 @@ async def _stream_direct_outcome(
     session_id: str,
     frontend_id: str,
     user_persona: str,
+    frontend_version: str = "",
 ) -> AsyncGenerator[str, None]:
     """Emit the SSE for a turn the direct path answered, and fill the artifact bundle.
 
@@ -7568,6 +7578,7 @@ async def _stream_direct_outcome(
                     "persona": user_persona,
                     "output_uri": _output_uri,
                     "frontend_id": frontend_id or None,
+                    "frontend_version": frontend_version or None,
                 },
             )
             _resp.raise_for_status()

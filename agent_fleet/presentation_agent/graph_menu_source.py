@@ -158,12 +158,20 @@ def _schema_has(base: str, prop: str, timeout: float) -> bool:
 def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optional[Dict[str, Dict[str, Any]]]:
     """Read every registered presentation menu from the graph.
 
-    Returns ``{frontend_id: {frontend_id, frontend_version, capabilities[]}}`` —
-    the SAME shape `_REGISTRY` held, so consumers need no new vocabulary — or
+    Returns ``{frontend_id: {frontend_id, frontend_version, capabilities[],
+    versions}}`` — the `_REGISTRY` shape plus ``versions`` — or
     ``None`` when the graph cannot be reached, which is distinct from "reached it
     and nobody has registered" (an empty dict). Collapsing those two would make a
     network blip indistinguishable from an empty registry, and they have opposite
     repairs.
+
+    MENUS ARE PER (frontend_id, frontend_version). The top level of each entry is
+    the NEWEST version's menu (greatest ``registered_at`` among its rows; an
+    unversioned group, or one with no ``registered_at``, ranks below every dated
+    versioned one), so a caller that names no version reads exactly what it
+    always read. ``versions`` maps every version to ``{capabilities,
+    registered_at}``; the unversioned group is keyed ``""``. A stale tab asks for
+    its own bundle's version and gets that menu, not the newest.
     """
     base = _weaviate_http()
     if not base:
@@ -173,6 +181,11 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
     fields = list(_BASE_FIELDS)
     if _schema_has(base, "recomputes", timeout):
         fields.append("recomputes")
+    # Optional like `recomputes`: a store registered before per-version menus
+    # lacks the properties and must still read (as one unversioned group).
+    for _opt in ("frontend_version", "registered_at"):
+        if _schema_has(base, _opt, timeout):
+            fields.append(_opt)
 
     # THE COMPLETENESS FILTER IS SELF-ACTIVATING. Until the registrar has marked
     # its first row the property does not exist, and filtering on it would empty
@@ -206,7 +219,7 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
             "TRUNCATED and some registered capabilities invisible", limit,
         )
 
-    entries: Dict[str, Dict[str, Any]] = {}
+    groups: Dict[str, Dict[str, Dict[str, Any]]] = {}
     orphans = 0
     incomplete = 0
     for row in rows:
@@ -237,11 +250,30 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
         rec = row.get("recomputes")
         if rec is not None:
             cap["contract"] = {"recomputes": bool(rec)}
-        entries.setdefault(fid, {
+        ver = (row.get("frontend_version") or "").strip()
+        reg_at = row.get("registered_at") or ""
+        grp = groups.setdefault(fid, {}).setdefault(
+            ver, {"capabilities": [], "registered_at": ""})
+        grp["capabilities"].append(cap)
+        if reg_at > grp["registered_at"]:
+            grp["registered_at"] = reg_at
+
+    entries: Dict[str, Dict[str, Any]] = {}
+    for fid, by_ver in groups.items():
+        # Legacy (unversioned or undated) groups rank below every dated versioned one.
+        def _rank(item):
+            v, g = item
+            return (bool(v and g["registered_at"]), g["registered_at"])
+        newest_ver, newest = max(by_ver.items(), key=_rank)
+        entries[fid] = {
             "frontend_id": fid,
-            "frontend_version": "graph",
-            "capabilities": [],
-        })["capabilities"].append(cap)
+            "frontend_version": newest_ver or "graph",
+            "capabilities": newest["capabilities"],
+            "versions": {
+                v: {"capabilities": g["capabilities"], "registered_at": g["registered_at"]}
+                for v, g in by_ver.items()
+            },
+        }
 
     if incomplete:
         logger.warning(

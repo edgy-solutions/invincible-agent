@@ -213,6 +213,9 @@ class RenderRequest(BaseModel):
     # client's registered menu. Absent -> the global capability table, i.e. today's
     # behaviour, so unidentified callers do not regress while the callers migrate.
     frontend_id: Optional[str] = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's bundle names its own version.
+    # Absent -> the newest registered version, i.e. today's behaviour.
+    frontend_version: Optional[str] = None
 
 
 # Canonicalizer + lookup live in capabilities.py — see the import at
@@ -1659,6 +1662,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             cap, _sel_prov = _select_presentation(
                 request.frontend_id, request.output_uri, _sel_payload,
                 persona=effective_persona, domain=request.domain,
+                frontend_version=request.frontend_version,
             )
             logger.info(
                 "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",
