@@ -5293,6 +5293,11 @@ class ArtifactResponse(_BaseModel):
     subject_uri: Optional[str] = None
     verb_iri: Optional[str] = None
     subject_instance_id: Optional[str] = None
+    # ADR-0041 §8.1 (delegate read path): the delegate that seeded the case and the case the
+    # artifact belongs to. `null` when the artifact has neither; only an entitled caller reaches
+    # this response, so an unentitled one still gets the absent-id 404.
+    seeded_by: Optional[str] = None
+    case_id: Optional[str] = None
 
 
 @app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
@@ -5433,6 +5438,8 @@ async def get_artifact(
         subject_uri=_or_none(intent.get("subject_uri")),
         verb_iri=_or_none(intent.get("verb_iri")),
         subject_instance_id=_or_none(intent.get("subject_instance_id")),
+        seeded_by=rec.get("seeded_by"),
+        case_id=rec.get("case_id"),
     )
 
 
