@@ -52,6 +52,15 @@ class AudienceRecord:
     grant_to: tuple[str, ...]
     granted_by: str
     reason: str = ""
+    #: groups (policy/groups.yaml) granted to ACT; written as `group:<G>#member` subjects.
+    #: Membership lives in users.yaml / topaz_sync, never here.
+    grant_to_groups: tuple[str, ...] = ()
+
+
+class GroupObjectMissing(RuntimeError):
+    """A `grant_to_groups` entry names a group that does not exist in live Topaz. Refused rather
+    than created: membership is topaz_sync's job, and an empty group object would pass readback
+    while routing the task to NOBODY."""
 
 
 def load_audiences(raw: dict) -> tuple[list[AudienceRecord], list[str]]:
@@ -63,18 +72,22 @@ def load_audiences(raw: dict) -> tuple[list[AudienceRecord], list[str]]:
     for key, entry in ((raw or {}).get("audiences") or {}).items():
         entry = entry or {}
         grant_to = [str(g).strip() for g in (entry.get("grant_to") or []) if str(g).strip()]
+        grant_to_groups = [str(g).strip() for g in (entry.get("grant_to_groups") or [])
+                           if str(g).strip()]
         granted_by = str(entry.get("granted_by") or "").strip()
         missing = [
-            k for k, v in (("granted_by", granted_by), ("reason", entry.get("reason")),
-                           ("grant_to", grant_to))
+            k for k, v in (("granted_by", granted_by), ("reason", entry.get("reason")))
             if not v
         ]
+        if not grant_to and not grant_to_groups:
+            missing.append("grant_to or grant_to_groups")
         if missing:
             errors.append(f"audience[{key}] MALFORMED: missing {', '.join(missing)}")
             continue
         out.append(AudienceRecord(
             key=str(key), grant_to=tuple(grant_to),
-            granted_by=granted_by, reason=str(entry.get("reason") or "")))
+            granted_by=granted_by, reason=str(entry.get("reason") or ""),
+            grant_to_groups=tuple(grant_to_groups)))
     return out, errors
 
 
@@ -89,6 +102,12 @@ def derive_desired(audiences: list[AudienceRecord]) -> DesiredState:
             state.relations.add(DirRelation(
                 object_type="task_audience", object_id=a.key, relation="actor",
                 subject_type="user", subject_id=grantee))
+        # A group is NOT added to state.objects: the group object is topaz_sync's, and
+        # creating it here would make an empty group that passes readback.
+        for group in a.grant_to_groups:
+            state.relations.add(DirRelation(
+                object_type="task_audience", object_id=a.key, relation="actor",
+                subject_type="group", subject_id=group, subject_relation="member"))
     return state
 
 
@@ -104,6 +123,13 @@ def sync_audiences(client, audiences: list[AudienceRecord], *, prune: bool = Tru
     """Ensure task_audience/user objects exist, then diff+apply the managed actor
     relations. prune=True REVOKES actor relations not asserted in git."""
     from topaz_sync import plan_diff, apply_plan
+    # Refuse BEFORE any write: every named group object must already exist live.
+    groups = sorted({g for a in audiences for g in a.grant_to_groups})
+    absent = [g for g in groups if not client.object_exists("group", g)]
+    if absent:
+        raise GroupObjectMissing(
+            "group object(s) absent from live Topaz: " + ", ".join(f"group:{g}" for g in absent)
+            + " (membership is topaz_sync's job; nothing written)")
     desired = derive_desired(audiences)
     for o in desired.objects:
         client.set_object(o)  # task_audience + user (ensure; not pruned)
@@ -121,7 +147,19 @@ def readback(client, audiences: list[AudienceRecord]) -> tuple[int, int]:
     """Positive control: every (audience, grantee) must resolve can_act TRUE.
     A missing relation FAILS LOUD (verification-must-be-able-to-fail)."""
     checked = failures = 0
+    live_rels = None
     for a in audiences:
+        for group in a.grant_to_groups:
+            # A group subject is not a caller, so can_act cannot be asked of it; the
+            # relation itself must be present live with the member userset.
+            checked += 1
+            if live_rels is None:
+                live_rels = set(client.list_relations(object_type="task_audience",
+                                                      relation="actor"))
+            if DirRelation("task_audience", a.key, "actor", "group", group,
+                           "member") not in live_rels:
+                print(f"  [FAIL] group:{group}#member actor {a.key}")
+                failures += 1
         for grantee in a.grant_to:
             checked += 1
             if not client.check("task_audience", a.key, "can_act", grantee):
@@ -133,7 +171,7 @@ def readback(client, audiences: list[AudienceRecord]) -> tuple[int, int]:
 def main() -> int:
     """CLI: sync task audiences into Topaz.
     Env: TASK_GRANTS_FILE (default policy/task_grants.yaml), TOPAZ_DIRECTORY_URL.
-    Exit: 0 ok · 2 malformed · 4 readback failed."""
+    Exit: 0 ok · 2 malformed · 4 readback failed · 5 a granted group object is absent."""
     import yaml
     from topaz_sync import TopazClient
 
@@ -149,11 +187,15 @@ def main() -> int:
         for e in malformed:
             print(f"  {e}", file=sys.stderr)
         return 2
-    n_grants = sum(len(a.grant_to) for a in audiences)
+    n_grants = sum(len(a.grant_to) + len(a.grant_to_groups) for a in audiences)
     print(f"loaded {len(audiences)} audience(s), {n_grants} actor grant(s)")
 
     with TopazClient(topaz_url) as client:
-        plan = sync_audiences(client, audiences)
+        try:
+            plan = sync_audiences(client, audiences)
+        except GroupObjectMissing as e:
+            print(f"REFUSED — {e}", file=sys.stderr)
+            return 5
         print(f"synced: +{len(plan.add_relations)} relations, -{len(plan.del_relations)} revoked")
         print("===== Readback (positive control — each grant resolves can_act) =====")
         checked, failures = readback(client, audiences)

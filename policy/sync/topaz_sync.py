@@ -67,7 +67,8 @@ class Grant(BaseModel):
 
 
 class GroupSpec(BaseModel):
-    grants: list[Grant]
+    # Omitted/empty admits an actor-only group (task-audience membership, no cell).
+    grants: list[Grant] = Field(default_factory=list)
 
 
 class DefaultCell(BaseModel):
