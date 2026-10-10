@@ -1,9 +1,9 @@
 # Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051, ADR-0056)
 
-**Seven questions, three different answer SHAPES — Q4 and Q5 reuse Q3's, Q6 and Q7 are their
-populated twins.** Three draw a card (Q2, Q6, Q7), one creates a TASK and draws nothing, and three
-REFUSE by asking for a slot. A walker who expects seven cards will score four defects that are not
-there.
+**Nine questions, three different answer SHAPES — Q4 and Q5 reuse Q3's, Q6 and Q7 are their
+populated twins, Q8 and Q9 are Q1's twins at two other matrix cells.** Three draw a card (Q2, Q6,
+Q7), three create a TASK and draw nothing (Q1, Q8, Q9), and three REFUSE by asking for a slot. A
+walker who expects nine cards will score six defects that are not there.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
@@ -14,6 +14,8 @@ there.
 | 5 | failure trend for this platform by month | `failure_trend_for_this_platform_by_month` | **a refusal** asking for `platform_id` |
 | 6 | what failed on this part PN-8801 | `what_failed_on_this_part` | a `CONTRIBUTION_RANKING` card, 1 row (bob sees one program) |
 | 7 | failures per month on this platform PLT-ALPHA | `failure_trend_for_this_platform_by_month` | a `MULTI_SERIES` card, 1 period (bob sees one program) |
+| 8 | draft a risk assessment for HAZ-1001 | `draft_risk_assessment` | **a task** for the `risk_acceptance_serious` audience, not a card |
+| 9 | draft a risk assessment for HAZ-1005 | `draft_risk_assessment` | **a task** for the `risk_acceptance_low` audience, not a card |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -464,6 +466,91 @@ with one point is correct here, not a rendering fault.
 Same two caveats as Q6: cortex-ui does not bind `safety:FailureTrend` yet (a `knowledge-document`
 card is the missing binding), and whether the utterance's `PLT-ALPHA` fills `platform_id` is the
 instance resolver's question (`safety:Platform` members: `PLT-ALPHA`, `PLT-BRAVO`, `PLT-CHARLIE`).
+
+---
+
+## Q8 — Draft a risk assessment at the worst severity row  ⚠ **a TASK, and Severity I is NOT High**
+
+> **"draft a risk assessment for HAZ-1001"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `task_requested` — **NOT YET WALKED LIVE** (waits on a Lane 1 roll; the
+captured payload below is the engine's own, from `TestClient`, not a cluster).
+
+**Why this hazard.** Q1 is Medium (II x D, bob's audience). HAZ-1001 is severity I (Catastrophic),
+probability D, and the ratified matrix resolves that cell to **Serious**, not High
+(`setup/ontologies/safety_risk_matrix.ttl`, the `I`/`D` cell). It is the cell a walker will
+"correct" to High on instinct, and it is the one where the audience flips from bob's tier to the
+senior authority's: `risk_acceptance_serious:SUSTAINMENT`, granted to alice and deliberately not
+to bob (`policy/task_grants.yaml`). It also has NO mitigation at all, so the assessment carries
+`orphan_reason: "no mitigation recorded"` and an empty `mitigations` list.
+
+```json
+{
+  "refused": false, "hazard_id": "HAZ-1001", "acceptance_status": "drafted",
+  "severity": "I", "probability": "D", "risk_level": "Serious",
+  "acceptance_audience": "risk_acceptance_serious:SUSTAINMENT",
+  "mitigations": [], "orphan_reason": "no mitigation recorded",
+  "derived_from": ["HAZ-1001", "safety_risk_matrix.ttl"],
+  "citations": {"risk_level": "safety_risk_matrix.ttl", "acceptance_audience": "safety_risk_matrix.ttl"},
+  "review_request": {"kind": "risk_acceptance_serious", "task_id": "risk-acceptance-HAZ-1001",
+                     "audience": "risk_acceptance_serious:SUSTAINMENT",
+                     "title": "Accept Serious risk — HAZ-1001"}
+}
+```
+
+### Checks that distinguish
+
+- `risk_level` is **`Serious`**. If it reads High, the matrix in the image is not the ratified one.
+- A row appears in `human_tasks` with `kind: risk_acceptance_serious`, **NOT assigned to bob**:
+  bob drafts and cannot accept a Serious risk. The audience is `risk_acceptance_serious:SUSTAINMENT`.
+- `acceptance_status` is `drafted`, never `accepted`.
+
+### What a correct result looks like BROKEN
+
+- **A card.** Same as Q1: the acceptance is a human act.
+- **A task in bob's queue as the acceptor.** That is the audience of Medium and Low.
+
+---
+
+## Q9 — Draft a risk assessment at the lowest cell  ⚠ **a TASK for bob's own tier, on a CLOSED hazard**
+
+> **"draft a risk assessment for HAZ-1005"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `task_requested` — **NOT YET WALKED LIVE** (waits on a Lane 1 roll).
+
+**Why this hazard.** It is the only fixture hazard in the Low cell (IV x E), so the only one that
+reaches `risk_acceptance_low:SUSTAINMENT`, the audience Q1 and Q8 do not. It is also `closed`
+with an owned, field-verified mitigation (MIT-2105): the verb does not gate on status, so it still
+drafts a task. That is what the engine does today; whether it should is an open question for the
+architect, and this row records the behaviour rather than endorsing it.
+
+```json
+{
+  "refused": false, "hazard_id": "HAZ-1005", "acceptance_status": "drafted",
+  "severity": "IV", "probability": "E", "risk_level": "Low",
+  "acceptance_audience": "risk_acceptance_low:SUSTAINMENT",
+  "orphan_reason": null,
+  "derived_from": ["HAZ-1005", "safety_risk_matrix.ttl", "MIT-2105"],
+  "review_request": {"kind": "risk_acceptance_low", "task_id": "risk-acceptance-HAZ-1005",
+                     "audience": "risk_acceptance_low:SUSTAINMENT",
+                     "title": "Accept Low risk — HAZ-1005"}
+}
+```
+
+### Checks that distinguish
+
+- `risk_level` is **`Low`**, `orphan_reason` is **null** (an owned, verified mitigation).
+- The task is `risk_acceptance_low`, audience `risk_acceptance_low:SUSTAINMENT` (bob holds it).
+- `acceptance_status` is `drafted`.
+
+### What a correct result looks like BROKEN
+
+- **A Medium or Serious level for IV x E.** The image's matrix is not the ratified one.
+- **A card.** As Q1.
 
 ---
 

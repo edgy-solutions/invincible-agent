@@ -51,7 +51,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_seven_prompts(sheet):
+def test_the_parser_finds_the_sheets_nine_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -64,6 +64,8 @@ def test_the_parser_finds_the_sheets_seven_prompts(sheet):
         "failure trend for this platform by month",
         "what failed on this part PN-8801",
         "failures per month on this platform PLT-ALPHA",
+        "draft a risk assessment for HAZ-1001",
+        "draft a risk assessment for HAZ-1005",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 
@@ -268,3 +270,40 @@ def test_Q6_and_Q7_captures_are_what_bob_gets(sheet, monkeypatch):
     for claim in ('"value_unit": "failures"', '"scope_label": "PN-8801"', '"period": "2026-03"',
                   '"key": "failure_count"', "sor-events-a:EVT-55101"):
         assert claim in sheet, f"the sheet no longer carries {claim!r}"
+
+
+# ---------------------------------------------------------------------------
+# Q8 / Q9 - the draft at two other matrix cells
+# ---------------------------------------------------------------------------
+
+@requires_rdflib
+@pytest.mark.parametrize("hazard,sev,prob,level,slug", [
+    ("HAZ-1001", "I", "D", "Serious", "serious"),
+    ("HAZ-1005", "IV", "E", "Low", "low"),
+])
+def test_Q8_and_Q9_captured_level_and_audience_are_what_the_engine_returns(
+        client, sheet, hazard, sev, prob, level, slug):
+    """The sheet's claim per hazard: the cell, the level the matrix yields for it, and the audience.
+    The level is read from the engine (which reads the ratified matrix), not restated here."""
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": hazard})
+    assert (body["severity"], body["probability"], body["risk_level"]) == (sev, prob, level)
+    assert body["acceptance_audience"] == f"risk_acceptance_{slug}:SUSTAINMENT"
+    assert body["acceptance_status"] == "drafted"
+    assert body["review_request"]["kind"] == f"risk_acceptance_{slug}"
+    assert body["citations"]["risk_level"] == "safety_risk_matrix.ttl"
+    for claim in (f"risk_acceptance_{slug}:SUSTAINMENT", f'"risk_level": "{level}"',
+                  f'"hazard_id": "{hazard}"'):
+        assert claim in sheet, f"the sheet no longer carries {claim!r}"
+
+
+@requires_rdflib
+def test_Q1_Q8_Q9_reach_three_DIFFERENT_audiences_and_cells(client):
+    """The reason the two were picked: each differs from the others in cell AND audience. Without
+    this a later fixture edit could collapse two rows onto one audience and the sheet would still
+    read as covering three."""
+    got = {}
+    for h in ("HAZ-1003", "HAZ-1001", "HAZ-1005"):
+        b = _measure(client, "draft_risk_assessment", {"hazard_id": h})
+        got[h] = ((b["severity"], b["probability"]), b["acceptance_audience"])
+    assert len({v[0] for v in got.values()}) == 3, got
+    assert len({v[1] for v in got.values()}) == 3, got

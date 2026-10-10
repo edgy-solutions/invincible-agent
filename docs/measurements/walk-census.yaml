@@ -279,6 +279,45 @@ rows:
     min_rows: 1
     dispositions: [drawn]
 
+  # TWO MORE DRAFT-ASSESSMENT ROWS, 2026-10-09, at matrix cells and audiences Q1 (HAZ-1003, II x D,
+  # Medium, bob) does not reach. NOT YET WALKED LIVE: they wait on a Lane 1 roll, like the two
+  # populated FRACAS rows above. The cell and audience are the engine's own output from the
+  # ratified matrix (safety_risk_matrix.ttl) and the task grants, not restated here.
+  - id: safety-haz-1001-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 7
+    question: draft a risk assessment for HAZ-1001
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_requested]
+    expect_task:
+      kind: risk_acceptance_serious
+      audience: risk_acceptance_serious:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+    # Severity I x probability D is SERIOUS (not High) in the ratified matrix, and Serious goes to
+    # the senior authority, not to bob.
+
+  - id: safety-haz-1005-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 8
+    question: draft a risk assessment for HAZ-1005
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_requested]
+    expect_task:
+      kind: risk_acceptance_low
+      audience: risk_acceptance_low:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+    # The only fixture hazard in the Low cell, and a CLOSED one: the verb does not gate on status.
+
   # ── SUSTAINMENT (74, engine-o) ─────────────────────────────────────────────────────────────
   # Rev 180 answered this question from the generalist (`no_verb_classified`). It is DERIVED from
   # docs/measurements/sustainment-walk-sheet.md, whose question is one of the verb's own declared
