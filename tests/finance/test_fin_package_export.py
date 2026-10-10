@@ -233,7 +233,9 @@ def test_both_export_routes_shape_through_the_ONE_helper():
         and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                 and n.func.id == "_shape_export_package_response" for n in ast.walk(fn))
     }
-    assert callers == {"export_package", "_export_package_from_template"}, sorted(callers)
+    # the cost path shapes inside `_call_engine_cost_package`, which export_package (single path
+    # and per-engine sections alike) calls: still one shaping call per route.
+    assert callers == {"_call_engine_cost_package", "_export_package_from_template"}, sorted(callers)
     assert src.count("engine returned no verifiable artifact hash") == 1
     assert src.count("_SHA256_LOCATOR_RE.match(sha)") == 1
 
