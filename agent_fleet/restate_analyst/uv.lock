@@ -797,8 +797,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.5"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=60e56c972b209617dbe85cff6ff606c957e120ad#60e56c972b209617dbe85cff6ff606c957e120ad" }
+version = "0.9.9"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.9#3c1f9084c102669737d1a62b3114a754093c0dc6" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -1996,7 +1996,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=60e56c972b209617dbe85cff6ff606c957e120ad" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.9" },
     { name = "langchain-community" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },

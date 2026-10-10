@@ -526,8 +526,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.8"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.8#e9739681dc2e50ce72ca4b749a3b15e14c9ca85a" }
+version = "0.9.9"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.9#3c1f9084c102669737d1a62b3114a754093c0dc6" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -828,7 +828,7 @@ requires-dist = [
     { name = "acryl-datahub" },
     { name = "baml-py", specifier = "==0.219.0" },
     { name = "fastapi" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.8" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.9" },
     { name = "langfuse", specifier = ">=3.0.0" },
     { name = "provenance-telemetry", specifier = "==0.1.0" },
     { name = "pydantic" },
