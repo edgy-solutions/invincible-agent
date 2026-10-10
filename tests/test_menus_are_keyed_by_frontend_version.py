@@ -170,8 +170,13 @@ _GMS = "graph_menu_source__versions_test"
 def _gms():
     spec = importlib.util.spec_from_file_location(_GMS, _PRESENTATION / "graph_menu_source.py")
     m = importlib.util.module_from_spec(spec)
-    sys.modules[_GMS] = m
-    spec.loader.exec_module(m)
+    # Registered only while it executes (dataclasses resolve their module there), then put back:
+    # the sys.modules ratchet refuses a write with no restore.
+    try:
+        sys.modules[_GMS] = m
+        spec.loader.exec_module(m)
+    finally:
+        sys.modules.pop(_GMS, None)
     return m
 
 
