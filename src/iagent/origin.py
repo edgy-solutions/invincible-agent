@@ -20,6 +20,7 @@ try:
         check_dropper_bound,
         load_domain_consumption,
         origin_visible,
+        visible_by_origin,
     )
 except ImportError:  # pragma: no cover — repo root not on sys.path (script/test invocations)
     _repo_root = _Path(__file__).resolve().parents[2]
@@ -32,6 +33,7 @@ except ImportError:  # pragma: no cover — repo root not on sys.path (script/te
         check_dropper_bound,
         load_domain_consumption,
         origin_visible,
+        visible_by_origin,
     )
 
 __all__ = [
@@ -41,4 +43,5 @@ __all__ = [
     "check_dropper_bound",
     "load_domain_consumption",
     "origin_visible",
+    "visible_by_origin",
 ]

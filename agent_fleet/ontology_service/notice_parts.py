@@ -24,14 +24,14 @@ THREE ANSWERS, NEVER CONFLATED:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Callable, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Callable, Iterable, List, Mapping, Optional
 from urllib.parse import quote
 
 try:  # engine image: flat layout (agent_fleet/ on sys.path as the root)
-    from utils.origin_entitlement import Origin, can_consume, origin_visible
+    from utils.origin_entitlement import visible_by_origin
 except ImportError:  # repo layout
     from agent_fleet.utils.origin_entitlement import (  # type: ignore[no-redef]
-        Origin, can_consume, origin_visible,
+        visible_by_origin,
     )
 
 VERB = "mesh:whichPartsDoesThisNoticeAffect"
@@ -130,14 +130,15 @@ def _origin_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def source_visibility(row: Dict[str, Any], *, caller_id: str, viewer_domains: Iterable[str],
-                      table: Mapping[str, frozenset]) -> Union[str, Tuple[str, str]]:
+                      table: Mapping[str, frozenset]) -> str:
     """PURE. Whether this caller may read the sources of the notice `row` describes:
-    `"visible"`, `"withheld"`, or `("ask_program", program)`: the origin is consumable and the final
-    yes is the shared decider's. `program` is the origin's program (the caller must be a member of
-    it; the reader asks, this function does not) or "" when the origin names none.
+    `"visible"`, `"withheld"`, or `"by_origin"`: engine-o's own preconditions all hold and the
+    answer is the one shared origin rule's (`visible_by_origin`, which the reader calls; this
+    function does not decide it, so engine-o and the BFF cannot drift).
 
-    After promotion the one rule is `can_consume(caller domains, origin) AND program_member`;
-    before promotion, or with no resolved origin, the drop is the dropper's alone."""
+    Engine-o's preconditions: seeded content and the dropper are visible; no artifact, not yet
+    promoted, or no resolved origin is withheld. `viewer_domains` and `table` are accepted for
+    signature stability and are not consulted here."""
     node = row.get("notice") or {}
     if not node.get("provenance_ingest_id"):
         return "visible"  # seeded content: unchanged
@@ -150,11 +151,7 @@ def source_visibility(row: Dict[str, Any], *, caller_id: str, viewer_domains: It
     owner = row.get("origin_owner_domain")
     if row.get("origin_resolved_by") in (None, "", "unresolved") or not owner:
         return "withheld"
-    if not can_consume(viewer_domains, owner, table):
-        return "withheld"
-    # The final yes is ALWAYS the shared decider's (origin_visible); the program, if the origin
-    # names one, is asked first. "" means: no program to ask about.
-    return ("ask_program", row.get("origin_program") or "")
+    return "by_origin"
 
 
 def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, Any]:
@@ -256,15 +253,14 @@ def read_notice_parts(driver: Any, notice_id: str, *, caller_id: str = "",
         domains = tuple(viewer_domains or ())
         verdict = source_visibility(rows[0], caller_id=caller_id, viewer_domains=domains,
                                     table=table)
-        if isinstance(verdict, tuple):
-            program = verdict[1]
-            member = bool(can_view_program(program, caller_id)) if (program and can_view_program) else False
+        if verdict == "by_origin":
             row = rows[0]
-            allowed = origin_visible(
-                viewer_domains=domains, is_program_member=member,
-                origin=Origin(owner_domain=row["origin_owner_domain"], program=program or None,
-                              obtained_via=row.get("origin_resolved_by") or ""),
-                table=table)
+            allowed = visible_by_origin(
+                viewer_domains=domains,
+                owner_domain=row["origin_owner_domain"],
+                program=row.get("origin_program"),
+                table=table,
+                is_program_member=lambda p: bool(can_view_program(p, caller_id)) if can_view_program else False)
             verdict = "visible" if allowed else "withheld"
         if verdict != "visible":
             return notice_parts([], notice_id)

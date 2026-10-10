@@ -5229,32 +5229,32 @@ def _load_domain_consumption_table() -> dict:
 
 async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
     """Non-owner read path (ruling: "ORIGIN, not audience"). False (never raises) when
-    the artifact carries no recorded origin — that artifact stays on the
-    dropper/owner-only path, unchanged. Raises HTTPException(503) when Topaz cannot
-    answer the program-membership question — "could not tell" must not collapse into
-    the same 404 a real deny produces, the same distinction `get_current_user` already
-    draws for the entitlement matrix itself.
+    the artifact carries no recorded origin -- that artifact stays on the dropper/owner-only
+    path, unchanged. The rule itself is `origin_entitlement.visible_by_origin`, the ONE function
+    engine-o's notice read calls too (architect Q1, 2026-10-10): an origin with a domain and NO
+    program is a steward attestation and is decided by `can_consume` alone; a program, when the
+    origin names one, is a second conjunct asked of Topaz only AFTER the pure check admits the
+    caller (a non-consumer gets False/404, never 503 -- no existence oracle). Raises
+    HTTPException(503) when Topaz cannot answer the program-membership question -- "could not
+    tell" must not collapse into the same 404 a real deny produces, the same distinction
+    `get_current_user` already draws for the entitlement matrix itself.
     """
-    owner_domain = (rec.get("origin_owner_domain") or "").strip() if rec.get("origin_owner_domain") else ""
-    program = (rec.get("origin_program") or "").strip() if rec.get("origin_program") else ""
-    if not owner_domain or not program:
-        return False
-
     from . import human_tasks, origin as origin_mod
     from starlette.concurrency import run_in_threadpool
 
-    # THE PURE CHECK RUNS FIRST. A caller whose domains cannot consume this origin is denied
-    # without asking Topaz -- otherwise a Topaz outage answers 503 for an artifact that EXISTS
-    # and 404 for one that does not, and the status code becomes the existence oracle the 404
-    # was chosen to close. Only a caller the table already admits can see a 503.
     viewer_domains = {c.domain for c in current_user.entitlements.cells}
     table = _load_domain_consumption_table()
-    if not origin_mod.can_consume(viewer_domains, owner_domain, table):
-        return False
-
+    program = rec.get("origin_program")
     try:
-        is_member = await run_in_threadpool(
-            lambda: human_tasks.check_can_view_program(program, current_user.authz_id)
+        return await run_in_threadpool(
+            lambda: origin_mod.visible_by_origin(
+                viewer_domains=viewer_domains,
+                owner_domain=rec.get("origin_owner_domain"),
+                program=program,
+                table=table,
+                is_program_member=lambda p: human_tasks.check_can_view_program(
+                    p, current_user.authz_id),
+            )
         )
     except Exception as exc:  # noqa: BLE001 — Topaz unreachable: fail closed, report loudly
         logger.warning("program membership check unavailable for %s: %s", program, exc)
@@ -5262,14 +5262,6 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
             status_code=503,
             detail={"error": "authorization_unavailable", "message": "could not verify program membership"},
         ) from exc
-
-    origin_obj = origin_mod.Origin(owner_domain=owner_domain, program=program, obtained_via="recorded")
-    return origin_mod.origin_visible(
-        viewer_domains=viewer_domains,
-        is_program_member=is_member,
-        origin=origin_obj,
-        table=table,
-    )
 
 
 class ArtifactResponse(_BaseModel):

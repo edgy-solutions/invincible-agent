@@ -17,7 +17,7 @@ domain_consumption.yaml and asks Topaz, then calls these.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -118,3 +118,42 @@ def origin_visible(
     if origin.program and not is_program_member:
         return False
     return can_consume(viewer_domains, origin.owner_domain, table)
+
+
+def visible_by_origin(
+    *,
+    viewer_domains: Iterable[str],
+    owner_domain: str | None,
+    program: str | None,
+    table: Mapping[str, frozenset[str]],
+    is_program_member: Callable[[str], bool],
+) -> bool:
+    """THE one origin rule, for every caller (engine-o's notice read and the BFF gateway).
+
+    Ruling Q1, 2026-10-10: a program-less origin is a steward attestation and is decided by
+    `can_consume` alone. The order below IS the rule:
+
+      1. `owner_domain` empty / blank / None -> False, membership never asked. No origin is no
+         grant. This needs no line of its own: a blank owner fails step 2, because the loader
+         strips blank origins and so no table row lists one (mutant D5, 2026-10-10: deleting an
+         explicit guard here left all 30 arms of test_one_origin_rule_both_callers green).
+      2. `can_consume(viewer_domains, owner_domain, table)` False -> False, membership NOT
+         asked. The pure check goes first so a Topaz outage answers a non-consumer exactly as
+         a healthy Topaz does (no existence oracle).
+      3. `program` empty / blank / None -> no membership question. Otherwise
+         `is_program_member(program)` is asked once; its exceptions PROPAGATE (callers map
+         them to 503).
+      4. The final yes is always `origin_visible`'s.
+    """
+    domains = list(viewer_domains)
+    owner = (owner_domain or "").strip()
+    if not can_consume(domains, owner, table):
+        return False
+    prog = (program or "").strip()
+    member = bool(is_program_member(prog)) if prog else False
+    return origin_visible(
+        viewer_domains=domains,
+        is_program_member=member,
+        origin=Origin(owner, prog or None),
+        table=table,
+    )
