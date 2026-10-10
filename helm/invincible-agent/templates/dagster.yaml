@@ -14,6 +14,8 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/dagster-instance: {{ include (print $.Template.BasePath "/dagster-instance.yaml") . | sha256sum }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 8 }}
@@ -57,6 +59,9 @@ spec:
           volumeMounts:
             - name: dagster-workspace
               mountPath: /dagster-workspace
+            - name: dagster-instance
+              mountPath: /opt/dagster/dagster_home/dagster.yaml
+              subPath: dagster.yaml
           resources:
             {{- toYaml .Values.dagster.webserver.resources | nindent 12 }}
           readinessProbe:
@@ -99,6 +104,9 @@ spec:
         - name: dagster-workspace
           configMap:
             name: {{ .Release.Name }}-dagster-workspace
+        - name: dagster-instance
+          configMap:
+            name: {{ .Release.Name }}-dagster-home
 {{- end }}
 ---
 {{- if .Values.dagster.daemon.enabled }}
@@ -117,6 +125,8 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-daemon" "root" .) | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/dagster-instance: {{ include (print $.Template.BasePath "/dagster-instance.yaml") . | sha256sum }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-daemon" "root" .) | nindent 8 }}
@@ -158,12 +168,18 @@ spec:
           volumeMounts:
             - name: dagster-workspace
               mountPath: /dagster-workspace
+            - name: dagster-instance
+              mountPath: /opt/dagster/dagster_home/dagster.yaml
+              subPath: dagster.yaml
           resources:
             {{- toYaml .Values.dagster.daemon.resources | nindent 12 }}
       volumes:
         - name: dagster-workspace
           configMap:
             name: {{ .Release.Name }}-dagster-workspace
+        - name: dagster-instance
+          configMap:
+            name: {{ .Release.Name }}-dagster-home
 {{- end }}
 ---
 {{- if .Values.dagster.webserver.enabled }}
