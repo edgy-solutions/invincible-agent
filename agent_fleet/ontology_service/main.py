@@ -980,6 +980,11 @@ try:
 except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
 
+try:
+    from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils import origin_entitlement as _origin_entitlement
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
@@ -5105,6 +5110,36 @@ class NoticePartsRequest(BaseModel):
     params: dict = Field(default_factory=dict)
     resolved_instance_id: str = ""
     entitled_domains: list[str] = Field(default_factory=list)
+    #: The caller's authz_id. The supervisor's dispatch body carries it here (dynamic_supervisor
+    #: dispatch body; the gateway sets `user_email=current_user.authz_id`). It is body-asserted at
+    #: the same trust level as `entitled_domains` -- specialists receive no user token.
+    user_email: str = ""
+
+
+def _load_domain_consumption_for_notice_parts() -> dict:
+    """The consumption table, read per request (no cache). FAIL CLOSED: an unreadable file is
+    `{}` (nobody consumes any origin) plus one WARNING, the posture of gateway.py's loader."""
+    path = os.getenv("DOMAIN_CONSUMPTION_FILE", "/app/policy/domain_consumption.yaml")
+    try:
+        import yaml  # noqa: PLC0415
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never 500
+        logging.getLogger("iagent.notice_parts").warning(
+            "domain_consumption.yaml unreadable at %s (%s) -- notice_parts sources of a "
+            "drop-derived notice are withheld from everyone but its dropper until this is fixed",
+            path, exc,
+        )
+        return {}
+    return _origin_entitlement.load_domain_consumption(raw)
+
+
+def _notice_parts_can_view_program(program: str, caller_id: str) -> bool:
+    try:
+        from utils.program_membership import can_view_program  # noqa: PLC0415
+    except ImportError:
+        from agent_fleet.utils.program_membership import can_view_program  # type: ignore[no-redef]
+    return can_view_program(program, caller_id)
 
 
 @app.post("/notice_parts")
@@ -5126,7 +5161,12 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
     notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
     try:
-        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+        return await asyncio.to_thread(
+            _notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id,
+            caller_id=request.user_email, viewer_domains=request.entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 

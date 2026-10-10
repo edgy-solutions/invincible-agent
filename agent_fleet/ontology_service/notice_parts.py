@@ -24,8 +24,15 @@ THREE ANSWERS, NEVER CONFLATED:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Callable, Iterable, List, Mapping, Optional, Tuple, Union
 from urllib.parse import quote
+
+try:  # engine image: flat layout (agent_fleet/ on sys.path as the root)
+    from utils.origin_entitlement import Origin, can_consume, origin_visible
+except ImportError:  # repo layout
+    from agent_fleet.utils.origin_entitlement import (  # type: ignore[no-redef]
+        Origin, can_consume, origin_visible,
+    )
 
 VERB = "mesh:whichPartsDoesThisNoticeAffect"
 DOMAIN = "SUSTAINMENT"
@@ -52,6 +59,11 @@ OPTIONAL MATCH (a)-[p:PROMOTION]->(a)
 WITH n, mpns, a, p ORDER BY p.promoted_at DESC
 RETURN properties(n) AS notice, mpns,
        a.dropped_by_authz_id AS dropped_by,
+       a IS NOT NULL AS has_artifact,
+       a.origin_owner_domain AS origin_owner_domain,
+       a.origin_program AS origin_program,
+       a.origin_resolved_by AS origin_resolved_by,
+       count(p) > 0 AS promoted,
        head(collect(p.promoted_by)) AS promoted_by
 """.strip()
 
@@ -81,7 +93,8 @@ def provenance_block_of(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _source(notice_id: str, mpn: str, block: Optional[Dict[str, Any]],
-            dropped_by: Optional[str], promoted_by: Optional[str]) -> Dict[str, Any]:
+            dropped_by: Optional[str], promoted_by: Optional[str],
+            origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     src: Dict[str, Any] = {
         "type": "graph",
         "label": f"P/N {mpn}",
@@ -98,7 +111,50 @@ def _source(notice_id: str, mpn: str, block: Optional[Dict[str, Any]],
     }
     if block is not None:
         src["provenance"] = dict(block)
+    if origin is not None:
+        src["origin"] = dict(origin)
     return src
+
+
+def _origin_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The origin the artifact records, as the rung rides with the source. None when it records no
+    owner domain."""
+    owner = row.get("origin_owner_domain")
+    if not owner:
+        return None
+    return {
+        "owner_domain": owner,
+        "program": row.get("origin_program") or None,
+        "resolved_by": row.get("origin_resolved_by") or None,
+    }
+
+
+def source_visibility(row: Dict[str, Any], *, caller_id: str, viewer_domains: Iterable[str],
+                      table: Mapping[str, frozenset]) -> Union[str, Tuple[str, str]]:
+    """PURE. Whether this caller may read the sources of the notice `row` describes:
+    `"visible"`, `"withheld"`, or `("ask_program", program)`: the origin is consumable and the final
+    yes is the shared decider's. `program` is the origin's program (the caller must be a member of
+    it; the reader asks, this function does not) or "" when the origin names none.
+
+    After promotion the one rule is `can_consume(caller domains, origin) AND program_member`;
+    before promotion, or with no resolved origin, the drop is the dropper's alone."""
+    node = row.get("notice") or {}
+    if not node.get("provenance_ingest_id"):
+        return "visible"  # seeded content: unchanged
+    if caller_id and caller_id == row.get("dropped_by"):
+        return "visible"
+    if not row.get("has_artifact"):
+        return "withheld"
+    if not row.get("promoted"):
+        return "withheld"
+    owner = row.get("origin_owner_domain")
+    if row.get("origin_resolved_by") in (None, "", "unresolved") or not owner:
+        return "withheld"
+    if not can_consume(viewer_domains, owner, table):
+        return "withheld"
+    # The final yes is ALWAYS the shared decider's (origin_visible); the program, if the origin
+    # names one, is asked first. "" means: no program to ask about.
+    return ("ask_program", row.get("origin_program") or "")
 
 
 def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, Any]:
@@ -132,7 +188,8 @@ def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, An
     dropped_by = row.get("dropped_by") or None
     promoted_by = row.get("promoted_by") or None
     mpns = sorted({m for m in (row.get("mpns") or []) if isinstance(m, str) and m.strip()})
-    sources = [_source(notice_id, m, block, dropped_by, promoted_by) for m in mpns]
+    origin = _origin_of(row) if block is not None else None
+    sources = [_source(notice_id, m, block, dropped_by, promoted_by, origin) for m in mpns]
     if mpns:
         message = f"{notice_id} affects {len(mpns)} part(s): " + ", ".join(mpns) + "."
     else:
@@ -180,12 +237,35 @@ def instances_by_property(notice_id: str, sources: List[Dict[str, Any]]) -> Dict
     }
 
 
-def read_notice_parts(driver: Any, notice_id: str) -> Dict[str, Any]:
-    """Run the one statement in a READ session and shape it."""
+def read_notice_parts(driver: Any, notice_id: str, *, caller_id: str = "",
+                      viewer_domains: Iterable[str] = (),
+                      table: Optional[Mapping[str, frozenset]] = None,
+                      can_view_program: Optional[Callable[[str, str], bool]] = None,
+                      ) -> Dict[str, Any]:
+    """Run the one statement in a READ session, decide whether this caller may see the sources,
+    and shape it. A withheld notice answers EXACTLY as an unknown one does, so the answer is not an
+    existence oracle. `can_view_program` exceptions propagate (the route answers 503)."""
     if not notice_id:
         return notice_parts([], notice_id)
     with driver.session(default_access_mode="READ") as session:
         rows: List[Dict[str, Any]] = [
             r.data() for r in session.run(NOTICE_PARTS_CYPHER, {"notice_id": notice_id})
         ]
+    if rows:
+        table = table or {}
+        domains = tuple(viewer_domains or ())
+        verdict = source_visibility(rows[0], caller_id=caller_id, viewer_domains=domains,
+                                    table=table)
+        if isinstance(verdict, tuple):
+            program = verdict[1]
+            member = bool(can_view_program(program, caller_id)) if (program and can_view_program) else False
+            row = rows[0]
+            allowed = origin_visible(
+                viewer_domains=domains, is_program_member=member,
+                origin=Origin(owner_domain=row["origin_owner_domain"], program=program or None,
+                              obtained_via=row.get("origin_resolved_by") or ""),
+                table=table)
+            verdict = "visible" if allowed else "withheld"
+        if verdict != "visible":
+            return notice_parts([], notice_id)
     return notice_parts(rows, notice_id)
