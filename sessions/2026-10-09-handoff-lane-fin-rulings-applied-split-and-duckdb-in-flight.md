@@ -19,6 +19,20 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-10, later: rulings Q1–Q4 applied. Nothing open but merges and the ACL
+
+- **Rulings received:**
+  - **Q1:** no ad-hoc export for engine-fin; ratified templates only. That is the finance control, not a gap.
+  - **Q2:** the fin section goes to the board's recipient and states "not a ratified template", nothing else.
+  - **Q3:** the refusal lives in the API response and the exporter's view, never the customer page.
+  - **Q4:** lane/fin rebases #11 with `--force-with-lease`. Merge order is #11, #18, #21.
+- **Done:**
+  - #11 is rebased onto `3976a9e0` and pushed (`b9792711` → `ae01d904`). Tests: 55 passed, 1 skipped, exit 0. GitHub reports MERGEABLE.
+  - #21 has `f66a2da5`, which applies Q1–Q3 and is pushed. Tests: 83 passed, 4 skipped, exit 0. Mutants M8–M10 all red. GitHub reports MERGEABLE.
+  - #18 is unchanged and merges clean.
+  - The digest packet and the cortex-ui packet are updated.
+- **Next:** merges are Lane 1's. Run the dist-page `--like` check once Chris fixes the ACL.
+
 ## Update 2026-10-10: everything below is now a PR. Read this first
 
 - **#11** `fin/cost-reproducible-build` @ `b9792711`: open.
