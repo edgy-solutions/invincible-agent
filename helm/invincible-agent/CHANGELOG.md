@@ -1,5 +1,23 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.40 — 2026-10-10
+
+NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
+OFF in the sandbox; nothing rolled.
+
+### Added
+
+- **`invincible-agent.networkPolicyEgressOnlyTargets`** (`_helpers.tpl`): components an engine may name
+  in `directCallers` that are neither stores nor engines (`dagster-webserver`, 3000). Renders the
+  engine's egress rule and no ingress policy. Needed for `DAGSTER_WEBSERVER_URL`, a flow no other
+  table could express.
+
+### Changed
+
+- Sandbox `networkPolicy.directCallers`: engine-o gains postgresql, keycloak, central-gateway,
+  dagster-webserver; cortex-bff gains weaviate, fuseki, topaz. Each carries its `via` key and the
+  2026-12-14 expiry. See docs/measurements/2026-10-10-the-gate-keeps-cortex-bff-and-engine-o.md.
+
 ## 0.4.38 — 2026-10-10
 
 Rev 184. Realm-reconcile repairs its own stale mappers.
