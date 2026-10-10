@@ -1,5 +1,28 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.39 — 2026-10-10
+
+Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
+STARTED (lane/74-dagster-max-runtime, PR #23; numbered 0.4.37 on its branch, renumbered here).
+
+### Fixed
+
+- **A STARTED run whose code-location pod died is failed after `maxRuntimeSeconds`**
+  (`templates/dagster-instance.yaml`, `values.yaml` `dagster.runMonitoring`). Under
+  `DefaultRunLauncher` the run monitor cannot check a worker's health. It still applies the
+  runtime bound, but the instance config set none, so a zombie held one of the two
+  `max_concurrent_runs` slots for ever, and two of them hung every question. The bound is 3600s,
+  about 1.9x the longest finished run measured on the sandbox (1930s, from 2742 runs, 2026-10-09).
+- **The instance config is chart-owned.** Before this it was a ConfigMap made by hand and
+  patched by hand into the webserver, daemon and user-code Deployments, so no install from the
+  chart could reproduce it. The new ConfigMap is `<release>-dagster-home`, a name helm can own.
+  The volume keeps the live name `dagster-instance` and the same mountPath, so the upgrade
+  re-points the hand-patched volume rather than adding a second one. A `checksum/dagster-instance`
+  annotation rolls the three pods when the config changes. The hand-made ConfigMap is left
+  orphaned, and deleting it is a human's call after the roll.
+- The "production would use K8sRunLauncher" comment is corrected. A dead worker under
+  `DefaultRunLauncher` IS caught, by the runtime bound.
+
 ## 0.4.38 — 2026-10-10
 
 Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.

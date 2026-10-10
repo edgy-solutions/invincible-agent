@@ -17,10 +17,19 @@ seeded notice has no `provenance_*` keys, and its sources carry NO block: the fl
 `unstamped`, which is the truth about a source nobody stamped. Synthesising a block for it would
 be the laundering the floor exists to prevent.
 
-THREE ANSWERS, NEVER CONFLATED:
+ANSWERS, NEVER CONFLATED. Every refusal is the fleet's named envelope (`_refused`: `refused: True`,
+`outcome: "refused"`, `reason`; `status: "refused"` stays for existing consumers):
   * REFUSED, `notice_required` — no notice id reached the verb. It does not guess one from prose.
   * REFUSED, `unknown_notice` — the graph holds no notice with that id. A different fact from:
-  * an explicit EMPTY part list — the notice exists and names no part.
+  * REFUSED, `no_affected_parts` — the notice IS in the graph and names no affected part. It is a
+    refusal, not an empty list: an empty table reads as "checked, none".
+  * REFUSED, `bad_offset` / `page_out_of_range` — the paging control is not a non-negative integer,
+    or it points past the last part (`total_available` says how many there are).
+
+PAGED IN THE STORE. A notice with more than NOTICE_PARTS_PAGE_SIZE (100) parts answers one page:
+the statement orders the mpns, collects them, and slices `[$offset..$offset+$limit]`, returning the
+total beside the page. The answer says `offset`, `total_available`, `completeness` ("complete" or
+"truncated") and `next_offset`. `params.offset` is a paging control only, not a fillable slot.
 """
 from __future__ import annotations
 
@@ -40,17 +49,24 @@ COMPONENT_IRI_PREFIX = "http://internal/components/"
 #: `provenance.py`'s; the prefix is the producer's.
 PROVENANCE_PREFIX = "provenance_"
 
+#: Parts per answer. A paging control, cut in the store.
+NOTICE_PARTS_PAGE_SIZE = 100
+
 #: ONE statement. The notice is matched FIRST so an unknown id returns no row at all (refusal)
-#: while a known notice with no parts returns one row with an empty list (explicit empty). The
-#: promotion is ordered newest-first so a re-promotion names who promoted it last.
+#: while a known notice with no parts returns one row with an empty list (refused as
+#: `no_affected_parts`). The mpns are ORDERED before they are collected and only the page
+#: `[$offset..$offset+$limit]` is returned, with the total. The promotion is ordered newest-first
+#: so a re-promotion names who promoted it last.
 NOTICE_PARTS_CYPHER = """
 MATCH (n:SUSTAINMENT:SustainmentNotice {id: $notice_id})
 OPTIONAL MATCH (c:SUSTAINMENT:Component)-[:SUBJECT_TO]->(n)
-WITH n, collect(DISTINCT c.mpn) AS mpns
+WITH n, c.mpn AS mpn ORDER BY mpn
+WITH n, collect(DISTINCT mpn) AS all_mpns
 OPTIONAL MATCH (a:IngestArtifact {ingest_id: n.provenance_ingest_id})
 OPTIONAL MATCH (a)-[p:PROMOTION]->(a)
-WITH n, mpns, a, p ORDER BY p.promoted_at DESC
-RETURN properties(n) AS notice, mpns,
+WITH n, all_mpns, a, p ORDER BY p.promoted_at DESC
+RETURN properties(n) AS notice, size(all_mpns) AS total,
+       all_mpns[$offset..($offset + $limit)] AS mpns,
        a.dropped_by_authz_id AS dropped_by,
        head(collect(p.promoted_by)) AS promoted_by
 """.strip()
@@ -101,42 +117,94 @@ def _source(notice_id: str, mpn: str, block: Optional[Dict[str, Any]],
     return src
 
 
-def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, Any]:
+def _refused(reason: str, message: str, **extra: Any) -> Dict[str, Any]:
+    """The named refusal envelope every refusal here speaks: `refused` + `outcome` + `reason` is
+    what presentation keys on; `status` stays for existing consumers."""
+    return {
+        "status": "refused",
+        "refused": True,
+        "outcome": "refused",
+        "reason": reason,
+        "verb": VERB,
+        "message": message,
+        "parts": [],
+        "sources": [],
+        **extra,
+    }
+
+
+def parse_offset(raw: Any) -> Optional[int]:
+    """The paging offset as an int >= 0, or None when it is not one. Absent (None) is 0. A bool,
+    a negative, a non-numeric string and a float with a fraction are all None."""
+    if raw is None:
+        return 0
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 0 else None
+    if isinstance(raw, float):
+        return int(raw) if raw >= 0 and raw == int(raw) else None
+    if isinstance(raw, str):
+        t = raw.strip()
+        if t.isascii() and t.isdigit():
+            return int(t)
+    return None
+
+
+def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str, offset: int = 0,
+                 limit: int = NOTICE_PARTS_PAGE_SIZE) -> Dict[str, Any]:
     """Shape the statement's rows into the verb's answer. PURE — the read is `read_notice_parts`."""
     if not notice_id:
-        return {
-            "status": "refused",
-            "reason": "notice_required",
-            "verb": VERB,
-            "message": (
-                "Which notice? This read answers for one sustainment notice (a PCN or PDN id) "
-                "and no notice id reached it."
-            ),
-            "parts": [],
-            "sources": [],
-        }
+        return _refused(
+            "notice_required",
+            "Which notice? This read answers for one sustainment notice (a PCN or PDN id) "
+            "and no notice id reached it.",
+        )
     rows = list(rows)
     if not rows:
-        return {
-            "status": "refused",
-            "reason": "unknown_notice",
-            "verb": VERB,
-            "notice_id": notice_id,
-            "message": f"No sustainment notice {notice_id!r} is in the graph.",
-            "parts": [],
-            "sources": [],
-        }
+        return _refused(
+            "unknown_notice",
+            f"No sustainment notice {notice_id!r} is in the graph.",
+            notice_id=notice_id,
+        )
     row = rows[0]
     node = dict(row.get("notice") or {})
     block = provenance_block_of(node)
     dropped_by = row.get("dropped_by") or None
     promoted_by = row.get("promoted_by") or None
-    mpns = sorted({m for m in (row.get("mpns") or []) if isinstance(m, str) and m.strip()})
-    sources = [_source(notice_id, m, block, dropped_by, promoted_by) for m in mpns]
-    if mpns:
-        message = f"{notice_id} affects {len(mpns)} part(s): " + ", ".join(mpns) + "."
+    page = sorted({m for m in (row.get("mpns") or []) if isinstance(m, str) and m.strip()})
+    page = page[:limit]  # defence: a store that over-returns never widens the page
+    total = row.get("total")
+    if not isinstance(total, int) or isinstance(total, bool):
+        total = len(page)
+    if total <= 0 and not page:
+        return _refused(
+            "no_affected_parts",
+            f"{notice_id} is in the graph but names no affected part.",
+            notice_id=notice_id,
+        )
+    if not page or offset >= total:
+        return _refused(
+            "page_out_of_range",
+            f"{notice_id} affects {total} part(s); offset {offset} is past the last one.",
+            notice_id=notice_id,
+            total_available=total,
+            offset=offset,
+        )
+    sources = [_source(notice_id, m, block, dropped_by, promoted_by) for m in page]
+    end = offset + len(page)
+    truncated = end < total
+    next_offset = end if truncated else None
+    rng = f"parts {offset + 1}\u2013{end} of {total}"
+    ibp = instances_by_property(notice_id, sources)
+    if offset == 0 and not truncated:
+        message = f"{notice_id} affects {len(page)} part(s): " + ", ".join(page) + "."
     else:
-        message = f"{notice_id} names no affected part in the graph."
+        message = f"{notice_id} affects {total} part(s); {rng}: " + ", ".join(page) + "."
+        ibp["title"] = f"Parts affected by {notice_id} ({rng})"
+        if truncated:
+            message += f" The next page is offset = {next_offset}."
+            ibp["title"] += f"; next page offset = {next_offset}"
     return {
         "status": "ok",
         "verb": VERB,
@@ -145,10 +213,14 @@ def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str) -> Dict[str, An
         "notice_type": node.get("type") or None,
         "parts": [{"mpn": s["mpn"], "uri": s["uri"]} for s in sources],
         "count": len(sources),
+        "offset": offset,
+        "total_available": total,
+        "completeness": "truncated" if truncated else "complete",
+        "next_offset": next_offset,
         "message": message,
         "data": message,
         "sources": sources,
-        **instances_by_property(notice_id, sources),
+        **ibp,
     }
 
 
@@ -180,12 +252,22 @@ def instances_by_property(notice_id: str, sources: List[Dict[str, Any]]) -> Dict
     }
 
 
-def read_notice_parts(driver: Any, notice_id: str) -> Dict[str, Any]:
-    """Run the one statement in a READ session and shape it."""
+def read_notice_parts(driver: Any, notice_id: str, offset: Any = 0,
+                      limit: int = NOTICE_PARTS_PAGE_SIZE) -> Dict[str, Any]:
+    """Run the one statement in a READ session and shape it. `offset` and `limit` are statement
+    parameters, never formatted into the text. A bad offset is refused BEFORE any store read."""
     if not notice_id:
         return notice_parts([], notice_id)
+    off = parse_offset(offset)
+    if off is None:
+        return _refused(
+            "bad_offset",
+            f"offset must be a whole number >= 0, got {offset!r}.",
+            notice_id=notice_id,
+        )
     with driver.session(default_access_mode="READ") as session:
         rows: List[Dict[str, Any]] = [
-            r.data() for r in session.run(NOTICE_PARTS_CYPHER, {"notice_id": notice_id})
+            r.data() for r in session.run(
+                NOTICE_PARTS_CYPHER, {"notice_id": notice_id, "offset": off, "limit": limit})
         ]
-    return notice_parts(rows, notice_id)
+    return notice_parts(rows, notice_id, off, limit)

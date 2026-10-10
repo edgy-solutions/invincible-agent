@@ -107,6 +107,10 @@ agent-fleet = [
     "hypercorn",
     "python-dotenv",
     "langfuse",
+    # PINNED EQUAL to agent_fleet/cost_agent/pyproject.toml: the package page carries the .duckdb
+    # file's sha256, and a test venv on another duckdb version verifies a container the engine
+    # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
+    "duckdb==1.5.2",
 ]
 
 [dependency-groups]

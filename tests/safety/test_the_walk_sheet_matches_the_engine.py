@@ -51,7 +51,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_seven_prompts(sheet):
+def test_the_parser_finds_the_sheets_eleven_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -64,6 +64,10 @@ def test_the_parser_finds_the_sheets_seven_prompts(sheet):
         "failure trend for this platform by month",
         "what failed on this part PN-8801",
         "failures per month on this platform PLT-ALPHA",
+        "draft a risk assessment for HAZ-1001",
+        "draft a risk assessment for HAZ-1005",
+        "draft a risk assessment for HAZ-1007",
+        "draft a risk assessment for HAZ-1006",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 
@@ -268,3 +272,95 @@ def test_Q6_and_Q7_captures_are_what_bob_gets(sheet, monkeypatch):
     for claim in ('"value_unit": "failures"', '"scope_label": "PN-8801"', '"period": "2026-03"',
                   '"key": "failure_count"', "sor-events-a:EVT-55101"):
         assert claim in sheet, f"the sheet no longer carries {claim!r}"
+
+
+# ---------------------------------------------------------------------------
+# Q8 / Q9 - the draft at two other matrix cells
+# ---------------------------------------------------------------------------
+
+@requires_rdflib
+@pytest.mark.parametrize("hazard,sev,prob,level,slug", [
+    ("HAZ-1001", "I", "D", "Serious", "serious"),
+    ("HAZ-1007", "I", "B", "High", "high"),
+])
+def test_Q8_and_Q10_captured_level_and_audience_are_what_the_engine_returns(
+        client, sheet, hazard, sev, prob, level, slug):
+    """The sheet's claim per hazard: the cell, the level the matrix yields for it, and the audience.
+    The level is read from the engine (which reads the ratified matrix), not restated here."""
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": hazard})
+    assert (body["severity"], body["probability"], body["risk_level"]) == (sev, prob, level)
+    assert body["acceptance_audience"] == f"risk_acceptance_{slug}:SUSTAINMENT"
+    assert body["acceptance_status"] == "drafted"
+    assert body["review_request"]["kind"] == f"risk_acceptance_{slug}"
+    assert body["citations"]["risk_level"] == "safety_risk_matrix.ttl"
+    for claim in (f"risk_acceptance_{slug}:SUSTAINMENT", f'"risk_level": "{level}"',
+                  f'"hazard_id": "{hazard}"'):
+        assert claim in sheet, f"the sheet no longer carries {claim!r}"
+
+
+@requires_rdflib
+def test_Q1_Q8_Q10_reach_three_DIFFERENT_audiences_and_cells(client):
+    """The reason these were picked: each differs from the others in cell AND audience. Without
+    this a later fixture edit could collapse two rows onto one audience and the sheet would still
+    read as covering three."""
+    got = {}
+    for h in ("HAZ-1003", "HAZ-1001", "HAZ-1007"):
+        b = _measure(client, "draft_risk_assessment", {"hazard_id": h})
+        got[h] = ((b["severity"], b["probability"]), b["acceptance_audience"])
+    assert len({v[0] for v in got.values()}) == 3, got
+    assert len({v[1] for v in got.values()}) == 3, got
+    assert {v[1] for v in got.values()} >= {"risk_acceptance_high:SUSTAINMENT"}, got
+
+
+@requires_rdflib
+def test_Q10_the_fixture_cell_is_a_High_cell_of_the_ratified_matrix_and_not_typed_here():
+    """The cell is DERIVED: every High cell is read from the ttl, and the fixture's pair must be
+    one of them. A fixture edit that leaves the High cell reds here, not in a walk."""
+    from rdflib import Graph, Namespace
+    from agent_fleet.safety_agent import entities
+    ttl = Path(__file__).resolve().parents[2] / "setup" / "ontologies" / "safety_risk_matrix.ttl"
+    g = Graph().parse(ttl)
+    S = Namespace("http://internal/sustainment/safety#")
+    high_cells = set()
+    for cell in g.subjects(None, S.MatrixCell):
+        lvl = g.value(cell, S.yieldsRiskLevel)
+        if lvl is not None and str(lvl).endswith("High"):
+            high_cells.add((str(g.value(cell, S.whenSeverity)), str(g.value(cell, S.whenProbability))))
+    assert high_cells, "no High cell parsed: the namespace or predicate names moved; this is a blind test"
+    h = entities.BY_HAZARD_ID["HAZ-1007"]
+    assert (h.severity, h.probability) in high_cells, (h.severity, h.probability, high_cells)
+    # and it is not an orphan, so Q2's count of three is undisturbed
+    assert h.status == "mitigated" and all(m.owner and m.verified_in_field == "true" for m in h.mitigations)
+
+
+@requires_rdflib
+def test_Q9_a_closed_hazard_is_refused_hazard_closed_and_creates_no_task(client):
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1005"})
+    assert body["refused"] is True and body["outcome"] == "hazard_closed", body
+    assert body["hazard_id"] == "HAZ-1005"
+    assert "review_request" not in body and "risk_level" not in body and "acceptance_audience" not in body
+    for claim in ('"outcome": "hazard_closed"', '"hazard_id": "HAZ-1005"'):
+        assert claim in _SHEET.read_text(encoding="utf-8"), claim
+
+
+@requires_rdflib
+def test_Q9_CONTROL_the_same_hazard_reopened_drafts_its_task(client, monkeypatch):
+    """Differs from the subject in ONE thing: status. Same hazard id, same severity/probability,
+    same mitigation, same caller and route."""
+    import dataclasses
+    from agent_fleet.safety_agent import entities, measures
+    reopened = dataclasses.replace(entities.BY_HAZARD_ID["HAZ-1005"], status="open")
+    monkeypatch.setitem(measures.BY_HAZARD_ID, "HAZ-1005", reopened)
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1005"})
+    assert body["refused"] is False and body["risk_level"] == "Low", body
+    assert body["review_request"]["kind"] == "risk_acceptance_low"
+
+
+@requires_rdflib
+def test_Q11_a_not_assessed_hazard_makes_no_task_and_invents_no_level(client):
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1006"})
+    assert body["assessment"] == "not_assessed" and body["severity"] is None and body["probability"] is None
+    assert "severity" in body["gap"]
+    for absent in ("review_request", "risk_level", "acceptance_audience"):
+        assert absent not in body, absent
+    assert '"assessment": "not_assessed"' in _SHEET.read_text(encoding="utf-8")

@@ -2405,7 +2405,10 @@ async def _run_definition(
         elif step.kind == "spo_operation":
             def _do_spo(s=step, ident=identity):
                 try:
-                    verb = verify_spo_step(s.subject, s.verb, ident["entitled_domains"])
+                    verb = verify_spo_step(
+                        s.subject, s.verb, ident["entitled_domains"],
+                        on_behalf_of=ident.get("authz_id", ""),
+                    )
                     return dispatch_spo_step(
                         verb, s.subject, ident,
                         rendered_intent=f"workflow {wf.id}: {s.verb} on {s.subject}",
@@ -3125,7 +3128,8 @@ async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
     async def compute_sets():
         subjects = si.authorized_operation_subjects(caller_email, engine_o_url=_ENGINE_O_URL, domain=scope_domain)
         verbs = (si.authorized_verbs(focused_subject, workflow_domain=state.classification,
-                                     engine_o_url=_ENGINE_O_URL) if focused_subject else [])
+                                     engine_o_url=_ENGINE_O_URL,
+                                     on_behalf_of=caller_email) if focused_subject else [])
         return {"subjects": subjects, "verbs": verbs}
 
     sets = await ctx.run("authorized_sets", compute_sets)
@@ -3167,7 +3171,8 @@ async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
 
             async def verbs_for_pick():
                 return si.authorized_verbs(subj, workflow_domain=state.classification,
-                                           engine_o_url=_ENGINE_O_URL)
+                                           engine_o_url=_ENGINE_O_URL,
+                                           on_behalf_of=caller_email)
 
             fresh_verbs = await ctx.run("verbs_for_pick", verbs_for_pick)
             applied = si.apply_pick(state, pick, authorized_subjects=subjects,

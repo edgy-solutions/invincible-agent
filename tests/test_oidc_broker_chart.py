@@ -131,11 +131,50 @@ def base_sha_base() -> str:
 
 # ------------------------------------------------------------------ (a) base unchanged
 
+_OIDC_HEAD = "3bae602d"  # the OIDC change's last commit
+
+
+def _oidc_templates() -> set[str]:
+    """The templates the OIDC change itself touched, DERIVED from immutable shas.
+
+    The seal's subject is the OIDC change. A whole-render scope reds on any unrelated chart
+    feature (rev 186: #23's Dagster instance config). `_helpers.tpl` is not a document source;
+    its changes are seen through the documents of the OIDC templates.
+    """
+    r = subprocess.run(["git", "diff", "--name-only", _BASE_SHA, _OIDC_HEAD, "--", f"{_CHART}/templates"],
+                       capture_output=True, cwd=str(_REPO), timeout=60)
+    assert r.returncode == 0, r.stderr.decode(errors="replace")
+    names = {Path(l.strip()).name for l in r.stdout.decode().splitlines() if l.strip()}
+    return names - {"_helpers.tpl"}
+
+
+def _in_scope(rendered: str, templates: set[str]) -> str:
+    """The rendered documents whose `# Source:` header names one of `templates`."""
+    keep = []
+    for d in re.split(r"^---$", rendered, flags=re.M):
+        m = re.search(r"^# Source: [^/\n]+/templates/(\S+)$", d, re.M)
+        if m and m.group(1) in templates:
+            keep.append(d)
+    return "---".join(keep)
+
+
+def _norm_old(old: str) -> str:
+    ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
+    return re.sub(r"0.4.35", ver, old)
+
+
+def _line_diff(a: str, b: str) -> list[str]:
+    return [l for l in difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)
+            if not l.startswith(("---", "+++", "@@"))]
+
+
 def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, base_sha_base):
     # The chart version moves with every bump (labels, default image tags); it is not the
     # contract. Normalize the base sha's version to this chart's before diffing.
-    ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
-    old = re.sub(r"0.4.35", ver, base_sha_base)
+    old = _norm_old(base_sha_base)
+    tpls = _oidc_templates()
+    assert {"configmap.yaml", "realm-reconcile-job.yaml"} <= tpls, tpls
+    old, new = _in_scope(old, tpls), _in_scope(base, tpls)
 
     def _split(rendered: str) -> tuple[str, str]:
         """(everything but the realm-reconcile Job, that Job's script)."""
@@ -144,12 +183,13 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
         assert len(job) == 1
         return "---".join(d for d in docs if d is not job[0]), job[0]
 
-    def _diff(a: str, b: str) -> list[str]:
-        return [l for l in difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)
-                if not l.startswith(("---", "+++", "@@"))]
-
+    _diff = _line_diff
     old_rest, old_job = _split(old)
-    new_rest, new_job = _split(base)
+    new_rest, new_job = _split(new)
+    # positive controls: a scoping bug must not empty the comparison
+    for rest in (old_rest, new_rest):
+        assert re.search(r"^kind: ConfigMap$", rest, re.M) and re.search(r"^  name: \S+-config$", rest, re.M),             "the -config ConfigMap is missing from the filtered render"
+    assert "USER_ENTITLEMENT_CLAIM" in new_rest
     assert _diff(old_rest, new_rest) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
@@ -163,6 +203,30 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
         'if [ "$HAS" = "0" ]; then',
         'echo "   present, mapper ok"',
     }, removed
+
+
+def test_the_scope_excludes_a_feature_the_oidc_change_never_touched(base, base_sha_base):
+    """The fixture distinguishes the rejected rule (whole-render scope).
+
+    The unfiltered bare renders must differ in a document from a template OUTSIDE the OIDC set
+    (rev 186: the Dagster documents of #23); the filtered renders must not contain that
+    difference. On a branch where no other feature has changed the chart yet there is nothing
+    to distinguish, and the test skips.
+    """
+    old = _norm_old(base_sha_base)
+    tpls = _oidc_templates()
+    all_tpls = {m.group(1) for m in re.finditer(r"^# Source: [^/\n]+/templates/(\S+)$", old + "\n" + base, re.M)}
+    outside = all_tpls - tpls
+    out_old, out_new = _in_scope(old, outside), _in_scope(base, outside)
+    if out_old == out_new:
+        pytest.skip("no template outside the OIDC set differs between the base sha and now")
+    assert _line_diff(out_old, out_new), "outside-set documents differ but the line diff is empty"
+    assert _in_scope(old, tpls) != old and _in_scope(base, tpls) != base
+    # the filtered renders carry none of the outside difference
+    f_old, f_new = _in_scope(old, tpls), _in_scope(base, tpls)
+    outside_lines = {l for l in _line_diff(out_old, out_new) if l[1:].strip()}
+    leaked = outside_lines & set(_line_diff(f_old, f_new))
+    assert not leaked, sorted(leaked)[:5]
 
 
 # ------------------------------------------------------------------ (b) one claim name

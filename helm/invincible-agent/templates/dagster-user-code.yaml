@@ -15,6 +15,8 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/dagster-instance: {{ include (print $.Template.BasePath "/dagster-instance.yaml") . | sha256sum }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 8 }}
@@ -62,6 +64,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: BPMN_POSTGRES_PASSWORD
+          volumeMounts:
+            - name: dagster-instance
+              mountPath: /opt/dagster/dagster_home/dagster.yaml
+              subPath: dagster.yaml
           resources:
             {{- toYaml .Values.dagster.userCode.resources | nindent 12 }}
           # Probe timings have to accommodate the dagster CLI cold-start
@@ -88,6 +94,10 @@ spec:
             periodSeconds: 120
             timeoutSeconds: 30
             failureThreshold: 5
+      volumes:
+        - name: dagster-instance
+          configMap:
+            name: {{ .Release.Name }}-dagster-home
 ---
 # User Code Service (gRPC)
 apiVersion: v1
