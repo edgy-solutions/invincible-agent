@@ -914,8 +914,10 @@ async def lifespan(app: FastAPI):
                     "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
                     "the notice's provenance as the graph records it: how it was obtained, the ingest "
                     "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
-                    "unknown notice id, which is a different fact from a known notice naming no part "
-                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "unknown notice id (unknown_notice), which is a different fact from a known "
+                    "notice naming no part (also a refusal: no_affected_parts). More than 100 parts "
+                    "are paged (params.offset; the answer says total_available, completeness and "
+                    "next_offset). READ-ONLY: proposes no disposition and opens no review. "
                     "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
                     "subject to this notice."
                 ),
@@ -5116,6 +5118,8 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
+            "refused": True,
+            "outcome": "refused",
             "reason": "not_entitled",
             "verb": _notice_parts.VERB,
             "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
@@ -5126,7 +5130,8 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
     notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
     try:
-        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id,
+            (request.params or {}).get("offset"))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 
