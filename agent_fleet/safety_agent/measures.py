@@ -311,6 +311,18 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         # because it renders as a completed assessment.
         return {"refused": True, "reason": f"unknown hazard '{hazard_id}'"}
 
+    if h.status == "closed":
+        # A CLOSED HAZARD HAS NOTHING LEFT TO ACCEPT (ruled 2026-10-09). Drafting would hand the
+        # gateway a review_request, and the gateway would open a risk-acceptance task against a
+        # condition the programme has already closed. Named so a caller can tell this decided
+        # refusal from an unknown id; carries no review_request, so no task is created.
+        return {
+            "refused": True,
+            "outcome": "hazard_closed",
+            "hazard_id": h.hazard_id,
+            "reason": f"hazard '{h.hazard_id}' is closed; there is no open risk to accept",
+        }
+
     # DERIVED_FROM: every source object this draft actually read. Seal 10 asserts each one
     # resolves; a fabricated entry must go red, which is why they are collected as they are used
     # rather than declared up front from a list someone remembered.
