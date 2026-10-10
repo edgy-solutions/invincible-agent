@@ -30,6 +30,7 @@ rendering does not. That is the seam a card action should be built on.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import pathlib
 import re
@@ -505,6 +506,21 @@ def test_a_CHECKOUT_still_resolves_its_sha_through_GIT(tmp_path, monkeypatch, re
     assert result["algorithm_sha"] == _SHA_GIT
 
 
+def _stop_at_build_package(real_builder, captured: dict):
+    """A stand-in for `X.build_package` that takes the REAL signature, read from the function it
+    replaces -- never a frozen copy of the keywords one caller passed on one day. A frozen fake
+    turned `build_html` forwarding `as_of=` into a TypeError that read as this seam failing.
+    `bind` still refuses any call the real builder would refuse, so a caller passing a keyword
+    the builder never declared stays red here."""
+    sig = inspect.signature(real_builder.X.build_package)
+
+    def fake(*args, **kwargs):
+        captured.update(sig.bind(*args, **kwargs).arguments)
+        raise RuntimeError("stop here - captured")
+
+    return fake
+
+
 def test_build_html_USES_the_passed_sha_and_never_calls_its_OWN_algorithm_sha(
     monkeypatch, real_builder):
     """`build_html`'s own contract, independent of `package_export`: given a `sha`, it is used
@@ -514,14 +530,11 @@ def test_build_html_USES_the_passed_sha_and_never_calls_its_OWN_algorithm_sha(
     """
     captured: dict = {}
 
-    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
-        captured["algorithm_sha"] = algorithm_sha
-        raise RuntimeError("stop here - captured")
-
     def fail_if_called():
         raise AssertionError("algorithm_sha() (git) must not be called when sha is given")
 
-    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+    monkeypatch.setattr(real_builder.X, "build_package",
+                        _stop_at_build_package(real_builder, captured))
     monkeypatch.setattr(real_builder, "algorithm_sha", fail_if_called)
 
     with pytest.raises(RuntimeError, match="stop here - captured"):
@@ -541,12 +554,9 @@ def test_build_html_STILL_DEFAULTS_to_algorithm_sha_when_none_is_given(
         captured["called"] = True
         return "e" * 40
 
-    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
-        captured["algorithm_sha"] = algorithm_sha
-        raise RuntimeError("stop here - captured")
-
     monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
-    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+    monkeypatch.setattr(real_builder.X, "build_package",
+                        _stop_at_build_package(real_builder, captured))
 
     with pytest.raises(RuntimeError, match="stop here - captured"):
         real_builder.build_html("notional-customer-alpha", pathlib.Path("/nonexistent"))
