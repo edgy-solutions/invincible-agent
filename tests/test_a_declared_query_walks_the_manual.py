@@ -84,6 +84,9 @@ def wire(monkeypatch):
         return rec["allow"]
 
     def _post(url, json, headers, timeout):
+        if "/internal/cases/" in url:
+            # the runner's writes at `released`, not the walk's wire: accepted, not recorded here
+            return _Resp({})
         rec["posts"].append({"url": url, "json": json, "headers": dict(headers)})
         decl, shaped = _shaped_walk(json["verb"], json["params"])
         return _Resp({"verb": decl.verb, "domain": decl.domain, "selects": shaped})

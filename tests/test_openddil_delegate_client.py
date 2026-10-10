@@ -180,6 +180,14 @@ def base_sha_render() -> str:
         return r.stdout
 
 
+def _sandbox_claim() -> str:
+    """The claim the sandbox overlay renders (keycloak.authzClaim), read from the file. The base
+    sha rendered `email`; the OIDC-brokering change flips the sandbox to one claim for every
+    species, so the ONLY intended difference in a pre-existing client is that claim name."""
+    values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    return values["keycloak"]["authzClaim"]
+
+
 def _pre_existing_client_ids() -> list[str]:
     """Derive the base sha's client list from ITS OWN values.yaml — never a literal list typed
     here, which would silently stop tracking the real population the moment either side
@@ -243,7 +251,7 @@ def test_import_has_no_secret_key_for_openddil(sandbox_render):
 def test_import_carries_both_mappers_for_openddil(sandbox_render):
     mappers = {m["name"]: m for m in _configmap_clients(sandbox_render)[_NEW_CLIENT_ID]["protocolMappers"]}
     assert mappers["authz-id-svc"]["config"]["claim.value"] == "svc:openddil"
-    assert mappers["authz-id-svc"]["config"]["claim.name"] == "email"
+    assert mappers["authz-id-svc"]["config"]["claim.name"] == _sandbox_claim()
     ik = mappers["initiator-kind-svc"]
     assert ik["config"]["claim.name"] == "initiator_kind"
     assert ik["config"]["claim.value"] == "delegate"
@@ -304,8 +312,20 @@ def test_reconcile_never_touches_an_existing_clients_secret(sandbox_render):
 def test_preexisting_clients_import_unchanged(sandbox_render, base_sha_render):
     old = _configmap_clients(base_sha_render)
     new = _configmap_clients(sandbox_render)
+    claim = _sandbox_claim()
     for cid in _pre_existing_client_ids():
-        assert new[cid] == old[cid], f"{cid}'s rendered import object changed"
+        expected = json.loads(json.dumps(old[cid]).replace('"claim.name": "email"', f'"claim.name": "{claim}"'))
+        assert new[cid] == expected, f"{cid}'s rendered import object changed"
+
+
+def _cut_present_mapper_branch(seg: str) -> str:
+    """Drop the text from the "# Present. Repair a MISSING mapper" comment to the delegate block's
+    own comment (or the segment's end): the one region 0.4.38 rewrote."""
+    start = seg.find("# Present. Repair a MISSING mapper")
+    if start < 0:
+        return seg
+    end = seg.find("# Delegate clients also carry", start)
+    return seg[:start] + (seg[end:] if end >= 0 else "")
 
 
 def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_sha_render):
@@ -319,8 +339,15 @@ def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_s
     old_segs = _client_segments(_reconcile_script(base_sha_render))
     new_segs = _client_segments(_reconcile_script(sandbox_render))
     for cid in _pre_existing_client_ids():
-        old = [s.rstrip("\n") for s in old_segs[cid]]
+        claim = _sandbox_claim()
+        old = [s.rstrip("\n").replace('"claim.name": "email"', f'"claim.name": "{claim}"') for s in old_segs[cid]]
         new = [s.rstrip("\n") for s in new_segs[cid]]
+        # 0.4.38 rewrote ONE region on purpose: the present-branch for an existing authz-id-svc
+        # mapper (a chart-owned stale mapper is now migrated in place; tests/test_oidc_broker_chart.py
+        # runs it). Cut that region from both sides; everything else, create branch and delegate
+        # tail included, must still be byte-identical to the base sha.
+        old = [_cut_present_mapper_branch(s) for s in old]
+        new = [_cut_present_mapper_branch(s) for s in new]
         assert old == new, f"{cid}'s reconcile script segments changed"
 
 

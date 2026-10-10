@@ -649,6 +649,14 @@ engineSafety:
     tag: ""
   port: 8099
   env: {}
+  # FAILURE_SOURCE_CONNECTORS (agent_fleet/safety_agent/failure_source.py; saf B2): the FRACAS
+  # source seam's real connectors, comma-separated `name=module:callable`. EMPTY = the sandbox
+  # fixture; SET = ONLY the named connectors, and the fixture never mixes in. Rendered into the
+  # shared ConfigMap only when non-empty (an explicit agentFleet.env entry wins). No connector
+  # module ships in any image yet (saf B1), so a value here on a cluster without the overlay
+  # image refuses EVERY FRACAS question with `source_unavailable`. Leave it empty until a
+  # deployment's overlay image carries the classes it names.
+  failureSourceConnectors: ""
   resources:
     requests:
       cpu: 100m
@@ -1871,7 +1879,48 @@ keycloak:
   # The claim the hardcoded-claim mapper writes = USER_ENTITLEMENT_CLAIM. `email` in
   # sandbox; set to the employee-id claim at work so service authz_ids land in the same
   # slot human ones do.
+  #
+  # ONE VALUE, EVERY SPECIES. This key is rendered as the env USER_ENTITLEMENT_CLAIM in the shared
+  # `-config` ConfigMap (every workload that loads it, cortex-bff included) AND as the claim name
+  # of the service-client authz-id-svc mapper. When it is anything other than `email`, local human
+  # users also carry a user attribute of the same name (= their email) and the cortex-ui client
+  # emits it as that claim; a brokered human gets it from the broker's sub mapper.
+  # docs/reference/identity-mint-contract.md: the BFF env claim, the service token claim and the
+  # human claim must all be equal.
   authzClaim: "email"
+  # The local human users the realm IMPORT carries (keycloak-configmap.yaml). Listed here ONLY so
+  # the reconcile job can give an already-imported realm the same authz attribute the import gives
+  # a fresh one; consumed only when authzClaim is not `email`. A test pins this list to the import.
+  localHumanUsers:
+    - {username: agent-user, email: agent@example.com}
+    - {username: alice, email: alice@example.com}
+    - {username: bob, email: bob@example.com}
+    - {username: carol, email: carol@example.com}
+  # ── IDENTITY BROKERS ────────────────────────────────────────────────────────────────
+  # OIDC brokering from this realm to another party's realm, so THEIR principals sign in
+  # through us and their grants bind to THEIR `sub`. The IdP lives in the realm-reconcile job
+  # ONLY: the realm import is a ConfigMap and cannot carry the client secret. Disabled by default.
+  # Requires authzClaim != "email" (a brokered human's authz identity is the upstream sub, which
+  # cannot ride the email claim) and keycloak.reconcileClients.enabled (the render fails otherwise).
+  brokers:
+    openddil:
+      enabled: false
+      alias: openddil
+      displayName: "OpenDDIL"
+      # REQUIRED when enabled (the render fails on empty): the upstream realm issuer URL,
+      # discovery is read from <issuer>/.well-known/openid-configuration.
+      issuer: ""
+      # The client the upstream registers for us.
+      clientId: iagent-broker
+      # The Secret holding that client's secret, read only via secretKeyRef in the reconcile job.
+      # Never put the value in values or a ConfigMap. The broker is RENDERED only when `enabled`
+      # AND existingSecret is non-empty; enabled with no existingSecret renders no broker objects
+      # and a one-line NOTE in the job script (it does not fail the render).
+      existingSecret: ""
+      secretKey: "client-secret"
+      # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
+      # `sub` is the upstream's raw subject = the brokered user's authz identity.
+      principals: []
   # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
   # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
   # one; it exists so the name a delegate's writes carry is an identity the realm can be asked

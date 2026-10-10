@@ -105,6 +105,44 @@ def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
     return {"stamped": True}
 
 
+#: The `emit` channel the maintenance case's ActionRecord rides on
+#: (`policy/overlays/openddil-lab/workflows/maint_release.yaml`, step `action`,
+#: `channel: maintenance_action`). At `released` the runner reads it off the instance and writes
+#: it to the artifact store through cortex-bff (2026-10-09; before that nothing wrote it).
+ACTION_RECORD_CHANNEL = "maintenance_action"
+
+
+def _write_action_record(case_id: str, record: dict, seeded_by: Optional[str],
+                         on_behalf_of: str) -> dict:
+    """POST `{bff}/internal/cases/{case_id}/action-record`, as `svc:case-runner`. Same posture as
+    `_stamp_seeded_by`: a non-2xx is TERMINAL (the case fails visibly rather than releasing with
+    its record unwritten); a transport error or an unmintable credential raises plainly so
+    Restate retries it. The route's artifact id is derived from the case and the action, so a
+    retry of this call writes nothing twice."""
+    try:
+        import requests
+        try:
+            import spo_step_executor as _spo  # type: ignore[no-redef]
+            import workflow_definition as _wd  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst import spo_step_executor as _spo
+            from agent_fleet.restate_analyst import workflow_definition as _wd
+    except ImportError as exc:  # pragma: no cover
+        raise restate.TerminalError(f"cannot write the action record: {exc}", status_code=500) from exc
+    token = _spo.mint_case_runner_token()
+    resp = requests.post(
+        f"{_wd.bff_base_url()}/internal/cases/{case_id}/action-record",
+        json={"record": record, "seeded_by": seeded_by, "on_behalf_of": on_behalf_of},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_spo.STEP_HTTP_TIMEOUT,
+    )
+    if not 200 <= resp.status_code < 300:
+        raise restate.TerminalError(
+            f"writing the action record of case {case_id!r} was refused: HTTP {resp.status_code}",
+            status_code=502)
+    return {"written": True}
+
+
 def _terminal(fn, status_code: int):
     """Run a routing call; a routing failure is TERMINAL inside ``ctx.run`` (a retry of an
     untailored table produces the same gap in thirty seconds)."""
@@ -246,6 +284,27 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=step.get("acted_by") or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME:
+                # THE RECORD IS WRITTEN BEFORE THE STAMP, so the stamp finds it. Read off the
+                # instance's own outbox through `outbox` (a shared handler of this workflow;
+                # the instance has finished, its state is still there), not off `env["outputs"]`,
+                # which keeps only the LAST record a step emitted.
+                emitted = await ctx.workflow_call(
+                    outbox, key=instance, arg={"channel": ACTION_RECORD_CHANNEL})
+                if emitted:
+                    on_behalf_of = case["seeded_by"] or next(
+                        (e.get("approver_sub") for e in reversed(chain) if e.get("approver_sub")),
+                        None)
+                    if not on_behalf_of:
+                        raise restate.TerminalError(
+                            f"case {case_id} released with an action record and neither a "
+                            "seeding delegate nor an approver to write it on behalf of",
+                            status_code=422)
+                    for i, item in enumerate(emitted, start=1):
+                        await ctx.run(
+                            f"write_action_record_{n}_{i}",
+                            lambda rec=item["record"], who=on_behalf_of: _write_action_record(
+                                case_id, rec, case["seeded_by"], who))
             if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME and case["seeded_by"]:
                 await ctx.run(f"stamp_seeded_by_{n}",
                               lambda: _stamp_seeded_by(case_id, case["seeded_by"]))

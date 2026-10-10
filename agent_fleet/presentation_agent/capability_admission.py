@@ -153,6 +153,14 @@ KNOWN_ARCHETYPES = frozenset({
     # Adding it now to make a red go green would be inventing the row's content a step early.
     # It stays red, deliberately, and the red is the correct report of where the sequence is.
     "SOURCE_LEDGER",
+    # ILLUSTRATION and WORKFLOW_CASE, 2026-10-10 -- the EIGHTH round of this lesson, found by
+    # test_every_bound_archetype_is_in_the_ADMISSION_VOCABULARY while greening #13 for rev 183.
+    # cortex-ui has declared both contracts since 415e5e6 (the 182a bundle), and the projector
+    # rows landed 2026-10-07 (presentation_agent/main.py, the flat-contract table). This site,
+    # site 1 of docs/runbooks/adding-an-archetype.md, was the one left behind, so a
+    # registration naming either was refused at the door with every other site green.
+    "ILLUSTRATION",
+    "WORKFLOW_CASE",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that
