@@ -1657,16 +1657,10 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     #
     # Fifteen entries remain, all `mesh:` subjects the frontend binds alone.
     #
-    # ── TWO STAGED ENTRIES, ADDED 2026-10-08 (lane/saf) AND NOT RATIFICATION DEBT ────────────
-    #
-    # The two FRACAS output classes were declared in `capabilities.py` so their success path draws
-    # as a ranking and a series instead of the KNOWLEDGE_DOCUMENT fallback. cortex-ui's
-    # `DERIVED_BINDINGS` does not bind them yet, and a binding is cortex's to write (packet to
-    # cortex-ts). This is the staging step the seal's own message names. THE RATCHET BELOW REDDENS
-    # THE MOMENT CORTEX BINDS EITHER ONE, which is when its line must be deleted here. Backend-only,
-    # so until then a card chosen for these is drawn by the payload-only path.
-    (_SAFETY + "FailureRecordSet", _MESH + "ContributionRanking"),
-    (_SAFETY + "FailureTrend", _MESH + "MultiSeries"),
+    # The two FRACAS entries lane/saf staged on 2026-10-08 (safety:FailureRecordSet ->
+    # ContributionRanking, safety:FailureTrend -> MultiSeries) were deleted on the join to master
+    # 2026-10-09: cortex-ui master binds both (cortex PR #1, `assembleCapabilities.ts`), and the
+    # ratchet below reddened exactly as the staging note said it would.
 }
 
 
