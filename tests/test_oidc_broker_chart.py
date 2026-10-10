@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -135,9 +136,33 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     # contract. Normalize the base sha's version to this chart's before diffing.
     ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
     old = re.sub(r"0.4.35", ver, base_sha_base)
-    diff = [l for l in difflib.unified_diff(old.splitlines(), base.splitlines(), lineterm="", n=0)
-            if not l.startswith(("---", "+++", "@@"))]
-    assert diff == ['+  USER_ENTITLEMENT_CLAIM: "email"'], diff
+
+    def _split(rendered: str) -> tuple[str, str]:
+        """(everything but the realm-reconcile Job, that Job's script)."""
+        docs = [d for d in re.split(r"^---$", rendered, flags=re.M) if d.strip()]
+        job = [d for d in docs if re.search(r"^kind: Job$", d, re.M) and "-realm-reconcile" in d]
+        assert len(job) == 1
+        return "---".join(d for d in docs if d is not job[0]), job[0]
+
+    def _diff(a: str, b: str) -> list[str]:
+        return [l for l in difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)
+                if not l.startswith(("---", "+++", "@@"))]
+
+    old_rest, old_job = _split(old)
+    new_rest, new_job = _split(base)
+    assert _diff(old_rest, new_rest) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
+    # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
+    # lose from the Job are the old create-only check and its comment; nothing else is removed.
+    removed = {l[1:].strip() for l in _diff(old_job, new_job) if l.startswith("-")}
+    assert removed <= {
+        "# Keycloak `sub` UUID. Does not overwrite an existing mapper: an operator who",
+        "# deliberately changed one should not have it silently reverted by an upgrade.",
+        'HAS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \\',
+        "| grep -c 'authz-id-svc' || true)",
+        'if [ "$HAS" = "0" ]; then',
+        'echo "   present, mapper ok"',
+    }, removed
 
 
 # ------------------------------------------------------------------ (b) one claim name
@@ -202,7 +227,10 @@ def test_reconcile_gives_local_users_and_the_ui_client_the_attribute(sandbox):
 
 
 def test_a_stale_service_mapper_claim_is_a_readback_failure(sandbox):
-    assert "stale mapper from before the flip" in _script(sandbox)
+    s = _script(sandbox)
+    # The chart's own pre-flip mapper is migrated; one the chart does not own still FAILS the readback.
+    assert "stale mapper from before the flip" in s
+    assert "operator-owned mapper, not migrated" in s
 
 
 # ------------------------------------------------------------------ (c) the IdP in the job
@@ -445,3 +473,97 @@ def test_an_explicit_authz_id_wins_over_the_email_default():
     assert 'ensure_attr "alice" "E-1001"' in s and 'ensure_attr $UN "E-9"' in s
     assert 'ensure_attr "bob" "bob@example.com"' in s
     assert json.loads(_config(out)["DELEGATE_ON_BEHALF_OF"])["svc:case-runner"] == ["E-9"]
+
+
+# ------------------------------------------------------------------ (c2) the stale-mapper migration, run
+
+_ENGINE_D = "svc:engine-d"
+
+
+def _mapper_json(order: str, *, name: str = "email", value: str = _ENGINE_D) -> str:
+    """One authz-id-svc mapper as Keycloak returns it: compact, key order NOT fixed."""
+    cfg = ('"config":{"claim.name":"%s","claim.value":"%s","jsonType.label":"String",'
+           '"access.token.claim":"true"}' % (name, value))
+    head = '"id":"m-1234","name":"authz-id-svc"'
+    rest = '"protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","consentRequired":false'
+    if order == "id-first":
+        return "{%s,%s,%s}" % (head, rest, cfg)
+    return "{%s,%s,%s}" % (cfg, rest, '"name":"authz-id-svc","id":"m-1234"')  # config first, id last
+
+
+_OTHER_MAPPER = ('{"id":"m-other","name":"initiator-kind-svc","protocol":"openid-connect",'
+                 '"config":{"claim.name":"initiator_kind","claim.value":"delegate"}}')
+
+
+def _run_engine_d(sandbox: str, mappers: str) -> subprocess.CompletedProcess:
+    s = _script(sandbox)
+    start = s.index('CID="iagent-engine-d"')
+    body = s[start:s.index('CID="iagent-engine-e"', start)]
+    harness = """set -eu
+AUTH="Authorization: Bearer x"; API="http://kc/admin/realms/r"
+curl() {
+  case "$*" in
+    *"-X PUT"*|*"-X POST"*)
+      _m=""; _u=""; _b=""
+      while [ $# -gt 0 ]; do
+        case "$1" in -X) _m="$2" ;; -d) _b="$2" ;; http*) _u="$1" ;; esac
+        shift
+      done
+      printf '%s %s %s\n' "$_m" "$_u" "$(printf '%s' "$_b" | tr -d ' \n')" >&2 ;;
+    *"clients?clientId"*) printf '[{"id":"uuid-1"}]' ;;
+    *"protocol-mappers/models"*) printf '%s' "$MAPPERS" ;;
+  esac
+}
+""" + body
+    env = {**os.environ, "MAPPERS": mappers}
+    return subprocess.run([_BASH, "-c", harness], capture_output=True, text=True, timeout=60, env=env)
+
+
+def _writes(r: subprocess.CompletedProcess) -> list[tuple[str, str, dict]]:
+    out = []
+    for l in r.stderr.splitlines():
+        m = re.match(r"(PUT|POST) (\S+) (\{.*\})$", l)
+        if m:
+            out.append((m.group(1), m.group(2), json.loads(m.group(3))))
+    return out
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+@pytest.mark.parametrize("order", ["id-first", "id-last"])
+def test_a_pre_flip_chart_mapper_is_migrated_in_place(sandbox, order):
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_OTHER_MAPPER, _mapper_json(order)))
+    assert r.returncode == 0, r.stderr
+    w = _writes(r)
+    assert [x[0] for x in w] == ["PUT"], w
+    _, url, body = w[0]
+    assert url == "http://kc/admin/realms/r/clients/uuid-1/protocol-mappers/models/m-1234", url
+    assert body["id"] == "m-1234" and body["name"] == "authz-id-svc"
+    assert body["config"]["claim.name"] == "authz_id"
+    assert body["config"]["claim.value"] == _ENGINE_D
+    assert "mapper claim migrated email -> authz_id" in r.stdout
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_an_operator_mapper_is_never_touched(sandbox):
+    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", value="svc:somebody-else"))
+    assert r.returncode == 0, r.stderr
+    assert _writes(r) == [], r.stderr
+    assert "migrated" not in r.stdout
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_a_mapper_already_on_the_claim_is_left_alone(sandbox):
+    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", name="authz_id"))
+    assert r.returncode == 0, r.stderr
+    assert _writes(r) == [], r.stderr
+    assert "present, mapper ok" in r.stdout
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_a_missing_mapper_is_still_created(sandbox):
+    r = _run_engine_d(sandbox, "[%s]" % _OTHER_MAPPER)
+    assert r.returncode == 0, r.stderr
+    w = _writes(r)
+    assert [x[0] for x in w] == ["POST"], w
+    assert w[0][1].endswith("/clients/uuid-1/protocol-mappers/models")
+    assert w[0][2]["config"]["claim.name"] == "authz_id" and w[0][2]["config"]["claim.value"] == _ENGINE_D

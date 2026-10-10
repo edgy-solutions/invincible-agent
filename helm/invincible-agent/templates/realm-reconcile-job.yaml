@@ -200,11 +200,16 @@ spec:
               else
                 # Present. Repair a MISSING mapper — the exact defect found in sandbox, where a
                 # hand-made client carried none and its token's authz_id fell back to the opaque
-                # Keycloak `sub` UUID. Does not overwrite an existing mapper: an operator who
-                # deliberately changed one should not have it silently reverted by an upgrade.
-                HAS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
-                      | grep -c 'authz-id-svc' || true)
-                if [ "$HAS" = "0" ]; then
+                # Keycloak `sub` UUID. Ownership rule for an EXISTING mapper: a mapper whose
+                # claim.value is the chart's own declared authzId is the chart's, so a claim.name
+                # left over from before a flip is migrated in place (PUT, same id); one with any
+                # other value is the operator's and is never touched (the readback still refuses it).
+                # No jq in this image, and key order inside an object is not guaranteed: split the
+                # one-line array into one object per line at "},{" (only array elements meet there;
+                # a config object is never followed by "{"), then pick fields by key, not position.
+                MAPS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" || true)
+                MAP=$(printf '%s' "$MAPS" | sed 's/},{/}\n{/g' | grep '"name":"authz-id-svc"' | head -1 || true)
+                if [ -z "$MAP" ]; then
                   echo "   present, mapper MISSING -> adding"
                   curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
                     "$API/clients/$UUID/protocol-mappers/models" -d '{
@@ -221,7 +226,29 @@ spec:
                       }
                     }'
                 else
-                  echo "   present, mapper ok"
+                  MID=$(printf '%s' "$MAP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  OLDNAME=$(printf '%s' "$MAP" | sed -n 's/.*"claim\.name":"\([^"]*\)".*/\1/p')
+                  OLDVAL=$(printf '%s' "$MAP" | sed -n 's/.*"claim\.value":"\([^"]*\)".*/\1/p')
+                  if [ -n "$MID" ] && [ "$OLDVAL" = {{ $c.authzId | quote }} ] && [ "$OLDNAME" != {{ $claim | quote }} ]; then
+                    curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+                      "$API/clients/$UUID/protocol-mappers/models/$MID" -d '{
+                        "id": "'"$MID"'",
+                        "name": "authz-id-svc",
+                        "protocol": "openid-connect",
+                        "protocolMapper": "oidc-hardcoded-claim-mapper",
+                        "config": {
+                          "claim.name": {{ $claim | quote }},
+                          "claim.value": {{ $c.authzId | quote }},
+                          "jsonType.label": "String",
+                          "access.token.claim": "true",
+                          "id.token.claim": "true",
+                          "userinfo.token.claim": "true"
+                        }
+                      }'
+                    echo "   present, mapper claim migrated $OLDNAME -> {{ $claim }}"
+                  else
+                    echo "   present, mapper ok"
+                  fi
                 fi
                 {{- if eq $kind "delegate" }}
                 # Delegate clients also carry initiator_kind — same repair discipline: create
@@ -459,17 +486,22 @@ spec:
               # ── READBACK GATE — the claim is not "we applied it", it is "it is there" ──
               echo "== readback =="
               {{- if ne $claim "email" }}
-              # Every species carries the SAME claim name. An EXISTING authz-id-svc mapper is never
-              # overwritten (additive discipline), so a client created before the claim was flipped
-              # still emits the old name: that is a FAILURE here, not a silent split of the
-              # identity contract. Repair is a deliberate human act (delete the stale mapper, re-run).
+              # Every species carries the SAME claim name. The chart's own authz-id-svc mapper (value =
+              # the declared authzId) is migrated above; an operator's mapper (any other value) is not,
+              # so it still emits the old name: that is a FAILURE here, not a silent split of the
+              # identity contract. Repair is a deliberate human act (fix or delete that mapper, re-run).
               {{- range $c := $allServiceClients }}
               SVCID={{ $c.clientId | quote }}
               UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$SVCID" \
                      | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               if [ -n "$UUID" ] && ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
                      | grep -q '"claim.name":"{{ $claim }}"'; then
-                echo "   FAIL $SVCID: authz-id-svc does not emit claim {{ $claim }} (stale mapper from before the flip)"; rc=1
+                if curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                     | grep -q '"claim.value":"{{ $c.authzId }}"'; then
+                  echo "   FAIL $SVCID: authz-id-svc does not emit claim {{ $claim }} (stale mapper from before the flip)"; rc=1
+                else
+                  echo "   FAIL $SVCID: authz-id-svc does not emit claim {{ $claim }} (operator-owned mapper, not migrated)"; rc=1
+                fi
               fi
               {{- end }}
               if [ "$(curl -sf -H "$AUTH" "$API/users/profile" | grep -c '"unmanagedAttributePolicy":"ADMIN_EDIT"' || true)" = "0" ]; then
