@@ -136,6 +136,10 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     # contract. Normalize the base sha's version to this chart's before diffing.
     ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
     old = re.sub(r"0.4.35", ver, base_sha_base)
+    # The fleet SDK pin moves the same way (the rendered `iagent-mesh @ .../tags/<v>.tar.gz`), and
+    # is not this contract either. Read the pin from values.yaml, never restate it.
+    sdk = re.search(r'^\s*meshSdkVersion:\s*"?([^"\s]+)', (_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"), re.M).group(1)
+    old = re.sub(r"(iagent-mesh-sdk/archive/refs/tags/)v[0-9.]+(\.tar\.gz)", rf"\g<1>{sdk}\g<2>", old)
 
     def _split(rendered: str) -> tuple[str, str]:
         """(everything but the realm-reconcile Job, that Job's script)."""
