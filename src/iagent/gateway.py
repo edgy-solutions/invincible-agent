@@ -4566,8 +4566,11 @@ def _project_sources(mat: dict) -> list[dict] | None:
         # `obtained_via`, `ingest_id`, `dropped_by`, `promoted_by`: the graph's provenance as a
         # retrieval path copies it onto each source (engine-o's notice_parts.py is the first);
         # `promoted_by` is what the floor's promoted set is read from below.
+        # `mpn` and `notice_id`: the part and the notice a whichPartsDoesThisNoticeAffect source
+        # is ABOUT. Without them the citation is a label ("P/N 5530-184") and a URI, and nothing
+        # downstream can join a source to its table row or its notice without parsing either.
         for extra in ("matched_for", "provenance", "obtained_via", "ingest_id", "dropped_by",
-                      "promoted_by"):
+                      "promoted_by", "mpn", "notice_id"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
