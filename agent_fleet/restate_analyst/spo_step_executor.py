@@ -108,6 +108,7 @@ def verify_spo_step(
     *,
     query_is_set: bool = False,
     engine_o_url: str = ENGINE_O_URL,
+    on_behalf_of: str = "",
 ) -> dict:
     """STAGE-2 STRUCTURAL VERIFIER (the enforcement point). Confirms the DECLARED
     ``verb_iri`` is in the caller's eligible set for ``subject`` (domain ∩ arity),
@@ -116,14 +117,21 @@ def verify_spo_step(
     workflow cannot execute a verb outside the caller's eligibility set.
 
     NOT NL: ``subject``/``verb_iri`` are resolved identifiers; this is the structural
-    half only. Permission composes downstream at dispatch (the engine's gate)."""
+    half only. Permission composes downstream at dispatch (the engine's gate).
+
+    ``on_behalf_of`` is the run's authz subject, the person the read is attributed to (engine O
+    refuses an unattributed read with ``COMPATIBLE_VERBS_VIA_MESH`` on); sent only when non-blank.
+    A 4xx from engine O is about THIS request, so it is terminal; a 5xx is retried."""
     if not subject or subject == "UNKNOWN":
         raise StepFailAndRelease(
             f"spo_operation step has no resolved subject ({subject!r})", status_code=400
         )
+    body: dict = {"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains}
+    if (on_behalf_of or "").strip():
+        body["on_behalf_of"] = on_behalf_of.strip()
     resp = requests.post(
         f"{engine_o_url}/find_compatible_verbs",
-        json={"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains},
+        json=body,
         timeout=30,
         # svc:engine-a — this process's own identity, named HERE. Transport only: the
         # ELIGIBILITY subject stays `entitled_domains` in the body, and permission is enforced
@@ -133,6 +141,14 @@ def verify_spo_step(
             client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
         ),
     )
+    if 400 <= resp.status_code < 500:
+        # A 4xx is about THIS REQUEST (e.g. no on_behalf_of with the flag on): retrying re-sends
+        # the identical request, so it is terminal rather than retried for ever.
+        raise StepFailAndRelease(
+            f"engine-o refused the eligibility read for {subject!r} ({resp.status_code}): "
+            f"{resp.text[:300]}. A 4xx is about the REQUEST; retrying sends the same one again.",
+            status_code=resp.status_code,
+        )
     resp.raise_for_status()  # a 5xx is transient infra -> retry (NOT a denial)
     verbs = list(resp.json().get("verbs") or [])
     verbs = _filter_verbs_by_arity(verbs, query_is_set)
