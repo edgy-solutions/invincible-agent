@@ -29,7 +29,8 @@ ID = "sha256:" + HEX
 PREFIX = f"ingress-user/pdf/{HEX}/"
 REF = PREFIX + "generated/PCN26-119_pdf/doc-tools@61f74dc/manifest.json"
 ROW = {"id": ID, "status": "extracting", "kind": "pdf", "content_kind": "pcn",
-       "object_prefix": PREFIX, "submitted_by": "alice@example.com"}
+       "object_prefix": PREFIX, "submitted_by": "alice@example.com",
+       "on_behalf_of": "carol@example.com"}
 MANIFEST = {
     "doc_id": "PCN26-119", "filename": "PCN26-119.pdf", "source_key": PREFIX + "PCN26-119.pdf",
     "metadata": {}, "extraction_metadata": {}, "embedded_images": [], "pages": [],
@@ -182,7 +183,8 @@ def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_clien
     for f in promotion.PAYLOAD_FIELDS:
         assert p[f], f
     assert p["domain"] == "SUSTAINMENT"
-    assert p["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert p["dropped_by"] == {"authz_id": "alice@example.com",
+                               "on_behalf_of": "carol@example.com"}
     assert p["extraction_ref"] == REF and p["pipeline_version"] == "doc-tools@61f74dc"
     promotion.subject_from_payload(p)
     assert wired["status"] == [("review", {"extracted_count": None, "extracted_total": None,

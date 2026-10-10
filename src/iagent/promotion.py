@@ -107,6 +107,9 @@ class IngestGraph(Protocol):
 
     def write_fact(self, ingest_id: str, fact: dict) -> None: ...
 
+    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str) -> str:
+        """Record the steward's origin attestation; "written" | "kept_record" | "kept_steward"."""
+
     def delete_carrying(self, ingest_id: str) -> int: ...
 
 
@@ -308,15 +311,39 @@ def _missing(stores: Optional[PromotionStores], decision: str) -> list:
     return [n for n in REQUIRES[decision] if getattr(stores, n, None) is None]
 
 
+def domain_of(audience: str) -> str:
+    """D from `document_promotion:<D>` -- the audience `can_act` authorized the steward on."""
+    prefix, _, domain = (audience or "").partition(":")
+    if prefix != KIND or not domain.strip():
+        raise PromotionRefused(
+            "promotion_audience_has_no_domain",
+            f"audience {audience!r} is not `{KIND}:<domain>`; a promotion attests the origin "
+            f"domain of its audience and has none to attest. Nothing was written", status=422)
+    return domain
+
+
+def _excluded_attesters(payload: Any) -> set:
+    """Who dropped the document, and on whose behalf: neither may attest its origin. A payload
+    with no `dropped_by` (tasks filed before it was carried) excludes nobody."""
+    dropped = payload.get("dropped_by") if isinstance(payload, dict) else None
+    if not isinstance(dropped, dict):
+        return set()
+    return {v for v in (dropped.get("authz_id"), dropped.get("on_behalf_of"))
+            if isinstance(v, str) and v}
+
+
 def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
-           acted_by: str, acted_at: int, record_id: str) -> dict:
+           acted_by: str, acted_at: int, record_id: str, domain: str = "") -> dict:
     """The effect. Every step is keyed, so running it again after a partial failure converges."""
     step = "graph"
     try:
         if decision == PROMOTED:
             fact = promotion_fact(acted_by=acted_by, record_id=record_id, promoted_at=acted_at)
             stores.graph.write_fact(subject.ingest_id, dict(fact))
-            return {"fact": fact}
+            step = "origin"
+            origin = stores.graph.attest_origin(
+                subject.ingest_id, owner_domain=domain, record_id=record_id)
+            return {"fact": fact, "origin": origin}
         swept = {"graph": stores.graph.delete_carrying(subject.ingest_id)}
         step = "indexes"
         swept["indexes"] = stores.indexes.delete_carrying(subject.ingest_id)
@@ -344,6 +371,12 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         raise PromotionRefused("not_authorized_to_act",
                                "can_act on the task's audience did not answer yes", status=403)
     subject = subject_from_payload(payload)
+    domain = domain_of(audience) if decision == PROMOTED else ""
+    if decision == PROMOTED and acted_by in _excluded_attesters(payload):
+        raise PromotionRefused(
+            "dropper_cannot_attest_origin",
+            "the person who dropped the document (or whom it was dropped for) cannot attest its "
+            "origin by promoting it. Nothing was written", status=403)
     missing = _missing(stores, decision)
     if missing:
         raise PromotionRefused(
@@ -393,5 +426,5 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
     out = {"decision": decision, "ingest_id": subject.ingest_id,
            "record_id": record["record_id"], "replayed": replayed}
     out.update(_apply(decision, subject, stores, acted_by=effect_by, acted_at=effect_at,
-                      record_id=record["record_id"]))
+                      record_id=record["record_id"], domain=domain))
     return out

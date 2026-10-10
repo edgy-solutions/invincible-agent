@@ -10048,7 +10048,8 @@ async def _file_or_find_document_promotion_task(
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    payload = {**derived, "domain": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
+    payload = {**derived, "domain": domain, "dropped_by": {
+        "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")}}
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,

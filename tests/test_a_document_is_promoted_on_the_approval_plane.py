@@ -42,6 +42,7 @@ PAYLOAD = {
     "extraction_ref": "s3://extractions/pcn-4471/review.json",
     "notice_id": "PCN-4471",
 }
+AUDIENCE = "document_promotion:SUSTAINMENT"
 GOVERNING = {"ruleset_ref": "task_kind:document_promotion@x", "trust_table_ref": "trust@t"}
 
 #: Every field make_provenance can emit, the optional ones included, so the disjointness arm
@@ -93,6 +94,12 @@ class Graph:
             raise RuntimeError("graph writer down")
         self.nodes[iid].update(fact)
 
+    def attest_origin(self, iid, *, owner_domain, record_id):
+        self.log.append(("origin", iid, owner_domain, record_id))
+        if self.fail == "origin":
+            raise RuntimeError("graph writer down")
+        return "written"
+
     def delete_carrying(self, iid):
         self.log.append(("graph-delete", iid))
         if self.fail == "graph":
@@ -133,7 +140,7 @@ def _act(stores, *, decision="promoted", can_act=lambda a, c: True, payload=None
          acted_by="bob", comment="", now_ms=1_000):
     return promotion.act(
         dict(PAYLOAD) if payload is None else payload, decision=decision, acted_by=acted_by,
-        audience="aud:sustainment-approvers", comment=comment, can_act=can_act,
+        audience=AUDIENCE, comment=comment, can_act=can_act,
         stores=stores, governing=GOVERNING, era="commissioning", now_ms=now_ms)
 
 
@@ -146,7 +153,7 @@ def _kinds(log):
 def test_a_PROMOTION_checks_the_node_writes_the_record_THEN_adds_the_fact():
     log: list = []
     out = _act(_stores(log))
-    assert _kinds(log) == ["exists", "record", "fact"]
+    assert _kinds(log) == ["exists", "record", "fact", "origin"]
     record, (_, subject, fact) = log[1][1], log[2]
     assert record["request_key"] == INGEST_ID
     assert record["record_id"] == decision_record.record_id_for(INGEST_ID)
@@ -217,7 +224,7 @@ def test_NO_stores_at_all_is_503_before_any_record(decision):
 def test_a_PROMOTION_needs_no_index_and_no_object_store():
     log: list = []
     out = _act(_stores(log, indexes=None, objects=None))
-    assert out["decision"] == "promoted" and _kinds(log) == ["exists", "record", "fact"]
+    assert out["decision"] == "promoted" and _kinds(log) == ["exists", "record", "fact", "origin"]
 
 
 def test_every_store_field_is_required_by_SOME_verb():
@@ -444,7 +451,7 @@ from src.iagent import gateway  # noqa: E402
 def route(monkeypatch, fresh_declarations):
     log: list = []
     calls: dict = {"resolved": [], "can_act": [], "log": log}
-    task = {"task_id": "t-1", "kind": promotion.KIND, "audience": "aud:sustainment-approvers",
+    task = {"task_id": "t-1", "kind": promotion.KIND, "audience": AUDIENCE,
             "payload": dict(PAYLOAD)}
     monkeypatch.setattr(human_tasks, "list_tasks_for", lambda caller, status="pending": [task])
 
@@ -530,7 +537,7 @@ def test_ROUTE_promotes_then_resolves_the_projection(route):
     assert body["fact"]["promoted_by"] == "human:bob"
     record = next(e[1] for e in calls["log"] if e[0] == "record")
     assert record["governing"]["ruleset_ref"].startswith("task_kind:document_promotion@")
-    assert _kinds(calls["log"]) == ["exists", "record", "fact"]
+    assert _kinds(calls["log"]) == ["exists", "record", "fact", "origin"]
     assert calls["resolved"] == [("t-1", {"caller_id": "bob", "decision": "promoted",
                                           "comment": ""})]
     # the effect re-asked can_act itself, beyond the route's own check

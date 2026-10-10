@@ -1380,7 +1380,8 @@ def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
 
 def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "b" * 64, "status": "extracting", "kind": "pdf",
-          "content_kind": "pcn", "submitted_by": "alice@example.com"}
+          "content_kind": "pcn", "submitted_by": "alice@example.com",
+           "on_behalf_of": "carol@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
     _stub_domain(monkeypatch)
@@ -1397,7 +1398,8 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
     assert reg["payload"]["ingest_id"] == row["id"]
     assert reg["payload"]["domain"] == "SUSTAINMENT"
-    assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com",
+                                             "on_behalf_of": "carol@example.com"}
     assert r.json()["task_id"] == f"{promotion.KIND}:{row['id']}"
     assert r.json()["task_status"] == "FILED"
 
