@@ -1,6 +1,8 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.39 — 2026-10-10
+## 0.4.40 — 2026-10-10
+
+Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
 
 Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
 
