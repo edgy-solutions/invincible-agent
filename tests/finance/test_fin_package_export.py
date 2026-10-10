@@ -471,7 +471,7 @@ def test_the_duckdb_ddl_refuses_an_unmapped_type_by_name():
 # ── REAL BUILD ───────────────────────────────────────────────────────────────
 @pytest.fixture(scope="module")
 def real_build(tmp_path_factory):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     from fastapi.testclient import TestClient
 
     from agent_fleet.finance_agent import main as fmain
@@ -521,7 +521,7 @@ def test_the_real_build_html_parses_has_no_cdn_and_names_six_panels(real_build):
 
 
 def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real_build):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = real_build["duckdb"]
@@ -533,7 +533,7 @@ def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real
 
 def test_the_build_refuses_when_the_duckdb_disagrees_with_the_state(tmp_path):
     """CONTROL for the arm above: `tables_agree` can say no."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = tmp_path / "x.duckdb"

@@ -371,3 +371,30 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: D103
             "Restore these (`git checkout --`) or make the test that writes them use tmp_path.",
             red=True)
     session.exitstatus = 1 if exitstatus == 0 else exitstatus
+
+
+def _duckdb_skips(stats):
+    """The distinct (file, reason) of every skip whose reason names duckdb, sorted.
+
+    Pure, so the seal can feed it a fake stats dict. A skip's `longrepr` is a tuple
+    `(path, lineno, "Skipped: <reason>")`; anything else is not a skip we can read, and is left out.
+    """
+    seen = set()
+    for rep in stats.get("skipped", []):
+        lr = getattr(rep, "longrepr", None)
+        if isinstance(lr, tuple) and len(lr) == 3 and "duckdb" in str(lr[2]):
+            seen.add((str(lr[0]), str(lr[2])))
+    return sorted(seen)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: D103
+    # A skipped duckdb arm is not a green: the package page carries the .duckdb file's sha256 and
+    # these arms are what verify it. Name them in the summary so a venv without duckdb cannot
+    # pass for one with it. Prints nothing when none skipped; never changes pass/fail.
+    skips = _duckdb_skips(terminalreporter.stats)
+    if not skips:
+        return
+    terminalreporter.section("duckdb-gated skips", sep="-", yellow=True)
+    terminalreporter.write_line(f"duckdb-gated skips: {len(skips)}", yellow=True)
+    for path, reason in skips:
+        terminalreporter.write_line(f"    {path}: {reason}", yellow=True)

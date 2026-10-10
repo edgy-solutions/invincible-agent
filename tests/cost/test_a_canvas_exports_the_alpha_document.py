@@ -112,7 +112,7 @@ def test_the_alpha_canvas_package_IS_the_09_06_document(state):
 def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated_dist):
     """THE ACCEPTANCE, end to end: the verb, the real builder, DuckDB and the Pyodide page,
     read back off the disk it wrote."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     out = M.package_export(state, recipient_scope=ALPHA, canvas=ALPHA_CANVAS)
@@ -130,7 +130,7 @@ def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated
 
 def test_the_VERB_narrows_the_page_it_writes_not_only_its_response(state, isolated_dist):
     """The response and the file are built by two calls; both must take the canvas."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import duckdb
@@ -190,7 +190,7 @@ def test_the_subject_may_be_a_digit_string_or_a_full_mesh_IRI():
 
 
 def test_the_page_carries_only_the_canvas_sections(state, tmp_path):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import build_cost_dataset as D

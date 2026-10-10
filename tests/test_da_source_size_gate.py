@@ -133,7 +133,7 @@ def test_the_cell_arithmetic_discriminates_by_shape(rows, cols, limit, refused):
 def test_duckdb_can_consume_a_lazyframe_at_all():
     """The assumption the fix rests on, executed rather than trusted. If a future
     duckdb drops LazyFrame support this goes red HERE rather than in a pod."""
-    duckdb = pytest.importorskip("duckdb")
+    duckdb = pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: engine DA's source-size gate is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     lf = pl.LazyFrame({"company": ["a", "b", "a"], "cage": ["1", "2", "3"]})
     con = duckdb.connect()
     try:
