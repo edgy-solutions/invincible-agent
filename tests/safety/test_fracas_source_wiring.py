@@ -40,7 +40,7 @@ class _Q:
     def query(self, value):
         if self.exc:
             raise self.exc
-        return [dict(r) for r in self.rows]
+        return [dict(r) if isinstance(r, dict) else r for r in self.rows]   # a non-mapping row must REACH the hit check
 
 
 def test_unset_is_the_sandbox_fixture(monkeypatch):
@@ -117,23 +117,122 @@ def _post(monkeypatch, verb, params):
         return c.post(f"/measure/{verb}", json={"query": "", "params": params})
 
 
-@pytest.mark.parametrize("verb,params", [
-    ("what_failed_on_this_part", {"part_number": PART}),
-    ("failure_trend_for_this_platform_by_month", {"platform_id": "PLT-ALPHA"}),
-])
-def test_the_route_refuses_with_source_unavailable_and_the_control_answers(monkeypatch, verb, params):
-    _module(monkeypatch, "down_sor", lambda by: _Q(exc=ConnectionError("x")))
-    monkeypatch.setenv(fs.CONNECTORS_ENV, "sor-events-a=down_sor:factory")
-    r = _post(monkeypatch, verb, params)
+# ---------------------------------------------------------------------------
+# The refusal paths, ROUTE LEVEL: three failure modes x two verbs, per connector.
+#
+#   (a) BUILD   - the connector cannot be built (module / callable / constructor fails)
+#   (b) RAISES  - it builds, and raises while it is queried
+#   (c) BAD REC - it answers, with a hit the engine cannot use
+#
+# One named test per mode; each is parametrized over BOTH verbs and over BOTH connector names
+# the sandbox knows (so a handler that special-cases one name is seen). Each carries its own
+# CONTROL: the same connector, same caller, same route, healthy -> a populated answer. The
+# control differs from the subject in the fault and nothing else.
+# ---------------------------------------------------------------------------
+
+VERBS = [
+    pytest.param("what_failed_on_this_part", {"part_number": PART}, id="what_failed"),
+    pytest.param("failure_trend_for_this_platform_by_month", {"platform_id": "PLT-ALPHA"},
+                 id="trend"),
+]
+CONNECTORS = ["sor-events-a", "relyence"]
+
+
+def _assert_refused_naming(r, verb, connector):
     assert r.status_code == 200
     b = r.json()
-    assert b["refused"] is True and b["outcome"] == "source_unavailable"
-    assert b["connector"] == "sor-events-a" and b["fn"] == verb
+    assert b["refused"] is True and b["outcome"] == "source_unavailable", b
+    assert b["connector"] == connector and b["fn"] == verb, b
+    assert connector in b["reason"]
     assert "rows" not in b and "failure_count" not in b      # not an empty answer
-    # CONTROL: same route, same caller, connector healthy -> an answer. Differs in ONE thing.
-    _module(monkeypatch, "down_sor", lambda by: _Q([_hit()]))
+    assert "series" not in b and "periods" not in b
+
+
+def _assert_populated(r):
+    b = r.json()
+    assert r.status_code == 200 and not b.get("refused"), b
+    assert b["failure_count"] == 1, b
+
+
+@pytest.mark.parametrize("connector", CONNECTORS)
+@pytest.mark.parametrize("verb,params", VERBS)
+def test_mode_a_BUILD_a_connector_that_cannot_be_built_is_refused_naming_it(
+        monkeypatch, verb, params, connector):
+    def cannot_build(by):
+        raise RuntimeError("constructor failed")
+
+    _module(monkeypatch, "fake_sor", cannot_build)
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=fake_sor:factory")
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, connector)
+    # CONTROL: the same name, the same module, the factory builds.
+    _module(monkeypatch, "fake_sor", lambda by: _Q([_hit()]))
+    _assert_populated(_post(monkeypatch, verb, params))
+
+
+@pytest.mark.parametrize("connector", CONNECTORS)
+@pytest.mark.parametrize("verb,params", VERBS)
+def test_mode_a_BUILD_an_unimportable_module_or_missing_callable_is_refused_naming_it(
+        monkeypatch, verb, params, connector):
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=no_such_module_xyz:factory")
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, connector)
+    _module(monkeypatch, "fake_sor", lambda by: _Q([_hit()]))
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=fake_sor:missing_attr")
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, connector)
+    # CONTROL: module and callable both resolve.
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=fake_sor:factory")
+    _assert_populated(_post(monkeypatch, verb, params))
+
+
+@pytest.mark.parametrize("connector", CONNECTORS)
+@pytest.mark.parametrize("verb,params", VERBS)
+def test_mode_b_RAISES_a_connector_that_raises_during_query_is_refused_naming_it(
+        monkeypatch, verb, params, connector):
+    _module(monkeypatch, "fake_sor", lambda by: _Q(exc=ConnectionError("x")))
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=fake_sor:factory")
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, connector)
+    # CONTROL: the connector is built the same way and does not raise.
+    _module(monkeypatch, "fake_sor", lambda by: _Q([_hit()]))
+    _assert_populated(_post(monkeypatch, verb, params))
+
+
+@pytest.mark.parametrize("connector", CONNECTORS)
+@pytest.mark.parametrize("verb,params", VERBS)
+@pytest.mark.parametrize("bad", [
+    pytest.param(lambda: _hit(record_id=""), id="empty-required-field"),
+    pytest.param(lambda: {k: v for k, v in _hit().items() if k != "platform"}, id="missing-key"),
+    pytest.param(lambda: "not-a-dict", id="not-a-mapping"),
+])
+def test_mode_c_BAD_RECORD_an_unusable_hit_is_refused_naming_the_connector(
+        monkeypatch, verb, params, connector, bad):
+    _module(monkeypatch, "fake_sor", lambda by: _Q([bad()]))
+    monkeypatch.setenv(fs.CONNECTORS_ENV, f"{connector}=fake_sor:factory")
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, connector)
+    # CONTROL: the same connector returns a well-formed hit.
+    _module(monkeypatch, "fake_sor", lambda by: _Q([_hit()]))
+    _assert_populated(_post(monkeypatch, verb, params))
+
+
+@pytest.mark.parametrize("faulty_first", [True, False], ids=["faulty-first", "faulty-second"])
+@pytest.mark.parametrize("mode", ["build", "raises", "bad_record"])
+@pytest.mark.parametrize("verb,params", VERBS)
+def test_multi_connector_one_healthy_one_faulty_refuses_the_WHOLE_answer_naming_the_faulty_one(
+        monkeypatch, verb, params, mode, faulty_first):
+    def cannot_build(by):
+        raise RuntimeError("constructor failed")
+
+    faulty = {"build": cannot_build,
+              "raises": lambda by: _Q(exc=TimeoutError("slow")),
+              "bad_record": lambda by: _Q([_hit(record_id="")])}[mode]
+    _module(monkeypatch, "ok_sor", lambda by: _Q([_hit()]))
+    _module(monkeypatch, "faulty_sor", faulty)
+    pair = ["sor-events-a=ok_sor:factory", "relyence=faulty_sor:factory"]
+    monkeypatch.setenv(fs.CONNECTORS_ENV, ",".join(reversed(pair) if faulty_first else pair))
+    _assert_refused_naming(_post(monkeypatch, verb, params), verb, "relyence")
+    # CONTROL: both healthy -> the healthy connector's record is served, (half an answer is not
+    # what the refusal withheld: the same hit is what the faulty pair would have returned).
+    _module(monkeypatch, "faulty_sor", lambda by: _Q([_hit(record_id="E-2", failure_record_id="FR-E-2")]))
     ok = _post(monkeypatch, verb, params).json()
-    assert not ok.get("refused") and ok["failure_count"] == 1
+    assert not ok.get("refused") and ok["failure_count"] == 2, ok
 
 
 def test_the_route_still_answers_engine_fault_for_a_bug_that_is_not_a_source_fault(monkeypatch):

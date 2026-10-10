@@ -269,6 +269,52 @@ HAZARDS: tuple[Hazard, ...] = (
         opened_on="2026-08-30",
         mitigations=(),
     ),
+    # THE HIGH CELL (added 2026-10-09). Severity I x probability B is a High cell of the ratified
+    # matrix (safety_risk_matrix.ttl; a test derives that, this comment does not assert it). It is
+    # MITIGATED, OWNED and FIELD-VERIFIED, so it is neither an orphan nor a not-assessed hazard:
+    # the orphan count (3) and the three-state control are untouched. It exists so a walk row can
+    # reach the High audience.
+    Hazard(
+        hazard_id="HAZ-1007",
+        description="Brake hydraulic line routing can chafe against the gear-bay structure.",
+        status="mitigated",
+        severity="I",
+        probability="B",
+        tail="TN-7707",
+        platform="PLT-BRAVO",
+        opened_on="2026-06-19",
+        mitigations=(
+            Mitigation(
+                mitigation_id="MIT-2107",
+                description="Clamp and standoff retrofit; routing inspected on every A-check.",
+                owner="gear.systems@example.invalid",
+                verified_in_field="true",
+            ),
+        ),
+    ),
+    # THE LOW CELL (added 2026-10-09). Severity IV x probability E is a Low cell of the ratified
+    # matrix (a test derives that from safety_risk_matrix.ttl; this comment does not assert it).
+    # It is OPEN, and carries an OWNED, FIELD-VERIFIED mitigation, so it is not an orphan: the
+    # orphan count (3) is untouched. It exists because closing HAZ-1005 (Q9 refuses a closed
+    # hazard) left no fixture hazard that drafts a `risk_acceptance_low` task.
+    Hazard(
+        hazard_id="HAZ-1008",
+        description="Cabin placard adhesive lifts at the edge after repeated cleaning.",
+        status="open",
+        severity="IV",
+        probability="E",
+        tail="TN-7708",
+        platform="PLT-ALPHA",
+        opened_on="2026-07-08",
+        mitigations=(
+            Mitigation(
+                mitigation_id="MIT-2108",
+                description="Placard edge re-bonded with the approved adhesive; checked at each cabin clean.",
+                owner="cabin.interiors@example.invalid",
+                verified_in_field="true",
+            ),
+        ),
+    ),
 )
 
 CRITICAL_ITEMS: tuple[SafetyCriticalItem, ...] = (

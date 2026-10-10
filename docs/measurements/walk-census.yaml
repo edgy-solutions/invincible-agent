@@ -42,6 +42,10 @@
 #   abstained      the engine was reached and declined — no page explains the subject, no rows
 #                  exist to return. A WORDED refusal naming the subject, not a menu: an abstain
 #                  that CAN offer verbs is drawn as one and scores `slot_required` instead.
+#   refused        the VERB returned a NAMED refusal: `refused: true` plus an `outcome` word (for
+#                  example `hazard_closed`, `not_assessed`). Added 2026-10-09 (architect ruling).
+#                  Not `abstained` (no page explains the subject) and not `slot_required` (a
+#                  mandatory input was missing).
 #   fallback       the GENERALIST answered, because nothing in the registry matched. Correct
 #                  routing per ADR-0008 and not a failure of it — but it is not `drawn`, which is
 #                  what this runner scored until 2026-09-26. The generalist draws a card, so
@@ -278,6 +282,90 @@ rows:
     expect_archetype: MULTI_SERIES
     min_rows: 1
     dispositions: [drawn]
+
+  # TWO MORE DRAFT-ASSESSMENT ROWS, 2026-10-09, at matrix cells and audiences Q1 (HAZ-1003, II x D,
+  # Medium, bob) does not reach. NOT YET WALKED LIVE: they wait on a Lane 1 roll, like the two
+  # populated FRACAS rows above. The cell and audience are the engine's own output from the
+  # ratified matrix (safety_risk_matrix.ttl) and the task grants, not restated here.
+  - id: safety-haz-1001-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 7
+    question: draft a risk assessment for HAZ-1001
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_requested]
+    expect_task:
+      kind: risk_acceptance_serious
+      audience: risk_acceptance_serious:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+    # Severity I x probability D is SERIOUS (not High) in the ratified matrix, and Serious goes to
+    # the senior authority, not to bob.
+
+  # Q9 EXPECTS A REFUSAL (architect ruling 2026-10-09): a CLOSED hazard is refused with
+  # `hazard_closed` and no task. It used to expect a Low-tier task. NOT YET WALKED LIVE.
+  - id: safety-haz-1005-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 8
+    question: draft a risk assessment for HAZ-1005
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [refused]
+
+  # Q10: the only fixture hazard in a High cell. NOT YET WALKED LIVE.
+  - id: safety-haz-1007-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 9
+    question: draft a risk assessment for HAZ-1007
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_requested]
+    expect_task:
+      kind: risk_acceptance_high
+      audience: risk_acceptance_high:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
+
+  # Q11: not assessed. RULED 2026-10-09: refused with `outcome: not_assessed`, no review_request,
+  # no task. NOT YET WALKED LIVE.
+  - id: safety-haz-1006-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 10
+    question: draft a risk assessment for HAZ-1006
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [refused]
+
+  # Q12: the only OPEN fixture hazard in a Low cell. NOT YET WALKED LIVE.
+  - id: safety-haz-1008-risk-assessment
+    sheet: docs/measurements/safety-walk-sheet.md
+    sheet_index: 11
+    question: draft a risk assessment for HAZ-1008
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: draft_risk_assessment
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [task_requested]
+    expect_task:
+      kind: risk_acceptance_low
+      audience: risk_acceptance_low:SUSTAINMENT
+      row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
 
   # ── SUSTAINMENT (74, engine-o) ─────────────────────────────────────────────────────────────
   # Rev 180 answered this question from the generalist (`no_verb_classified`). It is DERIVED from
