@@ -1,0 +1,73 @@
+{{- if or .Values.dagster.webserver.enabled .Values.dagster.daemon.enabled .Values.dagster.userCode.enabled }}
+# Dagster instance config (dagster.yaml), mounted into the webserver, the daemon and the
+# central user-code pod at /opt/dagster/dagster_home/dagster.yaml.
+#
+# NAMED `-dagster-home`, NOT `-dagster-instance`: the sandbox's live ConfigMap
+# `iagent-dagster-instance` was created by hand on 2026-06-01 and is not
+# helm-owned, so helm would refuse to adopt it. The Deployments reference this one through a
+# volume that is still NAMED `dagster-instance`, so helm's strategic merge replaces the
+# hand-patched volume rather than adding a second one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dagster-home
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  dagster.yaml: |
+    # Storage reads ENV REFS only: the DAGSTER_POSTGRES_* variables are set on each pod from
+    # the chart's own helpers and secret, so no credential appears in this file.
+    run_launcher:
+      module: dagster._core.launcher
+      class: DefaultRunLauncher
+
+    storage:
+      postgres:
+        postgres_db:
+          username:
+            env: DAGSTER_POSTGRES_USER
+          password:
+            env: DAGSTER_POSTGRES_PASSWORD
+          hostname:
+            env: DAGSTER_POSTGRES_HOST
+          db_name:
+            env: DAGSTER_POSTGRES_DB
+          port:
+            env: DAGSTER_POSTGRES_PORT
+
+    compute_logs:
+      module: dagster._core.storage.local_compute_log_manager
+      class: LocalComputeLogManager
+      config:
+        base_dir: /opt/dagster/dagster_home/compute_logs
+
+    local_artifact_storage:
+      module: dagster._core.storage.root
+      class: LocalArtifactStorage
+      config:
+        base_dir: /opt/dagster/dagster_home
+
+    run_coordinator:
+      module: dagster._core.run_coordinator
+      class: QueuedRunCoordinator
+      config:
+        max_concurrent_runs: {{ .Values.dagster.maxConcurrentRuns }}
+
+    telemetry:
+      enabled: false
+
+    # DefaultRunLauncher cannot report on a run's worker (it does not support worker health
+    # checks), so a STARTED run whose code-location pod died is not noticed as dead. It is
+    # still ended by max_runtime_seconds: the monitor falls through to the runtime check,
+    # which cancels the run, tries to terminate it, and force-marks it FAILED once it has been
+    # STARTED longer than the bound. Without that bound the zombie holds one of the
+    # max_concurrent_runs slots for ever.
+    run_monitoring:
+      enabled: {{ .Values.dagster.runMonitoring.enabled }}
+      start_timeout_seconds: {{ .Values.dagster.runMonitoring.startTimeoutSeconds }}
+      cancel_timeout_seconds: {{ .Values.dagster.runMonitoring.cancelTimeoutSeconds }}
+      poll_interval_seconds: {{ .Values.dagster.runMonitoring.pollIntervalSeconds }}
+      {{- if .Values.dagster.runMonitoring.maxRuntimeSeconds }}
+      max_runtime_seconds: {{ .Values.dagster.runMonitoring.maxRuntimeSeconds }}
+      {{- end }}
+{{- end }}
