@@ -5818,12 +5818,15 @@ _COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
 _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
 #: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
-#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
-#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
-#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: 3's Jena read, both as the person the request names in `on_behalf_of`. ON by default: every
+#: caller of the route now hands the person down (the seal derives the callers and holds each to
+#: it), so the 400 for a request with no person is reached only by a caller that is itself wrong.
+#: LEG 3 is live (the flag-off read is a service and is refused), so the pool gains `mesh:explain`
+#: on every class subject; LEGs 1 and 2 answer what they answer off. Turn it off with
+#: `COMPATIBLE_VERBS_VIA_MESH=false` (one statement, no identity, no 400s).
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
-    "COMPATIBLE_VERBS_VIA_MESH", "false"
+    "COMPATIBLE_VERBS_VIA_MESH", "true"
 ).lower() in ("true", "1", "yes")
 
 
