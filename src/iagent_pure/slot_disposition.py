@@ -59,7 +59,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
-from iagent_pure.slot_acceptance import decode_declarations
+from iagent_pure.slot_acceptance import decode_declarations, is_spoken_mandatory
 
 #: THE MENU BOUND — a HUMAN-ATTENTION bound: the number of options a person can choose from
 #: in one turn. That makes it a fact about readers, so it must be the SAME number wherever a
@@ -221,7 +221,7 @@ def mandatory_slots(declared: Sequence[Mapping[str, Any]]) -> list[Mapping[str, 
     """The declarations an ask may be owed for. PUBLIC because the direct path needs the
     SAME set this module decides on — a second predicate for "which slots are mandatory"
     would be a copy, and the two would agree until one grew a kind."""
-    return [d for d in declared if d.get("kind") == "spoken-mandatory"]
+    return [d for d in declared if is_spoken_mandatory(d)]
 
 
 #: Retained so this module's own call sites and seals read unchanged.
