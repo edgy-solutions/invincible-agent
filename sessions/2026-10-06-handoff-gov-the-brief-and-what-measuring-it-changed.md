@@ -189,11 +189,32 @@ Merge is Lane 1's gate.
    - Mutants M1–M5 (process check, `-le` floor, integer check, tee exit, trap) are each red at
      the named arm.
 
+## 2026-10-08 dispatch (architect, "day"): two items
+
+1. **Delivered.**
+   - Numbered drafts: `2026-10-08-packet-to-lane-01-numbered-draft-list-r-090-to-r-119.md`.
+   - Reds by name: `2026-10-08-packet-to-architect-gov-the-reds-on-master-by-name-none-is-environment.md`.
+     There are 11 reds, not 16, and none of them is caused by the environment.
+   - Both packets are placed in the master tree, not committed.
+   - The gate's Linux branch is sealed at `129838a2`. A probe that fails now refuses with exit 3.
+     There are 7 Linux arms plus 1 Windows arm, and all 18 pass.
+   - Still untested on Linux: a forked process whose argv contains `pytest` reads as BUSY.
+2. **The five-repo census is built:** `15232b69`, `scripts/inbox_census_repos.py`.
+   - It dates each packet by the date in its filename. Commit dating misses the 23 placed packets.
+   - Report: `2026-10-08-packet-to-architect-gov-five-repo-inbox-census-unanswered-over-48h.md`,
+     placed.
+   - Result: 81 packets over 48h with no reply, across 15 addressees. 33 of them are in 8 rows
+     that name no real lane.
+   - Open asks:
+     - a ruling on cortex-ui's lane address;
+     - whether `for:` should be parsed as an addressee line.
+
 ## Next step
 
 1. Lane 1's merge of lane/gov: the gate, the census label and citation fix, and the inbox seal
    message.
 2. Await Lane 1's numbers (or refusals) for R-090..R-119, and the authorisation, or not, to
    re-address the 9 derivable packets.
-3. The SDK fork is resolved by Lane 1 (fleet to v0.9.8, `b3cacd17` and `5b66fdc3`). The old
+3. Await the architect on the census asks (cortex-ui's address; parsing `for:`).
+4. The SDK fork is resolved by Lane 1 (fleet to v0.9.8, `b3cacd17` and `5b66fdc3`). The old
    re-pin steps above are superseded.
