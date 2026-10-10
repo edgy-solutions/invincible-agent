@@ -1,5 +1,21 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.38 — 2026-10-10
+
+Rev 184. Realm-reconcile repairs its own stale mappers.
+
+### Fixed
+
+- **`realm-reconcile` no longer fails the release on chart-written `authz-id-svc` mappers.** Rev 183
+  (0.4.36 flipped sandbox `keycloak.authzClaim` `email` -> `authz_id`) failed at realm-reconcile:
+  all 17 service clients still carried the mapper the chart itself wrote at 0.4.35 (`claim.name`
+  `email`), the Job only ever created a MISSING mapper, and the readback then refused every one.
+  Ownership rule: a mapper whose `claim.value` is the chart's declared `authzId` is the chart's, and
+  its stale `claim.name` is now migrated in place (PUT on the same mapper id, value unchanged); a
+  mapper with any other value is the operator's, is never touched, and still fails the readback
+  (now worded "operator-owned mapper, not migrated"). The `cortex-ui` `authz-id-user` mapper is not
+  migrated (it passed readback live).
+
 ## 0.4.37 — 2026-10-10
 
 Rev 183.

@@ -318,6 +318,16 @@ def test_preexisting_clients_import_unchanged(sandbox_render, base_sha_render):
         assert new[cid] == expected, f"{cid}'s rendered import object changed"
 
 
+def _cut_present_mapper_branch(seg: str) -> str:
+    """Drop the text from the "# Present. Repair a MISSING mapper" comment to the delegate block's
+    own comment (or the segment's end): the one region 0.4.38 rewrote."""
+    start = seg.find("# Present. Repair a MISSING mapper")
+    if start < 0:
+        return seg
+    end = seg.find("# Delegate clients also carry", start)
+    return seg[:start] + (seg[end:] if end >= 0 else "")
+
+
 def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_sha_render):
     """Compare each pre-existing client's two segments (create/repair, readback), trailing
     newlines stripped: the LAST client in the OLD list sits directly against the fixed
@@ -332,6 +342,12 @@ def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_s
         claim = _sandbox_claim()
         old = [s.rstrip("\n").replace('"claim.name": "email"', f'"claim.name": "{claim}"') for s in old_segs[cid]]
         new = [s.rstrip("\n") for s in new_segs[cid]]
+        # 0.4.38 rewrote ONE region on purpose: the present-branch for an existing authz-id-svc
+        # mapper (a chart-owned stale mapper is now migrated in place; tests/test_oidc_broker_chart.py
+        # runs it). Cut that region from both sides; everything else, create branch and delegate
+        # tail included, must still be byte-identical to the base sha.
+        old = [_cut_present_mapper_branch(s) for s in old]
+        new = [_cut_present_mapper_branch(s) for s in new]
         assert old == new, f"{cid}'s reconcile script segments changed"
 
 
