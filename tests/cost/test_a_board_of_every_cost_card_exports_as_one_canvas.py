@@ -26,7 +26,7 @@ and `canvas._lot_number` accept. A card with no subject (trend, assumptions) car
 
 MIXED BOARD (RULED 2026-10-09, architect Q1): a board holding the 8 cost cards plus one
 finance answer is SPLIT per engine. engine-cost receives only the cost partition and exports
-it; the finance answer is a refusal section naming it. The response is a 200 with `documents`
+it; the finance answer is a "not a ratified template" refusal section (2026-10-10 Q2). The response is a 200 with `documents`
 and status "partial" (see `tests/test_a_mixed_board_exports_per_engine.py`).
 """
 from __future__ import annotations
@@ -185,7 +185,7 @@ def test_CONTROL_a_board_of_one_card_carries_only_that_cards_sections(export):
 
 def test_MIXED_a_finance_card_is_split_off_and_the_eight_cost_cards_still_export(export):
     """RULED 2026-10-09: engine-cost receives exactly the eight cost cards (no finance id), they
-    resolve to the alpha document, and the finance card is a refusal section naming it."""
+    resolve to the alpha document, and the finance card is a "not a ratified template" refusal section."""
     fin = {"id": "ans-fin-funding", "verb_iri": "mesh:finFundingStatus",
            "subject_instance_id": None}
     canvas, body = export.full(list(ALPHA_CANVAS["answers"]) + [fin])
@@ -199,7 +199,8 @@ def test_MIXED_a_finance_card_is_split_off_and_the_eight_cost_cards_still_export
     assert cost_doc["answers"] == ALL_IDS
     assert (fin_doc["engine"], fin_doc["status"]) == ("fin", "failed")
     assert fin_doc["answers"] == ["ans-fin-funding"]
-    assert "ans-fin-funding" in fin_doc["reason"]
+    assert fin_doc["reason"] == "not a ratified template"
+    assert fin_doc["recipient_scope"] == ALPHA
 
 
 def test_CONTROL_a_board_of_only_the_trend_card_discloses_every_entitled_lot(export):

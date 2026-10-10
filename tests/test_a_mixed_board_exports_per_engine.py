@@ -2,8 +2,8 @@
 
 RULED (architect, 2026-10-09, Q1): the ad-hoc `POST /export/package` splits a board's answers
 by the engine that serves their verb. engine-cost gets only its own answers; engine-fin, which
-packages a ratified template's panels and takes no ad-hoc answers, is a refusal section made
-in the gateway. A cost-only board answers in today's shape (no `documents`) and still raises
+exports ratified templates only (RULED 2026-10-10 Q1: the finance control, not a gap), is a
+"not a ratified template" refusal section made in the gateway. A cost-only board answers in today's shape (no `documents`) and still raises
 on an engine refusal -- the section form is only for a board that has a fin answer on it.
 """
 from __future__ import annotations
@@ -194,12 +194,30 @@ def test_an_unknown_verb_still_goes_to_engine_cost_which_names_it(world):
         [{"id": "n", "verb_iri": None}])[0][0] == "cost"
 
 
-def test_the_fin_refusal_is_local_only_while_engine_fin_takes_templates():
-    """When this reds, engine-fin can take ad-hoc answers and the gateway's local fin refusal
-    (`_fin_ad_hoc_refusal_section`) is wrong: forward them instead."""
+def test_engine_fin_takes_ratified_templates_only():
+    """RULED 2026-10-10 Q1: ad-hoc finance export is refused by policy (the finance control).
+    If this reds, engine-fin has grown an ad-hoc path AGAINST the ruling -- stop and report it;
+    do not forward ad-hoc answers to engine-fin."""
     from agent_fleet.finance_agent.main import PackageCanvas
-    assert PackageCanvas.model_fields["template_id"].is_required()
-    assert "answers" not in PackageCanvas.model_fields
+    assert PackageCanvas.model_fields["template_id"].is_required(), (
+        "RULED 2026-10-10 Q1: ad-hoc finance export is refused by policy (the finance control). "
+        "engine-fin has grown an ad-hoc path AGAINST the ruling -- stop and report it; do not "
+        "forward ad-hoc answers to engine-fin.")
+    assert "answers" not in PackageCanvas.model_fields, (
+        "RULED 2026-10-10 Q1: ad-hoc finance export is refused by policy (the finance control). "
+        "engine-fin has grown an ad-hoc path AGAINST the ruling -- stop and report it; do not "
+        "forward ad-hoc answers to engine-fin.")
+
+
+def test_the_fin_section_states_not_a_ratified_template_and_nothing_else(world):
+    r = world.post([FIN1, FIN2])
+    assert r.status_code == 200, r.text
+    doc = r.json()["documents"][0]
+    assert set(doc) == {"engine", "answers", "export_id", "status", "recipient_scope",
+                        "outcome", "reason"}
+    assert doc["reason"] == "not a ratified template"
+    assert doc["recipient_scope"] == SCOPE
+    assert doc["answers"] == ["f1", "f2"]
 
 
 def test_a_missing_answer_404s_before_any_engine_on_a_mixed_board(world):

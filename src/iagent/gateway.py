@@ -1882,28 +1882,14 @@ def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict
 def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> dict:
     """The fin section of a mixed board: always a refusal, made HERE without calling engine-fin.
 
-    WHY LOCAL: engine-fin's `PackageCanvas` requires `template_id`/`template_hash` and has no
-    `answers` field, so forwarding ad-hoc answers would only produce a pydantic 422. Sealed by
-    `tests/test_a_mixed_board_exports_per_engine.py::
-    test_the_fin_refusal_is_local_only_while_engine_fin_takes_templates`, which reds when
-    engine-fin grows an ad-hoc path (and this refusal becomes wrong).
+    WHY: RULED 2026-10-10 (Q1): engine-fin exports ratified templates only -- that is the
+    finance control, not a gap -- so an ad-hoc finance card is refused, locally, without
+    calling engine-fin. (Q2): the section goes to the board's recipient and states "not a
+    ratified template", nothing else (no ids, no template name, no hint). (Q3): it lives in the
+    API response / exporter's view, never in the customer page. Sealed by
+    `tests/test_a_mixed_board_exports_per_engine.py::test_engine_fin_takes_ratified_templates_only`
+    and `::test_the_fin_section_states_not_a_ratified_template_and_nothing_else`.
     """
-    named = "a ratified finance template and a program binding"
-    try:
-        from agent_fleet.finance_agent.export import AUDIENCES
-        from .canvas_template import load_template, ratified_template_ids
-        ids = []
-        for tid in ratified_template_ids():
-            try:
-                t = load_template(tid)
-            except Exception:  # noqa: BLE001 -- an unloadable template is simply not offered
-                continue
-            if t.package is not None and t.package.audience in AUDIENCES:
-                ids.append(tid)
-        if ids:
-            named = "template_id=" + " or ".join(repr(i) for i in ids) + " and a program binding"
-    except Exception:  # noqa: BLE001 -- the wording degrades; the refusal does not
-        pass
     return {
         "engine": "fin",
         "answers": answer_ids,
@@ -1911,10 +1897,7 @@ def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> 
         "status": "failed",
         "recipient_scope": recipient_scope,
         "outcome": "not_in_model",
-        "reason": (
-            "engine-fin packages a ratified template's panels, not ad-hoc answers: "
-            f"{answer_ids}. Export them with {named}."
-        ),
+        "reason": "not a ratified template",
     }
 
 
@@ -2136,8 +2119,8 @@ async def export_package(
     partitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is
     engine-cost's), each engine is given only its own, and when any engine-fin answer is
     present the response is a 200 carrying `documents`, one section per engine: a refused engine
-    (engine-cost's refusal or unreachability, or engine-fin, which packages templates and not
-    ad-hoc answers) renders as a refusal section and the others still export. Hard stop 4 then
+    (engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates
+    only -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then
     applies to a section, not the response. A cost-only board answers exactly as before.
     """
     if body.template_id and body.answers:
