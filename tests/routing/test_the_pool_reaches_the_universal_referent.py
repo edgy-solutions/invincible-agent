@@ -443,12 +443,16 @@ def client(engine_o_module):
 
 
 def test_AN_EMPTY_CONFIRMED_SET_REACHES_NEO4J_AS_AN_EMPTY_LIST_AND_THE_POOL_STAYS_EMPTY(
-    engine_o_module, client
+    engine_o_module, client, monkeypatch
 ):
     """Nothing confirmed (Jena unreachable, refused, or no candidate flagged) → LEG 3
     contributes zero rows. Exercised end to end: with no other coverage either, the pool comes
     back empty and the endpoint answers 200, not an error - an empty pool is the supervisor's
-    signal to fall back to the generalist, never a 5xx."""
+    signal to fall back to the generalist, never a 5xx.
+
+    This arm is about the FLAG-OFF route (one statement, the service-initiator read), so it names
+    the flag; `COMPATIBLE_VERBS_VIA_MESH` defaults on and would 400 a request with no person."""
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
     engine_o_module._JENA_ONTOLOGY = _with_post(engine_o_module, _Post(raises=True))
     engine_o_module._NEO4J_DRIVER = _FakeCompatDriver(rows=[])
 
@@ -499,7 +503,7 @@ def test_the_docs_census_still_has_exactly_five_rows_EXPECTING_A_PRODUCIBLE_SPEL
 
 @pytest.mark.parametrize("row", _DOCS_ROWS, ids=[r.id for r in _DOCS_ROWS])
 def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
-    engine_o_module, client, row
+    engine_o_module, client, row, monkeypatch
 ):
     """Pool MEMBERSHIP only - not the final draw/abstain outcome. All four rows route to
     `mesh:explain` (they declare `expect_verb: explain`, the spelling `verb_names` produces from
@@ -515,6 +519,9 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     ONCE that gap closes, entitled_domains filtering does not accidentally exclude mesh:explain
     for any of the four personas/domains the census actually asks with.
     """
+    # The FLAG-OFF route is what swaps `_POOL_READ_INITIATOR`; the flag-on route reads as the
+    # request's person instead (sealed in test_find_compatible_verbs_via_mesh_graph.py).
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
     original_initiator = engine_o_module._POOL_READ_INITIATOR
     engine_o_module._POOL_READ_INITIATOR = PERSON
     original_jena = _with_post(
