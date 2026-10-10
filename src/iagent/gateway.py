@@ -10015,12 +10015,15 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={
             "error": "no_declared_domain",
             "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
-                       "which resolves to no registered domain -- refusing to open a "
-                       "promotion task with no audience.",
+                       "which resolves to no steward pool to route the review to -- refusing to "
+                       "open a promotion task with no audience (the kind routes the review; it "
+                       "does not assert the document's domain).",
         })
     # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain, but the Topaz grant
     # key in policy/task_grants.yaml is UPPERCASE -- uppercase it below for both the audience
-    # and the payload so the resolved domain actually matches a grant.
+    # and the payload's `review_pool` so the resolved pool actually matches a grant. The payload
+    # carries the ROUTING POOL under `review_pool`; it is not a fact about the document, so it
+    # must never ride under a plain `domain` key a reader could take for the document's own.
     domain = domain.upper()
     audience = f"{promotion.KIND}:{domain}"
     task_id = f"{promotion.KIND}:{ingest_id}"
@@ -10048,7 +10051,7 @@ async def _file_or_find_document_promotion_task(
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    payload = {**derived, "domain": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
+    payload = {**derived, "review_pool": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
