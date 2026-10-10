@@ -2,8 +2,10 @@
 
 RULED 2026-10-08 (Chris): `seeded_by` is stamped at `released` by the runner; a `svc:` delegate is
 a recipient only as the seeding delegate; GET /artifacts/{id} admits it. THE POPULATION IS EMPTY
-TODAY: no workflow writes an AnswerArtifact with a `case_id`, so the stamp matches nothing and the
-read path has nobody to admit. This is a PATH WITH NO PRODUCER YET, and the last arm seals that.
+until 2026-10-09 no workflow wrote an AnswerArtifact with a `case_id`, so the stamp matched nothing
+and the read path had nobody to admit. CORRECTED 2026-10-09: the maintenance case's ActionRecord is
+now the producer (tests/test_the_runner_writes_the_action_record_at_released.py), and the last arm
+seals that exactly that one call site passes `case_id=`.
 
 Arms:
   runner   a case keeps `seeded_by`; exactly one stamp at the stamp outcome, none otherwise.
@@ -12,7 +14,7 @@ Arms:
   contract the SDK's check_mesh_artifacts_entitlement_contract against GatewayArtifacts.
   read     GET /artifacts/{id} answers an unentitled caller exactly as it answers an absent id.
   writer   `case_id` lands on the node only when given (statement text and params).
-  seal     no call site of the answer-artifact writer passes `case_id=` yet.
+  seal     exactly one call site of the answer-artifact writer passes `case_id=`: the action record.
 
 Run: uv run pytest tests/test_a_delegate_reads_what_it_seeded.py -v
 """
@@ -443,15 +445,13 @@ def test_case_id_is_absent_when_not_given():
 
 
 # =============================================================================================
-# THE NO-PRODUCER SEAL
+# THE ONE-PRODUCER SEAL (was the no-producer seal until 2026-10-09)
 # =============================================================================================
 
-def test_no_call_site_of_the_answer_artifact_writer_passes_case_id():
-    """THIS IS THE "PATH, NO PRODUCER YET" STATE. Today no call site constructs an
-    AnswerArtifactBundle with `case_id=`, so the runner's `released` stamp matches nothing and the
-    seeding delegate's read path has an empty population. This arm must be INVERTED, NOT DELETED,
-    when the first workflow producer lands: it then asserts that exactly the declared producer(s)
-    pass `case_id=`, and that the stamp's Cypher still finds them."""
+def test_exactly_the_action_record_route_passes_case_id():
+    """INVERTED 2026-10-09 (it was `test_no_call_site_..._passes_case_id`, the "path, no producer
+    yet" seal). The maintenance case's ActionRecord route is the one declared producer; a second
+    call site passing `case_id=` must be declared here, and the stamp's Cypher must still find it."""
     sites: list[str] = []
     passing: list[str] = []
     for root in ("src", "agent_fleet"):
@@ -468,9 +468,14 @@ def test_no_call_site_of_the_answer_artifact_writer_passes_case_id():
                 name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
                 if name != "AnswerArtifactBundle":
                     continue
-                where = f"{path.relative_to(_REPO)}:{node.lineno}"
+                where = f"{path.relative_to(_REPO).as_posix()}:{node.lineno}"
                 sites.append(where)
                 if any(k.arg == "case_id" or k.arg is None for k in node.keywords):
                     passing.append(where)
     assert sites, "the scan found no AnswerArtifactBundle call site: the control is void"
-    assert passing == [], f"a producer now passes case_id=: invert this arm. {passing}"
+    assert [w.split(":")[0] for w in passing] == ["src/iagent/gateway.py"], (
+        f"the declared producer set changed: {passing}")
+    # and the producer is the action-record route, not some other call in the gateway
+    gw = (_REPO / "src/iagent/gateway.py").read_text(encoding="utf-8")
+    route = gw[gw.index("async def write_action_record_route"):]
+    assert "case_id=case_id" in route.split("\n@app.", 1)[0]

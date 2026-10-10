@@ -391,7 +391,8 @@ audiences:
     granted_by: cnogradi
     reason: >-
       ADR-0041 §5. The reviewer who promotes or rejects a contributed MAINTENANCE document
-      (s1000d-data-module). MAINTENANCE -> liaison, ruled 2026-10-02 and granted 2026-10-06 once
-      liaison was mirrored (OpenDDIL's client registration) and seeded in users.yaml.
+      (s1000d-data-module). MAINTENANCE -> liaison, ruled 2026-10-02 and granted 2026-10-06; now
+      bound to OpenDDIL's liaison.coalition by its upstream sub (the OIDC broker's authz_id), not
+      to a mirrored email user.
     grant_to:
-      - liaison@example.com
+      - 33333333-3333-4333-8333-333333333333

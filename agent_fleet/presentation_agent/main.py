@@ -22,6 +22,7 @@ PRESENTATION_PATH_FALLBACK_NO_OUTPUT_URI = "fallback-no-output-uri"
 # fallback firing means nobody declared anything and the shape had to be guessed at. If the
 # inference path keeps firing after the engines declare, something upstream is still silent.
 PRESENTATION_PATH_DECLARED_UNGROUNDED = "declared-ungrounded"
+PRESENTATION_PATH_REFUSAL_ENVELOPE = "refusal-envelope"
 
 # Statuses that mean "no answer was produced, and the producer SAYS SO". Rendered deliberately
 # rather than inferred from an empty payload.
@@ -610,6 +611,30 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
     "ask": "slot_elicitation", "abstain": "slot_abstain",
 }
 
+#: A REFUSAL IS A BODY WITH A REFUSAL ENVELOPE, NOT ZERO ROWS (architect ruling).
+#: An engine that refuses answers `200 {refused: true, outcome, reason, ...}` with no rows. The
+#: planning projector used to read that as "no rows" and degrade, so nothing rows-less reached
+#: cortex. Now the selected component goes over with its payload list EMPTY and this envelope
+#: under REFUSAL_FIELD. ONE definition: producer (`_refusal_envelope`) and seal both read it.
+#: `refused`/`outcome`/`reason` are always present; the OPTIONAL keys travel only when the
+#: producer supplied them (absent means silent, same as the passthroughs).
+REFUSAL_FIELD = "refusal"
+REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn")
+
+
+def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:
+    env: Dict[str, Any] = {
+        "refused": True,
+        "outcome": str(resp.get("outcome") or "refused"),
+        "reason": None if resp.get("reason") is None else str(resp.get("reason")),
+    }
+    for k in REFUSAL_ENVELOPE_OPTIONAL:
+        if resp.get(k) is not None:
+            env[k] = resp[k]
+    return env
+
+
 _FLAT_ARCHETYPES: Dict[str, tuple] = {
     # Fields read from cortex-ui/src/components/elicitation/Elicitation.contract.ts, not
     # invented here. `slot` (which declaration is missing) and `disposition` are required.
@@ -1080,7 +1105,13 @@ def _project_planning_archetype(
                 resp = {**resp, **rows}
                 rows = rows[k]
                 break
-    if not isinstance(rows, list) or not rows:
+    # A REFUSED BODY (`refused is True`, identity -- as the ELICITATION arm) is not "no rows":
+    # it keeps the card with an EMPTY ARRAY and the envelope. A non-refused empty body still
+    # returns None below -- an empty planning card is a refusal of the scope.
+    refused = resp.get("refused") is True
+    if refused and (rows is None or rows == []):
+        rows = []
+    elif not isinstance(rows, list) or not rows:
         return None
 
     # ROWS GO OVER AS AN ARRAY, NOT A JSON STRING.
@@ -1105,7 +1136,7 @@ def _project_planning_archetype(
     }
     for field in passthrough:
         val = resp.get(field)
-        if val is None and isinstance(rows[0], dict):
+        if val is None and rows and isinstance(rows[0], dict):
             # `group_kind` rides the ROWS for the timeline (the verb stamps it
             # per row); the contract says it is stated, never inferred, so we
             # only lift a value the producer actually wrote.
@@ -1132,6 +1163,9 @@ def _project_planning_archetype(
         val = resp.get(field)
         if val is not None:
             component[field] = val
+
+    if refused and not rows:
+        component[REFUSAL_FIELD] = _refusal_envelope(resp)
 
     return component
 
@@ -1687,7 +1721,15 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 raw_data=request.raw_data,
             )
             if handled:
-                response.headers["X-Presentation-Path"] = PRESENTATION_PATH_ARCHETYPE_HARDENED
+                _comps = (hardened or {}).get("components") or [{}]
+                if isinstance(_comps[0], dict) and REFUSAL_FIELD in _comps[0]:
+                    response.headers["X-Presentation-Path"] = PRESENTATION_PATH_REFUSAL_ENVELOPE
+                    logger.info(
+                        "render_ui: refused body (outcome=%s) -> %s with empty payload + %s envelope",
+                        _comps[0][REFUSAL_FIELD].get("outcome"), archetype, REFUSAL_FIELD,
+                    )
+                else:
+                    response.headers["X-Presentation-Path"] = PRESENTATION_PATH_ARCHETYPE_HARDENED
                 return _with_selection_provenance(hardened, _sel_prov)
             logger.warning(
                 "render_ui: no hardened renderer for archetype=%s; "

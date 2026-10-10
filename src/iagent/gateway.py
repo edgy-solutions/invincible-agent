@@ -10330,8 +10330,11 @@ async def stamp_seeded_by_route(
 ):
     """The runner stamps the seeding delegate on a case's artifacts at `released` (ADR-0041 §8.1,
     RULED 2026-10-08). SERVICE-ONLY: only `svc:case-runner` may call this, same gate as
-    `/internal/origin/write`. `n == 0` is a 200, not an error: no producer writes case-linked
-    artifacts yet. Only a declared delegate can be a seeding delegate: anything else is 422.
+    `/internal/origin/write`. `n == 0` is a 200, not an error (a case that released without
+    writing a case-linked artifact stamps nothing). CORRECTED 2026-10-09: the maintenance case's
+    ActionRecord, written by `/internal/cases/{case_id}/action-record` just below, IS a
+    case-linked artifact, and the runner writes it before this stamp.
+    Only a declared delegate can be a seeding delegate: anything else is 422.
     R-089: the delegate map is asserted by configuration this pass."""
     from starlette.concurrency import run_in_threadpool
 
@@ -10353,6 +10356,99 @@ async def stamp_seeded_by_route(
         return int(rec["n"]) if rec is not None else 0
 
     return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
+
+
+ACTION_RECORD_KIND = "maintenance-action-record"
+
+
+class ActionRecordRequest(_BaseModel):
+    record: dict
+    seeded_by: Optional[str] = None
+    on_behalf_of: str
+
+
+def action_record_artifact_id(case_id: str, action_id: str) -> str:
+    """DETERMINISTIC: a Restate retry of the runner's write names the same artifact."""
+    digest = hashlib.sha256(f"{case_id}\0{action_id}".encode("utf-8")).hexdigest()[:32]
+    return f"action-record-{digest}"
+
+
+@app.post("/internal/cases/{case_id}/action-record")
+async def write_action_record_route(
+    case_id: str,
+    req: ActionRecordRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The maintenance case's ActionRecord (R-114, an iagent-side OUTPUT artifact), written at
+    `released` by the runner (2026-10-09; ADR-0041 §8.1's first case-linked producer). SERVICE-
+    ONLY, same gate as `/internal/cases/{case_id}/seeded-by`.
+
+    ONE AnswerArtifact: id derived from (case_id, action_id) so a retry writes nothing twice
+    (`written: false` when it exists); `case_id` and, when given, `seeded_by` on the node;
+    `kind` = `maintenance-action-record`; the record as `rendered_output.record`; produced by the
+    case runner (delegate) FOR `on_behalf_of`, who is therefore the OWNER the read gate admits.
+    The record's own `provenance.case_id` must be the path's, refused before any write."""
+    from starlette.concurrency import run_in_threadpool
+
+    # Reached as `_aaw.AnswerArtifactBundle`, not the bare name: tests/routing/test_ask_to_answer_
+    # lineage.py reads the FIRST bare-name construction as the answer pipeline's bundle.
+    from . import answer_artifact_writer as _aaw
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/action-record is callable only by the "
+                       "case runner's own service identity.",
+        })
+    if not (req.on_behalf_of or "").strip():
+        raise HTTPException(status_code=422, detail={"error": "on_behalf_of_required"})
+    # R-089: `seeded_by` must be a DECLARED delegate (the configured map, asserted not verified
+    # this pass), as at the seeded-by stamp; `on_behalf_of` is the case's principal as the runner
+    # read it from the case, RECORDED as the owner, not an act this route authorises.
+    if req.seeded_by is not None and req.seeded_by not in _delegate_principals():
+        raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+    provenance = req.record.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("case_id") != case_id:
+        raise HTTPException(status_code=422, detail={"error": "case_id_mismatch"})
+    action_id = req.record.get("action_id")
+    if not isinstance(action_id, str) or not action_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "action_id_required"})
+
+    artifact_id = action_record_artifact_id(case_id, action_id)
+    now_ms = int(time.time() * 1000)
+    bundle = _aaw.AnswerArtifactBundle(
+        id=artifact_id,
+        question_text=f"Maintenance action record {action_id} for case {case_id}",
+        message_id=case_id,
+        valid_as_of=now_ms,
+        status="complete",
+        produced_by={"actor_type": "agent", "actor_id": _CASE_RUNNER_SERVICE_AUTHZ_ID},
+        produced_for={"user_id": req.on_behalf_of, "is_authenticated": True,
+                      "entitlement_source": "case_runner_delegate"},
+        resolved_intent={"kind": ACTION_RECORD_KIND, "case_id": case_id, "action_id": action_id},
+        routing=None,
+        rendered_output={"kind": ACTION_RECORD_KIND, "record": req.record},
+        kind=ACTION_RECORD_KIND,
+        case_id=case_id,
+        seeded_by=req.seeded_by,
+    )
+
+    def _write() -> tuple[bool, Optional[str]]:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                "MATCH (a:AnswerArtifact {id: $id}) RETURN count(a) AS n", id=artifact_id
+            ).single()
+        if rec is not None and int(rec["n"]) > 0:
+            return False, None
+        result = _aaw.AnswerArtifactWriter(driver=neo4j_driver).write_sync(bundle)
+        return result.success, result.error
+
+    written, error = await run_in_threadpool(_write)
+    exists_already = (not written) and error is None
+    if not written and not exists_already:
+        raise HTTPException(status_code=503, detail={"error": "artifact_write_failed"})
+    return {"case_id": case_id, "artifact_id": artifact_id, "written": written}
 
 
 # ════════════════════════════════════════════════════════════════════
