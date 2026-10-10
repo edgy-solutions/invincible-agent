@@ -217,6 +217,21 @@ externalRestate:
 # already run Dagster and only want the user code deployment.
 # ==========================================================================
 dagster:
+  # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
+  # dagster-instance.yaml) and mounted as dagster.yaml.
+  maxConcurrentRuns: 2
+  runMonitoring:
+    enabled: true
+    startTimeoutSeconds: 600
+    cancelTimeoutSeconds: 180
+    pollIntervalSeconds: 60
+    # The bound that ends a STARTED run whose code-location pod died (DefaultRunLauncher
+    # cannot health-check a worker, so nothing else does; such a run holds one of the
+    # maxConcurrentRuns slots for ever). MEASURED 2026-10-09 on the sandbox run storage,
+    # 2742 finished runs: longest finished run 1930s (process_document_artifact_job; p50 685s);
+    # supervisor_query_job max 1396s; ingest_ontology_job max 341s. 3600 is ~1.9x the longest
+    # legitimate run. 0 disables the bound (the pre-chart hand-made config had none).
+    maxRuntimeSeconds: 3600
   webserver:
     enabled: true
     replicas: 1
@@ -272,7 +287,8 @@ dagster:
       tag: ""  # defaults to .Chart.AppVersion
     port: 4000
     # SIZED FROM THE LOAD, NOT BY DOUBLING. `DefaultRunLauncher` starts runs INSIDE this pod
-    # (see dagster.yaml — "production would use K8sRunLauncher"), so one pod holds the gRPC
+    # (instance config: templates/dagster-instance.yaml; runs that outlive
+    # dagster.runMonitoring.maxRuntimeSeconds are failed by the daemon), so one pod holds the gRPC
     # server, the run, and up to `max_concurrent: 5` step subprocesses at once. Dagster SPAWNS
     # rather than forks, so every step re-imports the module graph from cold, and that import
     # measures 17.5s single-threaded in this image (dagster 6.2s, of which dagster.components
@@ -1187,7 +1203,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (dagster instance config)
+  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s
