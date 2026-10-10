@@ -388,12 +388,14 @@ def _render_document_deterministic(
 
 
 def _with_document_refusal(card: Dict[str, Any], raw_data: Any) -> Dict[str, Any]:
-    """Name a refused body's refusal on its KNOWLEDGE_DOCUMENT card.
+    """Name a refused body's refusal on its KNOWLEDGE_DOCUMENT card, at every document site.
 
     The document path rendered before any refusal check, so a refused draft (safety's
     RiskAssessmentDraft on a closed hazard) reached cortex as a document and the census as
     `drawn`. It lives outside `_render_document_deterministic` because that composer's read-set
     is sealed to the envelope keys; the refusal is the card's envelope, not the composer's input.
+    All three document fallbacks use it: the KNOWLEDGE_DOCUMENT archetype, the menu that cannot
+    draw the output_uri, and the chart whose rows fail the chart contract.
     """
     body = _extract_agent_response(raw_data)
     if isinstance(body, dict) and body.get("refused") is True:
@@ -1696,10 +1698,10 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 # The caller's menu cannot draw this. Honest text beats a widget it never
                 # advertised -- and the provenance above says WHICH refusal produced it.
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _with_selection_provenance(_render_document_deterministic(
+                return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                     request.raw_data, effective_persona,
                     subject_concept=request.output_uri,
-                ), _sel_prov)
+                ), request.raw_data), _sel_prov)
         if cap:
             archetype = cap["archetype"]
             # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────
@@ -1725,11 +1727,11 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                         request.output_uri, _refusal,
                     )
                     response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                    return _with_selection_provenance(_render_document_deterministic(
+                    return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                         request.raw_data,
                         effective_persona,
                         subject_concept=request.output_uri,
-                    ), _sel_prov)
+                    ), request.raw_data), _sel_prov)
             logger.info(
                 "render_ui: output_uri=%s matched capability archetype=%s",
                 request.output_uri, archetype,

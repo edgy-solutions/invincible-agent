@@ -67,3 +67,53 @@ async def test_a_refused_draft_drawn_as_a_document_carries_its_refusal(m, monkey
 async def test_CONTROL_the_same_body_not_refused_has_no_refusal_key(m, monkeypatch):
     card = await _render(m, monkeypatch, dict(_REFUSED, refused=False))
     assert m.REFUSAL_FIELD not in card, sorted(card)
+
+
+# -- the two other document fallbacks (same helper, same refusal) -----------------------------
+# A refused chart verb has no `data`, fails the chart contract and was drawn as a document with
+# no refusal; any refused body whose output_uri the caller's menu cannot draw did the same.
+
+_CHART_URI = "mesh:DatasetAnalysisReport"
+_CHART_CAP = ({"archetype": "CHART_WIDGET"}, {"presentation_source": "t"})
+_NO_CAP = (None, {"presentation_source": "t", "reason": "menu cannot draw"})
+
+
+async def _render_with(m, monkeypatch, body, selected, uri, frontend_id=None):
+    monkeypatch.setattr(m, "_select_presentation", lambda *a, **k: selected)
+    raw = [{"persona": "P", "expert_response": body}]
+    out = await m.render_ui(
+        m.RenderRequest(raw_data=raw, output_uri=uri, user_persona="P", frontend_id=frontend_id),
+        Response(),
+    )
+    comps = out["components"]
+    assert len(comps) == 1 and comps[0]["archetype"] == "KNOWLEDGE_DOCUMENT", comps
+    return comps[0]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_chart_verb_failing_the_chart_contract_carries_its_refusal(m, monkeypatch):
+    assert m._validate_chart_payload(None, None, None) is not None  # the rows DO fail the contract
+    card = await _render_with(m, monkeypatch, dict(_REFUSED), _CHART_CAP, _CHART_URI)
+    assert card[m.REFUSAL_FIELD] == m._refusal_envelope(_REFUSED), sorted(card)
+
+
+@pytest.mark.asyncio
+async def test_CONTROL_chart_contract_fallback_not_refused_has_no_refusal_key(m, monkeypatch):
+    card = await _render_with(
+        m, monkeypatch, dict(_REFUSED, refused=False), _CHART_CAP, _CHART_URI)
+    assert m.REFUSAL_FIELD not in card, sorted(card)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_body_the_menu_cannot_draw_carries_its_refusal(m, monkeypatch):
+    card = await _render_with(
+        m, monkeypatch, dict(_REFUSED), _NO_CAP, "safety:RiskAssessmentDraft", "some-frontend")
+    assert card[m.REFUSAL_FIELD] == m._refusal_envelope(_REFUSED), sorted(card)
+
+
+@pytest.mark.asyncio
+async def test_CONTROL_menu_cannot_draw_fallback_not_refused_has_no_refusal_key(m, monkeypatch):
+    card = await _render_with(
+        m, monkeypatch, dict(_REFUSED, refused=False), _NO_CAP,
+        "safety:RiskAssessmentDraft", "some-frontend")
+    assert m.REFUSAL_FIELD not in card, sorted(card)
