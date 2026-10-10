@@ -174,6 +174,26 @@ def unknown_user_subjects(file_label: str, pairs, known_users: set[str]) -> list
     return out
 
 
+def unusable_group_audiences(audiences, groups: dict, users: list) -> list[str]:
+    """`grant_to_groups` gate. A group not in groups.yaml, or with zero members in users.yaml,
+    routes the task to NOBODY (the phantom-user failure by another door). PURE."""
+    members: dict[str, int] = {}
+    for u in users:
+        if isinstance(u, dict):
+            for g in u.get("groups") or []:
+                members[g] = members.get(g, 0) + 1
+    out: list[str] = []
+    for a in audiences:
+        for g in a.grant_to_groups:
+            if g not in (groups or {}):
+                out.append(f"task_grants.yaml: audience {a.key!r} grants group {g!r}, which is "
+                           f"NOT a group in groups.yaml")
+            elif not members.get(g):
+                out.append(f"task_grants.yaml: audience {a.key!r} grants group {g!r}, which has "
+                           f"ZERO members in users.yaml - the task would route to NOBODY")
+    return out
+
+
 def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> list[str]:
     """PROVE-THE-NEGATIVE on domain_consumption.yaml, same posture as
     load_capabilities/load_programs: every consumer-domain row must name
@@ -379,6 +399,10 @@ def validate(
             [(c.key, gt) for c in caps for gt in c.grant_to], known_users))
         errors.extend(unknown_user_subjects("program_members.yaml",
             [(p.key, gt) for p in programs for gt in p.grant_to], known_users))
+
+    # grant_to_groups: the group must exist and have members (2026-10-10 ruling).
+    errors.extend(unusable_group_audiences(
+        audiences, groups_raw.get("groups") or {}, users_raw.get("users") or []))
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #

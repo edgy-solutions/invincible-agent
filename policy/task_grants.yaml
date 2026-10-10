@@ -23,15 +23,22 @@
 
 # An AUDIENCE groups tasks whose approval authority is the same, and names who may
 # act. `grant_to` are entitlement keys (emails/employee-ids, matching seeded `user`
-# objects) — USERS ONLY. Group names are NOT resolved here (the sync writes user
-# subjects unconditionally; a group name would seed a phantom `user:<group>` that
-# passes readback while routing the approval task to NOBODY — the sharpest silent-
-# wrong-grant, since a workflow then suspends awaiting an approver who cannot exist).
-# `validate_policy` REFUSES a grant_to not in users.yaml. Group-based audiences are a
-# DEFERRED design decision (they split "who may act" across git + drifting group
-# membership — a real weakening of the git-blame audit story that needs its own
-# ruling; plus `actor: user | group#member` in the manifest + sync support). Every
-# audience REQUIRES an accountable `granted_by` + `reason` (prove-the-negative on the
+# objects) — USERS ONLY: a group name in `grant_to` would seed a phantom `user:<group>`
+# that passes readback while routing the approval task to NOBODY — the sharpest silent-
+# wrong-grant, since a workflow then suspends awaiting an approver who cannot exist.
+# `validate_policy` REFUSES a grant_to not in users.yaml.
+#
+# GROUP AUDIENCES, RULED 2026-10-10 (architect; Chris chose "build group audiences"). An
+# audience may instead (or also) carry `grant_to_groups: [<group>]`. Each names a group from
+# `policy/groups.yaml`; its members come from `users.yaml`; the sync writes
+# `task_audience:<aud>#actor@group:<G>#member` (the manifest already allows
+# `actor: user | group#member`); the queue expands members ONE level (no nested groups).
+# At least one of `grant_to` / `grant_to_groups` must be non-empty. `validate_policy` REFUSES
+# an unknown group and a group with zero members (it would route a task to NOBODY, the same
+# silent failure as the phantom user). `task_grant_sync` REFUSES (exit 5) while the group
+# object is absent from live Topaz; membership is topaz_sync's job. The trade-off the earlier
+# deferral named stands: "who may act" is split across git and group membership.
+# Every audience REQUIRES an accountable `granted_by` + `reason` (prove-the-negative on the
 # grant path — the sync REFUSES an unexplained entry, same as the other grant files).
 #
 # Audience KEY convention: "<task_kind>:<compartment>" — e.g. a promotion approval
@@ -396,3 +403,24 @@ audiences:
       to a mirrored email user.
     grant_to:
       - 33333333-3333-4333-8333-333333333333
+
+  # OpenDDIL-lab `maint_fault_propose` `decide` await: audience
+  # `maint_fault_approval:{trigger.owning_tier}`. Sandbox tier = ORG. Granted THROUGH THE GROUP
+  # (2026-10-10 ruling), never to bob directly, for the #15 walks.
+  maint_fault_approval:ORG:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_fault_propose` `decide` await (audience
+      `maint_fault_approval:{trigger.owning_tier}`), sandbox tier ORG. Granted through the
+      maintenance-tier-org group per the 2026-10-10 ruling, for the #15 walks. Sandbox member = bob.
+    grant_to_groups:
+      - maintenance-tier-org
+
+  # `maint_release`'s `tier_ack` signal, same tier and same group as above.
+  maint_tier_ack:ORG:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_release` `tier_ack` signal, sandbox tier ORG. Granted through the
+      maintenance-tier-org group per the 2026-10-10 ruling, for the #15 walks. Sandbox member = bob.
+    grant_to_groups:
+      - maintenance-tier-org

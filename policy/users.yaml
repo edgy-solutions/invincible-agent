@@ -117,6 +117,8 @@ users:
       # He does hold `risk_redraft:SUSTAINMENT` and `hazard_link_review:SUSTAINMENT` in
       # task_grants.yaml — the author's queue, which is the other half of the same role.
       - safety-engineers
+      # 2026-10-10 ruling: group audiences. Actor-only (no cell); see groups.yaml.
+      - maintenance-tier-org
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]

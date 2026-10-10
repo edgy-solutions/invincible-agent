@@ -123,3 +123,8 @@ groups:
   safety-engineers:
     grants:
       - {persona: SAFETY_ENGINEER, domain: SUSTAINMENT}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-10 ruling). Grants NO persona.domain cell, so it
+  # cannot change anyone's routing; it exists so task_grants.yaml can name it in
+  # `grant_to_groups` (maint_fault_approval:ORG, maint_tier_ack:ORG).
+  maintenance-tier-org: {}
