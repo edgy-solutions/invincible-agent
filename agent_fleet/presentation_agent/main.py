@@ -127,6 +127,11 @@ async def lifespan(fastapi_app: FastAPI):
                 object_uri=cap["object_uri"],
                 archetype=cap["archetype"],
                 expected_fields=cap["expected_fields"],
+                # UNVERSIONED. A presentation's manifest version keys its menu row by frontend
+                # bundle version; the system defaults are not a bundle, and the helper's "0.1.0"
+                # default would re-key every one of them to a version nobody ships. Empty keeps
+                # their uuids byte-identical and outside eviction.
+                version="",
             )
         except Exception as e:  # noqa: BLE001  -- ADR-0006: never crash on registration
             logger.warning(

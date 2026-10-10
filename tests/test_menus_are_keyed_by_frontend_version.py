@@ -504,3 +504,17 @@ def test_h_the_gateway_forwards_the_version_to_the_render_call_and_the_run():
     assert "X-Frontend-Version" in src
     sup = (_SRC / "iagent" / "defs" / "dynamic_supervisor.py").read_text(encoding="utf-8")
     assert '"frontend_version": config.frontend_version or None' in sup
+
+
+def test_h_engine_f_registers_its_system_defaults_unversioned():
+    """The helper defaults ``version="0.1.0"``; under this change that would key every system
+    default to a bundle version nobody ships. Engine F must pass the empty version explicitly."""
+    tree = ast.parse((_PRESENTATION / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "register_presentation_to_mesh"
+    ]
+    assert calls, "Engine F no longer calls register_presentation_to_mesh"
+    for c in calls:
+        kw = {k.arg: k.value for k in c.keywords}
+        assert "version" in kw and isinstance(kw["version"], ast.Constant) and kw["version"].value == ""
