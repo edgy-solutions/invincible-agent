@@ -1121,6 +1121,11 @@ networkPolicy:
       - {store: engine-lg, via: ENGINE_LG_PUBLIC_URL, expires: "2026-12-14"}
       - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
       - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
+      # found cut by tests/test_networkpolicy_flows_survive.py (flows derived from the render):
+      - {store: postgresql, via: DATABASE_URL, expires: "2026-12-14"}
+      - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
+      - {store: central-gateway, via: CENTRAL_GATEWAY_URL, expires: "2026-12-14"}
+      - {store: dagster-webserver, via: DAGSTER_WEBSERVER_URL, expires: "2026-12-14"}
     engine-a:  # table A "every engine" rows, expanded over the engines enabled in this file
       - {store: engine-o, via: ONTOLOGY_SERVICE_URL, expires: "2026-12-14"}
       - {store: engine-d, via: DATAHUB_WRAPPER_URL, expires: "2026-12-14"}
@@ -1324,6 +1329,10 @@ networkPolicy:
       - {store: neo4j, via: NEO4J_URI, expires: "2026-12-14"}
       - {store: restate, via: RESTATE_INGRESS_URL, expires: "2026-12-14"}
       - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
+      # found cut by tests/test_networkpolicy_flows_survive.py (flows derived from the render):
+      - {store: weaviate, via: WEAVIATE_HTTP_HOST, expires: "2026-12-14"}
+      - {store: fuseki, via: JENA_SPARQL_ENDPOINT, expires: "2026-12-14"}
+      - {store: topaz, via: TOPAZ_DIRECTORY_URL, expires: "2026-12-14"}
     cortex-ui:  # table B: configured consumer the store policy did not admit
       - {store: keycloak, via: KEYCLOAK_REALM_URL, expires: "2026-12-14"}
     dagster-daemon:  # table B: configured consumer the store policy did not admit

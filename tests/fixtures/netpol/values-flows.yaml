@@ -1,0 +1,31 @@
+# Test-only overlay for tests/test_networkpolicy_flows_survive.py. Documentation-range addresses
+# only (RFC 5737, 192.0.2.0/24): no real address belongs in this file.
+agentFleet:
+  env:
+    LLM_BASE_URL: "http://192.0.2.10:11434/v1"
+    OLLAMA_BASE_URL: "http://192.0.2.10:11434/v1"
+    MEM0_OLLAMA_BASE_URL: "http://192.0.2.10:11434"
+networkPolicy:
+  extraEgress:
+    # the off-cluster model / embedding endpoint
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.10/32
+      ports:
+        - protocol: TCP
+          port: 11434
+    # MinIO and DataHub GMS: in-namespace in reality, but neither carries a chart component label,
+    # so no podSelector can name them. The shape a local values file would take, modelled here on
+    # documentation addresses (tests/test_networkpolicy_flows_survive.py maps host -> address).
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.20/32
+      ports:
+        - protocol: TCP
+          port: 9000
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.30/32
+      ports:
+        - protocol: TCP
+          port: 8080

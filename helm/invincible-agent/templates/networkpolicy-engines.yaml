@@ -81,6 +81,7 @@
        templates/engines.yaml puts in containerPort), never typed here. */}}
 {{- $targets := dict }}
 {{- range fromJsonArray (include "invincible-agent.networkPolicyStores" .) }}{{- $_ := set $targets .component .ports }}{{- end }}
+{{- range fromJsonArray (include "invincible-agent.networkPolicyEgressOnlyTargets" .) }}{{- $_ := set $targets .component .ports }}{{- end }}
 {{- range $engines }}{{- if .values.port }}{{- $_ := set $targets .component (list .values.port) }}{{- end }}{{- end }}
 {{- $direct := .Values.networkPolicy.directCallers | default dict }}
 {{- range $engines }}
