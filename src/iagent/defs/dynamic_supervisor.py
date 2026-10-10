@@ -1587,7 +1587,17 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # is the service, so the gate would decide about the wrong subject: it would grant or deny
 # for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
 # the identity has to be right on the day the gate starts to read it.
-_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas", "explain"})
+#
+# `whatFailedOnThisPart` and `failureTrendForThisPlatformByMonth` (engine-safety) are its
+# ADR-0056 program-filtered measures. PROGRAM MEMBERSHIP BELONGS TO A PERSON, and a `svc:`
+# principal is never a member: dispatched as svc:supervisor they refuse 422 `no_person` on
+# every ask (measured live on rev 185, Dagster runs 4b7904be and 8793c2ff). The set is
+# sealed against safety's source by
+# tests/identity/test_a_service_identity_never_gets_a_program.py.
+_CALLER_IDENTITY_VERBS = frozenset(
+    {"seedPortfolioCanvas", "seedCanvas", "explain", "whatFailedOnThisPart",
+     "failureTrendForThisPlatformByMonth"}
+)
 
 
 class CallerIdentityUnavailable(Exception):
