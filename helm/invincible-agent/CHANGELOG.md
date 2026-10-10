@@ -1,5 +1,26 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.40 — 2026-10-10
+
+Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
+
+Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
+
+### Added
+
+- **`keycloak.retiredUsers`** (base `[]`; sandbox: `operator.atlantia`, `operator.borduria`,
+  `liaison`). Chart 0.4.36 removed these mirrored email users from `nonInteractiveUsers`, but the
+  reconcile job is additive, so they survive in any Keycloak first booted earlier. Per name: exact
+  username lookup; DELETE only when `federated-identity` is `[]` (a linked user is a brokered
+  shadow, kept and logged); the readback FAILS if the name still exists without a link. The render
+  fails for a name also in `nonInteractiveUsers`/`localHumanUsers` or not a plain username.
+
+### Tests
+
+- `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
+  double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
+  join seals binding policy grants to the brokered sub.
+
 ## 0.4.38 — 2026-10-10
 
 Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.

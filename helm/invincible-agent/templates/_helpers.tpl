@@ -551,4 +551,22 @@ http://{{ .Release.Name }}-dagster.{{ .Release.Namespace }}.svc.cluster.local:{{
   (dict "component" "fuseki" "ports" (list 3030))
   (dict "component" "topaz" "ports" (list 9393))
 | toJson -}}
+{{- end }}{{- /*
+keycloak.retiredUsers guard: every entry is a plain username (letters, digits, . _ -), and none is
+still declared as a local user the chart creates (nonInteractiveUsers / localHumanUsers) -- a name
+both created and deleted on every run is a contradiction, so the render fails.
+*/}}
+{{- define "invincible-agent.validateRetiredUsers" -}}
+{{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $r)) }}
+{{- fail (printf "keycloak.retiredUsers: %q is not a plain username" (toString $r)) }}
 {{- end }}
+{{- range $u := concat ($.Values.keycloak.nonInteractiveUsers | default list) ($.Values.keycloak.localHumanUsers | default list) }}
+{{- if eq $u.username $r }}
+{{- fail (printf "keycloak.retiredUsers: %q is also declared in keycloak.nonInteractiveUsers/localHumanUsers" $r) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+

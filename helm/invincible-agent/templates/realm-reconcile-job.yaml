@@ -141,6 +141,7 @@ spec:
               {{- $claim := .Values.keycloak.authzClaim | default "email" }}
               {{- include "invincible-agent.validateBrokers" $ }}
               {{- include "invincible-agent.validateServiceClients" $ }}
+              {{- include "invincible-agent.validateRetiredUsers" $ }}
               {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
@@ -369,6 +370,27 @@ spec:
               {{- end }}
               {{- end }}
 
+              {{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+              # RETIRED USER: removed only if present by EXACT username and carrying no federated link.
+              RU={{ $r | quote }}
+              echo "-- retired user $RU"
+              RID=$(curl -sf -H "$AUTH" "$API/users?username=$RU&exact=true" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              if [ -z "$RID" ]; then
+                echo "   absent"
+              else
+                FED=$(curl -sf -H "$AUTH" "$API/users/$RID/federated-identity" | tr -d '[:space:]' || true)
+                if [ "$FED" = "[]" ]; then
+                  if curl -sf -X DELETE -H "$AUTH" "$API/users/$RID" >/dev/null; then
+                    echo "   deleted (no federated link)"
+                  else
+                    echo "   DELETE refused"
+                  fi
+                else
+                  echo "   KEPT: has a federated identity link (or its state is unknown): a brokered shadow is never touched"
+                fi
+              fi
+              {{- end }}
+
               {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
               {{- if and $b.enabled (not $b.existingSecret) }}
               echo "-- NOTE: broker {{ $b.alias | default $bn }} enabled but no existingSecret: skipped"
@@ -572,6 +594,17 @@ spec:
                 echo "   FAIL user $UN: carries a credential -- it must not be able to sign in"; rc=1
               else
                 echo "   ok   user $UN (no credentials)"
+              fi
+              {{- end }}
+              {{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+              RU={{ $r | quote }}
+              RID=$(curl -sf -H "$AUTH" "$API/users?username=$RU&exact=true" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              if [ -z "$RID" ]; then
+                echo "   ok   retired user $RU absent"
+              elif [ "$(curl -sf -H "$AUTH" "$API/users/$RID/federated-identity" | tr -d '[:space:]' || true)" != "[]" ]; then
+                echo "   ok   retired name $RU is a linked (brokered) user: kept"
+              else
+                echo "   FAIL retired user $RU: still exists without a federated link"; rc=1
               fi
               {{- end }}
               {{- range $c := $allServiceClients }}
