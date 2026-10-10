@@ -2,7 +2,7 @@
 
 ## 0.4.38 — 2026-10-10
 
-Rev 184. Realm-reconcile repairs its own stale mappers.
+Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.
 
 ### Fixed
 
