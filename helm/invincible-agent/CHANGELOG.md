@@ -1,9 +1,9 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.41 — 2026-10-10
+## 0.4.42 — 2026-10-10
 
-Next-roll staging (`lane/01-prep-next`). Not rolled. Numbered past 0.4.39 (`lane/01-oidc-roundtrip`)
-and 0.4.40 (`lane/01-netpol`), both open, so no two branches publish one number.
+Next-roll staging (`lane/01-prep-next`). Not rolled. Numbered past 0.4.39 (rev 186), 0.4.40 (`lane/01-oidc-roundtrip`)
+and 0.4.41 (`lane/01-netpol`), so no two branches publish one number. Renumbered from 0.4.41 on 2026-10-10.
 
 ### Changed
 
