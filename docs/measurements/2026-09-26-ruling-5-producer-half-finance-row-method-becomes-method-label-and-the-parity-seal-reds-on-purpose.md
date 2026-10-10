@@ -143,18 +143,3 @@ a row as a method block. Then `_MIRROR["FORECAST_MEASURE"]` becomes `{"method_la
 - **`scripts/extraction_equivalence.py` re-run.** See §4 — argued, not measured.
 - **Whether any consumer outside these two repos reads the row key.** Enumerated across tracked
   Python, non-Python tracked files, and the ontology TTL; not enumerated beyond the repos.
-
-## 8. Addendum, 2026-10-08 — the consumer half has landed; the red is retired
-
-cortex-ui d7d6593 (`feat(finance): rows read method_label ... no fallback to method`) renames the
-row key in COMPETING_MEASURES and FORECAST_MEASURE, still MANDATORY, with no fallback to `method`;
-bd782c5 is an unrelated test fix in the same push. Both are ancestors of cortex-ui `master`.
-`_MIRROR["FORECAST_MEASURE"]` on this branch already reads `{"method_label", "formula", "eac"}`.
-Measured with the sibling checked out: `tests/finance/test_eac_comparison.py` and the
-FORECAST_MEASURE arms of `tests/planning/test_producers_speak_their_archetype.py` pass. The §7
-gap on COMPETING_MEASURES stands: that archetype is `_EXEMPT` from the parity seal, so its
-rename is still checked only by `test_eac_comparison.py`, not against cortex's interface.
-Three OTHER reds appear against current cortex master and are not method_label (SHORTFALL_GRID
-cell interface unparsed, ILLUSTRATION and WORKFLOW_CASE with no projector path, NoticePartSet
-mirrored on one side only). The deployed engine still emits what it was last rolled with; no roll
-was done.
