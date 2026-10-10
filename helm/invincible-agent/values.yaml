@@ -1929,6 +1929,13 @@ keycloak:
   #   - username: platform-registrar
   #     email: platform-registrar@example.com
   nonInteractiveUsers: []
+  # Local users the reconcile job REMOVES from the live realm. The job is additive, so a user a
+  # chart once declared stays in every Keycloak first booted before the declaration was dropped.
+  # For each name: exact-username lookup; DELETE only if it exists AND has no federated identity
+  # link (a user with a link is a brokered shadow and is never touched); readback FAILS if the
+  # name still exists without a link. A name also in nonInteractiveUsers / localHumanUsers, or
+  # not a plain username, fails the render.
+  retiredUsers: []
   # Realm reconcile (realm-reconcile-job.yaml) — converges the serviceClients list below
   # into the LIVE realm on every install/upgrade, because a realm import only applies at
   # first boot. ADDITIVE ONLY: creates missing clients, repairs a missing authz-id mapper,

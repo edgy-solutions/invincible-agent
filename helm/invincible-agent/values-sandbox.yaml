@@ -454,6 +454,15 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+  # Chart 0.4.36 dropped these three from nonInteractiveUsers: they were MIRRORED email users
+  # (local stand-ins for OpenDDIL's principals), replaced by brokered principals bound to the
+  # upstream `sub` (brokers.openddil.principals below). The reconcile job is additive, so any
+  # Keycloak first booted before 0.4.36 still holds them; this list makes the job remove them
+  # (only when they carry no federated identity link).
+  retiredUsers:
+    - operator.atlantia
+    - operator.borduria
+    - liaison
   # OIDC BROKER to OpenDDIL's realm. OpenDDIL's own principals sign in THROUGH us and their grants
   # bind to THEIR `sub` (authz_id = upstream sub), replacing the three mirrored email users the
   # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). NOT APPLIED until
