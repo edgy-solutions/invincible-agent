@@ -135,9 +135,11 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
 
 # ── the knowledge search, behind KNOWLEDGE_SEARCH_VIA_MESH ──────────────────────────────────
 #
-# OFF (the default): the incumbent query, unchanged — near_vector on an `embed_query` vector,
+# OFF: the incumbent query, unchanged — near_vector on an `embed_query` vector,
 # bm25 when the embed fails, the domain filter AND-ed with exact-match metadata filters.
-# ON: the same search through the fleet's `MeshVectors` reader, `mode="vector_only"` (what the
+# ON (the default since 2026-10-09; live retrieval parity measured 2026-10-08 by
+# scripts/probes/engine_w_identity_census.py: 60 shared source decisions identical on both
+# paths, 3 runs): the same search through the fleet's `MeshVectors` reader, `mode="vector_only"` (what the
 # incumbent already ran), metadata filters passed through. What the reader adds: the collection
 # marker checked at open, a degradation that is MARKED in the result (`mode == "bm25"`), and a
 # failure that is a refusal rather than an exception's text.
@@ -149,8 +151,10 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
 # THE DIFFERENCES THE FLAG MAKES, each deliberate and sealed in
 # tests/test_engine_w_knowledge_search_via_mesh.py:
 #   1. An EMPTY caller is refused before any search on the ON path: the read is attributed to a
-#      person, and the SDK's `Initiator` refuses a blank subject. OFF, an empty caller still
-#      searches, and the gate denies every chunk only when ENABLE_AGENTIC_AUTH is on.
+#      person, and the SDK's `Initiator` refuses a blank subject. `retrieve_gated_chunks` raises
+#      the NAMED `CallerRequired` first, and the tool answers KNOWLEDGE_CALLER_REQUIRED_REFUSAL
+#      (not the generic error string). OFF, an empty caller still searches, and the gate denies
+#      every chunk only when ENABLE_AGENTIC_AUTH is on.
 #   2. A list/set filter value is MEMBERSHIP on the ON path (SDK 0.9.8). OFF, every value is
 #      `equal`.
 #   3. A chunk with neither `source_url` nor `uri` gets a source URI from doc and page on the ON
@@ -159,15 +163,28 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
 #   4. An ABSENT collection is "No relevant information" on the ON path (the reader answers
 #      `empty`). OFF, the driver raises and the tool returns its error string.
 _KNOWLEDGE_VIA_MESH_RAW = os.getenv("KNOWLEDGE_SEARCH_VIA_MESH")
-KNOWLEDGE_SEARCH_VIA_MESH = (_KNOWLEDGE_VIA_MESH_RAW or "false").lower() in ("true", "1", "yes")
+# Unset -> ON. A SET value (even empty) is parsed as written, so "" and "false" turn it off.
+KNOWLEDGE_SEARCH_VIA_MESH = (
+    True if _KNOWLEDGE_VIA_MESH_RAW is None
+    else _KNOWLEDGE_VIA_MESH_RAW.lower() in ("true", "1", "yes")
+)
 print(
     f"knowledge search: {'MESH (MeshVectors.nominate)' if KNOWLEDGE_SEARCH_VIA_MESH else 'DIRECT'} "
-    f"({'explicit config' if _KNOWLEDGE_VIA_MESH_RAW is not None else 'DEFAULT'}) "
+    f"({'explicit config' if _KNOWLEDGE_VIA_MESH_RAW is not None else 'DEFAULT (on)'}) "
     f"[weaviate_expert: KNOWLEDGE_SEARCH_VIA_MESH]",
     flush=True,
 )
 
 KNOWLEDGE_SEARCH_LIMIT = 5
+
+KNOWLEDGE_CALLER_REQUIRED_REFUSAL = (
+    "Knowledge search refused: it reads on a person's behalf, and this request names no caller "
+    "(user_email is missing or blank). No search was run."
+)
+
+
+class CallerRequired(ValueError):
+    """The mesh path was asked to search with no caller. Raised BEFORE any search."""
 
 
 class _MeshHit:
@@ -245,9 +262,11 @@ def _search_via_mesh(weaviate_client, collection_name: str, domain_label: str,
     turns that into its error string, as it does for the incumbent's exceptions.
 
     NO BLANK-CALLER CHECK HERE, deliberately: the SDK's `Initiator` refuses a blank subject (a
-    ValueError, raised while the arguments are built, so before any search). A check of ours
-    above it was measured redundant — deleting it left the behaviour unchanged — so the refusal
-    has one owner, and the seal pins it to that owner.
+    ValueError, raised while the arguments are built, so before any search). That guard is the
+    one any DIRECT caller of this function meets (scripts/probes/engine_w_identity_census.py's
+    empty-caller control calls it directly). The shipping path never reaches it with a blank
+    caller: `retrieve_gated_chunks` raises the named `CallerRequired` first, so the live tool can
+    answer a refusal that says what is missing instead of the generic error string.
     """
     impl = WeaviateVectors(
         client=weaviate_client,
@@ -307,6 +326,8 @@ def retrieve_gated_chunks(weaviate_client, *, collection_name: str, domain_label
                           ) -> Tuple[List[Tuple[int, Any]], int, int]:
     """Search (by the flag's path), then gate. Returns (kept, dropped, retrieved)."""
     if KNOWLEDGE_SEARCH_VIA_MESH:
+        if not (caller_email or "").strip():
+            raise CallerRequired(KNOWLEDGE_CALLER_REQUIRED_REFUSAL)
         hits = _search_via_mesh(weaviate_client, collection_name, domain_label,
                                 semantic_query, metadata_filters, caller_email)
     else:
@@ -692,6 +713,8 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                         f"read access to them — request access to the specific document."
                     )
                 return "\n\n".join(results)
+            except CallerRequired:
+                return KNOWLEDGE_CALLER_REQUIRED_REFUSAL
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"
 
