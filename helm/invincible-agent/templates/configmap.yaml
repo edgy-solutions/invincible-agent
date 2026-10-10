@@ -303,6 +303,14 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "KEYCLOAK_REALM_URL") }}
   KEYCLOAK_REALM_URL: {{ include "invincible-agent.keycloakRealmUrl" . | quote }}
   {{- end }}
+  {{- /* ONE identity claim for every species: the same keycloak.authzClaim the service-client
+  authz-id-svc mapper emits (keycloak-configmap.yaml, realm-reconcile-job.yaml). src/iagent/auth.py
+  reads it as USER_ENTITLEMENT_CLAIM; rendered explicitly even when it equals the code default,
+  so the contract is visible in the render. An explicit agentFleet.env value still wins. */}}
+  {{- include "invincible-agent.validateBrokers" . }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "USER_ENTITLEMENT_CLAIM") }}
+  USER_ENTITLEMENT_CLAIM: {{ .Values.keycloak.authzClaim | default "email" | quote }}
+  {{- end }}
 
   # ── Extraction→review sensor (iagent.defs.extraction_review_sensor) ──
   # The canonical trigger runs in the iagent Dagster code-location: it
@@ -414,7 +422,15 @@ data:
   {{- range $o := $c.onBehalfOf }}
   {{- range $u := $.Values.keycloak.nonInteractiveUsers }}
   {{- if eq $u.username $o.user }}
-  {{- $emails = append $emails $u.email }}
+  {{- $emails = append $emails (include "invincible-agent.localAuthzId" (dict "root" $ "username" $u.username "email" $u.email)) }}
+  {{- end }}
+  {{- end }}
+  {{- /* A brokered principal's authz identity is its upstream sub, not an email. */}}
+  {{- range $bn, $b := ($.Values.keycloak.brokers | default dict) }}
+  {{- range $p := $b.principals }}
+  {{- if eq $p.username $o.user }}
+  {{- $emails = append $emails $p.sub }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}

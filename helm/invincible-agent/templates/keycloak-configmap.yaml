@@ -1,4 +1,5 @@
 {{- if .Values.keycloak.enabled }}
+{{- $claim := .Values.keycloak.authzClaim | default "email" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,6 +23,9 @@ data:
               "email": "agent@example.com",
               "firstName": "Invincible",
               "lastName": "User",
+              {{- if ne $claim "email" }}
+              "attributes": { {{ $claim | quote }}: [ {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" "agent-user" "email" "agent@example.com") | quote }} ] },
+              {{- end }}
               "credentials": [
                   {
                       "type": "password",
@@ -44,6 +48,9 @@ data:
               "email": "alice@example.com",
               "firstName": "Alice",
               "lastName": "Tester",
+              {{- if ne $claim "email" }}
+              "attributes": { {{ $claim | quote }}: [ {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" "alice" "email" "alice@example.com") | quote }} ] },
+              {{- end }}
               "credentials": [
                   { "type": "password", "value": "alice", "temporary": false }
               ],
@@ -56,6 +63,9 @@ data:
               "email": "bob@example.com",
               "firstName": "Bob",
               "lastName": "Tester",
+              {{- if ne $claim "email" }}
+              "attributes": { {{ $claim | quote }}: [ {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" "bob" "email" "bob@example.com") | quote }} ] },
+              {{- end }}
               "credentials": [
                   { "type": "password", "value": "bob", "temporary": false }
               ],
@@ -68,6 +78,9 @@ data:
               "email": "carol@example.com",
               "firstName": "Carol",
               "lastName": "Tester",
+              {{- if ne $claim "email" }}
+              "attributes": { {{ $claim | quote }}: [ {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" "carol" "email" "carol@example.com") | quote }} ] },
+              {{- end }}
               "credentials": [
                   { "type": "password", "value": "carol", "temporary": false }
               ],
@@ -87,6 +100,23 @@ data:
               "webOrigins": [
                   "*"
               ]
+              {{- if ne $claim "email" }},
+              "protocolMappers": [
+                  {
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                          "user.attribute": {{ $claim | quote }},
+                          "claim.name": {{ $claim | quote }},
+                          "jsonType.label": "String",
+                          "access.token.claim": "true",
+                          "id.token.claim": "true",
+                          "userinfo.token.claim": "true"
+                      }
+                  }
+              ]
+              {{- end }}
           },
           {{- include "invincible-agent.validateServiceClients" $ }}
           {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
@@ -108,7 +138,7 @@ data:
                       "protocol": "openid-connect",
                       "protocolMapper": "oidc-hardcoded-claim-mapper",
                       "config": {
-                          "claim.name": {{ $.Values.keycloak.authzClaim | default "email" | quote }},
+                          "claim.name": {{ $claim | quote }},
                           "claim.value": {{ $c.authzId | quote }},
                           "jsonType.label": "String",
                           "access.token.claim": "true",

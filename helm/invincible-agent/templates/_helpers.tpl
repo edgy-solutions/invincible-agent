@@ -248,11 +248,60 @@ Emits nothing on success; `fail`s the render on the first violation.
 {{- range $u := $.Values.keycloak.nonInteractiveUsers }}
 {{- if eq $u.username $o.user }}{{- $found = true }}{{- end }}
 {{- end }}
+{{- /* A principal is a DECLARATION: it is named whether or not the broker is rendered. */}}
+{{- range $bn, $b := ($.Values.keycloak.brokers | default dict) }}
+{{- range $p := $b.principals }}
+{{- if eq $p.username $o.user }}{{- $found = true }}{{- end }}
+{{- end }}
+{{- end }}
 {{- if not $found }}
-{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is not a keycloak.nonInteractiveUsers entry" $c.clientId $o.user) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is neither a keycloak.nonInteractiveUsers entry nor a principal of a declared keycloak.brokers entry" $c.clientId $o.user) }}
 {{- end }}
 {{- if not (or (eq $o.role "operator") (eq $o.role "supervisor")) }}
 {{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q has role %q; must be \"operator\" or \"supervisor\"" $c.clientId $o.user $o.role) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+A broker is RENDERED only when enabled AND its client secret's Secret is named. Enabled with no
+existingSecret renders nothing (the reconcile job carries a NOTE) and never fails: a roll survives it.
+Call: include "invincible-agent.brokerActive" $b  -> "true" or "".
+*/}}
+{{- define "invincible-agent.brokerActive" -}}
+{{- if and .enabled .existingSecret }}true{{- end }}
+{{- end }}
+
+{{/*
+The authz_id a LOCAL user gets: the user's email unless the values give an explicit authzId.
+Only meaningful when keycloak.authzClaim is not "email" (then the email IS the claim).
+Call: include "invincible-agent.localAuthzId" (dict "root" $ "username" u "email" e)
+*/}}
+{{- define "invincible-agent.localAuthzId" -}}
+{{- $id := .email -}}
+{{- if ne (.root.Values.keycloak.authzClaim | default "email") "email" -}}
+{{- range $u := concat (.root.Values.keycloak.localHumanUsers | default list) (.root.Values.keycloak.nonInteractiveUsers | default list) -}}
+{{- if and (eq $u.username $.username) $u.authzId -}}{{- $id = $u.authzId -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $id -}}
+{{- end }}
+
+{{/*
+Fail the render on a broker that cannot work. Called wherever the broker is consumed.
+*/}}
+{{- define "invincible-agent.validateBrokers" -}}
+{{- range $bn, $b := ($.Values.keycloak.brokers | default dict) }}
+{{- if $b.enabled }}
+{{- if not $b.issuer }}
+{{- fail (printf "keycloak.brokers.%s is enabled but issuer is empty; set the upstream realm issuer URL" $bn) }}
+{{- end }}
+{{- if eq ($.Values.keycloak.authzClaim | default "email") "email" }}
+{{- fail (printf "keycloak.brokers.%s is enabled but keycloak.authzClaim is \"email\"; a brokered principal's authz identity is its upstream sub and cannot ride the email claim" $bn) }}
+{{- end }}
+{{- if not $.Values.keycloak.reconcileClients.enabled }}
+{{- fail (printf "keycloak.brokers.%s is enabled but keycloak.reconcileClients.enabled is false; the broker is created only by the realm-reconcile job" $bn) }}
 {{- end }}
 {{- end }}
 {{- end }}

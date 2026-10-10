@@ -23,6 +23,7 @@ the intended `authz_id` value.** Sandbox names `email`; work names the employee-
 |---|---|---|---|
 | **human (sandbox)** | email | `alice@example.com` | Keycloak issues `email` natively for the seeded user |
 | **human (work)** | employee-id | `E01234567` | Ping asserts the attribute → broker IdP mapper → client/protocol mapper → the claim `USER_ENTITLEMENT_CLAIM` names (TWO mapper hops) |
+| **human (sandbox, brokered)** | upstream `sub` | `33333333-3333-4333-8333-333333333333` | a principal of the OpenDDIL realm signs in through this realm's identity broker; an IdP mapper copies the upstream `sub` into the user attribute named for the claim; the `cortex-ui` attribute mapper emits it as the claim `USER_ENTITLEMENT_CLAIM` names |
 | **service (any env)** | `svc:<name>` | `svc:review-starter` | a LOCAL Keycloak client with a hardcoded-claim mapper emitting the claim `USER_ENTITLEMENT_CLAIM` names = `svc:<name>` (ZERO Ping hops) |
 
 `svc:<name>` is the service-id convention (namespaced, unmistakably non-human, stable). It appears in
@@ -31,6 +32,17 @@ rule — renaming it later is expensive, so it is fixed now. **Services never ca
 they hold CAPABILITY grants, not persona×domain cells.
 
 ---
+
+## OpenDDIL brokering (sandbox)
+
+OpenDDIL principals sign in through an OIDC identity broker in this realm (`keycloak.brokers.openddil`; default disabled, and disabled in `values-sandbox.yaml` until OpenDDIL supplies issuer, client and secret). Their grants bind to OpenDDIL's own `sub`.
+
+- **One claim for every species.** `keycloak.authzClaim` is rendered as `USER_ENTITLEMENT_CLAIM` in the shared `-config` ConfigMap (every workload that imports `src/iagent/auth.py`), as the claim name of each service client's `authz-id-svc` mapper, and as the `cortex-ui` attribute mapper's claim and user attribute. The base default stays `email`; the sandbox sets `authz_id`. A chart test pins the three names equal.
+- **Local humans** carry the attribute `authz_id` = their email (realm import and reconcile job). Keycloak drops user attributes outside the declarative profile unless `unmanagedAttributePolicy` allows them, so the job sets ADMIN_EDIT (never ENABLED: a user could then edit their own authz identity).
+- **Brokered humans**: the IdP mapper `openddil-sub-to-authz-id` (FORCE) copies the upstream raw `sub` into `authz_id`. `policy/users.yaml`, `policy/task_grants.yaml` and `DELEGATE_ON_BEHALF_OF` key on that sub. A username mapper names the local shadow user `openddil.<preferred_username>`.
+- **No linking to a local account.** The IdP uses `openddil-first-login`, a copy of "first broker login" with review-profile and every link-existing, auto-link, confirm-link and verify-existing execution DISABLED; `trustEmail` is false. A brokered login can never attach to a local user with the same email. The reconcile readback fails if any of those executions is enabled.
+- **Secrets and order.** The broker client secret reaches only the reconcile job, through `existingSecret`/`secretKey` (secretKeyRef); the broker renders only when enabled AND existingSecret is set. A service client minted before the claim flip keeps its old claim name; the readback fails it until the stale mapper is deleted and the job re-run.
+- **Needs from OpenDDIL**: the issuer URL, a client `iagent-broker`, and its secret.
 
 ## Section 1 — Sandbox reference implementation (config-as-description; this is BUILT)
 

@@ -445,22 +445,45 @@ ontologySeed:
 
 keycloak:
   enabled: true
+  # ONE claim for every species (identity-mint-contract.md): service clients emit it through
+  # authz-id-svc, local humans through a user attribute of this name (= their email) that the
+  # cortex-ui client emits, brokered humans through the broker's sub mapper (= upstream sub).
+  # USER_ENTITLEMENT_CLAIM is rendered from this same key.
+  authzClaim: "authz_id"
   # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
-    # OpenDDIL's demo principals, mirrored here when its client registration landed
-    # (iagent-openddil, extraServiceClients below), so its onBehalfOf and approvals resolve
-    # to real subjects. No credentials, same shape as platform-registrar.
-    - username: operator.atlantia
-      email: operator.atlantia@example.com
-    - username: operator.borduria
-      email: operator.borduria@example.com
-    - username: liaison
-      email: liaison@example.com
+  # OIDC BROKER to OpenDDIL's realm. OpenDDIL's own principals sign in THROUGH us and their grants
+  # bind to THEIR `sub` (authz_id = upstream sub), replacing the three mirrored email users the
+  # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). NOT APPLIED until
+  # OpenDDIL supplies: the real issuer URL (the one below is a PLACEHOLDER on the reserved
+  # .invalid TLD), a client iagent-broker with redirect URI
+  # <our keycloak>/realms/invincible-agent/broker/openddil/endpoint, and its secret in the Secret
+  # named by existingSecret. `sub` values are the fixed ids in OpenDDIL's realm-openddil.json.
+  brokers:
+    openddil:
+      # Stays off until OpenDDIL supplies issuer + client + secret (then: enabled true, existingSecret set).
+      enabled: false
+      displayName: "OpenDDIL"
+      issuer: "https://openddil.invalid/idp/realms/openddil"   # PLACEHOLDER: needs OpenDDIL's value
+      clientId: iagent-broker
+      existingSecret: ""
+      secretKey: "client-secret"
+      principals:
+        - sub: "11111111-1111-4111-8111-111111111111"
+          username: operator.atlantia
+          label: "Operator, Atlantia"
+        - sub: "22222222-2222-4222-8222-222222222222"
+          username: operator.borduria
+          label: "Operator, Borduria"
+        - sub: "33333333-3333-4333-8333-333333333333"
+          username: liaison.coalition
+          label: "Coalition liaison"
   # OpenDDIL's delegate client (2026-10-02), "Model Y": an external workload like doc-tools —
   # a separate release, credential created here because the realm lives here. It authenticates
-  # AS ITSELF (kind: delegate), never as the three principals above; those are RECORDED in
+  # AS ITSELF (kind: delegate), never as the three brokered principals above (by username; the
+  # DELEGATE_ON_BEHALF_OF env carries their SUBs); those are RECORDED in
   # onBehalfOf, not verified this pass (R-089). configmap.yaml renders it as
   # DELEGATE_ON_BEHALF_OF; the BFF's /human_tasks/{id}/act reads it to let this client act for
   # exactly these principals, can_act asked of the principal, the delegate recorded as acted_via.
@@ -479,7 +502,7 @@ keycloak:
           role: operator
         - user: operator.borduria
           role: operator
-        - user: liaison
+        - user: liaison.coalition
           role: supervisor
     # The case runner's delegate identity (item B, 2026-10-03): restate-analyst's direct_call
     # steps act as this client when a step carries no human user_jwt. kind: delegate, same

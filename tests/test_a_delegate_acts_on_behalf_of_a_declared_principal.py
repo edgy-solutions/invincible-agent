@@ -56,9 +56,9 @@ ENV_NAME = _env_match.group(1)
 # JOIN checks the chart render actually contains these, rather than this file re-asserting a
 # number it alone invented.
 DELEGATE = "svc:openddil"
-PRINCIPAL_ATLANTIA = "operator.atlantia@example.com"
-PRINCIPAL_BORDURIA = "operator.borduria@example.com"
-PRINCIPAL_LIAISON = "liaison@example.com"
+PRINCIPAL_ATLANTIA = "11111111-1111-4111-8111-111111111111"  # brokered sub (keycloak.brokers.openddil.principals)
+PRINCIPAL_BORDURIA = "22222222-2222-4222-8222-222222222222"
+PRINCIPAL_LIAISON = "33333333-3333-4333-8333-333333333333"
 
 
 # =============================================================================================

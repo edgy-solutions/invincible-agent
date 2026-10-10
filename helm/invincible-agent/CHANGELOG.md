@@ -1,5 +1,32 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.36 — 2026-10-08
+
+OIDC brokering to the OpenDDIL realm, and one identity claim for every species. Not rolled.
+
+### Added
+
+- **`keycloak.brokers.openddil`** (default disabled; the sandbox keeps it off, with a placeholder
+  issuer, until OpenDDIL supplies issuer + client + secret). The realm-reconcile job upserts the `oidc` IdP (discovery, syncMode FORCE, trustEmail
+  false, storeToken false, PKCE), a sub -> `authz_id` mapper, a username mapper, and the
+  `openddil-first-login` flow: a copy of "first broker login" with review-profile and every
+  link-existing-account execution DISABLED. Every step is read back. The client secret reaches the
+  job only through `existingSecret`/`secretKey` (secretKeyRef); the broker renders only when enabled AND existingSecret is set.
+- **`USER_ENTITLEMENT_CLAIM`** is rendered in the shared `-config` ConfigMap from
+  `keycloak.authzClaim` (base default `email`; the base render differs from 0.4.35 by this one
+  line). `keycloak.localHumanUsers` lists the local humans that get the claim as a user attribute.
+
+### Changed
+
+- The sandbox sets `authzClaim: authz_id`. Local humans carry the attribute (realm import and
+  reconcile); the `cortex-ui` client gets an attribute mapper; the reconcile job sets the realm
+  user-profile `unmanagedAttributePolicy` to ADMIN_EDIT. A service client created before the flip
+  keeps its old `authz-id-svc` claim name: the reconcile readback FAILS it (exit 4); the repair is
+  to delete the stale mapper and re-run.
+- `operator.atlantia`, `operator.borduria` and `liaison` leave the sandbox `nonInteractiveUsers`;
+  `iagent-openddil` acts on behalf of the brokered principals. The onBehalfOf check accepts a
+  principal of an enabled broker, and `DELEGATE_ON_BEHALF_OF` carries the principal's `sub`.
+
 ## 0.4.30 — 2026-10-04
 
 engine-o is restarted by the re-register hook like every other engine that registers on boot.
