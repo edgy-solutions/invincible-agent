@@ -44,6 +44,9 @@
 #                  that CAN offer verbs is drawn as one and scores `slot_required` instead.
 #   refused        the VERB returned a NAMED refusal: `refused: true` plus an `outcome` word (for
 #                  example `hazard_closed`, `not_assessed`). Added 2026-10-09 (architect ruling).
+#                  READ FROM THE CARD'S `refusal` FIELD (presentation's REFUSAL_FIELD), on every
+#                  card, not from anywhere in the answer. A row may name the word with
+#                  `expect_refusal_outcome`.
 #                  Not `abstained` (no page explains the subject) and not `slot_required` (a
 #                  mandatory input was missing).
 #   fallback       the GENERALIST answered, because nothing in the registry matched. Correct
@@ -318,6 +321,7 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [refused]
+    expect_refusal_outcome: hazard_closed
 
   # Q10: the only fixture hazard in a High cell. NOT YET WALKED LIVE.
   - id: safety-haz-1007-risk-assessment
@@ -349,6 +353,7 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [refused]
+    expect_refusal_outcome: not_assessed
 
   # Q12: the only OPEN fixture hazard in a Low cell. NOT YET WALKED LIVE.
   - id: safety-haz-1008-risk-assessment

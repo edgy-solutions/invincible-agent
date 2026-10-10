@@ -103,6 +103,13 @@ PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
 #: to need it were safety Q9 and Q11, which had been filed under `abstained` as the nearest word.
 REFUSED = "refused"
 
+#: The key a refused card carries its envelope under. THE NAME IS PRESENTATION'S
+#: (`agent_fleet.presentation_agent.main.REFUSAL_FIELD`); this package may not import agent_fleet,
+#: so the two are tied by `tests/test_the_refused_disposition_is_read_not_assumed.py`, which reads
+#: the producer's source as text. The client never sees an engine's verb body, only the card, so
+#: this is the one place a refusal can be read from.
+REFUSAL_FIELD = "refusal"
+
 DISPOSITIONS = ("drawn", "slot_required", "task_requested", ABSTAINED, FALLBACK, REFUSED)
 
 #: Where a card's rows live, per archetype. `DELTA_SET` calls them `effects` — its contract's
@@ -189,6 +196,8 @@ class CensusRow:
     #: refusal the walker cannot answer, which is a worse outcome than a wrong card.
     expect_options: int = 0
     blocked: str = ""
+    #: The `outcome` word a `refused` row expects (`hazard_closed`, `not_assessed`). None = any.
+    expect_refusal_outcome: str | None = None
 
     @property
     def runnable(self) -> bool:
@@ -236,6 +245,7 @@ def _row(raw: dict, frontend_id: str) -> CensusRow:
         expect_task=raw.get("expect_task"),
         expect_options=int(raw.get("expect_options") or 0),
         blocked=(raw.get("blocked") or "").strip(),
+        expect_refusal_outcome=raw.get("expect_refusal_outcome"),
     )
 
 
@@ -432,27 +442,18 @@ def _review_request(result: dict) -> dict:
     return walk(result.get("final") or {}) or walk(result.get("events") or [])
 
 
-def _named_refusal(result: dict) -> dict:
-    """The verb's NAMED refusal, wherever it rides: `refused: true` plus a string `outcome`.
+def _card_refusals(comps: list[dict]) -> list[dict]:
+    """The refusal envelopes the cards carry under REFUSAL_FIELD, by NAME and nowhere else.
 
-    `slot_required` is excluded because it is the ELICITATION case and is classified before this
-    is asked. An absent block returns {} -- a claim about the refusal only, like `_review_request`.
+    `refused: true` plus a string `outcome`. A refusal planted in `events` or beside the cards
+    is not read: the client never sees an engine's verb body.
     """
-    def walk(o):
-        if isinstance(o, dict):
-            if o.get("refused") is True and isinstance(o.get("outcome"), str)                     and o["outcome"] != "slot_required":
-                return o
-            for v in o.values():
-                found = walk(v)
-                if found:
-                    return found
-        elif isinstance(o, list):
-            for v in o:
-                found = walk(v)
-                if found:
-                    return found
-        return {}
-    return walk(result.get("final") or {}) or walk(result.get("events") or [])
+    out = []
+    for c in comps:
+        env = c.get(REFUSAL_FIELD)
+        if isinstance(env, dict) and env.get("refused") is True and isinstance(env.get("outcome"), str):
+            out.append(env)
+    return out
 
 
 def components_of(result: dict) -> list[dict]:
@@ -498,6 +499,7 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
 
     # A REVIEW REQUEST IN THE PAYLOAD, which is the engine asking for a task — see DISPOSITIONS.
     requested = _review_request(result)
+    refusals = _card_refusals(comps)
 
     if asked:
         actual = "slot_required"
@@ -534,10 +536,11 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         # more specific fact about the same answer, and a fallback that also asked for a slot is
         # better reported as the ask. Putting this arm higher would silently reclassify them.
         actual = FALLBACK
-    elif _named_refusal(result):
+    elif refusals and len(refusals) == len(comps):
         # THE VERB REFUSED BY NAME. Below every more specific arm on purpose: it only takes over
         # answers that used to score `drawn` or `none`, so no existing row's verdict moves. Not
         # measured on the live wire yet (safety Q9/Q11 wait on a Lane 1 roll).
+        # EVERY card must carry the refusal: a mixed board drew something, and is `drawn`.
         actual = REFUSED
     elif comps:
         actual = "drawn"
@@ -563,7 +566,13 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         if actual == FALLBACK:
             detail = (f" — the generalist answered because nothing matched "
                       f"({routing.get(REASON_FIELD) or 'reason unstated'})")
+        if row.expect_refusal_outcome:
+            detail += f" (expected refusal outcome {row.expect_refusal_outcome!r})"
         why.append(f"disposition {actual!r}, row accepts {list(row.dispositions)}{detail}")
+    elif actual == REFUSED and row.expect_refusal_outcome:
+        got = refusals[0].get("outcome")
+        if got != row.expect_refusal_outcome:
+            why.append(f"refusal outcome {got!r} != expected {row.expect_refusal_outcome!r}")
 
     if asked and row.expect_options:
         opts = elicit.get("options") or []
