@@ -1857,6 +1857,109 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     return resolved
 
 
+def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Split a board's resolved answers by the engine that exports them.
+
+    "fin" claims an answer iff its verb is one engine-fin SERVES (`VERB_TO_FN`, derived, not
+    typed; imported lazily like `_fin_export_recipients_for`'s `export`). "cost" takes EVERY
+    OTHER answer, including verb None and unknown verbs. WHY: the ad-hoc path is engine-cost's
+    today, and engine-cost's `canvas.resolve` already refuses an unknown verb BY NAME; a third
+    exporting engine adds its own claim here.
+
+    Order: engines by first appearance on the board; answers within an engine in board order.
+    """
+    from agent_fleet.cost_agent.canvas import _verb_local
+    from agent_fleet.finance_agent.main import VERB_TO_FN
+    fin_verbs = {_verb_local(v) for v in VERB_TO_FN} - {None}
+    parts: dict[str, list[dict]] = {}
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        engine = "fin" if local in fin_verbs else "cost"
+        parts.setdefault(engine, []).append(ans)
+    return list(parts.items())
+
+
+def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> dict:
+    """The fin section of a mixed board: always a refusal, made HERE without calling engine-fin.
+
+    WHY: RULED 2026-10-10 (Q1): engine-fin exports ratified templates only -- that is the
+    finance control, not a gap -- so an ad-hoc finance card is refused, locally, without
+    calling engine-fin. (Q2): the section goes to the board's recipient and states "not a
+    ratified template", nothing else (no ids, no template name, no hint). (Q3): it lives in the
+    API response / exporter's view, never in the customer page. Sealed by
+    `tests/test_a_mixed_board_exports_per_engine.py::test_engine_fin_takes_ratified_templates_only`
+    and `::test_the_fin_section_states_not_a_ratified_template_and_nothing_else`.
+    """
+    return {
+        "engine": "fin",
+        "answers": answer_ids,
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "outcome": "not_in_model",
+        "reason": "not a ratified template",
+    }
+
+
+async def _call_engine_cost_package(
+    params: dict, bearer: str, *, recipient_scope: str, template_id: Optional[str],
+) -> dict:
+    """POST engine-cost's `package_export` and shape the answer. Raises HTTPException on an
+    unreachable engine, an HTTP refusal, or an in-band `unavailable` -- the single-engine path
+    lets that propagate; the per-engine split catches it into a section."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/measure/package_export",
+                json={"params": params},
+                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
+                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # applied here — a service calling on the caller's behalf must carry THAT
+                # caller's identity or refuse).
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=template_id,
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
+    )
+
+
+def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
+    """An engine-cost HTTPException as a refusal section, in `_shape_export_package_response`'s
+    in-band refusal shape. Not raised: on a mixed board the other engines still export."""
+    detail = exc.detail
+    outcome = "unavailable" if exc.status_code in (502, 503) else (
+        detail.get("outcome") if isinstance(detail, dict) else None
+    )
+    if isinstance(detail, dict) and detail.get("outcome") == "unavailable" and "reason" in detail:
+        reason = detail["reason"]
+    elif isinstance(detail, str):
+        reason = detail
+    else:
+        reason = json.dumps(detail, default=str)
+    return {
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        "outcome": outcome,
+    }
+
+
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
@@ -2011,6 +2114,14 @@ async def export_package(
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
       4. the engine unreachable, or the engine's own refusal, forwarded verbatim
+
+    A board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are
+    partitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is
+    engine-cost's), each engine is given only its own, and when any engine-fin answer is
+    present the response is a 200 carrying `documents`, one section per engine: a refused engine
+    (engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates
+    only -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then
+    applies to a section, not the response. A cost-only board answers exactly as before.
     """
     if body.template_id and body.answers:
         raise HTTPException(
@@ -2047,49 +2158,53 @@ async def export_package(
             },
         )
 
-    canvas = None
+    parts: list[tuple[str, list[dict]]] = []
     if body.answers:
+        # ALL ids resolve (404/503) BEFORE any engine is called or the board is split.
         resolved = _resolve_export_answers(
             [a.artifact_id for a in body.answers], current_user.id
         )
-        canvas = {"answers": resolved}
+        parts = _partition_export_answers(resolved)
     # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
     # program, same as it did before canvases existed.
 
-    params: dict = {"recipient_scope": recipient_scope}
-    if canvas is not None:
-        params["canvas"] = canvas
-
     bearer = _user_bearer(request)
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
-            rr = await client.post(
-                f"{_ENGINE_COST_URL}/measure/package_export",
-                json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
-                # applied here — a service calling on the caller's behalf must carry THAT
-                # caller's identity or refuse).
-                headers={"Authorization": f"Bearer {bearer}"},
-            )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail={
-            "error": "cost_engine_unreachable", "message": str(exc),
-        })
 
-    if rr.status_code >= 400:
+    if not any(engine == "fin" for engine, _ in parts):
+        # ONLY engine-cost's answers (or none): today's path and today's response, unchanged.
+        params: dict = {"recipient_scope": recipient_scope}
+        if parts:
+            params["canvas"] = {"answers": parts[0][1]}
+        return await _call_engine_cost_package(
+            params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
+        )
+
+    documents: list[dict] = []
+    for engine, answers in parts:
+        ids = [a["id"] for a in answers]
+        if engine == "fin":
+            documents.append(_fin_ad_hoc_refusal_section(ids, recipient_scope))
+            continue
         try:
-            body_json = rr.json()
-            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
-        except Exception:
-            detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+            section = await _call_engine_cost_package(
+                {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
+                bearer, recipient_scope=recipient_scope, template_id=None,
+            )
+        except HTTPException as exc:
+            section = _cost_refusal_section(exc, recipient_scope)
+        documents.append({"engine": engine, "answers": ids, **section})
 
-    out = rr.json()
-    return _shape_export_package_response(
-        out, recipient_scope=recipient_scope, template_id=body.template_id,
-        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
-    )
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = len(ok) - sum(ok)
+    return {
+        "export_id": None,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(ok)} engines refused",
+        "template_id": None,
+        "documents": documents,
+    }
 
 
 @app.get("/export/package/artifact/{filename}")

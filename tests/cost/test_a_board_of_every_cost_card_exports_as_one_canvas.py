@@ -24,10 +24,10 @@ THE FORM, DERIVED (not typed):
 So a lot card carries `mesh:costX` + a digit string, which is exactly what `canvas._verb_local`
 and `canvas._lot_number` accept. A card with no subject (trend, assumptions) carries "".
 
-MIXED BOARD (observed TODAY, an open architect question, not a decision made here): a board
-holding the 8 cost cards plus one finance answer is forwarded WHOLE by the gateway, and
-`canvas.resolve` REFUSES THE WHOLE EXPORT with NotInModel naming the finance answer. The cost
-cards are not exported without it.
+MIXED BOARD (RULED 2026-10-09, architect Q1): a board holding the 8 cost cards plus one
+finance answer is SPLIT per engine. engine-cost receives only the cost partition and exports
+it; the finance answer is a "not a ratified template" refusal section (2026-10-10 Q2). The response is a 200 with `documents`
+and status "partial" (see `tests/test_a_mixed_board_exports_per_engine.py`).
 """
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ def export(monkeypatch):
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
 
-    def run(cards):
+    def run_full(cards):
         store = {c["id"]: {"id": c["id"], "is_owner": True,
                            "resolved_intent": _resolved_intent_as_written(c)} for c in cards}
         monkeypatch.setattr(gateway, "neo4j_driver", _Driver(store))
@@ -142,8 +142,13 @@ def export(monkeypatch):
                 "recipient_scope": ALPHA,
                 "answers": [{"artifact_id": c["id"]} for c in cards]})
         assert r.status_code == 200, r.text
-        return sent["json"]["params"]["canvas"]
+        canvas = sent["json"]["params"]["canvas"] if "json" in sent else None
+        return canvas, r.json()
 
+    def run(cards):
+        return run_full(cards)[0]
+
+    run.full = run_full
     yield run
     gateway.app.dependency_overrides.clear()
 
@@ -178,18 +183,24 @@ def test_CONTROL_a_board_of_one_card_carries_only_that_cards_sections(export):
     assert composed["lots"] != tuple(lots_for_recipient(ALPHA))
 
 
-def test_MIXED_a_finance_card_on_the_board_refuses_the_whole_export_by_name(export):
-    """TODAY: the gateway forwards all nine, and engine-cost's `canvas.resolve` refuses the
-    WHOLE export (NotInModel) naming the finance answer; the eight cost cards are not
-    exported without it. Open architect question; this pins what is observed."""
+def test_MIXED_a_finance_card_is_split_off_and_the_eight_cost_cards_still_export(export):
+    """RULED 2026-10-09: engine-cost receives exactly the eight cost cards (no finance id), they
+    resolve to the alpha document, and the finance card is a "not a ratified template" refusal section."""
     fin = {"id": "ans-fin-funding", "verb_iri": "mesh:finFundingStatus",
            "subject_instance_id": None}
-    canvas = export(list(ALPHA_CANVAS["answers"]) + [fin])
-    assert [a["id"] for a in canvas["answers"]] == ALL_IDS + ["ans-fin-funding"]
-    with pytest.raises(NotInModel) as exc:
-        _resolve(canvas)
-    assert "ans-fin-funding" in str(exc.value)
-    assert "not cost answers this engine can export" in str(exc.value)
+    canvas, body = export.full(list(ALPHA_CANVAS["answers"]) + [fin])
+    assert [a["id"] for a in canvas["answers"]] == ALL_IDS
+    composed = _resolve(canvas)
+    assert composed["sections"] == tuple(FIXTURE["sections"])
+    assert composed["lots"] == tuple(lots_for_recipient(ALPHA))
+    assert body["status"] == "partial"
+    cost_doc, fin_doc = body["documents"]
+    assert (cost_doc["engine"], cost_doc["status"]) == ("cost", "exists")
+    assert cost_doc["answers"] == ALL_IDS
+    assert (fin_doc["engine"], fin_doc["status"]) == ("fin", "failed")
+    assert fin_doc["answers"] == ["ans-fin-funding"]
+    assert fin_doc["reason"] == "not a ratified template"
+    assert fin_doc["recipient_scope"] == ALPHA
 
 
 def test_CONTROL_a_board_of_only_the_trend_card_discloses_every_entitled_lot(export):
