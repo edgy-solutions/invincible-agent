@@ -51,7 +51,7 @@ def _measure(client, verb: str, params: dict):
     return r.json()
 
 
-def test_the_parser_finds_the_sheets_eleven_prompts(sheet):
+def test_the_parser_finds_the_sheets_twelve_prompts(sheet):
     """THE POSITIVE CONTROL THE RUNBOOK DEMANDS. If the heading style changes the regex matches
     nothing, every assertion below quantifies over an empty list, and the file goes green while
     checking a sheet it can no longer read."""
@@ -68,6 +68,7 @@ def test_the_parser_finds_the_sheets_eleven_prompts(sheet):
         "draft a risk assessment for HAZ-1005",
         "draft a risk assessment for HAZ-1007",
         "draft a risk assessment for HAZ-1006",
+        "draft a risk assessment for HAZ-1008",
     ], f"the sheet's prompts have changed or the parser cannot read them: {prompts}"
 
 
@@ -282,8 +283,9 @@ def test_Q6_and_Q7_captures_are_what_bob_gets(sheet, monkeypatch):
 @pytest.mark.parametrize("hazard,sev,prob,level,slug", [
     ("HAZ-1001", "I", "D", "Serious", "serious"),
     ("HAZ-1007", "I", "B", "High", "high"),
+    ("HAZ-1008", "IV", "E", "Low", "low"),
 ])
-def test_Q8_and_Q10_captured_level_and_audience_are_what_the_engine_returns(
+def test_Q8_Q10_and_Q12_captured_level_and_audience_are_what_the_engine_returns(
         client, sheet, hazard, sev, prob, level, slug):
     """The sheet's claim per hazard: the cell, the level the matrix yields for it, and the audience.
     The level is read from the engine (which reads the ratified matrix), not restated here."""
@@ -299,38 +301,73 @@ def test_Q8_and_Q10_captured_level_and_audience_are_what_the_engine_returns(
 
 
 @requires_rdflib
-def test_Q1_Q8_Q10_reach_three_DIFFERENT_audiences_and_cells(client):
+def test_Q1_Q8_Q10_Q12_reach_four_DIFFERENT_audiences_and_cells(client):
     """The reason these were picked: each differs from the others in cell AND audience. Without
     this a later fixture edit could collapse two rows onto one audience and the sheet would still
-    read as covering three."""
+    read as covering four."""
     got = {}
-    for h in ("HAZ-1003", "HAZ-1001", "HAZ-1007"):
+    for h in ("HAZ-1003", "HAZ-1001", "HAZ-1007", "HAZ-1008"):
         b = _measure(client, "draft_risk_assessment", {"hazard_id": h})
         got[h] = ((b["severity"], b["probability"]), b["acceptance_audience"])
-    assert len({v[0] for v in got.values()}) == 3, got
-    assert len({v[1] for v in got.values()}) == 3, got
-    assert {v[1] for v in got.values()} >= {"risk_acceptance_high:SUSTAINMENT"}, got
+    assert len({v[0] for v in got.values()}) == 4, got
+    assert len({v[1] for v in got.values()}) == 4, got
+    assert {v[1] for v in got.values()} >= {"risk_acceptance_high:SUSTAINMENT",
+                                            "risk_acceptance_low:SUSTAINMENT"}, got
 
 
 @requires_rdflib
-def test_Q10_the_fixture_cell_is_a_High_cell_of_the_ratified_matrix_and_not_typed_here():
-    """The cell is DERIVED: every High cell is read from the ttl, and the fixture's pair must be
-    one of them. A fixture edit that leaves the High cell reds here, not in a walk."""
+def _matrix():
+    """The ratified matrix, parsed: ({level: {(severity, probability)}}, {all RiskLevel names})."""
     from rdflib import Graph, Namespace
-    from agent_fleet.safety_agent import entities
     ttl = Path(__file__).resolve().parents[2] / "setup" / "ontologies" / "safety_risk_matrix.ttl"
     g = Graph().parse(ttl)
     S = Namespace("http://internal/sustainment/safety#")
-    high_cells = set()
+    cells: dict = {}
     for cell in g.subjects(None, S.MatrixCell):
         lvl = g.value(cell, S.yieldsRiskLevel)
-        if lvl is not None and str(lvl).endswith("High"):
-            high_cells.add((str(g.value(cell, S.whenSeverity)), str(g.value(cell, S.whenProbability))))
-    assert high_cells, "no High cell parsed: the namespace or predicate names moved; this is a blind test"
-    h = entities.BY_HAZARD_ID["HAZ-1007"]
-    assert (h.severity, h.probability) in high_cells, (h.severity, h.probability, high_cells)
+        if lvl is not None:
+            cells.setdefault(str(lvl).rsplit("#", 1)[-1], set()).add(
+                (str(g.value(cell, S.whenSeverity)), str(g.value(cell, S.whenProbability))))
+    levels = {str(x).rsplit("#", 1)[-1] for x in g.subjects(None, S.RiskLevel)}
+    return cells, levels
+
+
+@requires_rdflib
+@pytest.mark.parametrize("hazard,level,status", [
+    ("HAZ-1007", "High", "mitigated"),
+    ("HAZ-1008", "Low", "open"),
+])
+def test_Q10_and_Q12_the_fixture_cell_is_a_cell_of_the_ratified_matrix_and_not_typed_here(
+        hazard, level, status):
+    """The cell is DERIVED: every cell of the level is read from the ttl, and the fixture's pair
+    must be one of them. A fixture edit that leaves the cell reds here, not in a walk."""
+    from agent_fleet.safety_agent import entities
+    cells, _ = _matrix()
+    assert cells.get(level), f"no {level} cell parsed: the namespace or predicate names moved; this is a blind test"
+    h = entities.BY_HAZARD_ID[hazard]
+    assert (h.severity, h.probability) in cells[level], (h.severity, h.probability, cells[level])
     # and it is not an orphan, so Q2's count of three is undisturbed
-    assert h.status == "mitigated" and all(m.owner and m.verified_in_field == "true" for m in h.mitigations)
+    assert h.status == status and h.mitigations
+    assert all(m.owner and m.verified_in_field == "true" for m in h.mitigations)
+
+
+@requires_rdflib
+def test_every_risk_level_the_matrix_defines_has_a_walk_row(client, sheet):
+    """NEVER LEAVE AN AUDIENCE UNWALKED. The level set is read from the matrix; the hazards are
+    read from the sheet's own prompts; each is drafted through the engine. A level reached by no
+    prompt is NAMED in the failure."""
+    cells, levels = _matrix()
+    assert levels >= {"High", "Serious", "Medium", "Low"}, f"the matrix defines {levels}; the parse is blind"
+    assert levels == set(cells), (levels, set(cells))
+    hazards = re.findall(r'^> \*\*"draft a risk assessment for (HAZ-\d+)"\*\*', sheet, re.MULTILINE)
+    assert hazards, "the sheet names no hazard; the parser is blind"
+    reached = {}
+    for h in hazards:
+        b = _measure(client, "draft_risk_assessment", {"hazard_id": h})
+        if not b.get("refused"):
+            reached.setdefault(b["risk_level"], []).append(h)
+    missing = sorted(levels - set(reached))
+    assert not missing, f"risk level(s) {missing} have NO walk row; rows reach {reached}"
 
 
 @requires_rdflib
@@ -357,10 +394,36 @@ def test_Q9_CONTROL_the_same_hazard_reopened_drafts_its_task(client, monkeypatch
 
 
 @requires_rdflib
-def test_Q11_a_not_assessed_hazard_makes_no_task_and_invents_no_level(client):
+def test_Q11_a_not_assessed_hazard_is_refused_not_assessed_and_creates_no_task(client):
     body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1006"})
-    assert body["assessment"] == "not_assessed" and body["severity"] is None and body["probability"] is None
-    assert "severity" in body["gap"]
-    for absent in ("review_request", "risk_level", "acceptance_audience"):
+    assert body["refused"] is True and body["outcome"] == "not_assessed", body
+    assert body["hazard_id"] == "HAZ-1006" and "severity" in body["gap"]
+    for absent in ("review_request", "risk_level", "acceptance_audience", "assessment"):
         assert absent not in body, absent
-    assert '"assessment": "not_assessed"' in _SHEET.read_text(encoding="utf-8")
+    for claim in ('"outcome": "not_assessed"', '"hazard_id": "HAZ-1006"'):
+        assert claim in _SHEET.read_text(encoding="utf-8"), claim
+
+
+@requires_rdflib
+def test_Q11_CONTROL_the_same_hazard_assessed_drafts_its_task(client, monkeypatch):
+    """Differs from the subject in ONE thing: assessment state (severity, probability and the
+    status that goes with them). Same hazard id, tail, platform, caller and route."""
+    import dataclasses
+    from agent_fleet.safety_agent import entities, measures
+    assessed = dataclasses.replace(entities.BY_HAZARD_ID["HAZ-1006"], status="open",
+                                   severity="IV", probability="E")
+    monkeypatch.setitem(measures.BY_HAZARD_ID, "HAZ-1006", assessed)
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1006"})
+    assert body["refused"] is False and body["risk_level"] == "Low", body
+    assert body["review_request"]["kind"] == "risk_acceptance_low"
+
+
+def test_Q11_a_half_assessed_hazard_is_refused_and_names_the_missing_half(client, monkeypatch):
+    """Severity set, probability not: still unassessed, and the gap names the half that is missing."""
+    import dataclasses
+    from agent_fleet.safety_agent import entities, measures
+    half = dataclasses.replace(entities.BY_HAZARD_ID["HAZ-1006"], severity="IV")
+    monkeypatch.setitem(measures.BY_HAZARD_ID, "HAZ-1006", half)
+    body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1006"})
+    assert body["refused"] is True and body["outcome"] == "not_assessed", body
+    assert "probability" in body["gap"] and "review_request" not in body

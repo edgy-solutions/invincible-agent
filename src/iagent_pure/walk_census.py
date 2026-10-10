@@ -95,7 +95,15 @@ PROMPT_RE = re.compile(r'^> \*\*"(?P<q>[^"]+)"\*\*', re.MULTILINE)
 #: `abstained` in every respect: a fact the wire already carried (`fallback: true`, a structured
 #: `fallback_reason`, `provider: engine_a_fallback`) that no consumer read. See
 #: `iagent_pure.generalist_fallback`.
-DISPOSITIONS = ("drawn", "slot_required", "task_requested", ABSTAINED, FALLBACK)
+#:
+#: `refused` -- ADDED 2026-10-09, ruled. The VERB returned a NAMED refusal: a payload carrying
+#: `refused: true` and an `outcome` word (`hazard_closed`, `not_assessed`, `source_unavailable`).
+#: It is not `abstained` (the engine declined to answer a question no page explains) and not
+#: `slot_required` (a mandatory input was missing, which is an ELICITATION). The first two rows
+#: to need it were safety Q9 and Q11, which had been filed under `abstained` as the nearest word.
+REFUSED = "refused"
+
+DISPOSITIONS = ("drawn", "slot_required", "task_requested", ABSTAINED, FALLBACK, REFUSED)
 
 #: Where a card's rows live, per archetype. `DELTA_SET` calls them `effects` — its contract's
 #: word, not a synonym chosen here. Sealed against engine-cost's own table so the two cannot
@@ -424,6 +432,29 @@ def _review_request(result: dict) -> dict:
     return walk(result.get("final") or {}) or walk(result.get("events") or [])
 
 
+def _named_refusal(result: dict) -> dict:
+    """The verb's NAMED refusal, wherever it rides: `refused: true` plus a string `outcome`.
+
+    `slot_required` is excluded because it is the ELICITATION case and is classified before this
+    is asked. An absent block returns {} -- a claim about the refusal only, like `_review_request`.
+    """
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("refused") is True and isinstance(o.get("outcome"), str)                     and o["outcome"] != "slot_required":
+                return o
+            for v in o.values():
+                found = walk(v)
+                if found:
+                    return found
+        elif isinstance(o, list):
+            for v in o:
+                found = walk(v)
+                if found:
+                    return found
+        return {}
+    return walk(result.get("final") or {}) or walk(result.get("events") or [])
+
+
 def components_of(result: dict) -> list[dict]:
     final = result.get("final") or {}
     return [c for c in (final.get("components") or []) if isinstance(c, dict)]
@@ -503,6 +534,11 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         # more specific fact about the same answer, and a fallback that also asked for a slot is
         # better reported as the ask. Putting this arm higher would silently reclassify them.
         actual = FALLBACK
+    elif _named_refusal(result):
+        # THE VERB REFUSED BY NAME. Below every more specific arm on purpose: it only takes over
+        # answers that used to score `drawn` or `none`, so no existing row's verdict moves. Not
+        # measured on the live wire yet (safety Q9/Q11 wait on a Lane 1 roll).
+        actual = REFUSED
     elif comps:
         actual = "drawn"
     else:

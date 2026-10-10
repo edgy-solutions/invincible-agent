@@ -340,17 +340,22 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     }
 
     if h.severity is None or h.probability is None:
-        # NOT ASSESSED, AND SAID SO. The matrix is not consulted, no level is invented, and the
-        # gap names which half is missing so the reader knows what to go and get.
-        out["assessment"] = "not_assessed"
-        out["severity"] = h.severity
-        out["probability"] = h.probability
-        out["gap"] = (
+        # NOT ASSESSED IS REFUSED, NOT DRAFTED (ruled 2026-10-09). Nobody can draft an acceptance
+        # for a hazard nobody has assessed. The matrix is not consulted, no level is invented,
+        # and the gap names which half is missing so the reader knows what to go and get. This
+        # used to return a draft carrying `assessment: not_assessed`; it carries no
+        # review_request either way, so no task is created. Named, so a caller can tell this
+        # decided refusal from an unknown id (which has no `outcome`).
+        gap = (
             "severity" if h.severity is None else "probability"
         ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
-        out["derived_from"] = derived_from
-        out["citations"] = citations
-        return out
+        return {
+            "refused": True,
+            "outcome": "not_assessed",
+            "hazard_id": h.hazard_id,
+            "gap": gap,
+            "reason": f"hazard '{h.hazard_id}' has not been assessed: {gap}",
+        }
 
     out["severity"] = h.severity
     out["probability"] = h.probability
