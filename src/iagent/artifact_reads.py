@@ -38,7 +38,8 @@ RETURN a.id                    AS id,
        owner IS NOT NULL       AS is_owner,
        a.origin_owner_domain   AS origin_owner_domain,
        a.origin_program        AS origin_program,
-       a.seeded_by             AS seeded_by
+       a.seeded_by             AS seeded_by,
+       a.case_id               AS case_id
 """
 
 ARTIFACT_BY_ID_CYPHER = """
