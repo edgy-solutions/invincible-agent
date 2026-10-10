@@ -70,6 +70,12 @@ _NOT_IN_SCOPE = {
         "in the arithmetic sense — a count of orphans is not a computed contribution — so its "
         "method block is a design question rather than a transcription"
     ),
+    "safety:FailureRecordSet": (
+        "engine-safety's FRACAS producer (what_failed_on_this_part), bound to CONTRIBUTION_RANKING "
+        "by lane/saf on 2026-10-08. Same scope reason as the orphan set, and the same shape: its "
+        "rows are failure RECORDS for one part, not contributions computed from an input -- the "
+        "payload carries no method block and has no formula to state"
+    ),
 }
 
 #: One representative call per verb in the basis. Arguments only; the payload is the engine's.
