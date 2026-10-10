@@ -127,6 +127,11 @@ async def lifespan(fastapi_app: FastAPI):
                 object_uri=cap["object_uri"],
                 archetype=cap["archetype"],
                 expected_fields=cap["expected_fields"],
+                # UNVERSIONED. A presentation's manifest version keys its menu row by frontend
+                # bundle version; the system defaults are not a bundle, and the helper's "0.1.0"
+                # default would re-key every one of them to a version nobody ships. Empty keeps
+                # their uuids byte-identical and outside eviction.
+                version="",
             )
         except Exception as e:  # noqa: BLE001  -- ADR-0006: never crash on registration
             logger.warning(
@@ -213,6 +218,9 @@ class RenderRequest(BaseModel):
     # client's registered menu. Absent -> the global capability table, i.e. today's
     # behaviour, so unidentified callers do not regress while the callers migrate.
     frontend_id: Optional[str] = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's bundle names its own version.
+    # Absent -> the newest registered version, i.e. today's behaviour.
+    frontend_version: Optional[str] = None
 
 
 # Canonicalizer + lookup live in capabilities.py — see the import at
@@ -1659,6 +1667,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             cap, _sel_prov = _select_presentation(
                 request.frontend_id, request.output_uri, _sel_payload,
                 persona=effective_persona, domain=request.domain,
+                frontend_version=request.frontend_version,
             )
             logger.info(
                 "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",

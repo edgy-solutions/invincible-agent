@@ -202,8 +202,17 @@ def _live_view_is_registered_for(output_uri: str) -> bool:
     return False
 
 
-def menu_for(frontend_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    """The caller's registered menu, or None when the caller never registered."""
+def menu_for(
+    frontend_id: Optional[str], frontend_version: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """The caller's registered menu, or None when the caller never registered.
+
+    Menus are per (frontend_id, frontend_version). A caller that names a version
+    which is registered gets THAT version's menu (``version_basis`` "asked"); one
+    that names none gets the newest ("newest"); one that names a version nobody
+    registered -- a tab whose bundle was evicted -- gets the newest too, but the
+    basis says so ("newest-fallback") rather than passing it off as a match.
+    """
     if not frontend_id:
         return None
     fid = frontend_id.strip()
@@ -216,7 +225,18 @@ def menu_for(frontend_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
     for e in _entries():
         if str(e.get("frontend_id") or "").strip() == fid:
-            return dict(e)
+            out = dict(e)
+            asked = (frontend_version or "").strip()
+            versions = e.get("versions") or {}
+            if not asked:
+                out["version_basis"] = "newest"
+            elif asked in versions:
+                out["frontend_version"] = asked
+                out["capabilities"] = versions[asked].get("capabilities") or []
+                out["version_basis"] = "asked"
+            else:
+                out["version_basis"] = "newest-fallback"
+            return out
     return None
 
 
@@ -245,6 +265,8 @@ def _canonical(iri: str) -> str:
 def select_archetype(
     frontend_id: Optional[str],
     output_uri: str,
+    *,
+    frontend_version: Optional[str] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """Resolve (capability, provenance) for this caller and output type.
 
@@ -252,7 +274,7 @@ def select_archetype(
     `presentation_source`. Never returns a capability without saying which menu it came
     from -- that labelling is the whole point of the middle state.
     """
-    menu = menu_for(frontend_id)
+    menu = menu_for(frontend_id, frontend_version)
     target = _canonical(output_uri)
 
     if menu is None:
@@ -272,6 +294,7 @@ def select_archetype(
                 "presentation_source": "registered",
                 "frontend_id": menu["frontend_id"],
                 "registration_version": menu["frontend_version"],
+                "version_basis": menu.get("version_basis", "newest"),
                 "archetype": cap.get("archetype"),
             }
 
@@ -282,6 +305,7 @@ def select_archetype(
         "presentation_source": "unrenderable",
         "frontend_id": menu["frontend_id"],
         "registration_version": menu["frontend_version"],
+        "version_basis": menu.get("version_basis", "newest"),
         "reason": "output_uri " + repr(output_uri) + " is not in this frontend's registered menu",
     }
 
@@ -393,6 +417,7 @@ def select_presentation(
     *,
     persona: Optional[str] = None,
     domain: Optional[str] = None,
+    frontend_version: Optional[str] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """Choose an archetype the caller can render AND this payload can fill.
 
@@ -400,7 +425,7 @@ def select_presentation(
     now also `selection_basis` so a reader can tell WHY this archetype won -- the
     discriminant that was missing when the choice was made from a type annotation alone.
     """
-    menu = menu_for(frontend_id)
+    menu = menu_for(frontend_id, frontend_version)
     anonymous = menu is None
     if anonymous and _live_view_is_registered_for(output_uri):
         # ADR-0042 RULING 9. Checked BEFORE the union is built, so the answer is the specific
@@ -491,6 +516,7 @@ def select_presentation(
             "presentation_source": "default-menu" if anonymous else "unrenderable",
             "frontend_id": menu["frontend_id"],
             "registration_version": menu["frontend_version"],
+            "version_basis": menu.get("version_basis", "newest"),
             "selection_basis": basis,
             "refusals": refusals,
             "reason": "no registered capability's contract is satisfied by this payload",
@@ -511,6 +537,7 @@ def select_presentation(
         "presentation_source": "default-menu" if anonymous else "registered",
         "frontend_id": menu["frontend_id"],
         "registration_version": menu["frontend_version"],
+        "version_basis": menu.get("version_basis", "newest"),
         "archetype": winner.get("archetype"),
         "selection_basis": basis,
         "candidates_considered": len(candidates),
