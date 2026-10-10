@@ -100,9 +100,29 @@ The per-piece files do notice J1–J3, but J3's per-piece catch is a check on th
 text, not on its behaviour. The e2e file is the only one that catches a read-side rename by
 what the reader then returns.
 
+## Answers received 2026-10-10, and what was done
+
+- **Q1 answered, built: `38cebe0f`.**
+  - The ruling: the gateway was wrong. `visible_by_origin` in `agent_fleet/utils/origin_entitlement.py` is now the one rule, and both engine-o's `read_notice_parts` and the gateway's `_origin_visible_to_caller` call it.
+  - A program-less origin is decided by `can_consume` alone.
+  - `tests/security/test_one_origin_rule_both_callers.py` (30 passed) runs one truth table through the helper, the real gateway function and engine-o's real reader.
+  - Mutants:
+    - D1 (the gateway's old guard re-added): reds the gateway column only.
+    - D2 (membership asked before consumption): reds all three columns.
+    - D3 (member always True): reds all three columns.
+    - D4 (engine-o skips the helper): reds the engine-o column only.
+    - D5 (an explicit blank-owner guard): quiet, because `can_consume` already refuses a blank owner. The line was deleted, and the measurement is recorded in the docstring.
+  - **Reversed deliberately:** PR #7 sealed a "no-program" record as "half an origin is no origin" in `test_origin_across_the_kind_tree.py`. It is now its own arm (visible to a consumer, Topaz not asked), with a control that differs only in the viewer's domains (51 passed).
+  - Not covered by the Q1 change: the AnswerArtifact read carries no rung, and no writer in this repo sets an origin on an AnswerArtifact today. Engine-o's "unresolved → withheld" precondition has no gateway twin because there is nothing to read it from.
+- **Release:**
+  - PR #32 goes in **rev 187, not 186**, with its own PCN re-walk.
+  - The backfill runs live as part of the 187 roll, by Lane 1 (authorized).
+  - Lane 1: run it straight after the roll and before the re-walk. Until it runs, promoted drops with no origin are withheld from everyone but the dropper.
+- **Q2–Q8 and Q10** are open. They were re-sent in chat on 2026-10-10.
+
 ## Questions for a ruling
 
-1. **A program-less steward origin skips the program conjunct.**
+1. **ANSWERED (above).** A program-less steward origin skips the program conjunct.
    - The ruling's "can_consume AND program_member" cannot hold literally for a steward origin, because the steward attests a domain, not a program.
    - Engine-o applies the program conjunct only when the origin names a program. That is what makes Friday's walk work: dave or alice, in SUSTAINMENT with no program, reads it.
    - But `gateway._origin_visible_to_caller` (`gateway.py:5240`) still returns False for any origin with no program, so the BFF's AnswerArtifact path and engine-o now disagree on the same origin.
@@ -120,5 +140,5 @@ what the reader then returns.
 6. **A promotion's audience must now be `document_promotion:<D>`.** Older test audiences (`aud:sustainment-approvers`) now 422 `promotion_audience_has_no_domain`. Does any live task carry an old-shape audience? If so, it cannot be promoted until it is refiled.
 7. **The Jena verbs are untraced** (`resolve_instance`, `instances_by_property`, `declared_query`): I have not shown whether they can return drop-derived content. Only `/notice_parts` is gated by this PR.
 8. **The doc-tools `provenance_*` writer's caller is untraced.** The read check trusts the `provenance_ingest_id` on a notice. If any other writer sets it, or a seeded notice lacks it, the content is treated as seeded and is visible.
-9. **The backfill has had no live run** (no rolls). It needs `BACKFILL_ACTOR` plus the ledger DSN and Neo4j env. Who runs it, and when: before or after this PR's roll? Until it runs, promoted rows with no origin are withheld from everyone but the dropper.
+9. **ANSWERED (above): Lane 1, in the 187 roll.** The backfill has had no live run (no rolls). It needs `BACKFILL_ACTOR` plus the ledger DSN and Neo4j env. Who runs it, and when: before or after this PR's roll? Until it runs, promoted rows with no origin are withheld from everyone but the dropper.
 10. **Carried over:** cortex-ui's lane address, and the `for:` line parsing.
