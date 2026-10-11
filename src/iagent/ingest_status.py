@@ -67,7 +67,7 @@ STAGES = (RECEIVED, EXTRACTING, REVIEW, PROMOTED, REJECTED, FAILED)
 
 # Stages whose `detail` is REQUIRED — the two that end an ingest without landing it, so a
 # consumer reading the status is told WHY rather than only THAT (ca's IngestStatus rule).
-_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED)
+_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED, "review_rejected")
 
 # Out-of-band terminal: a repeat arrival never enters the ladder above (it never extracts,
 # never awaits disposition) — it is a DIFFERENT fact, recorded once and done. Kept separate from
@@ -90,7 +90,11 @@ CASE_OPENED = "case_opened"
 # arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
 # 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
 AWAITING_ORIGIN = "awaiting_origin"
-ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
+# Out-of-band terminal (steward-correction ruling 2026-10-10): a steward's NARROW REJECT of a grouped
+# review (wrong document / not a notice / duplicate) closes the task, writes nothing, and leaves the
+# row here. `detail` (the reason_code) is required -- a consumer is told WHY.
+REVIEW_REJECTED = "review_rejected"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
@@ -434,6 +438,33 @@ def record_origin_suggestion(ingest_id: str, suggestion: dict[str, Any]) -> None
                 (json.dumps(suggestion), ingest_id),
             )
         conn.commit()
+
+
+def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
+    """The status row for `ingest_id` with NO caller scoping. ONLY for a route that has already
+    proved the caller is a SERVICE (the pin-driven retry): a person must never reach this, because
+    the scoped lookup above is what keeps another user's queue invisible. `pin_digest` is the row's
+    recorded extractor pin when the projection carries one (the column is a follow-up; absent -> the
+    key is simply missing and the retry refuses `no_recorded_pin`)."""
+    if not ingest_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
+                          status, extracted_count, extracted_total, duplicate_of, detail,
+                          created_at, updated_at, origin_suggestion, content_kind, case_id,
+                          extraction_ref
+                     FROM ingest_status_projection
+                    WHERE id = %s""",
+                (ingest_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    return out
 
 
 def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:

@@ -38,7 +38,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Any, Optional
+from typing import AsyncGenerator, Any, Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -48,7 +48,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -643,9 +643,83 @@ class HumanTaskRegisterRequest(_BaseModel):
     excludes: list[str] = []
 
 
+_GROUPED_REJECT_CODES = ("not_a_notice", "parts_list_unusable", "superseded_or_duplicate")
+
+
+def _nonblank(v: str) -> str:
+    if not isinstance(v, str) or not v.strip():
+        raise ValueError("must be a non-empty string")
+    return v
+
+
+class _RowEditsModel(_BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class DeletedRow(_RowEditsModel):
+    mpn: str
+    reason: str   # a delete needs a reason
+
+
+class AddedRow(_RowEditsModel):
+    mpn: str
+    disposition: str
+    reason: str
+    evidence: str
+
+
+class CorrectedRow(_RowEditsModel):
+    mpn: str            # the EXTRACTED mpn -- identity never moves
+    corrected_mpn: str
+    evidence: str
+
+
+class RowEdits(_RowEditsModel):
+    """Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's
+    `steward_correction.validate_row_edits` restates every rule against the server-authored batch;
+    this is the wire half, so a bad payload is a 422 before it reaches Restate."""
+    deleted: list[DeletedRow] = []
+    added: list[AddedRow] = []
+    corrected: list[CorrectedRow] = []
+
+    @model_validator(mode="after")
+    def _rules(self):
+        for r in self.deleted:
+            _nonblank(r.mpn); _nonblank(r.reason)
+        for r in self.added:
+            for v in (r.mpn, r.disposition, r.reason, r.evidence):
+                _nonblank(v)
+        for r in self.corrected:
+            for v in (r.mpn, r.corrected_mpn, r.evidence):
+                _nonblank(v)
+            if r.corrected_mpn.strip().lower() == r.mpn.strip().lower():
+                raise ValueError(f"corrected_mpn must differ from mpn for {r.mpn!r} (ignoring case)")
+        seen: set = set()
+        for r in list(self.deleted) + list(self.corrected):
+            k = r.mpn.strip().lower()
+            if k in seen:
+                raise ValueError(f"mpn {r.mpn!r} appears more than once across deleted/corrected")
+            seen.add(k)
+        return self
+
+
 class HumanTaskActRequest(_BaseModel):
     decision: str  # "approved" | "rejected"
     comment: str = ""
+    # Grouped review only. A narrow REJECT (wrong document / not a notice / duplicate) names why;
+    # REQUIRED for a grouped_review reject (checked at the route, where the kind is known).
+    reason_code: Optional[Literal["not_a_notice", "parts_list_unusable", "superseded_or_duplicate"]] = None
+    # Grouped review approval only: steward deletes / additions / corrections, each with evidence.
+    row_edits: Optional[RowEdits] = None
+
+    @model_validator(mode="after")
+    def _verb_fields(self):
+        if self.reason_code is not None and self.decision != "rejected":
+            raise ValueError("reason_code is only valid with decision='rejected'")
+        if self.row_edits is not None and self.decision != "approved":
+            raise ValueError("row_edits is only valid with decision='approved'")
+        return self
+
     # PCN grouped review only: optional per-part disposition overrides the reviewer
     # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
     # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
@@ -3590,14 +3664,36 @@ async def act_on_human_task(
             # on the grouped-task register). Fail loudly rather than mark-resolved-and-dangle.
             raise HTTPException(status_code=409, detail={"error": "grouped_review_unresumable",
                 "message": "grouped-review task has no workflow_id; cannot resume the review"})
-        if req.decision == "rejected":
-            # A grouped-review rejection must CANCEL the durable workflow, else it dangles
-            # suspended (the suspend-vs-fail DoS). Cancellation-on-reject is a filed follow-up;
-            # refuse loudly here rather than mark-resolved-and-dangle. To change dispositions,
-            # the reviewer sends per-part `overrides` and approves.
-            raise HTTPException(status_code=501, detail={"error": "grouped_reject_not_wired",
-                "message": "grouped-review rejection needs workflow cancellation (follow-up); "
-                           "use per-part overrides to change dispositions, then approve"})
+        if req.decision == "rejected" and req.reason_code is None:
+            raise HTTPException(status_code=422, detail={"error": "reason_code_required",
+                "message": "a grouped-review reject needs a reason_code",
+                "codes": list(_GROUPED_REJECT_CODES)})
+        if req.decision == "approved" and req.row_edits is not None:
+            # The batch rules (an added mpn must not collide with an extracted one, ...) need the
+            # SERVER-AUTHORED batch. Read it back (best effort) and refuse with 422 here; Restate's
+            # evaluate_submission re-validates regardless, so this is an early, clearer refusal.
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as _c:
+                    _gb = await _c.post(
+                        f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(wf)}/get_batch")
+                _mpns = ([i.get("mpn") for i in (_gb.json().get("items") or [])]
+                         if _gb.status_code == 200 else None)
+            except Exception:  # noqa: BLE001 -- the workflow validates again
+                _mpns = None
+            if _mpns is not None:
+                _have = {str(m).strip().lower() for m in _mpns}
+                _e = req.row_edits
+                _bad = (
+                    [f"added mpn {r.mpn!r} collides with an extracted row"
+                     for r in _e.added if r.mpn.strip().lower() in _have]
+                    + [f"corrected_mpn {r.corrected_mpn!r} collides with an extracted row"
+                       for r in _e.corrected if r.corrected_mpn.strip().lower() in _have]
+                    + [f"mpn {r.mpn!r} is not a row of this review"
+                       for r in list(_e.deleted) + list(_e.corrected)
+                       if r.mpn.strip().lower() not in _have])
+                if _bad:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "row_edits_invalid", "message": _bad[0], "problems": _bad})
         # approved -> submit the (accept-all + optional per-part overrides) decision.
         #
         # `acted_by` RIDES THE DECISION AS DATA (2026-08-05). Until now nothing carried the
@@ -3625,7 +3721,13 @@ async def act_on_human_task(
         # ATTRIBUTED silently re-aims the GATE — the two would move together with nothing to say
         # they should not. Same-value-different-question is the reason for the duplication, not an
         # oversight. See docs/plans/approval-bypass-bpmn-runner.md.
-        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id}
+        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id,
+                    "verdict": req.decision}
+        if req.decision == "rejected":
+            decision["reason_code"] = req.reason_code
+            decision["comment"] = req.comment
+        elif req.row_edits is not None:
+            decision["row_edits"] = req.row_edits.model_dump()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
@@ -3690,6 +3792,22 @@ async def act_on_human_task(
                 comment=req.comment, workflow_id=wf,
             )
         )
+        if sub.get("rejected"):
+            # NARROW REJECT: the workflow wrote nothing. The task is closed (above); the ingest row,
+            # when this notice is one, ends `review_rejected` (best effort -- never fail the act).
+            _nf = sub.get("notice_fingerprint") or ""
+            try:
+                from . import ingest_status as _ist
+                await run_in_threadpool(
+                    lambda: _ist.update_status(_nf, _ist.REVIEW_REJECTED,
+                                               detail=req.reason_code or "rejected"))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("review_rejected status not written for %s: %s", _nf, exc)
+            logger.info("pcn grouped review rejected: task_id=%s wf=%s by=%s code=%s",
+                        task_id, wf, actor, req.reason_code)
+            return {"task_id": task_id, "decision": req.decision, "accepted": True,
+                    "rows_resolved": n, "review_dispatched": False,
+                    "reason_code": req.reason_code, "status": "review_rejected"}
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
                     task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,
@@ -9992,16 +10110,31 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     }
 
 
-@app.post("/ingest/{ingest_id}/retry")
-async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_current_user)):
-    """POST /ingest/<id>/retry -- let the dropper un-strand their own row without a hand write
-    (roll #20 item 3).
+class IngestRetryRequest(_BaseModel):
+    """POST /ingest/{id}/retry's body: the extractor pin the caller observed NOW."""
+    pin_digest: str = Field(..., min_length=1)
 
-    SAME caller scoping as GET /ingest/{ingest_id}/status just above (visible iff
-    submitted_by == caller OR on_behalf_of == caller): reuses that route's own
-    `ingest_status.get_status_for` lookup/predicate rather than writing a second, divergent
-    one, and refuses with the SAME plain 404 body a stranger or a missing row gets from
-    status -- existence-oracle-safe for the same reason.
+
+def _is_service_caller(authz_id: Optional[str]) -> bool:
+    """A non-human authz id: the `svc:` namespace (policy/users.yaml) or an asserted delegate
+    (`_delegate_principals`, R-089: a delegate is a service, never a person). Same predicate
+    family as safety_agent/measures.py."""
+    a = (authz_id or "").strip()
+    return bool(a) and (a.startswith("svc:") or a in _delegate_principals())
+
+
+@app.post("/ingest/{ingest_id}/retry")
+async def ingest_retry_route(ingest_id: str, body: IngestRetryRequest,
+                             current_user: User = Depends(get_current_user)):
+    """POST /ingest/<id>/retry -- PIN-DRIVEN ONLY (architect ruling 2026-10-10: the retry is driven
+    only by a pin change, never by the UI). Supersedes the dropper's own retry of roll #20 item 3.
+
+    Gate, in order: a HUMAN caller gets 403 `retry_is_pin_driven` before any lookup; a service caller
+    must send `{pin_digest}`; a row with no recorded pin is 409 `no_recorded_pin`; an equal pin is
+    409 `pin_unchanged`; only a DIFFERENT pin proceeds to the dispatch below.
+
+    The caller is a service (not the row's submitter), so the lookup is the unscoped one -- reached
+    only AFTER the service check, so a person never gets an existence oracle from it.
 
     Dispatch on the row:
       * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
@@ -10022,16 +10155,27 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
 
     from . import ingest_status
 
-    row = await run_in_threadpool(
-        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
-    )
+    if not _is_service_caller(current_user.authz_id):
+        raise HTTPException(status_code=403, detail={
+            "error": "retry_is_pin_driven",
+            "message": "a retry is driven only by an extractor pin change, never by a person"})
+    row = await run_in_threadpool(lambda: ingest_status.get_status_unscoped(ingest_id))
     if row is None:
         raise HTTPException(status_code=404, detail="ingest not found")
+    recorded_pin = row.get("pin_digest")
+    if not recorded_pin:
+        raise HTTPException(status_code=409, detail={
+            "error": "no_recorded_pin",
+            "message": "this row records no extractor pin (pin_fields_missing); a pin-driven "
+                       "retry needs the pin follow-up"})
+    if body.pin_digest == recorded_pin:
+        raise HTTPException(status_code=409, detail={"error": "pin_unchanged"})
 
     stage = row["status"]
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
         ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
+        ingest_status.REVIEW_REJECTED,
     )
     if stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
@@ -10259,7 +10403,7 @@ async def update_ingest_stage(
     # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
     # so a later move (including `failed`) off it is refused 409, same as the other three.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-                        ingest_status.AWAITING_ORIGIN)
+                        ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:

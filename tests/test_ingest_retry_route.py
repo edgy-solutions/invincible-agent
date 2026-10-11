@@ -1,5 +1,6 @@
-"""POST /ingest/{ingest_id}/retry (roll #20 item 3) -- let the dropper un-strand their own row
-without a hand write.
+"""POST /ingest/{ingest_id}/retry -- PIN-DRIVEN ONLY (architect ruling 2026-10-10; supersedes the
+dropper's own retry of roll #20 item 3). The caller is a SERVICE sending {pin_digest}; the pin-gate
+arms live in tests/test_steward_correction.py, these defend the dispatch BEHIND the gate.
 
 Harness/idiom mirrors tests/test_gateway_ingest_routes.py: TestClient(gateway.app) +
 dependency_overrides[get_current_user], ingest_status.get_status_for stubbed directly (its own
@@ -35,6 +36,9 @@ from src.iagent import promotion  # noqa: E402
 
 
 _RID = "sha256:" + "d" * 64
+_OLD = "sha256:" + "1" * 64
+_NEW = {"pin_digest": "sha256:" + "2" * 64}
+_SVC = "svc:pin-driver"
 
 
 def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
@@ -52,8 +56,8 @@ def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
 
 @pytest.fixture
 def client():
-    user = type("U", (), {"authz_id": "alice@example.com", "id": "alice@example.com",
-                          "sub": "alice@example.com", "email": "alice@example.com",
+    user = type("U", (), {"authz_id": _SVC, "id": _SVC,
+                          "sub": _SVC, "email": _SVC,
                           "persona": None, "entitled_domains": [],
                           "is_authenticated": True})()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
@@ -84,38 +88,29 @@ def _stub_domain(monkeypatch, domain="sustainment", expected="pcn"):
     monkeypatch.setattr(ck, "by_kind", lambda kind: reg if kind == expected else None)
 
 
-def test_retry_stranger_gets_404(client, monkeypatch):
-    captured = {}
-    def _fake(ingest_id, *, caller_id):
-        captured["caller_id"] = caller_id
-        return None
-    monkeypatch.setattr(ist, "get_status_for", _fake)
-    r = client.post("/ingest/someone-elses-ingest/retry")
+def test_retry_missing_row_gets_404(client, monkeypatch):
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: None)
+    r = client.post("/ingest/no-such-row/retry", json=_NEW)
     assert r.status_code == 404
-    assert captured["caller_id"] == "alice@example.com"
-    stranger_body = r.json()
-
-    r2 = client.post("/ingest/no-such-row/retry")
-    assert r2.status_code == 404
-    assert r2.json() == stranger_body, "a stranger and a missing row get the IDENTICAL 404 body"
 
 
 @pytest.mark.parametrize("stage", [ist.PROMOTED, ist.REJECTED, ist.FAILED, ist.DUPLICATE,
-                                   ist.CASE_OPENED, ist.AWAITING_ORIGIN])
+                                   ist.CASE_OPENED, ist.AWAITING_ORIGIN,
+                                   ist.REVIEW_REJECTED])
 def test_retry_terminal_stage_returns_409(client, monkeypatch, stage):
     row = {"id": "deadbeef", "status": stage, "kind": "pdf",
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
-    r = client.post("/ingest/deadbeef/retry")
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
+    r = client.post("/ingest/deadbeef/retry", json=_NEW)
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == {"error": "terminal", "stage": stage}
 
 
 def test_retry_event_row_at_received_returns_409_resend_the_event(client, monkeypatch):
     row = {"id": "evt-deadbeef", "status": ist.RECEIVED, "kind": ist.EVENT,
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
-    r = client.post("/ingest/evt-deadbeef/retry")
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
+    r = client.post("/ingest/evt-deadbeef/retry", json=_NEW)
     assert r.status_code == 409, r.text
     assert r.json()["detail"]["error"] == "resend_the_event"
 
@@ -123,9 +118,9 @@ def test_retry_event_row_at_received_returns_409_resend_the_event(client, monkey
 @pytest.mark.parametrize("stage", [ist.RECEIVED, ist.EXTRACTING])
 def test_retry_document_row_in_pipeline_returns_409(client, monkeypatch, stage):
     row = {"id": "deadbeef", "status": stage, "kind": "pdf",
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
-    r = client.post("/ingest/deadbeef/retry")
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
+    r = client.post("/ingest/deadbeef/retry", json=_NEW)
     assert r.status_code == 409, r.text
     body = r.json()["detail"]
     assert body["error"] == "in_pipeline"
@@ -135,15 +130,15 @@ def test_retry_document_row_in_pipeline_returns_409(client, monkeypatch, stage):
 
 def test_retry_review_row_with_no_task_files_it(client, monkeypatch):
     row = {"id": _RID, "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     _stub_domain(monkeypatch)
     row["extraction_ref"] = _extraction_for(row, monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     registered = []
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = client.post(f"/ingest/{_RID}/retry")
+    r = client.post(f"/ingest/{_RID}/retry", json=_NEW)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body == {"ingest_id": _RID, "stage": "review",
@@ -151,19 +146,19 @@ def test_retry_review_row_with_no_task_files_it(client, monkeypatch):
     assert len(registered) == 1, registered
     reg = registered[0]
     assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
-    assert reg["requested_by"] == "alice@example.com", \
-        "requested_by for a retry is the RETRYING caller's own authz_id"
+    assert reg["requested_by"] == _SVC, \
+        "requested_by for a retry is the RETRYING (service) caller's own authz_id"
 
 
 def test_retry_review_row_whose_task_exists_returns_already_filed(client, monkeypatch):
     row = {"id": "deadbeef", "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     _stub_domain(monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: True)
     registered = []
     monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
-    r = client.post("/ingest/deadbeef/retry")
+    r = client.post("/ingest/deadbeef/retry", json=_NEW)
     assert r.status_code == 200, r.text
     assert r.json()["task_status"] == "ALREADY_FILED"
     assert registered == [], "register_task must NOT be called when the task already exists"
@@ -171,37 +166,25 @@ def test_retry_review_row_whose_task_exists_returns_already_filed(client, monkey
 
 def test_retry_review_row_domainless_content_kind_returns_422(client, monkeypatch):
     row = {"id": "deadbeef", "status": ist.REVIEW, "kind": "pdf", "content_kind": None,
-          "submitted_by": "alice@example.com"}
-    monkeypatch.setattr(ist, "get_status_for", lambda ingest_id, *, caller_id: row)
+          "submitted_by": "alice@example.com", "pin_digest": _OLD}
+    monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     monkeypatch.setattr(ck, "by_kind", lambda kind: None)
     task_calls = []
     monkeypatch.setattr(ht, "task_exists", lambda task_id: task_calls.append(task_id) or False)
     registered = []
     monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
-    r = client.post("/ingest/deadbeef/retry")
+    r = client.post("/ingest/deadbeef/retry", json=_NEW)
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_declared_domain"
     assert task_calls == []
     assert registered == []
 
 
-def test_retry_on_behalf_of_caller_is_allowed(obo_client, monkeypatch):
-    """The on_behalf_of PRINCIPAL (not the submitter) can retry their own row -- same caller
-    scoping GET /ingest/{id}/status relies on."""
-    row = {"id": _RID, "status": ist.REVIEW, "kind": "pdf", "content_kind": "pcn",
-          "submitted_by": "alice@example.com", "on_behalf_of": "bob@example.com"}
-    captured = {}
-    def _fake(ingest_id, *, caller_id):
-        captured["caller_id"] = caller_id
-        return row
-    monkeypatch.setattr(ist, "get_status_for", _fake)
-    _stub_domain(monkeypatch)
-    row["extraction_ref"] = _extraction_for(row, monkeypatch)
-    monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
-    registered = []
-    monkeypatch.setattr(ht, "register_task",
-                        lambda **kw: registered.append(kw) or {"task_id": kw["task_id"], "recipients": ["x"]})
-    r = obo_client.post(f"/ingest/{_RID}/retry")
-    assert r.status_code == 200, r.text
-    assert captured["caller_id"] == "bob@example.com"
-    assert registered[0]["requested_by"] == "bob@example.com"
+def test_retry_on_behalf_of_human_is_refused_403(obo_client, monkeypatch):
+    """The old dropper path is closed: even the row's own principal is a person, and a person never
+    drives a retry. Nothing is read."""
+    monkeypatch.setattr(ist, "get_status_unscoped",
+                        lambda ingest_id: pytest.fail("a human must be refused BEFORE any lookup"))
+    r = obo_client.post(f"/ingest/{_RID}/retry", json=_NEW)
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["error"] == "retry_is_pin_driven"

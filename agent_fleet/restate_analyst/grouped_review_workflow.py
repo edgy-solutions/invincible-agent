@@ -64,6 +64,10 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_bulk_resolve import (
         BulkDecision, Override, PartItem, ReviewBatch, resolve_batch,
     )
+try:
+    import steward_correction as _sc  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.restate_analyst import steward_correction as _sc
 # NB: the dispatch imports (_mint_dispatch_task, fan_out_dispatch) retired with
 # _run_inline_LEGACY — the executor owns the register + fan-out now and imports them
 # itself. Left behind they would be dead imports pointing at the path this module no
@@ -118,6 +122,10 @@ class Submission:
     accepted: bool
     resolutions: list = field(default_factory=list)
     reason: str = ""
+    # steward correction (2026-10-10): a narrow REJECT is an accepted submission with no resolutions.
+    rejected: bool = False
+    reason_code: str = ""
+    edits: object = None          # the validated steward_correction.RowEdits of an approval, or None
 
 
 def evaluate_submission(batch: ReviewBatch, raw_decision: dict, *, notice_fingerprint: str) -> Submission:
@@ -126,12 +134,38 @@ def evaluate_submission(batch: ReviewBatch, raw_decision: dict, *, notice_finger
     explicit override, a row with no disposition, a blank override reason) becomes a REFUSED
     submission carrying the reason; a clean pass becomes ACCEPTED with the N per-item resolutions.
     Pure — no Restate — so the joint seals as a unit test."""
+    raw_decision = raw_decision or {}
     try:
+        verdict = raw_decision.get("verdict") or "approved"
+        if verdict == "rejected":
+            # NARROW REJECT: wrong document / not a notice / duplicate. Closes the review and WRITES
+            # NOTHING -- no resolutions, so the fan-out has nothing to dispatch.
+            code = raw_decision.get("reason_code")
+            if code not in _sc.REASON_CODES:
+                raise ValueError(f"a reject needs a reason_code in {list(_sc.REASON_CODES)}")
+            if raw_decision.get("row_edits"):
+                raise ValueError("row_edits are only valid with an approval")
+            return Submission(accepted=True, rejected=True, reason_code=code)
+        if verdict != "approved":
+            raise ValueError(f"unknown verdict {verdict!r}")
+        if raw_decision.get("reason_code"):
+            raise ValueError("reason_code is only valid with a reject")
+        edits = _sc.validate_row_edits(raw_decision.get("row_edits"),
+                                       extracted_mpns=[it.mpn for it in batch.items])
         decision = _build_bulk_decision(raw_decision)
-        resolutions = resolve_batch(batch, decision, notice_fingerprint=notice_fingerprint)
+        if edits.is_empty():
+            resolutions = resolve_batch(batch, decision, notice_fingerprint=notice_fingerprint)
+            return Submission(accepted=True, resolutions=resolutions)
+        _sc.check_overrides(decision.overrides, edits)
+        kept, prov = _sc.apply_edits(batch, edits, acted_by=raw_decision.get("acted_by") or "")
+        resolutions = _sc.attach_provenance(
+            resolve_batch(kept, decision, notice_fingerprint=notice_fingerprint), prov)
+        resolutions += _sc.added_resolutions(
+            edits, notice_fingerprint=notice_fingerprint,
+            acted_by=raw_decision.get("acted_by") or "")
     except ValueError as exc:
         return Submission(accepted=False, reason=str(exc))
-    return Submission(accepted=True, resolutions=resolutions)
+    return Submission(accepted=True, resolutions=resolutions, edits=edits)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +251,8 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         # than the lie it replaced. `.get` with a fallback because a definition executed before this
         # field existed still reports `count`.
         "dispatch_enqueued": grouped.get("dispatch_enqueued", grouped["count"]),
+        # steward-correction: a REJECTED review's record (code, comment, actor); absent otherwise.
+        **({"decision_record": grouped["decision_record"]} if grouped.get("decision_record") else {}),
     }
 
 
@@ -284,7 +320,9 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
         return {"status": "still_pending", "accepted": False, "reason": submission.reason}
 
     await ctx.promise("decision", type_hint=dict).resolve(request.get("decision", {}))
-    return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions)}
+    return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions),
+            "rejected": submission.rejected, "reason_code": submission.reason_code,
+            "notice_fingerprint": notice_fingerprint}
 
 
 @grouped_review.handler()
