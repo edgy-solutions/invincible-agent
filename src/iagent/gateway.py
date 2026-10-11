@@ -5349,32 +5349,32 @@ def _load_domain_consumption_table() -> dict:
 
 async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
     """Non-owner read path (ruling: "ORIGIN, not audience"). False (never raises) when
-    the artifact carries no recorded origin — that artifact stays on the
-    dropper/owner-only path, unchanged. Raises HTTPException(503) when Topaz cannot
-    answer the program-membership question — "could not tell" must not collapse into
-    the same 404 a real deny produces, the same distinction `get_current_user` already
-    draws for the entitlement matrix itself.
+    the artifact carries no recorded origin -- that artifact stays on the dropper/owner-only
+    path, unchanged. The rule itself is `origin_entitlement.visible_by_origin`, the ONE function
+    engine-o's notice read calls too (architect Q1, 2026-10-10): an origin with a domain and NO
+    program is a steward attestation and is decided by `can_consume` alone; a program, when the
+    origin names one, is a second conjunct asked of Topaz only AFTER the pure check admits the
+    caller (a non-consumer gets False/404, never 503 -- no existence oracle). Raises
+    HTTPException(503) when Topaz cannot answer the program-membership question -- "could not
+    tell" must not collapse into the same 404 a real deny produces, the same distinction
+    `get_current_user` already draws for the entitlement matrix itself.
     """
-    owner_domain = (rec.get("origin_owner_domain") or "").strip() if rec.get("origin_owner_domain") else ""
-    program = (rec.get("origin_program") or "").strip() if rec.get("origin_program") else ""
-    if not owner_domain or not program:
-        return False
-
     from . import human_tasks, origin as origin_mod
     from starlette.concurrency import run_in_threadpool
 
-    # THE PURE CHECK RUNS FIRST. A caller whose domains cannot consume this origin is denied
-    # without asking Topaz -- otherwise a Topaz outage answers 503 for an artifact that EXISTS
-    # and 404 for one that does not, and the status code becomes the existence oracle the 404
-    # was chosen to close. Only a caller the table already admits can see a 503.
     viewer_domains = {c.domain for c in current_user.entitlements.cells}
     table = _load_domain_consumption_table()
-    if not origin_mod.can_consume(viewer_domains, owner_domain, table):
-        return False
-
+    program = rec.get("origin_program")
     try:
-        is_member = await run_in_threadpool(
-            lambda: human_tasks.check_can_view_program(program, current_user.authz_id)
+        return await run_in_threadpool(
+            lambda: origin_mod.visible_by_origin(
+                viewer_domains=viewer_domains,
+                owner_domain=rec.get("origin_owner_domain"),
+                program=program,
+                table=table,
+                is_program_member=lambda p: human_tasks.check_can_view_program(
+                    p, current_user.authz_id),
+            )
         )
     except Exception as exc:  # noqa: BLE001 — Topaz unreachable: fail closed, report loudly
         logger.warning("program membership check unavailable for %s: %s", program, exc)
@@ -5382,14 +5382,6 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
             status_code=503,
             detail={"error": "authorization_unavailable", "message": "could not verify program membership"},
         ) from exc
-
-    origin_obj = origin_mod.Origin(owner_domain=owner_domain, program=program, obtained_via="recorded")
-    return origin_mod.origin_visible(
-        viewer_domains=viewer_domains,
-        is_program_member=is_member,
-        origin=origin_obj,
-        table=table,
-    )
 
 
 class ArtifactResponse(_BaseModel):
@@ -10006,6 +9998,10 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
     Dispatch on the row:
       * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
         nothing to retry.
+      * a DOCUMENT row at `awaiting_origin` (Q2c, 2026-10-10) -- NOT terminal: runs the state
+        function `_file_promotion_if_ready` with THIS caller as `requested_by`. Filed -> 200
+        `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin
+        unreadable or filing refused -> 503 `promotion_not_filed` (row stays put).
       * an EVENT row, which by this point can only be sitting at `received` (its own only
         non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
         through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
@@ -10031,7 +10027,7 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
     stage = row["status"]
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED,
     )
     if stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
@@ -10042,6 +10038,19 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
             "message": "the row holds only the payload hash; resend the same event to "
                        "POST /ingest/events, which is idempotent on event_id",
         })
+
+    if stage == ingest_status.AWAITING_ORIGIN:
+        # Q2c (2026-10-10): the SAME state function the accept and stage routes call.
+        out = await _file_promotion_if_ready(ingest_id, requested_by=current_user.authz_id)
+        if out and out.get("filed"):
+            return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                    "task_id": out["task_id"], "task_status": out["task_status"]}
+        if out is None:
+            raise HTTPException(status_code=409, detail={
+                "error": "awaiting_origin", "stage": stage,
+                "message": "no accepted origin is recorded for this artifact yet; a steward's accept files it"})
+        raise HTTPException(status_code=503, detail={"error": "promotion_not_filed",
+                                                     "reason": out.get("error"), "stage": stage})
 
     if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
         raise HTTPException(status_code=409, detail={
@@ -10116,6 +10125,7 @@ def _read_extraction_manifest(key: str) -> dict:
 
 async def _file_or_find_document_promotion_task(
     ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
+    domain: Optional[str] = None,
 ) -> tuple[Optional[str], str]:
     """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
     refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
@@ -10128,6 +10138,10 @@ async def _file_or_find_document_promotion_task(
     `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad|xml) -- a lookup
     on the file format always misses the registry, resolves to a None domain, and files a task
     no one can be entitled to.
+
+    `domain`, when given (stripped non-empty), IS the audience domain and the kind registry is not
+    consulted: the origin-accept caller (`write_origin_route`) passes the accepted origin's
+    `owner_domain` (Q2 ruling 2026-10-10). Otherwise the audience comes from the kind registry.
 
     `requested_by` is the caller each route should be attributing the task to -- doc-tools'
     own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
@@ -10150,8 +10164,10 @@ async def _file_or_find_document_promotion_task(
 
     from . import content_kinds, human_tasks, promotion
 
-    kind_reg = content_kinds.by_kind(row.get("content_kind"))
-    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    domain = str(domain or "").strip() or None
+    if domain is None:
+        kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
     if domain is None:
         # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write.
         raise HTTPException(status_code=422, detail={
@@ -10193,7 +10209,8 @@ async def _file_or_find_document_promotion_task(
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    payload = {**derived, "review_pool": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
+    payload = {**derived, "review_pool": domain, "dropped_by": {
+        "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")}}
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
@@ -10243,7 +10260,11 @@ async def update_ingest_stage(
     EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
     2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
     filed at all (there is no fixed audience to file one against) and the row moves straight
-    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
+    to the out-of-band stage `awaiting_origin` instead of `review`, persisting the body's
+    `extraction_ref` for the later filing. `awaiting_origin` is terminal for THIS route and for
+    the retry route; the ONE exit is a steward's accepted origin (`write_origin_route`), which
+    files `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10
+    Q2, superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10256,8 +10277,9 @@ async def update_ingest_stage(
     # STAGES' own order.
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
-    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal HERE too
+    # (its one exit is a steward's accepted origin, filed by `_file_promotion_if_ready`; Q2
+    # ruling 2026-10-10), so a later move (including `failed`) off it is refused 409.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
                         ingest_status.AWAITING_ORIGIN)
 
@@ -10315,9 +10337,9 @@ async def update_ingest_stage(
         # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
         # domained registration (the common case, and the only shape existing tests' plain stub
         # objects carry) never has to support `model_fields_set` at all.
-        # Decided HERE, in the stage route, before the shared find-or-file helper: a retry never
-        # meets this case, because `awaiting_origin` is terminal and a row only reaches it
-        # through this branch.
+        # Decided HERE, in the stage route, before the shared find-or-file helper: a row only
+        # reaches `awaiting_origin` through this branch; the retry route calls the same state
+        # function (`_file_promotion_if_ready`) for a row sitting there.
         deliberately_domainless = (
             kind_reg is not None and not kind_reg.domain
             and "domain" in getattr(kind_reg, "model_fields_set", frozenset())
@@ -10326,11 +10348,19 @@ async def update_ingest_stage(
         if deliberately_domainless:
             # NO TASK -- there is no fixed audience to file one against; the origin_record
             # case (section 6) resolves this artifact's audience per-artifact, from evidence,
-            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            # later. Out-of-band, same shape as `duplicate` (ingest_status.py); terminal for
+            # this route, exited only by a steward's accepted origin (Q2 ruling 2026-10-10).
             await run_in_threadpool(lambda: ingest_status.update_status(
                 ingest_id, ingest_status.AWAITING_ORIGIN,
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                extraction_ref=req.extraction_ref,
                 detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+            # Q2b: the steward's accept may have landed while the row was still extracting.
+            promotion_out = await _file_promotion_if_ready(ingest_id, requested_by=caller)
+            if promotion_out and promotion_out.get("filed"):
+                return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                        "task_id": promotion_out["task_id"],
+                        "task_status": promotion_out["task_status"]}
             return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
                     "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
 
@@ -10402,6 +10432,15 @@ async def write_origin_route(
     Never raises for a refused WRITE -- `write_refused` is a normal outcome of a resolution that
     fails `check_dropper_bound` or shape validation, reported 200 like `written` is. Only the
     caller gate (403) and the missing-steward bound check (422) are HTTP errors.
+
+    A steward's ACCEPT IS THE ATTESTATION (ruling 2026-10-10 Q2, superseding the 10-02 "terminal"
+    ruling for the accept branch only): when the origin is `written` and the ingest row is at
+    `awaiting_origin`, `_file_promotion_if_ready` files `document_promotion:<owner_domain>` (the
+    domain READ BACK FROM THE STORE, what was written) and moves the row to `review` -- TASK
+    FIRST, STATUS SECOND; the stage and retry routes call the same function. A filing refusal never
+    undoes the write and never strands the row: the response stays `written` with
+    `promotion: {"filed": False, "error": ...}`. Reject stays terminal and dropper-only. The
+    response gains `promotion` (None when nothing was attempted); `status` is unchanged.
     """
     from iagent_mesh.interfaces import Initiator
 
@@ -10454,7 +10493,80 @@ async def write_origin_route(
         initiator=initiator,
         dropper_is_program_member=dropper_is_program_member,
     )
-    return {"status": result["status"], "reason": result.get("reason")}
+    promotion_out = None
+    if result["status"] == "written":
+        promotion_out = await _file_promotion_if_ready(
+            req.artifact_id, requested_by=_CASE_RUNNER_SERVICE_AUTHZ_ID)
+    return {"status": result["status"], "reason": result.get("reason"),
+            "promotion": promotion_out}
+
+
+def _read_accepted_origin(ingest_id: str) -> Optional[dict]:
+    """SYNC. The artifact's ACCEPTED origin -- {"owner_domain", "program", "resolved_by"} -- or None
+    when there is no node, no owner domain, or the rung is unresolved. A read that raises PROPAGATES:
+    an unknown origin is not an absent one. Same accepted-origin predicate as
+    `notice_parts.source_visibility`."""
+    from .promotion_stores import INGEST_FACT_FAMILY
+
+    if neo4j_driver is None:
+        raise RuntimeError("graph store not connected")
+    # Built FROM the family, so it names the node `write_origin` writes.
+    cypher = (
+        f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+        f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+        "RETURN n.origin_owner_domain AS owner_domain, n.origin_program AS program, "
+        "n.origin_resolved_by AS resolved_by"
+    )
+    with neo4j_driver.session() as session:
+        row = session.run(cypher, ingest_id=ingest_id).single()
+    if row is None:
+        return None
+    owner_domain, program, resolved_by = row["owner_domain"], row["program"], row["resolved_by"]
+    if not isinstance(owner_domain, str) or not owner_domain.strip():
+        return None
+    if resolved_by in (None, "", "unresolved"):
+        return None
+    return {"owner_domain": owner_domain, "program": program or None, "resolved_by": resolved_by}
+
+
+async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Optional[dict]:
+    """FUNCTION OF STATE (Q2, 2026-10-10): files iff the row is at `awaiting_origin` AND an
+    accepted origin exists on the artifact; called from the accept route, the stage route and the
+    retry route, so the order the accept and the extraction land in cannot matter. TASK FIRST,
+    STATUS SECOND: a refusal leaves the row at `awaiting_origin`.
+
+    None when nothing was attempted (no row, row elsewhere, or no accepted origin yet);
+    {"filed": False, "error": ...} when attempted and refused or the origin was unreadable;
+    {"filed": True, "task_id", "task_status"} when filed and the row moved to `review`."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row["status"] != ingest_status.AWAITING_ORIGIN:
+        return None
+    try:
+        origin = await run_in_threadpool(lambda: _read_accepted_origin(ingest_id))
+    except Exception as exc:  # noqa: BLE001 -- an unknown origin is not an absent one
+        logger.warning("promotion not filed, origin unreadable: ingest_id=%s error=%s",
+                       ingest_id, exc)
+        return {"filed": False, "error": "origin_unreadable"}
+    if origin is None:
+        return None
+    try:
+        task_id, task_status = await _file_or_find_document_promotion_task(
+            ingest_id, row, requested_by=requested_by,
+            extraction_ref=row.get("extraction_ref"), domain=origin["owner_domain"])
+    except HTTPException as exc:
+        err = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
+        logger.warning("origin accepted but promotion not filed: ingest_id=%s error=%s",
+                       ingest_id, err)
+        return {"filed": False, "error": err}
+    domain_label = str(origin["owner_domain"]).strip().upper()
+    await run_in_threadpool(lambda: ingest_status.update_status(
+        ingest_id, ingest_status.REVIEW,
+        detail=f"accepted origin; promotion filed to document_promotion:{domain_label}"))
+    return {"filed": True, "task_id": task_id, "task_status": task_status}
 
 
 _SEEDED_BY_STAMP_CYPHER = (

@@ -345,17 +345,128 @@ def test_get_status_for_includes_case_id_when_present():
     assert "case_id" in sql, f"SQL was: {sql}"
 
 
-def test_get_status_for_non_owner_gets_none_not_another_users_row():
-    """SECURITY property: the query is scoped to submitted_by OR on_behalf_of = caller, so a
-    caller who is neither can only ever get None -- indistinguishable from 'no such ingest'.
-    A non-owner probing another user's ingest id must not be able to confirm it exists."""
+# ---------------------------------------------------------------------------
+# get_status_for against a REAL sqlite WHERE clause (not a string match on the SQL)
+# ---------------------------------------------------------------------------
+class _SqliteCursor:
+    def __init__(self, db):
+        self._cur = db.cursor()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=()):
+        self._cur.execute(sql.replace("%s", "?"), tuple(params))
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None:
+            return None
+        return {d[0]: v for d, v in zip(self._cur.description, row)}
+
+
+class _SqliteConn:
+    def __init__(self, db):
+        self._db = db
+
+    def cursor(self, cursor_factory=None):
+        return _SqliteCursor(self._db)
+
+
+class _SqliteConnCm:
+    def __init__(self, db):
+        self._conn = _SqliteConn(db)
+
+    def __enter__(self):
+        return self._conn
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _status_columns():
+    """The column list get_status_for SELECTs, parsed from the statement it executes."""
     cm, _, cur = _fake_conn(None)
     with mock.patch.object(ist, "_pg_connect", return_value=cm):
-        out = ist.get_status_for("SOMEONE-ELSES-INGEST", caller_id="mallory@example.com")
+        ist.get_status_for("x", caller_id="y")
+    sql = cur.execute.call_args[0][0]
+    head = sql.split("FROM", 1)[0].split("SELECT", 1)[1]
+    return [c.strip() for c in head.split(",") if c.strip()]
+
+
+_OTHER_STAGE = ist.RECEIVED
+_ROWS = [
+    # id, submitted_by, on_behalf_of, status, origin_suggestion
+    ("A", "alice", None, ist.AWAITING_ORIGIN, None),
+    ("B", "svc-dropper", "bob", ist.AWAITING_ORIGIN, '{"suggested": {"owner_domain": "X"}}'),
+    ("C", "carol", "mallory", _OTHER_STAGE, None),
+    ("D", "mallory", None, ist.AWAITING_ORIGIN, None),
+]
+
+
+@pytest.fixture
+def scoped_status():
+    """Call the REAL ist.get_status_for over an in-memory sqlite table of the fixture rows."""
+    import sqlite3
+
+    db = sqlite3.connect(":memory:")
+    cols = _status_columns()
+    db.execute("CREATE TABLE ingest_status_projection (%s)" % ", ".join(f"{c} TEXT" for c in cols))
+    for rid, sub, obo, status, sugg in _ROWS:
+        vals = {"id": rid, "submitted_by": sub, "on_behalf_of": obo, "status": status,
+                "origin_suggestion": sugg}
+        db.execute(
+            "INSERT INTO ingest_status_projection (%s) VALUES (%s)"
+            % (", ".join(vals), ", ".join("?" for _ in vals)),
+            tuple(vals.values()),
+        )
+
+    def call(ingest_id, caller):
+        with mock.patch.object(ist, "_pg_connect", return_value=_SqliteConnCm(db)):
+            return ist.get_status_for(ingest_id, caller_id=caller)
+
+    yield call
+    db.close()
+
+
+def test_get_status_for_submitter_gets_own_row(scoped_status):
+    out = scoped_status("A", "alice")
+    assert out is not None and out["id"] == "A"
+
+
+def test_get_status_for_on_behalf_of_principal_gets_the_row_with_parsed_suggestion(scoped_status):
+    out = scoped_status("B", "bob")
+    assert out is not None and out["id"] == "B"
+    assert out["origin_suggestion"] == {"suggested": {"owner_domain": "X"}}
+
+
+@pytest.mark.parametrize("ingest_id,caller", [
+    ("A", "mallory"), ("B", "mallory"),
+    ("B", "alice"), ("C", "alice"), ("D", "alice"),
+])
+def test_get_status_for_non_owner_gets_none_not_another_users_row(scoped_status, ingest_id, caller):
+    """SECURITY: a caller who is neither submitted_by nor on_behalf_of gets None --
+    indistinguishable from 'no such ingest' (existence-oracle safe). The WHERE clause decides."""
+    out = scoped_status(ingest_id, caller)
     assert out is None
-    sql, params = cur.execute.call_args[0][0], cur.execute.call_args[0][1]
-    assert "submitted_by = %s" in sql and "on_behalf_of = %s" in sql, f"SQL was: {sql}"
-    assert "mallory@example.com" in params
+    # a leaked row (right or wrong) must red, never pass
+    assert out is None or out["id"] == ingest_id
+
+
+@pytest.mark.parametrize("ingest_id,caller", [("C", "mallory"), ("D", "mallory")])
+def test_get_status_for_control_same_caller_is_admitted_where_scope_admits(scoped_status, ingest_id, caller):
+    """Control: mallory is on_behalf_of C and submitter of D, so she gets exactly that row --
+    the None above is the WHERE deciding, not an empty table."""
+    out = scoped_status(ingest_id, caller)
+    assert out is not None and out["id"] == ingest_id
+
+
+@pytest.mark.parametrize("caller", ["alice", "bob", "carol", "mallory", "svc-dropper"])
+def test_get_status_for_unknown_id_is_none_for_every_caller(scoped_status, caller):
+    assert scoped_status("NO-SUCH-ID", caller) is None
 
 
 def test_get_status_for_rejects_empty_inputs_without_touching_the_db():

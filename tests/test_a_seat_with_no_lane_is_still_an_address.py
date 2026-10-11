@@ -145,7 +145,7 @@ def test_a_qualified_address_may_carry_a_note_after_it(tmp_path, text, name):
 def test_repo_slash_branch_is_an_external_address(tmp_path, text):
     """Ruling Q10 (2026-10-10): `cortex-ui/master` is the ruling's own example."""
     got = parse_packet(_write(tmp_path, "r.md", f"# A packet\n\nto: {text}\n\nbody\n"))
-    assert (got.addressee, got.kind, got.form) == ("cortex-ui/master", "external", "repo")
+    assert (got.addressee, got.kind, got.form) == ("cortex-ui/master", "external", "branch")
 
 
 def test_repo_slash_branch_leaves_its_neighbours_alone(tmp_path):

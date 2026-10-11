@@ -128,21 +128,19 @@ _LANE = (
 #: — still fall through to UNADDRESSED, the control this module has carried since the
 #: bare-token rule.
 _PROSE_EXTERNAL = r"`?(?P<prose>[A-Za-z0-9][A-Za-z0-9-]*)`?'s[ 	]+agent"
-#: `to: cortex-ui/master` -- `<repo>/<branch>`, THE EXTERNAL FORM ruling Q10 (2026-10-10) gave as its
-#: own example and the grammar did not read: three packets already used it and all three printed
-#: UNADDRESSED. It is accepted ONLY for another repo. `invincible-agent/master` and `ia-<x>/master`
-#: stay refused (the negative lookahead is `_is_internal_repo`, spelled as a pattern): the shared
-#: master tree is not an address -- an unassigned session on it does no work until assigned by
-#: name -- and a worktree name is not an address either. The branch segment is one token with no
-#: `/`, and may not be `lane` or `seat`, so `doc-tools/lane` (a lane form with no lane) stays
-#: refused rather than reading as a branch called `lane`. It sits AFTER `_SEAT` and `_LANE` in the
-#: alternation, so `doc-tools/lane/7f` keeps its full suffix through `_LANE`. Like the lane form it
-#: is external: the repo is kept, because `master` here and `master` there are different branches.
-_BRANCH = (
-    r"`?(?!invincible-agent(?![A-Za-z0-9-])|ia-)(?P<brepo>[A-Za-z0-9][A-Za-z0-9-]*)`?[ 	]*/[ 	]*"
-    r"`?(?!(?:lane|seat)(?![A-Za-z0-9._-]))(?P<branch>[A-Za-z0-9][A-Za-z0-9._-]*)`?"
+#: `to: cortex-ui/master` -- RULED 2026-10-10 (architect Q10): cortex-ui's lane address IS
+#: `cortex-ui/master`; a packet addressed anywhere else is misaddressed and is reheaded by its
+#: author. Before this form the ruled address could not be SPELLED (`parse_packet` returned
+#: UNADDRESSED for it) -- the `cortex-60` defect again. EXTERNAL ONLY: for THIS repo
+#: (`invincible-agent/master`, `ia-74/master`) the form matches and `_addressed` refuses it, so
+#: the packet stays UNADDRESSED -- no lane's address is master here. ONLY `master`, DECIDED NOT
+#: MEASURED: the ruling names one repo's one branch, so `cortex-ui/main` stays unaddressed.
+#: `for:` IS NOT AN ADDRESSEE LINE (same ruling); only `to:` is. No pattern here reads `for:`, so
+#: a `for:`-only packet is UNADDRESSED and `unaddressed()` reports it; a seal pins that.
+_EXTERNAL_BRANCH = (
+    r"`?(?P<erepo>[A-Za-z0-9][A-Za-z0-9-]*)`?[ 	]*/[ 	]*`?master`?"
 )
-_QUALIFIED = rf"(?:{_SEAT})|(?:{_LANE})|(?:{_BRANCH})|(?:{_PROSE_EXTERNAL})"
+_QUALIFIED = rf"(?:{_SEAT})|(?:{_LANE})|(?:{_PROSE_EXTERNAL})|(?:{_EXTERNAL_BRANCH})"
 #: Only `— note`, `(note)`, `,` and `:` open a trailing clause. A bare space does not, so
 #: `to: ia-74/lane/74 from ia-32` is still refused — stated here because the accepted set is a
 #: claim, and the seal fires each of these rather than restating them.
@@ -184,7 +182,7 @@ _FROM = re.compile(
 )
 
 
-def _addressed(m) -> tuple[str, str]:
+def _addressed(m) -> tuple[str | None, str]:
     """The (name, kind) a matched address names. ONE reader for both patterns, so the address form
     and the stamp form cannot drift apart by being parsed in two places.
 
@@ -223,10 +221,11 @@ def _addressed(m) -> tuple[str, str]:
         # is kept: it is the only registry this address lives in.
         return f"{lrepo}/{m.group('lsuffix')}".lower(), "external"
 
-    brepo = m.group("brepo")
-    if brepo:
-        # `cortex-ui/master` (ruled Q10, 2026-10-10): another repo's branch, repo kept.
-        return f"{brepo}/{m.group('branch')}".lower(), "external"
+    erepo = m.group("erepo")
+    if erepo:
+        if _is_internal_repo(erepo):
+            return None, "lane"  # no lane's address is master here: stays UNADDRESSED
+        return f"{erepo}/master".lower(), "external"
 
     prose = m.group("prose")
     if prose:
@@ -248,8 +247,8 @@ def _form(m) -> str:
     lrepo = m.group("lrepo")
     if lrepo:
         return "worktree" if lrepo.lower().startswith("ia-") else "repo"
-    if m.group("brepo"):
-        return "repo"
+    if m.group("erepo"):
+        return "branch"
     return "prose" if m.group("prose") else "bare"
 
 
@@ -313,8 +312,9 @@ def parse_packet(path: Path) -> Packet:
     m = _TO.search(head)
     if m:
         addressee, kind = _addressed(m)
-        source, form = "to", _form(m)
-    else:
+        if addressee:
+            source, form = "to", _form(m)
+    if not addressee:
         # THE TITLE FORMS NAME LANES ONLY, and deliberately stay that way: they exist to read
         # packets written before the inbox did, and no such packet addresses a seat.
         for tform in _TITLE_FORMS:
@@ -323,7 +323,7 @@ def parse_packet(path: Path) -> Packet:
                 addressee, source, form = t.group(1).lower(), "title", "title"
                 break
 
-    read_by = [_addressed(r)[0] for r in _READ_BY.finditer(text)]
+    read_by = [a for a in (_addressed(r)[0] for r in _READ_BY.finditer(text)) if a]
 
     sender, sender_kind = None, "lane"
     fm = _FROM.search(head)
