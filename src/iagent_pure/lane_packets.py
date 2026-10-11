@@ -128,7 +128,21 @@ _LANE = (
 #: — still fall through to UNADDRESSED, the control this module has carried since the
 #: bare-token rule.
 _PROSE_EXTERNAL = r"`?(?P<prose>[A-Za-z0-9][A-Za-z0-9-]*)`?'s[ 	]+agent"
-_QUALIFIED = rf"(?:{_SEAT})|(?:{_LANE})|(?:{_PROSE_EXTERNAL})"
+#: `to: cortex-ui/master` -- `<repo>/<branch>`, THE EXTERNAL FORM ruling Q10 (2026-10-10) gave as its
+#: own example and the grammar did not read: three packets already used it and all three printed
+#: UNADDRESSED. It is accepted ONLY for another repo. `invincible-agent/master` and `ia-<x>/master`
+#: stay refused (the negative lookahead is `_is_internal_repo`, spelled as a pattern): the shared
+#: master tree is not an address -- an unassigned session on it does no work until assigned by
+#: name -- and a worktree name is not an address either. The branch segment is one token with no
+#: `/`, and may not be `lane` or `seat`, so `doc-tools/lane` (a lane form with no lane) stays
+#: refused rather than reading as a branch called `lane`. It sits AFTER `_SEAT` and `_LANE` in the
+#: alternation, so `doc-tools/lane/7f` keeps its full suffix through `_LANE`. Like the lane form it
+#: is external: the repo is kept, because `master` here and `master` there are different branches.
+_BRANCH = (
+    r"`?(?!invincible-agent(?![A-Za-z0-9-])|ia-)(?P<brepo>[A-Za-z0-9][A-Za-z0-9-]*)`?[ 	]*/[ 	]*"
+    r"`?(?!(?:lane|seat)(?![A-Za-z0-9._-]))(?P<branch>[A-Za-z0-9][A-Za-z0-9._-]*)`?"
+)
+_QUALIFIED = rf"(?:{_SEAT})|(?:{_LANE})|(?:{_BRANCH})|(?:{_PROSE_EXTERNAL})"
 #: Only `— note`, `(note)`, `,` and `:` open a trailing clause. A bare space does not, so
 #: `to: ia-74/lane/74 from ia-32` is still refused — stated here because the accepted set is a
 #: claim, and the seal fires each of these rather than restating them.
@@ -209,6 +223,11 @@ def _addressed(m) -> tuple[str, str]:
         # is kept: it is the only registry this address lives in.
         return f"{lrepo}/{m.group('lsuffix')}".lower(), "external"
 
+    brepo = m.group("brepo")
+    if brepo:
+        # `cortex-ui/master` (ruled Q10, 2026-10-10): another repo's branch, repo kept.
+        return f"{brepo}/{m.group('branch')}".lower(), "external"
+
     prose = m.group("prose")
     if prose:
         # `OpenDDIL's agent` — no repo to keep, because the address never had one.
@@ -229,6 +248,8 @@ def _form(m) -> str:
     lrepo = m.group("lrepo")
     if lrepo:
         return "worktree" if lrepo.lower().startswith("ia-") else "repo"
+    if m.group("brepo"):
+        return "repo"
     return "prose" if m.group("prose") else "bare"
 
 

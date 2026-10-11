@@ -87,6 +87,12 @@ NON_ADDRESSES = [
     "the architect seat (lane-less by R-019 — the inbox seal has no word for this)",
     "the — architect",             # a bare token FOLLOWED BY a trailer opener
     "whoever takes the shared master tree",
+    # ruling Q10 (2026-10-10): `<repo>/<branch>` is an address for ANOTHER repo only.
+    "invincible-agent/master",     # the shared master tree is not an address
+    "ia-01/master",                # a worktree name is not an address
+    "doc-tools/lane",              # a lane form with no lane is not a branch called `lane`
+    "doc-tools/seat",              # nor a seat form with no seat
+    "cortex-ui/master extra",      # a bare space opens no clause
 ]
 
 
@@ -133,6 +139,26 @@ def test_a_qualified_address_may_carry_a_note_after_it(tmp_path, text, name):
     lane/74 sat unread for a week because of it, one of them lane 32's closing handoff."""
     got = parse_packet(_write(tmp_path, "t.md", f"# A packet\n\nto: {text}\n\nbody\n"))
     assert got.addressee == name, f"`to: {text}` parsed as {got.addressee!r}"
+
+
+@pytest.mark.parametrize("text", ["cortex-ui/master", "`cortex-ui/master`", "cortex-ui/master — note"])
+def test_repo_slash_branch_is_an_external_address(tmp_path, text):
+    """Ruling Q10 (2026-10-10): `cortex-ui/master` is the ruling's own example."""
+    got = parse_packet(_write(tmp_path, "r.md", f"# A packet\n\nto: {text}\n\nbody\n"))
+    assert (got.addressee, got.kind, got.form) == ("cortex-ui/master", "external", "repo")
+
+
+def test_repo_slash_branch_leaves_its_neighbours_alone(tmp_path):
+    got = parse_packet(_write(tmp_path, "n1.md", "# P\n\nto: doc-tools/lane/7f\n\nbody\n"))
+    assert (got.addressee, got.kind) == ("doc-tools/lane/7f", "external")
+    got = parse_packet(_write(tmp_path, "n2.md", "# P\n\nto: invincible-agent/seat/architect\n\nbody\n"))
+    assert (got.addressee, got.kind) == ("architect", "seat")
+
+
+def test_a_repo_slash_branch_stamp_marks_its_packet_read(tmp_path):
+    body = "# P\n\nto: cortex-ui/master\n\nbody\n\nread-by: cortex-ui/master 2026-10-11\n"
+    got = parse_packet(_write(tmp_path, "rb.md", body))
+    assert "cortex-ui/master" in got.read_by and got.is_read
 
 
 def test_a_space_alone_does_not_open_a_trailing_clause(tmp_path):

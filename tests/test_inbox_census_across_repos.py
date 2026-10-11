@@ -21,6 +21,7 @@ def test_canonical_rules():
     assert canonical("architect", "seat", "seat", "doc-tools") == ("seat/architect", False)
     assert canonical("doc-tools/lane/7f", "external", "repo", "x") == ("doc-tools/lane/7f", False)
     assert canonical("openddil", "external", "prose", "x") == ("openddil", False)
+    assert canonical("cortex-ui/master", "external", "repo", "x") == ("cortex-ui/master", False)
     assert canonical("01", "lane", "repo", "cortex-ui") == ("invincible-agent/lane/01", False)
     # legacy worktree form
     assert canonical("74-x", "lane", "worktree", "doc-tools") == ("invincible-agent/lane/74-x", False)
