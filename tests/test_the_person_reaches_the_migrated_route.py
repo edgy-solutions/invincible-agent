@@ -99,6 +99,15 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # is quiet here and red there (``test_THE_PERSON_IS_HANDED_DOWN_AT_EVERY_CALL_IN_src``).
     ("13 · into the compatible-verbs lookup, the third migrated route",
      SUPERVISOR, "_classify_route", "_find_compatible_verbs", (FIELD,)),
+    # Hops 14-15: slot filling. The person rides to engine-o's /fill_slots so the resolveInstance
+    # fan-out can tell every provider who asked (gov's origin gate, Q7). PR #38 shipped these two
+    # sites without registering them, and the census below was red on that tip -- the second time
+    # this lane has done that to this file (see 091e2373), both times because the consequence set
+    # was chosen by the names edited rather than by the property this census reads.
+    ("14 · into slot filling",
+     SUPERVISOR, "execute_subtask", "_fill_slots_from_query", ("config." + FIELD,)),
+    ("15 · onto the wire to /fill_slots",
+     SUPERVISOR, "_fill_slots_from_query", "<dict>", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
