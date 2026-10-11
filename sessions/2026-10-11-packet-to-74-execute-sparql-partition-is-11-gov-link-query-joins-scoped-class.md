@@ -64,9 +64,11 @@ Measured against `c56a0ca2`, in a detached worktree at `c:/tmp/m187`:
 
 **The trailer seal does not read detached worktrees.** Its regex reads `[branch]`, and a detached
 worktree prints `(detached HEAD)`, so a detached worktree drops out of the registry. That was the
-first red: `ia-01-merge1008` was detached. It is mine and its tree was clean, so I put it back on
-`lane/01-merge1008`.
-- The next red is `a16e2391` (`Lane: ia-np/chart/networkpolicy`, on master since 2026-10-06), and
+first red: `ia-01-merge1008` is detached. It is mine, and it is a roll checkout kept detached on
+purpose since 10-08.
+- I switched it to `lane/01-merge1008` to look past it, then put it back at `3bae602d`. Its
+  checkout state is left as it was.
+- With it on the branch, the next red was `a16e2391` (`Lane: ia-np/chart/networkpolicy`, on master since 2026-10-06), and
   no worktree `ia-np` is registered.
 - I did not recreate `ia-np`, and did not read further than that first red.
 - I checked all 9 trailer pairs that 187 adds against the registry and the refs. All 9 are
