@@ -142,3 +142,51 @@ def test_the_safety_rows_that_expect_a_refusal_say_refused_and_name_their_outcom
     for rid, outcome in want.items():
         assert rows[rid].dispositions == (REFUSED,), (rid, rows[rid].dispositions)
         assert rows[rid].expect_refusal_outcome == outcome, (rid, rows[rid].expect_refusal_outcome)
+
+
+# ── Q13-shaped seals: a refusal that names itself only in `reason` (unknown part) ────────────
+
+_REPRO_ID = "repro-failures-recorded-for-part-5530-184"
+_UNKNOWN_PART = {"refused": True, "outcome": "refused", "reason": "unknown part '5530-184'"}
+
+
+def _fracas(final, status="matched"):
+    """`_result` routed to the FRACAS verb the repro row expects."""
+    r = _result(final, status)
+    d = r["events"][0]["data"]
+    d["action"] = {"iri": "mesh:whatFailedOnThisPart"}
+    d["handled_by"] = {"endpoint_url": "http://engine-safety/measure/what_failed_on_this_part"}
+    return r
+
+
+def _repro_row() -> CensusRow:
+    return {r.id: r for r in load_rows(_CENSUS)}[_REPRO_ID]
+
+
+def test_the_unknown_part_refusal_passes_the_real_repro_row():
+    r = _fracas({"components": [_doc(_UNKNOWN_PART), _doc(_UNKNOWN_PART)]})
+    state, why = judge(_repro_row(), r)
+    assert state == PASS, why
+
+
+def test_a_refusal_with_a_different_reason_fails_naming_both_strings():
+    bad = _fracas({"components": [_doc(dict(_UNKNOWN_PART, reason="source_unavailable"))]})
+    state, why = judge(_repro_row(), bad)
+    assert state == FAIL and any(
+        "source_unavailable" in w and "lacks 'unknown part'" in w for w in why), why
+
+
+def test_CONTROL_the_rev_185_abstain_fails_the_repro_row():
+    """The 185 result: the supervisor abstained (`no_verb_classified`). Not refused, not drawn."""
+    r = _fracas({"components": [_doc()]}, status=ABSTAINED)
+    state, why = judge(_repro_row(), r)
+    assert state == FAIL and any("disposition 'abstained'" in w for w in why), why
+
+
+def test_the_repro_row_is_the_hand_repro_on_its_own_sheet():
+    row = _repro_row()
+    assert row.expect_verb == "what_failed_on_this_part"
+    assert row.expect_refusal_reason_contains == "unknown part"
+    assert (row.user, row.persona) == ("bob", "SAFETY_ENGINEER")
+    assert row.sheet == "docs/measurements/hand-repro-walk-sheet.md"
+    assert not row.sheet.endswith("safety-walk-sheet.md")

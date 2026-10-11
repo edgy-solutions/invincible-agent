@@ -198,6 +198,9 @@ class CensusRow:
     blocked: str = ""
     #: The `outcome` word a `refused` row expects (`hazard_closed`, `not_assessed`). None = any.
     expect_refusal_outcome: str | None = None
+    #: A substring every refusal's `reason` must contain when the row scores `refused`. For a
+    #: refusal the verb gives no `outcome` word (an unknown part): the name lives in `reason`.
+    expect_refusal_reason_contains: str | None = None
 
     @property
     def runnable(self) -> bool:
@@ -246,6 +249,7 @@ def _row(raw: dict, frontend_id: str) -> CensusRow:
         expect_options=int(raw.get("expect_options") or 0),
         blocked=(raw.get("blocked") or "").strip(),
         expect_refusal_outcome=raw.get("expect_refusal_outcome"),
+        expect_refusal_reason_contains=raw.get("expect_refusal_reason_contains"),
     )
 
 
@@ -573,6 +577,10 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
         got = refusals[0].get("outcome")
         if got != row.expect_refusal_outcome:
             why.append(f"refusal outcome {got!r} != expected {row.expect_refusal_outcome!r}")
+    if actual == REFUSED and row.expect_refusal_reason_contains:
+        reasons = [str(r.get("reason")) for r in refusals]
+        if not all(row.expect_refusal_reason_contains in r for r in reasons):
+            why.append(f"refusal reason {reasons} lacks {row.expect_refusal_reason_contains!r}")
 
     if asked and row.expect_options:
         opts = elicit.get("options") or []
