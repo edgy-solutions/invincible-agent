@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.44 — 2026-10-11
+
+Answers at scale (lane/01-answers-at-scale). Numbered past the open 0.4.41–0.4.43 branches.
+
+### Added
+
+- **`answer_artifact_projection` gains `archived_at`, `archived_by`, `archive_reason`** and two
+  indexes (`files/sql/create_answer_artifact_projection.sql`): `idx_aap_user_created`
+  (newest-first paging per user) and `idx_aap_search_tsv`, an EXPRESSION GIN index over
+  question_text + summary. Not a generated column, because Electric refuses to replicate one. Every statement is
+  idempotent (`IF NOT EXISTS`), so the existing schema job applies it to a live table.
+
 ## 0.4.39 — 2026-10-10
 
 Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
