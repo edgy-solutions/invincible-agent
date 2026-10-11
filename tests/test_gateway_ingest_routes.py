@@ -1556,6 +1556,8 @@ def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_
     row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "test-domainless-kind", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    # Q2: no accepted origin yet -- and this test must never reach Neo4j.
+    monkeypatch.setattr(gateway, "_read_accepted_origin", lambda ingest_id: None)
     status_calls = []
     monkeypatch.setattr(ist, "update_status",
                         lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
@@ -1645,6 +1647,7 @@ def test_stage_review_on_a_real_format_level_kind_goes_to_awaiting_origin(
     row = {"id": "sha256:" + "4" * 64, "status": "extracting", "kind": "pdf",
            "content_kind": content_kind, "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(gateway, "_read_accepted_origin", lambda ingest_id: None)
     status_calls = []
     monkeypatch.setattr(ist, "update_status",
                         lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage)))

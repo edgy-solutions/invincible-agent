@@ -397,6 +397,18 @@ async def _accept_through_the_route(g, rec, monkeypatch):
     graph writer is this file's FakeGraph (the class the route imports is patched)."""
     import agent_fleet.utils.mesh_writers.neo4j_graph as ng
     monkeypatch.setattr(ng, "Neo4jGraphWriter", lambda **kw: g)
+
+    def _read_origin(ingest_id):
+        # what the fake graph HOLDS (Q2: the filing reads the store, not the request)
+        node = g.nodes.get(ingest_id) or {}
+        owner = node.get(ORIGIN_PROP_OF["origin_owner_domain"])
+        resolved = node.get(ORIGIN_PROP_OF["origin_resolved_by"])
+        if not isinstance(owner, str) or not owner.strip() or resolved in (None, "", "unresolved"):
+            return None
+        return {"owner_domain": owner, "program": node.get(ORIGIN_PROP_OF["origin_program"]),
+                "resolved_by": resolved}
+
+    monkeypatch.setattr(gateway, "_read_accepted_origin", _read_origin)
     req = gateway.OriginWriteRequest(**{k: rec[k] for k in (
         "artifact_id", "dropped_by", "origin", "evidence", "approval_chain")})
     return await gateway.write_origin_route(req, current_user=_case_runner())
