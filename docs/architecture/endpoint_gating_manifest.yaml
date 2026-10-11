@@ -1670,14 +1670,15 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/retry
         identity: keycloak-jwt
-        gate: "get_current_user + the status route's own scoping (submitted_by OR on_behalf_of = caller); a stranger and a missing row get the identical 404"
+        gate: "get_current_user + a SERVICE caller only (svc: namespace or an asserted delegate); a human gets 403 retry_is_pin_driven before any lookup; body {pin_digest} must differ from the row's recorded pin (equal 409 pin_unchanged, none recorded 409 no_recorded_pin)"
         exposes: action
-        consumers: [ingestion seam UI (ADR-0041 §8), the dropper un-stranding their own row]
+        consumers: [extractor pin-change driver (service identity)]
         class: gated
         justification: >-
-          The dropper's own retry (roll #20). The visibility rule and the 404 are the status
-          route's, so this adds no new existence oracle. The only effect is re-running the
-          find-or-file of the document_promotion task, and only for a row already at review.
+          PIN-DRIVEN ONLY (architect ruling 2026-10-10): a retry is driven by an extractor pin
+          change, never by the UI. A person is refused 403 before the row is read, so the unscoped
+          lookup a service needs is no existence oracle for people. The only effect is re-running
+          the find-or-file of the document_promotion task, and only for a row already at review.
           Terminal rows, event rows at received and documents still in doc-tools' pipeline are
           refused 409 and nothing is written.
       - method: GET

@@ -5237,6 +5237,15 @@ class WriteItemStateRequest(BaseModel):
     # str = "" not Optional[str]: this module uses `from __future__ import annotations`, and Pydantic
     # v2 can't resolve `Optional` as a forward-ref (same reason list[str] is used over List[str], §657).
     proposed_by_ruleset: str = ""
+    # Steward-correction provenance, STORED beside the item's identity (never a re-key). All
+    # optional; absent means unchanged, so existing callers are untouched. `extracted_value` is
+    # null for a steward-ADDED row. (`str = ""`-style note above: the module uses
+    # `from __future__ import annotations`; `str | None` resolves, `Optional` does not.)
+    obtained_via: str | None = None
+    corrected_by: str | None = None
+    extracted_value: str | None = None
+    corrected_value: str | None = None
+    evidence: str | None = None
 
 
 @app.post("/write_item_state")
@@ -5252,7 +5261,11 @@ async def write_item_state(
     s = request.subject_iri
     if not s.startswith("http://internal/"):
         raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
-    update = _build_state_update(s, request.disposition_state, request.disposition_ref, request.proposed_by_ruleset)
+    # Only the provenance fields the caller actually SENT are stamped (absent = unchanged).
+    _prov = {k: getattr(request, k) for k in request.model_fields_set
+             if k in ("obtained_via", "corrected_by", "extracted_value", "corrected_value", "evidence")}
+    update = _build_state_update(s, request.disposition_state, request.disposition_ref,
+                                 request.proposed_by_ruleset, _prov or None)
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
 
