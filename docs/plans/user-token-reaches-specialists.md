@@ -77,6 +77,17 @@ verbs are both in the set.
 step, hits it now. I have not seen it live, because I have not walked a plan with two caller-identity
 verbs. Phase 1 seals it either way.
 
+**And PR #33 makes it the ordinary case** (`lane/01-supervisor-person` @1eb41311, open, Lane 1's
+own, found after this note was first written). #33 adds `whatFailedOnThisPart` and
+`failureTrendForThisPlatformByMonth` to `_CALLER_IDENTITY_VERBS`, and its body names this exact
+defect as a "known limit, not fixed": a plan with what-failed plus trend fails the second subtask
+with `already_redeemed`. Those two verbs are a natural pair in one plan. So:
+- #33 is the first instance of Phase 2 (safety), already in flight. Phase 1 is the fix for #33's
+  known limit, and **should land before or with #33**, not after it.
+- #33 raises the ceiling seal `test_the_identity_list_is_not_merely_NON_EMPTY` from `<= 4` to
+  `<= 5`, held for the architect. That seal caps how many verbs Phase 2 can add without a fresh
+  approval each time. It is the right brake, and this note does not propose removing it.
+
 **Two tempting workarounds are both refused:**
 - *Pass the token from the first subtask to the others* through op outputs or the IO manager.
   That writes it to run storage, which is ruled out permanently.
@@ -143,8 +154,11 @@ record, the same reasoning `_redeem_caller_token` already applies to `context.ru
     because defaulting would make two subtasks contend for slot 0, which is today's defect.
   - The verb set is **unchanged**. Phase 1 makes the existing verbs safe in multi-subtask plans,
     and nothing more.
-- **The Engine A fallback (`:1878`)** carries the caller token when the subtask redeemed one. It
-  still never redeems on its own.
+- **The Engine A fallback (`:1878`): NOT built.** Planned as "carries the caller token when the
+  subtask redeemed one". The build (d2816e87) found that both fallback call sites return before
+  redemption, so no redeemed token exists there to carry, and carrying one would need a new
+  holder. The fallback still dispatches as `svc:supervisor`. It needs its own design, and is not
+  part of Phase 1.
 - **Seals:**
   - two subtasks with caller-identity verbs both receive the token, and neither logs `REPLAY`;
   - a second redeem of one slot is still `ALREADY_REDEEMED`;
