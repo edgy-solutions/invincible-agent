@@ -423,6 +423,22 @@ def _no_git(*_a, **_k):
     raise FileNotFoundError(2, "No such file or directory: 'git'")
 
 
+def _html_stub(real_builder, captured: dict | None = None):
+    """A stand-in for `builder.build_html` that takes the REAL signature, read from the function
+    it replaces before the patch lands. A fake of `(*_a, **kw)` accepts any call at all, so a
+    `package_export` passing a keyword the builder never declared stayed green here and raised
+    only in the pod. `bind` refuses exactly what the real builder would refuse."""
+    sig = inspect.signature(real_builder.build_html)
+
+    def fake(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs).arguments
+        if captured is not None:
+            captured.update(bound)
+        return "<html></html>"
+
+    return fake
+
+
 def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusable(
     tmp_path, monkeypatch, real_builder):
     """ARM A -- the pod, reproduced faithfully: not a checkout (no `.git`), the builder and
@@ -435,12 +451,8 @@ def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusab
 
     captured: dict = {}
 
-    def fake_build_html(*_a, **kw):
-        captured["sha_kwarg"] = kw.get("sha")
-        return "<html></html>"
-
     monkeypatch.setattr(m, "_repo_root", lambda: root)
-    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    monkeypatch.setattr(real_builder, "build_html", _html_stub(real_builder, captured))
     monkeypatch.setattr(subprocess, "run", _no_git)
     monkeypatch.setenv("IAGENT_GIT_SHA", _SHA_POD)
 
@@ -449,7 +461,7 @@ def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusab
     assert result["algorithm_sha"] == _SHA_POD, (
         "the manifest's algorithm_sha did not come from the baked IAGENT_GIT_SHA"
     )
-    assert captured["sha_kwarg"] == _SHA_POD, (
+    assert captured.get("sha") == _SHA_POD, (
         "build_html did not receive the SAME sha the manifest carries -- the two can now "
         "disagree about which commit the package names"
     )
@@ -490,12 +502,9 @@ def test_a_CHECKOUT_still_resolves_its_sha_through_GIT(tmp_path, monkeypatch, re
         calls.append(1)
         return _SHA_GIT
 
-    def fake_build_html(*_a, **_kw):
-        return "<html></html>"
-
     monkeypatch.setattr(m, "_repo_root", lambda: root)
     monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
-    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    monkeypatch.setattr(real_builder, "build_html", _html_stub(real_builder))
     # POISONED ON PURPOSE. If the checkout branch ever reads the baked env instead of git,
     # this value -- distinct from `_SHA_GIT` -- would show up in the result and expose it.
     monkeypatch.setenv("IAGENT_GIT_SHA", "unknown")
