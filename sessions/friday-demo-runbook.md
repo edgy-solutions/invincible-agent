@@ -132,3 +132,11 @@ overnight status lines (Lane 1 appends below)
   - Stages `received` 16:40:17Z → `extracting` 16:41:02Z → `review` 16:41:49Z.
   - bob's task `document_promotion:sha256:034fe9f1…`, audience `document_promotion:SUSTAINMENT`, status `pending`, not acted on.
   - §4 starts from here.
+- **Rev 185 is live** (2026-10-10, roll 06:15:02Z → 06:35:29Z, exit 0). It replaces 182a, so the §5 "would undo 182a" warning is spent.
+  - Fleet `3bae602d` (chart 0.4.38, tag `invincible-agent-0.4.38`). cortex-ui `9bf8063` at `ghcr.io/edgy-solutions/cortex-ui/frontend@sha256:1985ce7fe1aa378687b1f001e6441066f381ababed959c9296483eb687a49f86`. **Hard-refresh every cortex tab.**
+  - Rev 183 failed at realm-reconcile (17 stale `authz-id-svc` mappers). Rev 184 was the rollback to 182 (plus 182a). Rev 185 migrated all 17 and its readback passed.
+  - Hooks: topaz manifest 12/12; task-grant-sync programs 3/3 (SANDBOX_PROGRAM_BRAVO seeded) and task grants 16/16; prime 22 ok / 0 failed.
+- **PCN26-184 walk on rev 185: 6/6.** alice / SAFETY_ENGINEER / SUSTAINMENT. `mesh:whichPartsDoesThisNoticeAffect` on engine-o, INSTANCES_BY_PROPERTY, rows 5530-184 and 5530-185. Three were `default-menu` and three `registered` (`frontend_id: cortex-ui-desktop`).
+- **PCN26-185 is promoted** (§4 is consumed). bob acted `promoted` on `document_promotion:sha256:034fe9f1…` (200, `rows_resolved: 1`). alice's status reads `promoted`, detail `record dr-b7066780f6ac6725`.
+  - The ask "which parts does PCN26-185 affect" passed 3/3: rows 5530-186 and 5530-187, `default-menu`.
+  - For a further §4 demo, drop a new notice. This one is spent.

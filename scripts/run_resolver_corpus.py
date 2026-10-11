@@ -24,6 +24,10 @@ returns: what a pure top-score rule WOULD have chosen. It documents rather than 
 that the one-line interim is unavailable — expect rows where argmax and the LLM disagree
 AND `instance_fired` is false, i.e. fixing selection alone would not have grounded them.
 
+WITH `COMPATIBLE_VERBS_VIA_MESH` ON (engine O's default), `/find_compatible_verbs` refuses a
+request that names no person (400), which `_verbs` reads as -1. Set `IA_CORPUS_ON_BEHALF_OF` to
+the person the corpus runs as (read at call time) and it is sent as `on_behalf_of`.
+
 Read-only. Every call is a GET-shaped POST to /resolve plus two /find_compatible_verbs
 probes; nothing is written to any store.
 """
@@ -31,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 from collections import Counter, defaultdict
@@ -136,10 +141,14 @@ def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
 
 
 def _verbs(base: str, subject_uri: str, domains: list, timeout: float) -> int:
+    body = {"subject_uri": subject_uri, "max_hops": 5, "entitled_domains": domains}
+    person = os.environ.get("IA_CORPUS_ON_BEHALF_OF", "").strip()
+    if person:
+        body["on_behalf_of"] = person
     try:
         r = requests.post(
             f"{base}/find_compatible_verbs",
-            json={"subject_uri": subject_uri, "max_hops": 5, "entitled_domains": domains},
+            json=body,
             timeout=timeout,
         )
         r.raise_for_status()

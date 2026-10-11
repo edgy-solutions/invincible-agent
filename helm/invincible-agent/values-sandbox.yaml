@@ -814,7 +814,17 @@ cortexUi:
     # linux/arm64 + 2 attestations); the abbreviated tag, the full tag with its last hex altered,
     # and this digest with its last hex altered all answer 404. Since 3d5a0e1 the Dockerfile,
     # docker-entrypoint.sh and .github are unchanged, so VITE_FEATURES is unchanged.
-    digest: "sha256:1985ce7fe1aa378687b1f001e6441066f381ababed959c9296483eb687a49f86"
+    # 2026-10-10, pinned for rev 186b: cortex-ui 865c080 (master; merges cortex #2 8b96ade, #5
+    # 6e64da2 and #6 865c080; NOT #4, which is 187 unless a follow-up pin lands first) ->
+    # 2c45d36a. 9bf8063 is an ANCESTOR of 865c080, so the refusal reader stays. Measured before
+    # pinning: the FULL tag resolves to this digest; the abbreviated tag, the full tag with its
+    # last hex altered, and this digest with its last hex altered all fail to resolve. Since
+    # 9bf8063 the Dockerfile and .github are unchanged; docker-entrypoint.sh gains only
+    # VITE_SEND_FRONTEND_VERSION (env below), so VITE_FEATURES is unchanged. KNOWN AT THIS PIN:
+    # a KNOWLEDGE_DOCUMENT carrying `refusal` draws as the refusal card alone, its prose not shown
+    # -- equally true of 9bf8063 once this repo's 935d7524 sends the field; cortex's fix is a
+    # follow-up pin.
+    digest: "sha256:2c45d36a87d8f773a11ee79b5d54233a6f566e66b07b645d61b324f2e5f8a536"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -858,6 +868,11 @@ cortexUi:
     # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
     VITE_FEATURES: "canvasExport,ingest"
+    # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
+    # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
+    # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
+    # dependency. Empty or absent = cortex sends nothing, the pre-186 wire.
+    VITE_SEND_FRONTEND_VERSION: "true"
 
 cortexBff:
   enabled: true

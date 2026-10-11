@@ -1195,6 +1195,9 @@ def _run_saga(
         tool_kind=manifest.tool_kind,
         frontend_id=manifest.frontend_id or "",
         archetype=manifest.archetype or "",
+        # PRESENTATION ONLY: the manifest's `version` is the frontend bundle version for this
+        # species. For an Engine it is the engine's own version and must not key anything.
+        frontend_version=(manifest.version or "") if manifest.tool_kind == "Presentation" else "",
         expected_fields=list(manifest.expected_fields or []),
         recomputes=manifest.recomputes,
     )

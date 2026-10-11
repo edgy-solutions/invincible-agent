@@ -46,7 +46,7 @@ describes** -- so the assertion below is the negative as well as the positive.
   `safety_acceptance_workflow.run`, with the row's kind and audience read back and cross-checked
   against `policy/task_grants.yaml`'s own three-caller fixture (alice/bob/carol) -- the exact
   "two assessments instead of one" seal 7 asks for, with HAZ-1003/bob as the paired Medium control
-  and a synthetic trigger standing in for the High leg no fixture hazard reaches.
+  and a synthetic trigger for the High leg (HAZ-1007 now reaches it too; see the real arm).
 """
 from __future__ import annotations
 
@@ -184,17 +184,34 @@ def test_haz_1004_is_measured_serious_not_the_high_the_work_order_names():
 
 
 @requires_rdflib
-def test_no_fixture_hazard_reaches_high_so_the_high_leg_needs_a_synthetic_trigger():
-    """Guards the premise for arm 4 below: if some future hazard DOES reach High, the synthetic
-    trigger stops being the only way to exercise that path and should be replaced by the real one."""
+def test_exactly_one_fixture_hazard_reaches_high_and_it_is_the_walk_row_hazard():
+    """THE PREMISE CHANGED ON 2026-10-09 (architect ruling: a High fixture hazard for the walk
+    sheet's Q10). This used to assert NO fixture hazard reaches High; its own message said what to
+    do if one did ("exercise it directly instead of the synthetic trigger"), and the real arm below
+    does. The synthetic arms stay: they build a trigger with no dependency on the fixture, so a
+    fixture edit cannot silently retire them. Pinned to ONE hazard so a second High is a decision."""
     from agent_fleet.safety_agent import entities, measures
 
     levels = {h.hazard_id: measures.draft_risk_assessment(hazard_id=h.hazard_id).get("risk_level")
               for h in entities.HAZARDS}
-    assert "High" not in levels.values(), (
-        f"a fixture hazard now resolves to High ({levels}) — exercise it directly instead of the "
-        "synthetic trigger this file builds"
-    )
+    assert [k for k, v in levels.items() if v == "High"] == ["HAZ-1007"], levels
+
+
+@requires_rdflib
+@pytest.mark.asyncio
+async def test_the_real_high_hazards_first_act_registers_the_concurrence_not_alices_acceptance(monkeypatch):
+    """The synthetic High arm below, run on the real producer's output for HAZ-1007."""
+    from agent_fleet.safety_agent import measures
+
+    review_request = measures.draft_risk_assessment(hazard_id="HAZ-1007")["review_request"]
+    trigger = ar.acceptance_trigger(review_request, authz_id=_REQUESTER)
+    assert trigger["level"] == "High" and trigger["level_slug"] == "high"
+    posts = _recording_post(monkeypatch)
+    await _run_acceptance(trigger)
+    bodies = _registers(posts)
+    assert len(bodies) == 1, bodies
+    assert bodies[0]["kind"] == "risk_acceptance_concurrence_high", bodies[0]
+    assert bodies[0]["audience"] == "risk_acceptance_concurrence_high:SUSTAINMENT", bodies[0]
 
 
 # ── 2. HAZ-1004 (SERIOUS): THE FIRST ACT IS CAROL'S QUEUE, NOT ALICE'S ──────────────────────
@@ -282,7 +299,7 @@ def test_no_concurrence_audience_exists_for_medium_or_low():
     assert "risk_acceptance_concurrence_low:SUSTAINMENT" not in granted, granted
 
 
-# ── 4. THE HIGH PATH, SYNTHETIC: no fixture hazard reaches it, so this builds the trigger ──
+# ── 4. THE HIGH PATH, SYNTHETIC: HAZ-1007 reaches it since 2026-10-09; this builds a trigger with no fixture dependence ──
 #      the same way the real producer would, and runs it through the same real dispatch.
 
 @requires_rdflib

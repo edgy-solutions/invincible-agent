@@ -23,7 +23,10 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-pytest.importorskip("duckdb")
+pytest.importorskip(
+    "duckdb",
+    reason="duckdb is not installed in this venv: the alpha document's one-duckdb idempotent "
+           "rebuild is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
 if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
     pytest.skip("the pinned Pyodide runtime is not fetched here", allow_module_level=True)
 

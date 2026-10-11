@@ -127,6 +127,11 @@ async def lifespan(fastapi_app: FastAPI):
                 object_uri=cap["object_uri"],
                 archetype=cap["archetype"],
                 expected_fields=cap["expected_fields"],
+                # UNVERSIONED. A presentation's manifest version keys its menu row by frontend
+                # bundle version; the system defaults are not a bundle, and the helper's "0.1.0"
+                # default would re-key every one of them to a version nobody ships. Empty keeps
+                # their uuids byte-identical and outside eviction.
+                version="",
             )
         except Exception as e:  # noqa: BLE001  -- ADR-0006: never crash on registration
             logger.warning(
@@ -213,6 +218,9 @@ class RenderRequest(BaseModel):
     # client's registered menu. Absent -> the global capability table, i.e. today's
     # behaviour, so unidentified callers do not regress while the callers migrate.
     frontend_id: Optional[str] = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's bundle names its own version.
+    # Absent -> the newest registered version, i.e. today's behaviour.
+    frontend_version: Optional[str] = None
 
 
 # Canonicalizer + lookup live in capabilities.py — see the import at
@@ -377,6 +385,24 @@ def _render_document_deterministic(
         component.update(_docs_explanation_passthrough(agent_response))
 
     return {"components": [component]}
+
+
+def _with_document_refusal(card: Dict[str, Any], raw_data: Any) -> Dict[str, Any]:
+    """Name a refused body's refusal on its KNOWLEDGE_DOCUMENT card, at every document site.
+
+    The document path rendered before any refusal check, so a refused draft (safety's
+    RiskAssessmentDraft on a closed hazard) reached cortex as a document and the census as
+    `drawn`. It lives outside `_render_document_deterministic` because that composer's read-set
+    is sealed to the envelope keys; the refusal is the card's envelope, not the composer's input.
+    All three document fallbacks use it: the KNOWLEDGE_DOCUMENT archetype, the menu that cannot
+    draw the output_uri, and the chart whose rows fail the chart contract.
+    """
+    body = _extract_agent_response(raw_data)
+    if isinstance(body, dict) and body.get("refused") is True:
+        for c in card.get("components") or []:
+            if isinstance(c, dict) and c.get("archetype") == "KNOWLEDGE_DOCUMENT":
+                c[REFUSAL_FIELD] = _refusal_envelope(body)
+    return card
 
 
 def _degrade_edgeless_topology_to_document(
@@ -1659,6 +1685,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             cap, _sel_prov = _select_presentation(
                 request.frontend_id, request.output_uri, _sel_payload,
                 persona=effective_persona, domain=request.domain,
+                frontend_version=request.frontend_version,
             )
             logger.info(
                 "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",
@@ -1671,10 +1698,10 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 # The caller's menu cannot draw this. Honest text beats a widget it never
                 # advertised -- and the provenance above says WHICH refusal produced it.
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _with_selection_provenance(_render_document_deterministic(
+                return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                     request.raw_data, effective_persona,
                     subject_concept=request.output_uri,
-                ), _sel_prov)
+                ), request.raw_data), _sel_prov)
         if cap:
             archetype = cap["archetype"]
             # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────
@@ -1700,22 +1727,22 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                         request.output_uri, _refusal,
                     )
                     response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                    return _with_selection_provenance(_render_document_deterministic(
+                    return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                         request.raw_data,
                         effective_persona,
                         subject_concept=request.output_uri,
-                    ), _sel_prov)
+                    ), request.raw_data), _sel_prov)
             logger.info(
                 "render_ui: output_uri=%s matched capability archetype=%s",
                 request.output_uri, archetype,
             )
             if archetype == "KNOWLEDGE_DOCUMENT":
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _with_selection_provenance(_render_document_deterministic(
+                return _with_selection_provenance(_with_document_refusal(_render_document_deterministic(
                     request.raw_data,
                     effective_persona,
                     subject_concept=request.output_uri,
-                ), _sel_prov)
+                ), request.raw_data), _sel_prov)
             hardened, handled = await _render_archetype_hardened(
                 archetype, str_raw_data, effective_persona,
                 raw_data=request.raw_data,

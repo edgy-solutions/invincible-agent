@@ -270,7 +270,7 @@ def slice2(state, isolated_dist):
     `package_export` gates it, means the ~48 seals under this fixture are either genuinely
     exercised or honestly skipped — never a pass borrowed from a stale file.
     """
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import scripts.build_cost_dataset as D
 
     db = isolated_dist / "cost-notional-customer-alpha.duckdb"
@@ -393,7 +393,7 @@ def test_the_embedded_rows_and_the_duckdb_agree(slice2):
     # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
     # first pass grepped for the import statement and missed every site that reaches it
     # through a helper, which is the enumerate-the-population rule failing on a grep.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     pkg, db = slice2
     assert X.datasets_agree(pkg["dataset"]["rows"], str(db)) == []
 
@@ -406,7 +406,7 @@ def test_the_agreement_check_BITES_on_an_altered_row(slice2, tmp_path):
     # dataset is an authoring format, not a runtime one - so a deployment image correctly
     # has none, and this seal failing there would be an unstated precondition failing for a
     # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import duckdb
     import scripts.build_cost_dataset as D
 
@@ -484,7 +484,7 @@ def test_the_ROW_hash_is_reproducible_and_the_FILE_hash_is_not(slice2):
     # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
     # first pass grepped for the import statement and missed every site that reaches it
     # through a helper, which is the enumerate-the-population rule failing on a grep.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import os
     import scripts.build_cost_dataset as D
 
@@ -1181,7 +1181,7 @@ def test_the_dataset_agreement_check_COVERS_PERIOD(slice2, tmp_path):
     # dataset is an authoring format, not a runtime one - so a deployment image correctly
     # has none, and this seal failing there would be an unstated precondition failing for a
     # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import duckdb
 
     pkg, db = slice2
@@ -1211,7 +1211,7 @@ def test_the_agreement_check_COMPARES_HOURS_too(slice2, tmp_path):
     # dataset is an authoring format, not a runtime one - so a deployment image correctly
     # has none, and this seal failing there would be an unstated precondition failing for a
     # reason unrelated to what it asserts. That is how a seal teaches people to ignore it.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import duckdb
 
     pkg, db = slice2
@@ -1353,7 +1353,7 @@ def test_the_agreement_is_INDEPENDENT_OF_INSERTION_ORDER(slice2):
     # into code that does. GUARDED BY WHAT IT NEEDS, not by what its text contains: my
     # first pass grepped for the import statement and missed every site that reaches it
     # through a helper, which is the enumerate-the-population rule failing on a grep.
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the customer-validation package's five acceptance seals is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     pkg, db = slice2
     rows = pkg["dataset"]["rows"]
     results = list(rows["results"])
