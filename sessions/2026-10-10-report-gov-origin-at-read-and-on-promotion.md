@@ -13,6 +13,8 @@ re: your Q1–Q3 answers and the origin-on-promotion ruling -- built, sealed, on
   A trial merge against `origin/master` (`3976a9e0`) is clean. The only file both sides touch is
   `gateway.py`; master's hunk there is the action-record route, which writes no origin property.
   **No roll was done.**
+- **PR [#39](https://github.com/edgy-solutions/invincible-agent/pull/39)** (`lane/gov-resolve-instance` → `lane/gov`, open, tip `ac6e4ff0`): the Q7 gate on `/resolve_instance`, plus S (ruling (b)), P (Q8 behind one flag), and the outage seal re-derived at eleven. 187 merged it at `2999bdca`, and that merge is held until 187 re-merges `ac6e4ff0`.
+- **PR [#45](https://github.com/edgy-solutions/invincible-agent/pull/45)** (`lane/gov-enumerate-gate` → `lane/gov-resolve-instance`, open, tip `9393ff08`): ruling (d), the enumerate gate. It merges lane/74's #40 (`311999f4`).
 
 ## What landed
 
@@ -271,6 +273,32 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - Exit codes: 0 none, 1 some, 2 could not look.
   - The new file passes 7; `test_promotion_records_origin` passes 25 and the e2e seal 8. Mutants B1–B4 each red their arm.
   - **Not run live.** It has had no DSN here; Lane 1 runs it in the roll.
+
+## 2026-10-11: rulings (b), (d) and Q8 built; the outage seal re-derived
+
+- **S, ruling (b): a service identity is never a grant.** Built on #39 at `657864f5`.
+  - `origin_entitlement.is_person` is False for no caller, a blank caller, or `svc:`. It runs first in `notice_visible`, the one verdict `read_notice_parts`, `/resolve_instance` and now enumerate share.
+  - A non-person sees seeded content only. No route refuses yet: the 422 `no_person` waits for lane/74's caller side of (a).
+  - The new seal passes 11. Mutants S1–S3 each red their arms.
+- **P, Q8 (parked behind doc-tools stamping seed provenance).** `SEED_PROVENANCE_STAMPED = False`, and both "seeded" branches read it, so behaviour is unchanged. The new seal passes 6, and mutants P1–P2 are red.
+- **Wire arms deleted with the measurement.** In ten wire mutants, every one that failed gov's six wire arms also failed lane/74's `test_resolve_instance_hears_the_caller`, and only lane/74's killed W5. W3 is equivalent.
+- **The outage seal, re-derived at eleven (`ac6e4ff0`).**
+  - #39's link query is the eleventh `execute_sparql` site. **I shipped `657864f5` with that seal red** because I had not run the file.
+  - The classification is read from the AST: scoped, with no `GRAPH`/`SERVICE`/`FROM`. The file passes 13, and a `FROM` mutant gives the named red.
+  - The first mutant run survived: an escape collapsed to a backspace byte through a heredoc.
+- **Ruling (d): the enumerate gate (#45).**
+  - Members go through the same `_filter_sustainment_candidates`. All-withheld reads as `empty`, the count does not reveal what was withheld, and a failure answers 503.
+  - The new seal passes 10, mutants E1–E5 are red, and nine keep-green files are green on `9393ff08`.
+  - **Residual:** `too_many` is unfiltered, and its count includes anything withheld.
+- **The retry collision (lane/01's packet, Q2c vs pin-driven).** I placed facts and costs, and asked for neither option.
+  - Nothing calls `/ingest/{id}/retry` today.
+  - Under (b), the `awaiting_origin` branch needs a pin exemption, or Q2c is unreachable.
+  - **Waiting on your ruling.**
+- **Not yet checked:** Q2b, Q2c and Q8 against Chris's pasted 21:29/22:11 text. I have not seen it.
+- **Day 2, not started:**
+  - trace the review-composer and script callers, per lane/74's ruling;
+  - the AnswerArtifact origin field, which waits for its first writer;
+  - the packet census list for Lane 1.
 
 ## Questions for a ruling
 
