@@ -2263,9 +2263,11 @@ def _fill_slots_from_query(
                 # /resolve already chose mesh:DocPage even though the caller's domain picker
                 # sent something else (MESH hides DOCS). See _docs_pool_applies in engine-o.
                 "subject_uri": subject_uri,
-                # THE CALLER'S IDENTITY, the same verified email `/resolve` carries, so engine-o's
-                # resolver fan-out can gate drop-derived content by origin. Empty = no identity.
-                "user_email": user_email,
+                # THE PERSON ASKING, so engine-o can hand it, with `acting_domains`, to every
+                # resolveInstance provider: a provider holding origin-scoped instances cannot
+                # gate on a caller it was never told (gov's origin-at-read report, 2026-10-10).
+                # The same body-asserted identity `/resolve` already receives.
+                "user_email": user_email or "",
             },
             timeout=_fill_slots_budget(declarations),
         )

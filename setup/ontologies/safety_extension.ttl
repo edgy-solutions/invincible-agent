@@ -289,6 +289,15 @@ safety:assesses a owl:ObjectProperty ;
     rdfs:domain safety:RiskAssessment ;
     rdfs:range safety:Hazard .
 
+safety:onPlatform a owl:ObjectProperty ;
+    rdfs:label "on platform" ;
+    rdfs:domain safety:Hazard ;
+    rdfs:range safety:Platform ;
+    rdfs:comment """The platform (FRACAS: program) a hazard is recorded against. The engine's
+fixture has carried this as the bare string field `platform` on a hazard; this declares the
+relation rather than minting a second vocabulary - the members are the same PLT-* identifiers.
+A graph node may carry it under the short property name `platform`.""" .
+
 safety:criticalItemFor a owl:ObjectProperty ;
     rdfs:label "critical item for" ;
     rdfs:domain safety:SafetyCriticalItem ;

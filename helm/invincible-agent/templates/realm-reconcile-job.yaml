@@ -278,6 +278,25 @@ spec:
               fi
               {{- end }}
 
+              # ── LOCAL HUMAN USERS — create-if-absent, under ANY authzClaim ──
+              # The realm import never re-runs on a live realm, so a local human added to
+              # keycloak.localHumanUsers after the first install would otherwise never exist.
+              # Same convention as the import (keycloak-configmap.yaml): password = username,
+              # non-temporary. The attribute (ensure_attr) stays in the claim branch above.
+              {{- range $u := .Values.keycloak.localHumanUsers }}
+              HU={{ $u.username | quote }}
+              echo "-- local human $HU: exists?"
+              if curl -sf -H "$AUTH" "$API/users?username=$HU&exact=true" | grep -q '"id"'; then
+                echo "   present"
+              else
+                echo "   absent -> creating (demo password = username, non-temporary)"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/users" \
+                  -d {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "credentials" (list (dict "type" "password" "value" $u.username "temporary" false)) | toJson | squote }} \
+                  || { echo "   FAIL: could not create $HU"; rc=1; }
+                echo "   created"
+              fi
+              {{- end }}
+
               # ── NON-INTERACTIVE USERS (A1) — additive, created WITHOUT credentials ──
               {{- if ne $claim "email" }}
               # ── AUTHZ ATTRIBUTE — every species carries the SAME claim ({{ $claim }}) ──

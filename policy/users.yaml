@@ -131,6 +131,41 @@ users:
       persona: MECHANIC
       domains: [AVIATION]
 
+  - id: erin@example.com
+    display_name: Erin (demo - clean walker)
+    # The clean walker: holds alice's groups and NONE of her direct per-user grants
+    # (alice stays the slow-inbox fixture, carol stays the denied human).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
+  - id: chris@example.com
+    display_name: Chris (demo - Chris's own sign-in)
+    # Chris's own sign-in, with the same groups as alice (group path only).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
   # ── OpenDDIL principals (brokered) ──────────────────────────────────
   # OpenDDIL's own principals sign in through the OIDC broker (values keycloak.brokers.openddil),
   # and their authz_id is OpenDDIL's raw `sub`, so the id here is that sub, NOT an email. This is

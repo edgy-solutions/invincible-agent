@@ -909,6 +909,10 @@ def test_the_verb_ROUTES_THROUGH_THE_SAME_BUILDER_as_the_script(state, monkeypat
 
     sentinel = RuntimeError("the shared builder was called")
 
+    # SIGNATURE-BLIND ON PURPOSE. This seal asserts only THAT the verb reaches this function,
+    # so the sentinel raises whatever it is passed. Whether the CALL fits the real signature is
+    # sealed by `_html_stub` in test_the_export_survives_the_image_layout.py, which binds every
+    # call to `inspect.signature(build_html)`. Do not copy this fake where the arguments matter.
     def explode(*a, **k):
         raise sentinel
 
@@ -934,6 +938,9 @@ def test_the_verb_APPLIES_THE_JAVASCRIPT_GATE(state, monkeypatch):
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_cost_package as B
 
+    # SIGNATURE-BLIND ON PURPOSE. This seal's subject is the gate applied to the RETURNED page,
+    # so the stand-in ignores its arguments. The call's fit to the real signature is sealed by
+    # `_html_stub` in test_the_export_survives_the_image_layout.py.
     monkeypatch.setattr(B, "build_html", lambda *a, **k: "<script>var a = (;</script>")
     with pytest.raises(SourceUnavailable, match="does not parse"):
         package_export(state, recipient_scope="notional-customer-alpha")

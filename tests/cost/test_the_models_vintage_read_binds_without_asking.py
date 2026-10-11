@@ -45,7 +45,7 @@ def eo(monkeypatch):
     mod = _eo()
     calls = SimpleNamespace(fanout=[], enumerate=[], drop_scoped_by=False)
 
-    async def _fanout(identifier, query, asked_domains=None, **kwargs):
+    async def _fanout(identifier, query, asked_domains=None, **_caller):
         calls.fanout.append(identifier)
         if identifier.strip().lower() in ("lot 3", "3"):
             return PRODUCTION_LOT, {"instance_resolved": True, "instance_id": "3",
