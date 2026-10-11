@@ -519,3 +519,34 @@ def test_a_row_with_no_recorded_pin_is_409_no_recorded_pin(retry):
 def test_a_service_without_a_pin_in_the_body_is_422(retry):
     r = retry["as"]("svc:pin-driver").post(f"/ingest/{_RID}/retry", json={})
     assert r.status_code == 422
+
+
+# ===========================================================================
+# ARM 7 -- the refusal envelope carries hazard_id and gap when the body has them, and only then
+# ===========================================================================
+@pytest.fixture(scope="module")
+def pres():
+    import importlib
+    from unittest.mock import MagicMock
+    mp = pytest.MonkeyPatch()
+    for n in ("baml_client", "baml_client.types", "baml_client.type_builder"):
+        mp.setitem(sys.modules, n, MagicMock())
+    name = "agent_fleet.presentation_agent.main"
+    mp.delitem(sys.modules, name, raising=False)
+    mod = importlib.import_module(name)
+    mp.setitem(sys.modules, name, mod)
+    try:
+        yield mod
+    finally:
+        mp.undo()
+
+
+def test_the_envelope_keeps_hazard_id_and_gap_when_the_body_has_them(pres):
+    env = pres._refusal_envelope({"refused": True, "outcome": "source_unavailable", "reason": "r",
+                                  "hazard_id": "HAZ-1003", "gap": "no source connected"})
+    assert env["hazard_id"] == "HAZ-1003" and env["gap"] == "no source connected"
+
+
+def test_the_envelope_gets_neither_key_when_the_body_has_neither(pres):
+    env = pres._refusal_envelope({"refused": True, "outcome": "source_unavailable", "reason": "r"})
+    assert "hazard_id" not in env and "gap" not in env
