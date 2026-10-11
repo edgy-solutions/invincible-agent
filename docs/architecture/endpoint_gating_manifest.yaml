@@ -1627,6 +1627,42 @@ services:
           An identity-less caller is refused rather than read broadly; an unreachable graph
           is 503 rather than 404, because "we could not look" is not "there is no such
           thing".
+      - method: GET
+        path: /answers
+        identity: keycloak-jwt
+        gate: "get_current_user + produced_for_user_id = caller (bound parameter, the Electric proxy's key)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          The caller's OWN answers as summaries only (id, ts, title, summary, type, status, subject, archived). Never a body: the SELECT names a fixed narrow column list and only the about.* sub-paths of routing. Archived hidden unless include_archived. Search is a parameterized to_tsquery built from word tokens only.
+      - method: GET
+        path: /answers/{answer_id}/body
+        identity: keycloak-jwt
+        gate: "get_current_user + the SAME helper as /artifacts/{artifact_id} (PRODUCED_FOR ownership, seeding delegate, recorded origin)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          ONE body (rendered_output, routing, resolved_intent) by id. Shares _entitled_artifact_rec with /artifacts/{artifact_id}, so a caller refused there is refused here with the same status (404, not 403: no existence oracle). Archived answers stay readable: archive hides, never revokes.
+      - method: POST
+        path: /answers/{answer_id}/archive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Sets archived_at/by/reason on the Neo4j AnswerArtifact (projected to Postgres) and appends archive_history. Hides from the default view; never deletes or detaches. A non-owner gets the same 404 as an unentitled /artifacts read. Steward cross-user tidy is a FOLLOW-UP needing a Topaz permission. Idempotent.
+      - method: POST
+        path: /answers/{answer_id}/unarchive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Clears the archive properties on the node and appends an unarchive entry to archive_history. Same owner-only gate and 404 as archive; idempotent.
       - method: POST
         path: /ingest
         identity: keycloak-jwt

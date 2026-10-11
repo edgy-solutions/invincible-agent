@@ -437,7 +437,10 @@ class ApplyLoop:
                   .resolved_intent,
                   .routing_inline,
                   .rendered_output,
-                  .graph_trace_json
+                  .graph_trace_json,
+                  .archived_at,
+                  .archived_by,
+                  .archive_reason
                 } AS a,
                   [(a)-[:PRODUCED_BY]->(p) | p {
                     .actor_type, .actor_id, .version, .endpoint
@@ -536,7 +539,8 @@ class ApplyLoop:
                         resolved_intent,
                         routing, sources, graph_trace, rendered_output,
                         produced_by, produced_for, derived_from_artifact_id,
-                        produced_for_user_id
+                        produced_for_user_id,
+                        archived_at, archived_by, archive_reason
                     ) VALUES (
                         %(id)s, %(kind)s, %(watermark)s, %(created_at)s,
                         %(updated_at)s, %(valid_as_of)s, %(valid_until)s,
@@ -547,7 +551,8 @@ class ApplyLoop:
                         %(sources)s, %(graph_trace)s, %(rendered_output)s,
                         %(produced_by)s, %(produced_for)s,
                         %(derived_from_artifact_id)s,
-                        %(produced_for_user_id)s
+                        %(produced_for_user_id)s,
+                        %(archived_at)s, %(archived_by)s, %(archive_reason)s
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         -- Decision 3 Option C: every apply that touches
@@ -578,7 +583,12 @@ class ApplyLoop:
                         derived_from_artifact_id =
                             EXCLUDED.derived_from_artifact_id,
                         produced_for_user_id =
-                            EXCLUDED.produced_for_user_id
+                            EXCLUDED.produced_for_user_id,
+                        -- Archive (rev 187): the record is the Neo4j node's;
+                        -- this is its projection. Unarchive nulls all three.
+                        archived_at = EXCLUDED.archived_at,
+                        archived_by = EXCLUDED.archived_by,
+                        archive_reason = EXCLUDED.archive_reason
                     """,
                     {
                         "id": artifact_id,
@@ -646,6 +656,10 @@ class ApplyLoop:
                         "produced_for_user_id": (
                             (produced_for or {}).get("user_id")
                         ),
+                        # NULL = live. Absence survives the hop (no `or 0`).
+                        "archived_at": art.get("archived_at"),
+                        "archived_by": art.get("archived_by"),
+                        "archive_reason": art.get("archive_reason"),
                     },
                 )
 

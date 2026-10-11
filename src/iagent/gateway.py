@@ -45,6 +45,7 @@ from dotenv import load_dotenv
 from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
+from fastapi import Query as _Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -5521,54 +5522,11 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
         ) from exc
 
 
-class ArtifactResponse(_BaseModel):
-    """What a caller may read back about ONE of their own artifacts.
-
-    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
-    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
-    time. `rendered_output` is large, it is already streamed and projected, and a second
-    delivery path for it is a second thing to keep in step with the projector.
-    """
-    id: str
-    status: Optional[str] = None
-    summary: Optional[str] = None
-    question_text: Optional[str] = None
-    valid_as_of: Optional[int] = None
-    duration_ms: Optional[int] = None
-    derived_from: Optional[str] = None
-    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
-    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
-    # has no recorded verb" from "its verb is the string UNKNOWN".
-    subject_uri: Optional[str] = None
-    verb_iri: Optional[str] = None
-    subject_instance_id: Optional[str] = None
-
-
-@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
-async def get_artifact(
-    artifact_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Read back ONE artifact the caller produced — id, status, and its recorded route.
-
-    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
-    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
-    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
-    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
-
-    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
-    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
-    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
-    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
-    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
-    route cannot enforce that, but it can refuse to hand out a value that invites it.
-
-    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
-    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
-    but is not theirs is an existence oracle over other people's questions, and the question
-    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
-    before it becomes one.
-    """
+async def _entitled_artifact_rec(artifact_id: str, current_user: User) -> dict:
+    """The ONE entitlement decision for reading an AnswerArtifact by id, shared by
+    `GET /artifacts/{id}` (body-less) and `GET /answers/{id}/body`. Returns the node record the
+    decision was made on; raises 403/404/503 exactly as `/artifacts/{id}` always has. Callers
+    choose what to project from the record; this function never decides what is returned."""
     # ── THE KEY THE WRITER STAMPED, NOT THE AUTHORIZATION IDENTITY ─────────────────────
     #
     # MEASURED 2026-09-09: this route read `authz_id` and 285 of alice's 286 artifacts were
@@ -5657,6 +5615,59 @@ async def get_artifact(
                 )
             raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
 
+    return rec
+
+
+class ArtifactResponse(_BaseModel):
+    """What a caller may read back about ONE of their own artifacts.
+
+    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
+    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
+    time. `rendered_output` is large, it is already streamed and projected, and a second
+    delivery path for it is a second thing to keep in step with the projector.
+    """
+    id: str
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    question_text: Optional[str] = None
+    valid_as_of: Optional[int] = None
+    duration_ms: Optional[int] = None
+    derived_from: Optional[str] = None
+    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
+    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
+    # has no recorded verb" from "its verb is the string UNKNOWN".
+    subject_uri: Optional[str] = None
+    verb_iri: Optional[str] = None
+    subject_instance_id: Optional[str] = None
+
+
+@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
+async def get_artifact(
+    artifact_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Read back ONE artifact the caller produced — id, status, and its recorded route.
+
+    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
+    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
+    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
+    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
+
+    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
+    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
+    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
+    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
+    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
+    route cannot enforce that, but it can refuse to hand out a value that invites it.
+
+    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
+    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
+    but is not theirs is an existence oracle over other people's questions, and the question
+    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
+    before it becomes one.
+    """
+    rec = await _entitled_artifact_rec(artifact_id, current_user)
+
     intent: dict = {}
     if rec.get("resolved_intent"):
         try:
@@ -5683,6 +5694,115 @@ async def get_artifact(
         verb_iri=_or_none(intent.get("verb_iri")),
         subject_instance_id=_or_none(intent.get("subject_instance_id")),
     )
+
+
+# ── Answers at scale (rev 187) ─────────────────────────────────────────────────────────
+#
+# Cortex measured one Electric shape of the projection at 6.82 MB for ~816 rows (`routing` 47%,
+# `rendered_output` 31%); a list row needs ~200 B. So: summaries here, one body by id below, and
+# `/artifacts/{id}` stays body-less.
+
+def _answers_scope_id(current_user: User) -> str:
+    """The caller key the Electric proxy filters on: the JWT `sub`, validated by the SAME
+    `_escape_sql_string_literal` (UUID check). The list query binds it as a parameter, so the
+    value is the raw id, never the quote-escaped literal -- the two are equal for any UUID."""
+    verified_user_id = current_user.id
+    try:
+        _escape_sql_string_literal(verified_user_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=403, detail="no usable caller identity on this request") from exc
+    return verified_user_id
+
+
+@app.get("/answers", tags=["answers"])
+async def list_answers(
+    page: int = _Query(1, ge=1),
+    size: int = _Query(50, ge=1, le=200),
+    sort: str = _Query("newest", pattern="^(newest|oldest)$"),
+    q: Optional[str] = _Query(None, max_length=500),
+    type: Optional[str] = _Query(None, max_length=100),
+    status: Optional[str] = _Query(None, max_length=100),
+    include_archived: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    """The caller's own answers as SUMMARIES (id, ts, title, summary, type, status, subject,
+    archived). Never a body. Archived answers are hidden unless `include_archived`."""
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_list
+
+    caller = _answers_scope_id(current_user)
+    try:
+        return await run_in_threadpool(
+            lambda: answer_list.list_answers(
+                caller=caller, page=page, size=size, sort=sort, q=q, type_=type,
+                status=status, include_archived=include_archived,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("answers list failed: %s", exc)
+        raise HTTPException(status_code=503, detail="answer store unavailable")
+
+
+@app.get("/answers/{answer_id}/body", tags=["answers"])
+async def get_answer_body(
+    answer_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """ONE body, by id, under the SAME entitlement `/artifacts/{id}` applies. Archived answers
+    stay readable: archive hides, it never revokes."""
+    from .projector.apply_loop import _parse_json
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    return {
+        "id": str(rec["id"]),
+        "rendered_output": _parse_json(rec.get("rendered_output")),
+        "routing": _parse_json(rec.get("routing_inline")),
+        "resolved_intent": _parse_json(rec.get("resolved_intent")) or {},
+    }
+
+
+class ArchiveRequest(_BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class UnarchiveRequest(_BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+async def _set_archive(answer_id: str, current_user: User, *, archive: bool, reason: Optional[str]) -> dict:
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_artifact_writer
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    # Owner only. FOLLOW-UP: steward cross-user tidy needs a Topaz permission; no persona check here.
+    if not rec.get("is_owner"):
+        raise HTTPException(status_code=404, detail=f"no artifact {answer_id!r} for you")
+    try:
+        changed = await run_in_threadpool(
+            lambda: answer_artifact_writer.set_archive_state(
+                neo4j_driver, answer_id, archive=archive,
+                by=current_user.id, reason=reason,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("archive write failed for %s: %s", answer_id, exc)
+        raise HTTPException(status_code=503, detail="artifact store unavailable")
+    return {"id": answer_id, "archived": archive, "changed": bool(changed)}
+
+
+@app.post("/answers/{answer_id}/archive", tags=["answers"])
+async def archive_answer(
+    answer_id: str, req: ArchiveRequest, current_user: User = Depends(get_current_user),
+):
+    """Hide an answer from the default view. Never deletes; idempotent."""
+    return await _set_archive(answer_id, current_user, archive=True, reason=req.reason)
+
+
+@app.post("/answers/{answer_id}/unarchive", tags=["answers"])
+async def unarchive_answer(
+    answer_id: str, req: UnarchiveRequest, current_user: User = Depends(get_current_user),
+):
+    return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
 
 
 async def _launch_supervisor_job(
@@ -11254,6 +11374,10 @@ async def electric_shape_proxy(
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"
+        if table == "answer_artifact_projection":
+            # Rev 187: the default view hides archived answers (archive hides, never deletes;
+            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
+            server_where += " AND archived_at IS NULL"
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
