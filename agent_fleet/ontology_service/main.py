@@ -2988,6 +2988,31 @@ class EnumerateInstancesRequest(BaseModel):
             "A provider that ignores them answers class-wide and says so via scoped_by."
         ),
     )
+    # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
+    # so a provider gates both verbs on one pair of fields. Forwarded to every provider AND gated
+    # on here, after the fan-out, by `_filter_sustainment_candidates` -- the same origin verdict
+    # `/resolve_instance` and `/notice_parts` apply (ruled 2026-10-10, (d)). Defaulted for the same
+    # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
+                                   body: dict) -> tuple[list[dict], int]:
+    """THE SAME GATE `/resolve_instance` RUNS, applied after the enumerate fan-out to a provider's
+    `members` body. Returns (kept, count). The count is the provider's own minus what was
+    withheld, floored at len(kept), so it never reveals how many were withheld. A lookup failure
+    is the 503 that route answers, never an unfiltered list."""
+    members = body["members"]
+    try:
+        kept = await _filter_sustainment_candidates(
+            members, user_email=request.user_email or "",
+            entitled_domains=list(request.entitled_domains or []))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    provider_count = int(body.get("count") or len(members))
+    return kept, max(len(kept), provider_count - (len(members) - len(kept)))
 
 
 @app.post("/enumerate_instances")
@@ -3059,8 +3084,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
                     # menu from this". Sent unconditionally — an empty dict is the same request
                     # this endpoint made before the field existed, so a provider still on the
                     # old shape sees no change in behaviour, only an extra key.
+                    # THE CALLER TRAVELS ON EVERY POST, empty rather than absent when nobody
+                    # was named, so "no caller" reaches a gate as a value it can refuse on.
                     json={"class_uri": request.class_uri,
-                          "bound_slots": dict(request.bound_slots or {})},
+                          "bound_slots": dict(request.bound_slots or {}),
+                          "user_email": request.user_email or "",
+                          "entitled_domains": list(request.entitled_domains or [])},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -3080,11 +3109,13 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         # shape therefore behaves correctly here without being changed.
         _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
-            print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']} "
-                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
-            return {"outcome": "members", "members": body["members"],
-                    "count": int(body.get("count") or len(body["members"])),
+            kept, count = await _gate_enumerated_members(request, body)
+            if not kept:  # WITHHELD IS UNKNOWN: as `empty`
+                answered_empty += 1
+                continue
+            print(f"[Engine O] enumerate {request.class_uri} -> members ({len(kept)}) "
+                  f"from {prov['provider']} scoped_by={_scoped_by or '[] (class-wide)'}")
+            return {"outcome": "members", "members": kept, "count": count,
                     "provider": prov["provider"],
                     # WHICH slots, not whether. A provider handed `{lot, category}` that
                     # honours only `lot` produced a list scoped by one of two, and a boolean
@@ -3188,7 +3219,8 @@ def _docs_pool_accepts(referent) -> bool:
 
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
-                           narrowed_by: list[str]) -> dict | None:
+                           narrowed_by: list[str], *, user_email: str = "",
+                           entitled_domains: list[str] | None = None) -> dict | None:
     """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
 
     BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
@@ -3197,7 +3229,10 @@ async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
     exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
     the ask, which is where the menu for a near-miss already lives.
     """
-    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
+    enum = await enumerate_instances(EnumerateInstancesRequest(
+        class_uri=referent, bound_slots=bound,
+        user_email=user_email, entitled_domains=list(entitled_domains or []),
+    ))
     if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
@@ -4645,6 +4680,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
             scoped = await _bind_from_scope(
                 referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+                user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
                 accepted[name] = scoped["instance_id"]
