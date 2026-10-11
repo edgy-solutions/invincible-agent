@@ -48,6 +48,8 @@ from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
 
 FP = "IPCN25300X"
+INGEST = "sha256:" + "ab12" * 16   # a real ingest id: NOT the extracted doc_id
+INGEST = "sha256:" + "ab12" * 16   # a real ingest id: NOT the extracted doc_id
 EV = "p3 table 2 row 7"
 IRI = "http://internal/components/"
 PIN = "doc-tools@61f74dc"
@@ -248,7 +250,7 @@ def _submits():
 def test_reject_reaches_submit_decision_with_the_code_and_the_row_ends_review_rejected(act):
     _FakeAsyncClient.submit_response = {"status": "accepted", "accepted": True, "rejected": True,
                                         "reason_code": "parts_list_unusable", "resolved_count": 0,
-                                        "notice_fingerprint": FP}
+                                        "notice_fingerprint": FP, "ingest_id": INGEST}
     r = act.post("/human_tasks/grouped:wf-1/act",
                  json={"decision": "rejected", "reason_code": "parts_list_unusable", "comment": "garbled"})
     assert r.status_code == 200, r.text
@@ -258,8 +260,54 @@ def test_reject_reaches_submit_decision_with_the_code_and_the_row_ends_review_re
     assert sent["decision"]["comment"] == "garbled"
     assert sent["decision"]["acted_by"] == "alice@example.com"
     assert r.json()["status"] == "review_rejected"
-    assert [(i, s) for i, s, _ in act.statuses] == [(FP, ist.REVIEW_REJECTED)], \
-        "the ingest row did not end review_rejected"
+    assert r.json()["ingest_row"] == "review_rejected"
+    assert [(i, s) for i, s, _ in act.statuses] == [(INGEST, ist.REVIEW_REJECTED)], \
+        "the ingest row was not marked review_rejected by the INGEST id"
+    assert all(i != FP for i, _, _ in act.statuses), "the extracted doc_id was used as a row key"
+
+
+def test_reject_of_a_review_with_no_ingest_id_writes_no_row_and_says_unlinked(act):
+    _FakeAsyncClient.submit_response = {"status": "accepted", "accepted": True, "rejected": True,
+                                        "reason_code": "parts_list_unusable", "resolved_count": 0,
+                                        "notice_fingerprint": FP, "ingest_id": ""}
+    r = act.post("/human_tasks/grouped:wf-1/act",
+                 json={"decision": "rejected", "reason_code": "parts_list_unusable", "comment": "x"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "review_rejected"
+    assert r.json()["ingest_row"] == "unlinked"
+    assert act.statuses == [], "an unlinked review wrote an ingest row"
+
+
+def test_review_start_request_refuses_a_malformed_ingest_id():
+    from pydantic import ValidationError
+    ok = gateway.ReviewStartRequest(notice_id=FP, impacted_parts=[], ingest_id=INGEST)
+    assert ok.ingest_id == INGEST
+    for bad in (FP, "ab12" * 16, "sha256:" + "AB12" * 16, "sha256:abc"):
+        with pytest.raises(ValidationError):
+            gateway.ReviewStartRequest(notice_id=FP, impacted_parts=[], ingest_id=bad)
+
+
+def _sensor():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "src" / "iagent" / "defs" / "extraction_review_sensor.py"
+    spec = importlib.util.spec_from_file_location("_sensor_under_steward", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_sensor_turns_a_valid_source_sha256_into_the_payload_ingest_id():
+    sha = "ab12" * 16
+    p = _sensor().build_start_review_payload({"doc_id": FP, "source_sha256": sha, "review_items": []})
+    assert p["ingest_id"] == "sha256:" + sha
+
+
+@pytest.mark.parametrize("bad", [None, "", "ab12", "sha256:" + "ab12" * 16, "AB12" * 16, 12345])
+def test_sensor_omits_ingest_id_for_an_absent_or_malformed_source_sha256(bad):
+    rj = {"doc_id": FP, "review_items": []}
+    if bad is not None:
+        rj["source_sha256"] = bad
+    assert "ingest_id" not in _sensor().build_start_review_payload(rj)
 
 
 def test_reject_without_a_reason_code_is_422_and_reaches_nothing(act):

@@ -1942,6 +1942,7 @@ async def _run_grouped_human_await(
     ctx.set("batch_items", batch_items)
     ctx.set("approver", approver)
     ctx.set("notice_fingerprint", notice_fingerprint)
+    ctx.set("ingest_id", request.get("ingest_id") or "")
     ctx.set("notice_id", notice_id)
     ctx.set("doc_type", doc_type)
     ctx.set("pipeline_version", request.get("pipeline_version") or "")

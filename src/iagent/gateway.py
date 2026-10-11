@@ -1090,6 +1090,10 @@ class ReviewStartRequest(_BaseModel):
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
+    # The ingest row this notice came through (`sha256:<64 hex>`), when the extraction names its
+    # source document. The ONLY key the narrow reject may use to mark an ingest row: the
+    # extracted doc_id (`notice_id`) is LLM-derived and never matches a row id.
+    ingest_id: Optional[str] = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     # ── ADMISSION FACTS: REMOVED FROM THE CONTRACT (ADR-0034 phase 1.3, consumer half) ────────
     # `format_fingerprint` / `pipeline_version` were briefly accepted here as caller-supplied
     # facts. They are gone: ReviewStarter DERIVES both from the artifact `artifact_uri` names.
@@ -1202,6 +1206,7 @@ async def start_review(
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    body["ingest_id"] = req.ingest_id or ""   # rebuilding hop: absent here = absent downstream
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
     # contract. This is a REBUILDING HOP (the body is hand-enumerated twice over), which is exactly
@@ -3795,19 +3800,28 @@ async def act_on_human_task(
         if sub.get("rejected"):
             # NARROW REJECT: the workflow wrote nothing. The task is closed (above); the ingest row,
             # when this notice is one, ends `review_rejected` (best effort -- never fail the act).
-            _nf = sub.get("notice_fingerprint") or ""
-            try:
-                from . import ingest_status as _ist
-                await run_in_threadpool(
-                    lambda: _ist.update_status(_nf, _ist.REVIEW_REJECTED,
-                                               detail=req.reason_code or "rejected"))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("review_rejected status not written for %s: %s", _nf, exc)
+            # Keyed by the INGEST ID only. The fingerprint is the extracted doc_id and never
+            # matches an ingest row; a review without an ingest id writes nothing.
+            _iid = sub.get("ingest_id") or ""
+            _row = "unlinked"
+            if _iid:
+                try:
+                    from . import ingest_status as _ist
+                    await run_in_threadpool(
+                        lambda: _ist.update_status(_iid, _ist.REVIEW_REJECTED,
+                                                   detail=req.reason_code or "rejected"))
+                    _row = "review_rejected"
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("review_rejected status not written for %s: %s", _iid, exc)
+            else:
+                logger.info("pcn grouped review rejected with no ingest_id: ingest row unlinked, "
+                            "task_id=%s wf=%s", task_id, wf)
             logger.info("pcn grouped review rejected: task_id=%s wf=%s by=%s code=%s",
                         task_id, wf, actor, req.reason_code)
             return {"task_id": task_id, "decision": req.decision, "accepted": True,
                     "rows_resolved": n, "review_dispatched": False,
-                    "reason_code": req.reason_code, "status": "review_rejected"}
+                    "reason_code": req.reason_code, "status": "review_rejected",
+                    "ingest_row": _row}
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
                     task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,

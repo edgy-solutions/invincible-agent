@@ -312,6 +312,7 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
                 "reason": "this review was already resolved by a member of its audience"}
     approver = await ctx.get("approver")
     notice_fingerprint = await ctx.get("notice_fingerprint")
+    ingest_id = await ctx.get("ingest_id") or ""
 
     batch = _reviewbatch_from_state(approver, batch_items)
     submission = evaluate_submission(batch, request.get("decision", {}), notice_fingerprint=notice_fingerprint)
@@ -322,7 +323,7 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     await ctx.promise("decision", type_hint=dict).resolve(request.get("decision", {}))
     return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions),
             "rejected": submission.rejected, "reason_code": submission.reason_code,
-            "notice_fingerprint": notice_fingerprint}
+            "notice_fingerprint": notice_fingerprint, "ingest_id": ingest_id}
 
 
 @grouped_review.handler()
