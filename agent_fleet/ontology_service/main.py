@@ -2983,6 +2983,13 @@ class EnumerateInstancesRequest(BaseModel):
             "A provider that ignores them answers class-wide and says so via scoped_by."
         ),
     )
+    # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
+    # so a provider gates both verbs on one pair of fields. RECEIVED AND FORWARDED, NOT GATED
+    # ON HERE: the gate belongs to a provider that holds origin-scoped instances (ruled
+    # 2026-10-10, (d): enumerateInstances gets resolveInstance's gate). Defaulted for the same
+    # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
 
 
 @app.post("/enumerate_instances")
@@ -3054,8 +3061,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
                     # menu from this". Sent unconditionally — an empty dict is the same request
                     # this endpoint made before the field existed, so a provider still on the
                     # old shape sees no change in behaviour, only an extra key.
+                    # THE CALLER TRAVELS ON EVERY POST, empty rather than absent when nobody
+                    # was named, so "no caller" reaches a gate as a value it can refuse on.
                     json={"class_uri": request.class_uri,
-                          "bound_slots": dict(request.bound_slots or {})},
+                          "bound_slots": dict(request.bound_slots or {}),
+                          "user_email": request.user_email or "",
+                          "entitled_domains": list(request.entitled_domains or [])},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -3183,7 +3194,8 @@ def _docs_pool_accepts(referent) -> bool:
 
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
-                           narrowed_by: list[str]) -> dict | None:
+                           narrowed_by: list[str], *, user_email: str = "",
+                           entitled_domains: list[str] | None = None) -> dict | None:
     """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
 
     BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
@@ -3192,7 +3204,10 @@ async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
     exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
     the ask, which is where the menu for a near-miss already lives.
     """
-    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
+    enum = await enumerate_instances(EnumerateInstancesRequest(
+        class_uri=referent, bound_slots=bound,
+        user_email=user_email, entitled_domains=list(entitled_domains or []),
+    ))
     if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
@@ -4640,6 +4655,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
             scoped = await _bind_from_scope(
                 referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+                user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
                 accepted[name] = scoped["instance_id"]
