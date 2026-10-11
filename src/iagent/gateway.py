@@ -8018,63 +8018,79 @@ async def register_frontend_capabilities(
     _graph_registered, _graph_failed = 0, []
     _registrar_url = os.getenv("MESH_REGISTRAR_URL")
     if _registrar_url:
-        from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+        # ── THE EMIT LOOP RUNS OFF THE EVENT LOOP ──────────────────────────────────
+        # Was: this loop ran inline in an `async def`, and each
+        # `_emit_presentation_to_registrar` is a SYNC HTTP POST (timeout=30.0). Measured
+        # live on rev 186 (2026-10-10): ~49 capabilities per registration at a mean 0.42s
+        # each held the loop ~21s per registration. Every cortex tab registers at load,
+        # two overlapping registrations exceeded the 50s liveness window (5 x 10s /health
+        # timeouts) and the probe killed cortex-bff (exit 137); each restart made the tabs
+        # re-register. Now the whole loop is a plain function run in the threadpool.
+        # `_cap_registry.register` above is an in-process dict and stays on the loop.
+        from starlette.concurrency import run_in_threadpool
 
-        for _c in _admitted:
-            _contract = _c.get("contract") if isinstance(_c, dict) else None
-            _recomputes = None
-            if isinstance(_contract, dict) and "recomputes" in _contract:
-                # Tri-state preserved end to end: only a DECLARED value travels.
-                _recomputes = bool(_contract.get("recomputes"))
-            _outcome = _emit_presentation_to_registrar(
-                registrar_url=_registrar_url,
-                # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
-                # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
-                # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
-                # `#`, so the whole thing survived and the name became
-                #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
-                # — a URN DELIMITER inside a URN component. Measured on the live substrate
-                # 2026-09-02: the __system_default__ rows written by the presentation agent
-                # were clean and the cortex-ui-desktop rows written HERE carried the colon,
-                # which is what identified this as the second site.
-                #
-                # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
-                # THERE, in the same week the five-registries lesson was written up. Fixing
-                # the instance you found is what stops you looking for the sibling. Imported
-                # rather than re-implemented so there is no third copy to diverge.
-                #
-                # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
-                # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
-                # this ships leaves the colon-bearing rows standing and double-binds every
-                # subject. It must ride the same migration as the archetype-out-of-the-name
-                # ruling, which moves every presentation urn anyway.
-                name=(
-                    f"presentation_{str(_c.get('archetype') or '').lower()}"
-                    f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
-                    f"__{payload.frontend_id}"
-                ),
-                description=(
-                    f"{payload.frontend_id} renders {_c.get('subject_uri')} "
-                    f"as {_c.get('archetype')}"
-                ),
-                subject_uri=str(_c.get("subject_uri") or ""),
-                object_uri=str(_c.get("object_uri") or ""),
-                archetype=str(_c.get("archetype") or ""),
-                expected_fields=list(_c.get("expected_fields") or []),
-                persona_fit=list(_c.get("persona_fit") or []),
-                domain_fit=list(_c.get("domain_fit") or []),
-                # The mesh helper takes `version: str`. An ABSENT version is carried as
-                # empty rather than the string "None", which is what `str(None)` would put
-                # into the graph and what a reader would then see as a version.
-                version=payload.frontend_version or "",
-                frontend_id=payload.frontend_id,
-                recomputes=_recomputes,
-            )
-            if _outcome is True:
-                _graph_registered += 1
-            else:
-                _graph_failed.append({"subject_uri": _c.get("subject_uri"),
-                                      "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+        def _emit_all() -> tuple[int, list]:
+            _graph_registered, _graph_failed = 0, []
+            from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+
+            for _c in _admitted:
+                _contract = _c.get("contract") if isinstance(_c, dict) else None
+                _recomputes = None
+                if isinstance(_contract, dict) and "recomputes" in _contract:
+                    # Tri-state preserved end to end: only a DECLARED value travels.
+                    _recomputes = bool(_contract.get("recomputes"))
+                _outcome = _emit_presentation_to_registrar(
+                    registrar_url=_registrar_url,
+                    # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
+                    # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
+                    # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
+                    # `#`, so the whole thing survived and the name became
+                    #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
+                    # — a URN DELIMITER inside a URN component. Measured on the live substrate
+                    # 2026-09-02: the __system_default__ rows written by the presentation agent
+                    # were clean and the cortex-ui-desktop rows written HERE carried the colon,
+                    # which is what identified this as the second site.
+                    #
+                    # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
+                    # THERE, in the same week the five-registries lesson was written up. Fixing
+                    # the instance you found is what stops you looking for the sibling. Imported
+                    # rather than re-implemented so there is no third copy to diverge.
+                    #
+                    # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
+                    # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
+                    # this ships leaves the colon-bearing rows standing and double-binds every
+                    # subject. It must ride the same migration as the archetype-out-of-the-name
+                    # ruling, which moves every presentation urn anyway.
+                    name=(
+                        f"presentation_{str(_c.get('archetype') or '').lower()}"
+                        f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
+                        f"__{payload.frontend_id}"
+                    ),
+                    description=(
+                        f"{payload.frontend_id} renders {_c.get('subject_uri')} "
+                        f"as {_c.get('archetype')}"
+                    ),
+                    subject_uri=str(_c.get("subject_uri") or ""),
+                    object_uri=str(_c.get("object_uri") or ""),
+                    archetype=str(_c.get("archetype") or ""),
+                    expected_fields=list(_c.get("expected_fields") or []),
+                    persona_fit=list(_c.get("persona_fit") or []),
+                    domain_fit=list(_c.get("domain_fit") or []),
+                    # The mesh helper takes `version: str`. An ABSENT version is carried as
+                    # empty rather than the string "None", which is what `str(None)` would put
+                    # into the graph and what a reader would then see as a version.
+                    version=payload.frontend_version or "",
+                    frontend_id=payload.frontend_id,
+                    recomputes=_recomputes,
+                )
+                if _outcome is True:
+                    _graph_registered += 1
+                else:
+                    _graph_failed.append({"subject_uri": _c.get("subject_uri"),
+                                          "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+            return _graph_registered, _graph_failed
+
+        _graph_registered, _graph_failed = await run_in_threadpool(_emit_all)
         if _graph_failed:
             # LOUD, and per-capability: a menu that is half in the graph renders
             # inconsistently depending on which shape an answer takes, which is far
