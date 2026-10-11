@@ -1565,14 +1565,19 @@ def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_
                         lambda task_id: task_exists_calls.append(task_id) or False)
     monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
 
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    ref = f"ingress-user/pdf/{'1' * 64}/generated/doc_pdf/doc-tools@61f74dc/manifest.json"
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage",
+                              json={"stage": "review", "extraction_ref": ref})
     assert r.status_code == 200, r.text
     assert r.json() == {"ingest_id": row["id"], "stage": "awaiting_origin",
                         "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
     assert task_exists_calls == [], "no task lookup for a deliberately domainless kind"
     assert register_calls == [], "no task filed for a deliberately domainless kind"
+    # Q2 (2026-10-10): the row carries the request's extraction_ref, so a steward's accepted
+    # origin can later file the promotion from it.
     assert status_calls == [(row["id"], ist.AWAITING_ORIGIN,
                              {"extracted_count": None, "extracted_total": None,
+                              "extraction_ref": ref,
                               "detail": "origin resolved by evidence, not kind (ruling 2026-10-02)"})]
 
 

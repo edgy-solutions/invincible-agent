@@ -82,13 +82,16 @@ DUPLICATE = "duplicate"
 # ca's SDK -- it is this repo's own event-branch extension. Keeping it out of STAGES keeps that
 # seal intact; it is still a legal `update_status` target via ALL_STATUSES below.
 CASE_OPENED = "case_opened"
-# Out-of-band terminal, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
+# Out-of-band, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
 # registration declares `domain` EXPLICITLY as null (`pdf`, `engineering-document`,
 # `doors-export` -- "origin resolved by evidence, not kind") never enters `review`'s task-filing
 # step at all, so it does not belong on the STAGES ladder either -- it is a different fact
 # (no audience exists to file a task against), recorded once and done, same as a duplicate
-# arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
-# 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
+# arrival. Terminal for doc-tools' stage route and for the retry route: any move out of
+# `awaiting_origin` through them (including `failed`) is refused 409. The ONE exit is a
+# steward's accepted origin (gateway's `write_origin_route`), which files
+# `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10 Q2,
+# superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
 AWAITING_ORIGIN = "awaiting_origin"
 ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
 

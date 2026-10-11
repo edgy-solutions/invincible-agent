@@ -9966,6 +9966,7 @@ def _read_extraction_manifest(key: str) -> dict:
 
 async def _file_or_find_document_promotion_task(
     ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
+    domain: Optional[str] = None,
 ) -> tuple[Optional[str], str]:
     """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
     refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
@@ -9978,6 +9979,10 @@ async def _file_or_find_document_promotion_task(
     `content_kind` (the declared, registry-level kind), never on `kind` (pdf|cad|xml) -- a lookup
     on the file format always misses the registry, resolves to a None domain, and files a task
     no one can be entitled to.
+
+    `domain`, when given (stripped non-empty), IS the audience domain and the kind registry is not
+    consulted: the origin-accept caller (`write_origin_route`) passes the accepted origin's
+    `owner_domain` (Q2 ruling 2026-10-10). Otherwise the audience comes from the kind registry.
 
     `requested_by` is the caller each route should be attributing the task to -- doc-tools'
     own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
@@ -10000,8 +10005,10 @@ async def _file_or_find_document_promotion_task(
 
     from . import content_kinds, human_tasks, promotion
 
-    kind_reg = content_kinds.by_kind(row.get("content_kind"))
-    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    domain = str(domain or "").strip() or None
+    if domain is None:
+        kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
     if domain is None:
         # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write.
         raise HTTPException(status_code=422, detail={
@@ -10091,7 +10098,11 @@ async def update_ingest_stage(
     EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
     2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
     filed at all (there is no fixed audience to file one against) and the row moves straight
-    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
+    to the out-of-band stage `awaiting_origin` instead of `review`, persisting the body's
+    `extraction_ref` for the later filing. `awaiting_origin` is terminal for THIS route and for
+    the retry route; the ONE exit is a steward's accepted origin (`write_origin_route`), which
+    files `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10
+    Q2, superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10104,7 +10115,8 @@ async def update_ingest_stage(
     # STAGES' own order.
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal HERE too
+    # (its one exit is a steward's accepted origin, write_origin_route; Q2 ruling 2026-10-10),
     # so a later move (including `failed`) off it is refused 409, same as the other three.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
                         ingest_status.AWAITING_ORIGIN)
@@ -10174,10 +10186,12 @@ async def update_ingest_stage(
         if deliberately_domainless:
             # NO TASK -- there is no fixed audience to file one against; the origin_record
             # case (section 6) resolves this artifact's audience per-artifact, from evidence,
-            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            # later. Out-of-band, same shape as `duplicate` (ingest_status.py); terminal for
+            # this route, exited only by a steward's accepted origin (Q2 ruling 2026-10-10).
             await run_in_threadpool(lambda: ingest_status.update_status(
                 ingest_id, ingest_status.AWAITING_ORIGIN,
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                extraction_ref=req.extraction_ref,
                 detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
             return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
                     "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
@@ -10250,6 +10264,14 @@ async def write_origin_route(
     Never raises for a refused WRITE -- `write_refused` is a normal outcome of a resolution that
     fails `check_dropper_bound` or shape validation, reported 200 like `written` is. Only the
     caller gate (403) and the missing-steward bound check (422) are HTTP errors.
+
+    A steward's ACCEPT IS THE ATTESTATION (ruling 2026-10-10 Q2, superseding the 10-02 "terminal"
+    ruling for the accept branch only): when the origin is `written` and the ingest row is at
+    `awaiting_origin`, this files `document_promotion:<origin owner_domain>` (origin already
+    recorded) and moves the row to `review` -- TASK FIRST, STATUS SECOND. A filing refusal never
+    undoes the write and never strands the row: the response stays `written` with
+    `promotion: {"filed": False, "error": ...}`. Reject stays terminal and dropper-only. The
+    response gains `promotion` (None when nothing was attempted); `status` is unchanged.
     """
     from iagent_mesh.interfaces import Initiator
 
@@ -10302,7 +10324,41 @@ async def write_origin_route(
         initiator=initiator,
         dropper_is_program_member=dropper_is_program_member,
     )
-    return {"status": result["status"], "reason": result.get("reason")}
+    promotion_out = None
+    if result["status"] == "written":
+        promotion_out = await _file_promotion_for_accepted_origin(req)
+    return {"status": result["status"], "reason": result.get("reason"),
+            "promotion": promotion_out}
+
+
+async def _file_promotion_for_accepted_origin(req: "OriginWriteRequest") -> Optional[dict]:
+    """Q2 (2026-10-10): a steward's accepted origin on an `awaiting_origin` row files the
+    `document_promotion:<owner_domain>` task and moves the row to `review`. None when the row is
+    absent or not at `awaiting_origin` (nothing attempted)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    ingest_id = req.artifact_id
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row["status"] != ingest_status.AWAITING_ORIGIN:
+        return None
+    try:
+        # TASK FIRST, STATUS SECOND: a refusal here leaves the row at awaiting_origin.
+        task_id, task_status = await _file_or_find_document_promotion_task(
+            ingest_id, row, requested_by=_CASE_RUNNER_SERVICE_AUTHZ_ID,
+            extraction_ref=row.get("extraction_ref"),
+            domain=req.origin.get("owner_domain"))
+    except HTTPException as exc:
+        err = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
+        logger.warning("origin accepted but promotion not filed: ingest_id=%s error=%s",
+                       ingest_id, err)
+        return {"filed": False, "error": err}
+    domain_label = str(req.origin.get("owner_domain") or "").strip().upper()
+    await run_in_threadpool(lambda: ingest_status.update_status(
+        ingest_id, ingest_status.REVIEW,
+        detail=f"origin accepted by a steward; promotion filed to document_promotion:{domain_label}"))
+    return {"filed": True, "task_id": task_id, "task_status": task_status}
 
 
 _SEEDED_BY_STAMP_CYPHER = (

@@ -25,6 +25,12 @@ payload's properties over it, a None value removes the property, outcome "writte
 named iagent_mesh/ as the home; the concrete writer is in this repo, the SDK has only the
 Protocol, iagent_mesh/interfaces.py:1118.)
 
+The arms: 1 a rejection never widens (and files nothing); 2 an ACCEPT on an awaiting_origin
+row files `document_promotion:<owner_domain>` through the real `write_origin_route` (Q2 ruling
+2026-10-10) and the real `promotion.act` then opens it, `record` rung kept, dropper refused;
+3 accepted then promoted; 4 a no-origin drop promoted by a steward; 5 the dropper cannot attest;
+6 the backfill.
+
 Run: uv run --frozen pytest tests/security/test_steward_origin_case_end_to_end.py -q
 """
 from __future__ import annotations
@@ -41,7 +47,9 @@ from iagent_mesh.interfaces import Initiator
 from iagent_mesh.write_results import MeshWriteResult
 
 from agent_fleet.ontology_service import notice_parts as np_mod
-from src.iagent import origin_writer, promotion, promotion_stores
+from src.iagent import gateway, origin_writer, promotion, promotion_stores
+from src.iagent import human_tasks as ht_mod
+from src.iagent import ingest_status as ist_mod
 from src.iagent.promotion_stores import INGEST_FACT_FAMILY, Neo4jIngestGraph
 
 # The case-run harness of the per-piece file: its fixtures and drivers, not a second copy.
@@ -336,6 +344,62 @@ def _write(g, resolution, who="steward@x"):
         dropper_is_program_member=True)
 
 
+class IngestWorld:
+    """An in-memory `ingest_status` (one row, at `awaiting_origin`) and a recording
+    `human_tasks` -- what the real `write_origin_route` files into (Q2, 2026-10-10)."""
+
+    def __init__(self):
+        self.row = {
+            "id": INGEST_ID, "status": "awaiting_origin", "kind": "pdf", "content_kind": "pdf",
+            "submitted_by": ALICE, "on_behalf_of": None,
+            "object_prefix": f"ingress-user/pdf/{HEX}/",
+            "extraction_ref": f"ingress-user/pdf/{HEX}/generated/doc_pdf/doc-tools@61f74dc/manifest.json",
+        }
+        self.manifest = {
+            "doc_id": NOTICE, "filename": "pcn.pdf",
+            "source_key": f"ingress-user/pdf/{HEX}/pcn.pdf",
+            "pipeline_version": "doc-tools@61f74dc", "ingest_id": INGEST_ID,
+            "provenance": {"standing": "supervised", "ingest_id": INGEST_ID}}
+        self.tasks = []
+        self.program_asks = []
+
+    def get_row(self, ingest_id):
+        return self.row if ingest_id == self.row["id"] else None
+
+    def update_status(self, ingest_id, status, **kw):
+        assert ingest_id == self.row["id"]
+        self.row["status"] = status
+
+
+@pytest.fixture
+def ingest_world(monkeypatch):
+    w = IngestWorld()
+    monkeypatch.setattr(ist_mod, "get_row", w.get_row)
+    monkeypatch.setattr(ist_mod, "update_status", w.update_status)
+    monkeypatch.setattr(ht_mod, "task_exists", lambda task_id: False)
+    monkeypatch.setattr(ht_mod, "register_task",
+                        lambda **kw: w.tasks.append(kw) or {"task_id": kw["task_id"], "recipients": []})
+    monkeypatch.setattr(ht_mod, "check_can_view_program",
+                        lambda program, who: w.program_asks.append((program, who)) or True)
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: w.manifest)
+    return w
+
+
+def _case_runner():
+    return type("U", (), {"authz_id": "svc:case-runner", "id": "svc:case-runner",
+                          "is_authenticated": True})()
+
+
+async def _accept_through_the_route(g, rec, monkeypatch):
+    """The accepted case's resolution, handed to the REAL `gateway.write_origin_route`, whose
+    graph writer is this file's FakeGraph (the class the route imports is patched)."""
+    import agent_fleet.utils.mesh_writers.neo4j_graph as ng
+    monkeypatch.setattr(ng, "Neo4jGraphWriter", lambda **kw: g)
+    req = gateway.OriginWriteRequest(**{k: rec[k] for k in (
+        "artifact_id", "dropped_by", "origin", "evidence", "approval_chain")})
+    return await gateway.write_origin_route(req, current_user=_case_runner())
+
+
 # ── 1. a rejection never widens ───────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -358,7 +422,7 @@ def status_row():
 
 
 @pytest.mark.asyncio
-async def test_arm1_a_REJECTION_never_widens(registered, writer, status_row):
+async def test_arm1_a_REJECTION_never_widens(registered, writer, status_row, ingest_world):
     g = _world()
     before = list(g.write_node_calls)
     ev = _suggestion(dropper=ALICE)
@@ -375,28 +439,64 @@ async def test_arm1_a_REJECTION_never_widens(registered, writer, status_row):
     got = _assert_visible(g, NOTICE, ALICE, ["SUSTAINMENT"], prog)     # the dropper sees it
     assert "origin" not in got["sources"][0], got["sources"][0]
     assert prog.calls == [], prog.calls
+    # reject stays terminal: no promotion filed, the row stays where it was.
+    assert ingest_world.tasks == [] and ingest_world.row["status"] == "awaiting_origin"
     # the status read: awaiting_origin is the dropper's alone.
     assert status_row(BOB) is None
     row = status_row(ALICE)
     assert row is not None and row["status"] == ist.AWAITING_ORIGIN, row
 
 
-# ── 2. accepted, not promoted: still the dropper's alone ──────────────────────────────────────
+# ── 2. accepted on an awaiting_origin row: the accept files the promotion (Q2, 2026-10-10) ────
 
 @pytest.mark.asyncio
-async def test_arm2_ACCEPTED_but_not_promoted_is_still_dropper_only(registered, writer):
+async def test_arm2_ACCEPTED_on_awaiting_origin_files_the_promotion_and_promotion_opens_it(
+        registered, writer, ingest_world, monkeypatch):
+    """A steward's accept IS the attestation: the accept files `document_promotion:SUSTAINMENT`
+    and moves the row to `review`; until a SUSTAINMENT steward (not the dropper) promotes it,
+    bob still reads the unknown-notice body; then the real `promotion.act` opens it, with the
+    `record` rung kept, and the dropper still cannot attest."""
     g = _world()
     res = await _accepted_resolution(suggested=RECORD_ORIGIN, artifact_id=INGEST_ID)
-    assert _write(g, res) == {"status": "written", "reason": None}
+    out = await _accept_through_the_route(g, res, monkeypatch)
+    assert out["status"] == "written" and out["promotion"]["filed"] is True, out
     # The node carries the origin under the names the cypher READS (derived mapping).
     node = g.nodes[INGEST_ID]
     assert node.get(ORIGIN_PROP_OF["origin_owner_domain"]) == "SUSTAINMENT", node
     assert node.get(ORIGIN_PROP_OF["origin_program"]) == "prog-x", node
     assert node.get(ORIGIN_PROP_OF["origin_resolved_by"]) == "record", node
+    # The promotion was filed to the origin's domain, and the row moved to review.
+    [task] = ingest_world.tasks
+    assert task["kind"] == "document_promotion" and task["audience"] == AUDIENCE, task
+    assert ingest_world.row["status"] == "review", ingest_world.row
+    # Filed is not promoted: bob is still unknown-identical, the dropper sees it.
     prog = Program([("prog-x", BOB)])
     _assert_unknown(g, NOTICE, BOB, ["SUSTAINMENT"], prog)            # no PROMOTION fact yet
     _assert_visible(g, NOTICE, ALICE, ["SUSTAINMENT"], prog)
     assert prog.calls == [], prog.calls
+    # Now the REAL act, on THAT filed task's payload and audience, by bob.
+    ledger = _Ledger()
+    done = promotion.act(
+        task["payload"], decision="promoted", acted_by=BOB, audience=task["audience"],
+        comment="why", can_act=lambda a, c: True,
+        stores=promotion.PromotionStores(ledger=ledger, graph=g.store(BOB),
+                                         indexes=_Quiet(), objects=_Quiet()),
+        governing=GOVERNING, era="commissioning", now_ms=1_000)
+    assert done["origin"] == "kept_record", done
+    assert g.nodes[INGEST_ID].get(ORIGIN_PROP_OF["origin_resolved_by"]) == "record"
+    prog = Program([("prog-x", BOB)])
+    got = _assert_visible(g, NOTICE, BOB, ["SUSTAINMENT"], prog)
+    assert got["sources"][0]["origin"]["resolved_by"] == "record", got["sources"][0]
+    assert prog.calls == [("prog-x", BOB)], prog.calls
+    # The dropper cannot attest the very same filed payload.
+    with pytest.raises(promotion.PromotionRefused) as ei:
+        promotion.act(
+            task["payload"], decision="promoted", acted_by=ALICE, audience=task["audience"],
+            comment="why", can_act=lambda a, c: True,
+            stores=promotion.PromotionStores(ledger=_Ledger(), graph=g.store(ALICE),
+                                             indexes=_Quiet(), objects=_Quiet()),
+            governing=GOVERNING, era="commissioning", now_ms=1_000)
+    assert ei.value.error == "dropper_cannot_attest_origin" and ei.value.status == 403
 
 
 # ── 3. accepted then promoted: the consumer reads it, the non-consumer does not ───────────────
