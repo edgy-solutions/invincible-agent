@@ -41,7 +41,12 @@ def test_property_names_are_declared_in_the_ontology_except_the_two_named_undecl
     assert "hazardStatus" in declared  # positive control for the regex
     assert set(graph_shape.ONTOLOGY_PROPS) <= declared
     used = {k for n in graph_shape.hazard_nodes() for k in n["props"]}
-    assert used - declared == set(graph_shape.UNDECLARED_PROPS)
+    objects = set(re.findall(r"^safety:(\w+) a owl:ObjectProperty", ttl, re.MULTILINE))
+    mapped = {k for k, v in graph_shape.GRAPH_NAME_OF_OBJECT_PROP.items() if v in objects}
+    assert mapped == {"platform"}  # platform is declared: as safety:onPlatform
+    assert used - declared - mapped == set(graph_shape.UNDECLARED_PROPS)
+    assert re.search(r"safety:onPlatform a owl:ObjectProperty ;\s+rdfs:label \"on platform\" ;\s+"
+                     r"rdfs:domain safety:Hazard ;\s+rdfs:range safety:Platform", ttl)
     assert re.search(rf"^safety:{graph_shape.LABEL} a owl:Class", ttl, re.MULTILINE)
 
 
@@ -55,8 +60,9 @@ def test_the_resolver_control_a_hazard_not_in_the_fixture_is_not_claimed():
     assert instances.resolve("HAZ-9999", graph_shape.SAFETY + "Hazard") == []
 
 
-@pytest.mark.skip(
-    reason="WAITS ON lane 7f / doc-tools: (1) which seeder writes safety:Hazard nodes, (2) which "
+@pytest.mark.skip(  # PARKED BY RULING 2026-10-10: seeding hazards into a graph is not being done
+
+    reason="PARKED BY ARCHITECT RULING (2026-10-10): hazards are not being seeded into a graph; do not extend graph_shape.py. Formerly WAITED ON lane 7f / doc-tools: (1) which seeder writes safety:Hazard nodes, (2) which "
     "store (Jena SUSTAINMENT_INSTANCES vs Neo4j), (3) a seeded store or double of the ontology-"
     "service resolve route. Until then no seeded-graph routing path exists to assert against, and "
     "the in-process resolver tests above already pass WITHOUT seeding. Control to write with it: "

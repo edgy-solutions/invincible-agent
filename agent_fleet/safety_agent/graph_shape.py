@@ -11,7 +11,7 @@ TWO CHOICES THAT ARE PROPOSALS, NOT RULINGS (sent to the seeder's owner):
     the phone book and the graph agree on one name for it.
   * `platform` carries the Platform id (PLT-*). The ontology calls a platform a FRACAS PROGRAM
     (`safety:Platform` comment) and the fixture's field is `platform`, so no second vocabulary
-    is minted. The ontology has NO hazard-to-platform property yet; this one is undeclared.
+    is minted. It is the graph-side short name of `safety:onPlatform`.
 
 A hazard nobody assessed has severity/probability None. The key is OMITTED, never written as a
 bottom-of-matrix value: absence says "not assessed", a seeded `E`/`IV` says "assessed negligible".
@@ -29,8 +29,11 @@ SAFETY = "http://internal/sustainment/safety#"
 LABEL = "Hazard"  # local name of safety:Hazard
 #: Declared in the ttl as datatype properties of safety:Hazard.
 ONTOLOGY_PROPS = ("hazardStatus", "severity", "probability")
+#: `platform` is the graph-side short name of the object property `safety:onPlatform`
+#: (declared 2026-10-10, architect ruling); the shape stays PARKED and inert.
+GRAPH_NAME_OF_OBJECT_PROP = {"platform": "onPlatform"}
 #: Not declared in the ttl; see the module docstring.
-UNDECLARED_PROPS = ("identifier", "platform")
+UNDECLARED_PROPS = ("identifier",)
 
 
 def hazard_nodes() -> List[Dict[str, Any]]:
