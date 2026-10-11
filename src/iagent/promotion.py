@@ -52,11 +52,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol
 
 from .decision_record import build_decision_record, make_check
+
+logger = logging.getLogger(__name__)
 
 try:
     from agent_fleet.utils.format_fingerprint import format_fingerprint_from_manifest
@@ -372,6 +375,12 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                                "can_act on the task's audience did not answer yes", status=403)
     subject = subject_from_payload(payload)
     domain = domain_of(audience) if decision == PROMOTED else ""
+    if decision == PROMOTED and not (
+            isinstance(payload, dict) and isinstance(payload.get("dropped_by"), dict)):
+        # Q5 (2026-10-10): a legacy task (filed before `dropped_by` was carried) excludes
+        # nobody; count how many of those are still being acted on.
+        logger.warning("promotion with no dropped_by excludes nobody (legacy task): ingest_id=%s",
+                       subject.ingest_id)
     if decision == PROMOTED and acted_by in _excluded_attesters(payload):
         raise PromotionRefused(
             "dropper_cannot_attest_origin",

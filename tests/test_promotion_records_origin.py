@@ -299,3 +299,32 @@ def test_the_backfill_DRY_RUN_reports_and_writes_nothing():
     out = mod.backfill(records, graph)
     assert out["written"] == 1 and out["applied"] is False
     assert state.write_node_calls == []
+
+
+# ── Q5 (2026-10-10): a legacy task's empty exclusion is logged ────────────────────────────────
+
+def _legacy_records(caplog):
+    return [r for r in caplog.records
+            if r.name == "src.iagent.promotion" and "excludes nobody" in r.getMessage()]
+
+
+def test_a_LEGACY_task_with_no_dropped_by_PROMOTED_logs_once_naming_the_ingest(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.iagent.promotion"):
+        _act(_stores())
+    [rec] = _legacy_records(caplog)
+    assert INGEST_ID in rec.getMessage()
+
+
+def test_a_payload_WITH_dropped_by_PROMOTED_logs_nothing(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.iagent.promotion"):
+        _act(_stores(), payload={**PAYLOAD, "dropped_by": {"authz_id": "alice"}})
+    assert _legacy_records(caplog) == []
+
+
+def test_a_LEGACY_task_REJECTED_logs_nothing(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.iagent.promotion"):
+        _act(_stores(), decision="rejected")
+    assert _legacy_records(caplog) == []
