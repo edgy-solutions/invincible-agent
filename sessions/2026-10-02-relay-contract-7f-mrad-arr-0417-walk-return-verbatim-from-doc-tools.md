@@ -2,7 +2,7 @@
 
 > **SUPERSEDED 2026-10-03** by `2026-10-03-packet-to-openddil-the-secret-line-and-the-walk-return-corrections-accepted.md` §2 (C1-C4). The body below is the verbatim relay as received.
 
-**To:** doc-tools/lane/7f
+to: doc-tools/lane/7f
 **Status:** contract RECORDED, **not** fulfilled. No citation file has been
 written and **nothing has been sent to OpenDDIL.** Read the blockers before
 attempting it — four of the five required citations are not selectable from

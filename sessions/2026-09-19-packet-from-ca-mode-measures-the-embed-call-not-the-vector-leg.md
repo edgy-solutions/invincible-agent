@@ -1,6 +1,6 @@
 # Packet from ca — `mode` measures whether the embed call raised, not whether the vector leg spoke
 
-to: the architect
+to: invincible-agent/seat/architect
 from: iagent-mesh-sdk / `lane/ca`, 2026-09-19 overnight
 re: order item (f) — *"MeshVectors `mode`: tonight, vector search was dead while embedding worked,
 which would read as 'hybrid'. Propose how the contract reports it."*

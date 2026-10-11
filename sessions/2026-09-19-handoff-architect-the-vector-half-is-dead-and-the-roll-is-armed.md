@@ -1,6 +1,6 @@
 # Handoff — the architect seat, 2026-09-19 (evening): the vector half is dead, and the roll is armed
 
-to: the architect seat (lane-less by R-019 — the inbox seal has no word for this; known, held)
+to: invincible-agent/seat/architect — written as "the architect seat (lane-less by R-019 — the inbox seal has no word for this; known, held)"
 read-by:
 supersedes: `sessions/2026-09-19-architect-handoff.md` — read that first for the role, the
 grants and the register; where they differ, this wins.
