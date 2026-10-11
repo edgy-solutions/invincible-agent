@@ -2989,12 +2989,30 @@ class EnumerateInstancesRequest(BaseModel):
         ),
     )
     # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
-    # so a provider gates both verbs on one pair of fields. RECEIVED AND FORWARDED, NOT GATED
-    # ON HERE: the gate belongs to a provider that holds origin-scoped instances (ruled
-    # 2026-10-10, (d): enumerateInstances gets resolveInstance's gate). Defaulted for the same
+    # so a provider gates both verbs on one pair of fields. Forwarded to every provider AND gated
+    # on here, after the fan-out, by `_filter_sustainment_candidates` -- the same origin verdict
+    # `/resolve_instance` and `/notice_parts` apply (ruled 2026-10-10, (d)). Defaulted for the same
     # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
     user_email: str = ""
     entitled_domains: list[str] = Field(default_factory=list)
+
+
+async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
+                                   body: dict) -> tuple[list[dict], int]:
+    """THE SAME GATE `/resolve_instance` RUNS, applied after the enumerate fan-out to a provider's
+    `members` body. Returns (kept, count). The count is the provider's own minus what was
+    withheld, floored at len(kept), so it never reveals how many were withheld. A lookup failure
+    is the 503 that route answers, never an unfiltered list."""
+    members = body["members"]
+    try:
+        kept = await _filter_sustainment_candidates(
+            members, user_email=request.user_email or "",
+            entitled_domains=list(request.entitled_domains or []))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    provider_count = int(body.get("count") or len(members))
+    return kept, max(len(kept), provider_count - (len(members) - len(kept)))
 
 
 @app.post("/enumerate_instances")
@@ -3091,11 +3109,13 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         # shape therefore behaves correctly here without being changed.
         _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
-            print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']} "
-                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
-            return {"outcome": "members", "members": body["members"],
-                    "count": int(body.get("count") or len(body["members"])),
+            kept, count = await _gate_enumerated_members(request, body)
+            if not kept:  # WITHHELD IS UNKNOWN: as `empty`
+                answered_empty += 1
+                continue
+            print(f"[Engine O] enumerate {request.class_uri} -> members ({len(kept)}) "
+                  f"from {prov['provider']} scoped_by={_scoped_by or '[] (class-wide)'}")
+            return {"outcome": "members", "members": kept, "count": count,
                     "provider": prov["provider"],
                     # WHICH slots, not whether. A provider handed `{lot, category}` that
                     # honours only `lot` produced a list scoped by one of two, and a boolean
