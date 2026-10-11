@@ -310,6 +310,50 @@ def instances_by_property(notice_id: str, sources: List[Dict[str, Any]]) -> Dict
     }
 
 
+def notice_visible(row: Dict[str, Any], *, caller_id: str, viewer_domains: Iterable[str],
+                   table: Optional[Mapping[str, frozenset]],
+                   can_view_program: Optional[Callable[[str, str], bool]]) -> bool:
+    """THE verdict: whether this caller may see the notice `row` describes (a `NOTICE_PARTS_CYPHER`
+    row). `read_notice_parts` and the `/resolve_instance` gate both call this, so the two cannot
+    drift. `can_view_program` exceptions propagate."""
+    table = table or {}
+    domains = tuple(viewer_domains or ())
+    verdict = source_visibility(row, caller_id=caller_id, viewer_domains=domains, table=table)
+    if verdict == "by_origin":
+        verdict = "visible" if visible_by_origin(
+            viewer_domains=domains,
+            owner_domain=row["origin_owner_domain"],
+            program=row.get("origin_program"),
+            table=table,
+            is_program_member=lambda p: bool(can_view_program(p, caller_id)) if can_view_program else False,
+        ) else "withheld"
+    return verdict == "visible"
+
+
+def visible_notice_ids(driver: Any, notice_ids: Iterable[str], *, caller_id: str = "",
+                       viewer_domains: Iterable[str] = (),
+                       table: Optional[Mapping[str, frozenset]] = None,
+                       can_view_program: Optional[Callable[[str, str], bool]] = None,
+                       ) -> set:
+    """The subset of `notice_ids` this caller may see, from one READ session running
+    `NOTICE_PARTS_CYPHER` once per distinct id. Exceptions propagate (the route answers 503)."""
+    ids = sorted({i for i in notice_ids if i})
+    visible: set = set()
+    with driver.session(default_access_mode="READ") as session:
+        for nid in ids:
+            rows = [r.data() for r in session.run(
+                NOTICE_PARTS_CYPHER, {"notice_id": nid, "offset": 0, "limit": 0})]
+            # Q8 (architect, 2026-10-10): no provenance and no seed stamp -> withheld. PARKED behind
+            # doc-tools stamping seed provenance; until then a notice id with no graph row reads as
+            # seeded and is VISIBLE. This branch and source_visibility's no-`provenance_ingest_id`
+            # branch flip together when the seed stamp lands.
+            if not rows or notice_visible(rows[0], caller_id=caller_id,
+                                          viewer_domains=viewer_domains, table=table,
+                                          can_view_program=can_view_program):
+                visible.add(nid)
+    return visible
+
+
 def read_notice_parts(driver: Any, notice_id: str, offset: Any = 0,
                       limit: int = NOTICE_PARTS_PAGE_SIZE, *, caller_id: str = "",
                       viewer_domains: Iterable[str] = (),
@@ -335,20 +379,7 @@ def read_notice_parts(driver: Any, notice_id: str, offset: Any = 0,
             r.data() for r in session.run(
                 NOTICE_PARTS_CYPHER, {"notice_id": notice_id, "offset": off, "limit": limit})
         ]
-    if rows:
-        table = table or {}
-        domains = tuple(viewer_domains or ())
-        verdict = source_visibility(rows[0], caller_id=caller_id, viewer_domains=domains,
-                                    table=table)
-        if verdict == "by_origin":
-            row = rows[0]
-            allowed = visible_by_origin(
-                viewer_domains=domains,
-                owner_domain=row["origin_owner_domain"],
-                program=row.get("origin_program"),
-                table=table,
-                is_program_member=lambda p: bool(can_view_program(p, caller_id)) if can_view_program else False)
-            verdict = "visible" if allowed else "withheld"
-        if verdict != "visible":
-            return notice_parts([], notice_id, off, limit)
+    if rows and not notice_visible(rows[0], caller_id=caller_id, viewer_domains=viewer_domains,
+                                   table=table, can_view_program=can_view_program):
+        return notice_parts([], notice_id, off, limit)
     return notice_parts(rows, notice_id, off, limit)

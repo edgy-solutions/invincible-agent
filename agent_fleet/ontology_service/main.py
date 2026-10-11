@@ -5117,10 +5117,76 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
-    #: The caller, as the fan-out sends it (`_call_resolver`); same names as `/notice_parts`.
-    #: RECEIVED, NOT YET GATED ON: the origin gate over drop-derived instances is gov's change.
+    #: Supervisor-derived (architect Q3), never user-supplied: `_call_resolver` forwards the verified
+    #: caller identity and entitled domains. Empty = no identity, so only seeded content is visible.
     user_email: str = ""
-    entitled_domains: list[str] = Field(default_factory=list)
+    entitled_domains: list[str] = []
+
+
+_NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
+_COMPONENT_IRI_PREFIX = "http://internal/components/"
+_SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"
+
+
+def _iri_is_safe(iri: str) -> bool:
+    return not any(ch in iri for ch in ('>', '"')) and not any(ch.isspace() for ch in iri)
+
+
+async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: str,
+                                         entitled_domains: list[str]) -> list[dict]:
+    """Withhold the candidates the SAME origin rule `/notice_parts` applies would withhold
+    (`notice_parts.notice_visible`): a drop-derived notice no caller may yet see, and a component
+    reachable only through such notices. A withheld candidate is simply absent, so the answer is
+    the one a Jena without that row would give. Raises on a lookup failure (the route answers 503).
+    Components with no linked notice and every non-sustainment IRI pass untouched."""
+    notice_ids: dict[str, str] = {}
+    comp_iris: list[str] = []
+    unsafe: set[str] = set()
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri.startswith(_NOTICE_IRI_PREFIX):
+            notice_ids[iri] = _notice_parts.notice_id_of({}, iri)
+        elif iri.startswith(_COMPONENT_IRI_PREFIX):
+            if _iri_is_safe(iri):
+                comp_iris.append(iri)
+            else:
+                unsafe.add(iri)
+    links: dict[str, set[str]] = {}
+    if comp_iris:
+        values = " ".join(f"<{i}>" for i in comp_iris)
+        link_rows = await execute_sparql(
+            f"SELECT ?c ?n WHERE {{ VALUES ?c {{ {values} }} ?c <{_SUBJECT_TO_NOTICE}> ?n }}",
+            domain="SUSTAINMENT",
+        )
+        for r in link_rows or []:
+            links.setdefault(str(r.get("c") or ""), set()).add(str(r.get("n") or ""))
+    linked_ids = {n: _notice_parts.notice_id_of({}, n)
+                  for ns in links.values() for n in ns if n.startswith(_NOTICE_IRI_PREFIX)}
+    all_ids = {i for i in [*notice_ids.values(), *linked_ids.values()] if i}
+    visible: set[str] = set()
+    if all_ids:
+        if _NEO4J_DRIVER is None:
+            raise RuntimeError("the sustainment graph is not connected")
+        visible = await asyncio.to_thread(
+            _notice_parts.visible_notice_ids, _NEO4J_DRIVER, all_ids,
+            caller_id=user_email, viewer_domains=entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
+    out: list[dict] = []
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri in unsafe:
+            continue
+        if iri in notice_ids:
+            if notice_ids[iri] and notice_ids[iri] not in visible:
+                continue
+        elif iri in links:
+            tied = [linked_ids[n] for n in links[iri] if linked_ids.get(n)]
+            if tied and not any(t in visible for t in tied):
+                continue
+        out.append(c)
+    return out
 
 
 @app.post("/resolve_instance")
@@ -5134,6 +5200,14 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
+    try:
+        candidates = await _filter_sustainment_candidates(
+            candidates, user_email=request.user_email,
+            entitled_domains=request.entitled_domains,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
     return {"candidates": candidates}
 
 
