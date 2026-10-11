@@ -321,3 +321,43 @@ def test_the_census_omits_ADDRESS_FORM_when_every_packet_is_ruled_form(tmp_path)
     _w(s, "2026-10-07-c.md", "# P\n\nto: invincible-agent/seat/architect\n")
     out = _census_subprocess(tmp_path)
     assert "LANES:" in out and "ADDRESS FORM" not in out, out
+
+
+# ── cortex-ui/master (RULED 2026-10-10, architect Q10) ─────────────────────────────────────────
+# `cortex-ui/master` is an address; `for:` is not an addressee line; only `to:` is.
+
+@pytest.mark.parametrize("line", [
+    "to: cortex-ui/master",
+    "to: cortex-ui/master — re: x",
+    "to: `cortex-ui`/`master`",
+], ids=["plain", "trailer", "backticked"])
+def test_cortex_ui_master_is_an_external_address(tmp_path, line):
+    got = parse_packet(_w(tmp_path, "a.md", f"# P\n\n{line}\n\nbody\n"))
+    assert (got.addressee, got.kind, got.form, got.source) == (
+        "cortex-ui/master", "external", "branch", "to")
+
+
+def test_cortex_ui_master_as_sender_and_as_read_by_stamp(tmp_path):
+    got = parse_packet(_w(
+        tmp_path, "a.md",
+        "# P\n\nfrom: cortex-ui/master\nto: ia-74/lane/74\n\nread-by: cortex-ui/master 2026-10-10\n"))
+    assert (got.sender, got.sender_kind) == ("cortex-ui/master", "external")
+    assert got.read_by == ["cortex-ui/master"]
+
+
+@pytest.mark.parametrize("line", [
+    "to: invincible-agent/master",   # differs only in the repo being THIS one
+    "to: ia-74/master",             # a legacy worktree prefix is this repo too
+    "to: cortex-ui/main",           # differs only in the branch token
+    "to: cortex-ui/master from x",  # differs only in a bare-space trailer
+], ids=["internal-repo", "internal-worktree", "other-branch", "bare-space-trailer"])
+def test_near_misses_of_cortex_ui_master_stay_UNADDRESSED(tmp_path, line):
+    got = parse_packet(_w(tmp_path, "a.md", f"# P\n\n{line}\n\nbody\n"))
+    assert got.addressee is None and unaddressed([got]) == [got]
+
+
+def test_for_is_not_an_addressee_line(tmp_path):
+    got = parse_packet(_w(tmp_path, "a.md", "# P\n\nfor: cortex-ui/master\n\nbody\n"))
+    assert got.addressee is None and unaddressed([got]) == [got]
+    both = parse_packet(_w(tmp_path, "b.md", "# P\n\nfor: ia-74/lane/74\nto: cortex-ui/master\n"))
+    assert (both.addressee, both.kind, both.source) == ("cortex-ui/master", "external", "to")
