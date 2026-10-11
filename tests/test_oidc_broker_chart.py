@@ -46,6 +46,7 @@ def _set(path: str, value) -> list[str]:
 
 
 _BROKER_ON = [*_set("keycloak.brokers.openddil.enabled", True),
+              *_set("keycloak.brokers.openddil.publicCA", True),
               *_set("keycloak.brokers.openddil.existingSecret", _SECRET)]
 _LIAISON_SUB = "33333333-3333-4333-8333-333333333333"
 
@@ -313,7 +314,7 @@ def test_reconcile_renders_the_idp_the_mappers_and_the_first_login_flow(broker):
         "first%20broker%20login/copy",
     ):
         assert frag in s, frag
-    assert "https://openddil.invalid/idp/realms/openddil/.well-known" in s
+    assert "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil/.well-known" in s
 
 
 def test_the_client_secret_reaches_the_job_only_through_secretkeyref(broker):
@@ -414,7 +415,7 @@ def _no_broker(out: str) -> None:
 
 def test_sandbox_renders_no_broker(sandbox, broker):
     _no_broker(sandbox)
-    assert "no existingSecret" not in _script(sandbox)  # disabled says nothing; enabled-without-secret says NOTE
+    assert "no existingSecret or clientSecret" not in _script(sandbox)  # disabled says nothing; enabled-without-secret says NOTE
     assert "identity-provider" in _script(broker)  # the positive control: the same render, broker on
 
 
@@ -432,10 +433,11 @@ def test_enabled_broker_with_its_secret_renders_idp_mappers_flow_and_the_secretk
 
 def test_enabled_broker_without_its_secret_renders_nothing_and_does_not_fail(sandbox):
     out = _render(*_SANDBOX, *_set("keycloak.brokers.openddil.enabled", True),
+                  *_set("keycloak.brokers.openddil.publicCA", True),
                   *_set("keycloak.brokers.openddil.existingSecret", ""))
     _no_broker(out)
-    assert "openddil enabled but no existingSecret: skipped" in _script(out)
-    assert "enabled but no existingSecret" not in _script(sandbox)  # sandbox (disabled) says nothing
+    assert "openddil enabled but no existingSecret or clientSecret: skipped" in _script(out)
+    assert "enabled but no existingSecret or clientSecret" not in _script(sandbox)  # sandbox (disabled) says nothing
 
 
 # ------------------------------------------------------------------ (g) onBehalfOf

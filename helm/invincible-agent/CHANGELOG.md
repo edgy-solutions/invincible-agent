@@ -1,5 +1,33 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.43 — 2026-10-10
+
+The OpenDDIL broker flip is two switches plus the secret file. Sits on PR #29 (lane/01-oidc-roundtrip).
+
+### Added
+
+- **`keycloak.brokers.<name>.clientSecret`** (default `""`; set ONLY in a gitignored `*.secret.yaml`).
+  `templates/secrets.yaml` renders it into `<release>-secrets` key `broker-<name>-client-secret`, and
+  the reconcile job reads it by `secretKeyRef`. `brokerActive` is now enabled AND (existingSecret OR
+  clientSecret). Never in a ConfigMap, the job script or an env literal.
+- **`keycloak.truststore`** (`enabled`, `caPem`, `existingConfigMap`, `key`, `mountPath`): extra PEM trust
+  for Keycloak's JVM (`KC_TRUSTSTORE_PATHS`), from ConfigMap `<release>-keycloak-truststore` or an
+  existing one, mounted read-only, with a checksum annotation so a CA change rolls Keycloak. Fails the
+  render when enabled with no CA source.
+- **Guard:** an enabled broker with an `https:` issuer fails the render unless `keycloak.truststore` is
+  enabled or `brokers.<name>.publicCA: true`, so a lab-CA issuer cannot flip on silently untrusted.
+- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches stay `false`.
+  The flip is `clientSecret` + `truststore.caPem` in `values-sandbox.secret.yaml` and the two
+  `enabled: true` lines.
+
+### Tests
+
+- `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only, CA
+  reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
+  enable nothing).
+- Existing broker tests now set `publicCA` where they enable the broker, and the NOTE reads
+  "no existingSecret or clientSecret".
+
 ## 0.4.40 — 2026-10-10
 
 Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).

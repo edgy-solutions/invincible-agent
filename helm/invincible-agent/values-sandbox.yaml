@@ -465,20 +465,29 @@ keycloak:
     - liaison
   # OIDC BROKER to OpenDDIL's realm. OpenDDIL's own principals sign in THROUGH us and their grants
   # bind to THEIR `sub` (authz_id = upstream sub), replacing the three mirrored email users the
-  # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). NOT APPLIED until
-  # OpenDDIL supplies: the real issuer URL (the one below is a PLACEHOLDER on the reserved
-  # .invalid TLD), a client iagent-broker with redirect URI
-  # <our keycloak>/realms/invincible-agent/broker/openddil/endpoint, and its secret in the Secret
-  # named by existingSecret. `sub` values are the fixed ids in OpenDDIL's realm-openddil.json.
+  # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). The issuer and client are
+  # OpenDDIL's (packet 2026-10-10): confidential client iagent-broker, auth-code only, scopes
+  # openid/profile/email. Their redirect URI is
+  # https://keycloak.edgy-solutions.com/realms/invincible-agent/broker/openddil/endpoint (realm
+  # `invincible-agent`); they also registered an `iagent` one, which we will ask them to drop.
+  # THE FLIP, when Chris passes the secret and the lab CA: two keys in the gitignored
+  # values-sandbox.secret.yaml (keycloak.brokers.openddil.clientSecret, keycloak.truststore.caPem)
+  # and the two switches below (keycloak.brokers.openddil.enabled and keycloak.truststore.enabled
+  # to true), which live in THIS file, so the flip is a two-line committed diff plus the secret file.
+  # OpenDDIL's issuer certificate is signed by their LAB CA, so Keycloak must trust it
+  # (keycloak.truststore) or the render fails.
+  truststore:
+    enabled: false   # switch: true with the flip; caPem goes in values-sandbox.secret.yaml
   brokers:
     openddil:
-      # Stays off until OpenDDIL supplies issuer + client + secret (then: enabled true, existingSecret set).
-      enabled: false
+      enabled: false   # switch: true with the flip; clientSecret goes in values-sandbox.secret.yaml
       displayName: "OpenDDIL"
-      issuer: "https://openddil.invalid/idp/realms/openddil"   # PLACEHOLDER: needs OpenDDIL's value
+      issuer: "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil"
       clientId: iagent-broker
       existingSecret: ""
       secretKey: "client-secret"
+      # The subs below are the fixed ids from OpenDDIL's realm-openddil.json; the 2026-10-10 packet did not
+      # restate them, so they are UNCONFIRMED against the live realm.
       principals:
         - sub: "11111111-1111-4111-8111-111111111111"
           username: operator.atlantia

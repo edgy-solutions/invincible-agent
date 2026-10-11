@@ -40,6 +40,7 @@ _ALIAS = "openddil"
 _FLOW = "openddil-first-login"
 _BROKER = ["--set", "keycloak.brokers.openddil.enabled=true",
            "--set", "keycloak.brokers.openddil.existingSecret=x",
+           "--set", "keycloak.brokers.openddil.publicCA=true",
            "--set", f"keycloak.brokers.openddil.issuer={_ISSUER}"]
 # The spec's independent list of link-capable authenticators / sub-flows (NOT derived from the script).
 _LINK_NAMES = {"idp-review-profile", "idp-auto-link", "idp-confirm-link", "idp-detect-existing-broker-user",

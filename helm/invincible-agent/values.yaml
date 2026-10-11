@@ -1928,15 +1928,34 @@ keycloak:
       issuer: ""
       # The client the upstream registers for us.
       clientId: iagent-broker
-      # The Secret holding that client's secret, read only via secretKeyRef in the reconcile job.
-      # Never put the value in values or a ConfigMap. The broker is RENDERED only when `enabled`
-      # AND existingSecret is non-empty; enabled with no existingSecret renders no broker objects
-      # and a one-line NOTE in the job script (it does not fail the render).
+      # Where the client's secret comes from, read only via secretKeyRef in the reconcile job. Two
+      # sources: (1) existingSecret/secretKey, a Secret made out of band; or (2) clientSecret, a value
+      # set ONLY in a gitignored `*.secret.yaml` values file, which templates/secrets.yaml renders into
+      # the release Secret `<release>-secrets` under key `broker-<name>-client-secret`. The value is
+      # NEVER put in a ConfigMap, the job script, an env literal, or a committed values file. The broker
+      # is RENDERED only when `enabled` AND (existingSecret OR clientSecret) is non-empty; enabled with
+      # neither renders no broker objects and a one-line NOTE in the job script (no render failure).
       existingSecret: ""
       secretKey: "client-secret"
+      clientSecret: ""
+      # An https issuer needs Keycloak to trust its certificate. The render FAILS when this broker is
+      # enabled, the issuer is https, and keycloak.truststore is not enabled, unless publicCA: true
+      # states that the issuer's certificate is publicly trusted.
+      publicCA: false
       # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
       # `sub` is the upstream's raw subject = the brokered user's authz identity.
       principals: []
+  # Extra CA trust for Keycloak's JVM (Keycloak 26 `truststore-paths`, env KC_TRUSTSTORE_PATHS). Needed
+  # when a broker's issuer is signed by a private CA: Keycloak itself fetches discovery, token and JWKS.
+  # enabled + caPem renders ConfigMap `<release>-keycloak-truststore` (the CA is public); enabled +
+  # existingConfigMap uses that one instead. Mounted read-only at mountPath; a CA change rolls Keycloak
+  # (checksum annotation). Enabled with neither caPem nor existingConfigMap fails the render.
+  truststore:
+    enabled: false
+    caPem: ""
+    existingConfigMap: ""
+    key: "ca.crt"
+    mountPath: "/opt/keycloak/conf/truststores"
   # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
   # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
   # one; it exists so the name a delegate's writes carry is an identity the realm can be asked

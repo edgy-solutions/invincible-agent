@@ -66,8 +66,13 @@ spec:
             - name: BROKER_{{ $bn | upper }}_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
+                  {{- if $b.existingSecret }}
                   name: {{ $b.existingSecret | quote }}
                   key: {{ $b.secretKey | default "client-secret" | quote }}
+                  {{- else }}
+                  name: {{ $.Release.Name }}-secrets
+                  key: {{ printf "broker-%s-client-secret" $bn | quote }}
+                  {{- end }}
             {{- end }}
             {{- end }}
           command: ["sh", "-c"]
@@ -392,8 +397,8 @@ spec:
               {{- end }}
 
               {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
-              {{- if and $b.enabled (not $b.existingSecret) }}
-              echo "-- NOTE: broker {{ $b.alias | default $bn }} enabled but no existingSecret: skipped"
+              {{- if and $b.enabled (not $b.existingSecret) (not $b.clientSecret) }}
+              echo "-- NOTE: broker {{ $b.alias | default $bn }} enabled but no existingSecret or clientSecret: skipped"
               {{- end }}
               {{- if include "invincible-agent.brokerActive" $b }}
               {{- $alias := $b.alias | default $bn }}
@@ -410,7 +415,7 @@ spec:
               BFLOW={{ $flow | quote }}
               BSECRET="${{"{"}}{{ $secretEnv }}:-}"
               if [ -z "$BSECRET" ]; then
-                echo "   FAIL: {{ $secretEnv }} is empty (Secret {{ $b.existingSecret }} key {{ $b.secretKey | default "client-secret" }})"
+                echo "   FAIL: {{ $secretEnv }} is empty (Secret {{ $b.existingSecret | default (printf "%s-secrets" $.Release.Name) }} key {{ if $b.existingSecret }}{{ $b.secretKey | default "client-secret" }}{{ else }}broker-{{ $bn }}-client-secret{{ end }})"
                 exit 1
               fi
 

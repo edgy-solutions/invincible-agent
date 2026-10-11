@@ -1,4 +1,5 @@
 {{- if .Values.keycloak.enabled }}
+{{- include "invincible-agent.validateTruststore" . }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -14,6 +15,10 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 6 }}
   template:
     metadata:
+      {{- if .Values.keycloak.truststore.enabled }}
+      annotations:
+        checksum/truststore: {{ (.Values.keycloak.truststore.caPem | default .Values.keycloak.truststore.existingConfigMap) | sha256sum }}
+      {{- end }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 8 }}
@@ -53,12 +58,27 @@ spec:
             - name: KC_HTTP_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.keycloak.truststore.enabled }}
+            # Extra PEM trust for the broker's private-CA issuer (Keycloak 26 option truststore-paths).
+            - name: KC_TRUSTSTORE_PATHS
+              value: {{ printf "%s/%s" .Values.keycloak.truststore.mountPath .Values.keycloak.truststore.key | quote }}
+            {{- end }}
           volumeMounts:
+            {{- if .Values.keycloak.truststore.enabled }}
+            - name: truststore
+              mountPath: {{ .Values.keycloak.truststore.mountPath | quote }}
+              readOnly: true
+            {{- end }}
             - name: realm-config
               mountPath: /opt/keycloak/data/import
             - name: data
               mountPath: /opt/keycloak/data
       volumes:
+        {{- if .Values.keycloak.truststore.enabled }}
+        - name: truststore
+          configMap:
+            name: {{ include "invincible-agent.truststoreConfigMap" . }}
+        {{- end }}
         - name: realm-config
           configMap:
             name: {{ .Release.Name }}-keycloak-realm
@@ -127,4 +147,16 @@ spec:
           {{- end }}
     {{- end }}
 {{- end }}
+{{- end }}
+{{- if and .Values.keycloak.enabled .Values.keycloak.truststore.enabled .Values.keycloak.truststore.caPem (not .Values.keycloak.truststore.existingConfigMap) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "invincible-agent.truststoreConfigMap" . }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  {{ .Values.keycloak.truststore.key }}: |
+    {{- .Values.keycloak.truststore.caPem | nindent 4 }}
 {{- end }}

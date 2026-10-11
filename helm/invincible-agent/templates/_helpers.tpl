@@ -265,12 +265,13 @@ Emits nothing on success; `fail`s the render on the first violation.
 {{- end }}
 
 {{/*
-A broker is RENDERED only when enabled AND its client secret's Secret is named. Enabled with no
-existingSecret renders nothing (the reconcile job carries a NOTE) and never fails: a roll survives it.
+A broker is RENDERED only when enabled AND its client secret has a source: an existingSecret, or a
+clientSecret value (set only in a gitignored *.secret.yaml; secrets.yaml puts it in the release
+Secret). Enabled with neither renders nothing (the reconcile job carries a NOTE) and never fails.
 Call: include "invincible-agent.brokerActive" $b  -> "true" or "".
 */}}
 {{- define "invincible-agent.brokerActive" -}}
-{{- if and .enabled .existingSecret }}true{{- end }}
+{{- if and .enabled (or .existingSecret .clientSecret) }}true{{- end }}
 {{- end }}
 
 {{/*
@@ -302,6 +303,9 @@ Fail the render on a broker that cannot work. Called wherever the broker is cons
 {{- end }}
 {{- if not $.Values.keycloak.reconcileClients.enabled }}
 {{- fail (printf "keycloak.brokers.%s is enabled but keycloak.reconcileClients.enabled is false; the broker is created only by the realm-reconcile job" $bn) }}
+{{- end }}
+{{- if and (hasPrefix "https:" $b.issuer) (not $b.publicCA) (not (($.Values.keycloak.truststore | default dict).enabled)) }}
+{{- fail (printf "keycloak.brokers.%s is enabled with an https issuer but keycloak.truststore.enabled is false: Keycloak would not trust a private-CA issuer. Enable keycloak.truststore (caPem or existingConfigMap), or set keycloak.brokers.%s.publicCA: true if the issuer's certificate is publicly trusted" $bn $bn) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -570,3 +574,19 @@ both created and deleted on every run is a contradiction, so the render fails.
 {{- end }}
 
 
+
+{{/*
+Keycloak's extra-CA truststore. Fails when enabled with no CA source. Called from keycloak.yaml.
+*/}}
+{{- define "invincible-agent.validateTruststore" -}}
+{{- $t := $.Values.keycloak.truststore | default dict -}}
+{{- if and $t.enabled (not $t.caPem) (not $t.existingConfigMap) }}
+{{- fail "keycloak.truststore.enabled is true but both caPem and existingConfigMap are empty; there is no CA to trust" }}
+{{- end }}
+{{- end }}
+
+{{/* The ConfigMap name holding the truststore PEM. */}}
+{{- define "invincible-agent.truststoreConfigMap" -}}
+{{- $t := .Values.keycloak.truststore -}}
+{{- if $t.existingConfigMap }}{{ $t.existingConfigMap }}{{- else }}{{ .Release.Name }}-keycloak-truststore{{- end }}
+{{- end }}
