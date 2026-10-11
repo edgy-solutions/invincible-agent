@@ -19,6 +19,29 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-10, latest: merged, live on 187, dist fork closed. Read this first
+
+- **Merged** in the ruled order: #11 `ae01d904`, #18 `bc2e730b`, #21 `f66a2da5`. Lane 1 then merged #11 at `443cebd8`.
+- **Still open on PR #11** (OPEN, MERGEABLE, head `1b5dd9d3`):
+  - `592d08be`: the `build_html` fakes are signature-bound through `_html_stub`;
+  - `1b5dd9d3`: comments on the two sentinel fakes.
+
+  Lane 1 merges them.
+- **Live on 187** (bff, cost and fin at `5b2a16a2`), walked as alice:
+  - A mixed board (cost, fin, cost) returns 200 `partial`. Cost exists; fin failed with `not_in_model` / "not a ratified template", 7 keys.
+  - A cost-only board is unchanged.
+  - The customer page carries no trace of fin (Q3 checked on the downloaded bytes).
+- **duckdb on master:** the seal gives 4 passed. With duckdb absent, the summary prints `duckdb-gated skips: 5`.
+- **The dist fork is closed.** `--like` on the dist page reproduces sha256 `be4a4057…` at the same size, so dist holds the slice-1 page. The full `cmp` was denied, and I did not retry it.
+- **Exporter view: not done, and not ours.** cortex-ui `3636f82` rejects `partial` and shows "response could not be read". I placed a correction packet: `cortex-ui/sessions/2026-10-10-packet-to-cortex-ui-correction-a-mixed-board-export-reads-as-unreadable-not-partial.md`. Re-check the exporter view when cortex-ui ships `documents[]`.
+- **Report to Lane 1:** `invincible-agent/sessions/2026-10-10-packet-to-lane-01-fin-split-live-on-187-dist-fork-closed-exporter-view-is-cortex-uis.md` (untracked).
+- **Open observations:**
+  - the verb-path export sha moves on every export; the cause is not measured;
+  - one port-forward download was truncated.
+- **Next:**
+  - wait for cortex-ui's `documents[]` change, then walk the mixed board in the UI as alice;
+  - otherwise stand by.
+
 ## Update 2026-10-10, later: rulings Q1–Q4 applied. Nothing open but merges and the ACL
 
 - **Rulings received:**
