@@ -13,6 +13,8 @@ Arms:
   gate     GatewayArtifacts.get: owner / seeding delegate admitted; the rest `empty`.
   contract the SDK's check_mesh_artifacts_entitlement_contract against GatewayArtifacts.
   read     GET /artifacts/{id} answers an unentitled caller exactly as it answers an absent id.
+  response GET /artifacts/{id} carries `seeded_by` and `case_id`: delegate, owner, null, no leak to
+           an unentitled caller, statement text.
   writer   `case_id` lands on the node only when given (statement text and params).
   seal     exactly one call site of the answer-artifact writer passes `case_id=`: the action record.
 
@@ -218,7 +220,7 @@ def _row(**over):
     base = {"id": "A-1", "status": "complete", "summary": "s", "question_text": "q",
             "valid_as_of": 1, "duration_ms": 1, "resolved_intent": None, "routing_inline": None,
             "derived_from": None, "origin_owner_domain": None, "origin_program": None,
-            "seeded_by": None, "owners": {PERSON}}
+            "seeded_by": None, "case_id": None, "owners": {PERSON}}
     base.update(over)
     return base
 
@@ -354,6 +356,52 @@ def test_the_route_admits_the_owner_and_the_seeding_delegate(api):
     assert r.status_code == 200 and r.json()["id"] == "A-1"
     _login(OTHER_DELEGATE)
     assert c.get("/artifacts/A-1").status_code == 404
+
+
+def test_the_seeding_delegates_response_carries_seeded_by_and_case_id(api):
+    c = api({"A-1": _row(seeded_by=DELEGATE, case_id="C-7")})
+    _login(DELEGATE)
+    r = c.get("/artifacts/A-1")
+    assert r.status_code == 200
+    assert r.json()["seeded_by"] == DELEGATE and r.json()["case_id"] == "C-7"
+
+
+def test_the_owners_response_carries_seeded_by_and_case_id(api):
+    c = api({"A-1": _row(seeded_by=DELEGATE, case_id="C-7")})
+    _login(PERSON)
+    r = c.get("/artifacts/A-1")
+    assert r.status_code == 200
+    assert r.json()["seeded_by"] == DELEGATE and r.json()["case_id"] == "C-7"
+
+
+def test_an_artifact_without_case_id_or_seeded_by_answers_both_as_null(api):
+    c = api({"A-1": _row()})
+    _login(PERSON)
+    body = c.get("/artifacts/A-1").json()
+    assert "seeded_by" in body and "case_id" in body
+    assert body["seeded_by"] is None and body["case_id"] is None
+
+
+def test_an_unentitled_response_to_a_row_with_case_id_is_the_absent_id_answer(api):
+    c = api({"A-1": _row(seeded_by=DELEGATE, case_id="C-7")})
+    _login(OTHER_DELEGATE)
+    refused = c.get("/artifacts/A-1")
+    absent = c.get("/artifacts/NEVER")
+    assert refused.status_code == absent.status_code == 404
+    assert refused.content.replace(b"A-1", b"X") == absent.content.replace(b"NEVER", b"X")
+    assert b"C-7" not in refused.content and DELEGATE.encode() not in refused.content
+
+
+def test_the_read_statement_selects_case_id_and_seeded_by(monkeypatch):
+    d = _Driver({"A-1": _row(seeded_by=DELEGATE, case_id="C-7")})
+    monkeypatch.setattr(gateway, "neo4j_driver", d)
+    _login(PERSON)
+    try:
+        assert TestClient(gateway.app).get("/artifacts/A-1").status_code == 200
+    finally:
+        gateway.app.dependency_overrides.clear()
+    cypher = d.calls[0][0]
+    assert "AS case_id" in cypher and "AS seeded_by" in cypher
 
 
 # =============================================================================================
