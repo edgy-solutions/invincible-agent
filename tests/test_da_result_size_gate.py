@@ -193,7 +193,7 @@ def test_the_pre_check_is_NOT_a_json_size_estimator():
 
 def _aggregate(n_groups: int, per_group: int):
     """The exact shape that failed at work, at test scale."""
-    duckdb = pytest.importorskip("duckdb")
+    duckdb = pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: engine DA's result-size gate is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     rows = n_groups * per_group
     src = pl.DataFrame({
         "company": [f"COMPANY_{i % n_groups:04d}" for i in range(rows)],

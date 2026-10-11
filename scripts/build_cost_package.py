@@ -21,6 +21,11 @@ about the package rather than a property of it.
 
   usage: .venv/Scripts/python.exe scripts/build_cost_package.py \
              --recipient notional-customer-alpha --out dist/
+
+  pinning (so a shipped page can be rebuilt byte for byte):
+    --as-of YYYY-MM-DD   the date the package claims (default: today)
+    --sha SHA            the 40-hex algorithm commit the page claims, used as-is
+    --like PAGE          take the sha and the date from an existing page; exclusive with the two
 """
 from __future__ import annotations
 
@@ -289,7 +294,10 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
             raise SystemExit(
                 "REFUSING TO BUILD: lots and sections narrow the slice-2 page only; the "
                 "slice-1 page carries neither")
-        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
+        # `as_of` MUST TRAVEL HERE TOO: this call once dropped it, so `--as-of D` without a
+        # dataset silently embedded today's date and the page could not be rebuilt.
+        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha,
+                                  as_of=as_of)
     else:
         # SLICE 2. The .duckdb ships BESIDE this file; the page embeds the same rows and the
         # manifest carries both hashes, so a recipient holding only the HTML still gets a
@@ -558,6 +566,11 @@ def main(argv: list[str] | None = None) -> int:
                           "selects the lots and sections. Needs a dataset."))
     ap.add_argument("--as-of", metavar="YYYY-MM-DD",
                     help="the date the package claims; default is today (the build date)")
+    ap.add_argument("--sha", metavar="SHA",
+                    help=("the algorithm commit the page claims (40 hex), used as-is; default "
+                          "is HEAD, refused on a dirty tree"))
+    ap.add_argument("--like", metavar="PAGE",
+                    help="rebuild what we shipped: take the sha and date from PAGE")
     ap.add_argument("--fetch-runtime", action="store_true",
                     help="download the pinned Pyodide runtime into --runtime-dir (needs network)")
     a = ap.parse_args(argv)
@@ -593,16 +606,41 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--recipient is required when building a package "
                  "(it is not required for --fetch-runtime alone)")
 
+    # --like SUPPLIES BOTH PINS, so combining it with either would leave two answers to one
+    # question. Refused by name, and before anything is read or built.
+    sha = a.sha
+    as_of_arg = a.as_of
+    if a.like is not None:
+        if a.sha is not None or a.as_of is not None:
+            raise SystemExit("--like supplies --sha and --as-of; pass one or the other")
+        like = pathlib.Path(a.like)
+        if not like.is_file():
+            raise SystemExit(f"--like {like}: no such file")
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import cost_package_identities as _ids
+        try:
+            shipped = _ids.package_from_html(like.read_text(encoding="utf-8"))
+        except ValueError:
+            raise SystemExit(f"--like {like}: no package-data block") from None
+        # NOTHING ELSE is taken from the page: the sha and the date are the two inputs a
+        # rebuild cannot recover from the tree, and everything else is derived again.
+        try:
+            sha, as_of_arg = shipped["algorithm_sha"], shipped["as_of"]
+        except KeyError as e:
+            raise SystemExit(f"--like {like}: package-data lacks {e.args[0]!r}") from None
+
+    if sha is not None and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
+        raise SystemExit(f"--sha must be a 40-hex commit, got {sha!r}")
     as_of = None
-    if a.as_of is not None:
+    if as_of_arg is not None:
         import datetime as _dt
         try:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.as_of):
-                raise ValueError(a.as_of)
-            _dt.date.fromisoformat(a.as_of)
+            if not (isinstance(as_of_arg, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_arg)):
+                raise ValueError(as_of_arg)
+            _dt.date.fromisoformat(as_of_arg)
         except ValueError:
-            raise SystemExit(f"--as-of must be YYYY-MM-DD, got {a.as_of!r}") from None
-        as_of = a.as_of
+            raise SystemExit(f"--as-of must be YYYY-MM-DD, got {as_of_arg!r}") from None
+        as_of = as_of_arg
 
     # THE DATASET: reused from --duckdb, rebuilt by --with-dataset, or absent. The first two are
     # exclusive, because "never rebuild it" and "rebuild it" cannot both be obeyed.
@@ -632,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.with_dataset:
         db = pathlib.Path(a.out_dir) / f"cost-{a.recipient}.duckdb"
         build_dataset(a.recipient, db)
-    html = build_html(a.recipient, rt, db, as_of=as_of, **narrowed)
+    html = build_html(a.recipient, rt, db, sha=sha, as_of=as_of, **narrowed)
     suffix = ""
     if a.corrupt_intermediate:
         # Alter ONE intermediate in the embedded manifest, leaving everything else — the

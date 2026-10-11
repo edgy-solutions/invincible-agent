@@ -44,6 +44,9 @@
 #                  that CAN offer verbs is drawn as one and scores `slot_required` instead.
 #   refused        the VERB returned a NAMED refusal: `refused: true` plus an `outcome` word (for
 #                  example `hazard_closed`, `not_assessed`). Added 2026-10-09 (architect ruling).
+#                  READ FROM THE CARD'S `refusal` FIELD (presentation's REFUSAL_FIELD), on every
+#                  card, not from anywhere in the answer. A row may name the word with
+#                  `expect_refusal_outcome`.
 #                  Not `abstained` (no page explains the subject) and not `slot_required` (a
 #                  mandatory input was missing).
 #   fallback       the GENERALIST answered, because nothing in the registry matched. Correct
@@ -318,6 +321,7 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [refused]
+    expect_refusal_outcome: hazard_closed
 
   # Q10: the only fixture hazard in a High cell. NOT YET WALKED LIVE.
   - id: safety-haz-1007-risk-assessment
@@ -349,6 +353,7 @@ rows:
     expect_archetype: null
     min_rows: 0
     dispositions: [refused]
+    expect_refusal_outcome: not_assessed
 
   # Q12: the only OPEN fixture hazard in a Low cell. NOT YET WALKED LIVE.
   - id: safety-haz-1008-risk-assessment
@@ -605,3 +610,23 @@ rows:
     expect_archetype: KNOWLEDGE_DOCUMENT
     min_rows: 1
     dispositions: [drawn]
+
+  # ── HAND REPROS (Lane 1) ───────────────────────────────────────────────────────────────────
+  # Questions a human asked in a real session that went wrong, in the asker's exact words. They
+  # are deliberately NOT catalogue synonyms (no synonym seal applies); the wording is the subject.
+
+  # Q1: Chris's hand repro on rev 185 -- this wording ABSTAINED (no_verb_classified, "no
+  # capability for this subject"). Expected after 186: the FRACAS card, or the unknown-part
+  # refusal. An abstain or a fallback is the defect. NOT YET WALKED LIVE.
+  - id: repro-failures-recorded-for-part-5530-184
+    sheet: docs/measurements/hand-repro-walk-sheet.md
+    sheet_index: 0
+    question: what failures are recorded for part 5530-184
+    user: bob
+    persona: SAFETY_ENGINEER
+    domains: [SUSTAINMENT]
+    expect_verb: what_failed_on_this_part
+    expect_archetype: null
+    min_rows: 0
+    dispositions: [refused, drawn]
+    expect_refusal_reason_contains: "unknown part"
