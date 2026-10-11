@@ -217,6 +217,21 @@ externalRestate:
 # already run Dagster and only want the user code deployment.
 # ==========================================================================
 dagster:
+  # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
+  # dagster-instance.yaml) and mounted as dagster.yaml.
+  maxConcurrentRuns: 2
+  runMonitoring:
+    enabled: true
+    startTimeoutSeconds: 600
+    cancelTimeoutSeconds: 180
+    pollIntervalSeconds: 60
+    # The bound that ends a STARTED run whose code-location pod died (DefaultRunLauncher
+    # cannot health-check a worker, so nothing else does; such a run holds one of the
+    # maxConcurrentRuns slots for ever). MEASURED 2026-10-09 on the sandbox run storage,
+    # 2742 finished runs: longest finished run 1930s (process_document_artifact_job; p50 685s);
+    # supervisor_query_job max 1396s; ingest_ontology_job max 341s. 3600 is ~1.9x the longest
+    # legitimate run. 0 disables the bound (the pre-chart hand-made config had none).
+    maxRuntimeSeconds: 3600
   webserver:
     enabled: true
     replicas: 1
@@ -272,7 +287,8 @@ dagster:
       tag: ""  # defaults to .Chart.AppVersion
     port: 4000
     # SIZED FROM THE LOAD, NOT BY DOUBLING. `DefaultRunLauncher` starts runs INSIDE this pod
-    # (see dagster.yaml — "production would use K8sRunLauncher"), so one pod holds the gRPC
+    # (instance config: templates/dagster-instance.yaml; runs that outlive
+    # dagster.runMonitoring.maxRuntimeSeconds are failed by the daemon), so one pod holds the gRPC
     # server, the run, and up to `max_concurrent: 5` step subprocesses at once. Dagster SPAWNS
     # rather than forks, so every step re-imports the module graph from cold, and that import
     # measures 17.5s single-threaded in this image (dagster 6.2s, of which dagster.components
@@ -649,6 +665,14 @@ engineSafety:
     tag: ""
   port: 8099
   env: {}
+  # FAILURE_SOURCE_CONNECTORS (agent_fleet/safety_agent/failure_source.py; saf B2): the FRACAS
+  # source seam's real connectors, comma-separated `name=module:callable`. EMPTY = the sandbox
+  # fixture; SET = ONLY the named connectors, and the fixture never mixes in. Rendered into the
+  # shared ConfigMap only when non-empty (an explicit agentFleet.env entry wins). No connector
+  # module ships in any image yet (saf B1), so a value here on a cluster without the overlay
+  # image refuses EVERY FRACAS question with `source_unavailable`. Leave it empty until a
+  # deployment's overlay image carries the classes it names.
+  failureSourceConnectors: ""
   resources:
     requests:
       cpu: 100m
@@ -1187,7 +1211,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (dagster instance config)
+  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s
@@ -1871,7 +1895,48 @@ keycloak:
   # The claim the hardcoded-claim mapper writes = USER_ENTITLEMENT_CLAIM. `email` in
   # sandbox; set to the employee-id claim at work so service authz_ids land in the same
   # slot human ones do.
+  #
+  # ONE VALUE, EVERY SPECIES. This key is rendered as the env USER_ENTITLEMENT_CLAIM in the shared
+  # `-config` ConfigMap (every workload that loads it, cortex-bff included) AND as the claim name
+  # of the service-client authz-id-svc mapper. When it is anything other than `email`, local human
+  # users also carry a user attribute of the same name (= their email) and the cortex-ui client
+  # emits it as that claim; a brokered human gets it from the broker's sub mapper.
+  # docs/reference/identity-mint-contract.md: the BFF env claim, the service token claim and the
+  # human claim must all be equal.
   authzClaim: "email"
+  # The local human users the realm IMPORT carries (keycloak-configmap.yaml). Listed here ONLY so
+  # the reconcile job can give an already-imported realm the same authz attribute the import gives
+  # a fresh one; consumed only when authzClaim is not `email`. A test pins this list to the import.
+  localHumanUsers:
+    - {username: agent-user, email: agent@example.com}
+    - {username: alice, email: alice@example.com}
+    - {username: bob, email: bob@example.com}
+    - {username: carol, email: carol@example.com}
+  # ── IDENTITY BROKERS ────────────────────────────────────────────────────────────────
+  # OIDC brokering from this realm to another party's realm, so THEIR principals sign in
+  # through us and their grants bind to THEIR `sub`. The IdP lives in the realm-reconcile job
+  # ONLY: the realm import is a ConfigMap and cannot carry the client secret. Disabled by default.
+  # Requires authzClaim != "email" (a brokered human's authz identity is the upstream sub, which
+  # cannot ride the email claim) and keycloak.reconcileClients.enabled (the render fails otherwise).
+  brokers:
+    openddil:
+      enabled: false
+      alias: openddil
+      displayName: "OpenDDIL"
+      # REQUIRED when enabled (the render fails on empty): the upstream realm issuer URL,
+      # discovery is read from <issuer>/.well-known/openid-configuration.
+      issuer: ""
+      # The client the upstream registers for us.
+      clientId: iagent-broker
+      # The Secret holding that client's secret, read only via secretKeyRef in the reconcile job.
+      # Never put the value in values or a ConfigMap. The broker is RENDERED only when `enabled`
+      # AND existingSecret is non-empty; enabled with no existingSecret renders no broker objects
+      # and a one-line NOTE in the job script (it does not fail the render).
+      existingSecret: ""
+      secretKey: "client-secret"
+      # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
+      # `sub` is the upstream's raw subject = the brokered user's authz identity.
+      principals: []
   # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
   # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
   # one; it exists so the name a delegate's writes carry is an identity the realm can be asked

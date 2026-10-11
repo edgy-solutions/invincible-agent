@@ -118,6 +118,8 @@ class SupervisorQueryConfig(Config):
     # resolve THIS caller's menu at decision time. Empty -> Engine F falls back to its
     # global capability table (the pre-seam behaviour), never to a silently smaller menu.
     frontend_id: str = ""
+    # Menus are per (frontend_id, frontend_version); empty -> the newest registered version.
+    frontend_version: str = ""
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
     # THE SPOKEN SLOTS, argument name -> value, forwarded from /route_intent.
@@ -3587,6 +3589,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             # from a global table that answers on behalf of clients which never advertised
             # those capabilities.
             "frontend_id": config.frontend_id or None,
+            "frontend_version": config.frontend_version or None,
         },
         timeout=300,
     )

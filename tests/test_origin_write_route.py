@@ -293,7 +293,7 @@ def test_q2_a_AN_ACCEPTED_ORIGIN_FILES_THE_PROMOTION_THEN_MOVES_THE_ROW(
     [kw] = filing.registered
     assert kw["kind"] == "document_promotion"
     assert kw["audience"] == "document_promotion:SUSTAINMENT"
-    assert kw["payload"]["domain"] == "SUSTAINMENT"
+    assert kw["payload"]["review_pool"] == "SUSTAINMENT"
     assert kw["payload"]["dropped_by"] == {"authz_id": "alice@example.com",
                                            "on_behalf_of": "carol@example.com"}
     assert filing.ingest.row["status"] == "review"
@@ -371,4 +371,4 @@ def test_q2_f_THE_AUDIENCE_COMES_FROM_THE_ORIGIN_NEVER_THE_KIND(
     assert out["promotion"]["filed"] is True, out
     [kw] = filing.registered
     assert kw["audience"] == "document_promotion:FINANCE"
-    assert kw["payload"]["domain"] == "FINANCE"
+    assert kw["payload"]["review_pool"] == "FINANCE"

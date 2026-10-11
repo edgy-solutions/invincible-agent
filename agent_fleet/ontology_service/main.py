@@ -914,8 +914,10 @@ async def lifespan(app: FastAPI):
                     "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
                     "the notice's provenance as the graph records it: how it was obtained, the ingest "
                     "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
-                    "unknown notice id, which is a different fact from a known notice naming no part "
-                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "unknown notice id (unknown_notice), which is a different fact from a known "
+                    "notice naming no part (also a refusal: no_affected_parts). More than 100 parts "
+                    "are paged (params.offset; the answer says total_available, completeness and "
+                    "next_offset). READ-ONLY: proposes no disposition and opens no review. "
                     "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
                     "subject to this notice."
                 ),
@@ -5151,6 +5153,8 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
+            "refused": True,
+            "outcome": "refused",
             "reason": "not_entitled",
             "verb": _notice_parts.VERB,
             "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
@@ -5163,6 +5167,7 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
     try:
         return await asyncio.to_thread(
             _notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id,
+            (request.params or {}).get("offset"),
             caller_id=request.user_email, viewer_domains=request.entitled_domains,
             table=_load_domain_consumption_for_notice_parts(),
             can_view_program=_notice_parts_can_view_program,
@@ -5853,12 +5858,15 @@ _COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
 _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
 #: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
-#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
-#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
-#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: 3's Jena read, both as the person the request names in `on_behalf_of`. ON by default: every
+#: caller of the route now hands the person down (the seal derives the callers and holds each to
+#: it), so the 400 for a request with no person is reached only by a caller that is itself wrong.
+#: LEG 3 is live (the flag-off read is a service and is refused), so the pool gains `mesh:explain`
+#: on every class subject; LEGs 1 and 2 answer what they answer off. Turn it off with
+#: `COMPATIBLE_VERBS_VIA_MESH=false` (one statement, no identity, no 400s).
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
-    "COMPATIBLE_VERBS_VIA_MESH", "false"
+    "COMPATIBLE_VERBS_VIA_MESH", "true"
 ).lower() in ("true", "1", "yes")
 
 

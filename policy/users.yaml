@@ -131,14 +131,16 @@ users:
       persona: MECHANIC
       domains: [AVIATION]
 
-  # ── OpenDDIL principals (no credentials) ────────────────────────────
-  # Mirrored as a non-interactive Keycloak user (values-sandbox.yaml keycloak.nonInteractiveUsers)
-  # when OpenDDIL's client registration landed, 2026-10-02. Seeded here only so a task audience
-  # can name it: validate_policy refuses a grant_to that is not in this file. It never signs in,
-  # never opens the picker, and so carries no `groups` and no `default` persona/domain cell;
-  # its only entitlement is the document_promotion:MAINTENANCE audience in task_grants.yaml.
-  - id: liaison@example.com
-    display_name: Liaison (OpenDDIL principal - MAINTENANCE document reviewer)
+  # ── OpenDDIL principals (brokered) ──────────────────────────────────
+  # OpenDDIL's own principals sign in through the OIDC broker (values keycloak.brokers.openddil),
+  # and their authz_id is OpenDDIL's raw `sub`, so the id here is that sub, NOT an email. This is
+  # liaison.coalition's fixed id in OpenDDIL's realm. Seeded here so a task audience can name it:
+  # validate_policy refuses a grant_to that is not in this file. It carries no `groups` and no
+  # `default` persona/domain cell; its only entitlement is the document_promotion:MAINTENANCE
+  # audience in task_grants.yaml. (operator.atlantia and operator.borduria hold no grant, so they
+  # are not seeded; they are only named in the delegate's onBehalfOf.)
+  - id: 33333333-3333-4333-8333-333333333333
+    display_name: Liaison (OpenDDIL brokered principal liaison.coalition - MAINTENANCE document reviewer)
     groups: []
 
   # ── Service identities (non-human subjects) ─────────────────────────

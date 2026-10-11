@@ -1609,6 +1609,7 @@ async def plan_measure(
     fn: str,
     body: PlanMeasureBody,
     x_frontend_id: Optional[str] = Header(default=None, alias="X-Frontend-Id"),
+    x_frontend_version: Optional[str] = Header(default=None, alias="X-Frontend-Version"),
     current_user: User = Depends(get_current_user),
 ):
     try:
@@ -1640,6 +1641,7 @@ async def plan_measure(
         "state_version": out.get("state_version"),
         "rows": out.get("rows"),
         "frontend_id": x_frontend_id,
+        "frontend_version": x_frontend_version,
     }
 
 
@@ -1857,6 +1859,109 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     return resolved
 
 
+def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Split a board's resolved answers by the engine that exports them.
+
+    "fin" claims an answer iff its verb is one engine-fin SERVES (`VERB_TO_FN`, derived, not
+    typed; imported lazily like `_fin_export_recipients_for`'s `export`). "cost" takes EVERY
+    OTHER answer, including verb None and unknown verbs. WHY: the ad-hoc path is engine-cost's
+    today, and engine-cost's `canvas.resolve` already refuses an unknown verb BY NAME; a third
+    exporting engine adds its own claim here.
+
+    Order: engines by first appearance on the board; answers within an engine in board order.
+    """
+    from agent_fleet.cost_agent.canvas import _verb_local
+    from agent_fleet.finance_agent.main import VERB_TO_FN
+    fin_verbs = {_verb_local(v) for v in VERB_TO_FN} - {None}
+    parts: dict[str, list[dict]] = {}
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        engine = "fin" if local in fin_verbs else "cost"
+        parts.setdefault(engine, []).append(ans)
+    return list(parts.items())
+
+
+def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> dict:
+    """The fin section of a mixed board: always a refusal, made HERE without calling engine-fin.
+
+    WHY: RULED 2026-10-10 (Q1): engine-fin exports ratified templates only -- that is the
+    finance control, not a gap -- so an ad-hoc finance card is refused, locally, without
+    calling engine-fin. (Q2): the section goes to the board's recipient and states "not a
+    ratified template", nothing else (no ids, no template name, no hint). (Q3): it lives in the
+    API response / exporter's view, never in the customer page. Sealed by
+    `tests/test_a_mixed_board_exports_per_engine.py::test_engine_fin_takes_ratified_templates_only`
+    and `::test_the_fin_section_states_not_a_ratified_template_and_nothing_else`.
+    """
+    return {
+        "engine": "fin",
+        "answers": answer_ids,
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "outcome": "not_in_model",
+        "reason": "not a ratified template",
+    }
+
+
+async def _call_engine_cost_package(
+    params: dict, bearer: str, *, recipient_scope: str, template_id: Optional[str],
+) -> dict:
+    """POST engine-cost's `package_export` and shape the answer. Raises HTTPException on an
+    unreachable engine, an HTTP refusal, or an in-band `unavailable` -- the single-engine path
+    lets that propagate; the per-engine split catches it into a section."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/measure/package_export",
+                json={"params": params},
+                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
+                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # applied here — a service calling on the caller's behalf must carry THAT
+                # caller's identity or refuse).
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+
+    out = rr.json()
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=template_id,
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
+    )
+
+
+def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
+    """An engine-cost HTTPException as a refusal section, in `_shape_export_package_response`'s
+    in-band refusal shape. Not raised: on a mixed board the other engines still export."""
+    detail = exc.detail
+    outcome = "unavailable" if exc.status_code in (502, 503) else (
+        detail.get("outcome") if isinstance(detail, dict) else None
+    )
+    if isinstance(detail, dict) and detail.get("outcome") == "unavailable" and "reason" in detail:
+        reason = detail["reason"]
+    elif isinstance(detail, str):
+        reason = detail
+    else:
+        reason = json.dumps(detail, default=str)
+    return {
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        "outcome": outcome,
+    }
+
+
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
@@ -2011,6 +2116,14 @@ async def export_package(
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
       4. the engine unreachable, or the engine's own refusal, forwarded verbatim
+
+    A board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are
+    partitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is
+    engine-cost's), each engine is given only its own, and when any engine-fin answer is
+    present the response is a 200 carrying `documents`, one section per engine: a refused engine
+    (engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates
+    only -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then
+    applies to a section, not the response. A cost-only board answers exactly as before.
     """
     if body.template_id and body.answers:
         raise HTTPException(
@@ -2047,49 +2160,53 @@ async def export_package(
             },
         )
 
-    canvas = None
+    parts: list[tuple[str, list[dict]]] = []
     if body.answers:
+        # ALL ids resolve (404/503) BEFORE any engine is called or the board is split.
         resolved = _resolve_export_answers(
             [a.artifact_id for a in body.answers], current_user.id
         )
-        canvas = {"answers": resolved}
+        parts = _partition_export_answers(resolved)
     # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
     # program, same as it did before canvases existed.
 
-    params: dict = {"recipient_scope": recipient_scope}
-    if canvas is not None:
-        params["canvas"] = canvas
-
     bearer = _user_bearer(request)
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
-            rr = await client.post(
-                f"{_ENGINE_COST_URL}/measure/package_export",
-                json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
-                # applied here — a service calling on the caller's behalf must carry THAT
-                # caller's identity or refuse).
-                headers={"Authorization": f"Bearer {bearer}"},
-            )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail={
-            "error": "cost_engine_unreachable", "message": str(exc),
-        })
 
-    if rr.status_code >= 400:
+    if not any(engine == "fin" for engine, _ in parts):
+        # ONLY engine-cost's answers (or none): today's path and today's response, unchanged.
+        params: dict = {"recipient_scope": recipient_scope}
+        if parts:
+            params["canvas"] = {"answers": parts[0][1]}
+        return await _call_engine_cost_package(
+            params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
+        )
+
+    documents: list[dict] = []
+    for engine, answers in parts:
+        ids = [a["id"] for a in answers]
+        if engine == "fin":
+            documents.append(_fin_ad_hoc_refusal_section(ids, recipient_scope))
+            continue
         try:
-            body_json = rr.json()
-            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
-        except Exception:
-            detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+            section = await _call_engine_cost_package(
+                {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
+                bearer, recipient_scope=recipient_scope, template_id=None,
+            )
+        except HTTPException as exc:
+            section = _cost_refusal_section(exc, recipient_scope)
+        documents.append({"engine": engine, "answers": ids, **section})
 
-    out = rr.json()
-    return _shape_export_package_response(
-        out, recipient_scope=recipient_scope, template_id=body.template_id,
-        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
-    )
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = len(ok) - sum(ok)
+    return {
+        "export_id": None,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(ok)} engines refused",
+        "template_id": None,
+        "documents": documents,
+    }
 
 
 @app.get("/export/package/artifact/{filename}")
@@ -3804,6 +3921,9 @@ class InterviewRequest(BaseModel):
     # non-UI callers (curl, scripts) keep working; they resolve to the LABELLED default
     # menu rather than being special-cased.
     frontend_id: str | None = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's old bundle names its own
+    # version and is served that menu. Absent -> the newest registered version.
+    frontend_version: str | None = None
     # Required: identifies the chat thread / DagsterRunTracker key. A missing
     # session_id used to be silently filled with a fresh UUID per request,
     # which defeated the tracker's per-key dedup and caused back-to-back
@@ -5439,6 +5559,7 @@ async def _launch_supervisor_job(
     # the archetype is chosen from THAT client's registered menu. Empty is not an error --
     # Engine F falls back to its global table, i.e. today's behaviour.
     frontend_id: str = "",
+    frontend_version: str = "",
     # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
     # runConfig key so the generalist-fallback subtask can hand it to
     # Engine D's query_metadata for the Topaz can_view ask.
@@ -5528,6 +5649,7 @@ async def _launch_supervisor_job(
         "user_email": user_email,
         # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
         "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
         # ADR-0009 Step F'.2 additions:
         "user_persona": user_persona,
         "entitled_domains": entitled_domains,
@@ -6661,6 +6783,7 @@ async def _generate_dagster_stream_inner(
             bundle=_artifact_bundle,
             session_id=session_id,
             frontend_id=(request.frontend_id or ""),
+            frontend_version=(request.frontend_version or ""),
             user_persona=user_persona or "",
         ):
             yield _ev
@@ -6701,6 +6824,7 @@ async def _generate_dagster_stream_inner(
         # ADR-0017 amendment: read straight off the request -- the UI names itself, and an
         # absent value is a NON-UI caller (curl, script), not an error.
         frontend_id=(request.frontend_id or ""),
+        frontend_version=(request.frontend_version or ""),
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
@@ -7367,6 +7491,7 @@ async def _stream_direct_outcome(
     session_id: str,
     frontend_id: str,
     user_persona: str,
+    frontend_version: str = "",
 ) -> AsyncGenerator[str, None]:
     """Emit the SSE for a turn the direct path answered, and fill the artifact bundle.
 
@@ -7560,6 +7685,7 @@ async def _stream_direct_outcome(
                     "persona": user_persona,
                     "output_uri": _output_uri,
                     "frontend_id": frontend_id or None,
+                    "frontend_version": frontend_version or None,
                 },
             )
             _resp.raise_for_status()
@@ -7884,63 +8010,79 @@ async def register_frontend_capabilities(
     _graph_registered, _graph_failed = 0, []
     _registrar_url = os.getenv("MESH_REGISTRAR_URL")
     if _registrar_url:
-        from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+        # ── THE EMIT LOOP RUNS OFF THE EVENT LOOP ──────────────────────────────────
+        # Was: this loop ran inline in an `async def`, and each
+        # `_emit_presentation_to_registrar` is a SYNC HTTP POST (timeout=30.0). Measured
+        # live on rev 186 (2026-10-10): ~49 capabilities per registration at a mean 0.42s
+        # each held the loop ~21s per registration. Every cortex tab registers at load,
+        # two overlapping registrations exceeded the 50s liveness window (5 x 10s /health
+        # timeouts) and the probe killed cortex-bff (exit 137); each restart made the tabs
+        # re-register. Now the whole loop is a plain function run in the threadpool.
+        # `_cap_registry.register` above is an in-process dict and stays on the loop.
+        from starlette.concurrency import run_in_threadpool
 
-        for _c in _admitted:
-            _contract = _c.get("contract") if isinstance(_c, dict) else None
-            _recomputes = None
-            if isinstance(_contract, dict) and "recomputes" in _contract:
-                # Tri-state preserved end to end: only a DECLARED value travels.
-                _recomputes = bool(_contract.get("recomputes"))
-            _outcome = _emit_presentation_to_registrar(
-                registrar_url=_registrar_url,
-                # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
-                # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
-                # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
-                # `#`, so the whole thing survived and the name became
-                #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
-                # — a URN DELIMITER inside a URN component. Measured on the live substrate
-                # 2026-09-02: the __system_default__ rows written by the presentation agent
-                # were clean and the cortex-ui-desktop rows written HERE carried the colon,
-                # which is what identified this as the second site.
-                #
-                # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
-                # THERE, in the same week the five-registries lesson was written up. Fixing
-                # the instance you found is what stops you looking for the sibling. Imported
-                # rather than re-implemented so there is no third copy to diverge.
-                #
-                # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
-                # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
-                # this ships leaves the colon-bearing rows standing and double-binds every
-                # subject. It must ride the same migration as the archetype-out-of-the-name
-                # ruling, which moves every presentation urn anyway.
-                name=(
-                    f"presentation_{str(_c.get('archetype') or '').lower()}"
-                    f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
-                    f"__{payload.frontend_id}"
-                ),
-                description=(
-                    f"{payload.frontend_id} renders {_c.get('subject_uri')} "
-                    f"as {_c.get('archetype')}"
-                ),
-                subject_uri=str(_c.get("subject_uri") or ""),
-                object_uri=str(_c.get("object_uri") or ""),
-                archetype=str(_c.get("archetype") or ""),
-                expected_fields=list(_c.get("expected_fields") or []),
-                persona_fit=list(_c.get("persona_fit") or []),
-                domain_fit=list(_c.get("domain_fit") or []),
-                # The mesh helper takes `version: str`. An ABSENT version is carried as
-                # empty rather than the string "None", which is what `str(None)` would put
-                # into the graph and what a reader would then see as a version.
-                version=payload.frontend_version or "",
-                frontend_id=payload.frontend_id,
-                recomputes=_recomputes,
-            )
-            if _outcome is True:
-                _graph_registered += 1
-            else:
-                _graph_failed.append({"subject_uri": _c.get("subject_uri"),
-                                      "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+        def _emit_all() -> tuple[int, list]:
+            _graph_registered, _graph_failed = 0, []
+            from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+
+            for _c in _admitted:
+                _contract = _c.get("contract") if isinstance(_c, dict) else None
+                _recomputes = None
+                if isinstance(_contract, dict) and "recomputes" in _contract:
+                    # Tri-state preserved end to end: only a DECLARED value travels.
+                    _recomputes = bool(_contract.get("recomputes"))
+                _outcome = _emit_presentation_to_registrar(
+                    registrar_url=_registrar_url,
+                    # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
+                    # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
+                    # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
+                    # `#`, so the whole thing survived and the name became
+                    #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
+                    # — a URN DELIMITER inside a URN component. Measured on the live substrate
+                    # 2026-09-02: the __system_default__ rows written by the presentation agent
+                    # were clean and the cortex-ui-desktop rows written HERE carried the colon,
+                    # which is what identified this as the second site.
+                    #
+                    # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
+                    # THERE, in the same week the five-registries lesson was written up. Fixing
+                    # the instance you found is what stops you looking for the sibling. Imported
+                    # rather than re-implemented so there is no third copy to diverge.
+                    #
+                    # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
+                    # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
+                    # this ships leaves the colon-bearing rows standing and double-binds every
+                    # subject. It must ride the same migration as the archetype-out-of-the-name
+                    # ruling, which moves every presentation urn anyway.
+                    name=(
+                        f"presentation_{str(_c.get('archetype') or '').lower()}"
+                        f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
+                        f"__{payload.frontend_id}"
+                    ),
+                    description=(
+                        f"{payload.frontend_id} renders {_c.get('subject_uri')} "
+                        f"as {_c.get('archetype')}"
+                    ),
+                    subject_uri=str(_c.get("subject_uri") or ""),
+                    object_uri=str(_c.get("object_uri") or ""),
+                    archetype=str(_c.get("archetype") or ""),
+                    expected_fields=list(_c.get("expected_fields") or []),
+                    persona_fit=list(_c.get("persona_fit") or []),
+                    domain_fit=list(_c.get("domain_fit") or []),
+                    # The mesh helper takes `version: str`. An ABSENT version is carried as
+                    # empty rather than the string "None", which is what `str(None)` would put
+                    # into the graph and what a reader would then see as a version.
+                    version=payload.frontend_version or "",
+                    frontend_id=payload.frontend_id,
+                    recomputes=_recomputes,
+                )
+                if _outcome is True:
+                    _graph_registered += 1
+                else:
+                    _graph_failed.append({"subject_uri": _c.get("subject_uri"),
+                                          "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+            return _graph_registered, _graph_failed
+
+        _graph_registered, _graph_failed = await run_in_threadpool(_emit_all)
         if _graph_failed:
             # LOUD, and per-capability: a menu that is half in the graph renders
             # inconsistently depending on which shape an answer takes, which is far
@@ -10014,12 +10156,15 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={
             "error": "no_declared_domain",
             "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
-                       "which resolves to no registered domain -- refusing to open a "
-                       "promotion task with no audience.",
+                       "which resolves to no steward pool to route the review to -- refusing to "
+                       "open a promotion task with no audience (the kind routes the review; it "
+                       "does not assert the document's domain).",
         })
     # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain, but the Topaz grant
     # key in policy/task_grants.yaml is UPPERCASE -- uppercase it below for both the audience
-    # and the payload so the resolved domain actually matches a grant.
+    # and the payload's `review_pool` so the resolved pool actually matches a grant. The payload
+    # carries the ROUTING POOL under `review_pool`; it is not a fact about the document, so it
+    # must never ride under a plain `domain` key a reader could take for the document's own.
     domain = domain.upper()
     audience = f"{promotion.KIND}:{domain}"
     task_id = f"{promotion.KIND}:{ingest_id}"
@@ -10047,7 +10192,7 @@ async def _file_or_find_document_promotion_task(
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    payload = {**derived, "domain": domain, "dropped_by": {
+    payload = {**derived, "review_pool": domain, "dropped_by": {
         "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")}}
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
@@ -10379,8 +10524,11 @@ async def stamp_seeded_by_route(
 ):
     """The runner stamps the seeding delegate on a case's artifacts at `released` (ADR-0041 §8.1,
     RULED 2026-10-08). SERVICE-ONLY: only `svc:case-runner` may call this, same gate as
-    `/internal/origin/write`. `n == 0` is a 200, not an error: no producer writes case-linked
-    artifacts yet. Only a declared delegate can be a seeding delegate: anything else is 422.
+    `/internal/origin/write`. `n == 0` is a 200, not an error (a case that released without
+    writing a case-linked artifact stamps nothing). CORRECTED 2026-10-09: the maintenance case's
+    ActionRecord, written by `/internal/cases/{case_id}/action-record` just below, IS a
+    case-linked artifact, and the runner writes it before this stamp.
+    Only a declared delegate can be a seeding delegate: anything else is 422.
     R-089: the delegate map is asserted by configuration this pass."""
     from starlette.concurrency import run_in_threadpool
 
@@ -10402,6 +10550,99 @@ async def stamp_seeded_by_route(
         return int(rec["n"]) if rec is not None else 0
 
     return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
+
+
+ACTION_RECORD_KIND = "maintenance-action-record"
+
+
+class ActionRecordRequest(_BaseModel):
+    record: dict
+    seeded_by: Optional[str] = None
+    on_behalf_of: str
+
+
+def action_record_artifact_id(case_id: str, action_id: str) -> str:
+    """DETERMINISTIC: a Restate retry of the runner's write names the same artifact."""
+    digest = hashlib.sha256(f"{case_id}\0{action_id}".encode("utf-8")).hexdigest()[:32]
+    return f"action-record-{digest}"
+
+
+@app.post("/internal/cases/{case_id}/action-record")
+async def write_action_record_route(
+    case_id: str,
+    req: ActionRecordRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The maintenance case's ActionRecord (R-114, an iagent-side OUTPUT artifact), written at
+    `released` by the runner (2026-10-09; ADR-0041 §8.1's first case-linked producer). SERVICE-
+    ONLY, same gate as `/internal/cases/{case_id}/seeded-by`.
+
+    ONE AnswerArtifact: id derived from (case_id, action_id) so a retry writes nothing twice
+    (`written: false` when it exists); `case_id` and, when given, `seeded_by` on the node;
+    `kind` = `maintenance-action-record`; the record as `rendered_output.record`; produced by the
+    case runner (delegate) FOR `on_behalf_of`, who is therefore the OWNER the read gate admits.
+    The record's own `provenance.case_id` must be the path's, refused before any write."""
+    from starlette.concurrency import run_in_threadpool
+
+    # Reached as `_aaw.AnswerArtifactBundle`, not the bare name: tests/routing/test_ask_to_answer_
+    # lineage.py reads the FIRST bare-name construction as the answer pipeline's bundle.
+    from . import answer_artifact_writer as _aaw
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/action-record is callable only by the "
+                       "case runner's own service identity.",
+        })
+    if not (req.on_behalf_of or "").strip():
+        raise HTTPException(status_code=422, detail={"error": "on_behalf_of_required"})
+    # R-089: `seeded_by` must be a DECLARED delegate (the configured map, asserted not verified
+    # this pass), as at the seeded-by stamp; `on_behalf_of` is the case's principal as the runner
+    # read it from the case, RECORDED as the owner, not an act this route authorises.
+    if req.seeded_by is not None and req.seeded_by not in _delegate_principals():
+        raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+    provenance = req.record.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("case_id") != case_id:
+        raise HTTPException(status_code=422, detail={"error": "case_id_mismatch"})
+    action_id = req.record.get("action_id")
+    if not isinstance(action_id, str) or not action_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "action_id_required"})
+
+    artifact_id = action_record_artifact_id(case_id, action_id)
+    now_ms = int(time.time() * 1000)
+    bundle = _aaw.AnswerArtifactBundle(
+        id=artifact_id,
+        question_text=f"Maintenance action record {action_id} for case {case_id}",
+        message_id=case_id,
+        valid_as_of=now_ms,
+        status="complete",
+        produced_by={"actor_type": "agent", "actor_id": _CASE_RUNNER_SERVICE_AUTHZ_ID},
+        produced_for={"user_id": req.on_behalf_of, "is_authenticated": True,
+                      "entitlement_source": "case_runner_delegate"},
+        resolved_intent={"kind": ACTION_RECORD_KIND, "case_id": case_id, "action_id": action_id},
+        routing=None,
+        rendered_output={"kind": ACTION_RECORD_KIND, "record": req.record},
+        kind=ACTION_RECORD_KIND,
+        case_id=case_id,
+        seeded_by=req.seeded_by,
+    )
+
+    def _write() -> tuple[bool, Optional[str]]:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                "MATCH (a:AnswerArtifact {id: $id}) RETURN count(a) AS n", id=artifact_id
+            ).single()
+        if rec is not None and int(rec["n"]) > 0:
+            return False, None
+        result = _aaw.AnswerArtifactWriter(driver=neo4j_driver).write_sync(bundle)
+        return result.success, result.error
+
+    written, error = await run_in_threadpool(_write)
+    exists_already = (not written) and error is None
+    if not written and not exists_already:
+        raise HTTPException(status_code=503, detail={"error": "artifact_write_failed"})
+    return {"case_id": case_id, "artifact_id": artifact_id, "written": written}
 
 
 # ════════════════════════════════════════════════════════════════════

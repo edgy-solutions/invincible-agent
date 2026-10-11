@@ -1,5 +1,86 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.39 — 2026-10-10
+
+Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
+STARTED (lane/74-dagster-max-runtime, PR #23; numbered 0.4.37 on its branch, renumbered here).
+
+### Fixed
+
+- **A STARTED run whose code-location pod died is failed after `maxRuntimeSeconds`**
+  (`templates/dagster-instance.yaml`, `values.yaml` `dagster.runMonitoring`). Under
+  `DefaultRunLauncher` the run monitor cannot check a worker's health. It still applies the
+  runtime bound, but the instance config set none, so a zombie held one of the two
+  `max_concurrent_runs` slots for ever, and two of them hung every question. The bound is 3600s,
+  about 1.9x the longest finished run measured on the sandbox (1930s, from 2742 runs, 2026-10-09).
+- **The instance config is chart-owned.** Before this it was a ConfigMap made by hand and
+  patched by hand into the webserver, daemon and user-code Deployments, so no install from the
+  chart could reproduce it. The new ConfigMap is `<release>-dagster-home`, a name helm can own.
+  The volume keeps the live name `dagster-instance` and the same mountPath, so the upgrade
+  re-points the hand-patched volume rather than adding a second one. A `checksum/dagster-instance`
+  annotation rolls the three pods when the config changes. The hand-made ConfigMap is left
+  orphaned, and deleting it is a human's call after the roll.
+- The "production would use K8sRunLauncher" comment is corrected. A dead worker under
+  `DefaultRunLauncher` IS caught, by the runtime bound.
+
+## 0.4.38 — 2026-10-10
+
+Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.
+
+### Fixed
+
+- **`realm-reconcile` no longer fails the release on chart-written `authz-id-svc` mappers.** Rev 183
+  (0.4.36 flipped sandbox `keycloak.authzClaim` `email` -> `authz_id`) failed at realm-reconcile:
+  all 17 service clients still carried the mapper the chart itself wrote at 0.4.35 (`claim.name`
+  `email`), the Job only ever created a MISSING mapper, and the readback then refused every one.
+  Ownership rule: a mapper whose `claim.value` is the chart's declared `authzId` is the chart's, and
+  its stale `claim.name` is now migrated in place (PUT on the same mapper id, value unchanged); a
+  mapper with any other value is the operator's, is never touched, and still fails the readback
+  (now worded "operator-owned mapper, not migrated"). The `cortex-ui` `authz-id-user` mapper is not
+  migrated (it passed readback live).
+
+## 0.4.37 — 2026-10-10
+
+Rev 183.
+
+### Added
+
+- **`engineSafety.failureSourceConnectors`** (default `""`) renders `FAILURE_SOURCE_CONNECTORS` into
+  the shared `-config` ConfigMap only when non-empty; an explicit `agentFleet.env` entry wins. The
+  sandbox leaves it empty (the FRACAS fixture): no connector module ships in any image yet.
+
+### Changed
+
+- Sandbox `cortexUi.image.digest` -> `1985ce7f` (cortex-ui 9bf8063: the `refusal` reader, the
+  stale-tab guard, the FRACAS bindings). Replaces the 182a hand-set image (`e06fbeb2`, 415e5e6).
+
+## 0.4.36 — 2026-10-08
+
+OIDC brokering to the OpenDDIL realm, and one identity claim for every species. Not rolled.
+
+### Added
+
+- **`keycloak.brokers.openddil`** (default disabled; the sandbox keeps it off, with a placeholder
+  issuer, until OpenDDIL supplies issuer + client + secret). The realm-reconcile job upserts the `oidc` IdP (discovery, syncMode FORCE, trustEmail
+  false, storeToken false, PKCE), a sub -> `authz_id` mapper, a username mapper, and the
+  `openddil-first-login` flow: a copy of "first broker login" with review-profile and every
+  link-existing-account execution DISABLED. Every step is read back. The client secret reaches the
+  job only through `existingSecret`/`secretKey` (secretKeyRef); the broker renders only when enabled AND existingSecret is set.
+- **`USER_ENTITLEMENT_CLAIM`** is rendered in the shared `-config` ConfigMap from
+  `keycloak.authzClaim` (base default `email`; the base render differs from 0.4.35 by this one
+  line). `keycloak.localHumanUsers` lists the local humans that get the claim as a user attribute.
+
+### Changed
+
+- The sandbox sets `authzClaim: authz_id`. Local humans carry the attribute (realm import and
+  reconcile); the `cortex-ui` client gets an attribute mapper; the reconcile job sets the realm
+  user-profile `unmanagedAttributePolicy` to ADMIN_EDIT. A service client created before the flip
+  keeps its old `authz-id-svc` claim name: the reconcile readback FAILS it (exit 4); the repair is
+  to delete the stale mapper and re-run.
+- `operator.atlantia`, `operator.borduria` and `liaison` leave the sandbox `nonInteractiveUsers`;
+  `iagent-openddil` acts on behalf of the brokered principals. The onBehalfOf check accepts a
+  principal of an enabled broker, and `DELEGATE_ON_BEHALF_OF` carries the principal's `sub`.
+
 ## 0.4.30 — 2026-10-04
 
 engine-o is restarted by the re-register hook like every other engine that registers on boot.

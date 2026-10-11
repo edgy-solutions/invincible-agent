@@ -1,0 +1,12 @@
+{
+  "answers": [
+    {"id": "ans-labor-1", "verb_iri": "mesh:costLaborComposition", "subject_instance_id": 1},
+    {"id": "ans-trend", "verb_iri": "mesh:costUnitPriceTrend", "subject_instance_id": null},
+    {"id": "ans-price-2", "verb_iri": "mesh:costPriceComposition", "subject_instance_id": 2},
+    {"id": "ans-breakdown-3", "verb_iri": "mesh:costLotBreakdown", "subject_instance_id": "3"},
+    {"id": "ans-category-4", "verb_iri": "mesh:costCategoryBreakdown", "subject_instance_id": 4},
+    {"id": "ans-rates-5", "verb_iri": "mesh:costRateComparison", "subject_instance_id": 5},
+    {"id": "ans-suppliers-3", "verb_iri": "mesh:costSupplierConcentration", "subject_instance_id": 3},
+    {"id": "ans-assumptions", "verb_iri": "mesh:costRateAssumptions", "subject_instance_id": null}
+  ]
+}

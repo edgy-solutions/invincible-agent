@@ -141,9 +141,12 @@ class AnswerArtifactBundle:
     kind: str = "answer"
     #: The case that produced this artifact, when a workflow did (ADR-0041 §8.1). The runner's
     #: `released` stamp finds the artifacts of a case by this property. OPTIONAL and written
-    #: ONLY when given. NO CALLER PASSES IT YET: no workflow produces a case-linked artifact
-    #: (tests/test_a_delegate_reads_what_it_seeded.py seals that state).
+    #: ONLY when given. CORRECTED 2026-10-09: the maintenance case's ActionRecord is the first
+    #: producer -- `POST /internal/cases/{case_id}/action-record` passes it (and `seeded_by`).
     case_id: Optional[str] = None
+    #: The seeding delegate, when the writer is told it (ADR-0041 §8.1). Written ONLY when given,
+    #: beside `case_id`; the runner's `released` stamp sets the same property on a case's artifacts.
+    seeded_by: Optional[str] = None
     # Factual S·P headline composed at write time from the captured
     # routing facts (subject label · verb label; fallback → the
     # structured fallback_reason). Per ADR-0028 Decision 4 and the
@@ -558,6 +561,12 @@ class AnswerArtifactWriter:
             tx.run(
                 "MATCH (a:AnswerArtifact {id: $id}) SET a.case_id = $case_id",
                 id=bundle.id, case_id=bundle.case_id,
+            )
+
+        if bundle.seeded_by:
+            tx.run(
+                "MATCH (a:AnswerArtifact {id: $id}) SET a.seeded_by = $seeded_by",
+                id=bundle.id, seeded_by=bundle.seeded_by,
             )
 
         # PRODUCED_BY edge → Actor node. MERGE on (actor_type, actor_id)

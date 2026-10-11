@@ -1397,7 +1397,7 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     assert reg["task_id"] == f"{promotion.KIND}:{row['id']}"
     assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
     assert reg["payload"]["ingest_id"] == row["id"]
-    assert reg["payload"]["domain"] == "SUSTAINMENT"
+    assert reg["payload"]["review_pool"] == "SUSTAINMENT"
     assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com",
                                              "on_behalf_of": "carol@example.com"}
     assert r.json()["task_id"] == f"{promotion.KIND}:{row['id']}"

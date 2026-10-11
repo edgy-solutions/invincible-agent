@@ -74,7 +74,7 @@ def test_ACCEPTANCE_an_undeclared_archetype_can_no_longer_win_by_fallthrough(mon
     """
     menu = {"frontend_id": "cortex-ui-desktop", "frontend_version": "1",
             "capabilities": [DOC]}
-    monkeypatch.setattr(cr, "menu_for", lambda fid: menu)
+    monkeypatch.setattr(cr, "menu_for", lambda fid, *_a: menu)
     cap, prov = cr.select_presentation(
         "cortex-ui-desktop",
         "http://invincible-agent/mesh#FundingGapSet",   # nothing on the menu binds this
@@ -94,7 +94,7 @@ def test_a_DECLARED_binding_still_renders_without_a_server_side_validator(monkey
                 "subject_uri": "http://invincible-agent/mesh#IntervalSchedule"}
     menu = {"frontend_id": "cortex-ui-desktop", "frontend_version": "1",
             "capabilities": [timeline, DOC]}
-    monkeypatch.setattr(cr, "menu_for", lambda fid: menu)
+    monkeypatch.setattr(cr, "menu_for", lambda fid, *_a: menu)
     cap, prov = cr.select_presentation(
         "cortex-ui-desktop", "http://invincible-agent/mesh#IntervalSchedule",
         {"chart_data": None, "chart_type": None},
