@@ -206,10 +206,54 @@ def test_both_callers_go_through_the_one_helper():
     import iagent.gateway as gw
     import iagent.origin as origin_mod
 
-    for fn in (gw._origin_visible_to_caller, np_mod.read_notice_parts):
+    # engine-o's read reaches the helper THROUGH `notice_visible` (Q7), asserted by the test below.
+    for fn in (gw._origin_visible_to_caller, np_mod.notice_visible):
         src = inspect.getsource(fn)
         assert "visible_by_origin(" in src, fn.__name__
         assert "origin_visible(" not in src.replace("visible_by_origin(", ""), fn.__name__
         assert "can_consume(" not in src, fn.__name__
     assert np_mod.visible_by_origin is oe.visible_by_origin
     assert origin_mod.visible_by_origin is oe.visible_by_origin
+
+
+# -- column 4: the real engine-o /resolve_instance (architect Q7, 2026-10-10) --------------------
+# The same table, the same row, the same caller: the notice candidate is present IFF
+# `read_notice_parts` returns the notice's sources. Agreement is the seal, so there is no second
+# truth table.
+
+@pytest.mark.parametrize("case", CASES, ids=_IDS)
+def test_engine_o_resolve_instance_agrees_with_notice_parts_on_the_same_table(case, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from agent_fleet.ontology_service import main as eo
+
+    _, domains, owner, program, answer, expected, asked = case
+    row = _row(owner, program)
+    m_read, m_resolve = _Member(answer), _Member(answer)
+
+    read = np_mod.read_notice_parts(_Driver(row), NOTICE, caller_id=CALLER, viewer_domains=domains,
+                                    table=TABLE, can_view_program=m_read)
+
+    async def _jena(query, domain="MAINTENANCE", **kw):
+        return [{"s": np_mod.NOTICE_IRI_PREFIX + NOTICE, "type": "http://x/pcn#Notice"}]
+
+    monkeypatch.setattr(eo, "execute_sparql", _jena)
+    monkeypatch.setattr(eo, "_NEO4J_DRIVER", _Driver(row))
+    monkeypatch.setattr(eo, "_load_domain_consumption_for_notice_parts", lambda: TABLE)
+    monkeypatch.setattr(eo, "_notice_parts_can_view_program", m_resolve)
+    resp = TestClient(eo.app).post("/resolve_instance", json={
+        "identifier": NOTICE, "user_email": CALLER, "entitled_domains": list(domains)})
+    assert resp.status_code == 200, resp.text
+    present = bool(resp.json()["candidates"])
+
+    assert present is bool(read["sources"]) is expected
+    assert m_resolve.calls == m_read.calls  # Topaz is asked on the same rows, and no others
+    assert bool(m_resolve.calls) is asked
+
+
+def test_the_resolve_instance_gate_and_the_notice_parts_read_share_the_one_verdict():
+    for fn in (np_mod.read_notice_parts, np_mod.visible_notice_ids):
+        src = inspect.getsource(fn)
+        assert "notice_visible(" in src, fn.__name__
+        assert "visible_by_origin(" not in src, fn.__name__
+    assert "visible_by_origin(" in inspect.getsource(np_mod.notice_visible)

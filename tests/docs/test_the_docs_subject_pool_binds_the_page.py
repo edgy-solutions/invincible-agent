@@ -342,7 +342,7 @@ def test_outside_DOCS_the_fan_out_still_decides(eo, monkeypatch):
     """The pool ADDS a binding under DOCS and changes nothing elsewhere: the old path runs."""
     called = []
 
-    async def _fanout(identifier, query, asked_domains=None):
+    async def _fanout(identifier, query, asked_domains=None, **kwargs):
         called.append(identifier)
         return None, {"instance_match": "empty"}
 
@@ -381,7 +381,7 @@ def test_a_route_to_any_other_class_under_MESH_still_leaves_the_pool_shut(eo, mo
     same as `test_outside_DOCS_the_fan_out_still_decides`."""
     called = []
 
-    async def _fanout(identifier, query, asked_domains=None):
+    async def _fanout(identifier, query, asked_domains=None, **kwargs):
         called.append(identifier)
         return None, {"instance_match": "empty"}
 
