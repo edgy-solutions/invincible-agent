@@ -118,27 +118,126 @@ what the reader then returns.
   - PR #32 goes in **rev 187, not 186**, with its own PCN re-walk.
   - The backfill runs live as part of the 187 roll, by Lane 1 (authorized).
   - Lane 1: run it straight after the roll and before the re-walk. Until it runs, promoted drops with no origin are withheld from everyone but the dropper.
-- **Q2–Q8 and Q10** are open. They were re-sent in chat on 2026-10-10.
+- **Q2–Q8 and Q10 answered later on 2026-10-10.** What was done for each is in the next section.
+
+## Answers to Q2–Q10, and what was done
+
+- **AnswerArtifact "how resolved".** Not built. The rung field goes on the write path when something first writes an origin there, not before. This is noted in the PR #32 body.
+- **Q2, an accept files the promotion.** BUILT at `0380bd50`.
+  - The behaviour:
+    - A steward's accept on an `awaiting_origin` row files `document_promotion:<owner_domain>`, with the domain taken from the origin and not the kind, and moves the row to `review`. The task is filed first, the status moves second.
+    - If filing is refused, the origin stays written and the row stays put. The refusal is named in the route's answer.
+    - A reject stays terminal and dropper-only.
+    - The stage route now keeps the `extraction_ref` on an `awaiting_origin` row, so the accept can build the payload.
+  - **A premise correction.** Your ruling says the accept records `resolved_by="steward"`. Every suggestion produced today is record-backed, so the accept writes `"record"`, and the later promotion keeps it rather than downgrading it.
+    - Engine-o treats both rungs the same: visible to consumers.
+    - I left the writer's mapping alone. Say if you want a steward accept of a record-backed suggestion to write `"steward"` instead.
+  - **Open, Q2b.** The suggestion case opens at `POST /ingest`, before extraction. If the steward accepts while the row is still `received` or `extracting`, nothing is filed, and the row later lands at `awaiting_origin` with an origin and no task.
+    - Is that a race worth closing? If so, should the stage route's domainless branch file against an already-accepted origin?
+  - **Open, Q2c.** If filing is refused after the origin is written, the row stays at `awaiting_origin`, which the retry route treats as terminal (409). So there is no retry path.
+    - Should the retry route re-run the filing for an `awaiting_origin` row that has an accepted origin?
+  - **Arm 2 of the e2e seal is rewritten** to the new behaviour:
+    - The steward accepts through the real route, the task is filed, and the content is still dropper-only.
+    - The real `promotion.act` on the filed payload then opens it to a consumer (rung kept `record`) and refuses the dropper.
+    - Arm 1 now also asserts that no task is filed and that the row stays at `awaiting_origin`.
+  - **Runs:**
+    - origin write route: 24 passed (+8 arms);
+    - ingest routes: 66;
+    - the e2e seal: 8;
+    - neighbours: suggestion case 17, retry 14, status projection 42, approval plane 73.
+  - **Mutants**, each restored and checked with `cmp` and `git diff`:
+
+    | mutant | red arms |
+    | --- | --- |
+    | E1 no filing on accept | route (a), (d)×2, (e), (f)×2; e2e arm 2 |
+    | E2 the kind decides the domain | the same set as E1 |
+    | E3 status moved before the task is filed | route (a), (d)×2 |
+    | E4 filing on `write_refused` | route (b) |
+    | E5 filing at any stage | route (c) |
+    | E6 `extraction_ref` not kept by the stage route | the ingest-routes arm only |
+
+  - **A blind spot, recorded:** e2e arm 2 does not see E6, because its row fake preloads `extraction_ref`. The ingest-routes arm is the only seal on that join.
+- **Q3, the identity seal.** BUILT at `5aeeec21`, test only: green on today's code, so nothing needed fixing.
+  - 3 passed, each test against a control that differs only in the asserted values.
+  - Mutants: Q3a (the gateway honours a body `user_email`) reds the gateway arm; Q3b (`task_def` keys merged into the specialist payload) reds the specialist arm.
+  - The seal: a body-asserted `user_email`, `entitled_domains` or `user_id` changes nothing the gateway hands the supervisor.
+  - The same holds for a `task_def` carrying them into the specialist and fallback dispatches.
+  - The user token reaching specialists is noted in the PR as Lane 1's follow-up.
+- **Q4, confirmed.** No change.
+- **Q5, the legacy log.** BUILT at `06636572`.
+  - One warning per PROMOTED act whose task has no `dropped_by`; none for REJECTED or when `dropped_by` is present.
+  - 25 passed (+3 arms). Mutants L1 (log removed) and L2 (log on every promotion) each red their arm.
+- **Q6.** Noted in the PR body: Lane 1 lists and refiles live tasks with a non-domain audience in the 187 roll. Until then they cannot be promoted.
+- **Q7, the Jena verbs.** TRACED; gate in a follow-up PR.
+  - **`resolve_instance`: YES.**
+    - Doc-tools' user-drop parser writes the notice into Jena `SUSTAINMENT_INSTANCES` at extraction, before any promotion (`doc_tools/plugins/sustainment.py:1972-2023`). It writes the notice IRI `http://internal/sustainment/doc/{id}` and component IRIs `http://internal/components/{mpn}`.
+    - Engine-o's SUSTAINMENT provider returns them with no origin filter, and the request carries no caller (`ontology_service/main.py:5093-5104`, `sustainment_instance_provider.py:26-31`).
+    - It also leaks existence: `/notice_parts` answers a withheld notice exactly as an unknown one, but `resolve_instance` still returns it as a candidate.
+  - **`instances_by_property`: NO, under the deployed config.**
+    - It reads only `pcn:dispositionState`, which only `/write_item_state` writes, from the review → dispatch flow.
+    - That flow watches `sustainment/`, but drops land under `ingress-user/`.
+    - It becomes YES if any values file widens `REVIEW_WATCH_PREFIX` to `ingress-user/`. I have not read the deployed values.
+  - **`declared_query`: NO.** The only declared verb (`s1000d_fault_walk`) reads `mil:*DataModule`, which only the XML S1000D ingest writes. The user-drop sensor accepts PDF only.
+  - **Engine E (Neo4j) `resolveInstance`:** drop-derived `WorkInstruction` nodes carry no IRI field and are skipped. It becomes YES if a sync later adds a `uri` to them. Unverified.
+  - **The proposal:** `resolve_instance` gets `visible_by_origin` in a follow-up PR (187 or 188), the same helper and no new rule. Two blockers before that PR:
+    1. The verb's request carries no caller today, so the caller's identity has to reach it first. That is the same chain as Q3.
+    2. A Jena IRI has to be joined to its `IngestArtifact`. The Jena triples carry `prov:wasDerivedFrom`; I have not yet checked whether it names the ingest_id.
+- **Q8, `provenance_ingest_id`.** TRACED; NOT CHANGED, because the ruling as worded would hide all seeded content today.
+  - **The one writer** of `provenance_ingest_id` on a `SustainmentNotice` is doc-tools' `SustainmentPlugin.to_graph_queries` (`sustainment.py:1923-1950`).
+    - It runs only on the user-drop path, from `POST /ingest`, which always puts an `ingest_id` in the block. Nothing in this repo or the SDK writes notices.
+  - **The seeded path writes no seed provenance at all.** That is the vetted `sustainment/inbound/` sensor, then `build_knowledge_graph`, then `sustainment.py:1876-1882`.
+    - It sets only `pub_date`, `mfr`, `mfr_parent`, `type`, `revision`, `doc_level_ltb_date` and `needs_review`.
+    - So "no `provenance_ingest_id` and no seed provenance → withheld" would withhold every seeded notice: the 12 the tests cite and the whole vetted corpus.
+  - **To apply the ruling,** doc-tools' vetted path would first have to stamp a seed-provenance property on the notice. The manifest already carries `source_key` and `pipeline_version`, but neither reaches Neo4j. Then the existing seeded notices need a backfill.
+  - **Two hazards the trace found, both today:**
+    1. The drop's provenance stamp is a separate query from the one that creates the notice, and its failure is only logged (`semantic_assets.py:781`). A drop whose stamp failed reads as seeded and is visible.
+    2. Notices merge on `{id}`. A drop whose `doc_id` matches a seeded notice stamps `provenance_*` onto the seeded node, and a later vetted re-ingest never clears it.
+  - Both are doc-tools' to fix. Ruling needed: who stamps seed provenance, and is the change gated until that backfill runs?
+- **Q10, packet addresses.** BUILT at `9766f984`.
+  - The extended address test: 46 passed. The seat test: 38 passed.
+  - Mutants:
+    - P1 (the form made unmatchable): 5 reds.
+    - P2 (an internal repo accepted): 3 reds.
+    - P3 (any branch accepted): 1 red.
+    - Plain removal of the form crashed with IndexError, which was not counted as a red.
+  - **Measured: gov's own scanner could not spell the ruled address.** `to: cortex-ui/master` parsed UNADDRESSED, because the grammar knew only `<repo>/lane/<x>`, `<repo>/seat/<x>` and `<Name>'s agent`.
+  - **The fix** adds an external `<repo>/master` form. It accepts `master` only, for another repo only; `invincible-agent/master` stays unaddressed.
+  - **`for:` lines:** a `for:`-only packet already parses as unaddressed. It is now sealed.
+  - **The census does not reproduce "8 rows": it finds 20 distinct packets.** These are the packets in `invincible-agent/sessions` or `ia-gov/sessions` whose `to:` line names cortex in any form other than `cortex-ui/master`.
+    - The command: the first `to:` line in a packet's first 40 lines matching `cortex`, excluding `to: cortex-ui/master`, deduplicated by filename across the two trees.
+    - Your 8 may be a sub-window. I can't tell which.
+  - **None was written by gov, and I edited none of them.** Each sender reheads its own:
+
+    | sender (`from:`) | packets |
+    | --- | --- |
+    | lane/01, including the ones signed `invincible-agent/master` | 09-23 please-copy, 09-26 forecastrow (`to: cortex-ui`, which parses as a bare lane `cortex-ui`), 09-26 completeness-count, 09-26 restating-count, 09-30 built-export, 09-30 ingest-seam, 10-01 reason-required-card, 10-01 ingest-routes-rev-163 |
+    | lane/ca | 09-30 mirror-source v0.9.5, 09-30 provenance-block (multi-recipient), 09-30 v0.9.5-cut (multi-recipient), 10-01 mirror-source write-node, 10-02 origin-and-system-of-record, 10-06 mirror-source maintenance-bridge, 10-08 mirror-source v0.9.9 |
+    | lane/saf | 10-08 bind-the-two-fracas-classes, 10-08 fracas-bindings-final-shape, 10-09 draft-risk-assessment (all `to: cortex-ui/lane/cortex-ts`) |
+    | no `from:` line | 09-18 dispatch source-ledger, 09-19 dispatch three-safety-rows (both `to: ia-cortex-60/lane/cortex-60`) |
+
+  - **`for:`-only packets:** one, `friday-demo-runbook.md` (`for: Chris, at the keyboard on Friday`). It parses as unaddressed.
+  - **A pre-existing red, not caused by this change:** `test_THE_REPO_INBOX_IS_FULLY_ADDRESSED` fails on 15 unaddressed packets in `ia-gov/sessions`.
+    - HEAD's scanner and the new one produce the same 15, and no packet's parsed address changes. I compared the two modules directly over the same directory.
 
 ## Questions for a ruling
 
-1. **ANSWERED (above).** A program-less steward origin skips the program conjunct.
+1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
    - The ruling's "can_consume AND program_member" cannot hold literally for a steward origin, because the steward attests a domain, not a program.
    - Engine-o applies the program conjunct only when the origin names a program. That is what makes Friday's walk work: dave or alice, in SUSTAINMENT with no program, reads it.
    - But `gateway._origin_visible_to_caller` (`gateway.py:5240`) still returns False for any origin with no program, so the BFF's AnswerArtifact path and engine-o now disagree on the same origin.
    - Align the gateway to engine-o?
-2. **A steward-ACCEPTED origin on an awaiting_origin drop dead-ends.**
+2. **ANSWERED, Q2 above: built.** **A steward-ACCEPTED origin on an awaiting_origin drop dead-ends.**
    - The row is terminal (ruled 2026-10-02), the accept writes a record origin, and nothing files a `document_promotion`.
    - Under your ruling, content is visible beyond the dropper only after promotion, so the drop stays dropper-only for ever.
    - The e2e arm 2 seals that as today's behaviour. Should an accept file a `document_promotion:<owner_domain>` task?
-3. **Engine-o identifies the caller by the body-asserted `user_email`.**
+3. **ANSWERED, Q3 above: sealed; the token is Lane 1's.** **Engine-o identifies the caller by the body-asserted `user_email`.**
    - The specialist dispatch carries it next to `entitled_domains` (`dynamic_supervisor.py:3059`), at the same trust level, since specialists get no user token.
    - The dropper rule rests on it, and so does every visibility decision via `entitled_domains`.
    - Acceptable, or does this wait for the user token to reach specialists?
-4. **The rung's name.** The write uses the SDK's existing `resolved_by="steward"`, and the ruling's `steward_attestation` rides in `origin_evidence`. No SDK change. Confirm.
-5. **The dropper exclusion refuses PROMOTED only; a dropper may still reject**, since rejection attests nothing. A task filed before this change has no `dropped_by` and excludes nobody. Confirm both.
-6. **A promotion's audience must now be `document_promotion:<D>`.** Older test audiences (`aud:sustainment-approvers`) now 422 `promotion_audience_has_no_domain`. Does any live task carry an old-shape audience? If so, it cannot be promoted until it is refiled.
-7. **The Jena verbs are untraced** (`resolve_instance`, `instances_by_property`, `declared_query`): I have not shown whether they can return drop-derived content. Only `/notice_parts` is gated by this PR.
-8. **The doc-tools `provenance_*` writer's caller is untraced.** The read check trusts the `provenance_ingest_id` on a notice. If any other writer sets it, or a seeded notice lacks it, the content is treated as seeded and is visible.
+4. **ANSWERED, Q4: confirmed.** **The rung's name.** The write uses the SDK's existing `resolved_by="steward"`, and the ruling's `steward_attestation` rides in `origin_evidence`. No SDK change. Confirm.
+5. **ANSWERED, Q5 above: built.** **The dropper exclusion refuses PROMOTED only; a dropper may still reject**, since rejection attests nothing. A task filed before this change has no `dropped_by` and excludes nobody. Confirm both.
+6. **ANSWERED, Q6: refiled in the 187 roll.** **A promotion's audience must now be `document_promotion:<D>`.** Older test audiences (`aud:sustainment-approvers`) now 422 `promotion_audience_has_no_domain`. Does any live task carry an old-shape audience? If so, it cannot be promoted until it is refiled.
+7. **ANSWERED, Q7 above: traced.** **The Jena verbs are untraced** (`resolve_instance`, `instances_by_property`, `declared_query`): I have not shown whether they can return drop-derived content. Only `/notice_parts` is gated by this PR.
+8. **ANSWERED, Q8 above: traced; not changed, needs a ruling.** **The doc-tools `provenance_*` writer's caller is untraced.** The read check trusts the `provenance_ingest_id` on a notice. If any other writer sets it, or a seeded notice lacks it, the content is treated as seeded and is visible.
 9. **ANSWERED (above): Lane 1, in the 187 roll.** The backfill has had no live run (no rolls). It needs `BACKFILL_ACTOR` plus the ledger DSN and Neo4j env. Who runs it, and when: before or after this PR's roll? Until it runs, promoted rows with no origin are withheld from everyone but the dropper.
-10. **Carried over:** cortex-ui's lane address, and the `for:` line parsing.
+10. **ANSWERED, Q10 above: built.** **Carried over:** cortex-ui's lane address, and the `for:` line parsing.
