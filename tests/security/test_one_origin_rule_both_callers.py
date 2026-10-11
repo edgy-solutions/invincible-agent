@@ -12,6 +12,7 @@ too early (an existence oracle) or never (a skipped conjunct) reds in its own co
 from __future__ import annotations
 
 import inspect
+import re
 import sys
 from pathlib import Path
 
@@ -134,6 +135,9 @@ class _Driver:
                 return False
 
             def run(self, cypher, params=None, **kw2):
+                # Neo4j refuses a statement run without one of its $parameters; so does this double.
+                missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
+                assert not missing, f"statement run without ${sorted(missing)}"
                 return [_Rec(row)]
         return _S()
 

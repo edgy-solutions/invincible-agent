@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -93,6 +94,9 @@ class _Driver:
             def run(self, cypher, params=None, **kw2):
                 if drv.raises:
                     raise RuntimeError("neo4j down")
+                # Neo4j refuses a statement run without one of its $parameters; so does this double.
+                missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
+                assert not missing, f"statement run without ${sorted(missing)}"
                 nid = params["notice_id"]
                 drv.runs.append(nid)
                 return [_Rec(drv.rows[nid])] if nid in drv.rows else []

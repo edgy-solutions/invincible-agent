@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -76,6 +77,7 @@ def _deterministic_predicate_uuid(
     input_uri: str,
     frontend_id: str = "",
     archetype: str = "",
+    frontend_version: str = "",
 ) -> UUID:
     """Same UUID5 derivation as ``aitool_linker.sync_predicate_to_weaviate``
     — keeps the deterministic key compatible across the gateway and the
@@ -100,11 +102,23 @@ def _deterministic_predicate_uuid(
     the species, on the grounds that nothing yet read per-frontend menus. The
     read path is what makes it bite, so it is closed here rather than discovered
     as a mystery overwrite by the first two-frontend deployment.
+
+    A PRESENTATION IS ALSO PER VERSION, and the version is the LAST part of the
+    name. A stale browser tab still runs the old bundle while a fresh one runs
+    the new, and the two ask for different menus; under the two-frontend key the
+    second deploy overwrites the first and the stale tab is served a menu its
+    bundle cannot render. ``frontend_version`` is appended ONLY when non-empty,
+    so an unversioned presentation and every verb keep the exact name string
+    they had -- they upsert to the uuid they already own. Appending ``|`` with an
+    empty version would have been the cheaper code and would have re-minted every
+    existing presentation row as a duplicate.
     """
     import hashlib
     name = f"{verb_iri}|{input_uri}"
     if frontend_id or archetype:
         name = f"{name}|{frontend_id}|{archetype}"
+    if frontend_version:
+        name = f"{name}|{frontend_version}"
     # uuid5 over NAMESPACE_DNS with a known name string. We compute it
     # without importing weaviate's helper to keep this module
     # dependency-light at import time.
@@ -505,6 +519,12 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
             wvc.config.Property(name="tool_kind", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="frontend_id", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="archetype", data_type=wvc.config.DataType.TEXT),
+            # PER-VERSION MENUS. `frontend_version` is the bundle that registered the
+            # row ("" = unversioned); `registered_at` is ISO-8601 UTC with a Z, written
+            # by the REGISTRAR at upsert, so lexicographic order IS time order and the
+            # reader can pick the newest version without parsing a date.
+            wvc.config.Property(name="frontend_version", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="registered_at", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="expected_fields", data_type=wvc.config.DataType.TEXT_ARRAY),
             # BOOL, and ABSENT MEANS NOTHING -- not False-meaning-live and not
             # True-meaning-live by accident. This mirrors `_is_live_view()` in
@@ -550,6 +570,7 @@ def upsert_weaviate_predicate_row(
     tool_kind: str = "Engine",
     frontend_id: str = "",
     archetype: str = "",
+    frontend_version: str = "",
     expected_fields: "list[str] | None" = None,
     recomputes: "bool | None" = None,
     verb_iri: str,
@@ -601,6 +622,8 @@ def upsert_weaviate_predicate_row(
         "tool_kind": tool_kind or "Engine",
         "frontend_id": frontend_id or "",
         "archetype": archetype or "",
+        "frontend_version": frontend_version or "",
+        "registered_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         "expected_fields": list(expected_fields or []),
     }
     # ABSENT MEANS NOTHING. `recomputes` is OMITTED rather than written False
@@ -617,7 +640,8 @@ def upsert_weaviate_predicate_row(
     # two-part key (empty extras reproduce the original name string byte for
     # byte, so all existing verb rows upsert in place rather than duplicating).
     deterministic_uuid = _deterministic_predicate_uuid(
-        verb_iri, input_uri, frontend_id or "", archetype or ""
+        verb_iri, input_uri, frontend_id or "", archetype or "",
+        frontend_version or "",
     )
     # Create the collection WITH the length index if absent, BEFORE the
     # get()+insert below — otherwise Weaviate auto-schema creates it indexless
@@ -683,6 +707,7 @@ def mark_registration_complete(
     input_uri: str,
     frontend_id: str = "",
     archetype: str = "",
+    frontend_version: str = "",
 ) -> bool:
     """Stamp the row as COMPLETE. The saga's final act, after the probe.
 
@@ -695,7 +720,8 @@ def mark_registration_complete(
     is itself a disagreement worth surfacing rather than swallowing.
     """
     deterministic_uuid = _deterministic_predicate_uuid(
-        verb_iri, input_uri, frontend_id or "", archetype or ""
+        verb_iri, input_uri, frontend_id or "", archetype or "",
+        frontend_version or "",
     )
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
     if not collection.data.exists(uuid=deterministic_uuid):
@@ -709,6 +735,7 @@ def mark_registration_complete(
 def compensate_weaviate_predicate_row(
     *, weaviate_client: Any, verb_iri: str, input_uri: str,
     frontend_id: str = "", archetype: str = "",
+    frontend_version: str = "",
 ) -> bool:
     """DELETE the Predicate row for this identity.
 
@@ -722,7 +749,8 @@ def compensate_weaviate_predicate_row(
     half-written row it was supposed to remove.
     """
     deterministic_uuid = _deterministic_predicate_uuid(
-        verb_iri, input_uri, frontend_id or "", archetype or ""
+        verb_iri, input_uri, frontend_id or "", archetype or "",
+        frontend_version or "",
     )
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
     if not collection.data.exists(uuid=deterministic_uuid):
@@ -887,6 +915,75 @@ def sweep_stale_weaviate_predicate_rows(
     return deleted
 
 
+def evict_undeployed_frontend_versions(
+    *,
+    weaviate_client: Any,
+    frontend_id: str,
+    keep_version: str,
+    retention_s: float,
+    now: "datetime | None" = None,
+) -> list[dict]:
+    """Delete the Presentation rows of versions this frontend no longer serves.
+
+    Runs after a registration of ``keep_version`` has committed. A row of
+    ``frontend_id`` is deleted when its ``frontend_version`` differs from
+    ``keep_version`` AND it is either unversioned, undated, or registered more
+    than ``retention_s`` ago. The retention window is what lets a stale tab keep
+    its own menu for a while after a deploy; the unversioned/undated rows are
+    legacy debris that no tab is asking for by version.
+
+    When ``keep_version`` is empty the registration was itself unversioned, so
+    there is no deployed version to compare against: unversioned rows are NEVER
+    deleted then (they are the live ones), and only versioned rows past
+    retention go.
+
+    SCOPE: only ``tool_kind == "Presentation"`` rows of exactly this
+    ``frontend_id``. Another frontend and every verb row are untouched.
+
+    NEO4J IS DELIBERATELY NOT TOUCHED. A presentation's edge is keyed
+    ``(subject=input_uri, verb, object=output_uri, key=tool_urn)`` and the
+    tool_urn is built from the manifest name, which carries no version. All
+    versions of a frontend therefore share ONE edge; deleting it for an evicted
+    version would remove the live version's half of the conjunctive-read pair.
+
+    Returns ``[{uuid, frontend_version, archetype, input_uri}]`` for what it deleted.
+    """
+    from weaviate.classes.query import Filter
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(seconds=retention_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    keep_version = keep_version or ""
+
+    collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
+    candidates = collection.query.fetch_objects(
+        filters=(
+            Filter.by_property("tool_kind").equal("Presentation")
+            & Filter.by_property("frontend_id").equal(frontend_id)
+        ),
+        limit=1000,
+    )
+
+    deleted: list[dict] = []
+    for obj in candidates.objects:
+        props = obj.properties or {}
+        ver = props.get("frontend_version") or ""
+        if ver == keep_version:
+            continue
+        reg_at = props.get("registered_at") or ""
+        # keep_version "" never reaches here with ver "" (equal, kept above), so an
+        # unversioned row survives an unversioned registration without a clause of its own.
+        if ver and reg_at and reg_at >= cutoff:
+            continue
+        collection.data.delete_by_id(uuid=obj.uuid)
+        deleted.append({
+            "uuid": str(obj.uuid),
+            "frontend_version": ver,
+            "archetype": props.get("archetype") or "",
+            "input_uri": props.get("input_uri") or "",
+        })
+    return deleted
+
+
 # ---------------------------------------------------------------------------
 # Read-back probe — the gateway's own postcondition test
 # ---------------------------------------------------------------------------
@@ -910,6 +1007,7 @@ def probe_both_stores(
     tool_urn: str,
     frontend_id: str = "",
     archetype: str = "",
+    frontend_version: str = "",
 ) -> dict:
     """Read both stores back and assert the registration is observable.
 
@@ -943,7 +1041,8 @@ def probe_both_stores(
     # write and returns 503. Observed 2026-08-21 the moment presentation rows
     # gained a per-frontend key and this call site did not.
     deterministic_uuid = _deterministic_predicate_uuid(
-        verb_iri, input_uri, frontend_id or "", archetype or ""
+        verb_iri, input_uri, frontend_id or "", archetype or "",
+        frontend_version or "",
     )
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
     if not collection.data.exists(uuid=deterministic_uuid):

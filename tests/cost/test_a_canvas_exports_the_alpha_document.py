@@ -46,17 +46,11 @@ def _a(aid, verb, subject=None):
 
 
 #: The alpha customer's cost questions, one answer per exportable verb, spread over their lots.
-#: The shape is the bff's ArtifactResponse fields for an answer on a board.
-ALPHA_CANVAS = {"answers": [
-    _a("ans-labor-1", "costLaborComposition", 1),
-    _a("ans-trend", "costUnitPriceTrend"),
-    _a("ans-price-2", "costPriceComposition", 2),
-    _a("ans-breakdown-3", "costLotBreakdown", "3"),
-    _a("ans-category-4", "costCategoryBreakdown", 4),
-    _a("ans-rates-5", "costRateComparison", 5),
-    _a("ans-suppliers-3", "costSupplierConcentration", 3),
-    _a("ans-assumptions", "costRateAssumptions"),
-]}
+#: The shape is the bff's ArtifactResponse fields for an answer on a board. LOADED from the one
+#: checked-in file the scripted build (`scripts/build_alpha_document.py`) reads as well, so the
+#: canvas this test exports and the canvas the build exports cannot drift apart.
+ALPHA_CANVAS = json.loads(
+    (ROOT / "tests" / "fixtures" / "cost_alpha_canvas.json").read_text("utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -112,7 +106,7 @@ def test_the_alpha_canvas_package_IS_the_09_06_document(state):
 def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated_dist):
     """THE ACCEPTANCE, end to end: the verb, the real builder, DuckDB and the Pyodide page,
     read back off the disk it wrote."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     out = M.package_export(state, recipient_scope=ALPHA, canvas=ALPHA_CANVAS)
@@ -130,7 +124,7 @@ def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated
 
 def test_the_VERB_narrows_the_page_it_writes_not_only_its_response(state, isolated_dist):
     """The response and the file are built by two calls; both must take the canvas."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import duckdb
@@ -190,7 +184,7 @@ def test_the_subject_may_be_a_digit_string_or_a_full_mesh_IRI():
 
 
 def test_the_page_carries_only_the_canvas_sections(state, tmp_path):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import build_cost_dataset as D

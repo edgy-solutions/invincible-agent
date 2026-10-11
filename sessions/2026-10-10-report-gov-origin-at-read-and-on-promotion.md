@@ -168,7 +168,9 @@ what the reader then returns.
   - One warning per PROMOTED act whose task has no `dropped_by`; none for REJECTED or when `dropped_by` is present.
   - 25 passed (+3 arms). Mutants L1 (log removed) and L2 (log on every promotion) each red their arm.
 - **Q6.** Noted in the PR body: Lane 1 lists and refiles live tasks with a non-domain audience in the 187 roll. Until then they cannot be promoted.
-- **Q7, the Jena verbs.** TRACED; gate in a follow-up PR.
+- **Q7, the Jena verbs.** TRACED, and the gate is BUILT in PR #39 (`69d72b59` on `lane/gov-resolve-instance`, stacked on #32). Ruled 2026-10-10: trace plus a gate PR for `resolve_instance`.
+  - Both blockers below are closed there: the caller reaches the verb through `/resolve` and `/fill_slots`, and the join goes notice IRI → Neo4j node (the same lookup `/notice_parts` uses) and component → `pcn:subjectToNotice` in Jena. `prov:wasDerivedFrom` was not needed: no drop producer sets it.
+  - One verdict function, `notice_parts.notice_visible`, serves both callers. Runs: the truth table with a third column, 40 passed; the new file, 22. Mutants G1–G8 each red their arms (table in the PR).
   - **`resolve_instance`: YES.**
     - Doc-tools' user-drop parser writes the notice into Jena `SUSTAINMENT_INSTANCES` at extraction, before any promotion (`doc_tools/plugins/sustainment.py:1972-2023`). It writes the notice IRI `http://internal/sustainment/doc/{id}` and component IRIs `http://internal/components/{mpn}`.
     - Engine-o's SUSTAINMENT provider returns them with no origin filter, and the request carries no caller (`ontology_service/main.py:5093-5104`, `sustainment_instance_provider.py:26-31`).
@@ -182,7 +184,7 @@ what the reader then returns.
   - **The proposal:** `resolve_instance` gets `visible_by_origin` in a follow-up PR (187 or 188), the same helper and no new rule. Two blockers before that PR:
     1. The verb's request carries no caller today, so the caller's identity has to reach it first. That is the same chain as Q3.
     2. A Jena IRI has to be joined to its `IngestArtifact`. The Jena triples carry `prov:wasDerivedFrom`; I have not yet checked whether it names the ingest_id.
-- **Q8, `provenance_ingest_id`.** TRACED; NOT CHANGED, because the ruling as worded would hide all seeded content today.
+- **Q8, `provenance_ingest_id`.** TRACED; NOT CHANGED, because the ruling as worded would hide all seeded content today. Ruled 2026-10-10: the change is parked behind doc-tools stamping seed provenance. Until then, no provenance (and, in #39, no graph row) reads as seeded. #39's arms covering that behaviour name the precondition, so they flip together when the stamp lands.
   - **The one writer** of `provenance_ingest_id` on a `SustainmentNotice` is doc-tools' `SustainmentPlugin.to_graph_queries` (`sustainment.py:1923-1950`).
     - It runs only on the user-drop path, from `POST /ingest`, which always puts an `ingest_id` in the block. Nothing in this repo or the SDK writes notices.
   - **The seeded path writes no seed provenance at all.** That is the vetted `sustainment/inbound/` sensor, then `build_knowledge_graph`, then `sustainment.py:1876-1882`.
@@ -218,6 +220,8 @@ what the reader then returns.
   - **`for:`-only packets:** one, `friday-demo-runbook.md` (`for: Chris, at the keyboard on Friday`). It parses as unaddressed.
   - **A pre-existing red, not caused by this change:** `test_THE_REPO_INBOX_IS_FULLY_ADDRESSED` fails on 15 unaddressed packets in `ia-gov/sessions`.
     - HEAD's scanner and the new one produce the same 15, and no packet's parsed address changes. I compared the two modules directly over the same directory.
+
+Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev 187.
 
 ## Questions for a ruling
 

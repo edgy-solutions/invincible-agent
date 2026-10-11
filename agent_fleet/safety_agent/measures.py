@@ -311,6 +311,18 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         # because it renders as a completed assessment.
         return {"refused": True, "reason": f"unknown hazard '{hazard_id}'"}
 
+    if h.status == "closed":
+        # A CLOSED HAZARD HAS NOTHING LEFT TO ACCEPT (ruled 2026-10-09). Drafting would hand the
+        # gateway a review_request, and the gateway would open a risk-acceptance task against a
+        # condition the programme has already closed. Named so a caller can tell this decided
+        # refusal from an unknown id; carries no review_request, so no task is created.
+        return {
+            "refused": True,
+            "outcome": "hazard_closed",
+            "hazard_id": h.hazard_id,
+            "reason": f"hazard '{h.hazard_id}' is closed; there is no open risk to accept",
+        }
+
     # DERIVED_FROM: every source object this draft actually read. Seal 10 asserts each one
     # resolves; a fabricated entry must go red, which is why they are collected as they are used
     # rather than declared up front from a list someone remembered.
@@ -328,17 +340,22 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     }
 
     if h.severity is None or h.probability is None:
-        # NOT ASSESSED, AND SAID SO. The matrix is not consulted, no level is invented, and the
-        # gap names which half is missing so the reader knows what to go and get.
-        out["assessment"] = "not_assessed"
-        out["severity"] = h.severity
-        out["probability"] = h.probability
-        out["gap"] = (
+        # NOT ASSESSED IS REFUSED, NOT DRAFTED (ruled 2026-10-09). Nobody can draft an acceptance
+        # for a hazard nobody has assessed. The matrix is not consulted, no level is invented,
+        # and the gap names which half is missing so the reader knows what to go and get. This
+        # used to return a draft carrying `assessment: not_assessed`; it carries no
+        # review_request either way, so no task is created. Named, so a caller can tell this
+        # decided refusal from an unknown id (which has no `outcome`).
+        gap = (
             "severity" if h.severity is None else "probability"
         ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
-        out["derived_from"] = derived_from
-        out["citations"] = citations
-        return out
+        return {
+            "refused": True,
+            "outcome": "not_assessed",
+            "hazard_id": h.hazard_id,
+            "gap": gap,
+            "reason": f"hazard '{h.hazard_id}' has not been assessed: {gap}",
+        }
 
     out["severity"] = h.severity
     out["probability"] = h.probability

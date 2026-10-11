@@ -203,7 +203,7 @@ VERBS: List[Dict[str, Any]] = [
             "DRAFTS ONLY - it cannot accept, reject or close anything; acceptance is a human "
             "task disposition by an entitled authority and this verb opens that review rather "
             "than resolving it. A hazard whose severity or probability is not assessed is "
-            "reported as not_assessed with the missing half named, never inferred from a "
+            "refused as not_assessed with the missing half named, never inferred from a "
             "neighbour and never defaulted. NOT a list of what is unattended - that is "
             "findOrphanedHazards. OWNS the phrasings: assess this hazard, what is the risk "
             "level, who has to accept this, draft the risk assessment."

@@ -208,7 +208,7 @@ ORIGIN_PROP_OF = {a: ARTIFACT_PROP_OF.get(a) for a in ORIGIN_ALIASES}
 def test_the_return_clause_parse_is_positive_controlled():
     """The mapping every arm leans on is READ off the statement: prove the parse found it."""
     aliases = [a for _, a in return_items(np_mod.NOTICE_PARTS_CYPHER)]
-    assert aliases == ["notice", "mpns", "dropped_by", "has_artifact", "origin_owner_domain",
+    assert aliases == ["notice", "total", "mpns", "dropped_by", "has_artifact", "origin_owner_domain",
                        "origin_program", "origin_resolved_by", "promoted", "promoted_by"], aliases
     assert all(ORIGIN_PROP_OF.values()) and set(ORIGIN_PROP_OF) == set(ORIGIN_ALIASES), \
         ORIGIN_PROP_OF
@@ -245,8 +245,10 @@ class _NoticeSession:
         for expr, alias in return_items(np_mod.NOTICE_PARTS_CYPHER):
             if expr == "properties(n)":
                 row[alias] = dict(notice)
-            elif expr == alias == "mpns":
-                row[alias] = list(PARTS)
+            elif expr == "size(all_mpns)":
+                row[alias] = len(PARTS)
+            elif expr == "all_mpns[$offset..($offset + $limit)]":
+                row[alias] = list(PARTS)[params["offset"]:params["offset"] + params["limit"]]
             elif (m := re.fullmatch(r"a\.(\w+)", expr)):
                 row[alias] = None if art is None else art.get(m.group(1))
             elif expr == "a IS NOT NULL":
