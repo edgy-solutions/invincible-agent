@@ -41,9 +41,10 @@ from typing import Any, Dict, Callable, Iterable, List, Mapping, Optional
 from urllib.parse import quote
 
 try:  # engine image: flat layout (agent_fleet/ on sys.path as the root)
-    from utils.origin_entitlement import visible_by_origin
+    from utils.origin_entitlement import is_person, visible_by_origin
 except ImportError:  # repo layout
     from agent_fleet.utils.origin_entitlement import (  # type: ignore[no-redef]
+        is_person,
         visible_by_origin,
     )
 
@@ -51,6 +52,16 @@ VERB = "mesh:whichPartsDoesThisNoticeAffect"
 DOMAIN = "SUSTAINMENT"
 INPUT_URI = "http://internal/sustainment/pcn#SustainmentNotice"
 OUTPUT_URI = "http://invincible-agent/mesh#NoticePartSet"
+
+#: RULING Q8 (2026-10-10), PARKED: once doc-tools stamps seed provenance, a notice with no
+#: provenance_ingest_id and no seed stamp is UNRESOLVED and withheld. Until that stamp exists this
+#: is False and "no provenance" reads as seeded. Every branch that decides "seeded" reads THIS.
+SEED_PROVENANCE_STAMPED = False
+
+
+def _unstamped_reads_as_seeded() -> bool:
+    return not SEED_PROVENANCE_STAMPED
+
 
 #: Where the producer mints notice and component IRIs (pcn_extension.ttl's own header).
 NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
@@ -161,7 +172,8 @@ def source_visibility(row: Dict[str, Any], *, caller_id: str, viewer_domains: It
     signature stability and are not consulted here."""
     node = row.get("notice") or {}
     if not node.get("provenance_ingest_id"):
-        return "visible"  # seeded content: unchanged
+        # Q8: seeded content is visible only while no seed stamp exists (SEED_PROVENANCE_STAMPED)
+        return "visible" if _unstamped_reads_as_seeded() else "withheld"
     if caller_id and caller_id == row.get("dropped_by"):
         return "visible"
     if not row.get("has_artifact"):
@@ -316,6 +328,8 @@ def notice_visible(row: Dict[str, Any], *, caller_id: str, viewer_domains: Itera
     """THE verdict: whether this caller may see the notice `row` describes (a `NOTICE_PARTS_CYPHER`
     row). `read_notice_parts` and the `/resolve_instance` gate both call this, so the two cannot
     drift. `can_view_program` exceptions propagate."""
+    if not is_person(caller_id):  # a grant belongs to a PERSON: a service or no caller sees seeded only
+        caller_id, viewer_domains, can_view_program = "", (), None
     table = table or {}
     domains = tuple(viewer_domains or ())
     verdict = source_visibility(row, caller_id=caller_id, viewer_domains=domains, table=table)
@@ -345,12 +359,15 @@ def visible_notice_ids(driver: Any, notice_ids: Iterable[str], *, caller_id: str
                 NOTICE_PARTS_CYPHER,
                 {"notice_id": nid, "offset": 0, "limit": NOTICE_PARTS_PAGE_SIZE})]
             # Q8 (architect, 2026-10-10): no provenance and no seed stamp -> withheld. PARKED behind
-            # doc-tools stamping seed provenance; until then a notice id with no graph row reads as
-            # seeded and is VISIBLE. This branch and source_visibility's no-`provenance_ingest_id`
-            # branch flip together when the seed stamp lands.
-            if not rows or notice_visible(rows[0], caller_id=caller_id,
-                                          viewer_domains=viewer_domains, table=table,
-                                          can_view_program=can_view_program):
+            # SEED_PROVENANCE_STAMPED; until then a notice id with no graph row reads as seeded and
+            # is VISIBLE. This branch and source_visibility's no-`provenance_ingest_id` branch both
+            # consult _unstamped_reads_as_seeded, so they flip together.
+            if not rows:
+                seen = _unstamped_reads_as_seeded()
+            else:
+                seen = notice_visible(rows[0], caller_id=caller_id, viewer_domains=viewer_domains,
+                                      table=table, can_view_program=can_view_program)
+            if seen:
                 visible.add(nid)
     return visible
 

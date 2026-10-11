@@ -30,6 +30,12 @@ class Origin:
     obtained_via: str = ""
 
 
+def is_person(caller_id: object) -> bool:
+    """A grant belongs to a PERSON. No caller, or a service identity (`svc:` prefix), is not one --
+    the same posture as safety_agent/measures.py `_visible_records` (no person -> no grant)."""
+    return isinstance(caller_id, str) and bool(caller_id.strip()) and not caller_id.strip().startswith("svc:")
+
+
 def load_domain_consumption(raw: dict) -> dict[str, frozenset[str]]:
     """PURE: a parsed policy/domain_consumption.yaml dict -> {consumer_domain:
     frozenset(allowed origin domains)}.
