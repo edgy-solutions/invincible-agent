@@ -16,7 +16,7 @@ re: your Q1–Q3 answers and the origin-on-promotion ruling -- built, sealed, on
 - **PR [#39](https://github.com/edgy-solutions/invincible-agent/pull/39)** (`lane/gov-resolve-instance` → `lane/gov`, open, tip `ac6e4ff0`): the Q7 gate on `/resolve_instance`, plus S (ruling (b)), P (Q8 behind one flag), and the outage seal re-derived at eleven. 187 merged it at `2999bdca`, and that merge is held until 187 re-merges `ac6e4ff0`.
 - **PR [#45](https://github.com/edgy-solutions/invincible-agent/pull/45)** (`lane/gov-enumerate-gate` → `lane/gov-resolve-instance`, open, tip `9393ff08`): ruling (d), the enumerate gate. It merges lane/74's #40 (`311999f4`).
 - **#39 and #45 were ACCEPTED by the architect on 2026-10-11.**
-- **PR [#47](https://github.com/edgy-solutions/invincible-agent/pull/47)** (`lane/gov-caller-census` → `lane/gov-enumerate-gate`, open, tip `d8e61dd2`): Day 2's caller census. It seals "a service identity is never a grant" at the callers.
+- **PR [#47](https://github.com/edgy-solutions/invincible-agent/pull/47)** (`lane/gov-caller-census` → `lane/gov-enumerate-gate`, open, tip `4f172cda`): Day 2's caller census. It seals "a service identity is never a grant" at the callers. Since 2026-10-12 it merges lane/74's #48 (`d7f8f3c1`).
 
 ## What landed
 
@@ -328,7 +328,21 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
 - There are 86 placed files. Master's parser misfiles 58 ruled-form packets until #32's Q10 parser lands with 187.
 - There are 10 `from: lane/saf` packets with no repo prefix.
 
-**Retry collision:** I restated (a) and (b) in one line each in the Day 2 digest to the architect, and I am waiting on the ruling.
+**Retry collision:** I restated (a) and (b) in one line each in the Day 2 digest to the architect. **RULED 2026-10-12: (a), no pin exemption needed.** 187 already carries (a), so gov changes nothing and Q2c's arm 4 stays as built.
+
+## 2026-10-12: the census counts lane/74's five sites as having a person (#47, `4f172cda`)
+
+- **The ruling:** "add a category for person derived from the artifact's ingest record so 74's five sites count as having a person".
+- **`79f90f36` merges lane/74's #48 (`d7f8f3c1`)** into `lane/gov-caller-census`. The merge was clean and brings four commits, including master `c56a0ca2`. The census has to read 74's code to measure the move.
+- **The five sites have two shapes, so there are two declared classes. This departs from the ruling's single name, and I flagged it in the packet to 74 (cc the architect):**
+  - **INGEST_RECORD** (row 8, review_composer): the `user_email` value uses the `on_behalf_of` parameter, which the BFF fills from the ingest's status row.
+  - **TEST_PERSONA** (rows 9–11, run_resolver_corpus, 4 sites): the `user_email` value is `_person()`, which reads `IA_CORPUS_ON_BEHALF_OF` and raises without it.
+- **NO_PERSON is 5 sites** (rows 13–17). Lane/74 left them deliberately for the 422 to refuse.
+- **UNDECIDED**, lane/74's finding: an unreadable payload used to count as NO_PERSON. It is now a red.
+- **DOMAINS_WITHOUT_PERSON** is empty, and it is now derived over the whole census.
+- **Mutants N1–N5 all give named reds.** Under N1 (the composer sends `""`), the count arm stays green and only the class arm catches it.
+- **Test:** 26 passed.
+- **Not run:** lane/74's own seals on the merged tree. The docstring says so.
 
 ## Questions for a ruling
 
