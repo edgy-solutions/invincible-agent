@@ -23,7 +23,7 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 
 - **The directive of 10-11** (uncompressed duckdb, `as_of` as an input, a Linux CI test, a runbook note, an ingress download test) is done as two open PRs. Lane 1 merges and rolls.
   - **#50** `fin/export-byte-stable` @ `e63c6f4c`, worktree `ia-fin-export-byte-stable`. CI `reproducible` is green.
-    - The Linux and Windows dataset shas DIFFER: cost `9dd2f92b…` vs `1ccd4ef2…`. Each platform is stable, and the cause is not measured. Noted on the PR.
+    - The Linux and Windows dataset shas DIFFER: cost `9dd2f92b…` vs `1ccd4ef2…`. Each platform is stable, and the cause is not measured. Noted on the PR. **RULED 10-12: noted, NOT chased. Do not investigate it.** Lane 1 merges #50 and #49 for rev 188.
   - **#49** `fin/walk-sheet-download-check` @ 2 commits, worktree `ia-fin-walk-sheet-download`.
 - **The ingress also truncates**, rarely: 1 of 50, with an unexplained `ReadError`. This corrects the 10-11 packet's title.
 - **Report to Lane 1:** `invincible-agent/sessions/2026-10-12-packet-to-lane-01-fin-byte-stable-export-pr50-and-the-ingress-truncates-too-pr49.md` (untracked).
