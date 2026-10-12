@@ -1,5 +1,18 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.44 — 2026-10-12
+
+Rev 187c, a frontend-only pin, rolled ahead of 188 on the architect's direction. The fleet image
+is unchanged (49aa5e28). #41 (lane/01-broker-flip) also claims 0.4.44 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:facdc367…` (cortex-ui f3617a9).**
+  A drop is now an ingest entry on the answers rail, and "My drops" is gone. The build also
+  carries the walk login fix and `WALK_SPKI_PIN` (#17). The tag-to-digest binding was measured
+  before pinning; the values comment records how.
+
 ## 0.4.43 — 2026-10-12
 
 Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
