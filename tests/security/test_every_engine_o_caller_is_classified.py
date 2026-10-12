@@ -10,10 +10,14 @@ sees seeded content only. THIS file is the CALLER side: a PARTITIONED census of 
 (`/resolve`, `/resolve_instance`, `/fill_slots`, `/notice_parts`, `/enumerate_instances`, plus
 restate_analyst's `/analyze`, which forwards to engine-o `/resolve`). Every site is in exactly one
 class. WHAT IS DERIVED FROM THE CODE is the split this ruling turns on, PERSON vs NO_PERSON (does
-the payload the site sends carry `user_email` at all). The split of PERSON into TOKEN, FORWARD,
-INGEST_RECORD and TEST_PERSONA is DECLARED, checked only as far as stated below (TOKEN/FORWARD:
-"`config.user_email` or a parameter named user_email appears in the function"). Whether the supervisor's callers really pass `config.user_email` into rows 1-3 is
-NOT this file's subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
+the payload the site sends carry `user_email` with a value that is not a blank literal --
+`carries_person`; architect, 2026-10-12: a blank `""`, whitespace or `None` names nobody and counts
+as ABSENT in every arm). The split of PERSON into TOKEN, FORWARD, INGEST_RECORD and TEST_PERSONA is
+DECLARED, checked only as far as stated below (TOKEN/FORWARD: "`config.user_email` or a parameter
+named user_email appears in the function"). The blank rule reads the PAYLOAD's literal only: a
+blank handed in by a caller of the function (mutant X below) is an argument, not a literal here.
+Whether the supervisor's callers really pass `config.user_email` into rows 1-3 is NOT this file's
+subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
 `user_email=""` instead of `config.user_email` stays green here AND in
 `tests/routing/test_resolve_instance_hears_the_caller.py`; it is killed by lane/74's
 `tests/test_the_person_reaches_the_migrated_route.py` (two arms: "not the caller's own identity",
@@ -29,7 +33,7 @@ NOT this file's subject. MEASURED 2026-10-11: `execute_subtask` handing `_classi
   TEST_PERSONA   the payload's `user_email` is a test persona read from the environment by a module
               function that raises without it. The run-time refusal is lane/74's
               tests/routing/test_a_reresolve_needs_a_person.py (their mutants B1-B12; not re-run by gov).
-  NO_PERSON   the payload has no `user_email` key at all.
+  NO_PERSON   the payload has no `user_email` key, or some value found for it is a blank literal.
   UNDECIDED   no payload keys could be derived; never a member of NO_PERSON, always a red.
 INGEST_RECORD and TEST_PERSONA, like TOKEN and FORWARD, are DECLARED splits of PERSON checked only
 as far as stated; the PERSON vs NO_PERSON split is derived.
@@ -326,13 +330,13 @@ def census() -> list[Site]:
 # --------------------------------------------------------------------------------------
 # Payload derivation (the class comes from this, not from the label)
 # --------------------------------------------------------------------------------------
-def _name_keys(name, scopes, line, seen):
+def _name_keys(name, scopes, line, seen, vals=None):
     for sc in scopes:
         keys, found = set(), False
         val = _assigned_before(sc, name, line)
         if val is not None:
             found = True
-            keys |= _expr_keys(val, scopes, line, seen | {name})
+            keys |= _expr_keys(val, scopes, line, seen | {name}, vals)
         for n in ast.walk(sc):  # later `name["k"] = ...` assignments in the same function
             if isinstance(n, ast.Assign):
                 for t in n.targets:
@@ -340,39 +344,83 @@ def _name_keys(name, scopes, line, seen):
                             and t.value.id == name and isinstance(t.slice, ast.Constant)
                             and isinstance(t.slice.value, str)):
                         keys.add(t.slice.value)
+                        if vals is not None:
+                            vals.setdefault(t.slice.value, []).append(n.value)
                         found = True
         if found:
             return keys
     return set()
 
 
-def _expr_keys(expr, scopes, line, seen=frozenset()) -> set:
+def _expr_keys(expr, scopes, line, seen=frozenset(), vals=None) -> set:
+    """The payload's keys. When `vals` is a dict, every value expression found for a key is
+    appended to `vals[key]` (dict literals, spreads, and later `name["k"] = ...` assignments)."""
     keys: set = set()
     if isinstance(expr, ast.Dict):
         for k, v in zip(expr.keys, expr.values):
             if k is None:  # **spread
-                keys |= _expr_keys(v, scopes, line, seen)
+                keys |= _expr_keys(v, scopes, line, seen, vals)
             elif isinstance(k, ast.Constant) and isinstance(k.value, str):
                 keys.add(k.value)
+                if vals is not None:
+                    vals.setdefault(k.value, []).append(v)
     elif isinstance(expr, ast.Name):
         if expr.id not in seen:
-            keys |= _name_keys(expr.id, scopes, line, seen)
+            keys |= _name_keys(expr.id, scopes, line, seen, vals)
     elif isinstance(expr, ast.Call):  # json.dumps({...}).encode()
         for sub in [expr.func, *expr.args]:
-            keys |= _expr_keys(sub, scopes, line, seen)
+            keys |= _expr_keys(sub, scopes, line, seen, vals)
     elif isinstance(expr, ast.Attribute):
-        keys |= _expr_keys(expr.value, scopes, line, seen)
+        keys |= _expr_keys(expr.value, scopes, line, seen, vals)
     return keys
 
 
-def payload_keys(site: Site) -> set:
+def _payload_body(site: Site):
     call = site.node
     body = next((k.value for k in call.keywords if k.arg == "json"), None)
     if body is None:
         body = next((k.value for k in call.keywords if k.arg == "data"), None)
+    return body
+
+
+def payload_keys(site: Site) -> set:
+    body = _payload_body(site)
     if body is None:
         return set()
-    return _expr_keys(body, site.scopes, call.lineno)
+    return _expr_keys(body, site.scopes, site.node.lineno)
+
+
+def payload_values(site: Site) -> dict:
+    """{key: [every value expression the derivation found for it]}."""
+    body = _payload_body(site)
+    vals: dict = {}
+    if body is not None:
+        _expr_keys(body, site.scopes, site.node.lineno, vals=vals)
+    return vals
+
+
+def _is_blank(expr) -> bool:
+    """A literal that names nobody: `""`, `"  "`, or `None`."""
+    return isinstance(expr, ast.Constant) and (
+        expr.value is None or (isinstance(expr.value, str) and not expr.value.strip()))
+
+
+# A curl body's `"user_email": ""` (quotes may be backslash-escaped inside a shell string).
+SH_BLANK_USER_EMAIL_RE = re.compile(r'user_email\\?"\s*:\s*\\?"\s*\\?"')
+
+
+def carries_person(site: Site, inprocess: bool = False) -> bool:
+    """The payload names `user_email` AND no value found for it is a blank literal. A blank
+    `user_email` is ABSENT: it names nobody, so it is never counted as a person (architect,
+    2026-10-12). Conservative: one blank value anywhere (e.g. a default later overwritten under a
+    condition) makes the site NOT carry a person."""
+    if site.shell_cmd:
+        return "user_email" in site.shell_cmd and not SH_BLANK_USER_EMAIL_RE.search(site.shell_cmd)
+    if inprocess:
+        kws = [k.value for k in site.node.args[0].keywords if k.arg == "user_email"]
+        return bool(kws) and not any(_is_blank(v) for v in kws)
+    vals = payload_values(site).get("user_email")
+    return bool(vals) and not any(_is_blank(v) for v in vals)
 
 
 def _user_email_value(site: Site):
@@ -400,15 +448,14 @@ def _user_email_value(site: Site):
 
 
 def derived_class(site: Site) -> str:
-    """PERSON when the payload names `user_email`, else NO_PERSON. UNDECIDED when a non-shell site
-    derives no payload keys at all: a site the derivation cannot read is never counted as a member
-    of NO_PERSON."""
+    """PERSON when the payload carries a person (`carries_person`: `user_email` present and never a
+    blank literal), else NO_PERSON. UNDECIDED when a non-shell site derives no payload keys at all:
+    a site the derivation cannot read is never counted as a member of NO_PERSON."""
     if site.shell_cmd:
-        return "PERSON" if "user_email" in site.shell_cmd else "NO_PERSON"
-    keys = payload_keys(site)
-    if not keys:
+        return "PERSON" if carries_person(site) else "NO_PERSON"
+    if not payload_keys(site):
         return "UNDECIDED"
-    return "PERSON" if "user_email" in keys else "NO_PERSON"
+    return "PERSON" if carries_person(site) else "NO_PERSON"
 
 
 # --------------------------------------------------------------------------------------
@@ -587,6 +634,37 @@ def test_CONTROL_an_unreadable_payload_is_UNDECIDED_never_NO_PERSON():
     assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": u})\n') == "PERSON"
 
 
+def test_CONTROL_a_blank_user_email_is_absent_never_a_person():
+    """Architect, 2026-10-12: a blank `user_email` names nobody, so it counts as ABSENT in every arm."""
+    def cls(src):
+        (s,) = find_py_sites(src, "x.py")
+        return derived_class(s)
+
+    post = '    requests.post(f"{b}/resolve", json=p)\n'
+    assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": ""})\n') == "NO_PERSON"
+    assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": "  "})\n') == "NO_PERSON"
+    assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": None})\n') == "NO_PERSON"
+    # a blank default, overwritten only under a condition: conservative, not a person
+    assert cls('def f(b, u):\n    p = {"query": 1, "user_email": ""}\n    if u:\n        p["user_email"] = u\n'
+               + post) == "NO_PERSON"
+    # a blank reached through a spread
+    assert cls("def o(u):\n    c = {'user_email': ''}\n    def i():\n"
+               '        requests.post(f"{b}/resolve", json={"q": 1, **c})\n') == "NO_PERSON"
+    # NOT blank: an expression that may fall back to "" is still the parameter's value (the
+    # INGEST_RECORD / TOKEN arms judge what feeds it)
+    assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": u or ""})\n') == "PERSON"
+    assert cls('def f(b, u):\n    p = {"query": 1}\n    p["user_email"] = u\n' + post) == "PERSON"
+
+    def sh(src):
+        (s,) = find_sh_sites(src, "a.sh")
+        return derived_class(s)
+
+    assert sh('curl -s -X POST http://h:1/resolve \\\n  -d \'{"query":"w","user_email":""}\'\n') == "NO_PERSON"
+    assert sh('curl -s -X POST http://h:1/resolve -d "{\\"query\\":\\"w\\",\\"user_email\\":\\"\\"}"\n') == "NO_PERSON"
+    assert sh('curl -s -X POST http://h:1/resolve \\\n  -d \'{"query":"w","user_email":"a@b"}\'\n') == "PERSON"
+    assert sh('curl -s -X POST http://h:1/resolve -d "{\\"query\\":\\"w\\",\\"user_email\\":\\"a@b\\"}"\n') == "PERSON"
+
+
 # --------------------------------------------------------------------------------------
 # Arm C: the class of each site, derived from the code
 # --------------------------------------------------------------------------------------
@@ -598,21 +676,23 @@ def test_CLASS_of_each_site_is_the_class_its_payload_has(row):
         f"found {len(sites)}")
     for s in sites:
         if row.found_by == "url" and s.shell_cmd:
-            has_person = "user_email" in s.shell_cmd
+            has_person = carries_person(s)
             assert (not has_person) if row.cls == "NO_PERSON" else has_person
             continue
         keys = _keys_of(row, s)
         assert keys, f"row {row.n} ({row.function}): no payload keys derived -- the derivation is blind here"
+        person = carries_person(s, inprocess=row.found_by == "inprocess")
         if row.cls == "NO_PERSON":
-            assert "user_email" not in keys, (
+            assert not person, (
                 f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared NO_PERSON "
-                f"but its payload now carries `user_email`. It has MOVED to a person-carrying class: "
-                f"move its row (TOKEN/FORWARD/INGEST_RECORD/TEST_PERSONA), lower the NO_PERSON count, "
-                f"and say why.")
+                f"but its payload now carries a person in `user_email`. It has MOVED to a "
+                f"person-carrying class: move its row (TOKEN/FORWARD/INGEST_RECORD/TEST_PERSONA), "
+                f"lower the NO_PERSON count, and say why.")
             continue
-        assert "user_email" in keys, (
+        assert person, (
             f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared "
-            f"{row.cls} but its payload has no `user_email` key (keys: {sorted(keys)})")
+            f"{row.cls} but its payload carries no person: `user_email` is absent or a blank "
+            f"literal (keys: {sorted(keys)})")
         where = f"row {row.n} ({row.file}:{s.line} {row.function})"
         if row.cls == "TOKEN":
             fed = _has_param(s, "user_email")
@@ -652,12 +732,12 @@ def test_CLASS_of_each_site_is_the_class_its_payload_has(row):
 # --------------------------------------------------------------------------------------
 # Arm D: DOMAINS_WITHOUT_PERSON (the shape ruling (b) names)
 # --------------------------------------------------------------------------------------
-def _is_domains_without_person(keys) -> bool:
-    return bool(keys & {"domains", "entitled_domains"}) and "user_email" not in keys
+def _is_domains_without_person(site: Site) -> bool:
+    return bool(payload_keys(site) & {"domains", "entitled_domains"}) and not carries_person(site)
 
 
 def test_DOMAINS_WITHOUT_PERSON_is_exactly_the_declared_set():
-    found = {s.key for s in census() if not s.shell_cmd and _is_domains_without_person(payload_keys(s))}
+    found = {s.key for s in census() if not s.shell_cmd and _is_domains_without_person(s)}
     declared = {(r.file, r.function, r.route) for r in ROWS if r.n in DOMAINS_WITHOUT_PERSON_ROWS}
     assert found == declared, (
         f"sites sending a domains list and no person: {sorted(found)}; declared: {sorted(declared)}. "
@@ -666,15 +746,17 @@ def test_DOMAINS_WITHOUT_PERSON_is_exactly_the_declared_set():
 
 
 def test_CONTROL_domains_without_person_is_detected():
-    def keys(src):
+    def site(src):
         (s,) = find_py_sites(src, "x.py")
-        return payload_keys(s)
+        return s
 
     base = "def f(b, u):\n"
     assert _is_domains_without_person(
-        keys(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"]})\n'))
+        site(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"]})\n'))
     assert not _is_domains_without_person(
-        keys(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"], "user_email": u})\n'))
+        site(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"], "user_email": u})\n'))
+    assert _is_domains_without_person(
+        site(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"], "user_email": ""})\n'))
 
 
 # --------------------------------------------------------------------------------------
@@ -687,7 +769,7 @@ def test_NO_PERSON_class_has_exactly_the_declared_population():
     for r in ROWS:
         for s in _sites_for(r):
             if r.found_by == "inprocess":
-                cls = "PERSON" if "user_email" in _inprocess_keys(s) else "NO_PERSON"
+                cls = "PERSON" if carries_person(s, inprocess=True) else "NO_PERSON"
             else:
                 cls = derived_class(s)
             if cls == "UNDECIDED":
