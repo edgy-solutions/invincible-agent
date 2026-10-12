@@ -424,3 +424,29 @@ audiences:
       maintenance-tier-org group per the 2026-10-10 ruling, for the #15 walks. Sandbox member = bob.
     grant_to_groups:
       - maintenance-tier-org
+
+  # 2026-10-11 ruling: sandbox tier edge-01 audiences, granted through groups.
+  maint_fault_approval:edge-01:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_fault_approval` task (maint_release workflow), sandbox tier edge-01.
+      Ruling 2026-10-11, via the maint-approvers-edge-01 group. Sandbox member = bob.
+    grant_to_groups:
+      - maint-approvers-edge-01
+
+  maint_tier_ack:edge-01:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_release` `tier_ack` signal, sandbox tier edge-01. Ruling 2026-10-11,
+      via the maint-tier-ack-edge-01 group. Sandbox member = alice (the MECHANIC/MAINTENANCE fixture).
+    grant_to_groups:
+      - maint-tier-ack-edge-01
+
+  maint_supervisor_approval:edge-01:
+    granted_by: cnogradi
+    reason: >-
+      The audience of the maint_supervisor_review workflow (overlays/openddil-lab/workflows/
+      maint_supervisor_review.yaml), sandbox tier edge-01. Ruling 2026-10-11, via the
+      maint-supervisors-edge-01 group. Sandbox member = bob.
+    grant_to_groups:
+      - maint-supervisors-edge-01
