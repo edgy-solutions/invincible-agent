@@ -344,6 +344,20 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
 - **Test:** 26 passed.
 - **Not run:** lane/74's own seals on the merged tree. The docstring says so.
 
+## 2026-10-12 (2): a blank `user_email` is absent in every arm (#47, `8fc4d1e5`)
+
+- **The ruling:** "two categories approved, accurately described beats one name. Blank "" user_email — make the count arm treat empty as absent, so both arms catch it."
+- **One predicate decides PERSON in every arm.** `carries_person` is used by the derived class, arm C, arm D and arm E, for Python, in-process and shell sites.
+- **What counts as absent:** a missing key; or any value found for it that is a blank literal (`""`, whitespace or `None`); or, at a shell site, `user_email":""`.
+- **What stays out of scope:** a blank passed as a call argument (mutant X). Lane/74's seal owns it.
+- **New control:** `test_CONTROL_a_blank_user_email_is_absent_never_a_person`.
+- **Test:** 27 passed.
+- **Mutants:**
+  - **N1b** (composer `""`): red on row 8, DOMAINS_WITHOUT_PERSON and the count.
+  - **N6** (dynamic_supervisor:429 stores `""`): red on row 1, DOMAINS_WITHOUT_PERSON and the count. **It survived the test at `4f172cda`** (26 passed, measured), which means a blank at a TOKEN row was invisible to every arm.
+  - **N7** (`_bind_from_scope` passes `""`): red on row 7 and the count.
+- **Packet placed:** `2026-10-12-packet-to-74-a-blank-user-email-is-now-absent-in-every-census-arm.md` (cc the architect).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
