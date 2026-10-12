@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.43 — 2026-10-12
+
+Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:2556cf5b…` (cortex-ui b566192).**
+  This build includes cortex #10 (3fa6fcb, the answers perf merge), and pinning it was
+  conditional on that. It also carries #4, the composer: rev 187 rolled on 865c080, which lacks
+  it. The tag-to-digest binding was measured before pinning; the values comment records how.
+
 ## 0.4.42 — 2026-10-11
 
 Rev 187, second chart change: answers at scale (#42, lane/01-answers-at-scale, numbered 0.4.44 on
