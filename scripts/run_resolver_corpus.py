@@ -69,10 +69,9 @@ def _person() -> str:
     return person
 
 
-def _resolve_body(query: str, domain) -> dict:
-    """ONE shape for every /resolve this script sends: the query, its domain scope, and the
-    person. Four call sites used to build it by hand, each without a person."""
-    return {"query": query, "user_email": _person(), "domain": domain, "domains": [domain]}
+# Every /resolve body below is a LITERAL dict naming `user_email`, not a helper's return value:
+# tests/security/test_every_engine_o_caller_is_classified.py derives each site's class from the
+# keys of the payload it can SEE, and a call it cannot read derives no keys at all.
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +83,9 @@ def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
     try:
         r = requests.post(
             f"{base}/resolve",
-            json=_resolve_body(row["query"], meta.get("domain", "DATA_ENGINEERING")),
+            json={"query": row["query"], "user_email": _person(),
+                  "domain": meta.get("domain", "DATA_ENGINEERING"),
+                  "domains": [meta.get("domain", "DATA_ENGINEERING")]},
             timeout=timeout,
         )
         r.raise_for_status()
@@ -201,7 +202,8 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json=_resolve_body(q, meta.get("domain")),
+                json={"query": q, "user_email": _person(), "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
             r.raise_for_status()
@@ -228,7 +230,8 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json=_resolve_body(ident, meta.get("domain")),
+                json={"query": ident, "user_email": _person(), "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
             r.raise_for_status()
@@ -273,7 +276,8 @@ def check_pool(base: str, meta: dict, timeout: float) -> tuple[bool, list]:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json=_resolve_body(q, meta.get("domain")),
+                json={"query": q, "user_email": _person(), "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
             r.raise_for_status()
