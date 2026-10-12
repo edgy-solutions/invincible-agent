@@ -15,6 +15,8 @@ re: your Q1–Q3 answers and the origin-on-promotion ruling -- built, sealed, on
   **No roll was done.**
 - **PR [#39](https://github.com/edgy-solutions/invincible-agent/pull/39)** (`lane/gov-resolve-instance` → `lane/gov`, open, tip `ac6e4ff0`): the Q7 gate on `/resolve_instance`, plus S (ruling (b)), P (Q8 behind one flag), and the outage seal re-derived at eleven. 187 merged it at `2999bdca`, and that merge is held until 187 re-merges `ac6e4ff0`.
 - **PR [#45](https://github.com/edgy-solutions/invincible-agent/pull/45)** (`lane/gov-enumerate-gate` → `lane/gov-resolve-instance`, open, tip `9393ff08`): ruling (d), the enumerate gate. It merges lane/74's #40 (`311999f4`).
+- **#39 and #45 were ACCEPTED by the architect on 2026-10-11.**
+- **PR [#47](https://github.com/edgy-solutions/invincible-agent/pull/47)** (`lane/gov-caller-census` → `lane/gov-enumerate-gate`, open, tip `d8e61dd2`): Day 2's caller census. It seals "a service identity is never a grant" at the callers.
 
 ## What landed
 
@@ -294,11 +296,39 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - Nothing calls `/ingest/{id}/retry` today.
   - Under (b), the `awaiting_origin` branch needs a pin exemption, or Q2c is unreachable.
   - **Waiting on your ruling.**
-- **Not yet checked:** Q2b, Q2c and Q8 against Chris's pasted 21:29/22:11 text. I have not seen it.
-- **Day 2, not started:**
-  - trace the review-composer and script callers, per lane/74's ruling;
-  - the AnswerArtifact origin field, which waits for its first writer;
-  - the packet census list for Lane 1.
+- **Checked (2026-10-11):** the architect confirmed the 21:29/22:11 rulings as Q2b (a state function), Q2c (a retry re-runs it) and Q8 (sealed behind seed-stamp). That matches what was built, so there is nothing to change.
+- **Day 2:** done; see the next section.
+
+## 2026-10-11: Day 2, the caller census, the AnswerArtifact check and the packet census
+
+**1. Caller census: PR #47 (`d8e61dd2`).** The file is `tests/security/test_every_engine_o_caller_is_classified.py`; it passes 26.
+
+- **What it derives:**
+  - every POST to `/resolve`, `/resolve_instance`, `/fill_slots`, `/enumerate_instances` and `/analyze` across `agent_fleet/`, `src/`, `scripts/` and `setup/`, using a `.py` URL detector plus a `.sh` curl scan;
+  - each site's class from its payload: PERSON or NO_PERSON, with DOMAINS_WITHOUT_PERSON as a sub-shape.
+- **What it declares:** the split of PERSON into TOKEN and FORWARD.
+- **There are 17 rows. NO_PERSON has 10 sites**, and they are the 422 `no_person` population:
+  - review_composer;
+  - run_resolver_corpus ×4;
+  - verify_tier3_live;
+  - phase1_stable_harness.sh;
+  - elicitation_battery;
+  - slot_fill_battery;
+  - agent_routers → /analyze.
+- **Mutants:**
+  - M1–M5 are red: a class flip at review_composer, a class flip at `_resolve_subject`, a new site, a deleted row, and the domains shape.
+  - X (the supervisor passing `user_email=""`) is green here and in `hears_the_caller`. It is red only in lane/74's `test_the_person_reaches_the_migrated_route.py`, so supervisor-hop provenance is theirs.
+  - This corrects my earlier claim that `hears_the_caller` covered it.
+
+**2. AnswerArtifact origin field: not built, because no writer exists.**
+- I ran the tripwire's detector over 71 distinct blobs from 99 refs: `gateway.py` 51, `notice_parts.py` 6, `promotion_stores.py` 5, `answer_artifact_writer.py` 4, `artifact_reads.py` 3 and `origin_writer.py` 2.
+- It found no AnswerArtifact origin site and no offender.
+
+**3. Packet census, placed for lane/01.**
+- There are 86 placed files. Master's parser misfiles 58 ruled-form packets until #32's Q10 parser lands with 187.
+- There are 10 `from: lane/saf` packets with no repo prefix.
+
+**Retry collision:** I restated (a) and (b) in one line each in the Day 2 digest to the architect, and I am waiting on the ruling.
 
 ## Questions for a ruling
 
