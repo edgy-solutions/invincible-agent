@@ -2427,7 +2427,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
 
 
 async def _call_resolver(
-    resolver: dict, identifier: str, query: str
+    resolver: dict, identifier: str, query: str, *,
+    user_email: str = "", entitled_domains: list | tuple = (),
 ) -> _ResolverOutcome:
     """Call one mesh:resolveInstance provider with the provider's own
     declared timeout budget (falling back to the router floor).
@@ -2437,6 +2438,13 @@ async def _call_resolver(
     2s-strangle bug. Candidates are always returned (possibly empty);
     the caller decides whether the empty list represents abstention
     or a kill upstream.
+
+    THE CALLER TRAVELS WITH THE TERM (2026-10-10). A provider whose instances carry an origin
+    (engine-o's SUSTAINMENT store holds drop-derived notices) cannot gate what it returns on a
+    caller it was never told. Both fields go on EVERY call, empty when the asker named nobody,
+    so a provider reads "no caller" as an explicit empty value, never as a field it was not
+    sent. The names match `/notice_parts` (`user_email`, `entitled_domains`). The gate is the
+    provider's, not this router's.
     """
     import time
     provider = resolver.get("provider") or ""
@@ -2449,7 +2457,9 @@ async def _call_resolver(
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
                 endpoint_url,
-                json={"identifier": identifier, "query": query},
+                json={"identifier": identifier, "query": query,
+                      "user_email": user_email or "",
+                      "entitled_domains": list(entitled_domains or [])},
             )
             resp.raise_for_status()
             data = resp.json() or {}
@@ -2497,9 +2507,14 @@ async def _call_resolver(
 
 
 async def _resolve_instance(
-    identifier: str, query: str, asked_domains: list | None = None
+    identifier: str, query: str, asked_domains: list | None = None, *,
+    user_email: str = "", entitled_domains: list | None = None,
 ) -> tuple[str | None, dict]:
     """Run the instance-resolution pre-step.
+
+    ``asked_domains`` RANKS (demotes out-of-domain hits); ``entitled_domains`` is the caller's
+    grant and is only forwarded, with ``user_email``, to every provider. They are separate
+    parameters because a routing domain is not an entitlement.
 
     Returns ``(subject_uri or None, provenance)``. ``None`` means
     abstain → the caller keeps the LLM's class guess. Provenance
@@ -2565,7 +2580,9 @@ async def _resolve_instance(
         else:
             _lookup_terms.append(_name)
 
-    tasks = [_call_resolver(r, term, query)
+    _entitled = list(entitled_domains or [])
+    tasks = [_call_resolver(r, term, query,
+                            user_email=user_email, entitled_domains=_entitled)
              for r in resolvers for term in _lookup_terms]
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
@@ -3501,6 +3518,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
                 asked_domains=request.domains or ([request.domain] if request.domain else []),
+                user_email=request.user_email, entitled_domains=list(request.domains or []),
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
@@ -3599,6 +3617,9 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # and ranks; forwarding it as an entitlement would grant what nobody granted.
+            user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
@@ -4363,6 +4384,11 @@ class FillSlotsRequest(BaseModel):
     #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
     #: falls back to `_acts_in_docs` alone.
     subject_uri: str = ""
+    #: THE PERSON ASKING, forwarded with `acting_domains` to every `mesh:resolveInstance`
+    #: provider so a provider holding origin-scoped instances can gate on who asked (2026-10-10,
+    #: gov's origin-at-read report). `/resolve` has carried it since ADR-0025; `/fill_slots`
+    #: never did. Empty is an explicit "no caller", which a gating provider must refuse on.
+    user_email: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -4625,7 +4651,8 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # slot's referent class for the same reason. Scoping here would hide the very
         # cross-domain match a person needs to see when disambiguating.
         _subject, prov = await _resolve_instance(
-            spoken_value, request.query, asked_domains=list(request.acting_domains or [])
+            spoken_value, request.query, asked_domains=list(request.acting_domains or []),
+            user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
@@ -5085,6 +5112,10 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
+    #: The caller, as the fan-out sends it (`_call_resolver`); same names as `/notice_parts`.
+    #: RECEIVED, NOT YET GATED ON: the origin gate over drop-derived instances is gov's change.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
 
 
 @app.post("/resolve_instance")

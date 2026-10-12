@@ -1,5 +1,18 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.41 — 2026-10-11
+
+Rev 187. Two walkers, and the reconcile creates a local human the live realm lacks (6c93b1c2).
+Numbered here because the release guard refused 0.4.40 for 6c93b1c2's helm change. Open
+branches that also claimed 0.4.41-0.4.44 (netpol, prep-next, #41, #42) renumber at merge.
+
+### Added
+
+- **`erin` and `chris`** in `keycloak-configmap.yaml` and `values.yaml` `localHumanUsers`.
+- **`realm-reconcile-job.yaml` creates any `localHumanUsers` entry the live realm lacks.** The realm
+  import applies only to a fresh realm, so a user added later otherwise never exists. The loop is
+  create-if-absent and never touches an existing user.
+
 ## 0.4.39 — 2026-10-10
 
 Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
