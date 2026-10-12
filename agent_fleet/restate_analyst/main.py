@@ -2074,6 +2074,16 @@ async def _run_grouped_human_await(
     }
 
 
+def _run_subject(request: dict) -> str:
+    # Ruling 2026-10-11: step 1 of the maintenance fault walk runs on_behalf_of the event's
+    # `dropped_by` (via svc:openddil); svc:case-runner is never a verb grantee, so no default
+    # of the runner's own is added. The dropper is the LAST fallback: a person-started run wins.
+    dropped = request.get("dropped_by")
+    dropper = dropped.get("authz_id") if isinstance(dropped, dict) else None
+    dropper = dropper.strip() if isinstance(dropper, str) else ""
+    return request.get("authz_id") or request.get("caller_email") or dropper or ""
+
+
 async def _run_definition(
     ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict,
     *, task_kind: str = "workflow_ack",
@@ -2171,7 +2181,7 @@ async def _run_definition(
     }
     user_jwt = request.get("user_jwt", "")
     identity = {
-        "authz_id": request.get("authz_id") or request.get("caller_email") or "",
+        "authz_id": _run_subject(request),
         "entitled_domains": list(request.get("entitled_domains") or []),
         "persona": request.get("user_persona"),
         "user_jwt": user_jwt,
