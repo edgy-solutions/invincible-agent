@@ -10,9 +10,9 @@ sees seeded content only. THIS file is the CALLER side: a PARTITIONED census of 
 (`/resolve`, `/resolve_instance`, `/fill_slots`, `/notice_parts`, `/enumerate_instances`, plus
 restate_analyst's `/analyze`, which forwards to engine-o `/resolve`). Every site is in exactly one
 class. WHAT IS DERIVED FROM THE CODE is the split this ruling turns on, PERSON vs NO_PERSON (does
-the payload the site sends carry `user_email` at all). The split of PERSON into TOKEN and FORWARD is
-DECLARED, checked only as far as "`config.user_email` or a parameter named user_email appears in
-the function". Whether the supervisor's callers really pass `config.user_email` into rows 1-3 is
+the payload the site sends carry `user_email` at all). The split of PERSON into TOKEN, FORWARD,
+INGEST_RECORD and TEST_PERSONA is DECLARED, checked only as far as stated below (TOKEN/FORWARD:
+"`config.user_email` or a parameter named user_email appears in the function"). Whether the supervisor's callers really pass `config.user_email` into rows 1-3 is
 NOT this file's subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
 `user_email=""` instead of `config.user_email` stays green here AND in
 `tests/routing/test_resolve_instance_hears_the_caller.py`; it is killed by lane/74's
@@ -22,16 +22,27 @@ NOT this file's subject. MEASURED 2026-10-11: `execute_subtask` handing `_classi
   TOKEN       the payload carries `user_email`, fed by the supervisor config (set by cortex-bff from
               the token) -- directly (`config.user_email`) or through a parameter named user_email.
   FORWARD     the payload carries `user_email` relayed from the site's own caller.
+  INGEST_RECORD  the payload's `user_email` is the artifact's ingest record's on_behalf_of (the
+              dropper), passed in as the `on_behalf_of` parameter. This file checks only that the
+              value uses that parameter. That the BFF fills it from the ingest record is lane/74's
+              tests/test_a_review_resolves_as_its_dropper.py (their mutants A1-A12; not re-run by gov).
+  TEST_PERSONA   the payload's `user_email` is a test persona read from the environment by a module
+              function that raises without it. The run-time refusal is lane/74's
+              tests/routing/test_a_reresolve_needs_a_person.py (their mutants B1-B12; not re-run by gov).
   NO_PERSON   the payload has no `user_email` key at all.
+  UNDECIDED   no payload keys could be derived; never a member of NO_PERSON, always a red.
+INGEST_RECORD and TEST_PERSONA, like TOKEN and FORWARD, are DECLARED splits of PERSON checked only
+as far as stated; the PERSON vs NO_PERSON split is derived.
 
 DOMAINS_WITHOUT_PERSON is a sub-shape of NO_PERSON: the payload has `domains` (or
 `entitled_domains`) and no `user_email`. That is the exact shape ruling (b) names, and the shape the
-corpus arm of `test_service_identity_is_never_a_grant` proves gets SEEDED CONTENT ONLY.
+corpus arm of `test_service_identity_is_never_a_grant` proves gets SEEDED CONTENT ONLY. It is empty
+since #48 and is derived over the whole census, so a new such site is a red.
 
 THE NO_PERSON CLASS IS THE POPULATION THE PLANNED 422 `no_person` REFUSAL ON /resolve_instance WILL
-BREAK. That refusal may land only when the class is empty or each member has been re-pointed to a
-person (lane/74 owns the caller-side changes). A site moving from NO_PERSON to a person-carrying
-class is EXPECTED: MOVE ITS ROW AND SAY WHY in the row's comment; do not loosen a predicate.
+BREAK. It is now 5 sites (rows 13-17), deliberately left to be refused by the planned 422 (lane/74,
+2026-10-11). A site moving from NO_PERSON to a person-carrying class is EXPECTED: MOVE ITS ROW AND
+SAY WHY in the row's comment; do not loosen a predicate.
 
 How the census is taken: the detector walks every tracked .py/.sh file under the four roots
 (tests excluded) and finds each `.post(...)` / `urllib Request(...)` whose URL ends in a route as a
@@ -94,18 +105,20 @@ ROWS = [
     Row("5", RA, "_resolve_ontology", "/resolve", "FORWARD"),
     Row("6", OS_, "_call_resolver", "/resolve_instance", "FORWARD", found_by="registry"),
     Row("7", OS_, "_bind_from_scope", "/enumerate_instances", "FORWARD", found_by="inprocess"),
-    Row("8", RC, "resolve_subject_via_engine_o", "/resolve_instance", "NO_PERSON"),
-    Row("9", RRC, "probe", "/resolve", "NO_PERSON"),
-    Row("10", RRC, "stamp", "/resolve", "NO_PERSON", count=2),
-    Row("11", RRC, "check_pool", "/resolve", "NO_PERSON"),
+    # MOVED by lane/74 #48 (16a08947, ruling (a)): the BFF passes the ingest record's dropper as on_behalf_of.
+    Row("8", RC, "resolve_subject_via_engine_o", "/resolve_instance", "INGEST_RECORD"),
+    # MOVED by lane/74 #48 (342fc3b5, ruling (b)): _person() reads IA_CORPUS_ON_BEHALF_OF and refuses to run without it.
+    Row("9", RRC, "probe", "/resolve", "TEST_PERSONA"),
+    Row("10", RRC, "stamp", "/resolve", "TEST_PERSONA", count=2),
+    Row("11", RRC, "check_pool", "/resolve", "TEST_PERSONA"),
     Row("13", "setup/verify_tier3_live.py", "_resolve_query", "/resolve", "NO_PERSON"),
     Row("14", "scripts/phase1_stable_harness.sh", "top level", "/resolve", "NO_PERSON"),
     Row("15", "scripts/elicitation_battery.py", "_fill", "/fill_slots", "NO_PERSON"),
     Row("16", "scripts/slot_fill_battery.py", "_call", "/fill_slots", "NO_PERSON"),
     Row("17", "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "/analyze", "NO_PERSON"),
 ]
-DOMAINS_WITHOUT_PERSON_ROWS = {"9", "10", "11"}  # run_resolver_corpus.py: probe, stamp x2, check_pool
-EXPECTED_NO_PERSON_SITES = 10  # rows 8, 9-11 (4 sites), 13, 14, 15, 16, 17
+DOMAINS_WITHOUT_PERSON_ROWS: set[str] = set()  # empty since #48: run_resolver_corpus sends a person with its domains
+EXPECTED_NO_PERSON_SITES = 5  # rows 13, 14, 15, 16, 17 -- left to be refused (lane/74, 2026-10-11)
 
 # A found site that is NOT engine-o. Keyed (file, function, route) -> (hole expected in the URL, why).
 EXCLUDED = {
@@ -362,11 +375,40 @@ def payload_keys(site: Site) -> set:
     return _expr_keys(body, site.scopes, call.lineno)
 
 
+def _user_email_value(site: Site):
+    """The value expression of the "user_email" key in the literal dict passed as json=, following
+    a Name to its assigned dict; None when not found."""
+    call = site.node
+    body = next((k.value for k in call.keywords if k.arg == "json"), None)
+    if body is None:
+        return None
+
+    def from_dict(d):
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, ast.Constant) and k.value == "user_email":
+                return v
+        return None
+
+    if isinstance(body, ast.Dict):
+        return from_dict(body)
+    if isinstance(body, ast.Name):
+        for sc in site.scopes:
+            val = _assigned_before(sc, body.id, call.lineno)
+            if isinstance(val, ast.Dict):
+                return from_dict(val)
+    return None
+
+
 def derived_class(site: Site) -> str:
-    """PERSON when the payload names `user_email`, else NO_PERSON."""
+    """PERSON when the payload names `user_email`, else NO_PERSON. UNDECIDED when a non-shell site
+    derives no payload keys at all: a site the derivation cannot read is never counted as a member
+    of NO_PERSON."""
     if site.shell_cmd:
         return "PERSON" if "user_email" in site.shell_cmd else "NO_PERSON"
-    return "PERSON" if "user_email" in payload_keys(site) else "NO_PERSON"
+    keys = payload_keys(site)
+    if not keys:
+        return "UNDECIDED"
+    return "PERSON" if "user_email" in keys else "NO_PERSON"
 
 
 # --------------------------------------------------------------------------------------
@@ -535,6 +577,16 @@ def test_CONTROL_payload_derivation_reads_spread_subscript_and_absence():
                 '    urllib.request.Request(f"{b}/fill_slots", data=body)\n') == {"query"}
 
 
+def test_CONTROL_an_unreadable_payload_is_UNDECIDED_never_NO_PERSON():
+    def cls(src):
+        (s,) = find_py_sites(src, "x.py")
+        return derived_class(s)
+
+    assert cls('def f(b, q):\n    requests.post(f"{b}/resolve", json=_body(q))\n') == "UNDECIDED"
+    assert cls('def f(b, q):\n    requests.post(f"{b}/resolve", json={"query": 1})\n') == "NO_PERSON"
+    assert cls('def f(b, u):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": u})\n') == "PERSON"
+
+
 # --------------------------------------------------------------------------------------
 # Arm C: the class of each site, derived from the code
 # --------------------------------------------------------------------------------------
@@ -555,39 +607,74 @@ def test_CLASS_of_each_site_is_the_class_its_payload_has(row):
             assert "user_email" not in keys, (
                 f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared NO_PERSON "
                 f"but its payload now carries `user_email`. It has MOVED to a person-carrying class: "
-                f"move its row (TOKEN/FORWARD), lower the NO_PERSON count, and say why.")
-        else:
-            assert "user_email" in keys, (
-                f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared "
-                f"{row.cls} but its payload has no `user_email` key (keys: {sorted(keys)})")
+                f"move its row (TOKEN/FORWARD/INGEST_RECORD/TEST_PERSONA), lower the NO_PERSON count, "
+                f"and say why.")
+            continue
+        assert "user_email" in keys, (
+            f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared "
+            f"{row.cls} but its payload has no `user_email` key (keys: {sorted(keys)})")
+        where = f"row {row.n} ({row.file}:{s.line} {row.function})"
+        if row.cls == "TOKEN":
             fed = _has_param(s, "user_email")
-            if row.cls == "TOKEN":
-                fn_text = "".join(ast.unparse(sc) for sc in s.scopes)
-                fed = fed or "config.user_email" in fn_text
-                assert fed, (f"row {row.n} TOKEN: neither `config.user_email` nor a `user_email` "
-                             f"parameter feeds the payload in {row.function}")
-            else:
-                assert fed, (f"row {row.n} FORWARD: no `user_email` parameter relays the caller's "
-                             f"identity in {row.function}")
+            fn_text = "".join(ast.unparse(sc) for sc in s.scopes)
+            fed = fed or "config.user_email" in fn_text
+            assert fed, (f"row {row.n} TOKEN: neither `config.user_email` nor a `user_email` "
+                         f"parameter feeds the payload in {row.function}")
+        elif row.cls == "FORWARD":
+            assert _has_param(s, "user_email"), (
+                f"row {row.n} FORWARD: no `user_email` parameter relays the caller's "
+                f"identity in {row.function}")
+        elif row.cls == "INGEST_RECORD":
+            val = _user_email_value(s)
+            assert val is not None, f"{where} INGEST_RECORD: no `user_email` value expression found in the payload"
+            assert any(isinstance(n, ast.Name) and n.id == "on_behalf_of" for n in ast.walk(val)), (
+                f"{where} INGEST_RECORD: the `user_email` value `{ast.unparse(val)}` does not use `on_behalf_of`")
+            assert _has_param(s, "on_behalf_of"), (
+                f"{where} INGEST_RECORD: the enclosing function has no `on_behalf_of` parameter")
+        elif row.cls == "TEST_PERSONA":
+            val = _user_email_value(s)
+            assert val is not None, f"{where} TEST_PERSONA: no `user_email` value expression found in the payload"
+            assert isinstance(val, ast.Call) and isinstance(val.func, ast.Name), (
+                f"{where} TEST_PERSONA: the `user_email` value `{ast.unparse(val)}` is not a call of a bare name")
+            fn = next((n for n in s.tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                       and n.name == val.func.id), None)
+            assert fn is not None, (
+                f"{where} TEST_PERSONA: `{val.func.id}` is not defined at module level in {s.file}")
+            text = ast.unparse(fn)
+            assert "environ" in text or "getenv" in text, (
+                f"{where} TEST_PERSONA: `{fn.name}` does not read the environment")
+            assert any(isinstance(n, ast.Raise) for n in ast.walk(fn)), (
+                f"{where} TEST_PERSONA: `{fn.name}` has no `raise` (it must refuse to run without a person)")
+        else:
+            pytest.fail(f"row {row.n}: unknown class {row.cls}")
 
 
 # --------------------------------------------------------------------------------------
 # Arm D: DOMAINS_WITHOUT_PERSON (the shape ruling (b) names)
 # --------------------------------------------------------------------------------------
-@pytest.mark.parametrize("row", [r for r in ROWS if r.n in DOMAINS_WITHOUT_PERSON_ROWS],
-                         ids=lambda r: f"row{r.n}-{r.function}")
-def test_DOMAINS_WITHOUT_PERSON_sends_domains_and_no_user_email(row):
-    sites = _sites_for(row)
-    assert len(sites) == row.count
-    for s in sites:
-        keys = payload_keys(s)
-        assert keys & {"domains", "entitled_domains"}, (
-            f"{row.file}:{s.line} {row.function} no longer sends a domains list: it is not "
-            f"DOMAINS_WITHOUT_PERSON any more; reclassify it")
-        assert "user_email" not in keys, (
-            f"{row.file}:{s.line} {row.function} sends domains AND user_email: it has moved out "
-            f"of DOMAINS_WITHOUT_PERSON (a domains list was never an entitlement; a person is). "
-            f"Move its row and say why")
+def _is_domains_without_person(keys) -> bool:
+    return bool(keys & {"domains", "entitled_domains"}) and "user_email" not in keys
+
+
+def test_DOMAINS_WITHOUT_PERSON_is_exactly_the_declared_set():
+    found = {s.key for s in census() if not s.shell_cmd and _is_domains_without_person(payload_keys(s))}
+    declared = {(r.file, r.function, r.route) for r in ROWS if r.n in DOMAINS_WITHOUT_PERSON_ROWS}
+    assert found == declared, (
+        f"sites sending a domains list and no person: {sorted(found)}; declared: {sorted(declared)}. "
+        f"A site sending a domains list and no person is exactly what ruling (b) forbids "
+        f"(a domains list is never an entitlement): give it a person or declare it.")
+
+
+def test_CONTROL_domains_without_person_is_detected():
+    def keys(src):
+        (s,) = find_py_sites(src, "x.py")
+        return payload_keys(s)
+
+    base = "def f(b, u):\n"
+    assert _is_domains_without_person(
+        keys(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"]})\n'))
+    assert not _is_domains_without_person(
+        keys(base + '    requests.post(f"{b}/resolve", json={"query": 1, "domains": ["x"], "user_email": u})\n'))
 
 
 # --------------------------------------------------------------------------------------
@@ -596,11 +683,18 @@ def test_DOMAINS_WITHOUT_PERSON_sends_domains_and_no_user_email(row):
 def test_NO_PERSON_class_has_exactly_the_declared_population():
     declared = sum(r.count for r in ROWS if r.cls == "NO_PERSON")
     derived = 0
+    undecided = []
     for r in ROWS:
         for s in _sites_for(r):
-            cls = "PERSON" if (r.found_by == "inprocess" and "user_email" in _inprocess_keys(s)) \
-                else derived_class(s)
+            if r.found_by == "inprocess":
+                cls = "PERSON" if "user_email" in _inprocess_keys(s) else "NO_PERSON"
+            else:
+                cls = derived_class(s)
+            if cls == "UNDECIDED":
+                undecided.append(f"row {r.n} {s.file}:{s.line}")
             derived += cls == "NO_PERSON"
+    assert not undecided, (
+        f"{undecided}: the derivation is blind here: a site it cannot read is not counted as NO_PERSON")
     assert declared == EXPECTED_NO_PERSON_SITES, (
         f"the declared NO_PERSON population is {declared}, expected {EXPECTED_NO_PERSON_SITES}")
     assert derived == EXPECTED_NO_PERSON_SITES, (
