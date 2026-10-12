@@ -65,12 +65,13 @@ def test_my_side_claims_haz_1004_exactly_once():
 
 
 @pytest.mark.skip(reason=(
-    "BLOCKED on engine_o_sustainment: it also claims HAZ-1004 (as a pcn#Component), so "
-    "fill_slots refuses the bind as ambiguous_in_domain. Fix is on its side (packet "
-    "2026-10-11-packet-to-eo-engine-o-sustainment-resolver-also-claims-haz-1004-...; Lane 1's "
-    "packet 2026-10-11-packet-to-saf-haz-1004-fails-live-...). Unskip when it stops matching "
-    "HAZ-*: fan out _call_resolver over every mesh:resolveInstance provider and assert exactly "
-    "one candidate overall."
+    "BLOCKED on lane/74 (owns engine_o_sustainment): it also claims HAZ-1004 as a "
+    "pcn#Component, so fill_slots refuses the bind as ambiguous_in_domain. RULED (architect, "
+    "Q3): HAZ-* belongs to the safety engine, an identifier namespace is claimed by exactly one "
+    "engine, and engine-o stops matching HAZ-. Packet: 2026-10-12-packet-to-74-engine-o-"
+    "sustainment-resolver-stops-matching-haz-ruled-and-a-namespace-field-ask.md. Unskip when "
+    "engine-o lands it: fan out _call_resolver over every mesh:resolveInstance provider and "
+    "assert exactly one candidate overall."
 ))
 def test_haz_1004_resolves_to_exactly_one_candidate_across_the_fan_out():
     raise AssertionError("unreachable until the other claimant is named and fixed")
