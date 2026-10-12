@@ -19,7 +19,20 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-10, latest: merged, live on 187, dist fork closed. Read this first
+## Update 2026-10-12, latest: byte-stable export is PR #50 and the runbook note is PR #49. Read this first
+
+- **The directive of 10-11** (uncompressed duckdb, `as_of` as an input, a Linux CI test, a runbook note, an ingress download test) is done as two open PRs. Lane 1 merges and rolls.
+  - **#50** `fin/export-byte-stable` @ `e63c6f4c`, worktree `ia-fin-export-byte-stable`. CI `reproducible` is green.
+    - The Linux and Windows dataset shas DIFFER: cost `9dd2f92b…` vs `1ccd4ef2…`. Each platform is stable, and the cause is not measured. Noted on the PR.
+  - **#49** `fin/walk-sheet-download-check` @ 2 commits, worktree `ia-fin-walk-sheet-download`.
+- **The ingress also truncates**, rarely: 1 of 50, with an unexplained `ReadError`. This corrects the 10-11 packet's title.
+- **Report to Lane 1:** `invincible-agent/sessions/2026-10-12-packet-to-lane-01-fin-byte-stable-export-pr50-and-the-ingress-truncates-too-pr49.md` (untracked).
+- **The fleet is on `e977c32b`** (rolled 13:33Z, not by this lane).
+- **Next:**
+  - after #50 rolls, export the same two cost answers twice through the ingress and expect one sha. Scratchpad script `dl_ingress3.py`; the TLS pin is the presented self-signed wildcard;
+  - the cortex-ui `documents[]` walk is still pending.
+
+## Update 2026-10-10: merged, live on 187, dist fork closed
 
 - **Merged** in the ruled order: #11 `ae01d904`, #18 `bc2e730b`, #21 `f66a2da5`. Lane 1 then merged #11 at `443cebd8`.
 - **Still open on PR #11** (OPEN, MERGEABLE, head `1b5dd9d3`):
