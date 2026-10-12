@@ -64,6 +64,23 @@ def _members() -> Dict[str, List[Dict[str, str]]]:
     hand-kept-list shape this arc has met repeatedly. Adding a hazard to `entities.py` makes it
     resolvable here with no edit.
     """
+    return {k: [_both_keys(m) for m in v] for k, v in _raw_members().items()}
+
+
+def _both_keys(member: Dict[str, str]) -> Dict[str, str]:
+    """Publish the id under `instance_id` AND `identifier`, same value.
+
+    THE MENU READS `instance_id`: `iagent_pure/slot_disposition.py` builds each `Option` from
+    `m.get("instance_id")` and DROPS a member without one (decide_disposition, ~line 478-482;
+    validate_bound_slots, ~line 964-966), and `ontology_service/main.py::_bind_from_scope`
+    (~line 3181) filters the same way. This engine published `identifier` only, so its
+    enumeration was a list of members the menu silently discarded. `identifier` is kept: the
+    resolver's scorer and existing readers use it.
+    """
+    return {"instance_id": member["identifier"], **member}
+
+
+def _raw_members() -> Dict[str, List[Dict[str, str]]]:
     return {
         SAFETY + "Hazard": [
             {"identifier": h.hazard_id, "label": h.description} for h in HAZARDS
