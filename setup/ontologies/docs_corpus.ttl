@@ -104,6 +104,6 @@ docs:runbook-writing-a-walk-sheet a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/6191350a9890982993a71bf09112cdac0a01d7ebf9c01a8e99a0c46057d0cbe3/writing-a-walk-sheet.md" ;
-  mesh:source_committed_at "2026-09-11T22:23:37-05:00" ;
+  mesh:source_committed_at "2026-10-12T08:54:05-05:00" ;
   mesh:body_sha "6191350a9890982993a71bf09112cdac0a01d7ebf9c01a8e99a0c46057d0cbe3" .
 # writing-a-walk-sheet.md: explains none — an honest row, not an omission.
