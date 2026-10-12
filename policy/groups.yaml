@@ -123,3 +123,21 @@ groups:
   safety-engineers:
     grants:
       - {persona: SAFETY_ENGINEER, domain: SUSTAINMENT}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-10 ruling). Grants NO persona.domain cell, so it
+  # cannot change anyone's routing; it exists so task_grants.yaml can name it in
+  # `grant_to_groups` (maint_fault_approval:ORG, maint_tier_ack:ORG).
+  maintenance-tier-org: {}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
+  # task_grants.yaml `grant_to_groups` for maint_fault_approval:edge-01.
+  maint-approvers-edge-01: {}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
+  # task_grants.yaml `grant_to_groups` for maint_tier_ack:edge-01.
+  # alice is the sandbox maint persona; erin and chris mirror her groups (the walker rule)
+  maint-tier-ack-edge-01: {}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
+  # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
+  maint-supervisors-edge-01: {}

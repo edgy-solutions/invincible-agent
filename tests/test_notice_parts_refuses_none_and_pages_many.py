@@ -18,7 +18,8 @@ import re
 import pytest
 
 from agent_fleet.ontology_service import notice_parts as np_mod
-from tests.test_notice_parts_provenance import NOTICE, _Record, _route, _row
+# `_row` is a DROP-DERIVED notice; the dropper always sees it, so paging is read as the dropper.
+from tests.test_notice_parts_provenance import DROPPED_BY, NOTICE, _Record, _route, _row
 from tests.test_notice_parts_renders_as_instances_by_property import ARCH, _project
 
 PAGE = np_mod.NOTICE_PARTS_PAGE_SIZE
@@ -58,14 +59,14 @@ class _PagingDriver:
 
 def _read(n, offset=0, **kw):
     d = _PagingDriver(_mpns(n), **kw)
-    return d, np_mod.read_notice_parts(d, NOTICE, offset)
+    return d, np_mod.read_notice_parts(d, NOTICE, offset, caller_id=DROPPED_BY)
 
 
 # -- no parts is a named refusal -------------------------------------------------------------
 
 def test_A_KNOWN_NOTICE_WITH_NO_PARTS_IS_THE_NAMED_REFUSAL_NO_AFFECTED_PARTS():
     """The envelope presentation keys on: refused + outcome + reason, with empty parts/sources."""
-    ans = np_mod.read_notice_parts(_PagingDriver([]), NOTICE)
+    ans = np_mod.read_notice_parts(_PagingDriver([]), NOTICE, caller_id=DROPPED_BY)
     assert ans["refused"] is True and ans["outcome"] == "refused"
     assert (ans["status"], ans["reason"]) == ("refused", "no_affected_parts")
     assert ans["notice_id"] == NOTICE and ans["verb"] == np_mod.VERB
@@ -86,7 +87,7 @@ def test_CONTROL_AN_UNKNOWN_NOTICE_IS_A_DIFFERENT_REFUSAL_REASON():
     np_mod.notice_parts([], ""),
     np_mod.notice_parts([], "PCN-NOPE"),
     np_mod.notice_parts([_row(mpns=[])], NOTICE),
-    np_mod.read_notice_parts(_PagingDriver([]), NOTICE, -1),
+    np_mod.read_notice_parts(_PagingDriver([]), NOTICE, -1, caller_id=DROPPED_BY),
     np_mod.notice_parts([_row(mpns=_mpns(5))], NOTICE, 9),
 ], ids=["notice_required", "unknown_notice", "no_affected_parts", "bad_offset", "page_out_of_range"])
 def test_EVERY_REFUSAL_IN_THE_MODULE_SPEAKS_THE_ONE_ENVELOPE(answer):
@@ -147,7 +148,7 @@ def test_AN_OFFSET_PAST_THE_END_IS_PAGE_OUT_OF_RANGE_CARRYING_THE_TOTAL():
                          ids=["negative", "word", "bool", "fraction", "neg-str", "frac-str", "list"])
 def test_A_BAD_OFFSET_IS_REFUSED_BEFORE_THE_STORE_IS_READ(bad):
     d = _PagingDriver(_mpns(250))
-    ans = np_mod.read_notice_parts(d, NOTICE, bad)
+    ans = np_mod.read_notice_parts(d, NOTICE, bad, caller_id=DROPPED_BY)
     assert ans["refused"] is True and ans["reason"] == "bad_offset"
     assert d.runs == [] and d.modes == []
 
@@ -155,7 +156,7 @@ def test_A_BAD_OFFSET_IS_REFUSED_BEFORE_THE_STORE_IS_READ(bad):
 @pytest.mark.parametrize("good,want", [(0, 0), (100, 100), ("100", 100), (None, 0), (100.0, 100)])
 def test_A_WHOLE_NUMBER_OFFSET_IS_ACCEPTED(good, want):
     d = _PagingDriver(_mpns(250))
-    ans = np_mod.read_notice_parts(d, NOTICE, good)
+    ans = np_mod.read_notice_parts(d, NOTICE, good, caller_id=DROPPED_BY)
     assert ans["status"] == "ok" and d.runs[0][1]["offset"] == want
 
 
@@ -184,7 +185,7 @@ def test_OFFSET_AND_LIMIT_ARE_RUN_PARAMETERS_NEVER_FORMATTED_INTO_THE_TEXT():
 
 def test_THE_ROUTE_CARRIES_PARAMS_OFFSET_TO_THE_STORE(monkeypatch):
     d = _PagingDriver(_mpns(250))
-    r = _route(monkeypatch, d, {"entitled_domains": ["SUSTAINMENT"],
+    r = _route(monkeypatch, d, {"entitled_domains": ["SUSTAINMENT"], "user_email": DROPPED_BY,
                                 "params": {"notice_id": NOTICE, "offset": 100}})
     assert r.status_code == 200, r.text
     assert d.runs[0][1]["offset"] == 100

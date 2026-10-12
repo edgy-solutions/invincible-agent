@@ -1,7 +1,7 @@
 """Dry-run of the OpenDDIL broker flip: the flip is values (two switches + the secret file), nothing else.
 
 Renders the chart with the committed values-sandbox.yaml PLUS an in-test override holding ONLY what the
-flip adds: the two `enabled: true` switches, a FAKE 64-hex clientSecret and a FAKE self-signed PEM.
+flip adds: the two `enabled: true` switches, a FAKE 64-hex clientSecret and a FAKE secret-name for the leaf (the PEM itself lives in a Secret made out of band).
 Builds on tests/test_oidc_broker_realm_roundtrip.py (PR #29) and tests/fake_keycloak_curl.py.
 
 Run: uv run --frozen python -m pytest tests/test_oidc_broker_flip_dry_run.py -v
@@ -9,7 +9,6 @@ Run: uv run --frozen python -m pytest tests/test_oidc_broker_flip_dry_run.py -v
 from __future__ import annotations
 
 import base64
-import datetime
 import json
 import secrets
 import shutil
@@ -31,36 +30,17 @@ _FAKE_SECRET = secrets.token_hex(32)  # 64 hex, generated in-test
 _SECRET_KEY = "broker-openddil-client-secret"
 
 
-def _fake_pem(cn: str) -> str:
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(x509.random_serial_number()).not_valid_before(now)
-            .not_valid_after(now + datetime.timedelta(days=1)).sign(key, hashes.SHA256()))
-    return cert.public_bytes(serialization.Encoding.PEM).decode()
-
-
-def _override(tmp_path, pem: str, name: str = "flip.yaml") -> list[str]:
+def _override(tmp_path, secret: str = "keycloak-openddil-trust", name: str = "flip.yaml") -> list[str]:
     p = tmp_path / name
     p.write_text(yaml.safe_dump({"keycloak": {
         "brokers": {"openddil": {"enabled": True, "clientSecret": _FAKE_SECRET}},
-        "truststore": {"enabled": True, "caPem": pem}}}), encoding="utf-8")
+        "truststore": {"enabled": True, "existingSecret": secret, "key": "ca.pem"}}}), encoding="utf-8")
     return ["-f", str(p)]
 
 
 @pytest.fixture(scope="module")
-def pem() -> str:
-    return _fake_pem("fake-lab-ca-one")
-
-
-@pytest.fixture(scope="module")
-def flipped(tmp_path_factory, pem) -> str:
-    return _render(*_SANDBOX, *_override(tmp_path_factory.mktemp("flip"), pem))
+def flipped(tmp_path_factory) -> str:
+    return _render(*_SANDBOX, *_override(tmp_path_factory.mktemp("flip")))
 
 
 @pytest.fixture(scope="module")
@@ -111,30 +91,31 @@ def test_arm2_the_secret_value_is_only_in_the_secret_object(flipped):
     assert _FAKE_SECRET not in _script(flipped)
 
 
-# ---------------------------------------------------------------- arm 3: the CA reaches Keycloak
-def test_arm3_the_ca_reaches_keycloak(flipped, pem, tmp_path):
+# ---------------------------------------------------------------- arm 3: the pinned leaf reaches Keycloak
+def test_arm3_the_pinned_leaf_reaches_keycloak(flipped, tmp_path):
     pod = _keycloak_sts(flipped)["spec"]["template"]
     c = pod["spec"]["containers"][0]
     env = {e["name"]: e.get("value") for e in c["env"]}
-    assert env.get("KC_TRUSTSTORE_PATHS", "").endswith("/ca.crt"), env
+    assert env.get("KC_TRUSTSTORE_PATHS", "").endswith("/ca.pem"), env
     (m,) = [m for m in c["volumeMounts"] if m["mountPath"] == "/opt/keycloak/conf/truststores"]
     assert m["readOnly"] is True
     (v,) = [v for v in pod["spec"]["volumes"] if v["name"] == m["name"]]
-    assert v["configMap"]["name"] == "t-keycloak-truststore"
-    (cm,) = [d for d in _by_kind(flipped, "ConfigMap") if d["metadata"]["name"] == "t-keycloak-truststore"]
-    assert cm["data"]["ca.crt"].strip() == pem.strip()
-    other = _render(*_SANDBOX, *_override(tmp_path, _fake_pem("fake-lab-ca-two")))
+    assert v["secret"]["secretName"] == "keycloak-openddil-trust" and "configMap" not in v
+    assert not [d for d in _by_kind(flipped, "ConfigMap") if "truststore" in d["metadata"]["name"]]
+    # the chart cannot see the Secret's content; naming a different Secret changes the annotation
+    other = _render(*_SANDBOX, *_override(tmp_path, "keycloak-openddil-trust-2"))
     a = pod["metadata"]["annotations"]["checksum/truststore"]
     b = _keycloak_sts(other)["spec"]["template"]["metadata"]["annotations"]["checksum/truststore"]
-    assert a != b, "a CA change must roll Keycloak"
+    assert a != b, "a different trust source must roll Keycloak"
 
 
-def test_arm3_enabled_with_no_ca_source_fails_the_render():
-    err = _render_fails(*_SANDBOX, *_set("keycloak.truststore.enabled", True))
-    assert "caPem" in err and "existingConfigMap" in err
+def test_arm3_enabled_with_no_source_fails_the_render():
+    err = _render_fails(*_SANDBOX, *_set("keycloak.truststore.enabled", True),
+                        *_set("keycloak.truststore.existingSecret", ""))
+    assert "existingSecret" in err and "existingConfigMap" in err
 
 
-# ---------------------------------------------------------------- arm 4: an untrusted lab issuer
+# ---------------------------------------------------------------- arm 4: an untrusted self-signed issuer
 def test_arm4_enabled_https_broker_without_truststore_fails_and_publicca_passes():
     on = [*_SANDBOX, *_set("keycloak.brokers.openddil.enabled", True),
           *_set("keycloak.brokers.openddil.clientSecret", _FAKE_SECRET)]
@@ -182,6 +163,6 @@ def test_arm5_second_pass_changes_nothing(passes):
 def test_arm6_committed_sandbox_values_enable_no_broker_and_no_truststore(sandbox):
     v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))["keycloak"]
     assert v["brokers"]["openddil"]["enabled"] is False and v["truststore"]["enabled"] is False
-    assert not v["brokers"]["openddil"].get("clientSecret") and not v["truststore"].get("caPem")
+    assert not v["brokers"]["openddil"].get("clientSecret") and "caPem" not in v["truststore"]
     assert "truststore" not in sandbox and "KC_TRUSTSTORE_PATHS" not in sandbox
     assert "broker-openddil-client-secret" not in sandbox

@@ -17,7 +17,10 @@ spec:
     metadata:
       {{- if .Values.keycloak.truststore.enabled }}
       annotations:
-        checksum/truststore: {{ (.Values.keycloak.truststore.caPem | default .Values.keycloak.truststore.existingConfigMap) | sha256sum }}
+        # Hash of source kind + name + key ONLY: the chart cannot see an existing Secret's content.
+        # A rotation means replacing the Secret AND restarting Keycloak; the leaf's sha256 fingerprint
+        # is recorded in docs/runbooks/rolling-a-service.md, not verified by the chart.
+        checksum/truststore: {{ printf "%s/%s/%s" (ternary "secret" "configmap" (not (not .Values.keycloak.truststore.existingSecret))) (.Values.keycloak.truststore.existingSecret | default .Values.keycloak.truststore.existingConfigMap) .Values.keycloak.truststore.key | sha256sum }}
       {{- end }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
@@ -59,7 +62,7 @@ spec:
               value: "true"
             {{- end }}
             {{- if .Values.keycloak.truststore.enabled }}
-            # Extra PEM trust for the broker's private-CA issuer (Keycloak 26 option truststore-paths).
+            # Extra PEM trust for the broker issuer's pinned self-signed leaf (Keycloak 26 option truststore-paths).
             - name: KC_TRUSTSTORE_PATHS
               value: {{ printf "%s/%s" .Values.keycloak.truststore.mountPath .Values.keycloak.truststore.key | quote }}
             {{- end }}
@@ -76,8 +79,13 @@ spec:
       volumes:
         {{- if .Values.keycloak.truststore.enabled }}
         - name: truststore
+          {{- if .Values.keycloak.truststore.existingSecret }}
+          secret:
+            secretName: {{ .Values.keycloak.truststore.existingSecret | quote }}
+          {{- else }}
           configMap:
-            name: {{ include "invincible-agent.truststoreConfigMap" . }}
+            name: {{ .Values.keycloak.truststore.existingConfigMap | quote }}
+          {{- end }}
         {{- end }}
         - name: realm-config
           configMap:
@@ -147,16 +155,4 @@ spec:
           {{- end }}
     {{- end }}
 {{- end }}
-{{- end }}
-{{- if and .Values.keycloak.enabled .Values.keycloak.truststore.enabled .Values.keycloak.truststore.caPem (not .Values.keycloak.truststore.existingConfigMap) }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "invincible-agent.truststoreConfigMap" . }}
-  labels:
-    {{- include "invincible-agent.labels" . | nindent 4 }}
-data:
-  {{ .Values.keycloak.truststore.key }}: |
-    {{- .Values.keycloak.truststore.caPem | nindent 4 }}
 {{- end }}

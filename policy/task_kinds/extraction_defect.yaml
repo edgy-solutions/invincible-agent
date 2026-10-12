@@ -1,0 +1,16 @@
+# SEED -- platform species. Filed ONCE per accepted grouped-review decision that carried steward
+# row edits (a corrected / added / deleted row): the EXTRACTOR was wrong, so its owner is told.
+# Payload: {notice, pin_digest, pin_fields_missing, decision_id, edits:[{op, extracted, corrected,
+# evidence|reason}]}. A triage item, not an approval: its verbs are its own.
+#
+# FOLLOW-UP: audience. The ruling routes this to the admin/7f queue, but no admin or 7f audience
+# exists in policy/. The narrowest existing operator audience is `dispatch_failure:<compartment>`
+# (policy/task_grants.yaml), and the workflow files the task there. Declare a real admin audience
+# and repoint the filing in restate_analyst/main.py (_run_grouped_human_await) when one exists.
+kind: extraction_defect
+renders_as:
+  badge: TRIAGE
+  title: Extraction defect
+  archetype: TRIAGE_TASK
+accepts: [acknowledged, dismissed]
+reason_required: [dismissed]

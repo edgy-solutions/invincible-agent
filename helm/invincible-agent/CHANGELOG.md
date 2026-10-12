@@ -1,8 +1,9 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.43 — 2026-10-10
+## 0.4.44 — 2026-10-12
 
-The OpenDDIL broker flip is two switches plus the secret file. Sits on PR #29 (lane/01-oidc-roundtrip).
+The OpenDDIL broker flip: the client secret is the only secret; Keycloak trusts OpenDDIL's issuer by
+pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/01-oidc-roundtrip).
 
 ### Added
 
@@ -10,24 +11,75 @@ The OpenDDIL broker flip is two switches plus the secret file. Sits on PR #29 (l
   `templates/secrets.yaml` renders it into `<release>-secrets` key `broker-<name>-client-secret`, and
   the reconcile job reads it by `secretKeyRef`. `brokerActive` is now enabled AND (existingSecret OR
   clientSecret). Never in a ConfigMap, the job script or an env literal.
-- **`keycloak.truststore`** (`enabled`, `caPem`, `existingConfigMap`, `key`, `mountPath`): extra PEM trust
-  for Keycloak's JVM (`KC_TRUSTSTORE_PATHS`), from ConfigMap `<release>-keycloak-truststore` or an
-  existing one, mounted read-only, with a checksum annotation so a CA change rolls Keycloak. Fails the
-  render when enabled with no CA source.
+- **`keycloak.truststore`** (`enabled`, `existingSecret`, `existingConfigMap`, `key`, `mountPath`): extra
+  PEM trust for Keycloak's JVM (`KC_TRUSTSTORE_PATHS`) from a Secret (or, alternatively, a ConfigMap)
+  created out of band, mounted read-only. Exactly one source must be set; zero or both fails the render.
+  The chart cannot see the content of an existing Secret: the `checksum/truststore` annotation hashes
+  source kind + name + key, so a rotation means replacing the Secret AND restarting Keycloak.
+  The `caPem` value was removed (setting it fails the render): the cert is not a secret and does not go
+  in the secret values file.
 - **Guard:** an enabled broker with an `https:` issuer fails the render unless `keycloak.truststore` is
-  enabled or `brokers.<name>.publicCA: true`, so a lab-CA issuer cannot flip on silently untrusted.
-- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches stay `false`.
-  The flip is `clientSecret` + `truststore.caPem` in `values-sandbox.secret.yaml` and the two
-  `enabled: true` lines.
+  enabled or `brokers.<name>.publicCA: true`, so a self-signed issuer cannot flip on silently untrusted.
+- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches stay `false`;
+  `truststore.existingSecret: keycloak-openddil-trust`, `key: ca.pem`.
+  The flip is `clientSecret` as the ONLY key in `values-sandbox.secret.yaml`, the OpenDDIL leaf PEM in
+  a Secret created out of band (`kubectl create secret generic keycloak-openddil-trust
+  --from-file=ca.pem=openddil-leaf.pem`), and the two `enabled: true` lines.
 
 ### Tests
 
-- `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only, CA
-  reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
+- `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only,
+  leaf reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
   enable nothing).
-- Existing broker tests now set `publicCA` where they enable the broker, and the NOTE reads
-  "no existingSecret or clientSecret".
+- `tests/test_oidc_broker_chart.py`: truststore arms for existingSecret, neither/both sources, caPem
+  removal, disabled, and the committed sandbox values.
+- Existing broker tests now set `publicCA` where they enable the broker.
 
+## 0.4.43 — 2026-10-12
+
+Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:2556cf5b…` (cortex-ui b566192).**
+  This build includes cortex #10 (3fa6fcb, the answers perf merge), and pinning it was
+  conditional on that. It also carries #4, the composer: rev 187 rolled on 865c080, which lacks
+  it. The tag-to-digest binding was measured before pinning; the values comment records how.
+
+## 0.4.42 — 2026-10-11
+
+Rev 187, second chart change: answers at scale (#42, lane/01-answers-at-scale, numbered 0.4.44 on
+its branch) and the group-audience exit code (#35, lane/01-group-audiences). Renumbered at merge;
+0.4.41 below is the rev's first.
+
+### Added
+
+- **`answer_artifact_projection` gains `archived_at`, `archived_by`, `archive_reason`** and two
+  indexes (`files/sql/create_answer_artifact_projection.sql`): `idx_aap_user_created`
+  (newest-first paging per user) and `idx_aap_search_tsv`, an EXPRESSION GIN index over
+  question_text + summary. Not a generated column, because Electric refuses to replicate one.
+  Every statement is idempotent (`IF NOT EXISTS`), so the existing schema job applies it to a
+  live table.
+
+### Changed
+
+- **`task-grant-sync-job.yaml` documents exit code 5:** a `grant_to_groups` entry names a group
+  object absent from live Topaz (REFUSED, nothing applied). `set -e` already fails the Job on it;
+  the change is to the header comment only.
+
+## 0.4.41 — 2026-10-11
+
+Rev 187. Two walkers, and the reconcile creates a local human the live realm lacks (6c93b1c2).
+Numbered here because the release guard refused 0.4.40 for 6c93b1c2's helm change. Open
+branches that also claimed 0.4.41-0.4.44 (netpol, prep-next, #41, #42) renumber at merge.
+
+### Added
+
+- **`erin` and `chris`** in `keycloak-configmap.yaml` and `values.yaml` `localHumanUsers`.
+- **`realm-reconcile-job.yaml` creates any `localHumanUsers` entry the live realm lacks.** The realm
+  import applies only to a fresh realm, so a user added later otherwise never exists. The loop is
+  create-if-absent and never touches an existing user.
 ## 0.4.40 — 2026-10-10
 
 Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).

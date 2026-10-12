@@ -175,17 +175,23 @@ capabilities:
     granted_by: cnogradi
     reason: >-
       Docs page gate prerequisite. Owner cell PORTFOLIO_LEAD in PORTFOLIO_PLANNING (gateway's
-      seed verb registration), granted by portfolio-leads; alice is its member.
+      seed verb registration), granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
+      the group path, rows derived from membership, not chosen).
     grant_to:
       - alice@example.com
+      - chris@example.com
+      - erin@example.com
 
   mesh:seedPortfolioCanvas:
     granted_by: cnogradi
     reason: >-
       Docs page gate prerequisite. Same owner cell as mesh:seedCanvas, which supersedes it
-      without removing it (ADR-0050 §4); granted by portfolio-leads; alice is its member.
+      without removing it (ADR-0050 §4); granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
+      the group path, rows derived from membership, not chosen).
     grant_to:
       - alice@example.com
+      - chris@example.com
+      - erin@example.com
 
   mesh:finProgramBrief:
     granted_by: cnogradi
@@ -194,6 +200,8 @@ capabilities:
       (policy/graphs/fin_program_brief.yaml), granted by finance-analysts; alice is its member.
     grant_to:
       - alice@example.com
+      - chris@example.com
+      - erin@example.com
 
   mesh:costLotCostingReview:
     granted_by: cnogradi
@@ -202,6 +210,8 @@ capabilities:
       (policy/graphs/cost_lot_costing_review.yaml), granted by cost-analysts; alice is its member.
     grant_to:
       - alice@example.com
+      - chris@example.com
+      - erin@example.com
 
   mesh:enumerateInstances:
     granted_by: cnogradi
@@ -213,6 +223,8 @@ capabilities:
     grant_to:
       - alice@example.com
       - bob@example.com
+      - chris@example.com
+      - erin@example.com
 
   mesh:resolveInstance:
     granted_by: cnogradi
@@ -226,6 +238,8 @@ capabilities:
       - agent@example.com
       - alice@example.com
       - bob@example.com
+      - chris@example.com
+      - erin@example.com
 
   # The s1000d fault walk (policy/overlays/openddil-lab/verbs/s1000d_fault_walk.yaml). The verb
   # declares a domain and no persona, so its invokers are every MAINTENANCE cell: groups.yaml grants
@@ -235,9 +249,14 @@ capabilities:
     reason: >-
       The verb declares domain MAINTENANCE and no persona; the only cell granting MAINTENANCE is
       MECHANIC/MAINTENANCE, granted by maintenance-mechanics; alice is its only member (a fixture
-      grant, users.yaml).
+      grant, users.yaml). svc:openddil is added by ruling (2026-10-11): step 1 runs on_behalf_of the
+      event's dropped_by, which for OpenDDIL events is this delegate; a service gets no cell, so it
+      is enumerated in the derived-invokers seal rather than derived.
     grant_to:
       - alice@example.com
+      - chris@example.com
+      - erin@example.com
+      - svc:openddil
 
   # origin.write (item B, 2026-10-03) — the single decider gating restate-analyst's
   # origin_record workflow's accept step (POST /internal/origin/write on the BFF). Same shape

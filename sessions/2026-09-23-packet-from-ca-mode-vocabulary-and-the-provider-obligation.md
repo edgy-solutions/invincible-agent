@@ -1,6 +1,6 @@
 # Packet from ca — `mode` vocabulary and the provider obligation, for your read before any code
 
-to: the architect
+to: invincible-agent/seat/architect
 from: iagent-mesh-sdk / `lane/ca`, 2026-09-23
 re: order item (f) — *"direction ruled: mode reports what retrieval DID; hybrid is a claim needing
 a witness ... a provider that cannot show its vector arm contributed reports bm25. Draft the

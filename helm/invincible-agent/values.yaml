@@ -1912,6 +1912,8 @@ keycloak:
     - {username: alice, email: alice@example.com}
     - {username: bob, email: bob@example.com}
     - {username: carol, email: carol@example.com}
+    - {username: erin, email: erin@example.com}
+    - {username: chris, email: chris@example.com}
   # ── IDENTITY BROKERS ────────────────────────────────────────────────────────────────
   # OIDC brokering from this realm to another party's realm, so THEIR principals sign in
   # through us and their grants bind to THEIR `sub`. The IdP lives in the realm-reconcile job
@@ -1945,14 +1947,19 @@ keycloak:
       # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
       # `sub` is the upstream's raw subject = the brokered user's authz identity.
       principals: []
-  # Extra CA trust for Keycloak's JVM (Keycloak 26 `truststore-paths`, env KC_TRUSTSTORE_PATHS). Needed
-  # when a broker's issuer is signed by a private CA: Keycloak itself fetches discovery, token and JWKS.
-  # enabled + caPem renders ConfigMap `<release>-keycloak-truststore` (the CA is public); enabled +
-  # existingConfigMap uses that one instead. Mounted read-only at mountPath; a CA change rolls Keycloak
-  # (checksum annotation). Enabled with neither caPem nor existingConfigMap fails the render.
+  # Extra trust for Keycloak's JVM (Keycloak 26 `truststore-paths`, env KC_TRUSTSTORE_PATHS). Needed
+  # when a broker's issuer is a self-signed leaf (there is no lab CA): Keycloak itself fetches
+  # discovery, token and JWKS, so it must trust exactly that leaf. The PEM lives in a Secret created
+  # OUT OF BAND (the cert is public, but it does not go in the secret values file), e.g.
+  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=openddil-leaf.pem
+  # and is named by existingSecret (mounted as a `secret` volume; `key` is the PEM's key in it).
+  # existingConfigMap is the only alternative source. Enabled needs EXACTLY ONE of the two; zero or
+  # both fails the render, and so does setting the removed `caPem`. The chart cannot see an existing
+  # Secret's content: the checksum annotation covers kind + name + key, so a rotation means replacing
+  # the Secret AND restarting Keycloak.
   truststore:
     enabled: false
-    caPem: ""
+    existingSecret: ""
     existingConfigMap: ""
     key: "ca.crt"
     mountPath: "/opt/keycloak/conf/truststores"

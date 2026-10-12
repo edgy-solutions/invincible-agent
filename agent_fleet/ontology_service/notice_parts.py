@@ -26,6 +26,10 @@ ANSWERS, NEVER CONFLATED. Every refusal is the fleet's named envelope (`_refused
   * REFUSED, `bad_offset` / `page_out_of_range` — the paging control is not a non-negative integer,
     or it points past the last part (`total_available` says how many there are).
 
+WITHHELD IS UNKNOWN. A drop-derived notice this caller may not see (`source_visibility`, then the
+one shared `visible_by_origin`) answers `unknown_notice`, the same envelope a notice the graph
+never held gets at the same offset, so the read is not an existence oracle.
+
 PAGED IN THE STORE. A notice with more than NOTICE_PARTS_PAGE_SIZE (100) parts answers one page:
 the statement orders the mpns, collects them, and slices `[$offset..$offset+$limit]`, returning the
 total beside the page. The answer says `offset`, `total_available`, `completeness` ("complete" or
@@ -33,13 +37,31 @@ total beside the page. The answer says `offset`, `total_available`, `completenes
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Callable, Iterable, List, Mapping, Optional
 from urllib.parse import quote
+
+try:  # engine image: flat layout (agent_fleet/ on sys.path as the root)
+    from utils.origin_entitlement import is_person, visible_by_origin
+except ImportError:  # repo layout
+    from agent_fleet.utils.origin_entitlement import (  # type: ignore[no-redef]
+        is_person,
+        visible_by_origin,
+    )
 
 VERB = "mesh:whichPartsDoesThisNoticeAffect"
 DOMAIN = "SUSTAINMENT"
 INPUT_URI = "http://internal/sustainment/pcn#SustainmentNotice"
 OUTPUT_URI = "http://invincible-agent/mesh#NoticePartSet"
+
+#: RULING Q8 (2026-10-10), PARKED: once doc-tools stamps seed provenance, a notice with no
+#: provenance_ingest_id and no seed stamp is UNRESOLVED and withheld. Until that stamp exists this
+#: is False and "no provenance" reads as seeded. Every branch that decides "seeded" reads THIS.
+SEED_PROVENANCE_STAMPED = False
+
+
+def _unstamped_reads_as_seeded() -> bool:
+    return not SEED_PROVENANCE_STAMPED
+
 
 #: Where the producer mints notice and component IRIs (pcn_extension.ttl's own header).
 NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
@@ -68,6 +90,11 @@ WITH n, all_mpns, a, p ORDER BY p.promoted_at DESC
 RETURN properties(n) AS notice, size(all_mpns) AS total,
        all_mpns[$offset..($offset + $limit)] AS mpns,
        a.dropped_by_authz_id AS dropped_by,
+       a IS NOT NULL AS has_artifact,
+       a.origin_owner_domain AS origin_owner_domain,
+       a.origin_program AS origin_program,
+       a.origin_resolved_by AS origin_resolved_by,
+       count(p) > 0 AS promoted,
        head(collect(p.promoted_by)) AS promoted_by
 """.strip()
 
@@ -97,7 +124,8 @@ def provenance_block_of(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _source(notice_id: str, mpn: str, block: Optional[Dict[str, Any]],
-            dropped_by: Optional[str], promoted_by: Optional[str]) -> Dict[str, Any]:
+            dropped_by: Optional[str], promoted_by: Optional[str],
+            origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     src: Dict[str, Any] = {
         "type": "graph",
         "label": f"P/N {mpn}",
@@ -114,7 +142,48 @@ def _source(notice_id: str, mpn: str, block: Optional[Dict[str, Any]],
     }
     if block is not None:
         src["provenance"] = dict(block)
+    if origin is not None:
+        src["origin"] = dict(origin)
     return src
+
+
+def _origin_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The origin the artifact records, as the rung rides with the source. None when it records no
+    owner domain."""
+    owner = row.get("origin_owner_domain")
+    if not owner:
+        return None
+    return {
+        "owner_domain": owner,
+        "program": row.get("origin_program") or None,
+        "resolved_by": row.get("origin_resolved_by") or None,
+    }
+
+
+def source_visibility(row: Dict[str, Any], *, caller_id: str, viewer_domains: Iterable[str],
+                      table: Mapping[str, frozenset]) -> str:
+    """PURE. Whether this caller may read the sources of the notice `row` describes:
+    `"visible"`, `"withheld"`, or `"by_origin"`: engine-o's own preconditions all hold and the
+    answer is the one shared origin rule's (`visible_by_origin`, which the reader calls; this
+    function does not decide it, so engine-o and the BFF cannot drift).
+
+    Engine-o's preconditions: seeded content and the dropper are visible; no artifact, not yet
+    promoted, or no resolved origin is withheld. `viewer_domains` and `table` are accepted for
+    signature stability and are not consulted here."""
+    node = row.get("notice") or {}
+    if not node.get("provenance_ingest_id"):
+        # Q8: seeded content is visible only while no seed stamp exists (SEED_PROVENANCE_STAMPED)
+        return "visible" if _unstamped_reads_as_seeded() else "withheld"
+    if caller_id and caller_id == row.get("dropped_by"):
+        return "visible"
+    if not row.get("has_artifact"):
+        return "withheld"
+    if not row.get("promoted"):
+        return "withheld"
+    owner = row.get("origin_owner_domain")
+    if row.get("origin_resolved_by") in (None, "", "unresolved") or not owner:
+        return "withheld"
+    return "by_origin"
 
 
 def _refused(reason: str, message: str, **extra: Any) -> Dict[str, Any]:
@@ -191,7 +260,8 @@ def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str, offset: int = 0
             total_available=total,
             offset=offset,
         )
-    sources = [_source(notice_id, m, block, dropped_by, promoted_by) for m in page]
+    origin = _origin_of(row) if block is not None else None
+    sources = [_source(notice_id, m, block, dropped_by, promoted_by, origin) for m in page]
     end = offset + len(page)
     truncated = end < total
     next_offset = end if truncated else None
@@ -252,10 +322,67 @@ def instances_by_property(notice_id: str, sources: List[Dict[str, Any]]) -> Dict
     }
 
 
+def notice_visible(row: Dict[str, Any], *, caller_id: str, viewer_domains: Iterable[str],
+                   table: Optional[Mapping[str, frozenset]],
+                   can_view_program: Optional[Callable[[str, str], bool]]) -> bool:
+    """THE verdict: whether this caller may see the notice `row` describes (a `NOTICE_PARTS_CYPHER`
+    row). `read_notice_parts` and the `/resolve_instance` gate both call this, so the two cannot
+    drift. `can_view_program` exceptions propagate."""
+    if not is_person(caller_id):  # a grant belongs to a PERSON: a service or no caller sees seeded only
+        caller_id, viewer_domains, can_view_program = "", (), None
+    table = table or {}
+    domains = tuple(viewer_domains or ())
+    verdict = source_visibility(row, caller_id=caller_id, viewer_domains=domains, table=table)
+    if verdict == "by_origin":
+        verdict = "visible" if visible_by_origin(
+            viewer_domains=domains,
+            owner_domain=row["origin_owner_domain"],
+            program=row.get("origin_program"),
+            table=table,
+            is_program_member=lambda p: bool(can_view_program(p, caller_id)) if can_view_program else False,
+        ) else "withheld"
+    return verdict == "visible"
+
+
+def visible_notice_ids(driver: Any, notice_ids: Iterable[str], *, caller_id: str = "",
+                       viewer_domains: Iterable[str] = (),
+                       table: Optional[Mapping[str, frozenset]] = None,
+                       can_view_program: Optional[Callable[[str, str], bool]] = None,
+                       ) -> set:
+    """The subset of `notice_ids` this caller may see, from one READ session running
+    `NOTICE_PARTS_CYPHER` once per distinct id. Exceptions propagate (the route answers 503)."""
+    ids = sorted({i for i in notice_ids if i})
+    visible: set = set()
+    with driver.session(default_access_mode="READ") as session:
+        for nid in ids:
+            rows = [r.data() for r in session.run(
+                NOTICE_PARTS_CYPHER,
+                {"notice_id": nid, "offset": 0, "limit": NOTICE_PARTS_PAGE_SIZE})]
+            # Q8 (architect, 2026-10-10): no provenance and no seed stamp -> withheld. PARKED behind
+            # SEED_PROVENANCE_STAMPED; until then a notice id with no graph row reads as seeded and
+            # is VISIBLE. This branch and source_visibility's no-`provenance_ingest_id` branch both
+            # consult _unstamped_reads_as_seeded, so they flip together.
+            if not rows:
+                seen = _unstamped_reads_as_seeded()
+            else:
+                seen = notice_visible(rows[0], caller_id=caller_id, viewer_domains=viewer_domains,
+                                      table=table, can_view_program=can_view_program)
+            if seen:
+                visible.add(nid)
+    return visible
+
+
 def read_notice_parts(driver: Any, notice_id: str, offset: Any = 0,
-                      limit: int = NOTICE_PARTS_PAGE_SIZE) -> Dict[str, Any]:
-    """Run the one statement in a READ session and shape it. `offset` and `limit` are statement
-    parameters, never formatted into the text. A bad offset is refused BEFORE any store read."""
+                      limit: int = NOTICE_PARTS_PAGE_SIZE, *, caller_id: str = "",
+                      viewer_domains: Iterable[str] = (),
+                      table: Optional[Mapping[str, frozenset]] = None,
+                      can_view_program: Optional[Callable[[str, str], bool]] = None,
+                      ) -> Dict[str, Any]:
+    """Run the one statement in a READ session, decide whether this caller may see the sources,
+    and shape it. `offset` and `limit` are statement parameters, never formatted into the text;
+    a bad offset is refused BEFORE any store read. A withheld notice answers EXACTLY as an
+    unknown one does at the same offset, so the answer is not an existence oracle.
+    `can_view_program` exceptions propagate (the route answers 503)."""
     if not notice_id:
         return notice_parts([], notice_id)
     off = parse_offset(offset)
@@ -270,4 +397,7 @@ def read_notice_parts(driver: Any, notice_id: str, offset: Any = 0,
             r.data() for r in session.run(
                 NOTICE_PARTS_CYPHER, {"notice_id": notice_id, "offset": off, "limit": limit})
         ]
+    if rows and not notice_visible(rows[0], caller_id=caller_id, viewer_domains=viewer_domains,
+                                   table=table, can_view_program=can_view_program):
+        return notice_parts([], notice_id, off, limit)
     return notice_parts(rows, notice_id, off, limit)

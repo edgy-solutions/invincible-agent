@@ -576,17 +576,15 @@ both created and deleted on every run is a contradiction, so the render fails.
 
 
 {{/*
-Keycloak's extra-CA truststore. Fails when enabled with no CA source. Called from keycloak.yaml.
+Keycloak's extra-CA truststore (a pinned self-signed leaf; there is no lab CA). Enabled needs EXACTLY ONE
+of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.yaml.
 */}}
 {{- define "invincible-agent.validateTruststore" -}}
 {{- $t := $.Values.keycloak.truststore | default dict -}}
-{{- if and $t.enabled (not $t.caPem) (not $t.existingConfigMap) }}
-{{- fail "keycloak.truststore.enabled is true but both caPem and existingConfigMap are empty; there is no CA to trust" }}
+{{- if hasKey $t "caPem" }}
+{{- fail "caPem was removed: the cert is not a secret and does not go in the secret values file; create a Secret and set keycloak.truststore.existingSecret" }}
 {{- end }}
+{{- if and $t.enabled (eq (not $t.existingSecret) (not $t.existingConfigMap)) }}
+{{- fail "keycloak.truststore.enabled is true but not exactly one of existingSecret / existingConfigMap is set (zero or both); set one of them" }}
 {{- end }}
-
-{{/* The ConfigMap name holding the truststore PEM. */}}
-{{- define "invincible-agent.truststoreConfigMap" -}}
-{{- $t := .Values.keycloak.truststore -}}
-{{- if $t.existingConfigMap }}{{ $t.existingConfigMap }}{{- else }}{{ .Release.Name }}-keycloak-truststore{{- end }}
 {{- end }}

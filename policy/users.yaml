@@ -59,6 +59,7 @@ users:
                             # fixture status as the finance grant below -- it makes the
                             # demo path reachable, it is not a claim about who should
                             # hold production cost data.
+      - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
@@ -117,6 +118,11 @@ users:
       # He does hold `risk_redraft:SUSTAINMENT` and `hazard_link_review:SUSTAINMENT` in
       # task_grants.yaml — the author's queue, which is the other half of the same role.
       - safety-engineers
+      # 2026-10-10 ruling: group audiences. Actor-only (no cell); see groups.yaml.
+      - maintenance-tier-org
+      # 2026-10-11 ruling: sandbox tier edge-01 task audiences. Actor-only (no cell).
+      - maint-approvers-edge-01
+      - maint-supervisors-edge-01
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]
@@ -129,6 +135,43 @@ users:
       - aviation-mechanics
     default:
       persona: MECHANIC
+      domains: [AVIATION]
+
+  - id: erin@example.com
+    display_name: Erin (demo - clean walker)
+    # The clean walker: holds alice's groups and NONE of her direct per-user grants
+    # (alice stays the slow-inbox fixture, carol stays the denied human).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - maint-tier-ack-edge-01
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
+  - id: chris@example.com
+    display_name: Chris (demo - Chris's own sign-in)
+    # Chris's own sign-in, with the same groups as alice (group path only).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - maint-tier-ack-edge-01
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
       domains: [AVIATION]
 
   # ── OpenDDIL principals (brokered) ──────────────────────────────────
@@ -248,4 +291,11 @@ users:
   # stanza precedes the code change rather than trailing it.
   - id: svc:case-runner
     display_name: case-runner (service - restate-analyst direct_call delegate identity)
+    groups: []
+
+  # The iagent-openddil delegate client's authz id (helm values-sandbox.yaml extraServiceClients).
+  # The fault walk's step 1 runs on_behalf_of the event's dropped_by, which for OpenDDIL events is
+  # this delegate; its verb grant is in capability_grants.yaml (ruling 2026-10-11). NO groups.
+  - id: svc:openddil
+    display_name: openddil (service - iagent-openddil delegate client authz id)
     groups: []

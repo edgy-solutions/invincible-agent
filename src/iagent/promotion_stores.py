@@ -202,6 +202,19 @@ _NODE_EXISTS_CYPHER = (
     f"RETURN count(n) AS n"
 )
 
+#: The node's current origin rung, or no row/None when it has none. Built FROM the family.
+_ORIGIN_RUNG_CYPHER = (
+    f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+    f"RETURN n.origin_resolved_by AS rung"
+)
+
+#: Rungs a steward attestation never replaces: a record origin outranks it, and an existing
+#: steward origin stays as first attested.
+_KEPT_RUNGS = {"record": "kept_record", "steward": "kept_steward"}
+
+STEWARD_ATTESTATION = "steward_attestation"
+
 #: Built FROM the family. Deletes the node ONLY IF it carries no relationship of any type --
 #: `WHERE NOT (n)--()` is untyped and undirected on purpose, so an edge from ANY other family
 #: (not just PROMOTION) still anchors the node and this never fires against it.
@@ -275,6 +288,40 @@ class Neo4jIngestGraph:
             raise RuntimeError(
                 f"ingest node create for {ingest_id}: {result.outcome}: {result.detail}")
         return True
+
+    def origin_rung(self, ingest_id: str) -> str | None:
+        """The node's `origin_resolved_by`, or None (no such node, or no origin written). A read
+        that raises propagates: an unknown rung is not an absent one."""
+        with self._driver.session() as session:
+            row = session.run(_ORIGIN_RUNG_CYPHER, ingest_id=ingest_id).single()
+        value = row["rung"] if row is not None else None
+        return value if isinstance(value, str) and value else None
+
+    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str) -> str:
+        """Record a steward's attestation of the document's origin. Returns "written",
+        "kept_record" or "kept_steward".
+
+        The ONE writer of this origin, for the promotion act and the backfill alike. Never
+        downgrades or overwrites: a node already at `origin_resolved_by` "record" or "steward"
+        is left alone; only no rung, or "unresolved", is written. The rung is the SDK's own
+        `Origin.resolved_by="steward"`; the ruling's name (`steward_attestation`) rides in the
+        evidence, citing the decision record. No `origin_program`: a steward attests a domain.
+        """
+        kept = _KEPT_RUNGS.get(self.origin_rung(ingest_id))
+        if kept:
+            return kept
+        from iagent_mesh.systems_of_record import Origin  # noqa: PLC0415
+
+        evidence = f"{STEWARD_ATTESTATION}:{record_id}"
+        Origin(owner_domain=owner_domain, resolved_by="steward", evidence=(evidence,))
+        result = self._writer.write_node(
+            self._initiator, label=INGEST_FACT_FAMILY["node_label"], id=ingest_id,
+            payload={"origin_owner_domain": owner_domain, "origin_resolved_by": "steward",
+                     "origin_evidence": evidence})
+        if result.outcome != "written":
+            raise RuntimeError(
+                f"origin attestation for {ingest_id}: {result.outcome}: {result.detail}")
+        return "written"
 
     def write_fact(self, ingest_id: str, fact: dict) -> None:
         result = self._writer.write_edge(

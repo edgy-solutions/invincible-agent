@@ -52,6 +52,12 @@ COPY policy/trust_table.yaml /app/policy/trust_table.yaml
 # another line here, and forgetting it fails SILENTLY (different values, no error). Copying
 # the whole directory is the durable fix and is filed with the normalization item.
 COPY policy/vendor_aliases.yaml /app/policy/vendor_aliases.yaml
+# DOMAIN CONSUMPTION TABLE — engine-o's /notice_parts read check evaluates the same
+# origin-entitlement decider the BFF does (can_consume over this table), loading the file via
+# DOMAIN_CONSUMPTION_FILE (default /app/policy/domain_consumption.yaml, the same default the BFF
+# uses at gateway.py). Without this line the file is absent from the fleet image, the loader
+# fails closed to {}, and every drop-derived notice source is withheld from everyone.
+COPY policy/domain_consumption.yaml /app/policy/domain_consumption.yaml
 # RATIFIED GRAPH ROWS (ADR-0046). engine-lg admits a graph ONLY from a row here, so
 # without this line the host ships with its graph MODULES and none of its contracts:
 # it boots, admits zero graphs, registers zero verbs and answers healthy. That is

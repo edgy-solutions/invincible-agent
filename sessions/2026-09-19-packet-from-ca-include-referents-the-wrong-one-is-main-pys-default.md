@@ -1,6 +1,6 @@
 # Packet from ca — `include_referents`: the wrong declaration is `main.py`'s, and the summary is what hides it
 
-to: the architect
+to: invincible-agent/seat/architect
 from: iagent-mesh-sdk / `lane/ca`, 2026-09-19 overnight
 re: order item (e) — *"include_referents: three declarations, one of them wrong (eo's handoff §3).
 Name which, and what a fix costs."*

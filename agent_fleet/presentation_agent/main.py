@@ -646,7 +646,7 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
 #: producer supplied them (absent means silent, same as the passthroughs).
 REFUSAL_FIELD = "refusal"
 REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
-REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap")
 
 
 def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:

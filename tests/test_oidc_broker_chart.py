@@ -191,7 +191,20 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     for rest in (old_rest, new_rest):
         assert re.search(r"^kind: ConfigMap$", rest, re.M) and re.search(r"^  name: \S+-config$", rest, re.M),             "the -config ConfigMap is missing from the filtered render"
     assert "USER_ENTITLEMENT_CLAIM" in new_rest
-    assert _diff(old_rest, new_rest) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    # The realm import is compared as DATA, not text: a local human added to the import since the base sha
+    # (erin, chris) is the one allowed growth, and only as whole users that are ALSO in localHumanUsers.
+    # Every user the base sha imported must be byte-for-byte what it was; the rest of the realm is equal.
+    def _blank_realm(rest: str) -> str:
+        return re.sub(r"(  realm-export\.json: \|\n)(?:    .*\n|\n)+", r"\1", rest)
+
+    old_realm, new_realm = _realm(old_rest), _realm(new_rest)
+    assert old_realm["users"], "positive control: the base sha imported users"
+    by_name = {u["username"]: u for u in new_realm["users"]}
+    assert [by_name[u["username"]] for u in old_realm["users"]] == old_realm["users"]
+    added = [u["username"] for u in new_realm["users"] if u["username"] not in {x["username"] for x in old_realm["users"]}]
+    assert set(added) <= {u["username"] for u in _values_local_humans()}, added
+    assert {**old_realm, "users": []} == {**new_realm, "users": []}
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.
@@ -633,3 +646,167 @@ def test_a_missing_mapper_is_still_created(sandbox):
     assert [x[0] for x in w] == ["POST"], w
     assert w[0][1].endswith("/clients/uuid-1/protocol-mappers/models")
     assert w[0][2]["config"]["claim.name"] == "authz_id" and w[0][2]["config"]["claim.value"] == _ENGINE_D
+
+
+# ------------------------------------------------------------------ (i) local humans: create, parity, join, groups
+# erin and chris are the walkers: alice's nine groups by the GROUP path only. The live sandbox realm
+# already exists and the realm import never re-runs, so the reconcile job must CREATE a local human
+# the realm lacks -- under any authzClaim (the attribute stays claim-gated; the user does not).
+
+def _values_local_humans() -> list[dict]:
+    values = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))
+    return values["keycloak"]["localHumanUsers"]
+
+
+def _create_lines(script: str, username: str) -> list[str]:
+    """The create-if-absent blocks for `username`: a `HU="<name>"` header and a POST to /users after it."""
+    out = []
+    for m in re.finditer(rf'^\s*HU="{re.escape(username)}"\n(?P<body>(?:(?!^\s*HU=).*\n){{0,12}})', script, re.M):
+        if 'curl -sf -X POST' in m.group("body") and '"$API/users"' in m.group("body"):
+            out.append(m.group(0))
+    return out
+
+
+@pytest.fixture(scope="module")
+def email_claim() -> str:
+    return _render(*_SANDBOX, *_set("keycloak.authzClaim", "email"))
+
+
+@pytest.mark.parametrize("who", ["erin", "chris"])
+def test_reconcile_creates_a_missing_local_human_under_either_claim(sandbox, email_claim, who):
+    for label, rendered in (("authz_id", sandbox), ("email", email_claim)):
+        blocks = _create_lines(_script(rendered), who)
+        assert len(blocks) == 1, f"{who} has no create-if-absent in the reconcile job under claim {label}"
+        assert f'"username":"{who}"' in blocks[0] and f'"email":"{who}@example.com"' in blocks[0]
+        assert '"enabled":true' in blocks[0] and '"temporary":false' in blocks[0]
+
+
+def test_every_local_human_is_in_the_import_and_in_a_reconcile_create(sandbox):
+    listed = [u["username"] for u in _values_local_humans()]
+    assert {"erin", "chris", "alice", "bob", "carol", "agent-user"} <= set(listed)   # positive control
+    imported = {u["username"] for u in _realm(sandbox)["users"]}
+    script = _script(sandbox)
+    for name in listed:
+        assert name in imported, f"{name} is in localHumanUsers but not in the realm import"
+        assert _create_lines(script, name), f"{name} is in localHumanUsers but the reconcile never creates it"
+
+
+def _users_yaml() -> list[dict]:
+    return yaml.safe_load((_REPO / "policy" / "users.yaml").read_text(encoding="utf-8"))["users"]
+
+
+# agent-user's realm email is agent@example.com and users.yaml says the same, so the join below
+# needs no exemption today; this set exists so a REAL divergence is named, not silently skipped.
+_JOIN_EXEMPT: set[str] = set()
+
+
+def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox):
+    humans = {u["id"] for u in _users_yaml() if re.fullmatch(r"[^@\s]+@example\.com", str(u["id"]))}
+    imported = {u["email"] for u in _realm(sandbox)["users"]}
+    assert {"alice@example.com", "bob@example.com", "carol@example.com", "agent@example.com",
+            "erin@example.com", "chris@example.com"} <= humans          # positive control
+    assert humans - _JOIN_EXEMPT == imported - _JOIN_EXEMPT, (
+        f"users.yaml only: {sorted(humans - imported)}; realm import only: {sorted(imported - humans)}")
+
+
+@pytest.mark.parametrize("who", ["erin", "chris"])
+def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
+    by_id = {u["id"]: u for u in _users_yaml()}
+    alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
+    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
+    assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
+    assert walker["default"] == alice["default"]
+    # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from
+    # group membership (the two derived-invoker seals pin each such row to the derived set exactly, both
+    # ways, so a missing or an extra walker reds there). Here: erin and chris name the same rows; none is
+    # in task or asset grants; and every row naming one also names alice, whose groups they hold.
+    def _rows(fname: str, who_id: str) -> set[str]:
+        doc = yaml.safe_load((_REPO / "policy" / fname).read_text(encoding="utf-8"))
+        text = (_REPO / "policy" / fname).read_text(encoding="utf-8")
+        assert "alice@example.com" in text                              # positive control: the file is read
+        found: set[str] = set()
+        def walk(node, key=None):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("grant_to", "subject") and (v == who_id or (isinstance(v, list) and who_id in v)):
+                        found.add(str(key))
+                    walk(v, k if isinstance(v, dict) else key)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, key)
+        walk(doc)
+        return found
+
+    me, other = f"{who}@example.com", ("chris" if who == "erin" else "erin") + "@example.com"
+    assert _rows("capability_grants.yaml", "alice@example.com"), "positive control: alice names capability rows"
+    mine = _rows("capability_grants.yaml", me)
+    assert mine and mine == _rows("capability_grants.yaml", other), mine
+    assert mine <= _rows("capability_grants.yaml", "alice@example.com"), mine
+    assert not _rows("task_grants.yaml", me) and not _rows("asset_grants.yaml", me), who
+
+
+# ------------------------------------------------------------------ keycloak.truststore (ruled 2026-10-12)
+# There is no lab CA: OpenDDIL's issuer is a self-signed leaf, pinned by trusting exactly that leaf. The
+# leaf PEM lives in a Secret created out of band (existingSecret); the chart never carries the cert.
+_TRUST_ON = [*_set("keycloak.truststore.enabled", True),
+             *_set("keycloak.truststore.existingSecret", "leaf-trust"),
+             *_set("keycloak.truststore.key", "ca.pem")]
+
+
+def _kc_pod(rendered: str) -> dict:
+    (sts,) = [d for d in _docs(rendered) if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "t-keycloak"]
+    return sts["spec"]["template"]
+
+
+def test_truststore_a_existing_secret_mounts_a_secret_volume_and_renders_no_configmap():
+    out = _render(*_SANDBOX, *_TRUST_ON)
+    pod = _kc_pod(out)
+    c = pod["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["KC_TRUSTSTORE_PATHS"] == "/opt/keycloak/conf/truststores/ca.pem"
+    (m,) = [m for m in c["volumeMounts"] if m["name"] == "truststore"]
+    assert m["readOnly"] is True
+    (v,) = [v for v in pod["spec"]["volumes"] if v["name"] == "truststore"]
+    assert v.get("secret") == {"secretName": "leaf-trust"} and "configMap" not in v, v
+    assert [d for d in _docs(out) if "truststore" in d["metadata"]["name"]] == []
+    assert "checksum/truststore" in pod["metadata"]["annotations"]
+
+
+def test_truststore_b_enabled_with_no_source_fails_the_render():
+    err = _render_fails(*_SANDBOX, *_set("keycloak.truststore.enabled", True),
+                        *_set("keycloak.truststore.existingSecret", ""))
+    assert "existingSecret" in err and "existingConfigMap" in err and "exactly one" in err
+
+
+def test_truststore_c_enabled_with_both_sources_fails_the_render():
+    err = _render_fails(*_SANDBOX, *_TRUST_ON, *_set("keycloak.truststore.existingConfigMap", "cm"))
+    assert "existingSecret" in err and "existingConfigMap" in err and "exactly one" in err
+
+
+def test_truststore_c2_the_configmap_alone_is_still_a_source():
+    out = _render(*_SANDBOX, *_set("keycloak.truststore.enabled", True),
+                  *_set("keycloak.truststore.existingSecret", ""),
+                  *_set("keycloak.truststore.existingConfigMap", "cm"))
+    (v,) = [v for v in _kc_pod(out)["spec"]["volumes"] if v["name"] == "truststore"]
+    assert v.get("configMap") == {"name": "cm"} and "secret" not in v, v
+
+
+def test_truststore_d_setting_capem_fails_with_the_removal_message():
+    err = _render_fails(*_SANDBOX, *_TRUST_ON, *_set("keycloak.truststore.caPem", "x"))
+    assert "caPem was removed" in err and "keycloak.truststore.existingSecret" in err
+
+
+def test_truststore_e_disabled_renders_no_truststore_volume_or_env(sandbox):
+    out = sandbox
+    pod = _kc_pod(out)
+    assert "KC_TRUSTSTORE_PATHS" not in out
+    assert all(v["name"] != "truststore" for v in pod["spec"]["volumes"])
+    assert "annotations" not in pod["metadata"] or "checksum/truststore" not in pod["metadata"]["annotations"]
+
+
+def test_truststore_f_committed_sandbox_values_name_a_secret_and_enable_nothing():
+    v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))["keycloak"]
+    t = v["truststore"]
+    assert t["existingSecret"] == "keycloak-openddil-trust" and t["key"] == "ca.pem", t
+    assert t["enabled"] is False and v["brokers"]["openddil"]["enabled"] is False
+    assert "caPem" not in t and not t.get("existingConfigMap")

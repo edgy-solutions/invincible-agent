@@ -1,6 +1,6 @@
 # Handoff — lane-less session, shared master tree, 2026-09-19 evening
 
-to: (no lane) — whoever next occupies the shared master tree at `C:\Users\cnogr\git\invincible-agent`
+to: invincible-agent/seat/architect — written as "(no lane)" — whoever next occupies the shared master tree at `C:\Users\cnogr\git\invincible-agent`
 read-by: unassigned at write time; the orchestrator was asked for routing and none arrived
 
 **This session did no work. That is the headline and the rest is context.** It answered a roster

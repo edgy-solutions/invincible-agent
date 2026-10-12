@@ -577,6 +577,7 @@ async def start_review(ctx: Context, request: dict) -> dict:
             "approver": approver,
             "audience": request.get("audience") or approver,
             "notice_fingerprint": notice_id,
+            "ingest_id": request.get("ingest_id") or "",
             "notice_id": notice_id,
             "doc_type": request.get("doc_type", "PCN"),
             "batch_items": batch_items,

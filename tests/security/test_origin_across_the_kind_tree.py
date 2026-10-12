@@ -220,16 +220,34 @@ _DOMAINLESS = _BY_BUCKET.get("domainless", [])
 @pytest.mark.parametrize("rec", [
     {"origin_owner_domain": None, "origin_program": None},
     {},
-    {"origin_owner_domain": "MAINTENANCE", "origin_program": None},
     {"origin_owner_domain": None, "origin_program": "SANDBOX_PROGRAM_ALPHA"},
     {"origin_owner_domain": "  ", "origin_program": "SANDBOX_PROGRAM_ALPHA"},
-], ids=["both-null", "absent", "no-program", "no-domain", "blank-domain"])
+], ids=["both-null", "absent", "no-domain", "blank-domain"])
 async def test_an_awaiting_origin_artifact_is_never_visible_by_origin_and_never_asks_topaz(route, reg, rec):
     """A domainless kind's artifact has no origin until evidence resolves one. Every viewer leg is
-    set to TRUE (best-case viewer) and the answer is still False, with Topaz untouched -- half an
-    origin (a domain without a program, or the reverse) is no origin."""
+    set to TRUE (best-case viewer) and the answer is still False, with Topaz untouched -- a program
+    with no domain is no origin. (A domain with NO program is NOT half an origin: it is a steward
+    attestation, decided by can_consume alone -- Q1 ruling 2026-10-10; see the arm below.)"""
     got = await route(rec, domains=tuple(_CONSUMPTION), member=True)
     assert got is False
+    assert route.calls == []
+
+
+_STEWARD_REC = {"origin_owner_domain": "MAINTENANCE", "origin_program": None}
+
+
+@pytest.mark.asyncio
+async def test_a_program_less_origin_is_a_steward_attestation_decided_by_consumption_alone(route):
+    """Q1 ruling 2026-10-10: a recorded domain with no program is visible to a viewer whose
+    domains can consume it, and Topaz is NOT asked."""
+    assert await route(_STEWARD_REC, domains=tuple(_CONSUMPTION), member=False) is True
+    assert route.calls == []
+
+
+@pytest.mark.asyncio
+async def test_control_a_program_less_origin_is_still_refused_to_a_non_consumer(route):
+    """Differs from the arm above in exactly one thing: the viewer's domains cannot consume it."""
+    assert await route(_STEWARD_REC, domains=("DOMAIN_WITH_NO_ROW",), member=False) is False
     assert route.calls == []
 
 
