@@ -450,3 +450,24 @@ audiences:
       maint-supervisors-edge-01 group. Sandbox member = bob.
     grant_to_groups:
       - maint-supervisors-edge-01
+
+  # 2026-10-12 ruling: an unanswered approval escalates to the SAME humans who approve, at the same
+  # tier (the maint_fault_escalate audience is `maint_escalation:{trigger.owning_tier}`). One tier up
+  # only where a supervisor group exists -- that is maint_supervisor_review's own audience, not this.
+  maint_escalation:ORG:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_fault_escalate` `escalation` await, sandbox tier ORG. Ruling
+      2026-10-12: escalation goes to the approvers, so the same maintenance-tier-org group as
+      maint_fault_approval:ORG. Sandbox member = bob.
+    grant_to_groups:
+      - maintenance-tier-org
+
+  maint_escalation:edge-01:
+    granted_by: cnogradi
+    reason: >-
+      The OpenDDIL-lab `maint_fault_escalate` `escalation` await, sandbox tier edge-01. Ruling
+      2026-10-12: escalation goes to the approvers, so the same maint-approvers-edge-01 group as
+      maint_fault_approval:edge-01. Sandbox member = bob.
+    grant_to_groups:
+      - maint-approvers-edge-01
