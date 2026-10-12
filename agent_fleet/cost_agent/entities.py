@@ -36,7 +36,14 @@ COST = "http://invincible-agent/cost#"
 
 
 class NotInModel(Exception):
-    """The named thing is not in the model at all. Distinct from 'has no data'."""
+    """The named thing is not in the model at all. Distinct from 'has no data'.
+
+    `slot` names the caller-supplied value at fault, when the raiser knows it; the route
+    otherwise assumes `rate_vintage`, which was true of every raiser before `as_of`."""
+
+    def __init__(self, *args: object, slot: str | None = None) -> None:
+        super().__init__(*args)
+        self.slot = slot
 
 
 class Unentitled(Exception):

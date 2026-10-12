@@ -29,11 +29,13 @@ import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
+import re
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     import export
@@ -794,9 +796,25 @@ class PackageCanvas(BaseModel):
     panels: list[PackagePanel] = Field(default_factory=list)
 
 
+def _request_date() -> str:
+    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 class PackageExportRequest(BaseModel):
     recipient_scope: str
     canvas: PackageCanvas
+    as_of: Optional[str] = None
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+        date.fromisoformat(v)  # a ValueError here is a 422 too
+        return v
 
 
 @app.post("/package_export")
@@ -817,6 +835,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
+    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -884,6 +903,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
+            as_of=as_of,
         )
     except SourceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
