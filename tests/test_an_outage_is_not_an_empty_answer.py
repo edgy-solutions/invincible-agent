@@ -163,7 +163,7 @@ def test_PATH_B_CANNOT_ANSWER_A_SCOPED_QUERY_AT_ALL():
     assert "dataset" in str(exc.value).lower() or "conjunctive" in str(exc.value).lower()
 
 
-def test_ALL_TEN_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
+def test_ALL_ELEVEN_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
     """PARTITIONED, NOT SAMPLED - every call site in the basis or excluded with a reason.
 
     Derived at eight on 2026-09-17: seven pass a query the wrap scopes, and the eighth (the Jena
@@ -186,6 +186,15 @@ def test_ALL_TEN_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
     `execute_sparql`'s raises -- `SubstrateUnavailable` propagates uncaught out of the route
     coroutine, and FastAPI's default handling of an unhandled exception is a 500, the same 5xx
     `/instances_by_property` surfaces on an outage. Ten of ten.
+
+    RE-DERIVED AT ELEVEN on 2026-10-11. The eleventh is `_filter_sustainment_candidates`' component
+    -> notice link query (the origin gate on `/resolve_instance`, ruling Q7, and on
+    `/enumerate_instances`, ruling (d)). It is built as `SELECT ?c ?n WHERE { VALUES ?c { ... } ?c
+    <pcn:subjectToNotice> ?n }`, and asserted below from its own literal parts: no `GRAPH`, `SERVICE`
+    or `FROM`, so it joins the SCOPED class. Its caller catches nothing. The raise leaves the filter,
+    and the route answers 503, never an unfiltered list (sealed in
+    `tests/security/test_resolve_instance_withholds_what_notice_parts_withholds.py::
+    test_a_link_query_failure_answers_503`). Eleven of eleven.
     """
     from agent_fleet.ontology_service.doc_pages import build_all_pages_query
 
@@ -201,8 +210,22 @@ def test_ALL_TEN_execute_sparql_CALL_SITES_are_unserviceable_by_the_fallback():
         and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) == "execute_sparql"
         and n.args
     ]
-    assert len(sites) == 10, (
-        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 10 "
+    link = [
+        n for fn in ast.walk(tree)
+        if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "_filter_sustainment_candidates"
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "execute_sparql" and n.args
+    ]
+    assert len(link) == 1, "the eleventh call site moved; re-derive the partition"
+    literal = " ".join(v.value for v in ast.walk(link[0].args[0])
+                       if isinstance(v, ast.Constant) and isinstance(v.value, str)).upper()
+    assert "SELECT" in literal, "POSITIVE CONTROL: the literal parts were read"
+    assert not re.search(r"\b(GRAPH|SERVICE|FROM)\b", literal), (
+        "the eleventh call site's query now spells GRAPH/SERVICE/FROM, so it has left the scoped "
+        "class; re-derive the partition"
+    )
+    assert len(sites) == 11, (
+        "the call-site count moved to " + str(len(sites)) + "; this partition was derived at 11 "
         "and a new caller has not been classified. Re-derive it rather than adjusting the number."
     )
 

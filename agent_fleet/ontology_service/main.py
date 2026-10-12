@@ -5118,9 +5118,11 @@ class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
     #: Supervisor-derived (architect Q3), never user-supplied: `_call_resolver` forwards the verified
-    #: caller identity and entitled domains. Empty = no identity, so only seeded content is visible.
+    #: caller identity and entitled domains; same names as `/notice_parts`. Empty = no identity, so
+    #: only seeded content is visible. GATED ON by `_filter_sustainment_candidates` below: the same
+    #: origin verdict `/notice_parts` applies (`notice_parts.notice_visible`).
     user_email: str = ""
-    entitled_domains: list[str] = []
+    entitled_domains: list[str] = Field(default_factory=list)
 
 
 _NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"

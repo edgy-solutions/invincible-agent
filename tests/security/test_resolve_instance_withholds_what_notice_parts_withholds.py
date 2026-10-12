@@ -12,10 +12,11 @@ WHAT IS SEALED. The route runs the SAME verdict `read_notice_parts` runs (`notic
   * a component linked only to withheld notices is withheld; one linked to ANY visible notice, or
     to none, is visible; a candidate that is not sustainment content is untouched;
   * a lookup failure (Neo4j or the link query) answers 503, never an unfiltered list;
-  * the wire: `/resolve` and `/fill_slots` hand the caller's identity and entitled domains to the
-    resolver fan-out, and the supervisor's `_fill_slots_from_query` posts the email.
+  * (the wire -- the caller's identity and grant reaching the fan-out -- is sealed in
+    tests/routing/test_resolve_instance_hears_the_caller.py, not here).
 
-Q8 PRECONDITION (architect, 2026-10-10: "no provenance and no seed stamp -> withheld"). Two arms
+Q8 PRECONDITION (architect, 2026-10-10: "no provenance and no seed stamp -> withheld"; the flag is
+`notice_parts.SEED_PROVENANCE_STAMPED`, sealed in test_q8_flips_on_one_precondition.py). Two arms
 here are TODAY'S behaviour and FLIP when doc-tools stamps seed provenance:
 `test_a_seeded_notice_is_visible_to_a_caller_with_no_identity` and
 `test_a_notice_iri_with_no_neo4j_row_is_visible_to_a_caller_with_no_identity`. When the stamp lands,
@@ -24,8 +25,7 @@ together, and these two arms are inverted with them.
 """
 from __future__ import annotations
 
-import asyncio
-import json
+import re
 import sys
 from pathlib import Path
 
@@ -93,6 +93,9 @@ class _Driver:
             def run(self, cypher, params=None, **kw2):
                 if drv.raises:
                     raise RuntimeError("neo4j down")
+                # Neo4j refuses a statement run without one of its $parameters; so does this double.
+                missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
+                assert not missing, f"statement run without ${sorted(missing)}"
                 nid = params["notice_id"]
                 drv.runs.append(nid)
                 return [_Rec(drv.rows[nid])] if nid in drv.rows else []
@@ -198,7 +201,7 @@ def test_a_withheld_component_answers_exactly_as_a_jena_that_never_held_it(call)
 # -- Q8 precondition: these two arms flip when doc-tools stamps seed provenance ---------------
 
 def test_a_seeded_notice_is_visible_to_a_caller_with_no_identity(call):
-    """Q8 PRECONDITION: flips (to withheld) when doc-tools stamps seed provenance."""
+    """Q8 PRECONDITION: flips (to withheld) when `notice_parts.SEED_PROVENANCE_STAMPED` becomes True."""
     seeded = call("PCN-S1", jena=_Jena([_notice("PCN-S1")]),
                   driver=_Driver({"PCN-S1": _seeded_row("PCN-S1")}))
     control = call("PCN-S1", jena=_Jena([_notice("PCN-S1")]),
@@ -208,7 +211,7 @@ def test_a_seeded_notice_is_visible_to_a_caller_with_no_identity(call):
 
 
 def test_a_notice_iri_with_no_neo4j_row_is_visible_to_a_caller_with_no_identity(call):
-    """Q8 PRECONDITION: flips (to withheld) when doc-tools stamps seed provenance."""
+    """Q8 PRECONDITION: flips (to withheld) when `notice_parts.SEED_PROVENANCE_STAMPED` becomes True."""
     drv = _Driver({})
     norow = call("PCN-N1", jena=_Jena([_notice("PCN-N1")]), driver=drv)
     control = call("PCN-N1", jena=_Jena([_notice("PCN-N1")]),
@@ -307,152 +310,3 @@ def test_a_disconnected_graph_answers_503_only_when_a_notice_is_involved(call):
                  driver=None)
     assert notice.status_code == 503
     assert other.status_code == 200
-
-
-# -- the wire ----------------------------------------------------------------------------------
-
-class _RecordingHttpx:
-    """Stands in for httpx.AsyncClient at the HTTP boundary and records every posted body."""
-    posted: list = []
-
-    def __init__(self, *a, **kw):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-    async def post(self, url, json=None, **kw):
-        type(self).posted.append(json)
-
-        class _R:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"candidates": []}
-        return _R()
-
-
-@pytest.fixture()
-def wire(eo, monkeypatch):
-    _RecordingHttpx.posted = []
-    monkeypatch.setattr(eo.httpx, "AsyncClient", _RecordingHttpx)
-    monkeypatch.setattr(
-        eo, "_discover_instance_resolvers",
-        lambda *a, **k: eo.MeshResult.answered(
-            [{"provider": "p", "endpoint_url": "http://p/resolve_instance", "timeout_s": 1}]))
-    return _RecordingHttpx.posted
-
-
-def _resolve(eo, monkeypatch, **req):
-    async def _no_docs(request):
-        return None
-
-    async def _no_pool(**kw):
-        return [], "none"
-
-    async def _no_sparql(*a, **k):
-        return []
-
-    monkeypatch.setattr(eo, "_resolve_docs_subject", _no_docs)
-    monkeypatch.setattr(eo, "class_pool_with_mode", _no_pool)
-    monkeypatch.setattr(eo, "execute_sparql", _no_sparql)
-    monkeypatch.setattr(eo, "ENABLE_AGENTIC_AUTH", False)
-    body = eo.ResolveRequest(query="tell me about PCN-D1", entity_refs=["PCN-D1"], **req)
-    asyncio.run(eo.resolve(body))
-
-
-def test_resolve_hands_the_callers_email_and_domains_to_the_fan_out(eo, monkeypatch, wire):
-    _resolve(eo, monkeypatch, user_email=DROPPER, domains=["SUSTAINMENT", "COST"])
-    assert wire, "the fan-out never posted"
-    for body in wire:
-        assert body["user_email"] == DROPPER
-        assert body["entitled_domains"] == ["SUSTAINMENT", "COST"]
-
-
-def test_resolve_without_the_fields_posts_an_empty_identity_and_no_entitlement(
-        eo, monkeypatch, wire):
-    """The control: differs from the arm above only in the absent fields. The legacy single
-    `domain` is a scope, not an entitlement, so it is NOT forwarded as one."""
-    _resolve(eo, monkeypatch, domain="SUSTAINMENT")
-    assert wire
-    for body in wire:
-        assert body["user_email"] == "" and body["entitled_domains"] == []
-
-
-def _fill_slots(eo, monkeypatch, **req):
-    from agent_fleet.docs_agent.slots import slots_for
-
-    class _Filled:
-        slots_json = json.dumps({"subject": "PCN-D1"})
-        confidence = 0.9
-        reasoning = "stub"
-
-    async def _fake(**kw):
-        return _Filled()
-
-    async def _no_sparql(*a, **k):
-        return []
-
-    monkeypatch.setattr(eo.b, "FillVerbSlots", _fake)
-    monkeypatch.setattr(eo, "execute_sparql", _no_sparql)
-    monkeypatch.setattr(eo, "_can_view_class", lambda email, iri: True)
-    body = eo.FillSlotsRequest(query="how do I add an engine", verb_iri="mesh:explain",
-                               declarations=json.dumps(slots_for("explain")), **req)
-    asyncio.run(eo.fill_slots(body))
-
-
-def test_fill_slots_hands_the_email_and_its_acting_domains_to_the_fan_out(eo, monkeypatch, wire):
-    _fill_slots(eo, monkeypatch, user_email=DROPPER, acting_domains=["MAINTENANCE", "COST"])
-    assert wire, "the fan-out never posted"
-    for body in wire:
-        assert body["user_email"] == DROPPER
-        assert body["entitled_domains"] == ["MAINTENANCE", "COST"]
-
-
-def test_fill_slots_without_the_fields_posts_an_empty_identity_and_no_entitlement(
-        eo, monkeypatch, wire):
-    _fill_slots(eo, monkeypatch)
-    assert wire
-    for body in wire:
-        assert body["user_email"] == "" and body["entitled_domains"] == []
-
-
-class _Ctx:
-    class log:
-        @staticmethod
-        def warning(*a, **k):
-            return None
-
-        info = warning
-
-
-def _supervisor_post(monkeypatch, **kw):
-    import iagent.defs.dynamic_supervisor as ds
-    sent = []
-
-    class _Resp:
-        status_code = 200
-
-        def json(self):
-            return {"slots": {}, "resolution": {}}
-
-    def _post(url, json=None, timeout=None, **k):
-        sent.append(json)
-        return _Resp()
-
-    monkeypatch.setattr(ds.requests, "post", _post)
-    ds._fill_slots_from_query(_Ctx(), query="q", verb_iri="mesh:explain", declarations=[], **kw)
-    assert len(sent) == 1
-    return sent[0]
-
-
-def test_the_supervisor_posts_the_email_to_fill_slots(monkeypatch):
-    assert _supervisor_post(monkeypatch, user_email=DROPPER).get("user_email") == DROPPER
-
-
-def test_the_supervisor_control_without_an_email_posts_an_empty_one(monkeypatch):
-    assert _supervisor_post(monkeypatch).get("user_email") == ""
