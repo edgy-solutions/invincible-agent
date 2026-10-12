@@ -104,6 +104,71 @@ _DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent")
 # being client-controlled. See `electric_shape_proxy` below.
 _ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-electric:3000")
 
+# ── Ingest watchdog (2026-10-12, pipeline failure must reach the row) ───────────────────
+
+# A row never sits at `received` for more than the timeout without either advancing or failing:
+# the loop below marks stale rows `failed:timeout` (ingest_status.fail_stale_received), carrying
+# the run id if a stage POST ever reported one.
+#
+# THE DEFAULT IS 600 s, NOT THE SENSOR'S 30 s INTERVAL. A row whose run is QUEUED behind
+# `max_concurrent_runs` legitimately sits at `received` for minutes; a 30 s bound would fail every
+# queued drop. The stage route treats a `timeout` failure as PROVISIONAL (a late run supersedes it),
+# so a too-early timeout is recoverable -- but it should still be rare, hence the generous default.
+# A value <= 0 disables the watchdog.
+_INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT = 600
+_INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT = 30
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+async def _ingest_watchdog_tick(timeout_s: int) -> list:
+    """One watchdog pass: fail every stale `received` document row, log each id, return the ids.
+    Split out of the loop so a test can run one tick without sleeping."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    ids = await run_in_threadpool(
+        lambda: ingest_status.fail_stale_received(older_than_seconds=timeout_s))
+    for _id in ids:
+        logger.info("ingest watchdog: %s failed:timeout (no stage move within %ss of arrival)",
+                    _id, timeout_s)
+    return ids
+
+
+async def _ingest_watchdog_loop(timeout_s: int, interval_s: int) -> None:
+    from . import ingest_status
+
+    while True:
+        try:
+            await _ingest_watchdog_tick(timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except ingest_status.IngestStatusConfigError as exc:
+            # No DSN: the seam is dormant, and a dormant seam has nothing to watch.
+            logger.info("ingest watchdog dormant (no PG DSN): %s", exc)
+            return
+        except Exception as exc:  # noqa: BLE001 -- the next tick retries
+            logger.warning("ingest watchdog tick failed (%s: %s); retrying next tick",
+                           type(exc).__name__, exc)
+        await asyncio.sleep(interval_s)
+
+
+def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
+    timeout_s = _env_int("INGEST_RECEIVED_TIMEOUT_SECONDS", _INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT)
+    interval_s = max(1, _env_int("INGEST_WATCHDOG_INTERVAL_SECONDS",
+                                 _INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT))
+    if timeout_s <= 0:
+        logger.info("ingest watchdog disabled (INGEST_RECEIVED_TIMEOUT_SECONDS=%s)", timeout_s)
+        return None
+    return asyncio.create_task(_ingest_watchdog_loop(timeout_s, interval_s))
+
+
 # ── Lifespan ──────────────────────────────────────────────
 
 @asynccontextmanager
@@ -316,7 +381,16 @@ async def lifespan(application: FastAPI):
             type(_exc).__name__, _exc,
         )
 
-    yield
+    _watchdog = _start_ingest_watchdog()
+    try:
+        yield
+    finally:
+        if _watchdog is not None:
+            _watchdog.cancel()
+            try:
+                await _watchdog
+            except asyncio.CancelledError:
+                pass
 
 
 # ── App ───────────────────────────────────────────────────
@@ -10261,6 +10335,11 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
     this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
     are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
+
+    `failure` (2026-10-12, pipeline failure must reach the row) is None unless `stage` is `failed`;
+    then it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with
+    none stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times
+    the row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10287,6 +10366,21 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         # row this caller is not scoped to see.
         stage = original["status"] if original is not None else None
         duplicate = {"of_ingest_id": row["duplicate_of"], "message": row.get("detail")}
+        # `failure` and `attempt` describe the row `stage` was taken from, so for a duplicate-arrival
+        # row they are the ORIGINAL's -- never the duplicate row's own.
+        source_row = original
+    else:
+        source_row = row
+
+    # `failure` is None unless the reported stage is `failed`. A failed row with NO stored failure
+    # is a legacy row written before 2026-10-12; synthesise from `detail`. reason_code None means
+    # the producer did not classify the failure; it does not mean there was no failure.
+    failure = None
+    if stage == ingest_status.FAILED and source_row is not None:
+        failure = source_row.get("failure") or {
+            "reason_code": None, "reason": source_row.get("detail"), "step": None,
+            "run_id": None, "pin_digest": None, "failed_at": source_row.get("updated_at")}
+    attempt = int((source_row or row).get("attempt") or 1)
 
     return {
         "ingest_id": row["id"],
@@ -10300,6 +10394,8 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
         "case_id": row.get("case_id"),
+        "failure": failure,
+        "attempt": attempt,
     }
 
 
@@ -10319,8 +10415,18 @@ def _is_service_caller(authz_id: Optional[str]) -> bool:
 @app.post("/ingest/{ingest_id}/retry")
 async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] = None,
                              current_user: User = Depends(get_current_user)):
-    """POST /ingest/<id>/retry -- PIN-DRIVEN ONLY (architect ruling 2026-10-10: the retry is driven
-    only by a pin change, never by the UI). Supersedes the dropper's own retry of roll #20 item 3.
+    """POST /ingest/<id>/retry. The architect's 2026-10-12 directive, "pipeline failure must reach
+    the row", supersedes the 2026-10-10 "pin-driven only, never the UI" ruling FOR FAILED ROWS: a
+    person may retry their OWN `failed` document row, and a service may retry one without a pin.
+    This is the one legitimate human retry, because the input was never processed. Every other
+    extraction retry stays pin-driven and service-only (supersedes the dropper's own retry of
+    roll #20 item 3).
+
+    THE RETRY ONLY RE-OPENS THE ROW (`ingest_status.retry_failed`: failed -> received, `failure`
+    cleared, `attempt` + 1). doc-tools' `ingress_user_sensor` does not relaunch an unchanged object:
+    its LastModified cursor has already passed it, and its run_key is `{ETag}-{key}`. So until
+    doc-tools adds a relaunch path, a retried row sits at `received` and the watchdog fails it again
+    with `timeout`. That outcome is visible and honest, not silent.
 
     TWO ACTS SHARE THIS ROUTE, and the two 2026-10-10 rulings govern one each (rev 187 merge of #32
     and #43; the architect is asked to confirm, packet 2026-10-11 "two rulings collide"):
@@ -10330,18 +10436,20 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
 
     Gate, in order:
       * A PERSON is looked up SCOPED (`get_status_for`: rows they submitted or are on_behalf_of).
-        Their own `awaiting_origin` DOCUMENT row goes to Q2c. Anything else -- another stage, a row
+        Their own `failed` DOCUMENT row is re-opened (200 `received` with the new `attempt`; 409
+        `not_failed` if it stopped being failed under them). Their own `awaiting_origin` DOCUMENT
+        row goes to Q2c. Anything else -- another stage, a row
         that is not theirs, no row at all -- is the SAME 403 `retry_is_pin_driven`, so the answer
         tells a person nothing about rows they cannot already see. A person never reaches the
         unscoped lookup or any extraction-retry action.
       * A SERVICE is looked up unscoped. An `awaiting_origin` DOCUMENT row goes to Q2c (re-filing
-        is not pin-driven). Otherwise it must send `{pin_digest}` (422 `pin_required`); a row with
+        is not pin-driven); a `failed` DOCUMENT row is re-opened with no pin. Otherwise it must send `{pin_digest}` (422 `pin_required`); a row with
         no recorded pin is 409 `no_recorded_pin`; an equal pin is 409 `pin_unchanged`; only a
         DIFFERENT pin proceeds to the dispatch below.
 
     Dispatch on the row:
-      * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
-        nothing to retry.
+      * already terminal (promoted/rejected/duplicate/case_opened, or a failed EVENT row) -- 409
+        `terminal`; nothing to retry.
       * a DOCUMENT row at `awaiting_origin` (Q2c, 2026-10-10) -- NOT terminal: runs the state
         function `_file_promotion_if_ready` with THIS caller as `requested_by`. Filed -> 200
         `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin
@@ -10383,11 +10491,25 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         return (r is not None and r.get("status") == ingest_status.AWAITING_ORIGIN
                 and r.get("kind") != ingest_status.EVENT)
 
+    def _is_failed_document(r: Optional[dict]) -> bool:
+        return (r is not None and r.get("status") == ingest_status.FAILED
+                and r.get("kind") != ingest_status.EVENT)
+
+    async def _reopen_failed() -> dict:
+        """Re-open a failed DOCUMENT row. `retry_failed` is one atomic UPDATE guarded on
+        `status = 'failed'`, so of two concurrent retries the second gets None -> 409."""
+        attempt = await run_in_threadpool(lambda: ingest_status.retry_failed(ingest_id))
+        if attempt is None:
+            raise HTTPException(status_code=409, detail={"error": "not_failed"})
+        return {"ingest_id": ingest_id, "stage": ingest_status.RECEIVED, "attempt": attempt}
+
     if not _is_service_caller(current_user.authz_id):
         own = await run_in_threadpool(
             lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id))
         if _refiles_from_state(own):
             return await _refile_from_state(current_user.authz_id)
+        if _is_failed_document(own):
+            return await _reopen_failed()
         raise HTTPException(status_code=403, detail={
             "error": "retry_is_pin_driven",
             "message": "a retry is driven only by an extractor pin change, never by a person"})
@@ -10396,6 +10518,9 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         raise HTTPException(status_code=404, detail="ingest not found")
     if _refiles_from_state(row):
         return await _refile_from_state(current_user.authz_id)
+    if _is_failed_document(row):
+        # No pin: the input was never processed, so there is no extractor pin to have changed.
+        return await _reopen_failed()
     if body is None:
         raise HTTPException(status_code=422, detail={
             "error": "pin_required",
@@ -10459,6 +10584,15 @@ class IngestStageUpdateRequest(_BaseModel):
     # Before this field existed Pydantic dropped it silently, and the promotion task was filed
     # with a payload the act refused.
     extraction_ref: Optional[str] = None
+    # 2026-10-12 (pipeline failure must reach the row, architect directive). `run_id` is the Dagster
+    # run, accepted on ANY target stage; the other four are the structured failure and are valid
+    # only with stage == "failed". `reason_code` is OPTIONAL on `failed` for legacy compatibility:
+    # doc-tools today posts `failed` with `detail` only and the two sides deploy separately.
+    reason_code: Optional[str] = None
+    reason: Optional[str] = None
+    step: Optional[str] = None
+    run_id: Optional[str] = None
+    pin_digest: Optional[str] = None
 
 
 def _read_extraction_manifest(key: str) -> dict:
@@ -10637,6 +10771,16 @@ async def update_ingest_stage(
     the retry route; the ONE exit is a steward's accepted origin (`write_origin_route`), which
     files `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10
     Q2, superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
+
+    PIPELINE FAILURE MUST REACH THE ROW (architect directive 2026-10-12): `failed` carries
+    {reason_code, reason, step, run_id, pin_digest}, stored as the row's `failure` and echoed by
+    GET /ingest/{id}/status. `reason_code` is optional (legacy `detail`-only posts still work),
+    but if given must match `ingest_status.REASON_CODE_RE`; the vocabulary is doc-tools' to own.
+    `run_id` is accepted on any target stage. The four failure fields on a non-`failed` stage are
+    422 `failure_fields_without_failed`. A `failed` row whose stored reason_code is `timeout`
+    (the BFF watchdog's, not doc-tools') is PROVISIONAL: it is treated as if it sat at `received`,
+    so a late run may still move it on (and moving off `failed` clears `failure`). Any other
+    `failed` row stays terminal.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10669,10 +10813,37 @@ async def update_ingest_stage(
             "allowed": list(_stage_targets),
         })
 
+    # BEFORE any row read: the failure fields describe a failure, so they mean nothing on any
+    # other target stage -- refuse rather than silently drop them.
+    _failure_fields = {"reason_code": req.reason_code, "reason": req.reason, "step": req.step,
+                       "pin_digest": req.pin_digest}
+    if req.stage != ingest_status.FAILED:
+        _stray = [k for k, v in _failure_fields.items() if v is not None]
+        if _stray:
+            raise HTTPException(status_code=422, detail={
+                "error": "failure_fields_without_failed", "fields": _stray})
+    if req.run_id is not None and not req.run_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "invalid_run_id"})
+    if req.reason_code is not None and not ingest_status.REASON_CODE_RE.match(req.reason_code):
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_reason_code",
+            "message": f"reason_code must match {ingest_status.REASON_CODE_RE.pattern}"})
+
     row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
     if row is None:
         raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
     current_stage = row["status"]
+
+    # A WATCHDOG TIMEOUT IS PROVISIONAL. `fail_stale_received` writes `failed:timeout` for a row
+    # that merely sat at `received` -- which a run queued behind max_concurrent_runs legitimately
+    # does. Treating that failure as terminal would turn a too-early timeout into a permanently
+    # lost document, so such a row behaves as if it still sat at `received` (both in the terminal
+    # check and the forward-order check below). Only a failure doc-tools itself reported, or any
+    # other terminal stage, is final.
+    _timed_out = (current_stage == ingest_status.FAILED
+                  and (row.get("failure") or {}).get("reason_code") == ingest_status.REASON_TIMEOUT)
+    if _timed_out:
+        current_stage = ingest_status.RECEIVED
 
     if current_stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={
@@ -10689,6 +10860,9 @@ async def update_ingest_stage(
             raise HTTPException(status_code=409, detail={
                 "error": "backwards_move", "from": current_stage, "to": req.stage,
             })
+
+    # `run_id` rides on any target stage, and only when given (COALESCE in update_status).
+    _run = {"run_id": req.run_id} if req.run_id is not None else {}
 
     task_id = None
     task_status = None
@@ -10726,7 +10900,8 @@ async def update_ingest_stage(
                 ingest_id, ingest_status.AWAITING_ORIGIN,
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
                 extraction_ref=req.extraction_ref,
-                detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+                detail="origin resolved by evidence, not kind (ruling 2026-10-02)",
+                **_run))
             # Q2b: the steward's accept may have landed while the row was still extracting.
             promotion_out = await _file_promotion_if_ready(ingest_id, requested_by=caller)
             if promotion_out and promotion_out.get("filed"):
@@ -10752,10 +10927,23 @@ async def update_ingest_stage(
     # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
     # `extraction_ref` rides only on the move INTO review (where it was just validated).
     _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
+    _detail = req.detail
+    if req.stage == ingest_status.FAILED:
+        # `reason` falls back to `detail` (legacy posts); the existing non-blank-detail rule in
+        # update_status still refuses a failure with neither. `detail` is written as the reason so
+        # it stays meaningful to readers that only know `detail`.
+        _reason = req.reason if (req.reason and req.reason.strip()) else req.detail
+        _detail = _reason
+        _extra["failure"] = {
+            "reason_code": req.reason_code, "reason": _reason, "step": req.step,
+            # A failure that names no run of its own still names the one the row last recorded
+            # (an `extracting` POST that carried it): the directive asks for "the run id if any".
+            "run_id": req.run_id or row.get("run_id"), "pin_digest": req.pin_digest,
+            "failed_at": int(time.time() * 1000)}
     try:
         await run_in_threadpool(lambda: ingest_status.update_status(
             ingest_id, req.stage, extracted_count=req.extracted_count,
-            extracted_total=req.extracted_total, detail=req.detail, **_extra))
+            extracted_total=req.extracted_total, detail=_detail, **_extra, **_run))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 

@@ -127,6 +127,14 @@ KINDS = (PDF, CAD, XML, EVENT)
 # construction, so checking it there would refuse every real event-door call.
 EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
 
+# 2026-10-12 (pipeline failure must reach the row): the failure reason_code the WATCHDOG writes
+# (`fail_stale_received`). The reason_code vocabulary is otherwise OPEN -- doc-tools owns its codes
+# and this repo does not enumerate them -- so the only thing checked is the SHAPE below. `timeout`
+# is the one code this repo itself mints, and the stage route treats it as PROVISIONAL (a late run
+# supersedes it), so it is named once here for both sides.
+REASON_TIMEOUT = "timeout"
+REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
 _MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS ingest_status_projection (
     id TEXT PRIMARY KEY,
@@ -177,6 +185,14 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEX
 -- the SAME write); NULL while a row sits at `received` and for every row the file-branch door
 -- writes (a document never opens a case). IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
+
+-- 2026-10-12 (pipeline failure must reach the row, architect directive): `failure` is JSON text,
+-- NULL unless the row is `failed` ({reason_code, reason, step, run_id, pin_digest, failed_at});
+-- `run_id` is the last Dagster run id a stage POST reported; `attempt` counts re-opens of a failed
+-- row (POST /ingest/{id}/retry), starting at 1. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
 """
 
 
@@ -356,6 +372,18 @@ def record_duplicate_arrival(
     return row
 
 
+def _parse_failure(raw: Any) -> Optional[dict[str, Any]]:
+    """`failure` is stored as JSON text; a dict (or None) is what a consumer sees. A malformed
+    value reads as None rather than raising -- the status route then synthesises from `detail`."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return val if isinstance(val, dict) else None
+
+
 def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
     """The row for `ingest_id`, unscoped to any caller, or None if it does not exist.
 
@@ -371,13 +399,18 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, content_kind, extraction_ref
+                          created_at, updated_at, content_kind, extraction_ref,
+                          failure, run_id, attempt
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
             )
             row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    out["failure"] = _parse_failure(out.get("failure"))
+    return out
 
 
 def update_status(
@@ -389,6 +422,8 @@ def update_status(
     detail: Optional[str] = None,
     case_id: Optional[str] = None,
     extraction_ref: Optional[str] = None,
+    failure: Optional[dict] = None,
+    run_id: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
@@ -406,13 +441,22 @@ def update_status(
     a call that only moves the stage never has to restate a case_id it already wrote.
 
     `extraction_ref` is the versioned manifest key doc-tools' review POST names; same discipline:
-    written only when given, never cleared by a call that omits it."""
+    written only when given, never cleared by a call that omits it.
+
+    `failure` (2026-10-12) is the structured reason {reason_code, reason, step, run_id, pin_digest,
+    failed_at}; it is valid ONLY with status `failed` (ValueError otherwise). Any OTHER status
+    writes `failure = NULL`, so a move off `failed` (a late run superseding a watchdog timeout)
+    clears it. `run_id` follows the COALESCE discipline: written only when given."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
         raise ValueError(
             f"update_status(status={status!r}) requires a non-blank detail — a {status!r} "
             f"with no reason is unactionable (ca's IngestStatus rule)")
+    if failure is not None and status != FAILED:
+        raise ValueError(f"update_status(failure=...) is valid only with status {FAILED!r}, "
+                         f"got {status!r}")
+    failure_json = json.dumps(failure) if (status == FAILED and failure is not None) else None
     now = int(time.time() * 1000)
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -421,10 +465,11 @@ def update_status(
                       SET status = %s, extracted_count = COALESCE(%s, extracted_count),
                           extracted_total = COALESCE(%s, extracted_total),
                           detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
-                          extraction_ref = COALESCE(%s, extraction_ref), updated_at = %s
+                          extraction_ref = COALESCE(%s, extraction_ref),
+                          failure = %s, run_id = COALESCE(%s, run_id), updated_at = %s
                     WHERE id = %s""",
                 (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
-                 now, ingest_id),
+                 failure_json, run_id, now, ingest_id),
             )
         conn.commit()
 
@@ -457,7 +502,7 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref
+                          extraction_ref, failure, run_id, attempt
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -467,6 +512,7 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
         return None
     out = dict(row)
     out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    out["failure"] = _parse_failure(out.get("failure"))
     return out
 
 
@@ -490,7 +536,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref
+                          extraction_ref, failure, run_id, attempt
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
@@ -500,4 +546,58 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
         return None
     out = dict(row)
     out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    out["failure"] = _parse_failure(out.get("failure"))
     return out
+
+
+def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
+    """The WATCHDOG (2026-10-12, pipeline failure must reach the row): mark every document row that
+    has sat at `received` for longer than `older_than_seconds` as `failed:timeout`, and return the
+    ids. ONE atomic UPDATE ... RETURNING, so two BFF replicas ticking at once cannot both claim a
+    row, and the `status = 'received'` predicate is re-evaluated at write time.
+
+    EVENT rows are excluded: an event row at `received` is the case runner's fact, not the
+    pipeline's (POST /ingest/events moves it to `case_opened`, or it stays because the runner
+    refused), and its fix is to resend the event -- a pipeline timeout would be a false claim.
+
+    `failure` is built in SQL so each row carries its OWN `run_id` (the last run a stage POST
+    reported, if any). `pin_digest` is NULL: a timeout means nothing ran far enough to pin."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    reason = f"no stage move was reported within {older_than_seconds} seconds of arrival"
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection
+                      SET status = 'failed', updated_at = %s, detail = %s,
+                          failure = jsonb_build_object(
+                              'reason_code', %s::text, 'reason', %s::text, 'step', 'received',
+                              'run_id', run_id, 'pin_digest', NULL, 'failed_at', %s::bigint)::text
+                    WHERE status = 'received' AND kind <> 'event' AND updated_at < %s
+                RETURNING id""",
+                (now, reason, REASON_TIMEOUT, reason, now, now - older_than_seconds * 1000),
+            )
+            ids = [r[0] for r in cur.fetchall()]
+        conn.commit()
+    return ids
+
+
+def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[int]:
+    """Re-open a `failed` document row at `received` (2026-10-12): clears `failure` and `detail`,
+    bumps `attempt`, and returns the NEW attempt -- or None if no row matched. ONE atomic UPDATE:
+    the `status = 'failed'` condition makes two concurrent retries safe (the second matches nothing
+    and gets None). Event rows never match (their fix is to resend the event). This only re-opens
+    the row; it does not relaunch the pipeline."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection
+                      SET status = 'received', failure = NULL, detail = NULL,
+                          attempt = attempt + 1, updated_at = %s
+                    WHERE id = %s AND status = 'failed' AND kind <> 'event'
+                RETURNING attempt""",
+                (now, ingest_id),
+            )
+            r = cur.fetchone()
+        conn.commit()
+    return r[0] if r else None

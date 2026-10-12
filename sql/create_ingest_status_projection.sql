@@ -108,3 +108,12 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion 
 -- promotion task's payload from it. NULL for every row that reached review before this column
 -- existed. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;
+
+-- 2026-10-12 (pipeline failure must reach the row, architect directive): three columns.
+-- `failure` is JSON text (plain TEXT like `detail` -- Electric rejects typed columns here), NULL
+-- unless the row is `failed`: {reason_code, reason, step, run_id, pin_digest, failed_at}. `run_id`
+-- is the last Dagster run id a stage POST reported. `attempt` counts re-opens of a failed row
+-- (POST /ingest/{id}/retry), starting at 1. All IDEMPOTENT (IF NOT EXISTS).
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
