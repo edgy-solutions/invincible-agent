@@ -308,6 +308,36 @@ class RegistrationManifest(BaseModel):
         ),
     )
 
+    # THE IDENTIFIER NAMESPACES THIS PROVIDER CLAIMS. RULED 2026-10-12 (architect, lane/saf's
+    # Q3): "an identifier namespace (a prefix pattern) is claimed by exactly one engine, declared
+    # in that engine's registration. A resolver refuses a fuzzy match across namespaces."
+    # Engine-o's resolveInstance fan-out reads this off the edge and refuses another provider's
+    # fuzzy candidate for an identifier in a declared namespace. Empty (default) = claims none.
+    id_namespaces: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Identifier prefixes this provider owns, e.g. ['HAZ-', 'CSI-']. Another provider's "
+            "fuzzy match on an identifier with one of these prefixes is refused at the fan-out."
+        ),
+    )
+
+    @field_validator("id_namespaces")
+    @classmethod
+    def _real_prefixes(cls, v: list[str]) -> list[str]:
+        """REFUSED, NOT STRIPPED. A blank prefix claims every identifier; one with whitespace can
+        never match a token; a single character is the shape of a string iterated as a list
+        (`list("HAZ-")`) and would claim a twenty-sixth of the alphabet. Each is a declaration
+        that means something other than what was written, so the registration is refused."""
+        out = []
+        for p in v:
+            q = (p or "").strip()
+            if len(q) < 2 or any(ch.isspace() for ch in q):
+                raise ValueError(
+                    f"id_namespaces entry {p!r} is not a prefix: it must be at least two "
+                    f"characters with no whitespace")
+            out.append(q)
+        return out
+
     @field_validator("verb_iri", "input_uri", "output_uri")
     @classmethod
     def _non_empty(cls, v: str) -> str:
@@ -808,6 +838,7 @@ def _build_custom_properties(manifest: "RegistrationManifest") -> dict:
         # JSON rather than the comma-join used by the list-of-strings fields next door —
         # these are records, and ",".join would flatten them into nonsense.
         "mesh_slots":                   json.dumps([dict(s) for s in (manifest.slots or [])]),
+        "mesh_id_namespaces":           ",".join(manifest.id_namespaces),
     }
     # THE DISCRIMINATOR RIDES IN THE DATA. `mesh_tool_kind` is written for BOTH
     # species so a consumer never has to infer the shape from which fields
@@ -1151,6 +1182,10 @@ def _build_rel_props_for_saga(
         # `timeout_s` idiom below and is written ONLY when declared, so an undeclared verb
         # holds no property at all rather than an empty string that reads as a value.
         "required_args": [str(a) for a in (manifest.required_args or [])],
+        # An array of strings, a legal Neo4j property, and ALWAYS written -- `[]` when undeclared,
+        # the `domains` idiom rather than the `timeout_s` one -- so a provider that withdraws a
+        # declaration clears it on re-registration instead of leaving the old claim on the edge.
+        "id_namespaces": [str(p) for p in (manifest.id_namespaces or [])],
         **({"arity": str(manifest.arity)} if manifest.arity else {}),
         # timeout_s is optional — only set when the engine declared it.
         **(

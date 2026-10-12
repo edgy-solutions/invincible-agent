@@ -519,3 +519,86 @@ def instance_not_found_message(identifier: str) -> str:
         f"returned no match. Check that the identifier is exact, or ask "
         f"about its general category instead of the specific instance."
     )
+
+
+# ── ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 (architect, lane/saf's Q3). ──
+#
+# "An identifier namespace (a prefix pattern) is claimed by exactly one engine, declared in that
+# engine's registration. A resolver refuses a fuzzy match across namespaces."
+#
+# MEASURED on sandbox, rev e977c32b, engine-o's own `/resolve_instance` (the pcn provider):
+#
+#     'HAZ-1004' -> HX3120004Q    0.556   matching blocks 'h', '1', '004'
+#                   AZV5001RA4-7  0.5     matching blocks 'az', '00', '4'
+#     'HAZ-1003' -> (nothing)             0.444 and 0.4: the trailing '3' matches neither
+#
+# Two part numbers sharing three characters with a hazard id cleared the pcn floor on a difflib
+# ratio, put `pcn#Component` beside `safety#Hazard` in SUSTAINMENT, and `ambiguous_in_domain`
+# refused a hazard that Engine S resolves exactly. HAZ-1003 bound and HAZ-1004 did not because of
+# ONE DIGIT. Neither scorer is wrong about its own vocabulary, and no floor inside engine-o's
+# scorer separates 0.556 from its genuine fuzzy hits -- so, as with domain scoping, the rule
+# lives here, where every provider's claim is seen at once.
+#
+# THE OWNER'S DECLARATION IS THE ONLY SOURCE. Nothing here names a prefix or an engine: the
+# namespaces come from the `id_namespaces` each provider declared at registration. A provider
+# that declares none claims no namespace and loses nothing.
+#
+# FUZZY IS REFUSED, EXACT IS NOT. A non-owner's candidate whose name IS the term (label or IRI
+# local name, case-insensitive) is kept: that is a real second claim on the same string, and the
+# ask that follows is the right answer. What is refused is a near-miss in someone else's namespace.
+
+_NS_TOKEN_SPLIT = re.compile(r"[\s,;:()\[\]{}<>'\"?!]+")
+
+
+def declared_id_namespaces(value) -> list[str]:
+    """A provider's declared namespaces, read off its registry row.
+
+    Only a LIST of strings is a declaration. A bare string is refused rather than iterated:
+    ``list("HAZ-")`` is ``['H', 'A', 'Z', '-']``, four one-character prefixes that would claim
+    every identifier beginning with H or A -- the container-traded-for-elements defect. Blank and
+    whitespace-bearing entries are dropped: an empty prefix would claim every identifier.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for p in value:
+        if isinstance(p, str):
+            p = p.strip()
+            if p and not any(ch.isspace() for ch in p):
+                out.append(p)
+    return out
+
+
+def claimed_namespaces(terms, resolvers) -> dict[str, frozenset[str]]:
+    """``{prefix: providers that declared it}`` for each declared prefix that some token of some
+    lookup term begins with (case-insensitive). More than one provider under one prefix is a
+    CONTESTED namespace; every declarer is treated as an owner, and the caller names it."""
+    owners: dict[str, set[str]] = {}
+    for r in resolvers or []:
+        for p in declared_id_namespaces(r.get("id_namespaces")):
+            owners.setdefault(p.upper(), set()).add(r.get("provider") or "unknown")
+    if not owners:
+        return {}
+    tokens = {tok.upper() for t in terms or [] for tok in _NS_TOKEN_SPLIT.split(str(t or "")) if tok}
+    return {p: frozenset(o) for p, o in owners.items() if any(tok.startswith(p) for tok in tokens)}
+
+
+def _name_is_term(c: "InstanceCandidate", names: set[str]) -> bool:
+    local = str(c.instance_id or "").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+    return str(c.label or "").strip().lower() in names or local.strip().lower() in names
+
+
+def refuse_cross_namespace(candidates, *, terms, resolvers):
+    """Drop every candidate a NON-OWNER offered fuzzily for a term in a declared namespace.
+
+    Returns ``(kept, refused, claimed)``. ``claimed`` is :func:`claimed_namespaces`'s answer, so
+    the caller can log what decided it; when it is empty nothing is refused."""
+    claimed = claimed_namespaces(terms, resolvers)
+    if not claimed:
+        return list(candidates), [], {}
+    owners = set().union(*claimed.values())
+    names = {str(t).strip().lower() for t in terms or [] if str(t or "").strip()}
+    kept, refused = [], []
+    for c in candidates:
+        (kept if c.provider in owners or _name_is_term(c, names) else refused).append(c)
+    return kept, refused, claimed
