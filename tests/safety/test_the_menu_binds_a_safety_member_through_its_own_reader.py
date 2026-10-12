@@ -65,9 +65,12 @@ def test_my_side_claims_haz_1004_exactly_once():
 
 
 @pytest.mark.skip(reason=(
-    "BLOCKED: the second claimant of HAZ-1004 is not yet named by Lane 1, and its fix is not "
-    "mine to make. Becomes real when that engine stops claiming HAZ-*: fan out _call_resolver "
-    "over every mesh:resolveInstance provider and assert exactly one candidate overall."
+    "BLOCKED on engine_o_sustainment: it also claims HAZ-1004 (as a pcn#Component), so "
+    "fill_slots refuses the bind as ambiguous_in_domain. Fix is on its side (packet "
+    "2026-10-11-packet-to-eo-engine-o-sustainment-resolver-also-claims-haz-1004-...; Lane 1's "
+    "packet 2026-10-11-packet-to-saf-haz-1004-fails-live-...). Unskip when it stops matching "
+    "HAZ-*: fan out _call_resolver over every mesh:resolveInstance provider and assert exactly "
+    "one candidate overall."
 ))
 def test_haz_1004_resolves_to_exactly_one_candidate_across_the_fan_out():
     raise AssertionError("unreachable until the other claimant is named and fixed")
