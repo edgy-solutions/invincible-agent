@@ -155,27 +155,42 @@ def apply_migration() -> None:
 
 def _resolve_audience_actors(audience: str) -> list[str]:
     """Ask the Topaz Directory for the authz_ids granted `actor` on this audience —
-    the authorized recipient set. Direct user grants only for v1 (group expansion
-    deferred; the manifest allows group#member). Returns [] if none (deny-by-
-    default: an ungranted audience yields NO rows -> invisible to everyone)."""
+    the authorized recipient set. Direct `user` grants, plus the members of every
+    `group#member` grant (RULED 2026-10-10), expanded ONE level. Deduped, first-seen
+    order. Returns [] if none (deny-by-default: an ungranted audience yields NO rows ->
+    invisible to everyone). A failure reading the audience OR any group's members RAISES;
+    a partial list would silently hide the task from the members it dropped."""
     if not _TOPAZ_DIRECTORY_URL:
         raise HumanTaskConfigError("TOPAZ_DIRECTORY_URL is unset")
-    params = {
-        "object_type": "task_audience",
-        "object_id": audience,
-        "relation": "actor",
-    }
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+
+    def _list(c, params):
         r = c.get("/api/v3/directory/relations", params=params)
         r.raise_for_status()
         body = r.json()
+        return body.get("results") or body.get("relations") or []
+
     actors: list[str] = []
-    for rel in body.get("results") or body.get("relations") or []:
-        # subject is a user object; its id is the AUTHORIZATION identity (authz_id
-        # — the USER_ENTITLEMENT_CLAIM key Topaz is seeded by: email in sandbox,
-        # employee-ID at work-deploy). NOT necessarily an email.
-        if (rel.get("subject_type") == "user") and rel.get("subject_id"):
-            actors.append(rel["subject_id"])
+
+    def _add(authz_id):
+        if authz_id and authz_id not in actors:
+            actors.append(authz_id)
+
+    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        rels = _list(c, {"object_type": "task_audience", "object_id": audience,
+                         "relation": "actor"})
+        for rel in rels:
+            # subject is a user object; its id is the AUTHORIZATION identity (authz_id
+            # — the USER_ENTITLEMENT_CLAIM key Topaz is seeded by: email in sandbox,
+            # employee-ID at work-deploy). NOT necessarily an email.
+            if rel.get("subject_type") == "user":
+                _add(rel.get("subject_id"))
+            elif (rel.get("subject_type") == "group"
+                  and rel.get("subject_relation") == "member" and rel.get("subject_id")):
+                # ONE level only: a member that is itself a group (nested) is NOT expanded.
+                for m in _list(c, {"object_type": "group", "object_id": rel["subject_id"],
+                                   "relation": "member"}):
+                    if m.get("subject_type") == "user":
+                        _add(m.get("subject_id"))
     return actors
 
 

@@ -2,6 +2,8 @@
 
 from: ia-01/lane/01, written 2026-10-09 (overnight item 2)
 for: Chris, at the keyboard on Friday
+to: invincible-agent/lane/01 — a runbook Lane 1 keeps, not a packet; for Chris at the keyboard
+read-by: invincible-agent/lane/01 2026-10-11
 
 Every "expected" below was **measured**: the drop and promote on rev 181 (2026-10-08 22:57Z), and
 the ask on rev 182 (2026-10-09 02:05Z). Where a line was not measured, it says so.

@@ -42,8 +42,9 @@ by weight alone.
 EXIT CODES — read from policy/sync/task_grant_sync.py's main(): 0 ok (including the
 zero-audiences case — there is no separate "nothing to do" code), 2 malformed grants file
 (REFUSED, nothing applied), 4 readback failed (apply happened but a grant does not resolve
-can_act). Both non-zero codes are REAL failures; neither means "nothing to do". So nothing
-here masks either one — `set -e` plus the script's own exit code fails the Job, and a failed
+can_act), 5 a `grant_to_groups` entry names a group object absent from live Topaz (REFUSED,
+nothing applied). Every non-zero code is a REAL failure; none means "nothing to do". So nothing
+here masks any of them — `set -e` plus the script's own exit code fails the Job, and a failed
 hook fails the release, exactly as intended. program_member_sync.py's main() uses the SAME
 exit-code scheme (0 ok, 2 malformed program_members.yaml, 4 readback/can_view_program failed),
 so `set -e` gates it identically — a failure in the program leg fails the Job before

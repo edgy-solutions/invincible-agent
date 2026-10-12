@@ -120,6 +120,11 @@ class ItemResolution:
     needs_review: bool
     override_reason: Optional[str] = None
     proposed_by_ruleset: Optional[str] = None   # policy-artifact identity (audit survives policy change)
+    # STEWARD-CORRECTION provenance (obtained_via / corrected_by / extracted_value / corrected_value /
+    # evidence), set ONLY on a row a steward corrected or added. None on every ordinary row, so the
+    # unedited path is unchanged. Stored beside the identity -- `mpn`/`idempotency_key` stay the
+    # EXTRACTED values (a correction never re-keys).
+    provenance: Optional[dict] = None
 
 
 def run_funnel(

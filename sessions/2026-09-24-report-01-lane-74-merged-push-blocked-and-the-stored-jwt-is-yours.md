@@ -1,5 +1,5 @@
 ---
-to: Chris, and the architect on item 1's second half
+to: invincible-agent/seat/architect — on item 1's second half; and Chris
 from: invincible-agent/master (Lane 1 seat)
 date: 2026-09-24
 subject: lane/74 merged at fa1b5cc — the push is blocked and needs you; the order's "four

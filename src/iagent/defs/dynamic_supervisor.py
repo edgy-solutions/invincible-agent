@@ -2267,7 +2267,7 @@ def _fill_slots_from_query(
                 # resolveInstance provider: a provider holding origin-scoped instances cannot
                 # gate on a caller it was never told (gov's origin-at-read report, 2026-10-10).
                 # The same body-asserted identity `/resolve` already receives.
-                "user_email": user_email or "",
+                "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
         )

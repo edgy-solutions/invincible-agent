@@ -1380,7 +1380,8 @@ def test_stage_route_moves_the_row(doc_tools_client, monkeypatch):
 
 def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     row = {"id": "sha256:" + "b" * 64, "status": "extracting", "kind": "pdf",
-          "content_kind": "pcn", "submitted_by": "alice@example.com"}
+          "content_kind": "pcn", "submitted_by": "alice@example.com",
+           "on_behalf_of": "carol@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
     monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
     _stub_domain(monkeypatch)
@@ -1397,7 +1398,8 @@ def test_stage_review_opens_exactly_one_task(doc_tools_client, monkeypatch):
     assert reg["audience"] == f"{promotion.KIND}:SUSTAINMENT"
     assert reg["payload"]["ingest_id"] == row["id"]
     assert reg["payload"]["review_pool"] == "SUSTAINMENT"
-    assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com"}
+    assert reg["payload"]["dropped_by"] == {"authz_id": "alice@example.com",
+                                             "on_behalf_of": "carol@example.com"}
     assert r.json()["task_id"] == f"{promotion.KIND}:{row['id']}"
     assert r.json()["task_status"] == "FILED"
 
@@ -1554,6 +1556,8 @@ def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_
     row = {"id": "sha256:" + "1" * 64, "status": "extracting", "kind": "pdf",
           "content_kind": "test-domainless-kind", "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    # Q2: no accepted origin yet -- and this test must never reach Neo4j.
+    monkeypatch.setattr(gateway, "_read_accepted_origin", lambda ingest_id: None)
     status_calls = []
     monkeypatch.setattr(ist, "update_status",
                         lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage, kw)))
@@ -1563,14 +1567,19 @@ def test_stage_review_deliberately_domainless_kind_goes_to_awaiting_origin_with_
                         lambda task_id: task_exists_calls.append(task_id) or False)
     monkeypatch.setattr(ht, "register_task", lambda **kw: register_calls.append(kw))
 
-    r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
+    ref = f"ingress-user/pdf/{'1' * 64}/generated/doc_pdf/doc-tools@61f74dc/manifest.json"
+    r = doc_tools_client.post(f"/ingest/{row['id']}/stage",
+                              json={"stage": "review", "extraction_ref": ref})
     assert r.status_code == 200, r.text
     assert r.json() == {"ingest_id": row["id"], "stage": "awaiting_origin",
                         "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
     assert task_exists_calls == [], "no task lookup for a deliberately domainless kind"
     assert register_calls == [], "no task filed for a deliberately domainless kind"
+    # Q2 (2026-10-10): the row carries the request's extraction_ref, so a steward's accepted
+    # origin can later file the promotion from it.
     assert status_calls == [(row["id"], ist.AWAITING_ORIGIN,
                              {"extracted_count": None, "extracted_total": None,
+                              "extraction_ref": ref,
                               "detail": "origin resolved by evidence, not kind (ruling 2026-10-02)"})]
 
 
@@ -1638,6 +1647,7 @@ def test_stage_review_on_a_real_format_level_kind_goes_to_awaiting_origin(
     row = {"id": "sha256:" + "4" * 64, "status": "extracting", "kind": "pdf",
            "content_kind": content_kind, "submitted_by": "alice@example.com"}
     monkeypatch.setattr(ist, "get_row", lambda ingest_id: row)
+    monkeypatch.setattr(gateway, "_read_accepted_origin", lambda ingest_id: None)
     status_calls = []
     monkeypatch.setattr(ist, "update_status",
                         lambda ingest_id, stage, **kw: status_calls.append((ingest_id, stage)))

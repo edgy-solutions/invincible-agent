@@ -16,11 +16,28 @@ def sparql_lit(v: str) -> str:
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
 
 
+# Steward-correction provenance (optional, stored BESIDE the item's identity -- never as a re-key).
+# payload key -> predicate local name. Absent means unchanged: a caller that sends none of these
+# gets byte-identical SPARQL to before this existed.
+PROVENANCE_PREDICATES = {
+    "obtained_via": "obtainedVia",
+    "corrected_by": "correctedBy",
+    "extracted_value": "extractedValue",
+    "corrected_value": "correctedValue",
+    "evidence": "evidence",
+}
+
+
 def build_item_state_update(
-    subject_iri: str, disposition_state: str, disposition_ref: str, proposed_by_ruleset: str = ""
+    subject_iri: str, disposition_state: str, disposition_ref: str, proposed_by_ruleset: str = "",
+    provenance: "dict | None" = None,
 ) -> str:
     """Idempotent state stamp: delete any prior disposition triples for the subject, then insert.
-    Re-stamping is a no-op-equivalent, which the two-write convergence relies on. Values escaped."""
+    Re-stamping is a no-op-equivalent, which the two-write convergence relies on. Values escaped.
+
+    ``provenance`` (optional): steward-correction facts stamped on the SAME node, beside the
+    disposition. Only keys in PROVENANCE_PREDICATES are honoured; a None value is skipped (an added
+    row has no extracted value). The subject IRI is never altered by it."""
     g, ns, s = _INSTANCES_GRAPH, _PCN_NS, subject_iri
     ins = [
         f'<{s}> <{ns}dispositionState> "{sparql_lit(disposition_state)}" .',
@@ -28,13 +45,18 @@ def build_item_state_update(
     ]
     if proposed_by_ruleset:
         ins.append(f'<{s}> <{ns}proposedByRuleset> "{sparql_lit(proposed_by_ruleset)}" .')
-    ins_block = " ".join(ins)
-    return (
+    dels = [
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionState> ?a }} }} ;\n'
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionRef> ?b }} }} ;\n'
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}proposedByRuleset> ?c }} }} ;\n'
-        f'INSERT DATA {{ GRAPH <{g}> {{ {ins_block} }} }}'
-    )
+    ]
+    for key, pred in PROVENANCE_PREDICATES.items():
+        if provenance and key in provenance:
+            dels.append(f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}{pred}> ?p_{pred} }} }} ;\n')
+            if provenance[key] is not None:
+                ins.append(f'<{s}> <{ns}{pred}> "{sparql_lit(provenance[key])}" .')
+    ins_block = " ".join(ins)
+    return "".join(dels) + f'INSERT DATA {{ GRAPH <{g}> {{ {ins_block} }} }}'
 
 
 def build_instances_by_property_query(disposition_state: str) -> str:

@@ -113,7 +113,7 @@ def _mat(sources):
 
 
 def _answer(**row_kw):
-    return np_mod.read_notice_parts(_Driver([_row(**row_kw)]), NOTICE)
+    return np_mod.read_notice_parts(_Driver([_row(**row_kw)]), NOTICE, caller_id=DROPPED_BY)
 
 
 # ── the read ─────────────────────────────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ def test_AN_UNKNOWN_NOTICE_IS_REFUSED_AND_A_KNOWN_ONE_WITH_NO_PARTS_IS_REFUSED_A
     notice names no part. An empty `ok` list would read as "checked, none"."""
     unknown = np_mod.read_notice_parts(_Driver([]), "PCN-NOPE")
     assert (unknown["status"], unknown["reason"]) == ("refused", "unknown_notice")
-    empty = np_mod.read_notice_parts(_Driver([_row(mpns=[])]), NOTICE)
+    empty = np_mod.read_notice_parts(_Driver([_row(mpns=[])]), NOTICE, caller_id=DROPPED_BY)
     assert (empty["status"], empty["reason"], empty["sources"]) == (
         "refused", "no_affected_parts", [])
     assert empty["reason"] != unknown["reason"]
@@ -251,7 +251,7 @@ def _route(monkeypatch, driver, body):
 def test_THE_ROUTE_ANSWERS_THE_DISPATCH_BODY_THE_SUPERVISOR_SENDS(monkeypatch):
     d = _Driver([_row()])
     r = _route(monkeypatch, d, {
-        "user_query": "which parts does PCN26-182 affect",
+        "user_query": "which parts does PCN26-182 affect", "user_email": DROPPED_BY,
         "entitled_domains": ["SUSTAINMENT"],
         "resolved_instance_id": "http://internal/sustainment/doc/" + NOTICE,
         "params": {}, "routed_verb_iri": np_mod.VERB,
@@ -316,3 +316,10 @@ def test_THE_CENSUS_ASKS_THE_SHEET_QUESTION_AND_EXPECTS_THIS_VERB():
     assert rows[0].question == "which parts does PCN26-182 affect"
     assert rows[0].expect_verb == wc._camel_to_snake(np_mod.VERB.split(":", 1)[1])
     assert wc.reconcile(rows, _REPO).problems == []
+
+
+def test_A_DROP_DERIVED_NOTICE_IS_THE_DROPPERS_ALONE_UNTIL_IT_HAS_A_RESOLVED_ORIGIN():
+    """These arms read the drop AS ITS DROPPER (the rev-180 fixture has no origin recorded). The
+    origin read check, for every other caller, is sealed in
+    tests/security/test_notice_sources_by_origin.py."""
+    assert np_mod.read_notice_parts(_Driver([_row()]), NOTICE)["reason"] == "unknown_notice"
