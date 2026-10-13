@@ -26,3 +26,15 @@ Scratch only: lane scratch scripts saf_walk.py / saf_runs.py; first batch was cu
 
 #51 (74, engine-o one namespace one claimant): OPEN, so the HAZ-/CSI-/MIT- declaration and the unskip
 are pending. Tests: unchanged tip b4e9c862, tests/safety 423 passed 5 skipped; refused/census trio 38 passed.
+
+## Correction 2026-10-13: walk times re-stamped against 13:53Z (rev 187 = 49aa5e28 live since 13:53Z)
+The roll line says e977c32b (13:33Z) was failed helm rev 188, replaced by rev 189 = 49aa5e28 at
+13:53Z. My image check read 49aa5e28, and every batch ran after it. File mtimes (local CDT, +5h = UTC):
+| batch | prompts | UTC (finished) | vs 13:53Z |
+| 1 (cut at 12 of 18 by my timeout) | Q1, Q8, Q10, Q12 x3 | started ~16:20Z, last write 16:33:59Z | after, on 49aa5e28 |
+| 2 | FRACAS runs 1-2 | last write 16:43:45Z | after |
+| 3 | HAZ-1004 x3 | last write 17:05:29Z | after |
+| 4 | FRACAS runs 3-5 | last write 17:10:29Z | after |
+The Dagster STARTED-run check was ~16:20Z. NO RUN is before 13:53Z, so none drops out and NO ROW OF THE
+DELTA TABLE MOVES. (Times are file mtimes, not event timestamps; to the minute at best.)
+Q3 ruled (architect): the task existing is the pass; recorded in the walk sheet.
