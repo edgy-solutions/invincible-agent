@@ -1,5 +1,28 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.45 — 2026-10-13
+
+Rev 188. The 188 image carries the structured `failure` field, `GET /ingest/retries` (the
+service-only listing doc-tools polls to relaunch retried drops) and the door 400 on `POST /ingest`
+(a drop with no registered content kind is refused before anything is written). The fleet
+imageTag is set at roll time, not here. #41 (lane/01-broker-flip) renumbers to 0.4.46 when it
+merges.
+
+### Added
+
+- **`cortexBff.env` `INGEST_RECEIVED_TIMEOUT_SECONDS: "600"` and
+  `INGEST_WATCHDOG_INTERVAL_SECONDS: "30"`.** The ingest watchdog's two knobs, now tunable from the
+  chart. 600 s is the architect's 2026-10-12 bound, deliberately longer than doc-tools' 30 s
+  sensor tick, because a run queued behind max_concurrent_runs sits at `received` legitimately; a
+  timeout failure is provisional until a run starts. A value <= 0 disables the watchdog.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:7b2b6129…` (cortex-ui 88a65d4).**
+  The upload now sends `content_kind`, a failed drop draws its `failure` and offers Retry,
+  `row_edits` is on by default, and the walk fixes (#19–#22) are in. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+
 ## 0.4.44 — 2026-10-12
 
 Rev 187c, a frontend-only pin, rolled ahead of 188 on the architect's direction. The fleet image
