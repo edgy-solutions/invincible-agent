@@ -32,7 +32,9 @@ subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
               tests/test_a_review_resolves_as_its_dropper.py (their mutants A1-A12; not re-run by gov).
   TEST_PERSONA   the payload's `user_email` is a test persona read from the environment by a module
               function that raises without it. The run-time refusal is lane/74's
-              tests/routing/test_a_reresolve_needs_a_person.py (their mutants B1-B12; not re-run by gov).
+              tests/routing/test_a_reresolve_needs_a_person.py (their mutants B1-B12; not re-run by gov)
+              for the corpus, and tests/test_the_engine_a_smoke_runs_as_a_test_persona.py (their
+              mutants C1-C11; not re-run by gov) for the Engine A smoke.
   NO_PERSON   the payload has no `user_email` key, or some value found for it is a blank literal.
   UNDECIDED   no payload keys could be derived; never a member of NO_PERSON, always a red.
 INGEST_RECORD and TEST_PERSONA, like TOKEN and FORWARD, are DECLARED splits of PERSON checked only
@@ -44,8 +46,8 @@ corpus arm of `test_service_identity_is_never_a_grant` proves gets SEEDED CONTEN
 since #48 and is derived over the whole census, so a new such site is a red.
 
 THE NO_PERSON CLASS IS THE POPULATION THE PLANNED 422 `no_person` REFUSAL ON /resolve_instance WILL
-BREAK. It is now 5 sites (rows 13-17), deliberately left to be refused by the planned 422 (lane/74,
-2026-10-11). A site moving from NO_PERSON to a person-carrying class is EXPECTED: MOVE ITS ROW AND
+BREAK. It is now 4 sites (rows 13-16), deliberately left to be refused by the planned 422 (lane/74,
+2026-10-11; row 17 moved with #52, 2026-10-12). A site moving from NO_PERSON to a person-carrying class is EXPECTED: MOVE ITS ROW AND
 SAY WHY in the row's comment; do not loosen a predicate.
 
 How the census is taken: the detector walks every tracked .py/.sh file under the four roots
@@ -119,10 +121,12 @@ ROWS = [
     Row("14", "scripts/phase1_stable_harness.sh", "top level", "/resolve", "NO_PERSON"),
     Row("15", "scripts/elicitation_battery.py", "_fill", "/fill_slots", "NO_PERSON"),
     Row("16", "scripts/slot_fill_battery.py", "_call", "/fill_slots", "NO_PERSON"),
-    Row("17", "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "/analyze", "NO_PERSON"),
+    # MOVED by lane/74 #52 (5902102b, ruling (b); architect 2026-10-12: "row 17 moves with #52"):
+    # _smoke_person() reads IA_SMOKE_ON_BEHALF_OF and refuses to run without it.
+    Row("17", "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "/analyze", "TEST_PERSONA"),
 ]
 DOMAINS_WITHOUT_PERSON_ROWS: set[str] = set()  # empty since #48: run_resolver_corpus sends a person with its domains
-EXPECTED_NO_PERSON_SITES = 5  # rows 13, 14, 15, 16, 17 -- left to be refused (lane/74, 2026-10-11)
+EXPECTED_NO_PERSON_SITES = 4  # rows 13, 14, 15, 16 -- left to be refused (lane/74, 2026-10-11)
 
 # A found site that is NOT engine-o. Keyed (file, function, route) -> (hole expected in the URL, why).
 EXCLUDED = {
