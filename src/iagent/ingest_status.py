@@ -581,6 +581,29 @@ def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None
     return ids
 
 
+def list_pending_retries(*, limit: int) -> list[dict]:
+    """Retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape 1): rows at
+    `received` whose `attempt` is above 1, oldest first. `retry_failed` re-opens a row at
+    `received` with `attempt` + 1, but doc-tools' sensor cannot see it again (its S3 cursor has
+    passed the object), so doc-tools polls this listing and launches each entry with the Dagster
+    run_key `{id}-a{attempt}`. A first attempt (`attempt` = 1) is the sensor's own and is never
+    listed. EVENT rows are excluded for the same reason as in `fail_stale_received`. Read-only."""
+    keys = ("id", "attempt", "kind", "content_kind", "object_prefix", "sha256", "run_id",
+            "updated_at")
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, attempt, kind, content_kind, object_prefix, sha256, run_id, updated_at
+                     FROM ingest_status_projection
+                    WHERE status = 'received' AND attempt > 1 AND kind <> 'event'
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT %s""",
+                (limit,),
+            )
+            rows = cur.fetchall()
+    return [dict(zip(keys, r)) for r in rows]
+
+
 def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[int]:
     """Re-open a `failed` document row at `received` (2026-10-12): clears `failure` and `detail`,
     bumps `attempt`, and returns the NEW attempt -- or None if no row matched. ONE atomic UPDATE:

@@ -1765,6 +1765,20 @@ services:
           seeded trigger requires is 422, naming the field; 503 when that trigger cannot be
           loaded (`trigger_unconfigured`). An unreadable kind registry is not caught here: it
           raises (500) rather than falling back to an empty set, and no case opens.
+      - method: GET
+        path: /ingest/retries
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: gated-content
+        consumers: [doc-tools relaunch poller (retried drops)]
+        class: gated
+        justification: >-
+          Lists the retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape
+          1): rows re-opened at `received` by the retry route, attempt above 1, oldest first.
+          doc-tools' sensor cannot see a retried object again, so it polls this route and launches
+          each entry with run_key `{ingest_id}-a{attempt}`. A single SERVICE identity is accepted,
+          checked before the database is touched, so no end user can enumerate other people's
+          drops and a non-doc-tools caller learns nothing. Event rows never appear.
       - method: POST
         path: /ingest/{ingest_id}/stage
         identity: keycloak-jwt

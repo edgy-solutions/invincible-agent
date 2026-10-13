@@ -9817,17 +9817,20 @@ async def ingest_document(
 
     FORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`
     path segment and the projection's `kind` column — never a registered content kind.
-    `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
-    kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
-    lives in doc-tools; the driver resolves and HALTs on an unregistered value — ca's
-    `resolve_content_kind`), it only refuses a value that is blank-after-strip or malformed.
-    Writing a bare file format into `manifest.metadata.content_kind` (the old behaviour) made
-    every user drop HALT as ContentKindUnregistered("pdf") — ADR-0021 rule 1 / ADR-0041 §4
-    reserve that key for a REGISTERED kind. Leaving `metadata.content_kind` absent when
-    undeclared is deliberate: absence is rule 1 not firing, and ADR-0021's 2026-09-30
-    amendment disables rule 2 under `ingress-user/` (that path segment is a format), so an
-    undeclared drop HALTs at the driver -- stage `failed` with a detail -- rather than being
-    resolved from a fabricated value.
+    `content_kind` is the SEPARATE channel for the picker's confirmed registered kind
+    (ADR-0041 §4), and it is REQUIRED (architect ruling 2026-10-12: the door refuses a kindless
+    drop where the uploader can still fix it, instead of accepting it and letting it die inside
+    a Dagster op on the ADR-0041 guard). Refusals, in this order and all BEFORE the bounded read
+    so nothing is written: blank-after-strip or malformed -> 422; absent -> 400
+    `content_kind_required`; declared but not in the registry (`content_kinds.by_kind` is None)
+    -> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s
+    carry `registered`, the sorted document-branch kind names, so the picker can offer them. Any
+    registered document-branch kind passes, including a deliberately domainless one like `pdf`
+    (it lands at `awaiting_origin` later, unchanged). Writing a bare file format into
+    `manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as
+    ContentKindUnregistered("pdf") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a
+    REGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`
+    (that path segment is a format), so a kindless drop could never be resolved downstream.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -9864,7 +9867,34 @@ async def ingest_document(
     # the branch=="event" block further down silently seed a workflow for bytes that were ALSO
     # durably written, which is what this repo did before this check existed.
     _registered_kind = content_kinds.by_kind(declared_content_kind) if declared_content_kind else None
-    if _registered_kind is not None and _registered_kind.branch == "event":
+    # THE DOOR 400 (architect ruling 2026-10-12): a document drop must name a REGISTERED kind.
+    # Before the event check and the bounded read, so a refused drop writes nothing.
+    if declared_content_kind is None or _registered_kind is None:
+        _doc_kinds = sorted(r.kind for r in content_kinds.registrations() if r.branch == "document")
+        if declared_content_kind is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "content_kind_required",
+                    "message": (
+                        "content_kind is required: pick the registered kind of this document "
+                        "and resubmit. Refusing before any write."
+                    ),
+                    "registered": _doc_kinds,
+                },
+            )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "kind_unregistered",
+                "message": (
+                    f"content_kind {declared_content_kind!r} is not a registered content kind. "
+                    "Refusing before any write."
+                ),
+                "registered": _doc_kinds,
+            },
+        )
+    if _registered_kind.branch == "event":
         raise HTTPException(
             status_code=422,
             detail={
@@ -10732,6 +10762,42 @@ async def _file_or_find_document_promotion_task(
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     return task_id, "FILED"
+
+
+@app.get("/ingest/retries")
+async def list_ingest_retries(
+    limit: int = _Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /ingest/retries -- retried drops awaiting relaunch. SERVICE-ONLY: only `svc:doc-tools`
+    (see `_DOC_TOOLS_SERVICE_AUTHZ_ID`) may call this; every other caller gets 403.
+
+    The architect's 2026-10-12 ruling (Shape 1). `POST /ingest/{id}/retry` re-opens a failed row
+    at `received` with `attempt` + 1, but doc-tools' sensor cannot see the object again (its S3
+    cursor has passed it), so doc-tools polls THIS route and launches each entry with the Dagster
+    run_key `{ingest_id}-a{attempt}`. The row stays at `received` until the relaunched run posts
+    `extracting`, so the same entry is listed on every poll; the attempt-keyed run_key is what
+    makes the relaunch idempotent. A row not relaunched within `INGEST_RECEIVED_TIMEOUT_SECONDS`
+    is failed `timeout` by the watchdog, as before. Oldest first; event rows never appear.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "GET /ingest/retries is callable only by doc-tools' own service identity.",
+        })
+    rows = await run_in_threadpool(lambda: ingest_status.list_pending_retries(limit=limit))
+    return {"retries": [
+        {"ingest_id": r["id"], "attempt": r["attempt"],
+         "run_key": f"{r['id']}-a{r['attempt']}",
+         "kind": r["kind"], "content_kind": r["content_kind"],
+         "object_prefix": r["object_prefix"], "sha256": r["sha256"],
+         "run_id": r["run_id"], "updated_at": r["updated_at"]}
+        for r in rows]}
 
 
 @app.post("/ingest/{ingest_id}/stage")
