@@ -358,6 +358,19 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - **N7** (`_bind_from_scope` passes `""`): red on row 7 and the count.
 - **Packet placed:** `2026-10-12-packet-to-74-a-blank-user-email-is-now-absent-in-every-census-arm.md` (cc the architect).
 
+## 2026-10-13: row 17 moves with #52; NO_PERSON is 4 (#47, `6780e7d9`)
+
+- **The rulings (architect, 2026-10-12 13:13):** "gov: accepted; row 17 moves with #52 in the 188 landing; blank user_email = absent (done)."
+- **`0eb0de7a` merges lane/74's #52 (`5902102b`).** #52 is based on a newer master, so the merge also brings in 29 rev-187 commits. The merge was clean.
+  - Three packets that were untracked in ia-gov, and that master now tracks, blocked the merge. Each was byte-identical to master's copy. I backed them up, moved them aside, merged, and cmp'd them back.
+- **Before the move**, on the merged tree, there were exactly 2 reds: row 17 and the count (4 vs 5). POPULATION was green, so rev 187 adds no caller site.
+- **`6780e7d9`:** row 17 is now TEST_PERSONA, because `_smoke_person()` reads `IA_SMOKE_ON_BEHALF_OF` and raises without it. NO_PERSON is 4 (rows 13–16). 27 passed.
+- **Mutants:**
+  - R1 (no raise): red on row 17.
+  - R2 (`""`): red on row 17 and the count.
+  - R3 (`"svc:supervisor"`): red on row 17 only. The count arm treats a service literal as a person, so the TEST_PERSONA arm is the only guard for that shape.
+- **Packet placed:** `2026-10-13-packet-to-01-for-188-take-47-at-6780e7d9-it-carries-52-and-moves-row-17.md` (cc the architect and 74).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
