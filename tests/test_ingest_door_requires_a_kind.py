@@ -108,3 +108,30 @@ def test_blank_or_malformed_keeps_its_422(client, rig, bad):
     r = _drop(client, content_kind=bad)
     assert r.status_code == 422, r.text
     _nothing_written(rig)
+
+
+def test_the_real_openddil_lab_overlay_registers_xml_and_not_cad(client, rig, monkeypatch):
+    """Against the REAL shipped overlay (not the fixed stand-in): `xml` passes the door,
+    `cad` is 400 kind_unregistered. Deleting xml.yaml reddens the first half."""
+    from pathlib import Path
+    overlay = Path(__file__).resolve().parents[1] / "policy" / "overlays" / "openddil-lab" / "content_kinds"
+    monkeypatch.undo()  # drop the rig's stand-in registry; rebuild the doubles over the real one
+    monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(overlay))
+    s3, recorded = [], []
+
+    class _S3:
+        def put_object(self, **kw):
+            s3.append(kw)
+
+    monkeypatch.setattr(gateway, "_build_s3_client", lambda: _S3())
+    monkeypatch.setattr(gateway, "_create_ingest_node", lambda **kw: None)
+    monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
+    monkeypatch.setattr(ist, "record_received",
+                        lambda **kw: recorded.append(kw) or {"id": kw["ingest_id"], "status": "received"})
+    ok = _drop(client, content_kind="xml")
+    assert ok.status_code == 200, ok.text
+    assert recorded and recorded[0]["content_kind"] == "xml"
+    bad = _drop(client, content_kind="cad")
+    assert bad.status_code == 400, bad.text
+    assert bad.json()["detail"]["error"] == "kind_unregistered"

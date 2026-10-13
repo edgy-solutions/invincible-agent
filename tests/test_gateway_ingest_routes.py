@@ -1642,7 +1642,8 @@ def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting
 
 
 # The ruling's set (architect, 2026-10-02): "engineering-document, doors-export, pdf -> none".
-_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export"}
+# `xml` joined 2026-10-13 (format-level, domain null like pdf; the door 400s an unregistered kind).
+_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export", "xml"}
 _OPENDDIL_CONTENT_KINDS = (Path(__file__).resolve().parents[1]
                            / "policy" / "overlays" / "openddil-lab" / "content_kinds")
 
