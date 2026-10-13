@@ -838,7 +838,18 @@ cortexUi:
     # unchanged, so VITE_FEATURES is unchanged. The rail's ingest entry reads
     # GET /ingest/{id}/status, which the rolled fleet already serves. `npm run walk` needs a
     # cortex checkout at or after f3617a9 from this pin on.
-    digest: "sha256:facdc367f7a85f5cf644bcf4c7ceba88c706033b98f7550c8a835b21beacfcfc"
+    # 2026-10-13, pinned for rev 188: cortex-ui 88a65d4 (master; merges #19 POST /ingest carries
+    # content_kind, #20 the walk classifies only the ask's own artifact and reads version.json
+    # through the pinned browser, #21 row_edits ON by default with the send matching the
+    # producer's models, #22 a failed drop draws its failure and can be retried) -> 7b2b6129.
+    # f3617a9 and 10f64f1 are both ancestors of 88a65d4. Measured before pinning: the FULL tag
+    # resolves to this digest; the abbreviated tag and the full tag with its last hex altered both
+    # answer not found; the f3617a9 control still resolves to facdc367. Since f3617a9 the
+    # Dockerfile and nginx config are unchanged; docker-entrypoint.sh changes one comment line, and
+    # .github only moves PRODUCER_REF to 49aa5e28 (a parity-test checkout, not a build arg), so
+    # VITE_FEATURES is unchanged. VITE_REVIEW_ROW_EDITS now defaults ON in the image and this
+    # chart still does not set it (only the exact string "false" turns it off).
+    digest: "sha256:7b2b612913c7d34caf16b3524c443e5144f55f8e288cf1f8685649178d9c2013"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

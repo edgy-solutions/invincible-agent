@@ -94,10 +94,15 @@ def test_retry_missing_row_gets_404(client, monkeypatch):
     assert r.status_code == 404
 
 
-@pytest.mark.parametrize("stage", [ist.PROMOTED, ist.REJECTED, ist.FAILED, ist.DUPLICATE,
-                                   ist.CASE_OPENED, ist.REVIEW_REJECTED])
-def test_retry_terminal_stage_returns_409(client, monkeypatch, stage):
-    row = {"id": "deadbeef", "status": stage, "kind": "pdf",
+# FAILED is not in this list for a DOCUMENT row any more: 2026-10-12 ("pipeline failure must reach
+# the row") makes a failed document row retryable (tests/test_a_pipeline_failure_reaches_the_row.py).
+# A failed EVENT row stays terminal -- its fix is to resend the event -- so FAILED is exercised here
+# with kind=event, every other stage with a pdf row as before.
+@pytest.mark.parametrize("stage,kind", [
+    (ist.PROMOTED, "pdf"), (ist.REJECTED, "pdf"), (ist.FAILED, ist.EVENT), (ist.DUPLICATE, "pdf"),
+    (ist.CASE_OPENED, "pdf"), (ist.REVIEW_REJECTED, "pdf")])
+def test_retry_terminal_stage_returns_409(client, monkeypatch, stage, kind):
+    row = {"id": "deadbeef", "status": stage, "kind": kind,
           "submitted_by": "alice@example.com", "pin_digest": _OLD}
     monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     r = client.post("/ingest/deadbeef/retry", json=_NEW)

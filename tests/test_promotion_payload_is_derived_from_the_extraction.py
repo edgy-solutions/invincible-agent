@@ -188,4 +188,5 @@ def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_clien
     assert p["extraction_ref"] == REF and p["pipeline_version"] == "doc-tools@61f74dc"
     promotion.subject_from_payload(p)
     assert wired["status"] == [("review", {"extracted_count": None, "extracted_total": None,
-                                           "detail": None, "extraction_ref": REF})]
+                                           "detail": None, "extraction_ref": REF,
+                                           "notice_id": "PCN26-119"})]
