@@ -127,9 +127,21 @@ def test_a_real_vintage_outside_the_lot_still_asks(eo, monkeypatch):
     assert other[0] in eo._test_calls.fanout
 
 
-def test_a_provider_that_does_not_say_it_scoped_binds_nothing(eo, monkeypatch):
-    """Absent `scoped_by` is class-wide by contract, and a class-wide list is not what the verb
-    accepts. Same members, same value: only the claim differs, and the bind must refuse."""
+def test_a_provider_that_does_not_say_it_scoped_still_binds_and_says_so(eo, monkeypatch):
+    """Q4 (ruled 2026-10-12): `scoped_by` is metadata, never a precondition. Same members, same
+    value, only the claim differs -- so the bind no longer refuses, and the record carries the
+    absent claim as `scoped_by: []` for a consumer to read. The 2026-09-16 form of this arm
+    ("binds nothing") asserted the rule the ruling relaxed."""
     eo._test_calls.drop_scoped_by = True
     r = _fill(eo, monkeypatch, {"rate_vintage": "2021-02-01", "lot": "lot 3"})
-    assert "rate_vintage" not in r.slots, r.slots
+    assert r.slots.get("rate_vintage") == "2021-02-01", (r.slots, r.refused, r.resolution)
+    res = r.resolution["rate_vintage"]
+    assert res["bound_from"] == "scope" and res["scoped_by"] == [], res
+    assert "2021-02-01" not in eo._test_calls.fanout, "the bind came from the fan-out, not the enumeration"
+
+
+def test_a_scoped_bind_carries_its_scope(eo, monkeypatch):
+    """The other half of the metadata: when the provider DID scope, the record says by what --
+    which is the only thing that distinguishes the two binds above."""
+    r = _fill(eo, monkeypatch, {"rate_vintage": "2021-02-01", "lot": "lot 3"})
+    assert r.resolution["rate_vintage"]["scoped_by"] == ["lot"], r.resolution["rate_vintage"]

@@ -2,9 +2,10 @@
 
 TWO HALVES, ONE COMMIT, AND THIS IS THE SEAL THAT KEEPS THEM TOGETHER. Declaring
 `referent: cost#RateTable` on `rate_vintage` alone does not turn a free-text box into a good
-menu — it turns it into a TWELVE-option class-wide menu, because `class_wide` has exactly one
-producer (`slot_disposition.py:496`) behind a `declared_scope ∩ offered` test that needs a
-`narrowed_by` no row has. Ten of those twelve are invalid for any given lot, and — the sharper
+menu -- it turns it into a TWELVE-option class-wide menu. (Until 2026-10-12 `slot_disposition`
+dropped such a list behind a `declared_scope ∩ offered` test; that rule is relaxed -- a menu is
+kept whenever the engine returns a member list -- so the provider scoping is now the ONLY guard.)
+Ten of those twelve are invalid for any given lot, and — the sharper
 half, measured 2026-09-23 — all twelve are in the id form `<fy>-<vintage>` while the slot
 accepts a bare `<vintage>`, so the class-wide ids intersect the accepted values in NOTHING.
 A chip from that menu is refused by the verb even when the user picks the right vintage, which
