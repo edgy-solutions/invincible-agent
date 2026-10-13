@@ -49,6 +49,7 @@ config inference needs `StartReviewConfig` as a real type, not a stringized anno
 """
 import hashlib
 import json
+import logging
 import os
 import re
 from typing import List, Optional, Tuple
@@ -73,6 +74,8 @@ _ARTIFACT_BUCKET = os.environ.get("ARTIFACT_BUCKET", "processing-artifacts")
 # endswith("/review.json") filter is what selects the "extraction done" artifact.
 _WATCH_PREFIX = os.environ.get("REVIEW_WATCH_PREFIX", "sustainment/")
 
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_log = logging.getLogger(__name__)
 _PART_FIELD = re.compile(r"parts\[(\d+)\]\.(\w+)")
 
 
@@ -138,7 +141,7 @@ def build_start_review_payload(
     if isinstance(cats, str):
         cats = re.split(r"[,;]", cats)
     categories = [str(c).strip() for c in (cats or []) if str(c).strip()]
-    return {
+    payload = {
         "notice_id": review_json.get("doc_id"),
         "doc_type": review_json.get("doc_type") or doc_type,
         "categories": categories,
@@ -196,6 +199,14 @@ def build_start_review_payload(
         # review.json written before doc-tools stamped it.
         "trace_id": review_json.get("trace_id") or "",
     }
+    # The source document's identity, when doc-tools stamped it. A malformed value is omitted,
+    # never repaired: a wrong id would mark the wrong ingest row.
+    _sha = review_json.get("source_sha256")
+    if isinstance(_sha, str) and _SHA256_RE.match(_sha):
+        payload["ingest_id"] = "sha256:" + _sha
+    else:
+        _log.info("review.json source_sha256 absent or malformed; no ingest_id in the payload")
+    return payload
 
 
 # PER-NOTICE CONTENT refusals: statements about THIS document, which only the

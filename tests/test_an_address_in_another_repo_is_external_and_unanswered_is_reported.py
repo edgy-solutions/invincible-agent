@@ -252,6 +252,9 @@ RULED = [
      "worktree"),
     ("cortex-ui/lane/cortex-60", "cortex-ui/lane/cortex-60", "external", "repo"),
     ("ia-cortex-60/lane/cortex-60", "cortex-60", "lane", "worktree"),
+    # ruling Q10 (2026-10-10), its own example: <repo>/master, another repo only (gov 9766f984).
+    ("cortex-ui/master", "cortex-ui/master", "external", "branch"),
+    ("`cortex-ui/master`", "cortex-ui/master", "external", "branch"),
 ]
 
 

@@ -32,6 +32,7 @@ SAF_REFUSAL = {
     "refused": True, "outcome": "source_unavailable",
     "reason": "the connector could not read the source",
     "connector": "saf-sql", "fn": "incident_rate",
+    "hazard_id": "HAZ-1003", "gap": "no incident-rate source is connected",
 }
 
 
@@ -77,6 +78,7 @@ def test_a_refused_saf_body_projects_an_empty_array_and_its_envelope(m):
         "refused": True, "outcome": "source_unavailable",
         "reason": "the connector could not read the source",
         "connector": "saf-sql", "fn": "incident_rate",
+        "hazard_id": "HAZ-1003", "gap": "no incident-rate source is connected",
     }
 
 
@@ -90,6 +92,7 @@ def test_connector_and_fn_travel_only_when_the_producer_supplied_them(m):
     bare = _project(m, {"refused": True, "outcome": "source_unavailable", "reason": "r"})
     assert set(bare["refusal"]) == set(m.REFUSAL_ENVELOPE_REQUIRED)
     assert "connector" not in bare["refusal"] and "fn" not in bare["refusal"]
+    assert "hazard_id" not in bare["refusal"] and "gap" not in bare["refusal"]
     only_fn = _project(m, {"refused": True, "outcome": "o", "reason": None, "fn": "f"})
     assert only_fn["refusal"]["fn"] == "f" and "connector" not in only_fn["refusal"]
     assert only_fn["refusal"]["reason"] is None

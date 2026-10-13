@@ -223,6 +223,55 @@ what the reader then returns.
 
 Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev 187.
 
+## 2026-10-11: Q2b and Q2c built
+
+**Where the wording comes from.** "Q2 state-function filing, Q2c retry" is your day plan. The exact Q2b/Q2c wording below is from my trace. I have not seen Chris's pasted 21:29/22:11 text, and will check against it before #32's next merge.
+
+- **Q2b and Q2c: BUILT at `00374662`** on lane/gov, pushed. Filing is now a function of state.
+  - `_file_promotion_if_ready(ingest_id, requested_by=...)` files if and only if the row is at `awaiting_origin` AND the artifact carries an accepted origin. Three places call it:
+    - the accept route (as before);
+    - the stage route, right after it moves a domainless row to `awaiting_origin`. That is Q2b, for an accept that landed while the row was still extracting;
+    - the retry route, which no longer treats `awaiting_origin` as terminal. That is Q2c: filed → 200 `review`; no accepted origin → 409 `awaiting_origin`; an unreadable origin or a refused filing → 503 `promotion_not_filed`.
+  - **The domain is read back from the store**, not taken from the request body. "Accepted" uses the same predicate as `notice_parts.source_visibility` (checked: an owner domain is present, and `resolved_by` is not empty or `unresolved`).
+  - **A read that raises is an unknown origin, not an absent one.** Nothing is filed and the row stays put.
+  - **`dropped_by` still comes from the row** (`submitted_by` / `on_behalf_of`), so the Q5 exclusion is unaffected. `requested_by` differs by route (case-runner service / stage caller / retrying user) and is attribution only.
+  - **Runs**, one gated file each:
+
+    | file | passed |
+    | --- | --- |
+    | new `test_promotion_filing_is_a_function_of_state` | 18 |
+    | origin write route | 24 |
+    | retry | 13 (`AWAITING_ORIGIN` left the terminal parametrization) |
+    | ingest routes | 66 |
+    | e2e seal | 8 |
+    | `test_promotion_records_origin` | 25 |
+    | approval plane | 73 |
+
+  - **Mutants M1–M6**, each restored and checked with `cmp`. Each one reds the arm derived from its subject:
+
+    | mutant | red arms |
+    | --- | --- |
+    | M1 the stage route skips the state function | the Q2b order arm and the one-predicate arm |
+    | M2 `awaiting_origin` terminal again in retry | three retry arms |
+    | M3 the reader accepts `unresolved` | its arm only |
+    | M4 no status check | the order arm, the second-accept arm, and a neighbour on all 5 stages |
+    | M5 status moved before filing | two arms |
+    | M6 the domain read from the request body | its arm only |
+
+  - **Two things found, not changed:**
+    1. A retry of a row already at `review`, for a deliberately domainless kind, answers 422 `no_declared_domain`.
+       - The shared helper resolves the domain from the kind registry before it looks for the task, and the review retry passes no domain.
+       - So an origin-filed row can never take retry's already-filed path. This predates Q2.
+       - Should the review retry read the stored origin, the same way?
+    2. On the stage route, a refused filing answers `NO_TASK_AWAITING_ORIGIN` and only logs the reason.
+- **Q6: BUILT on lane/gov.** The listing is for Lane 1's rev-187 refile: `scripts/backfill_promotion_origin.py --list-old-audiences`.
+  - It needs only `PROJECTOR_POSTGRES_DSN`, never touches Neo4j, and writes nothing.
+  - "Old" means the real `promotion.domain_of` refuses the audience.
+  - Each line carries `task_id`, `ingest_id`, `audience`, `proposed_domain`, `proposed_from` and `created_at`. The proposed domain comes from payload `review_pool`, else the legacy `domain`, else `undecided`; never from the audience.
+  - Exit codes: 0 none, 1 some, 2 could not look.
+  - The new file passes 7; `test_promotion_records_origin` passes 25 and the e2e seal 8. Mutants B1–B4 each red their arm.
+  - **Not run live.** It has had no DSN here; Lane 1 runs it in the roll.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.

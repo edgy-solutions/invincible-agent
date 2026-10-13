@@ -1,5 +1,38 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.43 — 2026-10-12
+
+Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:2556cf5b…` (cortex-ui b566192).**
+  This build includes cortex #10 (3fa6fcb, the answers perf merge), and pinning it was
+  conditional on that. It also carries #4, the composer: rev 187 rolled on 865c080, which lacks
+  it. The tag-to-digest binding was measured before pinning; the values comment records how.
+
+## 0.4.42 — 2026-10-11
+
+Rev 187, second chart change: answers at scale (#42, lane/01-answers-at-scale, numbered 0.4.44 on
+its branch) and the group-audience exit code (#35, lane/01-group-audiences). Renumbered at merge;
+0.4.41 below is the rev's first.
+
+### Added
+
+- **`answer_artifact_projection` gains `archived_at`, `archived_by`, `archive_reason`** and two
+  indexes (`files/sql/create_answer_artifact_projection.sql`): `idx_aap_user_created`
+  (newest-first paging per user) and `idx_aap_search_tsv`, an EXPRESSION GIN index over
+  question_text + summary. Not a generated column, because Electric refuses to replicate one.
+  Every statement is idempotent (`IF NOT EXISTS`), so the existing schema job applies it to a
+  live table.
+
+### Changed
+
+- **`task-grant-sync-job.yaml` documents exit code 5:** a `grant_to_groups` entry names a group
+  object absent from live Topaz (REFUSED, nothing applied). `set -e` already fails the Job on it;
+  the change is to the header comment only.
+
 ## 0.4.41 — 2026-10-11
 
 Rev 187. Two walkers, and the reconcile creates a local human the live realm lacks (6c93b1c2).

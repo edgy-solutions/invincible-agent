@@ -168,3 +168,30 @@ CREATE TABLE IF NOT EXISTS projector_skip_log (
 
 CREATE INDEX IF NOT EXISTS idx_psl_artifact_id
     ON projector_skip_log (artifact_id);
+
+-- ── Answers at scale (rev 187) ──
+--
+-- Archive: HIDDEN FROM THE DEFAULT VIEW, NEVER DELETED. The record of an
+-- archive lives on the Neo4j AnswerArtifact node (archived_at / archived_by /
+-- archive_reason, plus archive_history there only) and is PROJECTED here --
+-- this table is rebuilt from Neo4j, so Postgres alone is never the record.
+-- NULL archived_at = live. archived_at is epoch ms, like created_at.
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS archived_at BIGINT;
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS archived_by TEXT;
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+
+-- Newest-first paging for GET /answers: the caller's own rows by created_at
+-- (ms) DESC.
+CREATE INDEX IF NOT EXISTS idx_aap_user_created
+    ON answer_artifact_projection (produced_for_user_id, created_at DESC);
+
+-- Server-side search over question_text + summary: an EXPRESSION index, and
+-- deliberately NOT a generated column -- Electric refuses to replicate a table
+-- with a generated column (see the 2026-06-30 note above), and the cortex-ui
+-- shape names no `columns`. The GET /answers query repeats this expression
+-- EXACTLY (answer_list.SEARCH_EXPR); a seal compares the two.
+CREATE INDEX IF NOT EXISTS idx_aap_search_tsv
+    ON answer_artifact_projection USING GIN (to_tsvector('simple', coalesce(question_text,'') || ' ' || coalesce(summary,'')));

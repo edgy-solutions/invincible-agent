@@ -38,17 +38,18 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Any, Optional
+from typing import AsyncGenerator, Any, Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
+from fastapi import Query as _Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -643,9 +644,83 @@ class HumanTaskRegisterRequest(_BaseModel):
     excludes: list[str] = []
 
 
+_GROUPED_REJECT_CODES = ("not_a_notice", "parts_list_unusable", "superseded_or_duplicate")
+
+
+def _nonblank(v: str) -> str:
+    if not isinstance(v, str) or not v.strip():
+        raise ValueError("must be a non-empty string")
+    return v
+
+
+class _RowEditsModel(_BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class DeletedRow(_RowEditsModel):
+    mpn: str
+    reason: str   # a delete needs a reason
+
+
+class AddedRow(_RowEditsModel):
+    mpn: str
+    disposition: str
+    reason: str
+    evidence: str
+
+
+class CorrectedRow(_RowEditsModel):
+    mpn: str            # the EXTRACTED mpn -- identity never moves
+    corrected_mpn: str
+    evidence: str
+
+
+class RowEdits(_RowEditsModel):
+    """Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's
+    `steward_correction.validate_row_edits` restates every rule against the server-authored batch;
+    this is the wire half, so a bad payload is a 422 before it reaches Restate."""
+    deleted: list[DeletedRow] = []
+    added: list[AddedRow] = []
+    corrected: list[CorrectedRow] = []
+
+    @model_validator(mode="after")
+    def _rules(self):
+        for r in self.deleted:
+            _nonblank(r.mpn); _nonblank(r.reason)
+        for r in self.added:
+            for v in (r.mpn, r.disposition, r.reason, r.evidence):
+                _nonblank(v)
+        for r in self.corrected:
+            for v in (r.mpn, r.corrected_mpn, r.evidence):
+                _nonblank(v)
+            if r.corrected_mpn.strip().lower() == r.mpn.strip().lower():
+                raise ValueError(f"corrected_mpn must differ from mpn for {r.mpn!r} (ignoring case)")
+        seen: set = set()
+        for r in list(self.deleted) + list(self.corrected):
+            k = r.mpn.strip().lower()
+            if k in seen:
+                raise ValueError(f"mpn {r.mpn!r} appears more than once across deleted/corrected")
+            seen.add(k)
+        return self
+
+
 class HumanTaskActRequest(_BaseModel):
     decision: str  # "approved" | "rejected"
     comment: str = ""
+    # Grouped review only. A narrow REJECT (wrong document / not a notice / duplicate) names why;
+    # REQUIRED for a grouped_review reject (checked at the route, where the kind is known).
+    reason_code: Optional[Literal["not_a_notice", "parts_list_unusable", "superseded_or_duplicate"]] = None
+    # Grouped review approval only: steward deletes / additions / corrections, each with evidence.
+    row_edits: Optional[RowEdits] = None
+
+    @model_validator(mode="after")
+    def _verb_fields(self):
+        if self.reason_code is not None and self.decision != "rejected":
+            raise ValueError("reason_code is only valid with decision='rejected'")
+        if self.row_edits is not None and self.decision != "approved":
+            raise ValueError("row_edits is only valid with decision='approved'")
+        return self
+
     # PCN grouped review only: optional per-part disposition overrides the reviewer
     # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
     # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
@@ -1016,6 +1091,10 @@ class ReviewStartRequest(_BaseModel):
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
+    # The ingest row this notice came through (`sha256:<64 hex>`), when the extraction names its
+    # source document. The ONLY key the narrow reject may use to mark an ingest row: the
+    # extracted doc_id (`notice_id`) is LLM-derived and never matches a row id.
+    ingest_id: Optional[str] = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     # ── ADMISSION FACTS: REMOVED FROM THE CONTRACT (ADR-0034 phase 1.3, consumer half) ────────
     # `format_fingerprint` / `pipeline_version` were briefly accepted here as caller-supplied
     # facts. They are gone: ReviewStarter DERIVES both from the artifact `artifact_uri` names.
@@ -1178,6 +1257,7 @@ async def start_review(
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    body["ingest_id"] = req.ingest_id or ""   # rebuilding hop: absent here = absent downstream
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
     # contract. This is a REBUILDING HOP (the body is hand-enumerated twice over), which is exactly
@@ -3644,14 +3724,36 @@ async def act_on_human_task(
             # on the grouped-task register). Fail loudly rather than mark-resolved-and-dangle.
             raise HTTPException(status_code=409, detail={"error": "grouped_review_unresumable",
                 "message": "grouped-review task has no workflow_id; cannot resume the review"})
-        if req.decision == "rejected":
-            # A grouped-review rejection must CANCEL the durable workflow, else it dangles
-            # suspended (the suspend-vs-fail DoS). Cancellation-on-reject is a filed follow-up;
-            # refuse loudly here rather than mark-resolved-and-dangle. To change dispositions,
-            # the reviewer sends per-part `overrides` and approves.
-            raise HTTPException(status_code=501, detail={"error": "grouped_reject_not_wired",
-                "message": "grouped-review rejection needs workflow cancellation (follow-up); "
-                           "use per-part overrides to change dispositions, then approve"})
+        if req.decision == "rejected" and req.reason_code is None:
+            raise HTTPException(status_code=422, detail={"error": "reason_code_required",
+                "message": "a grouped-review reject needs a reason_code",
+                "codes": list(_GROUPED_REJECT_CODES)})
+        if req.decision == "approved" and req.row_edits is not None:
+            # The batch rules (an added mpn must not collide with an extracted one, ...) need the
+            # SERVER-AUTHORED batch. Read it back (best effort) and refuse with 422 here; Restate's
+            # evaluate_submission re-validates regardless, so this is an early, clearer refusal.
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as _c:
+                    _gb = await _c.post(
+                        f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(wf)}/get_batch")
+                _mpns = ([i.get("mpn") for i in (_gb.json().get("items") or [])]
+                         if _gb.status_code == 200 else None)
+            except Exception:  # noqa: BLE001 -- the workflow validates again
+                _mpns = None
+            if _mpns is not None:
+                _have = {str(m).strip().lower() for m in _mpns}
+                _e = req.row_edits
+                _bad = (
+                    [f"added mpn {r.mpn!r} collides with an extracted row"
+                     for r in _e.added if r.mpn.strip().lower() in _have]
+                    + [f"corrected_mpn {r.corrected_mpn!r} collides with an extracted row"
+                       for r in _e.corrected if r.corrected_mpn.strip().lower() in _have]
+                    + [f"mpn {r.mpn!r} is not a row of this review"
+                       for r in list(_e.deleted) + list(_e.corrected)
+                       if r.mpn.strip().lower() not in _have])
+                if _bad:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "row_edits_invalid", "message": _bad[0], "problems": _bad})
         # approved -> submit the (accept-all + optional per-part overrides) decision.
         #
         # `acted_by` RIDES THE DECISION AS DATA (2026-08-05). Until now nothing carried the
@@ -3679,7 +3781,13 @@ async def act_on_human_task(
         # ATTRIBUTED silently re-aims the GATE — the two would move together with nothing to say
         # they should not. Same-value-different-question is the reason for the duplication, not an
         # oversight. See docs/plans/approval-bypass-bpmn-runner.md.
-        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id}
+        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id,
+                    "verdict": req.decision}
+        if req.decision == "rejected":
+            decision["reason_code"] = req.reason_code
+            decision["comment"] = req.comment
+        elif req.row_edits is not None:
+            decision["row_edits"] = req.row_edits.model_dump()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
@@ -3744,6 +3852,31 @@ async def act_on_human_task(
                 comment=req.comment, workflow_id=wf,
             )
         )
+        if sub.get("rejected"):
+            # NARROW REJECT: the workflow wrote nothing. The task is closed (above); the ingest row,
+            # when this notice is one, ends `review_rejected` (best effort -- never fail the act).
+            # Keyed by the INGEST ID only. The fingerprint is the extracted doc_id and never
+            # matches an ingest row; a review without an ingest id writes nothing.
+            _iid = sub.get("ingest_id") or ""
+            _row = "unlinked"
+            if _iid:
+                try:
+                    from . import ingest_status as _ist
+                    await run_in_threadpool(
+                        lambda: _ist.update_status(_iid, _ist.REVIEW_REJECTED,
+                                                   detail=req.reason_code or "rejected"))
+                    _row = "review_rejected"
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("review_rejected status not written for %s: %s", _iid, exc)
+            else:
+                logger.info("pcn grouped review rejected with no ingest_id: ingest row unlinked, "
+                            "task_id=%s wf=%s", task_id, wf)
+            logger.info("pcn grouped review rejected: task_id=%s wf=%s by=%s code=%s",
+                        task_id, wf, actor, req.reason_code)
+            return {"task_id": task_id, "decision": req.decision, "accepted": True,
+                    "rows_resolved": n, "review_dispatched": False,
+                    "reason_code": req.reason_code, "status": "review_rejected",
+                    "ingest_row": _row}
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
                     task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,
@@ -5416,6 +5549,11 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
     from . import human_tasks, origin as origin_mod
     from starlette.concurrency import run_in_threadpool
 
+    # NO RECORDED ORIGIN -> False before anything about the caller is read: the docstring's
+    # "never raises" for that artifact (rev 187 merge restored this early return; the domain-only
+    # steward attestation still goes on to `visible_by_origin` below).
+    if not (rec.get("origin_owner_domain") or "").strip():
+        return False
     viewer_domains = {c.domain for c in current_user.entitlements.cells}
     table = _load_domain_consumption_table()
     program = rec.get("origin_program")
@@ -5438,54 +5576,11 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
         ) from exc
 
 
-class ArtifactResponse(_BaseModel):
-    """What a caller may read back about ONE of their own artifacts.
-
-    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
-    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
-    time. `rendered_output` is large, it is already streamed and projected, and a second
-    delivery path for it is a second thing to keep in step with the projector.
-    """
-    id: str
-    status: Optional[str] = None
-    summary: Optional[str] = None
-    question_text: Optional[str] = None
-    valid_as_of: Optional[int] = None
-    duration_ms: Optional[int] = None
-    derived_from: Optional[str] = None
-    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
-    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
-    # has no recorded verb" from "its verb is the string UNKNOWN".
-    subject_uri: Optional[str] = None
-    verb_iri: Optional[str] = None
-    subject_instance_id: Optional[str] = None
-
-
-@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
-async def get_artifact(
-    artifact_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Read back ONE artifact the caller produced — id, status, and its recorded route.
-
-    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
-    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
-    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
-    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
-
-    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
-    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
-    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
-    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
-    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
-    route cannot enforce that, but it can refuse to hand out a value that invites it.
-
-    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
-    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
-    but is not theirs is an existence oracle over other people's questions, and the question
-    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
-    before it becomes one.
-    """
+async def _entitled_artifact_rec(artifact_id: str, current_user: User) -> dict:
+    """The ONE entitlement decision for reading an AnswerArtifact by id, shared by
+    `GET /artifacts/{id}` (body-less) and `GET /answers/{id}/body`. Returns the node record the
+    decision was made on; raises 403/404/503 exactly as `/artifacts/{id}` always has. Callers
+    choose what to project from the record; this function never decides what is returned."""
     # ── THE KEY THE WRITER STAMPED, NOT THE AUTHORIZATION IDENTITY ─────────────────────
     #
     # MEASURED 2026-09-09: this route read `authz_id` and 285 of alice's 286 artifacts were
@@ -5574,6 +5669,59 @@ async def get_artifact(
                 )
             raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
 
+    return rec
+
+
+class ArtifactResponse(_BaseModel):
+    """What a caller may read back about ONE of their own artifacts.
+
+    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
+    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
+    time. `rendered_output` is large, it is already streamed and projected, and a second
+    delivery path for it is a second thing to keep in step with the projector.
+    """
+    id: str
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    question_text: Optional[str] = None
+    valid_as_of: Optional[int] = None
+    duration_ms: Optional[int] = None
+    derived_from: Optional[str] = None
+    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
+    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
+    # has no recorded verb" from "its verb is the string UNKNOWN".
+    subject_uri: Optional[str] = None
+    verb_iri: Optional[str] = None
+    subject_instance_id: Optional[str] = None
+
+
+@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
+async def get_artifact(
+    artifact_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Read back ONE artifact the caller produced — id, status, and its recorded route.
+
+    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
+    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
+    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
+    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
+
+    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
+    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
+    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
+    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
+    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
+    route cannot enforce that, but it can refuse to hand out a value that invites it.
+
+    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
+    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
+    but is not theirs is an existence oracle over other people's questions, and the question
+    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
+    before it becomes one.
+    """
+    rec = await _entitled_artifact_rec(artifact_id, current_user)
+
     intent: dict = {}
     if rec.get("resolved_intent"):
         try:
@@ -5600,6 +5748,115 @@ async def get_artifact(
         verb_iri=_or_none(intent.get("verb_iri")),
         subject_instance_id=_or_none(intent.get("subject_instance_id")),
     )
+
+
+# ── Answers at scale (rev 187) ─────────────────────────────────────────────────────────
+#
+# Cortex measured one Electric shape of the projection at 6.82 MB for ~816 rows (`routing` 47%,
+# `rendered_output` 31%); a list row needs ~200 B. So: summaries here, one body by id below, and
+# `/artifacts/{id}` stays body-less.
+
+def _answers_scope_id(current_user: User) -> str:
+    """The caller key the Electric proxy filters on: the JWT `sub`, validated by the SAME
+    `_escape_sql_string_literal` (UUID check). The list query binds it as a parameter, so the
+    value is the raw id, never the quote-escaped literal -- the two are equal for any UUID."""
+    verified_user_id = current_user.id
+    try:
+        _escape_sql_string_literal(verified_user_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=403, detail="no usable caller identity on this request") from exc
+    return verified_user_id
+
+
+@app.get("/answers", tags=["answers"])
+async def list_answers(
+    page: int = _Query(1, ge=1),
+    size: int = _Query(50, ge=1, le=200),
+    sort: str = _Query("newest", pattern="^(newest|oldest)$"),
+    q: Optional[str] = _Query(None, max_length=500),
+    type: Optional[str] = _Query(None, max_length=100),
+    status: Optional[str] = _Query(None, max_length=100),
+    include_archived: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    """The caller's own answers as SUMMARIES (id, ts, title, summary, type, status, subject,
+    archived). Never a body. Archived answers are hidden unless `include_archived`."""
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_list
+
+    caller = _answers_scope_id(current_user)
+    try:
+        return await run_in_threadpool(
+            lambda: answer_list.list_answers(
+                caller=caller, page=page, size=size, sort=sort, q=q, type_=type,
+                status=status, include_archived=include_archived,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("answers list failed: %s", exc)
+        raise HTTPException(status_code=503, detail="answer store unavailable")
+
+
+@app.get("/answers/{answer_id}/body", tags=["answers"])
+async def get_answer_body(
+    answer_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """ONE body, by id, under the SAME entitlement `/artifacts/{id}` applies. Archived answers
+    stay readable: archive hides, it never revokes."""
+    from .projector.apply_loop import _parse_json
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    return {
+        "id": str(rec["id"]),
+        "rendered_output": _parse_json(rec.get("rendered_output")),
+        "routing": _parse_json(rec.get("routing_inline")),
+        "resolved_intent": _parse_json(rec.get("resolved_intent")) or {},
+    }
+
+
+class ArchiveRequest(_BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class UnarchiveRequest(_BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+async def _set_archive(answer_id: str, current_user: User, *, archive: bool, reason: Optional[str]) -> dict:
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_artifact_writer
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    # Owner only. FOLLOW-UP: steward cross-user tidy needs a Topaz permission; no persona check here.
+    if not rec.get("is_owner"):
+        raise HTTPException(status_code=404, detail=f"no artifact {answer_id!r} for you")
+    try:
+        changed = await run_in_threadpool(
+            lambda: answer_artifact_writer.set_archive_state(
+                neo4j_driver, answer_id, archive=archive,
+                by=current_user.id, reason=reason,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("archive write failed for %s: %s", answer_id, exc)
+        raise HTTPException(status_code=503, detail="artifact store unavailable")
+    return {"id": answer_id, "archived": archive, "changed": bool(changed)}
+
+
+@app.post("/answers/{answer_id}/archive", tags=["answers"])
+async def archive_answer(
+    answer_id: str, req: ArchiveRequest, current_user: User = Depends(get_current_user),
+):
+    """Hide an answer from the default view. Never deletes; idempotent."""
+    return await _set_archive(answer_id, current_user, archive=True, reason=req.reason)
+
+
+@app.post("/answers/{answer_id}/unarchive", tags=["answers"])
+async def unarchive_answer(
+    answer_id: str, req: UnarchiveRequest, current_user: User = Depends(get_current_user),
+):
+    return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
 
 
 async def _launch_supervisor_job(
@@ -9455,6 +9712,68 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     return case_projection.project_workflow_case(case, definitions, task_rows)
 
 
+from pydantic import ConfigDict as _ConfigDict  # noqa: E402
+
+
+class CaseSignalRequest(_BaseModel):
+    """Body of `POST /cases/{case_id}/signals/{signal}`. `extra="forbid"`: the actor is never
+    a body field -- an `acted_by` (or anything else) the caller supplies is a 422."""
+    model_config = _ConfigDict(extra="forbid")
+    status: str
+    comments: str = ""
+
+
+@app.post("/cases/{case_id}/signals/{signal}")
+async def answer_case_signal(
+    case_id: str,
+    signal: str,
+    req: CaseSignalRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
+    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    a cortex action (architect ruling 2026-10-10).
+
+    GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
+    engine-a's `WorkflowRunner.signal` checks `accepts`, `reason_required` and the authority
+    gate (`_authorize_resolution`: actor present, not excluded, audience journalled, `can_act`).
+    The actor is `current_user.authz_id`, never the body.
+
+    Not checked here: the audience / `can_act` (the `case` projection does not expose the
+    awaiting signal's audience, so the BFF cannot re-check it without inventing a read).
+    """
+    acted_by = (current_user.authz_id or "").strip()
+    if not acted_by:
+        raise HTTPException(status_code=401, detail={
+            "error": "no_actor",
+            "message": "a case signal needs an authenticated caller with an authz_id",
+        })
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            rr = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/signal",
+                json={"signal": signal, "status": req.status, "comments": req.comments,
+                      "acted_by": acted_by},
+            )
+    except Exception as exc:  # noqa: BLE001 — connect errors, timeouts
+        raise HTTPException(status_code=502, detail={
+            "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
+    sc = rr.status_code
+    if sc == 200:
+        return {"case_id": case_id, "signal": signal, "status": req.status, "acted_by": acted_by}
+    msg = _restate_refusal_message(rr)
+    if sc == 400:
+        raise HTTPException(status_code=400, detail={"error": "signal_refused", "message": msg})
+    if sc in (401, 403):
+        # The caller IS authenticated: a refusal here is authority, not authentication.
+        raise HTTPException(status_code=403, detail={
+            "error": "not_authorized_to_act", "code": sc, "message": msg})
+    if sc == 404:
+        raise HTTPException(status_code=404, detail="case not found")
+    raise HTTPException(status_code=502, detail={
+        "error": "signal_failed", "code": sc, "message": msg})
+
+
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
@@ -10038,20 +10357,49 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     }
 
 
-@app.post("/ingest/{ingest_id}/retry")
-async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_current_user)):
-    """POST /ingest/<id>/retry -- let the dropper un-strand their own row without a hand write
-    (roll #20 item 3).
+class IngestRetryRequest(_BaseModel):
+    """POST /ingest/{id}/retry's body: the extractor pin the caller observed NOW."""
+    pin_digest: str = Field(..., min_length=1)
 
-    SAME caller scoping as GET /ingest/{ingest_id}/status just above (visible iff
-    submitted_by == caller OR on_behalf_of == caller): reuses that route's own
-    `ingest_status.get_status_for` lookup/predicate rather than writing a second, divergent
-    one, and refuses with the SAME plain 404 body a stranger or a missing row gets from
-    status -- existence-oracle-safe for the same reason.
+
+def _is_service_caller(authz_id: Optional[str]) -> bool:
+    """A non-human authz id: the `svc:` namespace (policy/users.yaml) or an asserted delegate
+    (`_delegate_principals`, R-089: a delegate is a service, never a person). Same predicate
+    family as safety_agent/measures.py."""
+    a = (authz_id or "").strip()
+    return bool(a) and (a.startswith("svc:") or a in _delegate_principals())
+
+
+@app.post("/ingest/{ingest_id}/retry")
+async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] = None,
+                             current_user: User = Depends(get_current_user)):
+    """POST /ingest/<id>/retry -- PIN-DRIVEN ONLY (architect ruling 2026-10-10: the retry is driven
+    only by a pin change, never by the UI). Supersedes the dropper's own retry of roll #20 item 3.
+
+    TWO ACTS SHARE THIS ROUTE, and the two 2026-10-10 rulings govern one each (rev 187 merge of #32
+    and #43; the architect is asked to confirm, packet 2026-10-11 "two rulings collide"):
+      * RE-FILING a promotion from recorded state (`awaiting_origin`, Q2c) re-extracts nothing and
+        is idempotent -- the dropper may do it, exactly as the accept and stage routes may.
+      * RE-EXTRACTION (every other stage) is pin-driven and service-only, as steward item 4 rules.
+
+    Gate, in order:
+      * A PERSON is looked up SCOPED (`get_status_for`: rows they submitted or are on_behalf_of).
+        Their own `awaiting_origin` DOCUMENT row goes to Q2c. Anything else -- another stage, a row
+        that is not theirs, no row at all -- is the SAME 403 `retry_is_pin_driven`, so the answer
+        tells a person nothing about rows they cannot already see. A person never reaches the
+        unscoped lookup or any extraction-retry action.
+      * A SERVICE is looked up unscoped. An `awaiting_origin` DOCUMENT row goes to Q2c (re-filing
+        is not pin-driven). Otherwise it must send `{pin_digest}` (422 `pin_required`); a row with
+        no recorded pin is 409 `no_recorded_pin`; an equal pin is 409 `pin_unchanged`; only a
+        DIFFERENT pin proceeds to the dispatch below.
 
     Dispatch on the row:
       * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
         nothing to retry.
+      * a DOCUMENT row at `awaiting_origin` (Q2c, 2026-10-10) -- NOT terminal: runs the state
+        function `_file_promotion_if_ready` with THIS caller as `requested_by`. Filed -> 200
+        `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin
+        unreadable or filing refused -> 503 `promotion_not_filed` (row stays put).
       * an EVENT row, which by this point can only be sitting at `received` (its own only
         non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
         through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
@@ -10068,16 +10416,57 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
 
     from . import ingest_status
 
-    row = await run_in_threadpool(
-        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
-    )
+    async def _refile_from_state(requested_by: str) -> dict:
+        """Q2c (2026-10-10): re-file a DOCUMENT row at `awaiting_origin` through the SAME state function
+        the accept and stage routes call, with the retrying party as `requested_by`. Filed -> 200
+        `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin unreadable or
+        filing refused -> 503 `promotion_not_filed` (the row stays put). Re-extracts nothing."""
+        stage = ingest_status.AWAITING_ORIGIN
+        out = await _file_promotion_if_ready(ingest_id, requested_by=requested_by)
+        if out and out.get("filed"):
+            return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                    "task_id": out["task_id"], "task_status": out["task_status"]}
+        if out is None:
+            raise HTTPException(status_code=409, detail={
+                "error": "awaiting_origin", "stage": stage,
+                "message": "no accepted origin is recorded for this artifact yet; a steward's accept files it"})
+        raise HTTPException(status_code=503, detail={"error": "promotion_not_filed",
+                                                     "reason": out.get("error"), "stage": stage})
+
+    def _refiles_from_state(r: Optional[dict]) -> bool:
+        return (r is not None and r.get("status") == ingest_status.AWAITING_ORIGIN
+                and r.get("kind") != ingest_status.EVENT)
+
+    if not _is_service_caller(current_user.authz_id):
+        own = await run_in_threadpool(
+            lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id))
+        if _refiles_from_state(own):
+            return await _refile_from_state(current_user.authz_id)
+        raise HTTPException(status_code=403, detail={
+            "error": "retry_is_pin_driven",
+            "message": "a retry is driven only by an extractor pin change, never by a person"})
+    row = await run_in_threadpool(lambda: ingest_status.get_status_unscoped(ingest_id))
     if row is None:
         raise HTTPException(status_code=404, detail="ingest not found")
+    if _refiles_from_state(row):
+        return await _refile_from_state(current_user.authz_id)
+    if body is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "pin_required",
+            "message": "a service retry sends the extractor pin it observed: {pin_digest}"})
+    recorded_pin = row.get("pin_digest")
+    if not recorded_pin:
+        raise HTTPException(status_code=409, detail={
+            "error": "no_recorded_pin",
+            "message": "this row records no extractor pin (pin_fields_missing); a pin-driven "
+                       "retry needs the pin follow-up"})
+    if body.pin_digest == recorded_pin:
+        raise HTTPException(status_code=409, detail={"error": "pin_unchanged"})
 
     stage = row["status"]
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.REVIEW_REJECTED,
     )
     if stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
@@ -10315,10 +10704,10 @@ async def update_ingest_stage(
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
     # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal HERE too
-    # (its one exit is a steward's accepted origin, write_origin_route; Q2 ruling 2026-10-10),
-    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    # (its one exit is a steward's accepted origin, filed by `_file_promotion_if_ready`; Q2
+    # ruling 2026-10-10), so a later move (including `failed`) off it is refused 409.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-                        ingest_status.AWAITING_ORIGIN)
+                        ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -10374,9 +10763,9 @@ async def update_ingest_stage(
         # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
         # domained registration (the common case, and the only shape existing tests' plain stub
         # objects carry) never has to support `model_fields_set` at all.
-        # Decided HERE, in the stage route, before the shared find-or-file helper: a retry never
-        # meets this case, because `awaiting_origin` is terminal and a row only reaches it
-        # through this branch.
+        # Decided HERE, in the stage route, before the shared find-or-file helper: a row only
+        # reaches `awaiting_origin` through this branch; the retry route calls the same state
+        # function (`_file_promotion_if_ready`) for a row sitting there.
         deliberately_domainless = (
             kind_reg is not None and not kind_reg.domain
             and "domain" in getattr(kind_reg, "model_fields_set", frozenset())
@@ -10392,6 +10781,12 @@ async def update_ingest_stage(
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
                 extraction_ref=req.extraction_ref,
                 detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+            # Q2b: the steward's accept may have landed while the row was still extracting.
+            promotion_out = await _file_promotion_if_ready(ingest_id, requested_by=caller)
+            if promotion_out and promotion_out.get("filed"):
+                return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                        "task_id": promotion_out["task_id"],
+                        "task_status": promotion_out["task_status"]}
             return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
                     "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
 
@@ -10466,8 +10861,9 @@ async def write_origin_route(
 
     A steward's ACCEPT IS THE ATTESTATION (ruling 2026-10-10 Q2, superseding the 10-02 "terminal"
     ruling for the accept branch only): when the origin is `written` and the ingest row is at
-    `awaiting_origin`, this files `document_promotion:<origin owner_domain>` (origin already
-    recorded) and moves the row to `review` -- TASK FIRST, STATUS SECOND. A filing refusal never
+    `awaiting_origin`, `_file_promotion_if_ready` files `document_promotion:<owner_domain>` (the
+    domain READ BACK FROM THE STORE, what was written) and moves the row to `review` -- TASK
+    FIRST, STATUS SECOND; the stage and retry routes call the same function. A filing refusal never
     undoes the write and never strands the row: the response stays `written` with
     `promotion: {"filed": False, "error": ...}`. Reject stays terminal and dropper-only. The
     response gains `promotion` (None when nothing was attempted); `status` is unchanged.
@@ -10525,38 +10921,77 @@ async def write_origin_route(
     )
     promotion_out = None
     if result["status"] == "written":
-        promotion_out = await _file_promotion_for_accepted_origin(req)
+        promotion_out = await _file_promotion_if_ready(
+            req.artifact_id, requested_by=_CASE_RUNNER_SERVICE_AUTHZ_ID)
     return {"status": result["status"], "reason": result.get("reason"),
             "promotion": promotion_out}
 
 
-async def _file_promotion_for_accepted_origin(req: "OriginWriteRequest") -> Optional[dict]:
-    """Q2 (2026-10-10): a steward's accepted origin on an `awaiting_origin` row files the
-    `document_promotion:<owner_domain>` task and moves the row to `review`. None when the row is
-    absent or not at `awaiting_origin` (nothing attempted)."""
+def _read_accepted_origin(ingest_id: str) -> Optional[dict]:
+    """SYNC. The artifact's ACCEPTED origin -- {"owner_domain", "program", "resolved_by"} -- or None
+    when there is no node, no owner domain, or the rung is unresolved. A read that raises PROPAGATES:
+    an unknown origin is not an absent one. Same accepted-origin predicate as
+    `notice_parts.source_visibility`."""
+    from .promotion_stores import INGEST_FACT_FAMILY
+
+    if neo4j_driver is None:
+        raise RuntimeError("graph store not connected")
+    # Built FROM the family, so it names the node `write_origin` writes.
+    cypher = (
+        f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+        f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+        "RETURN n.origin_owner_domain AS owner_domain, n.origin_program AS program, "
+        "n.origin_resolved_by AS resolved_by"
+    )
+    with neo4j_driver.session() as session:
+        row = session.run(cypher, ingest_id=ingest_id).single()
+    if row is None:
+        return None
+    owner_domain, program, resolved_by = row["owner_domain"], row["program"], row["resolved_by"]
+    if not isinstance(owner_domain, str) or not owner_domain.strip():
+        return None
+    if resolved_by in (None, "", "unresolved"):
+        return None
+    return {"owner_domain": owner_domain, "program": program or None, "resolved_by": resolved_by}
+
+
+async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Optional[dict]:
+    """FUNCTION OF STATE (Q2, 2026-10-10): files iff the row is at `awaiting_origin` AND an
+    accepted origin exists on the artifact; called from the accept route, the stage route and the
+    retry route, so the order the accept and the extraction land in cannot matter. TASK FIRST,
+    STATUS SECOND: a refusal leaves the row at `awaiting_origin`.
+
+    None when nothing was attempted (no row, row elsewhere, or no accepted origin yet);
+    {"filed": False, "error": ...} when attempted and refused or the origin was unreadable;
+    {"filed": True, "task_id", "task_status"} when filed and the row moved to `review`."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
 
-    ingest_id = req.artifact_id
     row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
     if row is None or row["status"] != ingest_status.AWAITING_ORIGIN:
         return None
     try:
-        # TASK FIRST, STATUS SECOND: a refusal here leaves the row at awaiting_origin.
+        origin = await run_in_threadpool(lambda: _read_accepted_origin(ingest_id))
+    except Exception as exc:  # noqa: BLE001 -- an unknown origin is not an absent one
+        logger.warning("promotion not filed, origin unreadable: ingest_id=%s error=%s",
+                       ingest_id, exc)
+        return {"filed": False, "error": "origin_unreadable"}
+    if origin is None:
+        return None
+    try:
         task_id, task_status = await _file_or_find_document_promotion_task(
-            ingest_id, row, requested_by=_CASE_RUNNER_SERVICE_AUTHZ_ID,
-            extraction_ref=row.get("extraction_ref"),
-            domain=req.origin.get("owner_domain"))
+            ingest_id, row, requested_by=requested_by,
+            extraction_ref=row.get("extraction_ref"), domain=origin["owner_domain"])
     except HTTPException as exc:
         err = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
         logger.warning("origin accepted but promotion not filed: ingest_id=%s error=%s",
                        ingest_id, err)
         return {"filed": False, "error": err}
-    domain_label = str(req.origin.get("owner_domain") or "").strip().upper()
+    domain_label = str(origin["owner_domain"]).strip().upper()
     await run_in_threadpool(lambda: ingest_status.update_status(
         ingest_id, ingest_status.REVIEW,
-        detail=f"origin accepted by a steward; promotion filed to document_promotion:{domain_label}"))
+        detail=f"accepted origin; promotion filed to document_promotion:{domain_label}"))
     return {"filed": True, "task_id": task_id, "task_status": task_status}
 
 
@@ -10993,6 +11428,10 @@ async def electric_shape_proxy(
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"
+        if table == "answer_artifact_projection":
+            # Rev 187: the default view hides archived answers (archive hides, never deletes;
+            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
+            server_where += " AND archived_at IS NULL"
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"

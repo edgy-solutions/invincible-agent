@@ -21,6 +21,12 @@ Needs PROJECTOR_POSTGRES_DSN (the decision ledger) and NEO4J_URI / NEO4J_USERNAM
 NEO4J_PASSWORD. The graph write is made as the acting identity named by BACKFILL_ACTOR
 (a person), as every promotion write is.
 
+LIST OLD AUDIENCES (`--list-old-audiences`; ruling Q6, architect, 2026-10-10). Live
+`document_promotion` tasks whose audience is not `document_promotion:<D>` cannot be promoted
+(`promotion.domain_of` refuses them), so Lane 1 lists them during the rev-187 roll and refiles
+them. This mode ONLY LISTS: it needs PROJECTOR_POSTGRES_DSN alone, touches no graph, and writes
+nothing anywhere.
+
 Exit codes:
     0  nothing to do, or applied successfully
     1  writes pending (dry run), or rows skipped as unparseable
@@ -86,16 +92,85 @@ def backfill(records: Iterable[dict], graph: Any, *, apply: bool = False) -> dic
     return out
 
 
+def _proposed(payload: Any) -> tuple[str | None, str]:
+    """The domain a refiler should propose, from the payload only -- never from the audience."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            payload = None
+    if not isinstance(payload, dict):
+        return None, "undecided"
+    for key, label in (("review_pool", "review_pool"), ("domain", "payload_domain")):
+        val = payload.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip().upper(), label
+    return None, "undecided"
+
+
+def old_audience_tasks(rows: Iterable[dict]) -> list[dict]:
+    """Live promotion tasks whose audience `promotion.domain_of` refuses (one per task_id: keyed by
+    it, so a per-recipient duplicate overwrites its twin -- they carry the same task)."""
+    from src.iagent import promotion
+
+    out: dict[str, dict] = {}
+    for row in rows:
+        task_id = row.get("task_id")
+        audience = row.get("audience")
+        try:
+            promotion.domain_of(audience)
+            continue
+        except promotion.PromotionRefused:
+            pass
+        domain, source = _proposed(row.get("payload"))
+        ingest_id = row.get("subject_ref") or (
+            str(task_id).split(f"{KIND}:", 1)[1] if f"{KIND}:" in str(task_id) else None)
+        out[task_id] = {"task_id": task_id, "ingest_id": ingest_id, "audience": audience,
+                        "proposed_domain": domain, "proposed_from": source,
+                        "created_at": row.get("created_at")}
+    return sorted(out.values(), key=lambda r: (r["created_at"] or 0, str(r["task_id"])))
+
+
+_LIST_SQL = ("SELECT DISTINCT ON (task_id) task_id, audience, subject_ref, payload, created_at "
+             "FROM human_task_projection WHERE kind = 'document_promotion' "
+             "AND status = 'pending' ORDER BY task_id, created_at")
+_LIST_KEYS = ("task_id", "ingest_id", "audience", "proposed_domain", "proposed_from", "created_at")
+
+
+def _list_old_audiences(dsn: str) -> int:
+    try:
+        import psycopg2
+
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(_LIST_SQL)
+            rows = [dict(zip(("task_id", "audience", "subject_ref", "payload", "created_at"), r))
+                    for r in cur.fetchall()]
+        old = old_audience_tasks(rows)
+    except Exception as exc:  # noqa: BLE001
+        print(f"COULD NOT LOOK (exit 2): {type(exc).__name__}: {exc}")
+        return 2
+    for t in old:
+        print("\t".join("" if t[k] is None else str(t[k]) for k in _LIST_KEYS))
+    undecided = sum(1 for t in old if t["proposed_from"] == "undecided")
+    print(f"old_audience_tasks={len(old)} undecided={undecided}")
+    return 1 if old else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--apply", action="store_true",
-                    help="perform the writes; without it this only reports")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true",
+                      help="perform the writes; without it this only reports")
+    mode.add_argument("--list-old-audiences", action="store_true",
+                      help="list live promotion tasks with a non-domain audience; writes nothing")
     args = ap.parse_args()
 
     dsn = (os.getenv("PROJECTOR_POSTGRES_DSN") or "").strip()
     if not dsn:
         print("PROJECTOR_POSTGRES_DSN is unset -- COULD NOT LOOK (exit 2).")
         return 2
+    if args.list_old_audiences:
+        return _list_old_audiences(dsn)
     actor = (os.getenv("BACKFILL_ACTOR") or "").strip()
     if not actor:
         print("BACKFILL_ACTOR is unset -- the graph write is a person's (exit 2).")

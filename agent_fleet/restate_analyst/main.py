@@ -1953,8 +1953,10 @@ async def _run_grouped_human_await(
     ctx.set("batch_items", batch_items)
     ctx.set("approver", approver)
     ctx.set("notice_fingerprint", notice_fingerprint)
+    ctx.set("ingest_id", request.get("ingest_id") or "")
     ctx.set("notice_id", notice_id)
     ctx.set("doc_type", doc_type)
+    ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
@@ -1999,8 +2001,51 @@ async def _run_grouped_human_await(
             f"grouped decision failed validation after wake: {submission.reason}", status_code=400,
         )
 
+    acted_by_h = (raw_decision or {}).get("acted_by") or approver
+    if submission.rejected:
+        # NARROW REJECT (steward-correction ruling 2026-10-10): closes the review and WRITES NOTHING --
+        # no fan_out_dispatch, so no write_item_state and no promotion. The decision record keeps the
+        # code, the comment and the actor.
+        return {
+            "step_id": step.id, "kind": "human_await", "completion": "grouped",
+            "status": "REJECTED", "dispatch_enqueued": 0, "count": 0, "dispatched_keys": [],
+            "decision_record": {
+                "verdict": "rejected", "reason_code": submission.reason_code,
+                "comment": (raw_decision or {}).get("comment") or "", "acted_by": acted_by_h,
+                "notice_fingerprint": notice_fingerprint,
+            },
+        }
+    resolutions = list(submission.resolutions)
+    edits = submission.edits
+    if edits is not None and not edits.is_empty():
+        # An ADDED row has no subject yet: resolve it in a JOURNALED step so a replay reuses the
+        # answer. Unresolved -> subject stays None -> no graph write (the existing re-link path).
+        try:
+            from review_composer import resolve_subject_via_engine_o  # type: ignore[no-redef]
+            from steward_correction import defect_task  # type: ignore[no-redef]
+        except ImportError:
+            from agent_fleet.restate_analyst.review_composer import resolve_subject_via_engine_o
+            from agent_fleet.restate_analyst.steward_correction import defect_task
+        from dataclasses import replace as _dc_replace
+        added_lc = {str(r["mpn"]).strip().lower() for r in edits.added}
+        for i, res in enumerate(resolutions):
+            if res.subject is None and res.mpn.strip().lower() in added_lc:
+                subj = await ctx.run(f"resolve_added_{i}", lambda m=res.mpn: resolve_subject_via_engine_o(m))
+                resolutions[i] = _dc_replace(res, subject=subj)
+        compartment_h = request.get("compartment") or ""
+        if not compartment_h:
+            raise restate.TerminalError(
+                "an extraction_defect cannot be routed: no compartment on this review", status_code=500)
+        # ONE extraction_defect per accepted decision, idempotent on (notice, decision id): the task
+        # key is derived from both, so a replay registers the same task, never a second.
+        defect = defect_task(
+            notice=notice_fingerprint, decision_id=ctx.key(),
+            pipeline_version=request.get("pipeline_version"), edits=edits,
+            audience=f"dispatch_failure:{compartment_h}", requested_by=approver, acted_by=acted_by_h)
+        await ctx.run("file_extraction_defect", lambda: _mint_dispatch_task(defect))
+
     keys = fan_out_dispatch(
-        ctx, submission.resolutions,
+        ctx, resolutions,
         notice_fingerprint=notice_fingerprint, notice_id=notice_id,
         # PROVENANCE-OF-INITIATION — who STARTED this review. In the canonical sensor-driven flow
         # that is `svc:review-starter`, and that is CORRECT for this field: it has always meant
