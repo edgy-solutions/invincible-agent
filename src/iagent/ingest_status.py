@@ -193,6 +193,11 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
+
+-- 2026-10-13: `notice_id` is the notice's OWN id (e.g. PCN26-184) as the extraction manifest's
+-- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
+-- LLM-extracted). NULL until known. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
 """
 
 
@@ -400,7 +405,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, content_kind, extraction_ref,
-                          failure, run_id, attempt
+                          failure, run_id, attempt, notice_id
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -424,6 +429,7 @@ def update_status(
     extraction_ref: Optional[str] = None,
     failure: Optional[dict] = None,
     run_id: Optional[str] = None,
+    notice_id: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
@@ -446,7 +452,10 @@ def update_status(
     `failure` (2026-10-12) is the structured reason {reason_code, reason, step, run_id, pin_digest,
     failed_at}; it is valid ONLY with status `failed` (ValueError otherwise). Any OTHER status
     writes `failure = NULL`, so a move off `failed` (a late run superseding a watchdog timeout)
-    clears it. `run_id` follows the COALESCE discipline: written only when given."""
+    clears it. `run_id` follows the COALESCE discipline: written only when given.
+
+    `notice_id` (2026-10-13) is the extraction manifest's `doc_id`, DISPLAY ONLY; same COALESCE
+    discipline: None leaves it unchanged, so a later stage move never erases it."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
@@ -466,10 +475,11 @@ def update_status(
                           extracted_total = COALESCE(%s, extracted_total),
                           detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
                           extraction_ref = COALESCE(%s, extraction_ref),
-                          failure = %s, run_id = COALESCE(%s, run_id), updated_at = %s
+                          failure = %s, run_id = COALESCE(%s, run_id),
+                          notice_id = COALESCE(%s, notice_id), updated_at = %s
                     WHERE id = %s""",
                 (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
-                 failure_json, run_id, now, ingest_id),
+                 failure_json, run_id, notice_id, now, ingest_id),
             )
         conn.commit()
 
@@ -502,7 +512,7 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref, failure, run_id, attempt
+                          extraction_ref, failure, run_id, attempt, notice_id
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -536,7 +546,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref, failure, run_id, attempt
+                          extraction_ref, failure, run_id, attempt, notice_id
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),

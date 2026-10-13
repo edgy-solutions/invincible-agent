@@ -10411,6 +10411,9 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
             "reason_code": None, "reason": source_row.get("detail"), "step": None,
             "run_id": None, "pin_digest": None, "failed_at": source_row.get("updated_at")}
     attempt = int((source_row or row).get("attempt") or 1)
+    # DISPLAY ONLY, never an identity (LLM-extracted `doc_id`). The key is always present: None
+    # means "claimed, none known yet"; a duplicate reports the ORIGINAL's.
+    notice_id = (source_row or {}).get("notice_id") or None
 
     return {
         "ingest_id": row["id"],
@@ -10426,6 +10429,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "case_id": row.get("case_id"),
         "failure": failure,
         "attempt": attempt,
+        "notice_id": notice_id,
     }
 
 
@@ -10661,7 +10665,7 @@ def _read_extraction_manifest(key: str) -> dict:
 
 async def _file_or_find_document_promotion_task(
     ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
-    domain: Optional[str] = None,
+    domain: Optional[str] = None, notice_out: Optional[dict] = None,
 ) -> tuple[Optional[str], str]:
     """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
     refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
@@ -10740,6 +10744,10 @@ async def _file_or_find_document_promotion_task(
                        f"{prefix!r}.",
         })
     manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    if notice_out is not None:
+        # The notice's own id, for the status row (DISPLAY ONLY, never an identity): the SAME
+        # `doc_id` the payload's `notice_id` is derived from, blank stored as None.
+        notice_out["notice_id"] = str(manifest.get("doc_id") or "").strip() or None
     try:
         derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref)
     except promotion.PromotionRefused as exc:
@@ -10932,6 +10940,7 @@ async def update_ingest_stage(
 
     task_id = None
     task_status = None
+    _notice: dict = {}
     if req.stage == ingest_status.REVIEW:
         # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
@@ -10985,7 +10994,8 @@ async def update_ingest_stage(
         # task and no way back (a retry on a row already at `review` is 409), so this call --
         # and everything it can raise -- happens before update_status below ever runs.
         task_id, task_status = await _file_or_find_document_promotion_task(
-            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref)
+            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref,
+            notice_out=_notice)
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised (nothing written) or produced a resolvable audience; only
@@ -10993,6 +11003,8 @@ async def update_ingest_stage(
     # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
     # `extraction_ref` rides only on the move INTO review (where it was just validated).
     _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
+    if req.stage == ingest_status.REVIEW and _notice.get("notice_id"):
+        _extra["notice_id"] = _notice["notice_id"]
     _detail = req.detail
     if req.stage == ingest_status.FAILED:
         # `reason` falls back to `detail` (legacy posts); the existing non-blank-detail rule in
@@ -11179,10 +11191,12 @@ async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Opti
         return {"filed": False, "error": "origin_unreadable"}
     if origin is None:
         return None
+    _notice: dict = {}
     try:
         task_id, task_status = await _file_or_find_document_promotion_task(
             ingest_id, row, requested_by=requested_by,
-            extraction_ref=row.get("extraction_ref"), domain=origin["owner_domain"])
+            extraction_ref=row.get("extraction_ref"), domain=origin["owner_domain"],
+            notice_out=_notice)
     except HTTPException as exc:
         err = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
         logger.warning("origin accepted but promotion not filed: ingest_id=%s error=%s",
@@ -11191,7 +11205,8 @@ async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Opti
     domain_label = str(origin["owner_domain"]).strip().upper()
     await run_in_threadpool(lambda: ingest_status.update_status(
         ingest_id, ingest_status.REVIEW,
-        detail=f"accepted origin; promotion filed to document_promotion:{domain_label}"))
+        detail=f"accepted origin; promotion filed to document_promotion:{domain_label}",
+        **({"notice_id": _notice["notice_id"]} if _notice.get("notice_id") else {})))
     return {"filed": True, "task_id": task_id, "task_status": task_status}
 
 

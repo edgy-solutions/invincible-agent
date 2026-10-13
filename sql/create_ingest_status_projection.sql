@@ -117,3 +117,8 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEX
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
+
+-- 2026-10-13: `notice_id` is the notice's OWN id (e.g. PCN26-184) as the extraction manifest's
+-- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
+-- LLM-extracted). NULL until known. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
