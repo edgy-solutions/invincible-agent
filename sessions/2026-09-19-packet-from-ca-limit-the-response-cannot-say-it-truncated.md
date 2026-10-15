@@ -1,6 +1,6 @@
 # Packet from ca — `limit`: the response has no way to say it truncated
 
-to: the architect
+to: invincible-agent/seat/architect
 from: iagent-mesh-sdk / `lane/ca`, 2026-09-19 overnight
 re: order item (d) — *"`limit`: how a truncated enumeration says it is truncated. Read the real
 model first. Give two options and a recommendation."*

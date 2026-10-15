@@ -57,6 +57,22 @@ PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://iag
 ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 DATA_ANALYST_URL = os.getenv("DATA_ANALYST_URL", "http://iagent-data-analyst:8089")
 
+# The test persona the Engine A smoke runs for. Same shape as the resolver corpus's
+# IA_CORPUS_ON_BEHALF_OF: a real persona, set by whoever materialises the asset; no default,
+# because a default here would be exactly the stand-in ruling (b) forbids.
+SMOKE_PERSON_ENV = "IA_SMOKE_ON_BEHALF_OF"
+
+
+def _smoke_person() -> str:
+    """The test persona this smoke runs for, read at call time. Blank, or a service (`svc:`),
+    is no person: refused."""
+    person = os.environ.get(SMOKE_PERSON_ENV, "").strip()
+    if not person or person.lower().startswith("svc:"):
+        raise RuntimeError(
+            f"no_person: set {SMOKE_PERSON_ENV} to the test persona this smoke runs for; "
+            "Engine A refuses a personless re-resolve, and a service is not a person")
+    return person
+
 # ---------------------------------------------------------------------------
 # Assets
 # ---------------------------------------------------------------------------
@@ -78,6 +94,11 @@ DATA_ANALYST_URL = os.getenv("DATA_ANALYST_URL", "http://iagent-data-analyst:808
 )
 def trigger_restate_analyst() -> dict:
     """Trigger Engine A (Restate + Smolagents) analyst agent pod."""
+    # A TEST PERSONA FROM THE ENVIRONMENT, NEVER PERSONLESS (ruling (b), 2026-10-10; ordered for
+    # this asset 2026-10-12). The smoke has no resolved subject, so Engine A re-resolves the task
+    # through Engine O, and that re-resolve refuses a blank caller with 422 `no_person`. Read at
+    # materialisation time, and refused HERE, before any POST, when unset: the run fails naming the
+    # variable, not Engine A. The bearer below stays svc:supervisor; the person is whom it runs for.
     # svc:supervisor — the Dagster plane's process identity, named HERE. Not `_telemetry_headers`:
     # that helper lives in dynamic_supervisor and takes a `config` this asset does not have. Same
     # identity, same mint, one shared helper — reaching across for a private function would be the
@@ -88,9 +109,15 @@ def trigger_restate_analyst() -> dict:
         # fields off the payload; posting nothing made `await request.json()` raise inside the
         # proxy's bare except and come back as a 502 NAMING RESTATE. Fields mirror AnalyzeRequest
         # (restate_analyst/main.py) — smoke payload, same standing as Engines E/F/DA's.
+        # A LITERAL DICT naming `user_email`: tests/test_agent_router_triggers_send_a_body.py and
+        # the Engine O caller census both read the keys of the payload they can see, and the census
+        # classes this site TEST_PERSONA only when the value is the CALL itself, not a local bound
+        # to it. The json dict is built before the post runs and before the bearer is minted, so
+        # the refusal still comes first.
         json={
             "task_description": "Smoke: summarise this dataset's lineage and freshness.",
             "dataset_id": "default",
+            "user_email": _smoke_person(),
         },
         timeout=300,
         headers=outbound_auth_headers(

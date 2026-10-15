@@ -100,8 +100,25 @@ class _Calls(list):
     returns -- so a test can flip to `write_refused` without a second fixture."""
 
 
+@pytest.fixture(autouse=True)
+def origin_store(monkeypatch):
+    """The origin the fake `write_origin` recorded -- what the real `_read_accepted_origin` would
+    read back from the graph (Q2: the filing reads the STORE, never the request)."""
+    store = {}
+
+    def _read(ingest_id):
+        o = store.get("origin")
+        if not o:
+            return None
+        return {"owner_domain": o["owner_domain"], "program": o.get("program"),
+                "resolved_by": "steward"}
+
+    monkeypatch.setattr(gateway, "_read_accepted_origin", _read)
+    return store
+
+
 @pytest.fixture
-def fake_write_origin(monkeypatch):
+def fake_write_origin(monkeypatch, origin_store):
     """Captures every write_origin call instead of touching Neo4j; returns `written` by
     default. A test that wants `write_refused` calls `.set_result(...)`."""
     calls = _Calls()
@@ -112,6 +129,8 @@ def fake_write_origin(monkeypatch):
             "resolution": resolution, "initiator": initiator,
             "dropper_is_program_member": dropper_is_program_member,
         })
+        if result["status"] == "written":
+            origin_store["origin"] = resolution["origin"]
         return result
 
     monkeypatch.setattr(origin_writer, "write_origin", _fake)

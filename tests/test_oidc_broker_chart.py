@@ -711,7 +711,7 @@ def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox)
 def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     by_id = {u["id"]: u for u in _users_yaml()}
     alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
-    assert len(alice["groups"]) == 9, alice["groups"]                    # positive control: the set is non-trivial
+    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
     assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
     assert walker["default"] == alice["default"]
     # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from

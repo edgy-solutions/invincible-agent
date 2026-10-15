@@ -45,7 +45,9 @@ ARTIFACT_BY_ID_CYPHER = """
 MATCH (a:AnswerArtifact {id: $artifact_id})
 OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
 OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
-""" + _RETURN
+""" + _RETURN.rstrip() + """,
+       a.rendered_output       AS rendered_output
+"""
 
 # Every AnswerArtifact the subject owns or seeded. The seeding arm is added in Python only when
 # the subject is a declared delegate, so a person whose id equals some `seeded_by` matches nothing.

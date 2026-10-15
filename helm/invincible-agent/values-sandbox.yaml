@@ -815,7 +815,20 @@ cortexUi:
     # a KNOWLEDGE_DOCUMENT carrying `refusal` draws as the refusal card alone, its prose not shown
     # -- equally true of 9bf8063 once this repo's 935d7524 sends the field; cortex's fix is a
     # follow-up pin.
-    digest: "sha256:2c45d36a87d8f773a11ee79b5d54233a6f566e66b07b645d61b324f2e5f8a536"
+    # 2026-10-12, pinned for rev 187b: cortex-ui b566192 (master; merges #10 3fa6fcb, the answers
+    # perf merge this pin is conditioned on, plus #4 d528b0b the composer, #7 the refused document
+    # keeps its prose, #8 hazard refusals named, #9 row edits (off) and the narrow Reject, #11
+    # mixed-board export, #12 npm run walk, #13 a refused export shows its reason, #14 stale-tab
+    # re-check) -> 2556cf5b. Rev 187 rolled on 865c080, so the composer goes live HERE, not at
+    # 187. 865c080 and 3fa6fcb are both ancestors of b566192. Measured before pinning: the FULL
+    # tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations); the
+    # abbreviated tag and this digest with its last hex altered both answer 404; the 865c080
+    # control still resolves to 2c45d36a. Since 865c080 the Dockerfile is unchanged;
+    # docker-entrypoint.sh gains only VITE_REVIEW_ROW_EDITS (sanitised, empty by default, and not
+    # set by this chart), and .github's one change (build.yml PRODUCER_REF -> 5b2a16a2, an
+    # ancestor of the rolled e977c32b) selects the parity tests' checkout and is not a build arg,
+    # so VITE_FEATURES is unchanged.
+    digest: "sha256:2556cf5b4259e268a296b461d2456dbfd51a6d9588acb824a7f1e0646fd3683d"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
