@@ -1233,6 +1233,56 @@ def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optio
 _PCN_REVIEW_BAD_REQUEST = {"REVIEW_STATE_UNSOURCED", "RULESET_INVALID", "RULES_NOT_FOUND"}
 
 
+def _review_on_behalf_of(artifact_uri: str) -> str:
+    """The PERSON a review's lookups run for (ruling (a), 2026-10-10): the dropper of the ingest the
+    reviewed artifact came from, DERIVED FROM THE ARTIFACT and never read from the body. doc-tools
+    writes `ingest_id` into `manifest.json`, the sibling of the review.json `artifact_uri` names; the
+    ingest's status row holds its dropper of record in `on_behalf_of` (the `actor` the drop route
+    also stamps as the IngestArtifact's `dropped_by_authz_id`). So a caller can name WHICH artifact,
+    and the artifact names whose review it is: one artifact cannot be composed under another
+    ingest's dropper.
+
+    "" (no person) when there is honestly none: no pointer, no manifest, a manifest without an
+    `ingest_id`, or an ingest the BFF never recorded. An OUTAGE is not "no person": a store that
+    does not answer raises 503 rather than composing under the seeded-only view."""
+    from urllib.parse import urlparse
+    from . import ingest_status
+
+    u = urlparse(artifact_uri or "")
+    key = u.path.lstrip("/")
+    if u.scheme != "s3" or not u.netloc or "/" not in key:
+        return ""
+    manifest_key = key.rsplit("/", 1)[0] + "/manifest.json"
+    try:
+        raw = _build_s3_client().get_object(Bucket=u.netloc, Key=manifest_key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            return ""
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer for the manifest beside {artifact_uri!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    try:
+        manifest = json.loads(raw)
+    except ValueError:
+        return ""
+    ingest_id = manifest.get("ingest_id") if isinstance(manifest, dict) else None
+    if not isinstance(ingest_id, str) or not ingest_id:
+        return ""
+    try:
+        row = ingest_status.get_row(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "error": "ingest_status_unreachable",
+            "message": f"the ingest status store did not answer for {ingest_id!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    return str((row or {}).get("on_behalf_of") or "")
+
+
 @app.post("/reviews")
 async def start_review(
     req: ReviewStartRequest,
@@ -1289,6 +1339,10 @@ async def start_review(
     # field that does not appear on this line does not exist downstream. Pinned by
     # tests/test_review_payload_passthrough.py.
     body["artifact_uri"] = req.artifact_uri or ""
+    # THE PERSON the composition's lookups run for: derived from the artifact above, never from the
+    # body (ruling (a)). ReviewStartRequest declares no such field, so a caller cannot assert one.
+    from starlette.concurrency import run_in_threadpool
+    body["on_behalf_of"] = await run_in_threadpool(_review_on_behalf_of, body["artifact_uri"])
     # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
     # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `artifact_uri` points at,
     # so a caller can no longer assert the trust key and thereby choose its own supervision level.

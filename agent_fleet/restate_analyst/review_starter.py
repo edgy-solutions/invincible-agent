@@ -447,7 +447,10 @@ async def start_review(ctx: Context, request: dict) -> dict:
                 ruleset=rules["ruleset"],
                 category_classes=rules["category_classes"],
                 ruleset_ref=rules["ruleset_ref"],
-                resolve_subject=resolve_subject_via_engine_o,
+                # Ruling (a): the lookup runs on behalf of the ingest's dropper, which the BFF
+                # derived from the artifact and stamped; never the approver, never svc:engine-a.
+                resolve_subject=lambda mpn: resolve_subject_via_engine_o(
+                    mpn, on_behalf_of=str(request.get("on_behalf_of") or "")),
                 can_act=_no_reviewer_filter,
             )
 

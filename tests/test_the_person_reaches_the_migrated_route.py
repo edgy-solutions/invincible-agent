@@ -108,6 +108,18 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "execute_subtask", "_fill_slots_from_query", ("config." + FIELD,)),
     ("15 · onto the wire to /fill_slots",
      SUPERVISOR, "_fill_slots_from_query", "<dict>", (FIELD,)),
+    # Hops 16-17: the sibling verb. enumerateInstances lists the instances resolveInstance
+    # resolves, and gets the same origin gate (ruled 2026-10-10, (d)), so the person rides to
+    # /enumerate_instances too. The enumerator is MADE with the caller (both consumers call it
+    # with a class and nothing else), so hop 16 is the factory call, at both of its sites.
+    # MEASURED: like hop 13, hop 16's arm passes while EITHER site forwards the value, so one site
+    # dropping the keyword is quiet here and red in tests/routing/
+    # test_enumerate_instances_hears_the_caller.py (``EVERY_SUPERVISOR_ENUMERATOR_IS_MADE_...``);
+    # both sites dropping it is red here.
+    ("16 · into the enumerator",
+     SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
+    ("17 · onto the wire to /enumerate_instances",
+     SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a

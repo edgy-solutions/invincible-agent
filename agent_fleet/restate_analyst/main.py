@@ -582,12 +582,23 @@ def _resolve_ontology(
     caught this path dropping identity (``caller=''``) when the supervisor's
     resolution returned UNKNOWN and Engine A re-resolved: the multi-path
     corollary of [[identity-reaches-enforcement-point]] — every call to an
-    enforcement point must carry the subject, not just the primary one. Empty
-    is honest-absent → deny-by-default on compartmented classes (fail-closed).
+    enforcement point must carry the subject, not just the primary one.
+
+    NO PERSON IS A REFUSAL, NOT A QUERY (ruling (b), 2026-10-10: "scripts and
+    restate_analyst send a real test persona or get refused — a domains list is
+    never an entitlement"). This used to post a blank caller as honest-absent,
+    still carrying the request's ``entitled_domains`` — a domains list standing in
+    for the person who holds it. A blank ``user_email`` now raises a 422
+    ``no_person`` TerminalError BEFORE any call to Engine O: terminal, because a
+    replay cannot conjure a person the request never named.
     """
-    payload: dict = {"query": task_description}
-    if user_email:
-        payload["user_email"] = user_email
+    if not str(user_email or "").strip():
+        raise restate.TerminalError(
+            "no_person: re-resolving the ontology needs the person this runs for "
+            "(user_email); a domains list is never an entitlement",
+            status_code=422,
+        )
+    payload: dict = {"query": task_description, "user_email": user_email}
 
     # ── THE CALLER'S DOMAINS, OR THIS RESOLVES AGAINST MAINTENANCE ──────────────────────
     #
