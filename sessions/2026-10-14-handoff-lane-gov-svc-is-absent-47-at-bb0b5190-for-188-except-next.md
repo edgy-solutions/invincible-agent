@@ -22,6 +22,7 @@ All four branches are pushed. The full record is `sessions/2026-10-10-report-gov
 - **2026-10-14:** "a svc: literal counts as absent in every arm, same as blank; a service identity is never a person." Built at `bb0b5190`.
   - 28 passed.
   - S2 and S3 survived the old test; both are red now.
+- **2026-10-14, later:** "accepted; the engine-side 422 refusing svc: after 188b, as you say." Note that this says **188b**, not 188.
 
 ## Placed (untracked in master's `sessions/`)
 
@@ -41,7 +42,7 @@ All four branches are pushed. The full record is `sessions/2026-10-10-report-gov
    - Catch only those as 503; everything else answers 500.
    - Re-run `tests/test_an_outage_is_not_an_empty_answer.py`.
    - Do this as its own PR.
-2. **The 422 `no_person`, after 188 lands #48 and #52.** Its population is rows 13–16. The refusal should also name `svc:` as no person: the census now does, and the engine side has to agree.
+2. **The 422 `no_person`, after 188b lands (RULED 2026-10-14).** Its population is rows 13–16. The refusal also treats `svc:` as no person (RULED), so the engine side agrees with the census.
 3. The AnswerArtifact "how resolved" field, when its tripwire goes red.
 
 ## Lessons
