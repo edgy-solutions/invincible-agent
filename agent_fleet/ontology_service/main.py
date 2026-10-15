@@ -30,6 +30,7 @@ import rdflib
 import weaviate
 import weaviate.classes as wvc
 from neo4j import GraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -571,10 +572,10 @@ ORDER BY ?label
 # import), and where the package IS importable it guarantees one canonical class.
 try:
     from agent_fleet.ontology_service.read_outcome import (
-        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+        MeshResult, StoreAttempt, SubstrateUnavailable, outcome, rows_or_refuse)
 except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
     from read_outcome import (  # type: ignore[no-redef]
-        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+        MeshResult, StoreAttempt, SubstrateUnavailable, outcome, rows_or_refuse)
 
 
 def _get_local_graph() -> rdflib.Graph:
@@ -3008,7 +3009,7 @@ async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
         kept = await _filter_sustainment_candidates(
             members, user_email=request.user_email or "",
             entitled_domains=list(request.entitled_domains or []))
-    except Exception as exc:  # noqa: BLE001
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
         raise HTTPException(
             status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
     provider_count = int(body.get("count") or len(members))
@@ -5169,12 +5170,27 @@ def _iri_is_safe(iri: str) -> bool:
     return not any(ch in iri for ch in ('>', '"')) and not any(ch.isspace() for ch in iri)
 
 
+# WHAT THE VISIBILITY CHECK'S STORES RAISE WHEN THEY ARE DOWN, and nothing else. The two routes
+# that run `_filter_sustainment_candidates` answer 503 for exactly these; every other exception
+# (TypeError, KeyError, AttributeError, a ValueError from a garbled Topaz body, ...) is a DEFECT
+# and answers 500. A defect filed as "the lookup failed" is a defect nobody looks for in the code
+# (same reasoning as the NARROWED ON PURPOSE catch in enumerate_instances). Each 500 still fails
+# closed: no candidate list is returned. Sealed in
+# tests/security/test_the_visibility_check_answers_503_only_for_an_outage.py.
+_VISIBILITY_OUTAGE: tuple[type[BaseException], ...] = (
+    SubstrateUnavailable,  # execute_sparql's link query; also raised below for a missing driver
+    ServiceUnavailable, SessionExpired, TransientError,  # neo4j, via notice_parts.visible_notice_ids
+    httpx.HTTPError,  # utils.program_membership -> the Topaz directory
+)
+
+
 async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: str,
                                          entitled_domains: list[str]) -> list[dict]:
     """Withhold the candidates the SAME origin rule `/notice_parts` applies would withhold
     (`notice_parts.notice_visible`): a drop-derived notice no caller may yet see, and a component
     reachable only through such notices. A withheld candidate is simply absent, so the answer is
-    the one a Jena without that row would give. Raises on a lookup failure (the route answers 503).
+    the one a Jena without that row would give. Raises one of `_VISIBILITY_OUTAGE` on a lookup
+    failure (the route answers 503); any other exception is a defect and answers 500.
     Components with no linked notice and every non-sustainment IRI pass untouched."""
     notice_ids: dict[str, str] = {}
     comp_iris: list[str] = []
@@ -5203,7 +5219,7 @@ async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: 
     visible: set[str] = set()
     if all_ids:
         if _NEO4J_DRIVER is None:
-            raise RuntimeError("the sustainment graph is not connected")
+            raise SubstrateUnavailable("the sustainment graph is not connected")
         visible = await asyncio.to_thread(
             _notice_parts.visible_notice_ids, _NEO4J_DRIVER, all_ids,
             caller_id=user_email, viewer_domains=entitled_domains,
@@ -5234,7 +5250,7 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
-    except Exception as exc:
+    except SubstrateUnavailable as exc:  # execute_sparql's only outage; a defect answers 500
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
     try:
@@ -5242,7 +5258,7 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
             candidates, user_email=request.user_email,
             entitled_domains=request.entitled_domains,
         )
-    except Exception as exc:  # noqa: BLE001
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
         raise HTTPException(
             status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
     return {"candidates": candidates}
