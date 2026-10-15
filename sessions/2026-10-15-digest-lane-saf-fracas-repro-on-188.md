@@ -25,3 +25,6 @@ whether it reached the supervisor is NOT observable from logs; unexamined, not p
 188 gives the same fallback text with the route shape no_compatible_verbs (not no_verb_classified);
 the refusal text is unchanged. Subject stays "Not grounded" although context_update names "Part 5530-184".
 Q6/Q7 rows untouched (FAILURE_SOURCE_CONNECTORS pending). HAZ/Q1/Q8/Q10/Q12 held for 188b.
+
+## Rulings (Chris, 2026-10-14)
+Q1: read the Dagster run tags for on_behalf_of on every walk; 188 runs 7ba1339c/16cbfe9b/32ff4772 carry only `dagster/code_location`. Q2: the subject should resolve to part 5530-184 regardless of FAILURE_SOURCE_CONNECTORS; UNKNOWN means identity is not reaching the router (Lane 1 traces; packet placed). 188b = #46, #47, #51, #52; HAZ walk held.
