@@ -2172,6 +2172,8 @@ try:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 except ImportError:
     from instance_resolution import (  # noqa: E402
@@ -2182,6 +2184,8 @@ except ImportError:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 
 # Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
@@ -2203,7 +2207,8 @@ RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
   coalesce(r.provider, type(r)) AS provider,
   r.timeout_s      AS timeout_s,
-  r.domains        AS domains
+  r.domains        AS domains,
+  r.id_namespaces  AS id_namespaces
 """
 
 #: WHO CAN LIST THE MEMBERS OF A CLASS. Mirrors the resolver discovery above, because the
@@ -2400,6 +2405,9 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
             "provider": r.get("provider") or "unknown",
             "timeout_s": timeout_s,
             "domains": r.get("domains") or [],
+            # The identifier namespaces this provider claims (ruled 2026-10-12). Read through
+            # the decoder, never `list(...)`: a string here would split into one-letter prefixes.
+            "id_namespaces": _ir_declared_namespaces(r.get("id_namespaces")),
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
     _INSTANCE_RESOLVERS_CACHE_TS = now
@@ -2633,6 +2641,27 @@ async def _resolve_instance(
             continue
         candidates.extend(o.candidates)
 
+    # SAY WHICH NAMES MATCHED, not just how many. RULED 2026-10-12 after HAZ-1004: this line
+    # said `candidates=3` and nothing else, so "which component did engine-o match?" could only
+    # be answered by re-asking the provider by hand. Bounded, because a bare fragment once drew
+    # twenty part numbers.
+    _matched = [(c.provider, c.label, round(float(c.score), 3)) for c in candidates]
+
+    # ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 -- the measurement and the rule
+    # are in instance_resolution.refuse_cross_namespace. Applied AFTER domain scoping and BEFORE
+    # the claimant set is taken, because the defect is a second claimant: two part numbers
+    # matched 'HAZ-1004' on a difflib ratio and made `ambiguous_in_domain` refuse a hazard
+    # Engine S resolves exactly. The namespaces come from the providers' own registrations; a
+    # provider that declared none claims nothing and loses nothing.
+    candidates, _ns_refused, _ns_claimed = _ir_refuse_cross_namespace(
+        candidates, terms=_lookup_terms, resolvers=resolvers)
+    _ns_contested = sorted(p for p, o in _ns_claimed.items() if len(o) > 1)
+    if _ns_contested:
+        # The ruling is ONE engine per namespace. Two declarers is a registration defect; both
+        # are kept as owners rather than one chosen by registry order, and the conflict is named.
+        print(f"mesh:resolveInstance: CONTESTED id namespace(s) {_ns_contested}: "
+              f"{ {p: sorted(_ns_claimed[p]) for p in _ns_contested} }", flush=True)
+
     # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
     #
     # The scoping above removes the CROSS-domain override. It cannot help when both
@@ -2674,7 +2703,10 @@ async def _resolve_instance(
         f"mesh:resolveInstance fan-out for {identifier!r}: terms={_lookup_terms} "
         f"candidates={len(candidates)} claimants={sorted(_claimants)} "
         f"subjects={sorted(_subjects)} asked_domains={sorted(_asked)} "
-        f"demoted={[d.get('provider') for d in demoted]}",
+        f"demoted={[d.get('provider') for d in demoted]} "
+        f"matched={_matched[:12]}{f' (+{len(_matched) - 12} more)' if len(_matched) > 12 else ''} "
+        f"namespace_refused={[(c.provider, c.label) for c in _ns_refused]} "
+        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} }",
         flush=True,
     )
     if len(_claimants) > 1 and len(_subjects) > 1:
