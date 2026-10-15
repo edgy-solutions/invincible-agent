@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from neo4j.exceptions import ServiceUnavailable
 
 _ROOT = Path(__file__).resolve().parents[2]
 for _p in (_ROOT / "src", _ROOT):
@@ -93,7 +94,7 @@ class _Driver:
 
             def run(self, cypher, params=None, **kw2):
                 if drv.raises:
-                    raise RuntimeError("neo4j down")
+                    raise ServiceUnavailable("neo4j down")
                 # Neo4j refuses a statement run without one of its $parameters; so does this double.
                 missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
                 assert not missing, f"statement run without ${sorted(missing)}"
