@@ -10,12 +10,15 @@ sees seeded content only. THIS file is the CALLER side: a PARTITIONED census of 
 (`/resolve`, `/resolve_instance`, `/fill_slots`, `/notice_parts`, `/enumerate_instances`, plus
 restate_analyst's `/analyze`, which forwards to engine-o `/resolve`). Every site is in exactly one
 class. WHAT IS DERIVED FROM THE CODE is the split this ruling turns on, PERSON vs NO_PERSON (does
-the payload the site sends carry `user_email` with a value that is not a blank literal --
+the payload the site sends carry `user_email` with a value that is not a literal naming nobody --
 `carries_person`; architect, 2026-10-12: a blank `""`, whitespace or `None` names nobody and counts
-as ABSENT in every arm). The split of PERSON into TOKEN, FORWARD, INGEST_RECORD and TEST_PERSONA is
+as ABSENT in every arm; architect, 2026-10-14: so does a `svc:` literal, "a service identity is
+never a person"). The split of PERSON into TOKEN, FORWARD, INGEST_RECORD and TEST_PERSONA is
 DECLARED, checked only as far as stated below (TOKEN/FORWARD: "`config.user_email` or a parameter
-named user_email appears in the function"). The blank rule reads the PAYLOAD's literal only: a
-blank handed in by a caller of the function (mutant X below) is an argument, not a literal here.
+named user_email appears in the function"). The blank and `svc:` rules read the PAYLOAD's literal
+only: a blank or a service handed in by a caller of the function (mutant X below) is an argument,
+not a literal here, and so is a `svc:` fallback inside an expression (`u or "svc:x"`), exactly as
+`u or ""` is.
 Whether the supervisor's callers really pass `config.user_email` into rows 1-3 is NOT this file's
 subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
 `user_email=""` instead of `config.user_email` stays green here AND in
@@ -35,7 +38,8 @@ subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
               tests/routing/test_a_reresolve_needs_a_person.py (their mutants B1-B12; not re-run by gov)
               for the corpus, and tests/test_the_engine_a_smoke_runs_as_a_test_persona.py (their
               mutants C1-C11; not re-run by gov) for the Engine A smoke.
-  NO_PERSON   the payload has no `user_email` key, or some value found for it is a blank literal.
+  NO_PERSON   the payload has no `user_email` key, or some value found for it is a literal naming
+              nobody: a blank, or a `svc:` service identity.
   UNDECIDED   no payload keys could be derived; never a member of NO_PERSON, always a red.
 INGEST_RECORD and TEST_PERSONA, like TOKEN and FORWARD, are DECLARED splits of PERSON checked only
 as far as stated; the PERSON vs NO_PERSON split is derived.
@@ -403,28 +407,49 @@ def payload_values(site: Site) -> dict:
     return vals
 
 
-def _is_blank(expr) -> bool:
-    """A literal that names nobody: `""`, `"  "`, or `None`."""
-    return isinstance(expr, ast.Constant) and (
-        expr.value is None or (isinstance(expr.value, str) and not expr.value.strip()))
+def _literal_prefix(expr) -> str | None:
+    """The leading literal text of a string-valued expression: the whole of a str constant, the
+    first literal part of an f-string, the left side of a `+` concatenation; None when the value
+    does not start with literal text."""
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return expr.value
+    if isinstance(expr, ast.JoinedStr) and expr.values and isinstance(expr.values[0], ast.Constant):
+        return expr.values[0].value
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _literal_prefix(expr.left)
+    return None
 
 
-# A curl body's `"user_email": ""` (quotes may be backslash-escaped inside a shell string).
-SH_BLANK_USER_EMAIL_RE = re.compile(r'user_email\\?"\s*:\s*\\?"\s*\\?"')
+def _names_nobody(expr) -> bool:
+    """A literal that names nobody:
+    - a blank: `""`, `"  "`, or `None` (architect, 2026-10-12);
+    - a service identity: a literal starting `svc:`, whole or as the literal head of an f-string
+      or concatenation (architect, 2026-10-14: "a service identity is never a person")."""
+    if isinstance(expr, ast.Constant) and (
+            expr.value is None or (isinstance(expr.value, str) and not expr.value.strip())):
+        return True
+    prefix = _literal_prefix(expr)
+    return prefix is not None and prefix.strip().lower().startswith("svc:")
+
+
+# A curl body's `"user_email": ""` or `"user_email": "svc:..."` (quotes may be backslash-escaped
+# inside a shell string).
+SH_NOBODY_USER_EMAIL_RE = re.compile(r'user_email\\?"\s*:\s*\\?"\s*(?:\\?"|svc:)', re.IGNORECASE)
 
 
 def carries_person(site: Site, inprocess: bool = False) -> bool:
-    """The payload names `user_email` AND no value found for it is a blank literal. A blank
-    `user_email` is ABSENT: it names nobody, so it is never counted as a person (architect,
-    2026-10-12). Conservative: one blank value anywhere (e.g. a default later overwritten under a
-    condition) makes the site NOT carry a person."""
+    """The payload names `user_email` AND no value found for it is a literal that names nobody
+    (`_names_nobody`: a blank, or a `svc:` service identity). Such a `user_email` is ABSENT and is
+    never counted as a person (architect, 2026-10-12 for blank, 2026-10-14 for `svc:`).
+    Conservative: one such value anywhere (e.g. a default later overwritten under a condition)
+    makes the site NOT carry a person."""
     if site.shell_cmd:
-        return "user_email" in site.shell_cmd and not SH_BLANK_USER_EMAIL_RE.search(site.shell_cmd)
+        return "user_email" in site.shell_cmd and not SH_NOBODY_USER_EMAIL_RE.search(site.shell_cmd)
     if inprocess:
         kws = [k.value for k in site.node.args[0].keywords if k.arg == "user_email"]
-        return bool(kws) and not any(_is_blank(v) for v in kws)
+        return bool(kws) and not any(_names_nobody(v) for v in kws)
     vals = payload_values(site).get("user_email")
-    return bool(vals) and not any(_is_blank(v) for v in vals)
+    return bool(vals) and not any(_names_nobody(v) for v in vals)
 
 
 def _user_email_value(site: Site):
@@ -453,7 +478,7 @@ def _user_email_value(site: Site):
 
 def derived_class(site: Site) -> str:
     """PERSON when the payload carries a person (`carries_person`: `user_email` present and never a
-    blank literal), else NO_PERSON. UNDECIDED when a non-shell site derives no payload keys at all:
+    literal naming nobody: a blank or a `svc:` service), else NO_PERSON. UNDECIDED when a non-shell site derives no payload keys at all:
     a site the derivation cannot read is never counted as a member of NO_PERSON."""
     if site.shell_cmd:
         return "PERSON" if carries_person(site) else "NO_PERSON"
@@ -669,6 +694,46 @@ def test_CONTROL_a_blank_user_email_is_absent_never_a_person():
     assert sh('curl -s -X POST http://h:1/resolve -d "{\\"query\\":\\"w\\",\\"user_email\\":\\"a@b\\"}"\n') == "PERSON"
 
 
+def test_CONTROL_a_svc_user_email_is_absent_never_a_person():
+    """Architect, 2026-10-14: "a svc: literal counts as absent in every arm, same as blank; a service
+    identity is never a person"."""
+    def cls(src):
+        (s,) = find_py_sites(src, "x.py")
+        return derived_class(s)
+
+    def one(val):
+        return cls('def f(b, u, n):\n    requests.post(f"{b}/resolve", json={"query": 1, "user_email": '
+                   + val + '})\n')
+
+    post = '    requests.post(f"{b}/resolve", json=p)\n'
+    assert one('"svc:supervisor"') == "NO_PERSON"
+    assert one('"SVC:Supervisor"') == "NO_PERSON"
+    assert one('" svc:x"') == "NO_PERSON"
+    assert one('f"svc:{n}"') == "NO_PERSON"
+    assert one('"svc:" + n') == "NO_PERSON"
+    # a svc default, overwritten only under a condition: conservative, not a person
+    assert cls('def f(b, u):\n    p = {"query": 1, "user_email": "svc:x"}\n    if u:\n        p["user_email"] = u\n'
+               + post) == "NO_PERSON"
+    # a svc stored by subscript, and one reached through a spread
+    assert cls('def f(b, u):\n    p = {"query": 1}\n    p["user_email"] = "svc:x"\n' + post) == "NO_PERSON"
+    assert cls("def o(u):\n    c = {'user_email': 'svc:x'}\n    def i():\n"
+               '        requests.post(f"{b}/resolve", json={"q": 1, **c})\n') == "NO_PERSON"
+    # NOT a service: `svc:` must be the LITERAL HEAD; a person-looking literal, a name, an f-string
+    # whose head is a name, and `u or "svc:x"` (an expression, judged like `u or ""`) stay PERSON
+    assert one('"a@b"') == "PERSON"
+    assert one('"user-svc:x@b"') == "PERSON"
+    assert one('f"{n}svc:"') == "PERSON"
+    assert one('u or "svc:x"') == "PERSON"
+
+    def sh(src):
+        (s,) = find_sh_sites(src, "a.sh")
+        return derived_class(s)
+
+    assert sh('curl -s -X POST http://h:1/resolve \\\n  -d \'{"query":"w","user_email":"svc:x"}\'\n') == "NO_PERSON"
+    assert sh('curl -s -X POST http://h:1/resolve -d "{\\"query\\":\\"w\\",\\"user_email\\":\\"svc:x\\"}"\n') == "NO_PERSON"
+    assert sh('curl -s -X POST http://h:1/resolve \\\n  -d \'{"query":"w","user_email":"a-svc:x"}\'\n') == "PERSON"
+
+
 # --------------------------------------------------------------------------------------
 # Arm C: the class of each site, derived from the code
 # --------------------------------------------------------------------------------------
@@ -695,8 +760,8 @@ def test_CLASS_of_each_site_is_the_class_its_payload_has(row):
             continue
         assert person, (
             f"row {row.n} ({row.file}:{s.line} {row.function} {row.route}) is declared "
-            f"{row.cls} but its payload carries no person: `user_email` is absent or a blank "
-            f"literal (keys: {sorted(keys)})")
+            f"{row.cls} but its payload carries no person: `user_email` is absent, a blank "
+            f"literal, or a `svc:` service literal (keys: {sorted(keys)})")
         where = f"row {row.n} ({row.file}:{s.line} {row.function})"
         if row.cls == "TOKEN":
             fed = _has_param(s, "user_email")
