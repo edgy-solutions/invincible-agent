@@ -123,6 +123,8 @@ users:
       # 2026-10-11 ruling: sandbox tier edge-01 task audiences. Actor-only (no cell).
       - maint-approvers-edge-01
       - maint-supervisors-edge-01
+      # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
+      - manufacturing-stewards
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]

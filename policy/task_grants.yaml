@@ -403,6 +403,14 @@ audiences:
       to a mirrored email user.
     grant_to:
       - 33333333-3333-4333-8333-333333333333
+  document_promotion:MANUFACTURING:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0041 §5. The reviewer who promotes or rejects a contributed MANUFACTURING document
+      (work-instruction). Ruled 2026-10-14 (architect): granted through the manufacturing-stewards
+      group, never to a user directly. Sandbox member = bob.
+    grant_to_groups:
+      - manufacturing-stewards
 
   # OpenDDIL-lab `maint_fault_propose` `decide` await: audience
   # `maint_fault_approval:{trigger.owning_tier}`. Sandbox tier = ORG. Granted THROUGH THE GROUP
