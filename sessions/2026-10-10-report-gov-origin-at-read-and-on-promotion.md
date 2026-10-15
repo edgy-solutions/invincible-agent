@@ -371,6 +371,23 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - R3 (`"svc:supervisor"`): red on row 17 only. The count arm treats a service literal as a person, so the TEST_PERSONA arm is the only guard for that shape.
 - **Packet placed:** `2026-10-13-packet-to-01-for-188-take-47-at-6780e7d9-it-carries-52-and-moves-row-17.md` (cc the architect and 74).
 
+## 2026-10-14: a `svc:` user_email is absent in every arm (#47, `bb0b5190`)
+
+- **The ruling:** "a svc: literal counts as absent in every arm, same as blank; a service identity is never a person." It answers the question I raised on 2026-10-13, after R3.
+- **The change:** `_is_blank` becomes `_names_nobody`, so `carries_person` treats a literal whose head is `svc:` as absent, the same as a blank.
+  - The head can be a str constant, an f-string head or the left side of a `+`, matched case-insensitively.
+  - At shell sites the rule matches `user_email":"svc:…`.
+  - `u or "svc:x"` stays PERSON, the same as `u or ""`.
+- **Control:** `test_CONTROL_a_svc_user_email_is_absent_never_a_person`, with checks on both sides.
+- **Test:** 28 passed. No real site sends a `svc:` literal, so the classes and NO_PERSON (4) are unchanged.
+- **Mutants**, each measured now and against the test at `6780e7d9`:
+  - S1 (composer): now red on row 8, DOMAINS_WITHOUT_PERSON and the count. Before: row 8 only.
+  - **S2** (DS:429 `"svc:supervisor"`): now red on row 1, DOMAINS_WITHOUT_PERSON and the count. **Before: survived (27 passed).**
+  - **S3** (`_bind_from_scope` `"svc:engine-o"`): now red on row 7 and the count. **Before: survived (27 passed).**
+  - S4 and S5 (agent_routers, a str and an f-string): now red on row 17 and the count. Before: row 17 only.
+  - S6 (harness curl gains `svc:`): green, because the site stays NO_PERSON. Its control S6c (`a@b`) is red on row 14 and the count.
+- **Packet placed:** `2026-10-14-packet-to-01-47-moved-to-bb0b5190-a-svc-user-email-is-absent-take-it-for-188.md` (cc the architect and 74).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
