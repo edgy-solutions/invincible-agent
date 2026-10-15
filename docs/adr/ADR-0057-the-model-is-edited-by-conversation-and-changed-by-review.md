@@ -1,7 +1,8 @@
 # ADR-0057 — The domain model is edited by conversation and changed by review
 
-**Status:** Proposed. Drafted by Lane 1 from the architect's packet of 2026-10-14. This is a PR,
-not merged; Chris reviews. Nothing is built.
+**Status:** Proposed. The architect approved it on 2026-10-14 with three additions, all folded
+in (§2's eighth question, §4's self-ratification exclusion, §4's migration-note minimum), and it
+is merged. **It becomes Accepted when the first engine-o verb lands.** Nothing is built yet.
 **Date:** 2026-10-14
 **Deciders:** architect (decision); Chris (review); Lane 1 (draft)
 **Related:**
@@ -73,7 +74,11 @@ A proposal asks, for each class it introduces or changes:
 - **consuming domains;**
 - **cardinality;**
 - **history versus property:** is a change a new fact with a date, or an overwrite;
-- **lifecycle.**
+- **lifecycle;**
+- **reuse:** does a vendored ontology already have this class or property?
+
+The reuse question puts survey-before-mint ([ADR-0007](ADR-0007-survey-before-mint.md)) inside
+the proposal. **A proposal that mints where it could reuse must say why.**
 
 **A proposal is incomplete until each question is answered or explicitly deferred.** A deferral
 is recorded with its reason. It is a declared absence, not a blank.
@@ -94,6 +99,18 @@ is never parsed back into one.
 
 This is the same governance as content-kind rows and finance templates. The change is a reviewed
 diff with a named approver; the conversation only produces the proposal.
+
+**The proposer may not ratify their own proposal.** This is the same exclusion as the dropper
+rule on ADR-0041's promotion verb: the person who dropped a document may not promote it
+(sealed at `tests/test_promotion_records_origin.py::test_the_DROPPER_cannot_promote_403_before_the_ledger_and_the_graph`).
+The ratification task's audience excludes the proposer, even when the proposer is a steward.
+
+**The migration-note minimum.** A change to **identity or cardinality** over existing instances
+is **not ratifiable** without a migration note that names:
+- the **number of instances affected**, and
+- **the rewrite**: what each affected instance becomes.
+
+Every other part of a migration note may be deferred.
 
 ### 5. Source format
 
@@ -136,8 +153,9 @@ later from grants and overlays.
 
 - **Who the ontology stewards are, per deployment.** That is §4's ratification audience, and it
   is Lane 1's unit of work.
-- **Migration notes.** What a migration note must contain when a change alters identity or
-  cardinality over existing instances.
+- **Migration notes beyond the minimum.** §4 fixes the minimum (an identity or cardinality
+  change names the instance count and the rewrite). Anything further a note must carry is
+  deferred.
 - **LinkML** (§5): a follow-up decision.
 
 ## Indicators for revisiting
