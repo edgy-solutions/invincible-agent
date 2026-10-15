@@ -387,6 +387,37 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - S4 and S5 (agent_routers, a str and an f-string): now red on row 17 and the count. Before: row 17 only.
   - S6 (harness curl gains `svc:`): green, because the site stays NO_PERSON. Its control S6c (`a@b`) is red on row 14 and the count.
 - **Packet placed:** `2026-10-14-packet-to-01-47-moved-to-bb0b5190-a-svc-user-email-is-absent-take-it-for-188.md` (cc the architect and 74).
+- **Later the same day, the architect ruled:** "accepted; the engine-side 422 refusing svc: after 188b, as you say."
+
+## 2026-10-14 (2): the visibility catch takes the stores' outage classes only (#54, `16aa5450`)
+
+- **The ask:** lane/74's §4 (2026-10-11 packet): "catch what the lookup's stores actually raise … and let everything else answer 500 … The defence belongs to both routes."
+- **The change:** a new branch `lane/gov-narrow-except`, stacked on #45, one commit.
+  - `/resolve_instance` and `_gate_enumerated_members` now catch `_VISIBILITY_OUTAGE` and answer 503. Anything else answers 500.
+  - `_VISIBILITY_OUTAGE` holds:
+    - `SubstrateUnavailable` (execute_sparql's only escaping exception);
+    - neo4j `ServiceUnavailable`, `SessionExpired` and `TransientError` (from `visible_notice_ids`);
+    - `httpx.HTTPError` (from `program_membership` → Topaz).
+  - **`ValueError` is excluded on purpose:** a garbled Topaz body is a defect. A 500 still fails closed.
+  - The filter's "graph not connected" now raises `SubstrateUnavailable`, not `RuntimeError`.
+  - `/resolve_instance`'s older 502 catch is narrowed to `SubstrateUnavailable`. It predates gov (`cac536e0`).
+- **Tests** (gated, one file per run):
+
+  | file | result |
+  | --- | --- |
+  | new seal `test_the_visibility_check_answers_503_only_for_an_outage.py` | 31 passed |
+  | resolve withholds | 16 passed |
+  | enumerate withholds | 10 passed |
+  | `test_an_outage_is_not_an_empty_answer.py` | 13 passed |
+  | `test_enumerate_fans_out.py` | 18 passed |
+
+- **The withholds doubles now raise the real classes.** The old `RuntimeError` doubles, measured against the new `main.py`, are red on three arms (neo4j, link query, enumerate LOOKUP).
+- **Before** (the new seal against `9393ff08`):
+  - Red: the 12 defect arms (each defect came back as a 503) and the AST arm.
+  - Crashed on a missing attribute, not red: the tuple, not-connected, outage and 502 arms.
+- **Mutants M1–M5 are each red on a named arm** (see the PR body and the commit message).
+  - **M1** (the gate back to `Exception`) leaves the enumerate seal green. That seal tests outages only; the new seal's defect arms catch M1.
+- **Packet placed:** `2026-10-14-packet-to-74-section-4-built-pr-54-the-visibility-catch-is-the-stores-outage-classes-only.md` (cc the architect and 01).
 
 ## Questions for a ruling
 
