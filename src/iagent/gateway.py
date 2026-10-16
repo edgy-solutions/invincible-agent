@@ -10500,6 +10500,13 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     then it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with
     none stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times
     the row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).
+
+    `artifacts` (ruled 2026-10-16) lists `{artifact_id, kind, released_at}` for the case the event
+    opened (`case_id`), so a delegate learns its artifact ids from the row it already may read.
+    ONLY what the caller may open: each artifact is filtered through `artifact_reads.is_entitled`,
+    the gate GET /artifacts/{id} applies, so an id the caller could not read is never listed. The
+    key is always present: `[]` means none (no case yet, or none the caller may open); `None` means
+    UNKNOWN (the graph could not be read; logged) -- the row itself still answers.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10545,6 +10552,26 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     # means "claimed, none known yet"; a duplicate reports the ORIGINAL's.
     notice_id = (source_row or {}).get("notice_id") or None
 
+    artifacts: Optional[list] = []
+    if row.get("case_id"):
+        from . import artifact_reads
+
+        def _case_artifacts() -> list:
+            with neo4j_driver.session() as session:
+                recs = list(session.run(
+                    artifact_reads.CASE_ARTIFACTS_CYPHER,
+                    case_id=row["case_id"], user_id=(current_user.id or "").strip()))
+            delegates = _delegate_principals()
+            return [{"artifact_id": r["id"], "kind": r["kind"], "released_at": r["released_at"]}
+                    for r in recs
+                    if artifact_reads.is_entitled(
+                        r, authz_id=current_user.authz_id, delegates=delegates)]
+        try:
+            artifacts = await run_in_threadpool(_case_artifacts)
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the case's artifacts could not be listed: %s", ingest_id, exc)
+            artifacts = None
+
     return {
         "ingest_id": row["id"],
         "stage": stage,
@@ -10560,6 +10587,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "failure": failure,
         "attempt": attempt,
         "notice_id": notice_id,
+        "artifacts": artifacts,
     }
 
 
