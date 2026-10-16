@@ -397,7 +397,11 @@ def execute_declared_query(
     ``/declared_query`` seam rather than a caller-declared endpoint. The query text never
     reaches this module; only the verb's name and its parameter values do."""
     user_jwt = identity.get("user_jwt")
-    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
+    # A declared query is a mesh VERB, and svc:case-runner is never a verb grantee (ruling
+    # 2026-10-11): the CHECK asks for the run's acting identity -- the person, or the event's
+    # `dropped_by` -- with or without a user_jwt, and a blank one is denied, never replaced by
+    # the runner's. The case-runner credential below is TRANSPORT only, never the gate subject.
+    caller = identity.get("authz_id", "")
     if not check_can_invoke(decl.capability, caller, topaz_url=topaz_url):
         raise StepFailAndRelease(
             f"caller {caller!r} is not authorized (can_invoke) for capability "
