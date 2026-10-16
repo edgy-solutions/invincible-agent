@@ -81,16 +81,16 @@ def test_the_fixture_actually_exercises_two_platforms_and_two_systems():
 
 # ── 2. KNOWN-BUT-CLEAN vs UNKNOWN — THE DISCRIMINATING CONTROL ─────────────────────────────
 
-def test_a_known_critical_item_with_no_failures_returns_an_explicit_empty_set():
+def test_a_listed_critical_item_with_no_failures_refuses_no_failures_recorded():
+    """RULED 2026-10-16: a resolved part with no failures refuses `no_failures_recorded`, listed or
+    not. It is told from an unresolvable string by its OUTCOME, not by refusing or not."""
     out = measures.what_failed_on_this_part(part_number="PN-8802")
-    assert out["refused"] is False, (
-        "a critical item that has never failed must NOT refuse — refusing here would make "
-        "'no failures' indistinguishable from 'this verb cannot identify the part'"
-    )
-    assert out["failure_count"] == 0
-    assert out["failures"] == []
-    assert out["platforms"] == []
-    assert out["systems_of_record_cited"] == []
+    assert "PN-8802" in entities.CRITICAL_PART_NUMBERS
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded", out
+    assert out["part_number"] == "PN-8802" and "PN-8802" in out["reason"]
+    assert "failures" not in out and not any("task" in k for k in out)
+    unresolvable = measures.what_failed_on_this_part(part_number="?? no ??")
+    assert unresolvable["outcome"] == "unknown_part" != out["outcome"]
 
 
 def test_an_unknown_part_number_refuses_rather_than_reporting_clean():
