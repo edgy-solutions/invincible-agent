@@ -38,12 +38,34 @@ record must say which row of which table chose each step.
 from __future__ import annotations
 
 import logging
+import os
+from datetime import timedelta
 from typing import Any, Optional
 
 import restate
 from restate import ObjectContext, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
 
 logger = logging.getLogger(__name__)
+
+def _case_workflow_retention() -> timedelta:
+    """How long Restate keeps a finished case's workflow (its state, `case` included) before it is
+    garbage-collected: CASE_WORKFLOW_RETENTION_DAYS, default 30 (ruled 2026-10-16: Restate's own
+    default is 1 day, which made the case record a clock, not evidence). Read once, at import.
+    Fewer than one day, or not a whole number of days, REFUSES the import: a runner that silently
+    kept a case for hours is worse than one that does not start. The durable record is the
+    Postgres case summary; this is the belt."""
+    raw = os.environ.get("CASE_WORKFLOW_RETENTION_DAYS", "30").strip() or "30"
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        raise RuntimeError(
+            f"CASE_WORKFLOW_RETENTION_DAYS must be a whole number of days >= 1; got {raw!r}")
+    return timedelta(days=days)
+
+
+CASE_WORKFLOW_RETENTION = _case_workflow_retention()
 
 #: FROZEN CONTRACT SURFACE — task rows name it, and ``/act`` and acks post to it.
 workflow_runner = Workflow("WorkflowRunner")
@@ -212,7 +234,7 @@ def _child_key(case_id: str, n: int) -> str:
     return f"{case_id}{_routing().CHILD_SEP}{n}"
 
 
-@workflow_runner.main()
+@workflow_runner.main(workflow_retention=CASE_WORKFLOW_RETENTION)
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     if "child_of" in request:
         return await _run_instance(ctx, request)

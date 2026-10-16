@@ -1,5 +1,16 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.51 — 2026-10-16
+
+A finished case's Restate workflow is kept 30 days, not Restate's default 1.
+
+### Added
+
+- **`restate.caseWorkflowRetentionDays`** (default `30`). `templates/engines.yaml` renders it into the
+  engine-a Deployment as `CASE_WORKFLOW_RETENTION_DAYS`; the runner puts it on its `run` handler as
+  `workflowCompletionRetention` in discovery. The runner refuses to import below 1 day. Retention is
+  fixed when the handler registers: restate-init re-registers engine-a with `force`, so a roll applies it.
+
 ## 0.4.50 — 2026-10-16
 
 (Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, to 0.4.47 when
