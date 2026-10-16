@@ -1627,6 +1627,42 @@ services:
           An identity-less caller is refused rather than read broadly; an unreachable graph
           is 503 rather than 404, because "we could not look" is not "there is no such
           thing".
+      - method: GET
+        path: /answers
+        identity: keycloak-jwt
+        gate: "get_current_user + produced_for_user_id = caller (bound parameter, the Electric proxy's key)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          The caller's OWN answers as summaries only (id, ts, title, summary, type, status, subject, archived). Never a body: the SELECT names a fixed narrow column list and only the about.* sub-paths of routing. Archived hidden unless include_archived. Search is a parameterized to_tsquery built from word tokens only.
+      - method: GET
+        path: /answers/{answer_id}/body
+        identity: keycloak-jwt
+        gate: "get_current_user + the SAME helper as /artifacts/{artifact_id} (PRODUCED_FOR ownership, seeding delegate, recorded origin)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          ONE body (rendered_output, routing, resolved_intent) by id. Shares _entitled_artifact_rec with /artifacts/{artifact_id}, so a caller refused there is refused here with the same status (404, not 403: no existence oracle). Archived answers stay readable: archive hides, never revokes.
+      - method: POST
+        path: /answers/{answer_id}/archive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Sets archived_at/by/reason on the Neo4j AnswerArtifact (projected to Postgres) and appends archive_history. Hides from the default view; never deletes or detaches. A non-owner gets the same 404 as an unentitled /artifacts read. Steward cross-user tidy is a FOLLOW-UP needing a Topaz permission. Idempotent.
+      - method: POST
+        path: /answers/{answer_id}/unarchive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Clears the archive properties on the node and appends an unarchive entry to archive_history. Same owner-only gate and 404 as archive; idempotent.
       - method: POST
         path: /ingest
         identity: keycloak-jwt
@@ -1670,16 +1706,21 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/retry
         identity: keycloak-jwt
-        gate: "get_current_user + the status route's own scoping (submitted_by OR on_behalf_of = caller); a stranger and a missing row get the identical 404"
+        gate: "get_current_user + a person may retry their OWN failed or awaiting_origin DOCUMENT row (scoped lookup ingest_status.get_status_for; anything else, including a row they cannot see, is the same 403 retry_is_pin_driven); a service may retry a failed DOCUMENT row without a pin; every other service retry is pin-driven: body {pin_digest} must differ from the row's recorded pin (equal 409 pin_unchanged, none recorded 409 no_recorded_pin)"
         exposes: action
-        consumers: [ingestion seam UI (ADR-0041 §8), the dropper un-stranding their own row]
+        consumers: [cortex-ui dropper (own failed or awaiting_origin row), extractor pin-change driver (service identity)]
         class: gated
         justification: >-
-          The dropper's own retry (roll #20). The visibility rule and the 404 are the status
-          route's, so this adds no new existence oracle. The only effect is re-running the
-          find-or-file of the document_promotion task, and only for a row already at review.
-          Terminal rows, event rows at received and documents still in doc-tools' pipeline are
-          refused 409 and nothing is written.
+          Architect directive 2026-10-12 ("pipeline failure must reach the row") supersedes the
+          2026-10-10 pin-driven-only ruling FOR FAILED ROWS: the input was never processed, so a
+          person may re-open their own failed document row (failed -> received, attempt + 1; it
+          does not relaunch the pipeline). A person's lookup is SCOPED to rows they submitted or
+          are on_behalf_of, so a failed row they cannot see is the same 403 as any other refusal
+          and no existence oracle. A person may also re-file their own awaiting_origin row (Q2c,
+          idempotent). Every other extraction retry stays pin-driven and service-only, and its only
+          effect is re-running the find-or-file of the document_promotion task for a row already at
+          review. Terminal rows, failed event rows, event rows at received and documents still in
+          doc-tools' pipeline are refused 409 and nothing is written.
       - method: GET
         path: /cases/{case_id}
         identity: keycloak-jwt
@@ -1691,6 +1732,19 @@ services:
           Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
           case and one the caller may not read answer the same 404. A runner that cannot be
           reached is a different fact and answers 503 runner_unavailable, not 404.
+      - method: POST
+        path: /cases/{case_id}/signals/{signal}
+        identity: keycloak-jwt
+        gate: "get_current_user (authz_id required, else 401); the actor is the token's authz_id, never the body; engine-a's WorkflowRunner.signal is the authority (accepts, reason_required, excluded, journalled audience, Topaz can_act)"
+        exposes: gated-content
+        consumers: [cortex-ui case view (a person answers a human-audience signal, e.g. tier_ack)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-10: a human acknowledgment is a cortex action. Generic over the
+          signal name, gated by the audience the runner journalled when it awaited the signal. The
+          BFF does not re-check can_act itself (the case projection does not expose the audience);
+          a runner refusal (401/403) is 403, a bad status or missing reason 400, an unknown case
+          404, an unreachable or failing runner 502. A refusal is never a 200.
       - method: POST
         path: /ingest/events
         identity: keycloak-jwt
@@ -1711,6 +1765,20 @@ services:
           seeded trigger requires is 422, naming the field; 503 when that trigger cannot be
           loaded (`trigger_unconfigured`). An unreadable kind registry is not caught here: it
           raises (500) rather than falling back to an empty set, and no case opens.
+      - method: GET
+        path: /ingest/retries
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: gated-content
+        consumers: [doc-tools relaunch poller (retried drops)]
+        class: gated
+        justification: >-
+          Lists the retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape
+          1): rows re-opened at `received` by the retry route, attempt above 1, oldest first.
+          doc-tools' sensor cannot see a retried object again, so it polls this route and launches
+          each entry with run_key `{ingest_id}-a{attempt}`. A single SERVICE identity is accepted,
+          checked before the database is touched, so no end user can enumerate other people's
+          drops and a non-doc-tools caller learns nothing. Event rows never appear.
       - method: POST
         path: /ingest/{ingest_id}/stage
         identity: keycloak-jwt

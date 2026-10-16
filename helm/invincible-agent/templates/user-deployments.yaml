@@ -108,7 +108,7 @@ spec:
           # DAGSTER_POSTGRES_* are REQUIRED for the daemon's
           # launch_run subprocess to instantiate the
           # DagsterPostgresStorage backend configured in
-          # iagent-dagster's dagster.yaml. Without these, every
+          # the chart's `<release>-dagster-home` ConfigMap (dagster.yaml; max_runtime_seconds bound). Without these, every
           # asset materialization through DefaultRunLauncher fails
           # with a misleading "User code server timed out after
           # 60s" error — the actual cause is a config-loading

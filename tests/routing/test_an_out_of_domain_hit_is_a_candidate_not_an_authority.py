@@ -103,7 +103,7 @@ def _run(monkeypatch, *, resolvers, outcomes, asked, identifier="Notional Progra
                          else main.MeshResult.empty()),
     )
 
-    async def _fake_call(resolver, term, query):
+    async def _fake_call(resolver, term, query, **_caller):
         for o in outcomes:
             if o.provider == resolver["provider"]:
                 return o

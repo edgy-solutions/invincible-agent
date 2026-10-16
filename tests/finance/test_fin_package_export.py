@@ -233,7 +233,9 @@ def test_both_export_routes_shape_through_the_ONE_helper():
         and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                 and n.func.id == "_shape_export_package_response" for n in ast.walk(fn))
     }
-    assert callers == {"export_package", "_export_package_from_template"}, sorted(callers)
+    # the cost path shapes inside `_call_engine_cost_package`, which export_package (single path
+    # and per-engine sections alike) calls: still one shaping call per route.
+    assert callers == {"_call_engine_cost_package", "_export_package_from_template"}, sorted(callers)
     assert src.count("engine returned no verifiable artifact hash") == 1
     assert src.count("_SHA256_LOCATOR_RE.match(sha)") == 1
 
@@ -471,7 +473,7 @@ def test_the_duckdb_ddl_refuses_an_unmapped_type_by_name():
 # ── REAL BUILD ───────────────────────────────────────────────────────────────
 @pytest.fixture(scope="module")
 def real_build(tmp_path_factory):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     from fastapi.testclient import TestClient
 
     from agent_fleet.finance_agent import main as fmain
@@ -521,7 +523,7 @@ def test_the_real_build_html_parses_has_no_cdn_and_names_six_panels(real_build):
 
 
 def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real_build):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = real_build["duckdb"]
@@ -533,7 +535,7 @@ def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real
 
 def test_the_build_refuses_when_the_duckdb_disagrees_with_the_state(tmp_path):
     """CONTROL for the arm above: `tables_agree` can say no."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = tmp_path / "x.duckdb"

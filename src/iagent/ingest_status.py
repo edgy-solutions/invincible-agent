@@ -67,7 +67,7 @@ STAGES = (RECEIVED, EXTRACTING, REVIEW, PROMOTED, REJECTED, FAILED)
 
 # Stages whose `detail` is REQUIRED — the two that end an ingest without landing it, so a
 # consumer reading the status is told WHY rather than only THAT (ca's IngestStatus rule).
-_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED)
+_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED, "review_rejected")
 
 # Out-of-band terminal: a repeat arrival never enters the ladder above (it never extracts,
 # never awaits disposition) — it is a DIFFERENT fact, recorded once and done. Kept separate from
@@ -82,15 +82,22 @@ DUPLICATE = "duplicate"
 # ca's SDK -- it is this repo's own event-branch extension. Keeping it out of STAGES keeps that
 # seal intact; it is still a legal `update_status` target via ALL_STATUSES below.
 CASE_OPENED = "case_opened"
-# Out-of-band terminal, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
+# Out-of-band, SAME SHAPE AS DUPLICATE (architect ruling 2026-10-02): a kind whose
 # registration declares `domain` EXPLICITLY as null (`pdf`, `engineering-document`,
 # `doors-export` -- "origin resolved by evidence, not kind") never enters `review`'s task-filing
 # step at all, so it does not belong on the STAGES ladder either -- it is a different fact
 # (no audience exists to file a task against), recorded once and done, same as a duplicate
-# arrival. Terminal: any later move out of `awaiting_origin` (including `failed`) is refused
-# 409 by gateway's `update_ingest_stage`, exactly like the other terminal stages.
+# arrival. Terminal for doc-tools' stage route and for the retry route: any move out of
+# `awaiting_origin` through them (including `failed`) is refused 409. The ONE exit is a
+# steward's accepted origin (gateway's `write_origin_route`), which files
+# `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10 Q2,
+# superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
 AWAITING_ORIGIN = "awaiting_origin"
-ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN)
+# Out-of-band terminal (steward-correction ruling 2026-10-10): a steward's NARROW REJECT of a grouped
+# review (wrong document / not a notice / duplicate) closes the task, writes nothing, and leaves the
+# row here. `detail` (the reason_code) is required -- a consumer is told WHY.
+REVIEW_REJECTED = "review_rejected"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED)
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
@@ -119,6 +126,14 @@ KINDS = (PDF, CAD, XML, EVENT)
 # `kind == EVENT`, never against INGEST_ID_RE -- an event id can never satisfy that pattern by
 # construction, so checking it there would refuse every real event-door call.
 EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
+
+# 2026-10-12 (pipeline failure must reach the row): the failure reason_code the WATCHDOG writes
+# (`fail_stale_received`). The reason_code vocabulary is otherwise OPEN -- doc-tools owns its codes
+# and this repo does not enumerate them -- so the only thing checked is the SHAPE below. `timeout`
+# is the one code this repo itself mints, and the stage route treats it as PROVISIONAL (a late run
+# supersedes it), so it is named once here for both sides.
+REASON_TIMEOUT = "timeout"
+REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS ingest_status_projection (
@@ -170,6 +185,19 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEX
 -- the SAME write); NULL while a row sits at `received` and for every row the file-branch door
 -- writes (a document never opens a case). IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
+
+-- 2026-10-12 (pipeline failure must reach the row, architect directive): `failure` is JSON text,
+-- NULL unless the row is `failed` ({reason_code, reason, step, run_id, pin_digest, failed_at});
+-- `run_id` is the last Dagster run id a stage POST reported; `attempt` counts re-opens of a failed
+-- row (POST /ingest/{id}/retry), starting at 1. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
+
+-- 2026-10-13: `notice_id` is the notice's OWN id (e.g. PCN26-184) as the extraction manifest's
+-- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
+-- LLM-extracted). NULL until known. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
 """
 
 
@@ -349,6 +377,18 @@ def record_duplicate_arrival(
     return row
 
 
+def _parse_failure(raw: Any) -> Optional[dict[str, Any]]:
+    """`failure` is stored as JSON text; a dict (or None) is what a consumer sees. A malformed
+    value reads as None rather than raising -- the status route then synthesises from `detail`."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return val if isinstance(val, dict) else None
+
+
 def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
     """The row for `ingest_id`, unscoped to any caller, or None if it does not exist.
 
@@ -364,13 +404,18 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
             cur.execute(
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
-                          created_at, updated_at, content_kind, extraction_ref
+                          created_at, updated_at, content_kind, extraction_ref,
+                          failure, run_id, attempt, notice_id
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
             )
             row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    out["failure"] = _parse_failure(out.get("failure"))
+    return out
 
 
 def update_status(
@@ -382,6 +427,9 @@ def update_status(
     detail: Optional[str] = None,
     case_id: Optional[str] = None,
     extraction_ref: Optional[str] = None,
+    failure: Optional[dict] = None,
+    run_id: Optional[str] = None,
+    notice_id: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
@@ -399,13 +447,25 @@ def update_status(
     a call that only moves the stage never has to restate a case_id it already wrote.
 
     `extraction_ref` is the versioned manifest key doc-tools' review POST names; same discipline:
-    written only when given, never cleared by a call that omits it."""
+    written only when given, never cleared by a call that omits it.
+
+    `failure` (2026-10-12) is the structured reason {reason_code, reason, step, run_id, pin_digest,
+    failed_at}; it is valid ONLY with status `failed` (ValueError otherwise). Any OTHER status
+    writes `failure = NULL`, so a move off `failed` (a late run superseding a watchdog timeout)
+    clears it. `run_id` follows the COALESCE discipline: written only when given.
+
+    `notice_id` (2026-10-13) is the extraction manifest's `doc_id`, DISPLAY ONLY; same COALESCE
+    discipline: None leaves it unchanged, so a later stage move never erases it."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
         raise ValueError(
             f"update_status(status={status!r}) requires a non-blank detail — a {status!r} "
             f"with no reason is unactionable (ca's IngestStatus rule)")
+    if failure is not None and status != FAILED:
+        raise ValueError(f"update_status(failure=...) is valid only with status {FAILED!r}, "
+                         f"got {status!r}")
+    failure_json = json.dumps(failure) if (status == FAILED and failure is not None) else None
     now = int(time.time() * 1000)
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -414,10 +474,12 @@ def update_status(
                       SET status = %s, extracted_count = COALESCE(%s, extracted_count),
                           extracted_total = COALESCE(%s, extracted_total),
                           detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
-                          extraction_ref = COALESCE(%s, extraction_ref), updated_at = %s
+                          extraction_ref = COALESCE(%s, extraction_ref),
+                          failure = %s, run_id = COALESCE(%s, run_id),
+                          notice_id = COALESCE(%s, notice_id), updated_at = %s
                     WHERE id = %s""",
                 (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
-                 now, ingest_id),
+                 failure_json, run_id, notice_id, now, ingest_id),
             )
         conn.commit()
 
@@ -434,6 +496,34 @@ def record_origin_suggestion(ingest_id: str, suggestion: dict[str, Any]) -> None
                 (json.dumps(suggestion), ingest_id),
             )
         conn.commit()
+
+
+def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
+    """The status row for `ingest_id` with NO caller scoping. ONLY for a route that has already
+    proved the caller is a SERVICE (the pin-driven retry): a person must never reach this, because
+    the scoped lookup above is what keeps another user's queue invisible. `pin_digest` is the row's
+    recorded extractor pin when the projection carries one (the column is a follow-up; absent -> the
+    key is simply missing and the retry refuses `no_recorded_pin`)."""
+    if not ingest_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
+                          status, extracted_count, extracted_total, duplicate_of, detail,
+                          created_at, updated_at, origin_suggestion, content_kind, case_id,
+                          extraction_ref, failure, run_id, attempt, notice_id
+                     FROM ingest_status_projection
+                    WHERE id = %s""",
+                (ingest_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    out["failure"] = _parse_failure(out.get("failure"))
+    return out
 
 
 def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
@@ -456,7 +546,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref
+                          extraction_ref, failure, run_id, attempt, notice_id
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
@@ -466,4 +556,81 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
         return None
     out = dict(row)
     out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
+    out["failure"] = _parse_failure(out.get("failure"))
     return out
+
+
+def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
+    """The WATCHDOG (2026-10-12, pipeline failure must reach the row): mark every document row that
+    has sat at `received` for longer than `older_than_seconds` as `failed:timeout`, and return the
+    ids. ONE atomic UPDATE ... RETURNING, so two BFF replicas ticking at once cannot both claim a
+    row, and the `status = 'received'` predicate is re-evaluated at write time.
+
+    EVENT rows are excluded: an event row at `received` is the case runner's fact, not the
+    pipeline's (POST /ingest/events moves it to `case_opened`, or it stays because the runner
+    refused), and its fix is to resend the event -- a pipeline timeout would be a false claim.
+
+    `failure` is built in SQL so each row carries its OWN `run_id` (the last run a stage POST
+    reported, if any). `pin_digest` is NULL: a timeout means nothing ran far enough to pin."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    reason = f"no stage move was reported within {older_than_seconds} seconds of arrival"
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection
+                      SET status = 'failed', updated_at = %s, detail = %s,
+                          failure = jsonb_build_object(
+                              'reason_code', %s::text, 'reason', %s::text, 'step', 'received',
+                              'run_id', run_id, 'pin_digest', NULL, 'failed_at', %s::bigint)::text
+                    WHERE status = 'received' AND kind <> 'event' AND updated_at < %s
+                RETURNING id""",
+                (now, reason, REASON_TIMEOUT, reason, now, now - older_than_seconds * 1000),
+            )
+            ids = [r[0] for r in cur.fetchall()]
+        conn.commit()
+    return ids
+
+
+def list_pending_retries(*, limit: int) -> list[dict]:
+    """Retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape 1): rows at
+    `received` whose `attempt` is above 1, oldest first. `retry_failed` re-opens a row at
+    `received` with `attempt` + 1, but doc-tools' sensor cannot see it again (its S3 cursor has
+    passed the object), so doc-tools polls this listing and launches each entry with the Dagster
+    run_key `{id}-a{attempt}`. A first attempt (`attempt` = 1) is the sensor's own and is never
+    listed. EVENT rows are excluded for the same reason as in `fail_stale_received`. Read-only."""
+    keys = ("id", "attempt", "kind", "content_kind", "object_prefix", "sha256", "run_id",
+            "updated_at")
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, attempt, kind, content_kind, object_prefix, sha256, run_id, updated_at
+                     FROM ingest_status_projection
+                    WHERE status = 'received' AND attempt > 1 AND kind <> 'event'
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT %s""",
+                (limit,),
+            )
+            rows = cur.fetchall()
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[int]:
+    """Re-open a `failed` document row at `received` (2026-10-12): clears `failure` and `detail`,
+    bumps `attempt`, and returns the NEW attempt -- or None if no row matched. ONE atomic UPDATE:
+    the `status = 'failed'` condition makes two concurrent retries safe (the second matches nothing
+    and gets None). Event rows never match (their fix is to resend the event). This only re-opens
+    the row; it does not relaunch the pipeline."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection
+                      SET status = 'received', failure = NULL, detail = NULL,
+                          attempt = attempt + 1, updated_at = %s
+                    WHERE id = %s AND status = 'failed' AND kind <> 'event'
+                RETURNING attempt""",
+                (now, ingest_id),
+            )
+            r = cur.fetchone()
+        conn.commit()
+    return r[0] if r else None

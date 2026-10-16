@@ -582,12 +582,23 @@ def _resolve_ontology(
     caught this path dropping identity (``caller=''``) when the supervisor's
     resolution returned UNKNOWN and Engine A re-resolved: the multi-path
     corollary of [[identity-reaches-enforcement-point]] — every call to an
-    enforcement point must carry the subject, not just the primary one. Empty
-    is honest-absent → deny-by-default on compartmented classes (fail-closed).
+    enforcement point must carry the subject, not just the primary one.
+
+    NO PERSON IS A REFUSAL, NOT A QUERY (ruling (b), 2026-10-10: "scripts and
+    restate_analyst send a real test persona or get refused — a domains list is
+    never an entitlement"). This used to post a blank caller as honest-absent,
+    still carrying the request's ``entitled_domains`` — a domains list standing in
+    for the person who holds it. A blank ``user_email`` now raises a 422
+    ``no_person`` TerminalError BEFORE any call to Engine O: terminal, because a
+    replay cannot conjure a person the request never named.
     """
-    payload: dict = {"query": task_description}
-    if user_email:
-        payload["user_email"] = user_email
+    if not str(user_email or "").strip():
+        raise restate.TerminalError(
+            "no_person: re-resolving the ontology needs the person this runs for "
+            "(user_email); a domains list is never an entitlement",
+            status_code=422,
+        )
+    payload: dict = {"query": task_description, "user_email": user_email}
 
     # ── THE CALLER'S DOMAINS, OR THIS RESOLVES AGAINST MAINTENANCE ──────────────────────
     #
@@ -1942,8 +1953,10 @@ async def _run_grouped_human_await(
     ctx.set("batch_items", batch_items)
     ctx.set("approver", approver)
     ctx.set("notice_fingerprint", notice_fingerprint)
+    ctx.set("ingest_id", request.get("ingest_id") or "")
     ctx.set("notice_id", notice_id)
     ctx.set("doc_type", doc_type)
+    ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
@@ -1988,8 +2001,51 @@ async def _run_grouped_human_await(
             f"grouped decision failed validation after wake: {submission.reason}", status_code=400,
         )
 
+    acted_by_h = (raw_decision or {}).get("acted_by") or approver
+    if submission.rejected:
+        # NARROW REJECT (steward-correction ruling 2026-10-10): closes the review and WRITES NOTHING --
+        # no fan_out_dispatch, so no write_item_state and no promotion. The decision record keeps the
+        # code, the comment and the actor.
+        return {
+            "step_id": step.id, "kind": "human_await", "completion": "grouped",
+            "status": "REJECTED", "dispatch_enqueued": 0, "count": 0, "dispatched_keys": [],
+            "decision_record": {
+                "verdict": "rejected", "reason_code": submission.reason_code,
+                "comment": (raw_decision or {}).get("comment") or "", "acted_by": acted_by_h,
+                "notice_fingerprint": notice_fingerprint,
+            },
+        }
+    resolutions = list(submission.resolutions)
+    edits = submission.edits
+    if edits is not None and not edits.is_empty():
+        # An ADDED row has no subject yet: resolve it in a JOURNALED step so a replay reuses the
+        # answer. Unresolved -> subject stays None -> no graph write (the existing re-link path).
+        try:
+            from review_composer import resolve_subject_via_engine_o  # type: ignore[no-redef]
+            from steward_correction import defect_task  # type: ignore[no-redef]
+        except ImportError:
+            from agent_fleet.restate_analyst.review_composer import resolve_subject_via_engine_o
+            from agent_fleet.restate_analyst.steward_correction import defect_task
+        from dataclasses import replace as _dc_replace
+        added_lc = {str(r["mpn"]).strip().lower() for r in edits.added}
+        for i, res in enumerate(resolutions):
+            if res.subject is None and res.mpn.strip().lower() in added_lc:
+                subj = await ctx.run(f"resolve_added_{i}", lambda m=res.mpn: resolve_subject_via_engine_o(m))
+                resolutions[i] = _dc_replace(res, subject=subj)
+        compartment_h = request.get("compartment") or ""
+        if not compartment_h:
+            raise restate.TerminalError(
+                "an extraction_defect cannot be routed: no compartment on this review", status_code=500)
+        # ONE extraction_defect per accepted decision, idempotent on (notice, decision id): the task
+        # key is derived from both, so a replay registers the same task, never a second.
+        defect = defect_task(
+            notice=notice_fingerprint, decision_id=ctx.key(),
+            pipeline_version=request.get("pipeline_version"), edits=edits,
+            audience=f"dispatch_failure:{compartment_h}", requested_by=approver, acted_by=acted_by_h)
+        await ctx.run("file_extraction_defect", lambda: _mint_dispatch_task(defect))
+
     keys = fan_out_dispatch(
-        ctx, submission.resolutions,
+        ctx, resolutions,
         notice_fingerprint=notice_fingerprint, notice_id=notice_id,
         # PROVENANCE-OF-INITIATION — who STARTED this review. In the canonical sensor-driven flow
         # that is `svc:review-starter`, and that is CORRECT for this field: it has always meant
@@ -2027,6 +2083,16 @@ async def _run_grouped_human_await(
         "status": "RESOLVED", "dispatch_enqueued": len(keys),
         "count": len(keys), "dispatched_keys": keys,
     }
+
+
+def _run_subject(request: dict) -> str:
+    # Ruling 2026-10-11: step 1 of the maintenance fault walk runs on_behalf_of the event's
+    # `dropped_by` (via svc:openddil); svc:case-runner is never a verb grantee, so no default
+    # of the runner's own is added. The dropper is the LAST fallback: a person-started run wins.
+    dropped = request.get("dropped_by")
+    dropper = dropped.get("authz_id") if isinstance(dropped, dict) else None
+    dropper = dropper.strip() if isinstance(dropper, str) else ""
+    return request.get("authz_id") or request.get("caller_email") or dropper or ""
 
 
 async def _run_definition(
@@ -2126,7 +2192,7 @@ async def _run_definition(
     }
     user_jwt = request.get("user_jwt", "")
     identity = {
-        "authz_id": request.get("authz_id") or request.get("caller_email") or "",
+        "authz_id": _run_subject(request),
         "entitled_domains": list(request.get("entitled_domains") or []),
         "persona": request.get("user_persona"),
         "user_jwt": user_jwt,
@@ -2405,7 +2471,10 @@ async def _run_definition(
         elif step.kind == "spo_operation":
             def _do_spo(s=step, ident=identity):
                 try:
-                    verb = verify_spo_step(s.subject, s.verb, ident["entitled_domains"])
+                    verb = verify_spo_step(
+                        s.subject, s.verb, ident["entitled_domains"],
+                        on_behalf_of=ident.get("authz_id", ""),
+                    )
                     return dispatch_spo_step(
                         verb, s.subject, ident,
                         rendered_intent=f"workflow {wf.id}: {s.verb} on {s.subject}",
@@ -3125,7 +3194,8 @@ async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
     async def compute_sets():
         subjects = si.authorized_operation_subjects(caller_email, engine_o_url=_ENGINE_O_URL, domain=scope_domain)
         verbs = (si.authorized_verbs(focused_subject, workflow_domain=state.classification,
-                                     engine_o_url=_ENGINE_O_URL) if focused_subject else [])
+                                     engine_o_url=_ENGINE_O_URL,
+                                     on_behalf_of=caller_email) if focused_subject else [])
         return {"subjects": subjects, "verbs": verbs}
 
     sets = await ctx.run("authorized_sets", compute_sets)
@@ -3167,7 +3237,8 @@ async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
 
             async def verbs_for_pick():
                 return si.authorized_verbs(subj, workflow_domain=state.classification,
-                                           engine_o_url=_ENGINE_O_URL)
+                                           engine_o_url=_ENGINE_O_URL,
+                                           on_behalf_of=caller_email)
 
             fresh_verbs = await ctx.run("verbs_for_pick", verbs_for_pick)
             applied = si.apply_pick(state, pick, authorized_subjects=subjects,

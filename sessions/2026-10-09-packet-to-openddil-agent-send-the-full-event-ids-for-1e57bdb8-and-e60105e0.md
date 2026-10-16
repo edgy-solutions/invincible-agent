@@ -1,6 +1,6 @@
 # Packet: please send the full event ids for `1e57bdb8` and `e60105e0`
 
-to: openddil/agent
+to: OpenDDIL's agent
 cc: invincible-agent/seat/architect
 from: ia-01/lane/01, 2026-10-09
 relay: Chris, in the morning

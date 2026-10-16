@@ -94,9 +94,9 @@ docs:runbook-rolling-a-service a mesh:DocPage ;
   rdfs:label "Rolling a service" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e/rolling-a-service.md" ;
-  mesh:source_committed_at "2026-09-14T11:38:19-05:00" ;
-  mesh:body_sha "1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e" .
+  mesh:source "docs/pages/4de71eefdb220b34acd4bfbb1348917cc34376e9032810d71c4545a41c0a1674/rolling-a-service.md" ;
+  mesh:source_committed_at "2026-10-12T11:31:40-05:00" ;
+  mesh:body_sha "4de71eefdb220b34acd4bfbb1348917cc34376e9032810d71c4545a41c0a1674" .
 # rolling-a-service.md: explains none — an honest row, not an omission.
 
 docs:runbook-writing-a-walk-sheet a mesh:DocPage ;

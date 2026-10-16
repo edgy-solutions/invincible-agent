@@ -914,8 +914,10 @@ async def lifespan(app: FastAPI):
                     "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
                     "the notice's provenance as the graph records it: how it was obtained, the ingest "
                     "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
-                    "unknown notice id, which is a different fact from a known notice naming no part "
-                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "unknown notice id (unknown_notice), which is a different fact from a known "
+                    "notice naming no part (also a refusal: no_affected_parts). More than 100 parts "
+                    "are paged (params.offset; the answer says total_available, completeness and "
+                    "next_offset). READ-ONLY: proposes no disposition and opens no review. "
                     "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
                     "subject to this notice."
                 ),
@@ -979,6 +981,11 @@ try:
     import notice_parts as _notice_parts  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+
+try:
+    from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils import origin_entitlement as _origin_entitlement
 
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
@@ -2165,6 +2172,8 @@ try:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 except ImportError:
     from instance_resolution import (  # noqa: E402
@@ -2175,6 +2184,8 @@ except ImportError:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 
 # Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
@@ -2196,7 +2207,8 @@ RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
   coalesce(r.provider, type(r)) AS provider,
   r.timeout_s      AS timeout_s,
-  r.domains        AS domains
+  r.domains        AS domains,
+  r.id_namespaces  AS id_namespaces
 """
 
 #: WHO CAN LIST THE MEMBERS OF A CLASS. Mirrors the resolver discovery above, because the
@@ -2393,6 +2405,9 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
             "provider": r.get("provider") or "unknown",
             "timeout_s": timeout_s,
             "domains": r.get("domains") or [],
+            # The identifier namespaces this provider claims (ruled 2026-10-12). Read through
+            # the decoder, never `list(...)`: a string here would split into one-letter prefixes.
+            "id_namespaces": _ir_declared_namespaces(r.get("id_namespaces")),
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
     _INSTANCE_RESOLVERS_CACHE_TS = now
@@ -2425,7 +2440,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
 
 
 async def _call_resolver(
-    resolver: dict, identifier: str, query: str
+    resolver: dict, identifier: str, query: str, *,
+    user_email: str = "", entitled_domains: list | tuple = (),
 ) -> _ResolverOutcome:
     """Call one mesh:resolveInstance provider with the provider's own
     declared timeout budget (falling back to the router floor).
@@ -2435,6 +2451,13 @@ async def _call_resolver(
     2s-strangle bug. Candidates are always returned (possibly empty);
     the caller decides whether the empty list represents abstention
     or a kill upstream.
+
+    THE CALLER TRAVELS WITH THE TERM (2026-10-10). A provider whose instances carry an origin
+    (engine-o's SUSTAINMENT store holds drop-derived notices) cannot gate what it returns on a
+    caller it was never told. Both fields go on EVERY call, empty when the asker named nobody,
+    so a provider reads "no caller" as an explicit empty value, never as a field it was not
+    sent. The names match `/notice_parts` (`user_email`, `entitled_domains`). The gate is the
+    provider's, not this router's.
     """
     import time
     provider = resolver.get("provider") or ""
@@ -2447,7 +2470,9 @@ async def _call_resolver(
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
                 endpoint_url,
-                json={"identifier": identifier, "query": query},
+                json={"identifier": identifier, "query": query,
+                      "user_email": user_email or "",
+                      "entitled_domains": list(entitled_domains or [])},
             )
             resp.raise_for_status()
             data = resp.json() or {}
@@ -2495,9 +2520,14 @@ async def _call_resolver(
 
 
 async def _resolve_instance(
-    identifier: str, query: str, asked_domains: list | None = None
+    identifier: str, query: str, asked_domains: list | None = None, *,
+    user_email: str = "", entitled_domains: list | None = None,
 ) -> tuple[str | None, dict]:
     """Run the instance-resolution pre-step.
+
+    ``asked_domains`` RANKS (demotes out-of-domain hits); ``entitled_domains`` is the caller's
+    grant and is only forwarded, with ``user_email``, to every provider. They are separate
+    parameters because a routing domain is not an entitlement.
 
     Returns ``(subject_uri or None, provenance)``. ``None`` means
     abstain → the caller keeps the LLM's class guess. Provenance
@@ -2563,7 +2593,9 @@ async def _resolve_instance(
         else:
             _lookup_terms.append(_name)
 
-    tasks = [_call_resolver(r, term, query)
+    _entitled = list(entitled_domains or [])
+    tasks = [_call_resolver(r, term, query,
+                            user_email=user_email, entitled_domains=_entitled)
              for r in resolvers for term in _lookup_terms]
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
@@ -2609,6 +2641,27 @@ async def _resolve_instance(
             continue
         candidates.extend(o.candidates)
 
+    # SAY WHICH NAMES MATCHED, not just how many. RULED 2026-10-12 after HAZ-1004: this line
+    # said `candidates=3` and nothing else, so "which component did engine-o match?" could only
+    # be answered by re-asking the provider by hand. Bounded, because a bare fragment once drew
+    # twenty part numbers.
+    _matched = [(c.provider, c.label, round(float(c.score), 3)) for c in candidates]
+
+    # ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 -- the measurement and the rule
+    # are in instance_resolution.refuse_cross_namespace. Applied AFTER domain scoping and BEFORE
+    # the claimant set is taken, because the defect is a second claimant: two part numbers
+    # matched 'HAZ-1004' on a difflib ratio and made `ambiguous_in_domain` refuse a hazard
+    # Engine S resolves exactly. The namespaces come from the providers' own registrations; a
+    # provider that declared none claims nothing and loses nothing.
+    candidates, _ns_refused, _ns_claimed = _ir_refuse_cross_namespace(
+        candidates, terms=_lookup_terms, resolvers=resolvers)
+    _ns_contested = sorted(p for p, o in _ns_claimed.items() if len(o) > 1)
+    if _ns_contested:
+        # The ruling is ONE engine per namespace. Two declarers is a registration defect; both
+        # are kept as owners rather than one chosen by registry order, and the conflict is named.
+        print(f"mesh:resolveInstance: CONTESTED id namespace(s) {_ns_contested}: "
+              f"{ {p: sorted(_ns_claimed[p]) for p in _ns_contested} }", flush=True)
+
     # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
     #
     # The scoping above removes the CROSS-domain override. It cannot help when both
@@ -2650,7 +2703,10 @@ async def _resolve_instance(
         f"mesh:resolveInstance fan-out for {identifier!r}: terms={_lookup_terms} "
         f"candidates={len(candidates)} claimants={sorted(_claimants)} "
         f"subjects={sorted(_subjects)} asked_domains={sorted(_asked)} "
-        f"demoted={[d.get('provider') for d in demoted]}",
+        f"demoted={[d.get('provider') for d in demoted]} "
+        f"matched={_matched[:12]}{f' (+{len(_matched) - 12} more)' if len(_matched) > 12 else ''} "
+        f"namespace_refused={[(c.provider, c.label) for c in _ns_refused]} "
+        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} }",
         flush=True,
     )
     if len(_claimants) > 1 and len(_subjects) > 1:
@@ -2964,6 +3020,31 @@ class EnumerateInstancesRequest(BaseModel):
             "A provider that ignores them answers class-wide and says so via scoped_by."
         ),
     )
+    # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
+    # so a provider gates both verbs on one pair of fields. Forwarded to every provider AND gated
+    # on here, after the fan-out, by `_filter_sustainment_candidates` -- the same origin verdict
+    # `/resolve_instance` and `/notice_parts` apply (ruled 2026-10-10, (d)). Defaulted for the same
+    # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
+                                   body: dict) -> tuple[list[dict], int]:
+    """THE SAME GATE `/resolve_instance` RUNS, applied after the enumerate fan-out to a provider's
+    `members` body. Returns (kept, count). The count is the provider's own minus what was
+    withheld, floored at len(kept), so it never reveals how many were withheld. A lookup failure
+    is the 503 that route answers, never an unfiltered list."""
+    members = body["members"]
+    try:
+        kept = await _filter_sustainment_candidates(
+            members, user_email=request.user_email or "",
+            entitled_domains=list(request.entitled_domains or []))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    provider_count = int(body.get("count") or len(members))
+    return kept, max(len(kept), provider_count - (len(members) - len(kept)))
 
 
 @app.post("/enumerate_instances")
@@ -3035,8 +3116,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
                     # menu from this". Sent unconditionally — an empty dict is the same request
                     # this endpoint made before the field existed, so a provider still on the
                     # old shape sees no change in behaviour, only an extra key.
+                    # THE CALLER TRAVELS ON EVERY POST, empty rather than absent when nobody
+                    # was named, so "no caller" reaches a gate as a value it can refuse on.
                     json={"class_uri": request.class_uri,
-                          "bound_slots": dict(request.bound_slots or {})},
+                          "bound_slots": dict(request.bound_slots or {}),
+                          "user_email": request.user_email or "",
+                          "entitled_domains": list(request.entitled_domains or [])},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -3056,11 +3141,13 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         # shape therefore behaves correctly here without being changed.
         _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
-            print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']} "
-                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
-            return {"outcome": "members", "members": body["members"],
-                    "count": int(body.get("count") or len(body["members"])),
+            kept, count = await _gate_enumerated_members(request, body)
+            if not kept:  # WITHHELD IS UNKNOWN: as `empty`
+                answered_empty += 1
+                continue
+            print(f"[Engine O] enumerate {request.class_uri} -> members ({len(kept)}) "
+                  f"from {prov['provider']} scoped_by={_scoped_by or '[] (class-wide)'}")
+            return {"outcome": "members", "members": kept, "count": count,
                     "provider": prov["provider"],
                     # WHICH slots, not whether. A provider handed `{lot, category}` that
                     # honours only `lot` produced a list scoped by one of two, and a boolean
@@ -3164,17 +3251,24 @@ def _docs_pool_accepts(referent) -> bool:
 
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
-                           narrowed_by: list[str]) -> dict | None:
-    """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
+                           narrowed_by: list[str], *, user_email: str = "",
+                           entitled_domains: list[str] | None = None) -> dict | None:
+    """Bind `spoken` from the referent's enumeration (asked WITH the bound slots and the caller), or None.
 
-    BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
-    `narrowed_by` is not the set of values the verb accepts, and a bind from it is the
-    class-wide-menu defect in a new place. Exact match only (id, or label case-folded), and
-    exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
-    the ask, which is where the menu for a near-miss already lives.
+    `scoped_by` IS METADATA, NEVER A PRECONDITION (Q4, ruled 2026-10-12; this relaxes the
+    2026-09-16 "never a class-wide list wearing a scoped menu" for the bind as for the menu).
+    Any member list binds an exact hit, and `scoped_by` travels on the record verbatim so a
+    consumer can see the list was not narrowed by `narrowed_by`. A value the lot does not accept
+    is the verb's `not_in_model` to refuse; refusing here instead only reached the fan-out, which
+    cannot match a bare member (the vintage regression) and so asked for what was already said.
+    Exact match only (id, or label case-folded), and exactly one member: this replaces no
+    scoring — a near-miss still reaches the fan-out and the ask, where its menu lives.
     """
-    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
-    if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
+    enum = await enumerate_instances(EnumerateInstancesRequest(
+        class_uri=referent, bound_slots=bound,
+        user_email=user_email, entitled_domains=list(entitled_domains or []),
+    ))
+    if enum.get("outcome") != "members":
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
     said = spoken.strip()
@@ -3499,6 +3593,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
                 asked_domains=request.domains or ([request.domain] if request.domain else []),
+                user_email=request.user_email, entitled_domains=list(request.domains or []),
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
@@ -3597,6 +3692,9 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # and ranks; forwarding it as an entitlement would grant what nobody granted.
+            user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
@@ -4361,6 +4459,11 @@ class FillSlotsRequest(BaseModel):
     #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
     #: falls back to `_acts_in_docs` alone.
     subject_uri: str = ""
+    #: THE PERSON ASKING, forwarded with `acting_domains` to every `mesh:resolveInstance`
+    #: provider so a provider holding origin-scoped instances can gate on who asked (2026-10-10,
+    #: gov's origin-at-read report). `/resolve` has carried it since ADR-0025; `/fill_slots`
+    #: never did. Empty is an explicit "no caller", which a gating provider must refuse on.
+    user_email: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -4612,6 +4715,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
             scoped = await _bind_from_scope(
                 referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+                user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
                 accepted[name] = scoped["instance_id"]
@@ -4623,7 +4727,8 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # slot's referent class for the same reason. Scoping here would hide the very
         # cross-domain match a person needs to see when disambiguating.
         _subject, prov = await _resolve_instance(
-            spoken_value, request.query, asked_domains=list(request.acting_domains or [])
+            spoken_value, request.query, asked_domains=list(request.acting_domains or []),
+            user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
@@ -5083,6 +5188,78 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
+    #: Supervisor-derived (architect Q3), never user-supplied: `_call_resolver` forwards the verified
+    #: caller identity and entitled domains; same names as `/notice_parts`. Empty = no identity, so
+    #: only seeded content is visible. GATED ON by `_filter_sustainment_candidates` below: the same
+    #: origin verdict `/notice_parts` applies (`notice_parts.notice_visible`).
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+_NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
+_COMPONENT_IRI_PREFIX = "http://internal/components/"
+_SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"
+
+
+def _iri_is_safe(iri: str) -> bool:
+    return not any(ch in iri for ch in ('>', '"')) and not any(ch.isspace() for ch in iri)
+
+
+async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: str,
+                                         entitled_domains: list[str]) -> list[dict]:
+    """Withhold the candidates the SAME origin rule `/notice_parts` applies would withhold
+    (`notice_parts.notice_visible`): a drop-derived notice no caller may yet see, and a component
+    reachable only through such notices. A withheld candidate is simply absent, so the answer is
+    the one a Jena without that row would give. Raises on a lookup failure (the route answers 503).
+    Components with no linked notice and every non-sustainment IRI pass untouched."""
+    notice_ids: dict[str, str] = {}
+    comp_iris: list[str] = []
+    unsafe: set[str] = set()
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri.startswith(_NOTICE_IRI_PREFIX):
+            notice_ids[iri] = _notice_parts.notice_id_of({}, iri)
+        elif iri.startswith(_COMPONENT_IRI_PREFIX):
+            if _iri_is_safe(iri):
+                comp_iris.append(iri)
+            else:
+                unsafe.add(iri)
+    links: dict[str, set[str]] = {}
+    if comp_iris:
+        values = " ".join(f"<{i}>" for i in comp_iris)
+        link_rows = await execute_sparql(
+            f"SELECT ?c ?n WHERE {{ VALUES ?c {{ {values} }} ?c <{_SUBJECT_TO_NOTICE}> ?n }}",
+            domain="SUSTAINMENT",
+        )
+        for r in link_rows or []:
+            links.setdefault(str(r.get("c") or ""), set()).add(str(r.get("n") or ""))
+    linked_ids = {n: _notice_parts.notice_id_of({}, n)
+                  for ns in links.values() for n in ns if n.startswith(_NOTICE_IRI_PREFIX)}
+    all_ids = {i for i in [*notice_ids.values(), *linked_ids.values()] if i}
+    visible: set[str] = set()
+    if all_ids:
+        if _NEO4J_DRIVER is None:
+            raise RuntimeError("the sustainment graph is not connected")
+        visible = await asyncio.to_thread(
+            _notice_parts.visible_notice_ids, _NEO4J_DRIVER, all_ids,
+            caller_id=user_email, viewer_domains=entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
+    out: list[dict] = []
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri in unsafe:
+            continue
+        if iri in notice_ids:
+            if notice_ids[iri] and notice_ids[iri] not in visible:
+                continue
+        elif iri in links:
+            tied = [linked_ids[n] for n in links[iri] if linked_ids.get(n)]
+            if tied and not any(t in visible for t in tied):
+                continue
+        out.append(c)
+    return out
 
 
 @app.post("/resolve_instance")
@@ -5096,6 +5273,14 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
+    try:
+        candidates = await _filter_sustainment_candidates(
+            candidates, user_email=request.user_email,
+            entitled_domains=request.entitled_domains,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
     return {"candidates": candidates}
 
 
@@ -5105,6 +5290,36 @@ class NoticePartsRequest(BaseModel):
     params: dict = Field(default_factory=dict)
     resolved_instance_id: str = ""
     entitled_domains: list[str] = Field(default_factory=list)
+    #: The caller's authz_id. The supervisor's dispatch body carries it here (dynamic_supervisor
+    #: dispatch body; the gateway sets `user_email=current_user.authz_id`). It is body-asserted at
+    #: the same trust level as `entitled_domains` -- specialists receive no user token.
+    user_email: str = ""
+
+
+def _load_domain_consumption_for_notice_parts() -> dict:
+    """The consumption table, read per request (no cache). FAIL CLOSED: an unreadable file is
+    `{}` (nobody consumes any origin) plus one WARNING, the posture of gateway.py's loader."""
+    path = os.getenv("DOMAIN_CONSUMPTION_FILE", "/app/policy/domain_consumption.yaml")
+    try:
+        import yaml  # noqa: PLC0415
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never 500
+        logging.getLogger("iagent.notice_parts").warning(
+            "domain_consumption.yaml unreadable at %s (%s) -- notice_parts sources of a "
+            "drop-derived notice are withheld from everyone but its dropper until this is fixed",
+            path, exc,
+        )
+        return {}
+    return _origin_entitlement.load_domain_consumption(raw)
+
+
+def _notice_parts_can_view_program(program: str, caller_id: str) -> bool:
+    try:
+        from utils.program_membership import can_view_program  # noqa: PLC0415
+    except ImportError:
+        from agent_fleet.utils.program_membership import can_view_program  # type: ignore[no-redef]
+    return can_view_program(program, caller_id)
 
 
 @app.post("/notice_parts")
@@ -5116,6 +5331,8 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
+            "refused": True,
+            "outcome": "refused",
             "reason": "not_entitled",
             "verb": _notice_parts.VERB,
             "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
@@ -5126,7 +5343,13 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
     notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
     try:
-        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+        return await asyncio.to_thread(
+            _notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id,
+            (request.params or {}).get("offset"),
+            caller_id=request.user_email, viewer_domains=request.entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 
@@ -5161,6 +5384,15 @@ class WriteItemStateRequest(BaseModel):
     # str = "" not Optional[str]: this module uses `from __future__ import annotations`, and Pydantic
     # v2 can't resolve `Optional` as a forward-ref (same reason list[str] is used over List[str], §657).
     proposed_by_ruleset: str = ""
+    # Steward-correction provenance, STORED beside the item's identity (never a re-key). All
+    # optional; absent means unchanged, so existing callers are untouched. `extracted_value` is
+    # null for a steward-ADDED row. (`str = ""`-style note above: the module uses
+    # `from __future__ import annotations`; `str | None` resolves, `Optional` does not.)
+    obtained_via: str | None = None
+    corrected_by: str | None = None
+    extracted_value: str | None = None
+    corrected_value: str | None = None
+    evidence: str | None = None
 
 
 @app.post("/write_item_state")
@@ -5176,7 +5408,11 @@ async def write_item_state(
     s = request.subject_iri
     if not s.startswith("http://internal/"):
         raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
-    update = _build_state_update(s, request.disposition_state, request.disposition_ref, request.proposed_by_ruleset)
+    # Only the provenance fields the caller actually SENT are stamped (absent = unchanged).
+    _prov = {k: getattr(request, k) for k in request.model_fields_set
+             if k in ("obtained_via", "corrected_by", "extracted_value", "corrected_value", "evidence")}
+    update = _build_state_update(s, request.disposition_state, request.disposition_ref,
+                                 request.proposed_by_ruleset, _prov or None)
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
 
@@ -5813,12 +6049,15 @@ _COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
 _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
 #: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
-#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
-#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
-#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: 3's Jena read, both as the person the request names in `on_behalf_of`. ON by default: every
+#: caller of the route now hands the person down (the seal derives the callers and holds each to
+#: it), so the 400 for a request with no person is reached only by a caller that is itself wrong.
+#: LEG 3 is live (the flag-off read is a service and is refused), so the pool gains `mesh:explain`
+#: on every class subject; LEGs 1 and 2 answer what they answer off. Turn it off with
+#: `COMPATIBLE_VERBS_VIA_MESH=false` (one statement, no identity, no 400s).
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
-    "COMPATIBLE_VERBS_VIA_MESH", "false"
+    "COMPATIBLE_VERBS_VIA_MESH", "true"
 ).lower() in ("true", "1", "yes")
 
 

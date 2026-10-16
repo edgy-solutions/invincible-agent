@@ -235,6 +235,20 @@ def test_domains_field_is_published(fake_datahub, monkeypatch):
     assert json.loads(props["mesh_domains"]) == ["MAINTENANCE", "MANUFACTURING"]
 
 
+def test_id_namespaces_field_is_published(fake_datahub, monkeypatch):
+    """The DataHub fallback's audit record carries the identifier namespaces the engine
+    claims, as a JSON array of prefixes -- never a string's characters."""
+    monkeypatch.setenv("MESH_REGISTER_ON_STARTUP", "true")
+    monkeypatch.setenv("DATAHUB_GMS_URL", "http://fake-gms:8080")
+
+    mesh_registration.register_engine_to_mesh(
+        **_call_kwargs(id_namespaces=["HAZ-", "CSI-"])
+    )
+
+    props = _FakeEmitter.instances[0].emitted[0].aspect.customProperties
+    assert json.loads(props["mesh_id_namespaces"]) == ["HAZ-", "CSI-"]
+
+
 def test_mesh_prefix_resolves_to_platform_authority(fake_datahub, monkeypatch):
     monkeypatch.setenv("MESH_REGISTER_ON_STARTUP", "true")
     monkeypatch.setenv("DATAHUB_GMS_URL", "http://fake-gms:8080")

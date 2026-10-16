@@ -48,6 +48,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # A LOCAL `master` BRANCH, which a branch checkout does not have. fetch-depth 0 brings
+      # `origin/master`, but tests/test_citation_paths.py falls back to `master` when
+      # `origin/master` holds no add, and on a branch run that ref was absent: every allow-listed
+      # phantom went red with "bad revision 'master'" on branch runs only (rev 186's run
+      # 38064126938), while master's own runs passed. A no-op when the checkout IS master.
+      - name: a local master ref for the citation seal
+        run: git show-ref --verify --quiet refs/heads/master || git branch master origin/master
       # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
       # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
       # because its other 8 assertions would vacuously pass against a repo that is not there.
@@ -101,6 +108,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # A LOCAL `master` BRANCH, which a branch checkout does not have. fetch-depth 0 brings
+      # `origin/master`, but tests/test_citation_paths.py falls back to `master` when
+      # `origin/master` holds no add, and on a branch run that ref was absent: every allow-listed
+      # phantom went red with "bad revision 'master'" on branch runs only (rev 186's run
+      # 38064126938), while master's own runs passed. A no-op when the checkout IS master.
+      - name: a local master ref for the citation seal
+        run: git show-ref --verify --quiet refs/heads/master || git branch master origin/master
       # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
       # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
       # because its other 8 assertions would vacuously pass against a repo that is not there.
@@ -158,6 +172,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # A LOCAL `master` BRANCH, which a branch checkout does not have. fetch-depth 0 brings
+      # `origin/master`, but tests/test_citation_paths.py falls back to `master` when
+      # `origin/master` holds no add, and on a branch run that ref was absent: every allow-listed
+      # phantom went red with "bad revision 'master'" on branch runs only (rev 186's run
+      # 38064126938), while master's own runs passed. A no-op when the checkout IS master.
+      - name: a local master ref for the citation seal
+        run: git show-ref --verify --quiet refs/heads/master || git branch master origin/master
       # THE SIBLING SDK. tests/test_cross_repo_contracts.py resolves it as
       # `_REPO.parent / "iagent-mesh-sdk"` and HARD-FAILS when it is absent — deliberately,
       # because its other 8 assertions would vacuously pass against a repo that is not there.

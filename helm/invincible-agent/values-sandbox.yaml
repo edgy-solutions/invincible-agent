@@ -805,7 +805,59 @@ cortexUi:
     # linux/arm64 + 2 attestations); the abbreviated tag, the full tag with its last hex altered,
     # and this digest with its last hex altered all answer 404. Since 3d5a0e1 the Dockerfile,
     # docker-entrypoint.sh and .github are unchanged, so VITE_FEATURES is unchanged.
-    digest: "sha256:1985ce7fe1aa378687b1f001e6441066f381ababed959c9296483eb687a49f86"
+    # 2026-10-10, pinned for rev 186b: cortex-ui 865c080 (master; merges cortex #2 8b96ade, #5
+    # 6e64da2 and #6 865c080; NOT #4, which is 187 unless a follow-up pin lands first) ->
+    # 2c45d36a. 9bf8063 is an ANCESTOR of 865c080, so the refusal reader stays. Measured before
+    # pinning: the FULL tag resolves to this digest; the abbreviated tag, the full tag with its
+    # last hex altered, and this digest with its last hex altered all fail to resolve. Since
+    # 9bf8063 the Dockerfile and .github are unchanged; docker-entrypoint.sh gains only
+    # VITE_SEND_FRONTEND_VERSION (env below), so VITE_FEATURES is unchanged. KNOWN AT THIS PIN:
+    # a KNOWLEDGE_DOCUMENT carrying `refusal` draws as the refusal card alone, its prose not shown
+    # -- equally true of 9bf8063 once this repo's 935d7524 sends the field; cortex's fix is a
+    # follow-up pin.
+    # 2026-10-12, pinned for rev 187b: cortex-ui b566192 (master; merges #10 3fa6fcb, the answers
+    # perf merge this pin is conditioned on, plus #4 d528b0b the composer, #7 the refused document
+    # keeps its prose, #8 hazard refusals named, #9 row edits (off) and the narrow Reject, #11
+    # mixed-board export, #12 npm run walk, #13 a refused export shows its reason, #14 stale-tab
+    # re-check) -> 2556cf5b. Rev 187 rolled on 865c080, so the composer goes live HERE, not at
+    # 187. 865c080 and 3fa6fcb are both ancestors of b566192. Measured before pinning: the FULL
+    # tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations); the
+    # abbreviated tag and this digest with its last hex altered both answer 404; the 865c080
+    # control still resolves to 2c45d36a. Since 865c080 the Dockerfile is unchanged;
+    # docker-entrypoint.sh gains only VITE_REVIEW_ROW_EDITS (sanitised, empty by default, and not
+    # set by this chart), and .github's one change (build.yml PRODUCER_REF -> 5b2a16a2, an
+    # ancestor of the rolled e977c32b) selects the parity tests' checkout and is not a build arg,
+    # so VITE_FEATURES is unchanged.
+    # 2026-10-12, pinned for rev 187c (architect: frontend-only, ahead of 188): cortex-ui f3617a9
+    # (master; merges #15 the drop box cannot stay grown, #16 rail rows at measured height, #17
+    # walk login cannot mistake Keycloak for the app + WALK_SPKI_PIN, #18 a drop is an ingest
+    # turn on the answers rail, My drops removed) -> facdc367. b566192 and 057938a are both
+    # ancestors of f3617a9. Measured before pinning: the FULL tag resolves to this digest (an OCI
+    # index); the abbreviated tag and this digest with its last hex altered both answer not
+    # found. Since b566192 the Dockerfile, docker-entrypoint.sh, nginx config and .github are
+    # unchanged, so VITE_FEATURES is unchanged. The rail's ingest entry reads
+    # GET /ingest/{id}/status, which the rolled fleet already serves. `npm run walk` needs a
+    # cortex checkout at or after f3617a9 from this pin on.
+    # 2026-10-13, pinned for rev 188: cortex-ui 88a65d4 (master; merges #19 POST /ingest carries
+    # content_kind, #20 the walk classifies only the ask's own artifact and reads version.json
+    # through the pinned browser, #21 row_edits ON by default with the send matching the
+    # producer's models, #22 a failed drop draws its failure and can be retried) -> 7b2b6129.
+    # f3617a9 and 10f64f1 are both ancestors of 88a65d4. Measured before pinning: the FULL tag
+    # resolves to this digest; the abbreviated tag and the full tag with its last hex altered both
+    # answer not found; the f3617a9 control still resolves to facdc367. Since f3617a9 the
+    # Dockerfile and nginx config are unchanged; docker-entrypoint.sh changes one comment line, and
+    # .github only moves PRODUCER_REF to 49aa5e28 (a parity-test checkout, not a build arg), so
+    # VITE_FEATURES is unchanged. VITE_REVIEW_ROW_EDITS now defaults ON in the image and this
+    # chart still does not set it (only the exact string "false" turns it off).
+    # 2026-10-15, pinned for rev 188b: cortex-ui e1b94e2 (master; merges #23 cad greyed "not yet
+    # accepted" and a door 4xx drawn as a refusal, #24 every walk row names its persona, #25 xml
+    # greyed like cad, #26 npm audit 5 high -> 0 via a compression override, dev-only) -> 8d0234ab.
+    # 88a65d4 is an ancestor of e1b94e2. Measured before pinning: the FULL tag resolves to this
+    # digest (an OCI index, amd64 and arm64); the abbreviated tag and this digest with its last hex
+    # altered both answer not found; the 88a65d4 control still resolves to 7b2b6129. Since 88a65d4
+    # the Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so
+    # VITE_FEATURES is unchanged. From this pin the chart SETS VITE_REVIEW_ROW_EDITS (env below).
+    digest: "sha256:8d0234abfa6720399d12be76befbafa591b9fe5d012d8d4ed852aa4706c44059"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -849,6 +901,17 @@ cortexUi:
     # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
     VITE_FEATURES: "canvasExport,ingest"
+    # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
+    # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
+    # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
+    # dependency. Empty or absent = cortex sends nothing, the pre-186 wire.
+    VITE_SEND_FRONTEND_VERSION: "true"
+    # 2026-10-15, rev 188b (architect: confirm one live row-edit correction in the roll packet, or
+    # set this false). None exists to confirm: no grouped review has been acted on since
+    # 2026-10-10, none ever carried row_edits, and no extraction_defect task has ever been filed.
+    # So row edits are OFF on the sandbox until one is confirmed. The image's entrypoint honours
+    # only the exact lowercase string "false"; anything else, including absent, is ON.
+    VITE_REVIEW_ROW_EDITS: "false"
 
 cortexBff:
   enabled: true

@@ -118,6 +118,8 @@ class SupervisorQueryConfig(Config):
     # resolve THIS caller's menu at decision time. Empty -> Engine F falls back to its
     # global capability table (the pre-seam behaviour), never to a silently smaller menu.
     frontend_id: str = ""
+    # Menus are per (frontend_id, frontend_version); empty -> the newest registered version.
+    frontend_version: str = ""
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
     # THE SPOKEN SLOTS, argument name -> value, forwarded from /route_intent.
@@ -2156,7 +2158,8 @@ _ENUMERATE_URL = os.getenv("ENUMERATE_INSTANCES_URL", "")
 _ENUMERATE_TIMEOUT_S = float(os.getenv("ENUMERATE_TIMEOUT_S", "5"))
 
 
-def _make_enumerator(context):
+def _make_enumerator(context, *, user_email: str = "",
+                     entitled_domains: Optional[List[str]] = None):
     """`(class_uri, bound_slots) -> {outcome, members, count, scoped_by}`, or None when no
     provider is reachable.
 
@@ -2175,15 +2178,22 @@ def _make_enumerator(context):
     every test double written against the one-argument shape — keeps working unchanged. A
     caller that passes nothing offers no context, which is the honest description of what it
     knows, and gets today's class-wide behaviour.
+
+    THE CALLER IS BOUND WHEN THE ENUMERATOR IS MADE, not passed per call, because the two
+    consumers (`validate_bound_slots`, `decide_disposition`) call it with a class and nothing
+    else. Sent on every POST, empty when nobody was named — the same fields the resolveInstance
+    fan-out sends, so one gate reads both verbs.
     """
     if not _ENUMERATE_URL:
         return None
+    _caller = {"user_email": user_email,
+               "entitled_domains": list(entitled_domains or [])}
 
     def _enumerate(class_uri: str, *, bound_slots: Dict[str, Any] | None = None) -> Dict[str, Any]:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         resp = requests.post(
             _ENUMERATE_URL,
-            json={"class_uri": class_uri, "bound_slots": _bound},
+            json={"class_uri": class_uri, "bound_slots": _bound, **_caller},
             timeout=_ENUMERATE_TIMEOUT_S,
         )
         resp.raise_for_status()
@@ -2214,6 +2224,7 @@ def _fill_slots_from_query(
     declarations,
     acting_domains: "List[str] | None" = None,
     subject_uri: str = "",
+    user_email: str = "",
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2260,6 +2271,11 @@ def _fill_slots_from_query(
                 # /resolve already chose mesh:DocPage even though the caller's domain picker
                 # sent something else (MESH hides DOCS). See _docs_pool_applies in engine-o.
                 "subject_uri": subject_uri,
+                # THE PERSON ASKING, so engine-o can hand it, with `acting_domains`, to every
+                # resolveInstance provider: a provider holding origin-scoped instances cannot
+                # gate on a caller it was never told (gov's origin-at-read report, 2026-10-10).
+                # The same body-asserted identity `/resolve` already receives.
+                "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
         )
@@ -2760,7 +2776,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         picked, refusals, bound_resolution = validate_bound_slots(
             config.bound_slots,
             declared=declared,
-            enumerate_class=_make_enumerator(context),
+            enumerate_class=_make_enumerator(
+                context, user_email=config.user_email,
+                entitled_domains=list(config.entitled_domains or []),
+            ),
         )
         for refusal in refusals:
             # LOUD. A refused pick is the menu-integrity guard doing its job, and it is the
@@ -2794,6 +2813,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # above as `predicate_routing_score ... subject_uri=%s`; "" when /resolve found
             # nothing (subject_uri == "UNKNOWN" reads as absent to engine-o's gate too).
             subject_uri=str(telemetry.get("subject_uri") or ""),
+            user_email=config.user_email,
         )
         spoken, resolution = filled.slots, filled.resolution
         # Extracted from the question by the slot filler, which resolves against the graph.
@@ -2833,7 +2853,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         accepted=accepted.params,
         declared=declared,
         resolution=resolution,
-        enumerate_class=_make_enumerator(context),
+        enumerate_class=_make_enumerator(
+            context, user_email=config.user_email,
+            entitled_domains=list(config.entitled_domains or []),
+        ),
     )
 
     # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
@@ -3587,6 +3610,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             # from a global table that answers on behalf of clients which never advertised
             # those capabilities.
             "frontend_id": config.frontend_id or None,
+            "frontend_version": config.frontend_version or None,
         },
         timeout=300,
     )

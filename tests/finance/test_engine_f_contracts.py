@@ -482,13 +482,25 @@ def test_resolve_accepts_the_payload_the_fanout_actually_sends():
 def test_the_fanout_request_shape_is_read_from_engine_o_not_remembered():
     """DERIVED, NOT TRANSCRIBED. If Engine O's fan-out changes its request keys, this fails
     rather than quietly describing a contract that moved."""
+    import ast
     src = (REPO / "agent_fleet" / "ontology_service" / "main.py").read_text(encoding="utf-8")
-    assert 'json={"identifier": identifier, "query": query}' in src, (
-        "Engine O's resolver fan-out no longer sends {identifier, query} — re-read it and "
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_call_resolver")
+    sent = {k.value for n in ast.walk(fn) if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", "") == "post"
+            for kw in n.keywords if kw.arg == "json" and isinstance(kw.value, ast.Dict)
+            for k in kw.value.keys if isinstance(k, ast.Constant)}
+    # 2026-10-10: the caller (`user_email`, `entitled_domains`) joined the body so an
+    # origin-scoped provider can gate on who asked. Engine-fin reads the two identity fields
+    # and need not read the caller, but it must not REFUSE the body that carries it.
+    assert sent == {"identifier", "query", "user_email", "entitled_domains"}, (
+        f"Engine O's resolver fan-out now sends {sorted(sent)} — re-read it and "
         "re-align engine-fin's ResolveRequest rather than trusting this test's memory"
     )
     fields = set(engine.ResolveRequest.model_fields)
     assert {"identifier", "query"} <= fields, fields
+    assert engine.ResolveRequest.model_config.get("extra") != "forbid", (
+        "engine-fin forbids extra fields, so every fan-out call carrying the caller is a 422")
     assert "text" not in fields, (
         "a `text` alias reintroduces two correct spellings for one field, which is how the "
         "next engine copies the wrong one"

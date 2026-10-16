@@ -92,16 +92,25 @@ def build_review_batch(
     return ReviewBuild(batch=batch, funnel=funnel, ruleset_ref=ruleset_ref, resolved=resolved, unresolved=unresolved)
 
 
-def resolve_subject_via_engine_o(mpn: str, *, engine_o_url: str = ENGINE_O_URL) -> Optional[str]:
+def resolve_subject_via_engine_o(mpn: str, *, on_behalf_of: str = "",
+                                 engine_o_url: str = ENGINE_O_URL) -> Optional[str]:
     """LIVE resolveInstance adapter (deploy-gated): POST the identifier to engine-o's pcn provider and
     take the top candidate's ``instance_id``, or None (abstain — empty candidates). The provider already
     ran the exact/fuzzy/abstain decision table; this picks the winner. An unresolved subject is NOT an
-    error — it routes to the re-link path in the driver."""
+    error — it routes to the re-link path in the driver.
+
+    ``on_behalf_of`` is the PERSON this lookup runs for (ruling (a), 2026-10-10: a service lookup runs
+    on behalf of the task's requesting person; for a review, the ingest's dropper). It is sent as the
+    caller (`user_email`), with ``entitled_domains`` EMPTY: the dropper sees their own drop with no
+    domain at all, and this process holds no domains of theirs to send. A domains list is never an
+    entitlement, so none is invented here. Blank = no person: engine-o answers seeded content only."""
     # svc:engine-a — this process's own identity, named HERE. THE SITE THAT STAYED INVISIBLE:
     # under REQUIRE an unminted call here 401s and every review fails to COMPOSE, and it was
     # missed because the enumeration that found it was scoped to registration callers.
     resp = requests.post(
-        f"{engine_o_url}/resolve_instance", json={"identifier": mpn}, timeout=_HTTP_TIMEOUT,
+        f"{engine_o_url}/resolve_instance",
+        json={"identifier": mpn, "user_email": on_behalf_of or "", "entitled_domains": []},
+        timeout=_HTTP_TIMEOUT,
         headers=outbound_auth_headers(
             client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
         ),

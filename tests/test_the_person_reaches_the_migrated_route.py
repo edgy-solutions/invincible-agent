@@ -99,6 +99,27 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # is quiet here and red there (``test_THE_PERSON_IS_HANDED_DOWN_AT_EVERY_CALL_IN_src``).
     ("13 · into the compatible-verbs lookup, the third migrated route",
      SUPERVISOR, "_classify_route", "_find_compatible_verbs", (FIELD,)),
+    # Hops 14-15: slot filling. The person rides to engine-o's /fill_slots so the resolveInstance
+    # fan-out can tell every provider who asked (gov's origin gate, Q7). PR #38 shipped these two
+    # sites without registering them, and the census below was red on that tip -- the second time
+    # this lane has done that to this file (see 091e2373), both times because the consequence set
+    # was chosen by the names edited rather than by the property this census reads.
+    ("14 · into slot filling",
+     SUPERVISOR, "execute_subtask", "_fill_slots_from_query", ("config." + FIELD,)),
+    ("15 · onto the wire to /fill_slots",
+     SUPERVISOR, "_fill_slots_from_query", "<dict>", (FIELD,)),
+    # Hops 16-17: the sibling verb. enumerateInstances lists the instances resolveInstance
+    # resolves, and gets the same origin gate (ruled 2026-10-10, (d)), so the person rides to
+    # /enumerate_instances too. The enumerator is MADE with the caller (both consumers call it
+    # with a class and nothing else), so hop 16 is the factory call, at both of its sites.
+    # MEASURED: like hop 13, hop 16's arm passes while EITHER site forwards the value, so one site
+    # dropping the keyword is quiet here and red in tests/routing/
+    # test_enumerate_instances_hears_the_caller.py (``EVERY_SUPERVISOR_ENUMERATOR_IS_MADE_...``);
+    # both sites dropping it is red here.
+    ("16 · into the enumerator",
+     SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
+    ("17 · onto the wire to /enumerate_instances",
+     SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
@@ -106,6 +127,19 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
 #: every hop above: those go red on a rename, this one returns ``""`` and the act proceeds
 #: anonymously. Keyed on (file, function) so a new one is a red that names its site.
 GETATTR_READERS: set[tuple[str, str]] = {(SUPERVISOR, "_redeem_caller_token")}
+
+#: Chains that START in the orchestrator: no caller arrives, so no hop above can carry one in, and
+#: the person is NAMED at the site by a sealed source -- (label, file, function, callee, source).
+#: This is the census's "second route to a mint, which needs its own chain", not a new hop: adding
+#: it to HOPS would claim the site forwards the CALLER's identity, which it does not. The arm below
+#: holds the value to exactly a bare call of the source, so a literal, a local, or the caller's own
+#: field arriving here is a red, not a quiet re-labelling.
+ORIGINS: list[tuple[str, str, str, str, str]] = [
+    # #52 (5902102b), ruling (b) 2026-10-12: the Engine A smoke runs for a test persona named by
+    # IA_SMOKE_ON_BEHALF_OF, never personless. Gov's caller census classes it TEST_PERSONA (row 17).
+    ("smoke · the Engine A smoke names its test persona",
+     "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "<dict>", "_smoke_person"),
+]
 
 _TREES: dict[str, ast.Module] = {}
 
@@ -371,6 +405,7 @@ def test_the_ORCHESTRATION_SIDE_forwards_the_identity_only_along_the_sealed_chai
     sealed is a red that names it.
     """
     sealed = {(rel, caller, callee) for _, rel, caller, callee, _ in HOPS if rel != ENGINE_O}
+    sealed |= {(rel, fn, callee) for _, rel, fn, callee, _ in ORIGINS}
     found: set[tuple[str, str, str]] = set()
     for rel in _orchestrator_modules():
         found |= _all_identity_sites(rel)
@@ -383,6 +418,34 @@ def test_the_ORCHESTRATION_SIDE_forwards_the_identity_only_along_the_sealed_chai
     assert sealed <= found, (
         f"a sealed hop no longer forwards the identity at all: {sorted(sealed - found)}"
     )
+
+
+@pytest.mark.parametrize("origin", ORIGINS, ids=[o[0].split(" · ")[0] for o in ORIGINS])
+def test_an_ORIGIN_names_its_person_only_by_its_sealed_source(
+    origin: tuple[str, str, str, str, str],
+) -> None:
+    """An origin is exempt from HOPS only because its value comes from a sealed source. Every
+    ``user_email`` entry in the origin's dict literals must be a bare, argument-less call of that
+    source, and the source must be a module-level function of the same file that can refuse."""
+    label, rel, fn_name, _, source = origin
+    values = [
+        value
+        for node in ast.walk(_function(rel, fn_name))
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values)
+        if isinstance(key, ast.Constant) and key.value == FIELD
+    ]
+    assert values, f"{label}: {fn_name} no longer puts {FIELD!r} in a dict -- the origin is gone"
+    for value in values:
+        assert (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                and value.func.id == source and not value.args and not value.keywords), (
+            f"{label}: {FIELD!r} is {ast.unparse(value)!r}, not a bare {source}() -- an origin's "
+            "person comes from its sealed source, never a literal, a local or a forwarded caller")
+    defs = [n for n in _tree(rel).body if isinstance(n, ast.FunctionDef) and n.name == source]
+    assert defs, f"{label}: {source} is not a module-level function of {rel}"
+    assert any(isinstance(n, ast.Raise) for n in ast.walk(defs[0])), (
+        f"{label}: {source} has no raise -- a source that cannot refuse is a default, and a "
+        "default person is the stand-in ruling (b) forbids")
 
 
 def test_HOP_11_lands_in_the_POST_PAYLOAD_and_not_in_one_of_the_seven_other_dicts() -> None:

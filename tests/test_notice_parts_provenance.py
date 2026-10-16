@@ -66,9 +66,11 @@ _NOTICE = {
 _SEEDED = {"id": "PCN-SEEDED-1", "type": "PCN", "mfr": "ACME"}
 
 
-def _row(notice=_NOTICE, mpns=PARTS, dropped_by=DROPPED_BY, promoted_by=PROMOTED_BY):
+def _row(notice=_NOTICE, mpns=PARTS, dropped_by=DROPPED_BY, promoted_by=PROMOTED_BY, total=None):
+    """`total` is the notice's whole part count (the statement returns it beside the page);
+    default is the page's own length."""
     return {"notice": dict(notice), "mpns": list(mpns), "dropped_by": dropped_by,
-            "promoted_by": promoted_by}
+            "promoted_by": promoted_by, "total": len(mpns) if total is None else total}
 
 
 class _Record:
@@ -111,7 +113,7 @@ def _mat(sources):
 
 
 def _answer(**row_kw):
-    return np_mod.read_notice_parts(_Driver([_row(**row_kw)]), NOTICE)
+    return np_mod.read_notice_parts(_Driver([_row(**row_kw)]), NOTICE, caller_id=DROPPED_BY)
 
 
 # ── the read ─────────────────────────────────────────────────────────────────────────────────
@@ -142,7 +144,8 @@ def test_THE_READ_IS_ONE_READ_SESSION_RUNNING_THE_STATEMENT_WITH_THE_NOTICE_AS_A
     d = _Driver([_row()])
     np_mod.read_notice_parts(d, NOTICE)
     assert d.modes == ["READ"]
-    assert d.runs == [(np_mod.NOTICE_PARTS_CYPHER, {"notice_id": NOTICE})]
+    assert d.runs == [(np_mod.NOTICE_PARTS_CYPHER,
+                       {"notice_id": NOTICE, "offset": 0, "limit": np_mod.NOTICE_PARTS_PAGE_SIZE})]
 
 
 def test_THE_STATEMENT_READS_THE_EDGES_AND_FACTS_THE_REV_180_GRAPH_CARRIES():
@@ -206,11 +209,15 @@ def test_A_PROMOTED_BY_WITH_NO_INGEST_ID_PROMOTES_NOTHING():
 
 # ── the three answers ───────────────────────────────────────────────────────────────────────
 
-def test_AN_UNKNOWN_NOTICE_IS_REFUSED_AND_A_KNOWN_ONE_WITH_NO_PARTS_IS_AN_EXPLICIT_EMPTY():
+def test_AN_UNKNOWN_NOTICE_IS_REFUSED_AND_A_KNOWN_ONE_WITH_NO_PARTS_IS_REFUSED_AS_NO_AFFECTED_PARTS():
+    """Two refusals that must stay two: the graph does not hold the notice, or it holds it and the
+    notice names no part. An empty `ok` list would read as "checked, none"."""
     unknown = np_mod.read_notice_parts(_Driver([]), "PCN-NOPE")
     assert (unknown["status"], unknown["reason"]) == ("refused", "unknown_notice")
-    empty = np_mod.read_notice_parts(_Driver([_row(mpns=[])]), NOTICE)
-    assert (empty["status"], empty["count"], empty["sources"]) == ("ok", 0, [])
+    empty = np_mod.read_notice_parts(_Driver([_row(mpns=[])]), NOTICE, caller_id=DROPPED_BY)
+    assert (empty["status"], empty["reason"], empty["sources"]) == (
+        "refused", "no_affected_parts", [])
+    assert empty["reason"] != unknown["reason"]
 
 
 def test_NO_NOTICE_ID_IS_REFUSED_BEFORE_THE_GRAPH_IS_READ():
@@ -244,14 +251,15 @@ def _route(monkeypatch, driver, body):
 def test_THE_ROUTE_ANSWERS_THE_DISPATCH_BODY_THE_SUPERVISOR_SENDS(monkeypatch):
     d = _Driver([_row()])
     r = _route(monkeypatch, d, {
-        "user_query": "which parts does PCN26-182 affect",
+        "user_query": "which parts does PCN26-182 affect", "user_email": DROPPED_BY,
         "entitled_domains": ["SUSTAINMENT"],
         "resolved_instance_id": "http://internal/sustainment/doc/" + NOTICE,
         "params": {}, "routed_verb_iri": np_mod.VERB,
     })
     assert r.status_code == 200, r.text
     assert [s["mpn"] for s in r.json()["sources"]] == PARTS
-    assert d.runs and d.runs[0][1] == {"notice_id": NOTICE}
+    assert d.runs and d.runs[0][1] == {"notice_id": NOTICE, "offset": 0,
+                                       "limit": np_mod.NOTICE_PARTS_PAGE_SIZE}
 
 
 @pytest.mark.parametrize("domains", [[], ["COST"]], ids=["empty-scope", "other-domain"])
@@ -308,3 +316,10 @@ def test_THE_CENSUS_ASKS_THE_SHEET_QUESTION_AND_EXPECTS_THIS_VERB():
     assert rows[0].question == "which parts does PCN26-182 affect"
     assert rows[0].expect_verb == wc._camel_to_snake(np_mod.VERB.split(":", 1)[1])
     assert wc.reconcile(rows, _REPO).problems == []
+
+
+def test_A_DROP_DERIVED_NOTICE_IS_THE_DROPPERS_ALONE_UNTIL_IT_HAS_A_RESOLVED_ORIGIN():
+    """These arms read the drop AS ITS DROPPER (the rev-180 fixture has no origin recorded). The
+    origin read check, for every other caller, is sealed in
+    tests/security/test_notice_sources_by_origin.py."""
+    assert np_mod.read_notice_parts(_Driver([_row()]), NOTICE)["reason"] == "unknown_notice"

@@ -253,3 +253,35 @@ that changes a key must be followed by a roll of everything that reads it — an
 be rolled *before* anything is repointed at it. Repointing `ENUMERATE_INSTANCES_URL` at an
 engine-o endpoint that had not been rolled yet broke enumeration for both domains for several
 minutes: the config moved before its target existed.
+
+## The sandbox TLS leaf is pinned, never trusted blindly
+
+The sandbox has no lab CA. Every ingress (the UI, the BFF, Keycloak, electric) serves one
+self-signed wildcard leaf from the `edgy-wildcard-tls` secret. A post-roll walk **pins that leaf**.
+It never disables verification (ruled 2026-10-12).
+
+| field | value (measured 2026-10-12) |
+| --- | --- |
+| subject = issuer | `CN=*.<sandbox domain>` (one wildcard leaf for every ingress; the domain is in the out-of-repo log) |
+| SHA-256 fingerprint | `99:F1:45:2F:08:86:1D:31:35:E3:7C:A1:2B:27:C4:C8:68:B7:E3:00:FB:A7:D4:A8:4C:4F:17:02:66:AB:CB:A6` |
+| SPKI sha256 (base64) | `4PSaAg7X2o8kQl7b/kRMD+Dp7piSCZwog2fajFf7v1s=` |
+| notAfter | 2027-06-05 |
+
+**Capture the leaf before every walk and compare.**
+
+```bash
+openssl s_client -connect <host>:443 -servername <host> </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM > sandbox-leaf.pem
+openssl x509 -in sandbox-leaf.pem -noout -fingerprint -sha256
+```
+
+A fingerprint that differs from the table is a **rotation**. Update this table in the same commit
+that walks against the new leaf, so a rotation is seen and never silently trusted.
+
+**Python clients** (`requests`, httpx) take the PEM: `REQUESTS_CA_BUNDLE=sandbox-leaf.pem`.
+
+**Chromium (Playwright)** reads only the OS store, so a PEM cannot reach it. Pin the key with
+`--ignore-certificate-errors-spki-list=<SPKI sha256>` in `launchOptions.args`. Chromium then
+accepts only a chain whose key hashes to that value.
+- Control, 2026-10-12: a wrong pin still fails `ERR_CERT_AUTHORITY_INVALID`.
+- With the right pin, 0 cert errors.

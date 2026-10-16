@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -171,6 +172,7 @@ def run_registration_saga(
     tool_kind: str = "Engine",
     frontend_id: str = "",
     archetype: str = "",
+    frontend_version: str = "",
     expected_fields: list[str] | None = None,
     recomputes: bool | None = None,
     budget_s: float | None = None,
@@ -284,6 +286,7 @@ def run_registration_saga(
                 tool_kind=tool_kind,
                 frontend_id=frontend_id,
                 archetype=archetype,
+                frontend_version=frontend_version,
                 expected_fields=expected_fields,
                 recomputes=recomputes,
             ),
@@ -363,6 +366,7 @@ def run_registration_saga(
                     tool_urn=tool_urn,
                     frontend_id=frontend_id,
                     archetype=archetype,
+                    frontend_version=frontend_version,
                 ),
             ),
             deadline=deadline,
@@ -378,6 +382,7 @@ def run_registration_saga(
             input_uri=input_uri,
             frontend_id=frontend_id,
             archetype=archetype,
+            frontend_version=frontend_version,
         )
         _compensate_neo4j_best_effort(
             driver=driver,
@@ -418,6 +423,7 @@ def run_registration_saga(
             input_uri=input_uri,
             frontend_id=frontend_id,
             archetype=archetype,
+            frontend_version=frontend_version,
         )
         if not _marked:
             logger.warning(
@@ -425,6 +431,12 @@ def run_registration_saga(
                 "(verb_iri=%r input_uri=%r frontend_id=%r): readers will treat it "
                 "as incomplete until the next registration.",
                 verb_iri, input_uri, frontend_id,
+            )
+        elif tool_kind == "Presentation":
+            _evict_versions_best_effort(
+                weaviate_client=weaviate_client,
+                frontend_id=frontend_id,
+                keep_version=frontend_version,
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -487,9 +499,43 @@ def _compensate_neo4j_best_effort(
         )
 
 
+def _evict_versions_best_effort(
+    *, weaviate_client: Any, frontend_id: str, keep_version: str,
+) -> None:
+    """Drop menus of frontend versions that are no longer served.
+
+    Presentation species only, and only after the new version's row is marked
+    complete, so a failed registration never evicts the menu a stale tab is still
+    using. Retention comes from ``FRONTEND_VERSION_RETENTION_S`` (default 86400).
+    Best-effort: eviction is hygiene, and failing a good registration for it
+    would compensate a good write.
+    """
+    try:
+        retention_s = float(os.getenv("FRONTEND_VERSION_RETENTION_S", "86400"))
+    except ValueError:
+        retention_s = 86400.0
+    try:
+        evicted = substrate.evict_undeployed_frontend_versions(
+            weaviate_client=weaviate_client,
+            frontend_id=frontend_id,
+            keep_version=keep_version,
+            retention_s=retention_s,
+            now=datetime.now(timezone.utc),
+        )
+        logger.info(
+            "evicted undeployed frontend versions for frontend_id=%r keep=%r: %s",
+            frontend_id, keep_version, evicted,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "frontend version eviction failed for frontend_id=%r: %s: %s",
+            frontend_id, type(exc).__name__, exc,
+        )
+
+
 def _compensate_weaviate_best_effort(
     *, weaviate_client: Any, verb_iri: str, input_uri: str,
-    frontend_id: str = "", archetype: str = "",
+    frontend_id: str = "", archetype: str = "", frontend_version: str = "",
 ) -> None:
     try:
         deleted = substrate.compensate_weaviate_predicate_row(
@@ -498,6 +544,7 @@ def _compensate_weaviate_best_effort(
             input_uri=input_uri,
             frontend_id=frontend_id,
             archetype=archetype,
+            frontend_version=frontend_version,
         )
         logger.info(
             "saga compensation: DELETE Weaviate Predicate row for "

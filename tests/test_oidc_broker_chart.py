@@ -131,11 +131,50 @@ def base_sha_base() -> str:
 
 # ------------------------------------------------------------------ (a) base unchanged
 
+_OIDC_HEAD = "3bae602d"  # the OIDC change's last commit
+
+
+def _oidc_templates() -> set[str]:
+    """The templates the OIDC change itself touched, DERIVED from immutable shas.
+
+    The seal's subject is the OIDC change. A whole-render scope reds on any unrelated chart
+    feature (rev 186: #23's Dagster instance config). `_helpers.tpl` is not a document source;
+    its changes are seen through the documents of the OIDC templates.
+    """
+    r = subprocess.run(["git", "diff", "--name-only", _BASE_SHA, _OIDC_HEAD, "--", f"{_CHART}/templates"],
+                       capture_output=True, cwd=str(_REPO), timeout=60)
+    assert r.returncode == 0, r.stderr.decode(errors="replace")
+    names = {Path(l.strip()).name for l in r.stdout.decode().splitlines() if l.strip()}
+    return names - {"_helpers.tpl"}
+
+
+def _in_scope(rendered: str, templates: set[str]) -> str:
+    """The rendered documents whose `# Source:` header names one of `templates`."""
+    keep = []
+    for d in re.split(r"^---$", rendered, flags=re.M):
+        m = re.search(r"^# Source: [^/\n]+/templates/(\S+)$", d, re.M)
+        if m and m.group(1) in templates:
+            keep.append(d)
+    return "---".join(keep)
+
+
+def _norm_old(old: str) -> str:
+    ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
+    return re.sub(r"0.4.35", ver, old)
+
+
+def _line_diff(a: str, b: str) -> list[str]:
+    return [l for l in difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)
+            if not l.startswith(("---", "+++", "@@"))]
+
+
 def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, base_sha_base):
     # The chart version moves with every bump (labels, default image tags); it is not the
     # contract. Normalize the base sha's version to this chart's before diffing.
-    ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
-    old = re.sub(r"0.4.35", ver, base_sha_base)
+    old = _norm_old(base_sha_base)
+    tpls = _oidc_templates()
+    assert {"configmap.yaml", "realm-reconcile-job.yaml"} <= tpls, tpls
+    old, new = _in_scope(old, tpls), _in_scope(base, tpls)
 
     def _split(rendered: str) -> tuple[str, str]:
         """(everything but the realm-reconcile Job, that Job's script)."""
@@ -144,13 +183,27 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
         assert len(job) == 1
         return "---".join(d for d in docs if d is not job[0]), job[0]
 
-    def _diff(a: str, b: str) -> list[str]:
-        return [l for l in difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)
-                if not l.startswith(("---", "+++", "@@"))]
-
+    _diff = _line_diff
     old_rest, old_job = _split(old)
-    new_rest, new_job = _split(base)
-    assert _diff(old_rest, new_rest) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    new_rest, new_job = _split(new)
+    # positive controls: a scoping bug must not empty the comparison
+    for rest in (old_rest, new_rest):
+        assert re.search(r"^kind: ConfigMap$", rest, re.M) and re.search(r"^  name: \S+-config$", rest, re.M),             "the -config ConfigMap is missing from the filtered render"
+    assert "USER_ENTITLEMENT_CLAIM" in new_rest
+    # The realm import is compared as DATA, not text: a local human added to the import since the base sha
+    # (erin, chris) is the one allowed growth, and only as whole users that are ALSO in localHumanUsers.
+    # Every user the base sha imported must be byte-for-byte what it was; the rest of the realm is equal.
+    def _blank_realm(rest: str) -> str:
+        return re.sub(r"(  realm-export\.json: \|\n)(?:    .*\n|\n)+", r"\1", rest)
+
+    old_realm, new_realm = _realm(old_rest), _realm(new_rest)
+    assert old_realm["users"], "positive control: the base sha imported users"
+    by_name = {u["username"]: u for u in new_realm["users"]}
+    assert [by_name[u["username"]] for u in old_realm["users"]] == old_realm["users"]
+    added = [u["username"] for u in new_realm["users"] if u["username"] not in {x["username"] for x in old_realm["users"]}]
+    assert set(added) <= {u["username"] for u in _values_local_humans()}, added
+    assert {**old_realm, "users": []} == {**new_realm, "users": []}
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.
@@ -163,6 +216,30 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
         'if [ "$HAS" = "0" ]; then',
         'echo "   present, mapper ok"',
     }, removed
+
+
+def test_the_scope_excludes_a_feature_the_oidc_change_never_touched(base, base_sha_base):
+    """The fixture distinguishes the rejected rule (whole-render scope).
+
+    The unfiltered bare renders must differ in a document from a template OUTSIDE the OIDC set
+    (rev 186: the Dagster documents of #23); the filtered renders must not contain that
+    difference. On a branch where no other feature has changed the chart yet there is nothing
+    to distinguish, and the test skips.
+    """
+    old = _norm_old(base_sha_base)
+    tpls = _oidc_templates()
+    all_tpls = {m.group(1) for m in re.finditer(r"^# Source: [^/\n]+/templates/(\S+)$", old + "\n" + base, re.M)}
+    outside = all_tpls - tpls
+    out_old, out_new = _in_scope(old, outside), _in_scope(base, outside)
+    if out_old == out_new:
+        pytest.skip("no template outside the OIDC set differs between the base sha and now")
+    assert _line_diff(out_old, out_new), "outside-set documents differ but the line diff is empty"
+    assert _in_scope(old, tpls) != old and _in_scope(base, tpls) != base
+    # the filtered renders carry none of the outside difference
+    f_old, f_new = _in_scope(old, tpls), _in_scope(base, tpls)
+    outside_lines = {l for l in _line_diff(out_old, out_new) if l[1:].strip()}
+    leaked = outside_lines & set(_line_diff(f_old, f_new))
+    assert not leaked, sorted(leaked)[:5]
 
 
 # ------------------------------------------------------------------ (b) one claim name
@@ -567,3 +644,100 @@ def test_a_missing_mapper_is_still_created(sandbox):
     assert [x[0] for x in w] == ["POST"], w
     assert w[0][1].endswith("/clients/uuid-1/protocol-mappers/models")
     assert w[0][2]["config"]["claim.name"] == "authz_id" and w[0][2]["config"]["claim.value"] == _ENGINE_D
+
+
+# ------------------------------------------------------------------ (i) local humans: create, parity, join, groups
+# erin and chris are the walkers: alice's nine groups by the GROUP path only. The live sandbox realm
+# already exists and the realm import never re-runs, so the reconcile job must CREATE a local human
+# the realm lacks -- under any authzClaim (the attribute stays claim-gated; the user does not).
+
+def _values_local_humans() -> list[dict]:
+    values = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))
+    return values["keycloak"]["localHumanUsers"]
+
+
+def _create_lines(script: str, username: str) -> list[str]:
+    """The create-if-absent blocks for `username`: a `HU="<name>"` header and a POST to /users after it."""
+    out = []
+    for m in re.finditer(rf'^\s*HU="{re.escape(username)}"\n(?P<body>(?:(?!^\s*HU=).*\n){{0,12}})', script, re.M):
+        if 'curl -sf -X POST' in m.group("body") and '"$API/users"' in m.group("body"):
+            out.append(m.group(0))
+    return out
+
+
+@pytest.fixture(scope="module")
+def email_claim() -> str:
+    return _render(*_SANDBOX, *_set("keycloak.authzClaim", "email"))
+
+
+@pytest.mark.parametrize("who", ["erin", "chris"])
+def test_reconcile_creates_a_missing_local_human_under_either_claim(sandbox, email_claim, who):
+    for label, rendered in (("authz_id", sandbox), ("email", email_claim)):
+        blocks = _create_lines(_script(rendered), who)
+        assert len(blocks) == 1, f"{who} has no create-if-absent in the reconcile job under claim {label}"
+        assert f'"username":"{who}"' in blocks[0] and f'"email":"{who}@example.com"' in blocks[0]
+        assert '"enabled":true' in blocks[0] and '"temporary":false' in blocks[0]
+
+
+def test_every_local_human_is_in_the_import_and_in_a_reconcile_create(sandbox):
+    listed = [u["username"] for u in _values_local_humans()]
+    assert {"erin", "chris", "alice", "bob", "carol", "agent-user"} <= set(listed)   # positive control
+    imported = {u["username"] for u in _realm(sandbox)["users"]}
+    script = _script(sandbox)
+    for name in listed:
+        assert name in imported, f"{name} is in localHumanUsers but not in the realm import"
+        assert _create_lines(script, name), f"{name} is in localHumanUsers but the reconcile never creates it"
+
+
+def _users_yaml() -> list[dict]:
+    return yaml.safe_load((_REPO / "policy" / "users.yaml").read_text(encoding="utf-8"))["users"]
+
+
+# agent-user's realm email is agent@example.com and users.yaml says the same, so the join below
+# needs no exemption today; this set exists so a REAL divergence is named, not silently skipped.
+_JOIN_EXEMPT: set[str] = set()
+
+
+def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox):
+    humans = {u["id"] for u in _users_yaml() if re.fullmatch(r"[^@\s]+@example\.com", str(u["id"]))}
+    imported = {u["email"] for u in _realm(sandbox)["users"]}
+    assert {"alice@example.com", "bob@example.com", "carol@example.com", "agent@example.com",
+            "erin@example.com", "chris@example.com"} <= humans          # positive control
+    assert humans - _JOIN_EXEMPT == imported - _JOIN_EXEMPT, (
+        f"users.yaml only: {sorted(humans - imported)}; realm import only: {sorted(imported - humans)}")
+
+
+@pytest.mark.parametrize("who", ["erin", "chris"])
+def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
+    by_id = {u["id"]: u for u in _users_yaml()}
+    alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
+    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
+    assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
+    assert walker["default"] == alice["default"]
+    # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from
+    # group membership (the two derived-invoker seals pin each such row to the derived set exactly, both
+    # ways, so a missing or an extra walker reds there). Here: erin and chris name the same rows; none is
+    # in task or asset grants; and every row naming one also names alice, whose groups they hold.
+    def _rows(fname: str, who_id: str) -> set[str]:
+        doc = yaml.safe_load((_REPO / "policy" / fname).read_text(encoding="utf-8"))
+        text = (_REPO / "policy" / fname).read_text(encoding="utf-8")
+        assert "alice@example.com" in text                              # positive control: the file is read
+        found: set[str] = set()
+        def walk(node, key=None):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("grant_to", "subject") and (v == who_id or (isinstance(v, list) and who_id in v)):
+                        found.add(str(key))
+                    walk(v, k if isinstance(v, dict) else key)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, key)
+        walk(doc)
+        return found
+
+    me, other = f"{who}@example.com", ("chris" if who == "erin" else "erin") + "@example.com"
+    assert _rows("capability_grants.yaml", "alice@example.com"), "positive control: alice names capability rows"
+    mine = _rows("capability_grants.yaml", me)
+    assert mine and mine == _rows("capability_grants.yaml", other), mine
+    assert mine <= _rows("capability_grants.yaml", "alice@example.com"), mine
+    assert not _rows("task_grants.yaml", me) and not _rows("asset_grants.yaml", me), who

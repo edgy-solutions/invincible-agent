@@ -781,3 +781,66 @@ def get_writer() -> Optional[AnswerArtifactWriter]:
                 exc,
             )
             return None
+
+
+# ── Archive (rev 187): hides, never deletes ──
+#
+# The record lives on the Neo4j AnswerArtifact node and is PROJECTED to Postgres, which is
+# rebuilt from Neo4j -- Postgres alone is never the record. This path SETs properties only: no
+# DELETE, no DETACH. `archive_history` (a list of JSON strings) stays on the node.
+#
+# CHANGE DETECTION: the projector polls `a.watermark > last_applied` (apply_loop._poll_neo4j),
+# so an archive bumps the global WatermarkSequence and sets `a.watermark` (and `a.updated_at`),
+# exactly as _tx_merge does; without that the row would never re-project.
+_ARCHIVE_STATE_CYPHER = """
+MATCH (a:AnswerArtifact {id: $id})
+RETURN a.archived_at AS archived_at
+"""
+
+_ARCHIVE_SET_CYPHER = """
+MERGE (s:WatermarkSequence {key: 'answer_artifact'})
+ON CREATE SET s.value = 0
+SET s.value = s.value + 1
+WITH s
+MATCH (a:AnswerArtifact {id: $id})
+SET a.archived_at = $archived_at,
+    a.archived_by = $archived_by,
+    a.archive_reason = $archive_reason,
+    a.archive_history = coalesce(a.archive_history, []) + [$entry],
+    a.updated_at = $now_ms,
+    a.watermark = s.value
+RETURN a.watermark AS watermark
+"""
+
+
+def set_archive_state(
+    driver: Any, artifact_id: str, *, archive: bool, by: str, reason: Optional[str]
+) -> bool:
+    """Archive (`archive=True`) or unarchive. Returns True when state changed, False for an
+    idempotent repeat (nothing written, no history appended) or an absent id."""
+    import json
+
+    now_ms = int(time.time() * 1000)
+    entry = json.dumps(
+        {"action": "archive" if archive else "unarchive", "by": by, "at": now_ms, "reason": reason}
+    )
+
+    def _tx(tx: Any) -> bool:
+        rec = tx.run(_ARCHIVE_STATE_CYPHER, id=artifact_id).single()
+        if rec is None:
+            return False
+        if (rec["archived_at"] is not None) == archive:
+            return False
+        tx.run(
+            _ARCHIVE_SET_CYPHER,
+            id=artifact_id,
+            archived_at=now_ms if archive else None,
+            archived_by=by if archive else None,
+            archive_reason=reason if archive else None,
+            entry=entry,
+            now_ms=now_ms,
+        )
+        return True
+
+    with driver.session() as session:
+        return session.execute_write(_tx)

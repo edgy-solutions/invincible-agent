@@ -1,6 +1,6 @@
 # Handoff — architecture seat (no lane), 2026-09-19
 
-to: whoever takes the shared master tree
+to: invincible-agent/seat/architect — whoever takes the shared master tree
 read-by:
 
 **This seat holds no lane branch. Read the STATE block before assuming you can commit anything

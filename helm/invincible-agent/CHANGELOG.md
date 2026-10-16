@@ -1,8 +1,10 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.41 — 2026-10-10
+## 0.4.49 — 2026-10-16
 
-Renumbered from 0.4.40: rev 186 takes 0.4.39 and lane/01-oidc-roundtrip moves to 0.4.40.
+Renumbered again, from 0.4.41: master is at 0.4.46, lane/01-broker-flip (#41) holds 0.4.47 and
+lane/01-rev189 holds 0.4.48. On 2026-10-10 it was renumbered from 0.4.40, when rev 186 took
+0.4.39 and lane/01-oidc-roundtrip moved to 0.4.40. Content is unchanged by either renumber.
 
 NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
 OFF in the sandbox; nothing rolled.
@@ -19,10 +21,132 @@ OFF in the sandbox; nothing rolled.
 - Sandbox `networkPolicy.directCallers`: engine-o gains postgresql, keycloak, central-gateway,
   dagster-webserver; cortex-bff gains weaviate, fuseki, topaz. Each carries its `via` key and the
   2026-12-14 expiry. See docs/measurements/2026-10-10-the-gate-keeps-cortex-bff-and-engine-o.md.
+## 0.4.46 — 2026-10-15
+
+Rev 188b. The fleet image carries #46 (saf), #47 (gov's caller census at bb0b5190, with #52's
+test persona), #51 (one identifier namespace, one claimant) and the walk's capability check asked
+as the run's acting identity rather than the case runner. The fleet imageTag is set at roll time,
+not here. #41 (lane/01-broker-flip) renumbers to 0.4.47 when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:8d0234ab…` (cortex-ui e1b94e2).**
+  cad and xml are drawn "not yet accepted" and only pdf sends, a door 4xx draws as a refusal,
+  every walk row names its persona, and `npm audit` is at zero. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+- **`values-sandbox.yaml` `cortexUi.env.VITE_REVIEW_ROW_EDITS: "false"`.** Steward row edits are
+  off on the sandbox. The architect's condition for keeping them on was one confirmed live
+  correction, and none exists: no grouped review has been acted on since 2026-10-10. Removing the
+  key turns them back on.
+
+## 0.4.45 — 2026-10-13
+
+Rev 188. The 188 image carries the structured `failure` field, `GET /ingest/retries` (the
+service-only listing doc-tools polls to relaunch retried drops) and the door 400 on `POST /ingest`
+(a drop with no registered content kind is refused before anything is written). The fleet
+imageTag is set at roll time, not here. #41 (lane/01-broker-flip) renumbers to 0.4.46 when it
+merges.
+
+### Added
+
+- **`cortexBff.env` `INGEST_RECEIVED_TIMEOUT_SECONDS: "600"` and
+  `INGEST_WATCHDOG_INTERVAL_SECONDS: "30"`.** The ingest watchdog's two knobs, now tunable from the
+  chart. 600 s is the architect's 2026-10-12 bound, deliberately longer than doc-tools' 30 s
+  sensor tick, because a run queued behind max_concurrent_runs sits at `received` legitimately; a
+  timeout failure is provisional until a run starts. A value <= 0 disables the watchdog.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:7b2b6129…` (cortex-ui 88a65d4).**
+  The upload now sends `content_kind`, a failed drop draws its `failure` and offers Retry,
+  `row_edits` is on by default, and the walk fixes (#19–#22) are in. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+
+## 0.4.44 — 2026-10-12
+
+Rev 187c, a frontend-only pin, rolled ahead of 188 on the architect's direction. The fleet image
+is unchanged (49aa5e28). #41 (lane/01-broker-flip) also claims 0.4.44 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:facdc367…` (cortex-ui f3617a9).**
+  A drop is now an ingest entry on the answers rail, and "My drops" is gone. The build also
+  carries the walk login fix and `WALK_SPKI_PIN` (#17). The tag-to-digest binding was measured
+  before pinning; the values comment records how.
+
+## 0.4.43 — 2026-10-12
+
+Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:2556cf5b…` (cortex-ui b566192).**
+  This build includes cortex #10 (3fa6fcb, the answers perf merge), and pinning it was
+  conditional on that. It also carries #4, the composer: rev 187 rolled on 865c080, which lacks
+  it. The tag-to-digest binding was measured before pinning; the values comment records how.
+
+## 0.4.42 — 2026-10-11
+
+Rev 187, second chart change: answers at scale (#42, lane/01-answers-at-scale, numbered 0.4.44 on
+its branch) and the group-audience exit code (#35, lane/01-group-audiences). Renumbered at merge;
+0.4.41 below is the rev's first.
+
+### Added
+
+- **`answer_artifact_projection` gains `archived_at`, `archived_by`, `archive_reason`** and two
+  indexes (`files/sql/create_answer_artifact_projection.sql`): `idx_aap_user_created`
+  (newest-first paging per user) and `idx_aap_search_tsv`, an EXPRESSION GIN index over
+  question_text + summary. Not a generated column, because Electric refuses to replicate one.
+  Every statement is idempotent (`IF NOT EXISTS`), so the existing schema job applies it to a
+  live table.
+
+### Changed
+
+- **`task-grant-sync-job.yaml` documents exit code 5:** a `grant_to_groups` entry names a group
+  object absent from live Topaz (REFUSED, nothing applied). `set -e` already fails the Job on it;
+  the change is to the header comment only.
+
+## 0.4.41 — 2026-10-11
+
+Rev 187. Two walkers, and the reconcile creates a local human the live realm lacks (6c93b1c2).
+Numbered here because the release guard refused 0.4.40 for 6c93b1c2's helm change. Open
+branches that also claimed 0.4.41-0.4.44 (netpol, prep-next, #41, #42) renumber at merge.
+
+### Added
+
+- **`erin` and `chris`** in `keycloak-configmap.yaml` and `values.yaml` `localHumanUsers`.
+- **`realm-reconcile-job.yaml` creates any `localHumanUsers` entry the live realm lacks.** The realm
+  import applies only to a fresh realm, so a user added later otherwise never exists. The loop is
+  create-if-absent and never touches an existing user.
+
+## 0.4.39 — 2026-10-10
+
+Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
+STARTED (lane/74-dagster-max-runtime, PR #23; numbered 0.4.37 on its branch, renumbered here).
+
+### Fixed
+
+- **A STARTED run whose code-location pod died is failed after `maxRuntimeSeconds`**
+  (`templates/dagster-instance.yaml`, `values.yaml` `dagster.runMonitoring`). Under
+  `DefaultRunLauncher` the run monitor cannot check a worker's health. It still applies the
+  runtime bound, but the instance config set none, so a zombie held one of the two
+  `max_concurrent_runs` slots for ever, and two of them hung every question. The bound is 3600s,
+  about 1.9x the longest finished run measured on the sandbox (1930s, from 2742 runs, 2026-10-09).
+- **The instance config is chart-owned.** Before this it was a ConfigMap made by hand and
+  patched by hand into the webserver, daemon and user-code Deployments, so no install from the
+  chart could reproduce it. The new ConfigMap is `<release>-dagster-home`, a name helm can own.
+  The volume keeps the live name `dagster-instance` and the same mountPath, so the upgrade
+  re-points the hand-patched volume rather than adding a second one. A `checksum/dagster-instance`
+  annotation rolls the three pods when the config changes. The hand-made ConfigMap is left
+  orphaned, and deleting it is a human's call after the roll.
+- The "production would use K8sRunLauncher" comment is corrected. A dead worker under
+  `DefaultRunLauncher` IS caught, by the runtime bound.
 
 ## 0.4.38 — 2026-10-10
 
-Rev 184. Realm-reconcile repairs its own stale mappers.
+Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.
 
 ### Fixed
 
