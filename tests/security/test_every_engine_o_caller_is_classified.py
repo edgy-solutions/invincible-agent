@@ -123,6 +123,7 @@ ROWS = [
     Row("11", RRC, "check_pool", "/resolve", "TEST_PERSONA"),
     Row("13", "setup/verify_tier3_live.py", "_resolve_query", "/resolve", "NO_PERSON"),
     Row("14", "scripts/phase1_stable_harness.sh", "top level", "/resolve", "NO_PERSON"),
+    # Rows 15/16: /fill_slots now REFUSES these (422 no_person; lane/74, 2026-10-16).
     Row("15", "scripts/elicitation_battery.py", "_fill", "/fill_slots", "NO_PERSON"),
     Row("16", "scripts/slot_fill_battery.py", "_call", "/fill_slots", "NO_PERSON"),
     # MOVED by lane/74 #52 (5902102b, ruling (b); architect 2026-10-12: "row 17 moves with #52"):
@@ -130,7 +131,7 @@ ROWS = [
     Row("17", "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "/analyze", "TEST_PERSONA"),
 ]
 DOMAINS_WITHOUT_PERSON_ROWS: set[str] = set()  # empty since #48: run_resolver_corpus sends a person with its domains
-EXPECTED_NO_PERSON_SITES = 4  # rows 13, 14, 15, 16 -- left to be refused (lane/74, 2026-10-11)
+EXPECTED_NO_PERSON_SITES = 4  # rows 13, 14 (/resolve) still left to be refused; rows 15, 16 (/fill_slots) now refused (lane/74, 2026-10-16)
 
 # A found site that is NOT engine-o. Keyed (file, function, route) -> (hole expected in the URL, why).
 EXCLUDED = {

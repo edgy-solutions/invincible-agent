@@ -80,7 +80,8 @@ def _ask(eo, monkeypatch, slots_json, confidence=0.9):
 
     monkeypatch.setattr(eo.b, "FillVerbSlots", _fake)
     req = eo.FillSlotsRequest(query="q", verb_iri="mesh:planFundingGap",
-                              declarations=json.dumps(slots_for("plan_funding_gap")))
+                              declarations=json.dumps(slots_for("plan_funding_gap")),
+                              user_email="tester@example.com")
     return asyncio.run(eo.fill_slots(req))
 
 
@@ -141,7 +142,8 @@ def test_a_model_EXCEPTION_yields_no_slots_rather_than_a_500(monkeypatch):
     monkeypatch.setattr(eo.b, "FillVerbSlots", _boom)
     r = asyncio.run(eo.fill_slots(eo.FillSlotsRequest(
         query="q", verb_iri="mesh:planFundingGap",
-        declarations=json.dumps(slots_for("plan_funding_gap")))))
+        declarations=json.dumps(slots_for("plan_funding_gap")),
+        user_email="tester@example.com")))
     assert r.slots == {} and "unavailable" in r.reasoning
 
 
