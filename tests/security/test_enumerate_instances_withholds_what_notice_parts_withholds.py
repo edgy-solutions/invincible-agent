@@ -213,9 +213,14 @@ def test_ENTITLED_person_sees_all_four_once_the_notice_is_promoted(ask):
 
 @pytest.mark.parametrize("who", ["", "svc:x"])
 def test_NON_PERSON_holding_OWNER_is_withheld(ask, who):
+    """Was: answered seeded content only. Now (2026-10-16, gov #39 closed): REFUSED 422
+    `no_person` -- a non-person gets nothing, a fortiori not the promoted member its OWNER
+    grant would have unlocked. Shape sealed in test_enumerate_instances_refuses_a_caller_who_is_not_a_person.py."""
     r = ask({"p1": _members(ALL4)}, user_email=who, domains=[OWNER],
             driver=_Driver(_rows(promoted=True)))
-    assert _ids(r) == [SEED_N, OTHER_IRI]
+    assert r.status_code == 422, r.text
+    assert r.json()["error"] == "no_person"
+    assert "members" not in r.json()
 
 
 # -- withheld is unknown -----------------------------------------------------------------------

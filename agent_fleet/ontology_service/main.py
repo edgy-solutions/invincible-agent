@@ -3132,7 +3132,7 @@ async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
 
 
 @app.post("/enumerate_instances")
-async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
+async def enumerate_instances(request: EnumerateInstancesRequest):
     """Fan a class out to every registered `mesh:enumerateInstances` provider.
 
     THE DEFECT THIS REPLACES. The supervisor held ONE hard-wired
@@ -3159,6 +3159,21 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
+    # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
+    # restate_analyst send a real test persona or get refused -- a domains list is never an
+    # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
+    # as blank; a service identity is never a person." Until now this route ANSWERED a caller with
+    # no person (the gate showed it seeded content only, gov #39); the refusal waited for its
+    # callers to carry a person. They do: census rows 3 (supervisor, TOKEN) and 7 (in-process
+    # `_bind_from_scope`, FORWARD) in tests/security/test_every_engine_o_caller_is_classified.py.
+    # REFUSED: blank, whitespace, absent and a `svc:` head. Nothing is sent -- neither the registry
+    # nor any provider is asked. The body copies safety's `no_person`
+    # (safety_agent/main.py, `except measures.NoPerson`) so the fleet has one shape.
+    if not _origin_entitlement.is_person(request.user_email):
+        return JSONResponse(status_code=422, content={
+            "error": "no_person",
+            "message": "this verb answers for a person; the caller carries none",
+            "fn": "enumerate_instances"})
     discovery = _discover_enumerate_providers()
     if discovery.outcome in ("failed", "unreachable"):
         # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
@@ -3352,6 +3367,11 @@ async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
         class_uri=referent, bound_slots=bound,
         user_email=user_email, entitled_domains=list(entitled_domains or []),
     ))
+    if not isinstance(enum, dict):
+        # A refusal (422 `no_person`) is not a member list. A `/fill_slots` caller with no person
+        # is census rows 15/16 (NO_PERSON), left to be refused at `/fill_slots`, not here; the slot
+        # goes on to the gated fan-out below, which shows a non-person seeded content only.
+        return None
     if enum.get("outcome") != "members":
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]

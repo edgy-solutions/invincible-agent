@@ -2158,6 +2158,14 @@ _ENUMERATE_URL = os.getenv("ENUMERATE_INSTANCES_URL", "")
 _ENUMERATE_TIMEOUT_S = float(os.getenv("ENUMERATE_TIMEOUT_S", "5"))
 
 
+class NoPersonRefused(RuntimeError):
+    """engine-o refused `/enumerate_instances` with 422 `no_person`: the caller carried no person.
+
+    Distinct from `HTTPError` so `slot_disposition` files the ask's `detail` as
+    `NoPersonRefused` -- a refused person is not "nobody could list this". The supervisor sends
+    the token's person, so this is a DEFENCE, not a live case."""
+
+
 def _make_enumerator(context, *, user_email: str = "",
                      entitled_domains: Optional[List[str]] = None):
     """`(class_uri, bound_slots) -> {outcome, members, count, scoped_by}`, or None when no
@@ -2196,6 +2204,13 @@ def _make_enumerator(context, *, user_email: str = "",
             json={"class_uri": class_uri, "bound_slots": _bound, **_caller},
             timeout=_ENUMERATE_TIMEOUT_S,
         )
+        if resp.status_code == 422:
+            try:
+                _refusal = resp.json()
+            except ValueError:
+                _refusal = None
+            if isinstance(_refusal, dict) and _refusal.get("error") == "no_person":
+                raise NoPersonRefused(str(_refusal.get("message") or "no_person"))
         resp.raise_for_status()
         body = resp.json() or {}
         context.log.info(
