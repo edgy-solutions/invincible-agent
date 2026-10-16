@@ -251,7 +251,7 @@ VERBS: List[Dict[str, Any]] = [
     {
         # RULED 2026-10-15 (b): the SAME verb is also registered on pcn:Component, so a part
         # that is a component but not a safety-critical item reaches it and gets the NAMED
-        # `unknown_part` refusal instead of an UNKNOWN subject. A separate registration NAME
+        # `no_failures_recorded` refusal (or `unknown_part` for a string that is no part number) instead of an UNKNOWN subject. A separate registration NAME
         # (`name`), because registering one verb twice under one name deletes the first edge.
         "fn": "what_failed_on_this_part",
         "name": "engine_safety_what_failed_on_this_part_component",
@@ -260,9 +260,9 @@ VERBS: List[Dict[str, Any]] = [
         "output_uri": SAFETY + "FailureRecordSet",
         "desc": (
             "The same FRACAS lookup as for a safety-critical item, asked of any component. "
-            "Answers the recorded failures for a part this engine lists, and REFUSES (outcome "
-            "unknown_part, no task) a component it does not list - no failures recorded here "
-            "is NOT a clean bill, it is a part this engine cannot identify. READ-ONLY."
+            "Answers the recorded failures for any component that has them, and REFUSES (no task) "
+            "with outcome no_failures_recorded when no source holds a failure for the part, or "
+            "unknown_part when the string is no part number - neither is a clean bill. READ-ONLY."
         ),
         "synonyms": [
             "what failed on this part", "failure history for this part",

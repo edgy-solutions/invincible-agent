@@ -85,13 +85,36 @@ def test_a_listed_part_returns_its_records():
     assert out["refused"] is False and out["failure_count"] == 2, out
 
 
-def test_an_unlisted_component_gets_the_named_refusal_and_no_task():
+def test_a_resolved_component_with_no_records_gets_no_failures_recorded_and_no_task():
     out = measures.what_failed_on_this_part(part_number="5530-184")
     assert out["refused"] is True
-    assert out["outcome"] == "unknown_part"
+    assert out["outcome"] == "no_failures_recorded"
     assert out["part_number"] == "5530-184"
-    assert "unknown part" in out["reason"]
+    assert "no failures recorded" in out["reason"] and "5530-184" in out["reason"]
     assert not any("task" in k for k in out)
+
+
+def test_an_unresolvable_part_gets_unknown_part():
+    out = measures.what_failed_on_this_part(part_number="!! not a part ??")
+    assert out["refused"] is True and out["outcome"] == "unknown_part"
+    assert "unknown part" in out["reason"] and "!! not a part ??" in out["reason"]
+    assert not any("task" in k for k in out)
+
+
+def test_a_component_with_records_and_no_listing_returns_its_records(monkeypatch):
+    """The listing is not a gate (ruled 2026-10-15): records on a plain component are returned."""
+    from agent_fleet.safety_agent import failure_source as fs
+    seed = fs.gather(fs.BY_PART, "PN-8801")[0]
+    plain = "5530-190"
+    assert plain not in measures.CRITICAL_PART_NUMBERS
+    rec = fs.FailureRecord(record_id="FR-T-1", part_number=plain, platform=seed.platform,
+                           system_of_record=seed.system_of_record, failure_mode="seized",
+                           observed_on=seed.observed_on, citation=seed.citation)
+    real = fs.gather
+    monkeypatch.setattr(fs, "gather",
+                        lambda by, v: [rec] if (by, v) == (fs.BY_PART, plain) else real(by, v))
+    out = measures.what_failed_on_this_part(part_number=plain)
+    assert out["refused"] is False and out["failure_count"] == 1, out
 
 
 def test_the_census_reader_reads_the_refusal_it_is_now_sent():
@@ -117,7 +140,7 @@ def test_pn_8802_with_the_fracas_verb_is_answered_by_the_safety_item_provider():
 @pytest.mark.skip(reason=(
     "BLOCKED on 189 (lane/74's decide() change plus this PR's registration live): an unlisted "
     "part number resolves to pcn:Component only, binds whatFailedOnThisPart, and returns the "
-    "named unknown_part refusal through the service (the 5530-184 row). Walk live after 189."
+    "named no_failures_recorded refusal through the service (the 5530-184 row). Walk live after 189."
 ))
 def test_an_unlisted_part_resolves_to_the_component_only_and_gets_the_refusal_end_to_end():
     raise AssertionError("unreachable until the registration is live")
