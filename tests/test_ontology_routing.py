@@ -31,6 +31,18 @@ from fastapi.testclient import TestClient
 # The service module sits under ``agent_fleet/ontology_service`` and
 # imports ``baml_client``/etc from sibling paths. Pre-mock the heavy
 # downstream modules so the import succeeds in a clean test environment.
+def _neo4j_double() -> MagicMock:
+    """A fake `neo4j` whose `neo4j.exceptions` is a real submodule carrying REAL Exception
+    subclasses: main.py imports the outage classes from it (16aa5450, #54) and uses them in
+    `except` tuples, where a MagicMock attribute raises TypeError."""
+    import types
+    neo = MagicMock()
+    neo.exceptions = types.ModuleType("neo4j.exceptions")
+    for _x in ("ServiceUnavailable", "SessionExpired", "TransientError"):
+        setattr(neo.exceptions, _x, type(_x, (Exception,), {}))
+    return neo
+
+
 @pytest.fixture(scope="module")
 def engine_o_module():
     # Add agent_fleet/ontology_service AND THE REPO ROOT to path. The repo root is not
@@ -51,7 +63,9 @@ def engine_o_module():
         "neo4j", "baml_client", "baml_client.types", "baml_client.type_builder",
         "llm_utils", "utils", "utils.weaviate_utils",
     ]:
-        sys.modules.setdefault(name, MagicMock())
+        sys.modules.setdefault(name, _neo4j_double() if name == "neo4j" else MagicMock())
+    # `from neo4j.exceptions import ...` (16aa5450, #54) needs the submodule in the table too.
+    sys.modules.setdefault("neo4j.exceptions", sys.modules["neo4j"].exceptions)
 
     # ``agent_fleet*`` IS DELIBERATELY NOT STUBBED. It used to be, and that was the bug:
     # a MagicMock for ``agent_fleet``/``agent_fleet.utils`` shadows the real package, so
