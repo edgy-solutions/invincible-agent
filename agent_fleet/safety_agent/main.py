@@ -62,6 +62,9 @@ except ImportError:
     from agent_fleet.safety_agent import slots as slots_mod  # type: ignore[no-redef]
 
 SAFETY = "http://internal/sustainment/safety#"
+#: The sustainment plane's namespace; pinned by a test to safety_extension.ttl's `pcn:` prefix and to
+#: engine-o's `_COMPONENT_CLASS`.
+PCN = "http://internal/sustainment/pcn#"
 MESH = "http://invincible-agent/mesh#"
 
 # ── THE WORK-ORDER SUBJECT IS THE STANDARD'S CLASS, NOT A HOUSE SYNONYM ──────
@@ -246,6 +249,31 @@ VERBS: List[Dict[str, Any]] = [
         ],
     },
     {
+        # RULED 2026-10-15 (b): the SAME verb is also registered on pcn:Component, so a part
+        # that is a component but not a safety-critical item reaches it and gets the NAMED
+        # `unknown_part` refusal instead of an UNKNOWN subject. A separate registration NAME
+        # (`name`), because registering one verb twice under one name deletes the first edge.
+        "fn": "what_failed_on_this_part",
+        "name": "engine_safety_what_failed_on_this_part_component",
+        "verb": "mesh:whatFailedOnThisPart",
+        "input_uri": PCN + "Component",
+        "output_uri": SAFETY + "FailureRecordSet",
+        "desc": (
+            "The same FRACAS lookup as for a safety-critical item, asked of any component. "
+            "Answers the recorded failures for a part this engine lists, and REFUSES (outcome "
+            "unknown_part, no task) a component it does not list - no failures recorded here "
+            "is NOT a clean bill, it is a part this engine cannot identify. READ-ONLY."
+        ),
+        "synonyms": [
+            "what failed on this part", "failure history for this part",
+            "what failures are recorded for this part", "FRACAS lookup",
+        ],
+        "anti_synonyms": [
+            "what is the risk of deferring this work order", "assess this hazard",
+            "what hazards are unattended", "accept this risk",
+        ],
+    },
+    {
         "fn": "failure_trend_for_this_platform_by_month",
         "verb": "mesh:failureTrendForThisPlatformByMonth",
         "input_uri": SAFETY + "Platform",
@@ -271,7 +299,11 @@ VERBS: List[Dict[str, Any]] = [
     },
 ]
 
-BY_FN = {v["fn"]: v for v in VERBS}
+# One entry per fn: a verb registered on a second class repeats its fn, and the first (the
+# safety-owned registration) is the one the /measure route runs.
+BY_FN: Dict[str, Dict[str, Any]] = {}
+for _v in VERBS:
+    BY_FN.setdefault(_v["fn"], _v)
 
 #: Classes this engine registers verbs ON but does not resolve or enumerate, WITH the reason.
 #:
@@ -281,6 +313,10 @@ BY_FN = {v["fn"]: v for v in VERBS}
 #: is an elicitation offering free text where it should offer a menu, and the provider
 #: answering `unsupported`, which reads to the ask as a CONSIDERED refusal rather than a gap.
 _NOT_ENUMERABLE = {
+    PCN + "Component": (
+        "owned by the sustainment plane (engine-o resolves and enumerates components); Engine S "
+        "registers whatFailedOnThisPart on it so an unlisted part is refused by name."
+    ),
     MRO + "MaintenanceWorkOrderRecord": (
         "owned by the maintenance plane; Engine S reads work orders and does not own them. "
         "Minting a safety-namespaced work-order class to make this self-consistent would be "
@@ -354,7 +390,7 @@ async def lifespan(app: FastAPI):
         # ONE NAME PER (VERB, SUBJECT). Registering one verb twice under one name DELETES the
         # first edge — the registrar's compensate-on-rescope sweep removes rows matching
         # (tool_urn, verb_iri) whose input_uri differs from the one being written.
-        name = f"engine_safety_{v['fn']}"
+        name = v.get("name") or f"engine_safety_{v['fn']}"
         try:
             register_engine_to_mesh(
                 name=name,

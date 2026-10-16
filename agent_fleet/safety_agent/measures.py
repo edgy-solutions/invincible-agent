@@ -595,7 +595,16 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     if part_number not in CRITICAL_PART_NUMBERS:
         # NOT the same as "no failures found", and reported differently on purpose — see
         # assess_deferral_risk's identical distinction for an unknown work order.
-        return {"refused": True, "reason": f"unknown part '{part_number}'"}
+        # A DECIDED, NAMED refusal in the hazard_closed / unknown_hazard shape: `outcome` names the
+        # check that ran (the part was looked up on the critical-items list and is not there), the
+        # id field is echoed, and there is no task. The census reader reads a refusal ONLY as
+        # `refused: true` plus a string `outcome`, so a refusal without one was invisible to it.
+        return {
+            "refused": True,
+            "outcome": "unknown_part",
+            "part_number": part_number,
+            "reason": f"unknown part '{part_number}'",
+        }
 
     records = _visible_records(
         sorted(failure_source.gather(failure_source.BY_PART, part_number),
