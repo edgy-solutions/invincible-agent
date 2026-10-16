@@ -849,7 +849,28 @@ cortexUi:
     # set by this chart), and .github's one change (build.yml PRODUCER_REF -> 5b2a16a2, an
     # ancestor of the rolled e977c32b) selects the parity tests' checkout and is not a build arg,
     # so VITE_FEATURES is unchanged.
-    digest: "sha256:2556cf5b4259e268a296b461d2456dbfd51a6d9588acb824a7f1e0646fd3683d"
+    # 2026-10-12, pinned for rev 187c (architect: frontend-only, ahead of 188): cortex-ui f3617a9
+    # (master; merges #15 the drop box cannot stay grown, #16 rail rows at measured height, #17
+    # walk login cannot mistake Keycloak for the app + WALK_SPKI_PIN, #18 a drop is an ingest
+    # turn on the answers rail, My drops removed) -> facdc367. b566192 and 057938a are both
+    # ancestors of f3617a9. Measured before pinning: the FULL tag resolves to this digest (an OCI
+    # index); the abbreviated tag and this digest with its last hex altered both answer not
+    # found. Since b566192 the Dockerfile, docker-entrypoint.sh, nginx config and .github are
+    # unchanged, so VITE_FEATURES is unchanged. The rail's ingest entry reads
+    # GET /ingest/{id}/status, which the rolled fleet already serves. `npm run walk` needs a
+    # cortex checkout at or after f3617a9 from this pin on.
+    # 2026-10-13, pinned for rev 188: cortex-ui 88a65d4 (master; merges #19 POST /ingest carries
+    # content_kind, #20 the walk classifies only the ask's own artifact and reads version.json
+    # through the pinned browser, #21 row_edits ON by default with the send matching the
+    # producer's models, #22 a failed drop draws its failure and can be retried) -> 7b2b6129.
+    # f3617a9 and 10f64f1 are both ancestors of 88a65d4. Measured before pinning: the FULL tag
+    # resolves to this digest; the abbreviated tag and the full tag with its last hex altered both
+    # answer not found; the f3617a9 control still resolves to facdc367. Since f3617a9 the
+    # Dockerfile and nginx config are unchanged; docker-entrypoint.sh changes one comment line, and
+    # .github only moves PRODUCER_REF to 49aa5e28 (a parity-test checkout, not a build arg), so
+    # VITE_FEATURES is unchanged. VITE_REVIEW_ROW_EDITS now defaults ON in the image and this
+    # chart still does not set it (only the exact string "false" turns it off).
+    digest: "sha256:7b2b612913c7d34caf16b3524c443e5144f55f8e288cf1f8685649178d9c2013"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

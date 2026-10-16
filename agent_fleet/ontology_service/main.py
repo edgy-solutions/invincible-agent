@@ -3189,16 +3189,19 @@ def _docs_pool_accepts(referent) -> bool:
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
                            narrowed_by: list[str]) -> dict | None:
-    """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
+    """Bind `spoken` from the referent's enumeration (asked WITH the bound slots), or None.
 
-    BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
-    `narrowed_by` is not the set of values the verb accepts, and a bind from it is the
-    class-wide-menu defect in a new place. Exact match only (id, or label case-folded), and
-    exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
-    the ask, which is where the menu for a near-miss already lives.
+    `scoped_by` IS METADATA, NEVER A PRECONDITION (Q4, ruled 2026-10-12; this relaxes the
+    2026-09-16 "never a class-wide list wearing a scoped menu" for the bind as for the menu).
+    Any member list binds an exact hit, and `scoped_by` travels on the record verbatim so a
+    consumer can see the list was not narrowed by `narrowed_by`. A value the lot does not accept
+    is the verb's `not_in_model` to refuse; refusing here instead only reached the fan-out, which
+    cannot match a bare member (the vintage regression) and so asked for what was already said.
+    Exact match only (id, or label case-folded), and exactly one member: this replaces no
+    scoring — a near-miss still reaches the fan-out and the ask, where its menu lives.
     """
     enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
-    if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
+    if enum.get("outcome") != "members":
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
     said = spoken.strip()

@@ -33,7 +33,7 @@ import pytest
 from agent_fleet.cost_agent import instances, measures, slots
 from agent_fleet.cost_agent.seed import build_state, check_consistency
 from iagent_mesh.graph_manifest import SlotDecl
-from iagent_pure.slot_disposition import ASK, FT_CLASS_WIDE, SRC_ENUMERATION, decide_disposition
+from iagent_pure.slot_disposition import ASK, SRC_ENUMERATION, decide_disposition
 
 RATE_TABLE = "http://invincible-agent/cost#RateTable"
 
@@ -65,7 +65,7 @@ def _class_wide_enumerator(state):
     entirely and never setting `scoped_by` — exactly what engine-cost looked like before
     `instances._SCOPED_BY_SLOT` existed, and exactly what a provider ignoring the slot still
     looks like today. If `narrowed_by` ever stopped doing its job, THIS is the enumerator that
-    would start drawing a menu again."""
+    would start reporting an unscoped list (`scoped_by == ()`)."""
     def _call(class_uri: str, *, bound_slots=None) -> dict:
         members = instances.members_of(state, class_uri)
         return {"outcome": "members", "members": members, "count": len(members)}
@@ -154,11 +154,12 @@ def test_the_opening_turn_asks_for_lot_not_rate_vintage(state):
     assert disp.slot == "lot", f"the opening ask is for {disp.slot!r}, not lot"
 
 
-def test_an_enumerator_blind_to_bound_slots_draws_no_chips(state):
-    """Arm (d), THE CONTROL. A provider that enumerates the class whole and never reports
-    `scoped_by` must be refused by `decide_disposition`'s class-wide guard — `cost#RateTable`
-    holds more members than lot 3 accepts, in a form (`<fy>-<vintage>`) the verb refuses
-    outright, so a menu built from it would be worse than free text."""
+def test_an_enumerator_blind_to_bound_slots_keeps_its_menu_and_reports_it_unscoped(state):
+    """Arm (d), THE CONTROL, rewritten to the 2026-10-12 ruling. A provider that enumerates the
+    class whole and never reports `scoped_by` still gets its menu kept -- a menu is kept
+    whenever the engine returns a member list. `cost#RateTable` holds more members than lot 3
+    accepts, in a form (`<fy>-<vintage>`) the verb refuses outright; the discriminator that
+    replaces dropping the chips is `scoped_by == ()` plus `detail` naming `lot`."""
     decls = slots.slots_for("cost_rate_comparison")
 
     disp = decide_disposition(
@@ -167,14 +168,17 @@ def test_an_enumerator_blind_to_bound_slots_draws_no_chips(state):
 
     assert disp.action == ASK
     assert disp.slot == "rate_vintage"
-    assert disp.options == (), (
-        f"a class-wide enumerator produced chips ({disp.options!r}); the class-wide guard did "
-        f"not fire"
+    members = instances.members_of(state, next(d["referent"] for d in decls if d["name"] == "rate_vintage"))
+    assert len(disp.options) == len(members) and disp.options, (
+        f"the menu was dropped ({len(disp.options)} options for {len(members)} members "
+        f"returned) -- scoped_by is optional metadata, never a precondition for a menu"
     )
-    assert disp.free_text_reason == FT_CLASS_WIDE, (
-        f"free_text_reason is {disp.free_text_reason!r}, not {FT_CLASS_WIDE!r} — a class-wide "
-        f"answer to a scoped slot must be named, not silently accepted as a menu"
+    assert disp.free_text_reason is None
+    assert disp.scoped_by == (), (
+        f"scoped_by is {disp.scoped_by!r}; the provider reported no narrowing and the "
+        f"disposition must say so"
     )
+    assert "lot" in disp.detail, "the unscoped list must name the slot it was not scoped by"
 
 
 @pytest.mark.parametrize("fn_name", list(measures.VERBS))

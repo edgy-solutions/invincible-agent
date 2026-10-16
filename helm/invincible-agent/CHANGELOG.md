@@ -1,6 +1,8 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.44 — 2026-10-12
+## 0.4.46 — 2026-10-15
+
+(Written as 0.4.44 on 2026-10-12; renumbered when master reached 0.4.45.)
 
 The OpenDDIL broker flip: the client secret is the only secret; Keycloak trusts OpenDDIL's issuer by
 pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/01-oidc-roundtrip).
@@ -34,6 +36,63 @@ pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/0
 - `tests/test_oidc_broker_chart.py`: truststore arms for existingSecret, neither/both sources, caPem
   removal, disabled, and the committed sandbox values.
 - Existing broker tests now set `publicCA` where they enable the broker.
+
+### Also in this release: the unreleased 0.4.40 (written 2026-10-10)
+
+Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
+
+Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
+
+#### Added
+
+- **`keycloak.retiredUsers`** (base `[]`; sandbox: `operator.atlantia`, `operator.borduria`,
+  `liaison`). Chart 0.4.36 removed these mirrored email users from `nonInteractiveUsers`, but the
+  reconcile job is additive, so they survive in any Keycloak first booted earlier. Per name: exact
+  username lookup; DELETE only when `federated-identity` is `[]` (a linked user is a brokered
+  shadow, kept and logged); the readback FAILS if the name still exists without a link. The render
+  fails for a name also in `nonInteractiveUsers`/`localHumanUsers` or not a plain username.
+
+#### Tests
+
+- `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
+  double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
+  join seals binding policy grants to the brokered sub.
+
+## 0.4.45 — 2026-10-13
+
+Rev 188. The 188 image carries the structured `failure` field, `GET /ingest/retries` (the
+service-only listing doc-tools polls to relaunch retried drops) and the door 400 on `POST /ingest`
+(a drop with no registered content kind is refused before anything is written). The fleet
+imageTag is set at roll time, not here. #41 (lane/01-broker-flip) renumbers to 0.4.46 when it
+merges.
+
+### Added
+
+- **`cortexBff.env` `INGEST_RECEIVED_TIMEOUT_SECONDS: "600"` and
+  `INGEST_WATCHDOG_INTERVAL_SECONDS: "30"`.** The ingest watchdog's two knobs, now tunable from the
+  chart. 600 s is the architect's 2026-10-12 bound, deliberately longer than doc-tools' 30 s
+  sensor tick, because a run queued behind max_concurrent_runs sits at `received` legitimately; a
+  timeout failure is provisional until a run starts. A value <= 0 disables the watchdog.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:7b2b6129…` (cortex-ui 88a65d4).**
+  The upload now sends `content_kind`, a failed drop draws its `failure` and offers Retry,
+  `row_edits` is on by default, and the walk fixes (#19–#22) are in. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+
+## 0.4.44 — 2026-10-12
+
+Rev 187c, a frontend-only pin, rolled ahead of 188 on the architect's direction. The fleet image
+is unchanged (49aa5e28). #41 (lane/01-broker-flip) also claims 0.4.44 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:facdc367…` (cortex-ui f3617a9).**
+  A drop is now an ingest entry on the answers rail, and "My drops" is gone. The build also
+  carries the walk login fix and `WALK_SPKI_PIN` (#17). The tag-to-digest binding was measured
+  before pinning; the values comment records how.
 
 ## 0.4.43 — 2026-10-12
 
@@ -80,26 +139,6 @@ branches that also claimed 0.4.41-0.4.44 (netpol, prep-next, #41, #42) renumber 
 - **`realm-reconcile-job.yaml` creates any `localHumanUsers` entry the live realm lacks.** The realm
   import applies only to a fresh realm, so a user added later otherwise never exists. The loop is
   create-if-absent and never touches an existing user.
-## 0.4.40 — 2026-10-10
-
-Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
-
-Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
-
-### Added
-
-- **`keycloak.retiredUsers`** (base `[]`; sandbox: `operator.atlantia`, `operator.borduria`,
-  `liaison`). Chart 0.4.36 removed these mirrored email users from `nonInteractiveUsers`, but the
-  reconcile job is additive, so they survive in any Keycloak first booted earlier. Per name: exact
-  username lookup; DELETE only when `federated-identity` is `[]` (a linked user is a brokered
-  shadow, kept and logged); the readback FAILS if the name still exists without a link. The render
-  fails for a name also in `nonInteractiveUsers`/`localHumanUsers` or not a plain username.
-
-### Tests
-
-- `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
-  double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
-  join seals binding policy grants to the brokered sub.
 
 ## 0.4.39 — 2026-10-10
 

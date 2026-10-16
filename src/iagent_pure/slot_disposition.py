@@ -144,20 +144,11 @@ FT_UNSUPPORTED = "unsupported"  # provider: I do not enumerate this class
 FT_NO_PROVIDER = "no_provider"  # nobody was asked — the gap, named rather than hidden
 FT_NO_REFERENT = "no_referent"  # the slot names a literal, not a referent; nothing to list
 
-#: THE FIFTH REASON, AND IT IS THE ONLY ONE WHERE A MENU EXISTED AND WAS REFUSED.
-#:
-#: Ruled 2026-09-16 (`sessions/2026-09-17-dispatch-cost-provider-scoped-by.md`): *"three states
-#: on an enumeration — scoped, class-wide, none. NEVER A CLASS-WIDE LIST WEARING A SCOPED
-#: MENU."* When slots are already bound in the turn and the provider answers class-wide anyway,
-#: the list it returned is real and the MENU would be a lie: `cost#RateTable` enumerates to 12
-#: while lot 3 accepts two, so ten of twelve picks produce the `not_in_model` refusal the menu
-#: exists to prevent — with the user's own click behind it.
-#:
-#: **A MENU IS WORSE THAN FREE TEXT HERE, WHICH IS WHY THIS IS NOT A DEGRADATION.** Free text
-#: does not imply validity; a menu does. Offering ten invalid chips teaches a user that the
-#: system's own suggestions are untrustworthy, and it does it at the moment they were trying to
-#: cooperate. So the options are DROPPED and the reason is named.
-FT_CLASS_WIDE = "class_wide"    # provider answered class-wide for a slot that needed scoping
+#: SUPERSEDED 2026-10-12 (architect, via saf's Q4 packet): a menu is kept whenever the engine
+#: returns a member list, so this reason is no longer emitted. It was ruled 2026-09-16 ("NEVER A
+#: CLASS-WIDE LIST WEARING A SCOPED MENU") and dropped the options. The name stays so card readers
+#: and `ask_message` still resolve it.
+FT_CLASS_WIDE = "class_wide"    # NO LONGER EMITTED since the 2026-10-12 ruling (menu kept); constant retained for card/ask_message readers
 
 #: Outcome -> the reason an ask carrying that outcome has no menu. SUPPLIED AT EMIT rather than
 #: refused, because refusing an invalid payload costs the reader the free-text box they could
@@ -481,33 +472,29 @@ def decide_disposition(
                 for m in members
                 if m.get("instance_id")
             )
-            if opts and unscoped_but_required:
-                # ── NEVER A CLASS-WIDE LIST WEARING A SCOPED MENU (ruled 2026-09-16) ──────
-                #
-                # This slot DECLARES that its valid values depend on other slots, those slots
-                # are bound, and the provider did not narrow by them. So the list is wider
-                # than what the verb will accept: `cost#RateTable` enumerates to 12 while
-                # lot 3 accepts two, and ten of those picks produce the `not_in_model`
-                # refusal the menu exists to prevent — with the user's own click behind it.
-                # The list is DROPPED and the reason is named. Free text is honest here
-                # because it does not imply validity, and a menu does.
-                return Disposition(
-                    ASK, slot=name, reason=reason, spoken=spoken, found=found,
-                    option_source=SRC_NONE, free_text_reason=FT_CLASS_WIDE,
-                    total_count=len(opts),
-                    scoped_by=scoped_by,
-                    bound_slots_offered=tuple(sorted(offered)),
-                    detail=(
-                        f"{len(opts)} listed for the class, not scoped by "
-                        f"{', '.join(unscoped_but_required)}"
-                    ),
-                )
             if opts:
+                # ── A MENU IS KEPT WHENEVER THE ENGINE RETURNS A MEMBER LIST ──────────────
+                #
+                # Ruled 2026-10-12 (architect, via saf's Q4 packet): `scoped_by` -- which
+                # slots narrowed the list -- is optional metadata, never a precondition for
+                # a menu. This RELAXES the 2026-09-16 rule "never a class-wide list wearing
+                # a scoped menu", which dropped the list when a declared-and-bound slot was
+                # not in the provider's `scoped_by`.
+                #
+                # The metadata stays on the disposition so a consumer can still SEE that the
+                # list was not narrowed by the slots in play: `scoped_by` is what the
+                # provider reported, `bound_slots_offered` what it was offered, and `detail`
+                # names the declared-and-bound slots it did not apply.
                 return Disposition(
                     ASK, slot=name, reason=reason, spoken=spoken, found=found,
                     options=opts, option_source=SRC_ENUMERATION,
                     scoped_by=scoped_by,
                     bound_slots_offered=tuple(sorted(offered)),
+                    detail=(
+                        f"{len(opts)} listed, not scoped by "
+                        f"{', '.join(unscoped_but_required)}"
+                        if unscoped_but_required else ""
+                    ),
                 )
             # `members: []` is a real answer and an empty menu is not a menu. The class is
             # enumerable and holds nothing, which is closer to `empty` than to a question.

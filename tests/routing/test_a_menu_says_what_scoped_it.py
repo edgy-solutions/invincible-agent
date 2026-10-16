@@ -1,5 +1,6 @@
-"""THREE STATES ON AN ENUMERATION — scoped, class-wide, none. Never a class-wide list wearing
-a scoped menu.
+"""THREE STATES ON AN ENUMERATION -- scoped, class-wide, none. Since 2026-10-12 a member list
+always keeps its menu; `scoped_by` is metadata saying whether it was narrowed (the 2026-09-16
+rule "never a class-wide list wearing a scoped menu" is relaxed).
 
 Ruled 2026-09-16; contract in `sessions/2026-09-17-dispatch-cost-provider-scoped-by.md`. The
 three halves land together or the seal cannot pass:
@@ -14,7 +15,7 @@ produce the `not_in_model` refusal the menu exists to prevent — with the user'
 it. **A menu is worse than free text there, because free text does not imply validity.**
 
 THE MUTATION THIS FILE IS WRITTEN AGAINST is the version nobody built: a menu appearing over
-invalid options. `test_a_class_wide_answer_refuses_the_menu` is the arm that kills it, and
+invalid options. `test_a_class_wide_answer_keeps_the_menu` is now the arm that pins the relaxed rule, and
 `test_a_scoped_answer_still_draws_its_menu` is the control that stops the fix from being
 "never draw a menu", which would pass the first arm and break every working elicitation.
 
@@ -28,10 +29,8 @@ import pytest
 
 from iagent_pure.slot_disposition import (
     ASK,
-    FT_CLASS_WIDE,
     FT_NO_PROVIDER,
     SRC_ENUMERATION,
-    SRC_NONE,
     ask_card,
     ask_message,
     decide_disposition,
@@ -122,13 +121,16 @@ def test_the_refusal_compares_declared_AND_bound_not_declared_alone():
         declared=_DECLS,
         enumerate_class=_enumerator({"outcome": "members", "members": _TWELVE}),
     )
-    assert once_bound.free_text_reason == FT_CLASS_WIDE, (
-        "binding the declared scope did not arm the refusal — the two halves of the "
+    # RULED 2026-10-12: the menu is KEPT either way; the intersection now shows in `detail`.
+    assert len(once_bound.options) == 12, "a member list lost its menu (ruling 2026-10-12)"
+    assert once_bound.free_text_reason is None
+    assert "lot" in once_bound.detail, (
+        "binding the declared scope did not mark the list unscoped — the two halves of the "
         "intersection are not both being read"
     )
-    # ONE DECLARATION, TWO TURNS, OPPOSITE OUTCOMES. That difference IS the intersection, and
-    # no single-turn assertion can see it.
-    assert bool(opening.options) and not once_bound.options
+    # ONE DECLARATION, TWO TURNS, SAME MENU, DIFFERENT METADATA. That difference IS the
+    # intersection, and no single-turn assertion can see it.
+    assert opening.detail == "" and once_bound.detail != ""
 
 
 # ---------------------------------------------------------------------------
@@ -174,22 +176,24 @@ def test_no_bound_slots_means_a_class_wide_menu_is_correct():
 # State 2 — CLASS-WIDE with slots offered. The menu is REFUSED.
 # ---------------------------------------------------------------------------
 
-def test_a_class_wide_answer_refuses_the_menu():
-    """THE RULING, AND THE MUTATION IT KILLS: a menu appearing over invalid options."""
+def test_a_class_wide_answer_keeps_the_menu():
+    """THE RULING (2026-10-12, relaxing 2026-09-16): a menu is kept whenever the engine returns
+    a member list. `scoped_by` is the metadata that says it was not narrowed -- the
+    discriminator that replaces dropping the options."""
     disp = decide_disposition(
         accepted={"lot": "3"},
         declared=_DECLS,
         enumerate_class=_enumerator({"outcome": "members", "members": _TWELVE}),
     )
     assert disp.action == ASK
-    assert disp.options == (), (
-        "a class-wide list was drawn as a menu for a turn that had bound `lot` — ten of these "
-        "twelve picks produce the not_in_model refusal the menu exists to prevent"
+    assert len(disp.options) == 12, (
+        "the menu was dropped for a member list the engine returned — scoped_by is optional "
+        "metadata, never a precondition for a menu"
     )
-    assert disp.option_source == SRC_NONE
-    assert disp.free_text_reason == FT_CLASS_WIDE
+    assert disp.option_source == SRC_ENUMERATION
+    assert disp.free_text_reason is None
+    assert disp.scoped_by == (), "the provider reported no narrowing, and the disposition says so"
     assert disp.bound_slots_offered == ("lot",)
-    assert disp.total_count == 12, "the count the user did not get to see is still a fact"
 
 
 def test_a_forgetful_provider_under_claims_rather_than_over_claims():
@@ -205,7 +209,8 @@ def test_a_forgetful_provider_under_claims_rather_than_over_claims():
         declared=_DECLS,
         enumerate_class=_enumerator({"outcome": "members", "members": _TWO}),
     )
-    assert disp.free_text_reason == FT_CLASS_WIDE
+    assert len(disp.options) == 2, "a member list lost its menu (ruling 2026-10-12)"
+    assert disp.scoped_by == (), "the omitted field reads as unscoped in the metadata"
 
 
 def test_partially_honoured_is_treated_as_class_wide():
@@ -222,7 +227,7 @@ def test_partially_honoured_is_treated_as_class_wide():
         enumerate_class=_enumerator(
             {"outcome": "members", "members": _TWELVE, "scoped_by": ["lot"]}),
     )
-    assert disp.free_text_reason == FT_CLASS_WIDE
+    assert len(disp.options) == 12, "a member list lost its menu (ruling 2026-10-12)"
     assert disp.scoped_by == ("lot",)
     assert "category" in disp.detail, "the reader must be told WHICH slot was not applied"
 
@@ -329,28 +334,24 @@ def test_the_card_carries_the_three_states():
     )
     card = ask_card(disp, verb_iri="mesh:costRateComparison", sub_query="q",
                     accepted={"lot": "3"})
-    assert card["free_text_reason"] == FT_CLASS_WIDE
-    assert card["options"] == []
+    assert card["free_text_reason"] is None
+    assert len(card["options"]) == 12, "the card dropped a menu the engine returned"
     assert card["scoped_by"] == []
     assert card["bound_slots_offered"] == ["lot"]
     assert card["structured_data"]["bound_slots_offered"] == ["lot"]
 
 
-def test_the_message_does_not_claim_the_class_is_unlistable():
-    """"Name it and I will run this" ALONE reads as "nothing could be listed", which is FALSE
-    here and sends the reader to the wrong repair: the provider can list this class, it cannot
-    narrow it — a provider change, not a missing capability."""
+def test_the_message_lists_the_options_it_kept():
+    """Ruling 2026-10-12: the unscoped list is still a menu, so the prose lists it rather than
+    saying "name it and I will run this"."""
     disp = decide_disposition(
         accepted={"lot": "3"},
         declared=_DECLS,
         enumerate_class=_enumerator({"outcome": "members", "members": _TWELVE}),
     )
     msg = ask_message(disp)
-    assert "I can list them" in msg
-    assert "lot" in msg
-    assert msg != ask_message(disp._replace(free_text_reason=None)), (
-        "the class-wide refusal reads identically to an ordinary menuless ask"
-    )
+    assert "Options:" in msg, "the kept menu is not in the message"
+    assert "Name it and I will run this" not in msg
 
 
 # ---------------------------------------------------------------------------

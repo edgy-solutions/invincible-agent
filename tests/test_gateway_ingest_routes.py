@@ -56,6 +56,27 @@ def client():
     gateway.app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _registered_document_kinds(monkeypatch):
+    """POST /ingest now refuses a drop with no REGISTERED content kind (architect ruling
+    2026-10-12, the door 400). The real registry is overlay-composed and empty in a bare test
+    env, so by default these kinds resolve as registered DOCUMENT kinds, falling through to the
+    real lookup for anything else. A test that needs another answer patches `by_kind` itself,
+    which wins over this fixture."""
+    import os
+    import types
+    _real = _ck_real.by_kind
+
+    def _by_kind(kind):
+        # a test that points the REAL registry at an overlay dir wants the real answers
+        if kind in ("notice", "work-instruction", "pcn") and not os.getenv("CONTENT_KIND_OVERLAY_DIRS"):
+            return types.SimpleNamespace(kind=kind, branch="document", domain=None,
+                                         seeds_workflow=None, identity_field=None)
+        return _real(kind)
+
+    monkeypatch.setattr(_ck_real, "by_kind", _by_kind)
+
+
 @pytest.fixture
 def doc_tools_client():
     """doc-tools' OWN transport identity (`svc:doc-tools`) -- the only caller
@@ -183,7 +204,7 @@ def test_ingest_dedupe_hit_returns_the_message_and_never_writes(
     monkeypatch.setattr(ist, "record_received", lambda **kw: received_called.__setitem__("v", True))
 
     r = client.post("/ingest", files={"file": ("re-drop.pdf", b"same bytes", "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200
     body = r.json()
     assert body["ingest_id"] == "new-uuid"
@@ -208,7 +229,7 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(
 
     body_bytes = b"brand new bytes"
     r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200
     body = r.json()
     expected_ingest_id = promotion.ingest_id_for(body_bytes)
@@ -228,10 +249,10 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(
     manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
     import json as _json
     manifest = _json.loads(manifest_call["Body"])
-    # FORMAT IS NOT KIND: undeclared content_kind -> manifest.content_kind is None and no
-    # metadata.content_kind at all (never the route's own file-format `kind`).
-    assert manifest["content_kind"] is None
-    assert "metadata" not in manifest
+    # FORMAT IS NOT KIND: the manifest carries the DECLARED registered kind, never the route's
+    # own file-format `kind` (media_kind is asserted below).
+    assert manifest["content_kind"] == "notice"
+    assert manifest["metadata"] == {"content_kind": "notice"}
     assert manifest["media_kind"] == "pdf"
     assert manifest["ingest_id"] == expected_ingest_id
     assert manifest["initiator"] == {"subject": "alice@example.com", "kind": "person",
@@ -271,7 +292,7 @@ def test_ingest_new_arrival_still_returns_200_when_create_ingest_node_raises(
 
     body_bytes = b"node creation fails but the upload must not"
     r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     body = r.json()
     expected_ingest_id = promotion.ingest_id_for(body_bytes)
@@ -335,12 +356,12 @@ def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client,
     monkeypatch.setattr(ist, "record_received", lambda **kw: {"id": kw["sha256"], "status": "received"})
 
     over = client.post("/ingest", files={"file": ("big.pdf", b"x" * 17, "application/pdf")},
-                       data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                       data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert over.status_code == 413, over.text
     assert looked["n"] == 0 and fake_s3 == [], "an oversize drop must be refused before any lookup or write"
 
     at = client.post("/ingest", files={"file": ("ok.pdf", b"x" * 16, "application/pdf")},
-                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert at.status_code == 200, at.text
     assert looked["n"] == 1
 
@@ -602,20 +623,21 @@ def test_ingest_declared_and_registered_kind_fills_domain_type(
     assert manifest["domain_type"] == "maintenance-bridge"
 
 
-def test_ingest_declared_but_unregistered_kind_leaves_domain_type_none(
+def test_ingest_declared_but_unregistered_kind_is_refused_at_the_door(
         client, fake_s3, fake_create_node, monkeypatch):
+    """Was `..._leaves_domain_type_none`: a declared-but-unregistered kind used to be accepted
+    with domain_type None. Since the 2026-10-12 ruling it is a 400 `kind_unregistered` and
+    nothing is written."""
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
-    monkeypatch.setattr(ist, "record_received",
-                        lambda **kw: {"id": kw["ingest_id"], "status": "received"})
+    recorded = []
+    monkeypatch.setattr(ist, "record_received", lambda **kw: recorded.append(kw))
     monkeypatch.setattr(_ck, "by_kind", lambda kind: None)
     r = client.post("/ingest", files={"file": ("wi.pdf", b"unregistered kind bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "work-instruction"})
-    assert r.status_code == 200, r.text
-    manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
-    import json as _json
-    manifest = _json.loads(manifest_call["Body"])
-    assert manifest["domain_type"] is None
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["error"] == "kind_unregistered"
+    assert recorded == [] and fake_s3 == []
 
 
 def test_ingest_records_dropped_by_authz_id_not_sub(client, fake_s3, fake_create_node, monkeypatch):
@@ -630,7 +652,7 @@ def test_ingest_records_dropped_by_authz_id_not_sub(client, fake_s3, fake_create
     monkeypatch.setattr(ist, "record_received",
                         lambda **kw: {"id": kw["ingest_id"], "status": "received"})
     r = client.post("/ingest", files={"file": ("f.pdf", b"sub vs authz_id bytes", "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice-authz-id"})
+                    data={"kind": "pdf", "on_behalf_of": "alice-authz-id", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
     import json as _json
@@ -1271,7 +1293,7 @@ def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
                         lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
     monkeypatch.setattr(_orr, "resolve", lambda artifact: dict(_SUGGESTION))
     r = client.post("/ingest", files={"file": ("f.pdf", b"origin hit bytes", "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     body = r.json()
     # MUTANT (section 6): dropping the record_origin_suggestion call, or opening no case, reds
@@ -1302,7 +1324,7 @@ def test_ingest_origin_suggestion_miss_records_and_opens_nothing(
                         lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
     monkeypatch.setattr(_orr, "resolve", lambda artifact: None)
     r = client.post("/ingest", files={"file": ("f.pdf", b"origin miss bytes", "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     assert recorded == [], recorded
     assert calls == [], calls
@@ -1322,7 +1344,7 @@ def test_ingest_origin_resolver_failure_still_returns_200(
         raise RuntimeError("systems-of-record load failed (stubbed)")
     monkeypatch.setattr(_orr, "resolve", _boom)
     r = client.post("/ingest", files={"file": ("f.pdf", b"origin resolver boom bytes", "application/pdf")},
-                    data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
+                    data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     assert calls == []
     assert r.json()["origin_suggestion"] is None
@@ -1620,7 +1642,8 @@ def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting
 
 
 # The ruling's set (architect, 2026-10-02): "engineering-document, doors-export, pdf -> none".
-_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export"}
+# `xml` joined 2026-10-13 (format-level, domain null like pdf; the door 400s an unregistered kind).
+_RULED_DOMAINLESS = {"pdf", "engineering-document", "doors-export", "xml"}
 _OPENDDIL_CONTENT_KINDS = (Path(__file__).resolve().parents[1]
                            / "policy" / "overlays" / "openddil-lab" / "content_kinds")
 
@@ -1697,20 +1720,19 @@ def test_ingest_declared_content_kind_reaches_record_received(client, fake_s3, f
     assert recorded[0]["content_kind"] == "pcn", recorded[0]
 
 
-def test_ingest_undeclared_drop_passes_none_content_kind_to_record_received(
+def test_ingest_undeclared_drop_is_refused_at_the_door_and_records_nothing(
         client, fake_s3, fake_create_node, monkeypatch):
+    """Was `..._passes_none_content_kind_to_record_received`: an undeclared drop used to be
+    accepted with content_kind None. Since the 2026-10-12 ruling it is a 400 and nothing is
+    recorded (the full arm set is in tests/test_ingest_door_requires_a_kind.py)."""
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
     recorded = []
-
-    def _record_received(**kw):
-        recorded.append(kw)
-        return {"id": kw["ingest_id"], "status": "received"}
-    monkeypatch.setattr(ist, "record_received", _record_received)
+    monkeypatch.setattr(ist, "record_received", lambda **kw: recorded.append(kw))
     r = client.post("/ingest", files={"file": ("f.pdf", b"undeclared bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
-    assert r.status_code == 200, r.text
-    assert len(recorded) == 1, recorded
-    assert recorded[0]["content_kind"] is None, recorded[0]
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["error"] == "content_kind_required"
+    assert recorded == [] and fake_s3 == []
 
 
 def test_ingest_duplicate_arrival_passes_content_kind_to_record_duplicate_arrival(

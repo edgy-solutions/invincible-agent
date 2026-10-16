@@ -1645,7 +1645,16 @@ cortexBff:
     limits:
       cpu: 500m
       memory: 512Mi
-  env: {}
+  # Extra env for the pod; maps MERGE with an overlay's own `env:` (values-sandbox adds MinIO).
+  #   INGEST_RECEIVED_TIMEOUT_SECONDS: a document row that sits at `received` this long is failed
+  #     `timeout` by the watchdog. The 600 s bound is the architect's 2026-10-12 ruling. It is
+  #     deliberately longer than doc-tools' 30 s sensor tick, because a run queued behind
+  #     max_concurrent_runs sits at `received` legitimately; a timeout failure is provisional
+  #     until a run starts. <= 0 disables the watchdog.
+  #   INGEST_WATCHDOG_INTERVAL_SECONDS: how often each replica ticks.
+  env:
+    INGEST_RECEIVED_TIMEOUT_SECONDS: "600"
+    INGEST_WATCHDOG_INTERVAL_SECONDS: "30"
   # Optional cluster-specific TLS trust override.
   #
   # When the cortex-bff pod needs to talk to an external HTTPS endpoint

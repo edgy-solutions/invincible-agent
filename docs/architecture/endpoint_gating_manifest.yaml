@@ -1706,17 +1706,21 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/retry
         identity: keycloak-jwt
-        gate: "get_current_user + a SERVICE caller only (svc: namespace or an asserted delegate); a human gets 403 retry_is_pin_driven before any lookup; body {pin_digest} must differ from the row's recorded pin (equal 409 pin_unchanged, none recorded 409 no_recorded_pin)"
+        gate: "get_current_user + a person may retry their OWN failed or awaiting_origin DOCUMENT row (scoped lookup ingest_status.get_status_for; anything else, including a row they cannot see, is the same 403 retry_is_pin_driven); a service may retry a failed DOCUMENT row without a pin; every other service retry is pin-driven: body {pin_digest} must differ from the row's recorded pin (equal 409 pin_unchanged, none recorded 409 no_recorded_pin)"
         exposes: action
-        consumers: [extractor pin-change driver (service identity)]
+        consumers: [cortex-ui dropper (own failed or awaiting_origin row), extractor pin-change driver (service identity)]
         class: gated
         justification: >-
-          PIN-DRIVEN ONLY (architect ruling 2026-10-10): a retry is driven by an extractor pin
-          change, never by the UI. A person is refused 403 before the row is read, so the unscoped
-          lookup a service needs is no existence oracle for people. The only effect is re-running
-          the find-or-file of the document_promotion task, and only for a row already at review.
-          Terminal rows, event rows at received and documents still in doc-tools' pipeline are
-          refused 409 and nothing is written.
+          Architect directive 2026-10-12 ("pipeline failure must reach the row") supersedes the
+          2026-10-10 pin-driven-only ruling FOR FAILED ROWS: the input was never processed, so a
+          person may re-open their own failed document row (failed -> received, attempt + 1; it
+          does not relaunch the pipeline). A person's lookup is SCOPED to rows they submitted or
+          are on_behalf_of, so a failed row they cannot see is the same 403 as any other refusal
+          and no existence oracle. A person may also re-file their own awaiting_origin row (Q2c,
+          idempotent). Every other extraction retry stays pin-driven and service-only, and its only
+          effect is re-running the find-or-file of the document_promotion task for a row already at
+          review. Terminal rows, failed event rows, event rows at received and documents still in
+          doc-tools' pipeline are refused 409 and nothing is written.
       - method: GET
         path: /cases/{case_id}
         identity: keycloak-jwt
@@ -1761,6 +1765,20 @@ services:
           seeded trigger requires is 422, naming the field; 503 when that trigger cannot be
           loaded (`trigger_unconfigured`). An unreadable kind registry is not caught here: it
           raises (500) rather than falling back to an empty set, and no case opens.
+      - method: GET
+        path: /ingest/retries
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: gated-content
+        consumers: [doc-tools relaunch poller (retried drops)]
+        class: gated
+        justification: >-
+          Lists the retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape
+          1): rows re-opened at `received` by the retry route, attempt above 1, oldest first.
+          doc-tools' sensor cannot see a retried object again, so it polls this route and launches
+          each entry with run_key `{ingest_id}-a{attempt}`. A single SERVICE identity is accepted,
+          checked before the database is touched, so no end user can enumerate other people's
+          drops and a non-doc-tools caller learns nothing. Event rows never appear.
       - method: POST
         path: /ingest/{ingest_id}/stage
         identity: keycloak-jwt
