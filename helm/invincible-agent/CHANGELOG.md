@@ -37,7 +37,7 @@ pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/0
   removal, disabled, and the committed sandbox values.
 - Existing broker tests now set `publicCA` where they enable the broker.
 
-### Also in this release: the unreleased 0.4.40 (written 2026-10-10)
+### Also in this release: written as 0.4.40 on 2026-10-10, a number master then released as rev 186b (tag invincible-agent-0.4.40) without this content
 
 Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
 
