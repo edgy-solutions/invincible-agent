@@ -1,4 +1,4 @@
-﻿"""Ruling 3 (2026-10-15): a slot accepts a candidate whose class is the referent OR a subclass.
+"""Ruling 3 (2026-10-15): a slot accepts a candidate whose class is the referent OR a subclass.
 
 PR #57 moved safety's `part_number` referent from `safety:SafetyCriticalItem` to `pcn:Component`.
 A SafetyCriticalItem IS a Component (`rdfs:subClassOf`), but both consumers compared
