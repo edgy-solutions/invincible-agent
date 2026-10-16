@@ -19,7 +19,23 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-12, latest: byte-stable export is PR #50 and the runbook note is PR #49. Read this first
+## Update 2026-10-16, latest: exporter view walked; twice-export waits for 189. Read this first
+
+- **Directive (10-12):** "after 189 staging, export the same two cost answers twice through the ingress and expect one sha; mixed board in the exporter view once cortex's documents[] lands; then idle is fine."
+- **Twice-export: blocked.** The fleet is on 188b `76af7b83`, and so is `origin/master`. #50 is OPEN. When 189 is live:
+  - check for `force_compression` in the deployed sha's `scripts/build_cost_dataset.py`;
+  - then run scratchpad `dl_ingress3.py` with the TLS pin.
+- **Exporter view: walked** on cortex-ui `e1b94e2`.
+  - `documents[]` renders correctly: "2 of 2 engines refused", with per-engine rows.
+  - The global canvas sends **every** stored answer, 856, not the 3-answer board.
+  - The supplier-concentration ask resolved **no verb** ("No direct match — subject unknown"), so cost refused it correctly.
+  - Board-only API control: one no-verb member refuses the whole cost document. Labor alone gives `exists` `6ac275fd…`.
+- **Packets placed (untracked):**
+  - `invincible-agent/sessions/2026-10-16-packet-to-lane-01-fin-exporter-view-draws-documents-but-the-global-canvas-sends-856-answers.md`. Q1: is all-or-nothing within one engine intended? Q2: is the global canvas the unit of export?
+  - `cortex-ui/sessions/2026-10-16-packet-to-cortex-ui-the-global-canvas-exports-every-stored-answer-856-not-the-board.md`
+- **Next:** the twice-export after 189, then idle. Wait for Q1/Q2 rulings; do nothing on them unasked.
+
+## Update 2026-10-12: byte-stable export is PR #50 and the runbook note is PR #49. Read this first
 
 - **The directive of 10-11** (uncompressed duckdb, `as_of` as an input, a Linux CI test, a runbook note, an ingress download test) is done as two open PRs. Lane 1 merges and rolls.
   - **#50** `fin/export-byte-stable` @ `e63c6f4c`, worktree `ia-fin-export-byte-stable`. CI `reproducible` is green.
