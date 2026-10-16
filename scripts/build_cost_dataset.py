@@ -89,7 +89,10 @@ def build(recipient: str, out: pathlib.Path, *, state=None,
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
         out.unlink()
-    con = duckdb.connect(str(out))
+    # UNCOMPRESSED, SO THE BYTES ARE A FUNCTION OF THE ROWS: the page embeds this file's sha,
+    # and duckdb's default compression choice varies build to build. The file STEM is in the
+    # bytes too, so rebuild under the same name.
+    con = duckdb.connect(str(out), config={"force_compression": "uncompressed"})
     con.execute(DDL)
 
     # ONE GENERATOR, TWO CONTAINERS. The rows come from export.dataset_rows so the database

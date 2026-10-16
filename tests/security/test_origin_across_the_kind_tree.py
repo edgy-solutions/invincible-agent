@@ -14,9 +14,13 @@ Each registered kind falls in exactly one bucket, decided from the row itself:
   domainless  `domain: null` written EXPLICITLY (`model_fields_set`) -- the stage route sends it to
               `awaiting_origin`; nothing may be consumable by KIND, only by recorded origin.
   domained    a document kind with a domain -- its (UPPERCASED) domain must be a declared domain,
-              must have a `domain_consumption` row naming ITSELF (no implicit identity), and must
-              have a `document_promotion:<DOMAIN>` audience grant, else the kind's task or
-              artifacts are unreachable by anyone.
+              must have a `domain_consumption` row naming ITSELF (no implicit identity), and its
+              `document_promotion:<DOMAIN>` audience must reach at least one RECIPIENT, else the
+              kind's task or artifacts are unreachable by anyone. A recipient is a `grant_to`
+              user, or a MEMBER of a `grant_to_groups` group (group -> members, the 2026-10-10
+              group-audience form). A group with no member in users.yaml reaches nobody; that
+              is the predicate `validate_policy.unusable_group_audiences` refuses, and an arm
+              here pins the two to the same answer.
   undecided   anything else (a document kind with the domain key OMITTED). MUST FAIL: the stage
               route answers it 422 `no_declared_domain`, so it is a defect, not a bucket.
 
@@ -33,9 +37,11 @@ import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
-for _p in (_ROOT / "src",):
+for _p in (_ROOT / "src", _ROOT / "policy" / "sync"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
+
+from validate_policy import unusable_group_audiences  # noqa: E402
 
 _POLICY = _ROOT / "policy"
 _SEED = _POLICY / "content_kinds"
@@ -69,6 +75,8 @@ for _r in _REGS:
 _DECLARED_DOMAINS = {str(d) for d in yaml.safe_load((_POLICY / "domains.yaml").read_text())["domains"]}
 _CONSUMPTION = yaml.safe_load((_POLICY / "domain_consumption.yaml").read_text())["domain_consumption"]
 _AUDIENCES = yaml.safe_load((_POLICY / "task_grants.yaml").read_text())["audiences"]
+_GROUPS = yaml.safe_load((_POLICY / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+_USERS = yaml.safe_load((_POLICY / "users.yaml").read_text(encoding="utf-8"))["users"]
 
 
 def _ids(regs):
@@ -110,7 +118,25 @@ def test_the_bucketing_itself_discriminates_the_four_cases():
 
 # ── domained kinds: the domain is reachable ───────────────────────────────────
 
-def _reachability_problems(kind, domain, domains, consumption, audiences):
+def _members(group, groups, users) -> set[str]:
+    """group -> members: the users.yaml ids listing `group`, for a group groups.yaml declares."""
+    if group not in (groups or {}):
+        return set()
+    return {str(u.get("id")) for u in users or [] if isinstance(u, dict)
+            and group in (u.get("groups") or [])}
+
+
+def _recipients(audience, groups, users) -> set[str]:
+    """Everyone a task audience reaches: its `grant_to` users, plus the members of each of its
+    `grant_to_groups` groups."""
+    audience = audience or {}
+    out = {str(g) for g in audience.get("grant_to") or []}
+    for g in audience.get("grant_to_groups") or []:
+        out |= _members(str(g), groups, users)
+    return out
+
+
+def _reachability_problems(kind, domain, domains, consumption, audiences, groups, users):
     dom = domain.upper()
     out = []
     if dom not in domains:
@@ -118,14 +144,19 @@ def _reachability_problems(kind, domain, domains, consumption, audiences):
     if dom not in ((consumption.get(dom) or {}).get("allowed_origins") or []):
         out.append(f"{kind}: no domain_consumption row lets {dom} read an artifact whose origin is "
                    f"{dom} (no implicit identity)")
-    if not (audiences.get(f"document_promotion:{dom}") or {}).get("grant_to"):
-        out.append(f"{kind}: no document_promotion:{dom} grant -- the task has no recipient")
+    if not _recipients(audiences.get(f"document_promotion:{dom}"), groups, users):
+        out.append(f"{kind}: document_promotion:{dom} reaches no recipient (no grant_to user and "
+                   f"no member of a grant_to_groups group) -- the task is visible to nobody")
     return out
+
+
+_SOURCES = dict(domains=_DECLARED_DOMAINS, consumption=_CONSUMPTION, audiences=_AUDIENCES,
+                groups=_GROUPS, users=_USERS)
 
 
 @pytest.mark.parametrize("reg", _BY_BUCKET.get("domained", []), ids=_ids(_BY_BUCKET.get("domained", [])))
 def test_a_domained_kinds_domain_is_declared_consumable_by_itself_and_has_a_reviewer(reg):
-    assert _reachability_problems(reg.kind, reg.domain, _DECLARED_DOMAINS, _CONSUMPTION, _AUDIENCES) == []
+    assert _reachability_problems(reg.kind, reg.domain, **_SOURCES) == []
 
 
 @pytest.mark.parametrize("missing", ["domains", "consumption", "audiences"])
@@ -133,10 +164,78 @@ def test_the_reachability_check_fails_when_each_source_loses_the_domain(missing)
     """Control: the SAME predicate, same kind, with exactly one source emptied -> exactly that
     source's problem appears. Proves each of the three clauses can fire."""
     reg = _BY_BUCKET["domained"][0]
-    args = dict(domains=_DECLARED_DOMAINS, consumption=_CONSUMPTION, audiences=_AUDIENCES)
+    args = dict(_SOURCES)
     args[missing] = set() if missing == "domains" else {}
     got = _reachability_problems(reg.kind, reg.domain, **args)
     assert len(got) == 1, got
+
+
+# ── a group grant reaches its members ─────────────────────────────────────────
+
+_G_GROUPS = {"stewards": {}, "empty-group": {}}
+_G_USERS = [{"id": "bob@example.com", "groups": ["stewards"]},
+            {"id": "carol@example.com", "groups": ["ghost"]}]
+
+
+@pytest.mark.parametrize("audience, reaches", [
+    ({"grant_to": ["bob@example.com"]}, {"bob@example.com"}),
+    ({"grant_to_groups": ["stewards"]}, {"bob@example.com"}),
+    ({"grant_to": [], "grant_to_groups": ["stewards"]}, {"bob@example.com"}),
+    ({"grant_to_groups": ["empty-group"]}, set()),  # declared, no member: reaches nobody
+    ({"grant_to_groups": ["ghost"]}, set()),  # a member lists it, groups.yaml does not
+    ({"grant_to": [], "grant_to_groups": []}, set()),
+    (None, set()),
+], ids=["user", "group", "group-beside-empty-users", "memberless-group", "undeclared-group",
+        "both-empty", "no-audience"])
+def test_a_group_grant_counts_as_a_recipient_through_its_members(audience, reaches):
+    """Two-sided: a group with a member is a recipient; a declared group with no member, or a
+    group groups.yaml does not declare, is not. The domain clauses pass, so the only thing that
+    differs between the rows is who the audience reaches."""
+    assert _recipients(audience, _G_GROUPS, _G_USERS) == reaches
+    got = _reachability_problems(
+        "k", "d", {"D"}, {"D": {"allowed_origins": ["D"]}},
+        {} if audience is None else {"document_promotion:D": audience}, _G_GROUPS, _G_USERS)
+    assert len(got) == (0 if reaches else 1), got
+
+
+def _join(names, groups, users) -> dict[str, tuple[bool, bool]]:
+    """group -> (validate_policy refuses it, this file finds it memberless)."""
+    from types import SimpleNamespace
+    return {g: (bool(unusable_group_audiences(
+                [SimpleNamespace(key=f"probe:{g}", grant_to=(), grant_to_groups=(g,))], groups, users)),
+                not _members(g, groups, users)) for g in sorted(names)}
+
+
+def test_a_groups_members_agree_with_what_validate_policy_refuses():
+    """THE JOIN. This file's group -> members is empty exactly when `unusable_group_audiences`
+    refuses the group, so a drift between the two answers reds here, not in a walk. It is
+    decided over two populations:
+      - the real policy: every group groups.yaml declares and every group an audience grants.
+        Today all of them are usable, so this half alone only ever compares "fine" with "fine";
+      - the fixture, which holds one group of each outcome (a member, declared but memberless,
+        listed by a user but undeclared). That half is what makes a disagreement observable."""
+    real = set(_GROUPS) | {str(g) for a in _AUDIENCES.values() for g in (a or {}).get(
+        "grant_to_groups") or []}
+    assert any((a or {}).get("grant_to_groups") for a in _AUDIENCES.values()), (
+        "no audience grants a group: the join has nothing to compare")
+    fixture = _join({"stewards", "empty-group", "ghost"}, _G_GROUPS, _G_USERS)
+    assert {r for r, _ in fixture.values()} == {True, False}, fixture  # both outcomes occur
+    for g, (refused, memberless) in {**_join(real, _GROUPS, _USERS), **{
+            f"fixture:{k}": v for k, v in fixture.items()}}.items():
+        assert refused == memberless, g
+
+
+def test_every_document_promotion_audience_reaches_a_recipient():
+    """Every `document_promotion:<DOMAIN>` audience the policy declares, whether or not a
+    registered kind uses it yet, reaches someone. That includes the 2026-10-14 MANUFACTURING
+    grant, which reaches its stewards only through a group."""
+    keys = [k for k in _AUDIENCES if k.startswith("document_promotion:")]
+    assert keys
+    assert {k: sorted(_recipients(_AUDIENCES[k], _GROUPS, _USERS)) for k in keys
+            if not _recipients(_AUDIENCES[k], _GROUPS, _USERS)} == {}
+    assert any((_AUDIENCES[k] or {}).get("grant_to_groups") and not (_AUDIENCES[k] or {}).get(
+        "grant_to") for k in keys), "no document_promotion audience is group-only: the group " \
+        "path is not exercised by real policy"
 
 
 # ── the conjunction, per domained kind, one leg at a time ─────────────────────

@@ -21,13 +21,14 @@ def test_user_drop_is_a_declared_rung():
     assert provenance.USER_DROP in provenance.OBTAINED_VIA
 
 
-def test_user_drop_is_ordered_last_the_farthest_rung():
+def test_user_drop_is_ordered_fifth_before_steward_corrected():
     # The order IS the degradation distance (ADR-0035 §5) — not cosmetic, so a rung inserted
     # in the middle would silently misstate every consumer that reasons over the ordering.
-    assert provenance.OBTAINED_VIA[-1] == provenance.USER_DROP
+    assert provenance.OBTAINED_VIA[-2] == provenance.USER_DROP
+    assert provenance.OBTAINED_VIA[-1] == provenance.STEWARD_CORRECTED
     assert provenance.OBTAINED_VIA == (
         provenance.DIRECT, provenance.ETL, provenance.WAREHOUSE,
-        provenance.MANUAL_EXPORT, provenance.USER_DROP,
+        provenance.MANUAL_EXPORT, provenance.USER_DROP, provenance.STEWARD_CORRECTED,
     )
 
 

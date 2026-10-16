@@ -66,11 +66,25 @@ _SHIMMED = (
 )
 
 
+def _neo4j_double() -> MagicMock:
+    """A fake `neo4j` whose `neo4j.exceptions` is a real submodule carrying REAL Exception
+    subclasses: main.py imports the outage classes from it (16aa5450, #54) and uses them in
+    `except` tuples, where a MagicMock attribute raises TypeError."""
+    import types
+    neo = MagicMock()
+    neo.exceptions = types.ModuleType("neo4j.exceptions")
+    for _x in ("ServiceUnavailable", "SessionExpired", "TransientError"):
+        setattr(neo.exceptions, _x, type(_x, (Exception,), {}))
+    return neo
+
+
 @pytest.fixture(scope="module")
 def engine_o():
     """`main.py` under a unique name, with every `sys.modules` entry this load installs put back
     after the last arm (through `stub_modules`, which restores absence as well as values)."""
     doubles: dict[str, object] = {n: MagicMock() for n in _SHIMMED}
+    doubles["neo4j"] = _neo4j_double()
+    doubles["neo4j.exceptions"] = doubles["neo4j"].exceptions
     spec = importlib.util.spec_from_file_location(_MOD_NAME, _SVC / "main.py")
     mod = importlib.util.module_from_spec(spec)
     doubles[_MOD_NAME] = mod

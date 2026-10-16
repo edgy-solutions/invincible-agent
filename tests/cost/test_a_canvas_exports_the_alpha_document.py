@@ -313,3 +313,75 @@ def test_the_canvas_is_a_HANDLE_slot_and_recipient_stays_the_only_mandatory_one(
     assert decl["kind"] == "handle" and decl["type"] == "object"
     assert decl["required"] is False and "referent" not in decl
     assert mandatory_slots("package_export") == ["recipient_scope"]
+
+
+# ── AS_OF IS AN INPUT: IDENTICAL INPUT, IDENTICAL BYTES ─────────────────────────────────
+
+_ONE_ANSWER = {"answers": [_a("only", "costLaborComposition", 3)]}
+
+
+def _needs_the_runtime():
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the as_of export arms are NOT verified (uv sync --extra agent-fleet)")
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("the pinned Pyodide runtime is not fetched here")
+
+
+def test_AS_OF_identical_input_gives_identical_page_bytes(state, isolated_dist):
+    """HEADLINE: same canvas and same explicit as_of, twice -> same sha and same bytes on disk,
+    for the page and for the .duckdb it embeds the sha of."""
+    _needs_the_runtime()
+    runs = []
+    for _ in range(2):
+        out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER,
+                               as_of="2026-01-02")
+        runs.append((out["artifact_sha256"],
+                     (isolated_dist / out["artifact_filename"]).read_bytes(),
+                     (isolated_dist / out["dataset_filename"]).read_bytes()))
+    assert runs[0][0] == runs[1][0]
+    assert runs[0][1] == runs[1][1] and runs[0][2] == runs[1][2]
+
+
+def test_AS_OF_explicit_reaches_the_page_the_package_data_and_the_response(state, isolated_dist):
+    _needs_the_runtime()
+    out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER, as_of="2026-01-02")
+    html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
+    assert "as of 2026-01-02" in html
+    assert I.package_from_html(html)["as_of"] == "2026-01-02"
+    assert out["as_of"] == "2026-01-02"
+
+
+def test_AS_OF_absent_is_the_request_date_resolved_ONCE(state, isolated_dist, monkeypatch):
+    _needs_the_runtime()
+    days = iter(["2031-03-04", "2031-03-05", "2031-03-06"])
+    calls = []
+
+    def _fake():
+        calls.append(1)
+        return next(days)
+
+    monkeypatch.setattr(M, "_request_date", _fake)
+    out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER)
+    html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
+    assert len(calls) == 1, f"the request date was resolved {len(calls)} times"
+    assert "as of 2031-03-04" in html
+    assert I.package_from_html(html)["as_of"] == "2031-03-04"
+    assert out["as_of"] == "2031-03-04"
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday", "2026-1-2", "20260102", ""])
+def test_AS_OF_malformed_is_a_NAMED_refusal_on_the_route_and_writes_nothing(
+        state, isolated_dist, bad):
+    from fastapi.testclient import TestClient
+    from agent_fleet.cost_agent import main as cost_main
+
+    before = sorted(p.name for p in isolated_dist.iterdir())
+    with TestClient(cost_main.app) as c:
+        r = c.post("/measure/package_export", json={"params": {
+            "recipient_scope": ALPHA, "canvas": _ONE_ANSWER, "as_of": bad}})
+    assert r.status_code < 500, (r.status_code, r.text[:300])
+    body = r.json()
+    assert body.get("refused") is True and body.get("outcome") == "not_in_model", body
+    assert "YYYY-MM-DD" in body["reason"] and repr(bad) in body["reason"], body
+    # The refusal names the slot at fault, or elicitation asks for the wrong one.
+    assert body.get("slot") == "as_of" and "available" not in body, body
+    assert sorted(p.name for p in isolated_dist.iterdir()) == before

@@ -141,3 +141,16 @@ groups:
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
   maint-supervisors-edge-01: {}
+
+  # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-14 ruling). Grants NO persona.domain cell; named in
+  # task_grants.yaml `grant_to_groups` for document_promotion:MANUFACTURING, the reviewers who
+  # vouch for a contributed work-instruction (ADR-0041 §5). Sandbox member = bob.
+  manufacturing-stewards: {}
+
+  # OpenDDIL's brokered maintainers (2026-10-16, Chris's directive item 5: "Seed operator.atlantia
+  # a cell via a group (openddil-maintainers → MAINTENANCE)"). Grants the EXISTING
+  # MECHANIC·MAINTENANCE cell, the only persona with a MAINTENANCE cell, so no new cell object
+  # is minted; the picker reaches it only through the group path. Member = operator.atlantia.
+  openddil-maintainers:
+    grants:
+      - {persona: MECHANIC, domain: MAINTENANCE}

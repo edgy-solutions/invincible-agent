@@ -100,8 +100,20 @@ def _script(rendered: str) -> str:
     return _job(rendered)["spec"]["template"]["spec"]["containers"][0]["args"][0]
 
 
+#: The committed sandbox flips the broker and its truststore ON (chart 0.4.50). The arms below that
+#: read `sandbox` were written against the switches OFF and test the off path, so they render it
+#: explicitly; `committed` is the values as they roll.
+_BROKER_OFF = [*_set("keycloak.brokers.openddil.enabled", False), *_set("keycloak.truststore.enabled", False)]
+
+
 @pytest.fixture(scope="module")
 def sandbox() -> str:
+    """The sandbox values with the broker and truststore switches OFF."""
+    return _render(*_SANDBOX, *_BROKER_OFF)
+
+
+@pytest.fixture(scope="module")
+def committed() -> str:
     return _render(*_SANDBOX)
 
 
@@ -496,13 +508,23 @@ def test_policy_binds_the_brokered_liaison_to_its_sub():
     assert p["liaison.coalition"] == _LIAISON_SUB
 
 
-def test_the_broker_is_disabled_in_the_base_and_in_the_sandbox_with_no_secret_named():
+def test_the_broker_is_disabled_in_the_base_and_on_by_reference_in_the_sandbox():
     base_v = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))
     sb_v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
     assert base_v["keycloak"]["brokers"]["openddil"]["enabled"] is False
-    assert sb_v["keycloak"]["brokers"]["openddil"]["enabled"] is False
     assert base_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == ""
-    assert sb_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == ""
+    assert sb_v["keycloak"]["brokers"]["openddil"]["enabled"] is True
+    assert sb_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == "openddil-broker-client"
+    assert not sb_v["keycloak"]["brokers"]["openddil"].get("clientSecret")
+
+
+def test_the_committed_sandbox_renders_the_broker_from_the_out_of_band_secret(committed):
+    s = _script(committed)
+    assert "identity-provider" in s and 'BFLOW="openddil-first-login"' in s
+    env = {e["name"]: e for e in _job(committed)["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": "openddil-broker-client", "key": "client-secret"}
+    assert "broker-openddil-client-secret" not in committed
 
 
 # ------------------------------------------------------------------ (i) authz_id defaults to email
@@ -669,7 +691,8 @@ def _create_lines(script: str, username: str) -> list[str]:
 
 @pytest.fixture(scope="module")
 def email_claim() -> str:
-    return _render(*_SANDBOX, *_set("keycloak.authzClaim", "email"))
+    # the broker refuses the email claim, so this is the switches-OFF sandbox under it
+    return _render(*_SANDBOX, *_BROKER_OFF, *_set("keycloak.authzClaim", "email"))
 
 
 @pytest.mark.parametrize("who", ["erin", "chris"])
@@ -804,9 +827,11 @@ def test_truststore_e_disabled_renders_no_truststore_volume_or_env(sandbox):
     assert "annotations" not in pod["metadata"] or "checksum/truststore" not in pod["metadata"]["annotations"]
 
 
-def test_truststore_f_committed_sandbox_values_name_a_secret_and_enable_nothing():
+def test_truststore_f_committed_sandbox_values_trust_the_lab_ca_secret(committed):
     v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))["keycloak"]
     t = v["truststore"]
     assert t["existingSecret"] == "keycloak-openddil-trust" and t["key"] == "ca.pem", t
-    assert t["enabled"] is False and v["brokers"]["openddil"]["enabled"] is False
+    assert t["enabled"] is True and v["brokers"]["openddil"]["enabled"] is True
     assert "caPem" not in t and not t.get("existingConfigMap")
+    (vol,) = [x for x in _kc_pod(committed)["spec"]["volumes"] if x["name"] == "truststore"]
+    assert vol["secret"]["secretName"] == "keycloak-openddil-trust"

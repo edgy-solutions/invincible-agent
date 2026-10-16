@@ -1,11 +1,18 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.47 — 2026-10-15
+## 0.4.50 — 2026-10-16
 
-(Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, and to 0.4.47 when rev 188b took 0.4.46.)
+(Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, to 0.4.47 when
+rev 188b took 0.4.46, and to 0.4.50 when rev 189 merged first as 0.4.49.)
 
-The OpenDDIL broker flip: the client secret is the only secret; Keycloak trusts OpenDDIL's issuer by
-pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/01-oidc-roundtrip).
+The OpenDDIL broker flip, now ON in `values-sandbox.yaml`. The client secret is the only secret, by
+reference: Secret `openddil-broker-client`, key `client-secret`. Keycloak trusts OpenDDIL's issuer
+through their lab CA ("OpenDDIL Lab Internal CA", CA:TRUE, pathlen:0), whose PEM is in Secret
+`keycloak-openddil-trust` key `ca.pem`. Both Secrets are created out of band. Sits on PR #29
+(lane/01-oidc-roundtrip).
+
+Correction: the 0.4.47 text of this entry said "pinning exactly its self-signed leaf. There is no lab
+CA." That was wrong. OpenDDIL's issuer chains to a lab CA, and the CA is what is trusted.
 
 ### Added
 
@@ -22,17 +29,17 @@ pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/0
   in the secret values file.
 - **Guard:** an enabled broker with an `https:` issuer fails the render unless `keycloak.truststore` is
   enabled or `brokers.<name>.publicCA: true`, so a self-signed issuer cannot flip on silently untrusted.
-- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches stay `false`;
-  `truststore.existingSecret: keycloak-openddil-trust`, `key: ca.pem`.
-  The flip is `clientSecret` as the ONLY key in `values-sandbox.secret.yaml`, the OpenDDIL leaf PEM in
-  a Secret created out of band (`kubectl create secret generic keycloak-openddil-trust
-  --from-file=ca.pem=openddil-leaf.pem`), and the two `enabled: true` lines.
+- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches `true`;
+  `brokers.openddil.existingSecret: openddil-broker-client`;
+  `truststore.existingSecret: keycloak-openddil-trust`, `key: ca.pem`. The lab CA's PEM is in that
+  Secret, created out of band (`kubectl create secret generic keycloak-openddil-trust
+  --from-file=ca.pem=<lab-ca.pem>`). No secret value is in any values file.
 
 ### Tests
 
 - `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only,
-  leaf reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
-  enable nothing).
+  CA reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
+  enable the broker by reference only).
 - `tests/test_oidc_broker_chart.py`: truststore arms for existingSecret, neither/both sources, caPem
   removal, disabled, and the committed sandbox values.
 - Existing broker tests now set `publicCA` where they enable the broker.
@@ -57,6 +64,32 @@ Retired users leave the live realm; the OpenDDIL broker segment is tested by rou
 - `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
   double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
   join seals binding policy grants to the brokered sub.
+
+## 0.4.49 — 2026-10-16
+
+Rev 189, the label it rolls under. The door-read flag below is chart content added after 0.4.48's
+bump, so the version moves (`tests/test_chart_version_tracks_chart_content.py`). 0.4.48 was never
+published or deployed. 189 merges before #41 (`lane/01-broker-flip`, 0.4.47), so #41 renumbers
+above this (0.4.50), and #28 after it.
+
+### Added
+
+- **`cortexBff.env` `INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"`.** `POST /ingest` can refuse a
+  registered kind that doc-tools does not process, using the list doc-tools publishes to the new
+  service-only `PUT /ingest/processable-kinds` (persisted in Postgres, cached per pod). The flag
+  ships OFF, so registry behaviour is unchanged; it is flipped ON in 190 after doc-tools
+  publishes. ON is deny-by-default: 503 `processable_kinds_unknown` before the first publish,
+  400 `kind_unprocessable` after.
+
+## 0.4.48 — 2026-10-16
+
+Rev 189's first label, never published: the iagent-mesh `v0.9.10` pin. Rolled as 0.4.49, above.
+
+### Changed
+
+- **`domainBroker.meshSdkVersion` `v0.9.8` → `v0.9.10`.** The broker takes the same inbound
+  transport-auth dependency as the fleet, and `tests/test_lock_coherence.py` asserts the two are
+  equal. The fleet's 0.9.10 pin left it at 0.9.8.
 
 ## 0.4.46 — 2026-10-15
 

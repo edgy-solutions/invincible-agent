@@ -1779,6 +1779,19 @@ services:
           each entry with run_key `{ingest_id}-a{attempt}`. A single SERVICE identity is accepted,
           checked before the database is touched, so no end user can enumerate other people's
           drops and a non-doc-tools caller learns nothing. Event rows never appear.
+      - method: PUT
+        path: /ingest/processable-kinds
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: mutation
+        consumers: [doc-tools processable-kinds publisher]
+        class: gated
+        justification: >-
+          doc-tools publishes the content kinds it can process (owner ruling: the BFF persists
+          and caches the list, the ingest door reads the cache behind
+          INGEST_DOOR_READS_PROCESSABLE_KINDS, default OFF). A single SERVICE identity is accepted,
+          checked before the store is touched. The route returns only what the caller sent plus
+          which of those the registry does not know; it exposes no gated content.
       - method: POST
         path: /ingest/{ingest_id}/stage
         identity: keycloak-jwt

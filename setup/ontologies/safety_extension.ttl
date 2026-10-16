@@ -1,6 +1,7 @@
 @prefix safety: <http://internal/sustainment/safety#> .
 @prefix s3kl:  <http://www.lksoft.com/s3kl#> .
 @prefix ps:    <http://internal/sustainment/product#> .
+@prefix pcn:   <http://internal/sustainment/pcn#> .
 # THE MESH IRI IS `invincible-agent/mesh#`, NOT `internal/mesh#`, AND THE REPO CONTAINS BOTH.
 # Written wrong here first, copied from `product_structure_extension.ttl` — a neighbour in this
 # same directory that declares `http://internal/mesh#`. The triple parsed, the file loaded, and
@@ -126,6 +127,10 @@ S3000L's `control` matches are logistics control numbers and trade-security cont
     skos:example "Loom re-routed and clamped per TCTO 12-3; verified on 41 of 44 tails." .
 
 safety:SafetyCriticalItem a owl:Class ;
+    # RULED 2026-10-15: a critical item IS a component that has a safety listing. The most specific
+    # class wins when two classes resolve one subject and both carry the verb asked.
+    # Every verb registered on pcn:Component applies to a critical item; a verb that must not apply to critical items is declared on a sibling class, never on Component.
+    rdfs:subClassOf pcn:Component ;
     rdfs:label "Safety-critical item" ;
     rdfs:comment """A part, procedure or inspection whose failure or omission opens a hazard.
 MINTED, though S3000L's TaskPersonnelSafetyCriticality is adjacent: that rates a TASK's

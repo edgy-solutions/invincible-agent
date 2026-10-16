@@ -624,9 +624,12 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         # absent-versus-empty rule as `disposal`: [] means "this lot accepts nothing",
         # omitted means "not computable from what you supplied". `options_for` already keeps
         # those apart and returns None for the second.
-        _avail = measures.options_for(STATE, fn_name, "rate_vintage", req.params)
+        # THE SLOT IS THE RAISER'S WHEN IT NAMES ONE: a bad `as_of` tagged `rate_vintage`
+        # would have elicitation ask the wrong question.
+        _slot = e.slot or "rate_vintage"
+        _avail = measures.options_for(STATE, fn_name, _slot, req.params)
         return _refusal(
-            "not_in_model", str(e), slot="rate_vintage",
+            "not_in_model", str(e), slot=_slot,
             **({"available": _avail} if _avail is not None else {}),
         )
     except Unentitled as e:

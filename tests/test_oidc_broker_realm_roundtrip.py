@@ -60,9 +60,15 @@ def broker_script() -> str:
     return _script(_render(*_SANDBOX, *_BROKER))
 
 
+#: The committed sandbox flips the broker ON (chart 0.4.50). The retired-user arms slice the segment
+#: between "# RETIRED USER:" and the readback gate, which the broker block would sit inside, so they
+#: render the switches OFF; the broker block is exercised by broker_script.
+_OFF = ["--set", "keycloak.brokers.openddil.enabled=false", "--set", "keycloak.truststore.enabled=false"]
+
+
 @pytest.fixture(scope="module")
 def retired_script() -> str:
-    return _script(_render(*_SANDBOX))
+    return _script(_render(*_SANDBOX, *_OFF))
 
 
 def _segment(script: str, start: str, end: str, *, end_inclusive: bool = False) -> str:

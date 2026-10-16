@@ -470,24 +470,23 @@ keycloak:
   # openid/profile/email. Their redirect URI is
   # https://keycloak.edgy-solutions.com/realms/invincible-agent/broker/openddil/endpoint (realm
   # `invincible-agent`); they also registered an `iagent` one, which we will ask them to drop.
-  # THE FLIP, when Chris passes the client secret and OpenDDIL's issuer leaf: the client secret is the
-  # ONLY key in the gitignored values-sandbox.secret.yaml (keycloak.brokers.openddil.clientSecret).
-  # There is no lab CA: OpenDDIL's issuer is a self-signed leaf, pinned by trusting exactly that
-  # leaf. The leaf PEM (public, not a secret) goes in a Secret Chris creates out of band:
-  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=openddil-leaf.pem
-  # named below. Then the two switches (keycloak.brokers.openddil.enabled and
-  # keycloak.truststore.enabled to true) in THIS file: a two-line committed diff plus the secret file.
+  # THE FLIP (0.4.50, 2026-10-16): OpenDDIL's issuer chains to their lab CA ("OpenDDIL Lab
+  # Internal CA", CA:TRUE, pathlen:0); Keycloak trusts that CA's PEM (public, not a secret) from a
+  # Secret created out of band:
+  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=<lab-ca.pem>
+  # The client secret is ALSO out of band, by reference only: Secret openddil-broker-client, key
+  # client-secret (existingSecret below). Neither value is in any values file, committed or not.
   truststore:
-    enabled: false   # switch: true with the flip
+    enabled: true   # the flip (0.4.50)
     existingSecret: keycloak-openddil-trust
     key: ca.pem
   brokers:
     openddil:
-      enabled: false   # switch: true with the flip; clientSecret goes in values-sandbox.secret.yaml
+      enabled: true   # the flip (0.4.50)
       displayName: "OpenDDIL"
       issuer: "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil"
       clientId: iagent-broker
-      existingSecret: ""
+      existingSecret: openddil-broker-client
       secretKey: "client-secret"
       # The subs below are the fixed ids from OpenDDIL's realm-openddil.json; the 2026-10-10 packet did not
       # restate them, so they are UNCONFIRMED against the live realm.

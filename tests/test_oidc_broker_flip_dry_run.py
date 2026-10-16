@@ -1,7 +1,10 @@
-"""Dry-run of the OpenDDIL broker flip: the flip is values (two switches + the secret file), nothing else.
+"""The OpenDDIL broker flip, committed in chart 0.4.50: the flip is values, nothing else.
 
-Renders the chart with the committed values-sandbox.yaml PLUS an in-test override holding ONLY what the
-flip adds: the two `enabled: true` switches, a FAKE 64-hex clientSecret and a FAKE secret-name for the leaf (the PEM itself lives in a Secret made out of band).
+The committed values-sandbox.yaml IS the flip: the two `enabled: true` switches, the client secret BY
+REFERENCE (Secret openddil-broker-client, key client-secret) and the lab CA's PEM in Secret
+keycloak-openddil-trust, both made out of band. The negative half renders the same values with the two
+switches off. The inline-clientSecret path (a FAKE 64-hex value in an override) is kept as the
+alternative source and must still land only in the Secret object.
 Builds on tests/test_oidc_broker_realm_roundtrip.py (PR #29) and tests/fake_keycloak_curl.py.
 
 Run: uv run --frozen python -m pytest tests/test_oidc_broker_flip_dry_run.py -v
@@ -28,24 +31,33 @@ pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not i
 _ISSUER = "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil"
 _FAKE_SECRET = secrets.token_hex(32)  # 64 hex, generated in-test
 _SECRET_KEY = "broker-openddil-client-secret"
+_CLIENT_SECRET_REF = {"name": "openddil-broker-client", "key": "client-secret"}
+_OFF = [*_set("keycloak.brokers.openddil.enabled", False), *_set("keycloak.truststore.enabled", False)]
 
 
 def _override(tmp_path, secret: str = "keycloak-openddil-trust", name: str = "flip.yaml") -> list[str]:
+    """The inline alternative: a FAKE clientSecret in place of the committed reference."""
     p = tmp_path / name
     p.write_text(yaml.safe_dump({"keycloak": {
-        "brokers": {"openddil": {"enabled": True, "clientSecret": _FAKE_SECRET}},
+        "brokers": {"openddil": {"enabled": True, "existingSecret": "", "clientSecret": _FAKE_SECRET}},
         "truststore": {"enabled": True, "existingSecret": secret, "key": "ca.pem"}}}), encoding="utf-8")
     return ["-f", str(p)]
 
 
 @pytest.fixture(scope="module")
-def flipped(tmp_path_factory) -> str:
+def flipped() -> str:
+    """The committed sandbox values, nothing added: the flip as it rolls."""
+    return _render(*_SANDBOX)
+
+
+@pytest.fixture(scope="module")
+def inline(tmp_path_factory) -> str:
     return _render(*_SANDBOX, *_override(tmp_path_factory.mktemp("flip")))
 
 
 @pytest.fixture(scope="module")
-def sandbox() -> str:
-    return _render(*_SANDBOX)
+def off() -> str:
+    return _render(*_SANDBOX, *_OFF)
 
 
 def _by_kind(rendered: str, kind: str) -> list[dict]:
@@ -58,7 +70,7 @@ def _keycloak_sts(rendered: str) -> dict:
 
 
 # ---------------------------------------------------------------- arm 1: the flip is the switches
-def test_arm1_the_flip_renders_the_openddil_broker(flipped, sandbox):
+def test_arm1_the_flip_renders_the_openddil_broker(flipped, off):
     s = _script(flipped)
     assert "== broker openddil ==" in s
     assert 'BALIAS="openddil"' in s
@@ -69,15 +81,25 @@ def test_arm1_the_flip_renders_the_openddil_broker(flipped, sandbox):
     sub = sub[:sub.index('echo "   created"')]
     assert '"syncMode": "FORCE"' in sub and '"claim": "sub"' in sub, "sub mapper is not a FORCE sub mapper"
     env = {e["name"]: e for e in _job(flipped)["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == {
-        "name": "t-secrets", "key": _SECRET_KEY}
-    # the negative half of the pair: the committed values alone render none of it
-    assert "== broker openddil ==" not in _script(sandbox) and "identity-provider" not in _script(sandbox)
-    assert "BROKER_OPENDDIL" not in json.dumps(_job(sandbox)) and "openddil-first-login" not in sandbox
+    assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == _CLIENT_SECRET_REF
+    # the negative half of the pair: the same values with the two switches off render none of it
+    assert "== broker openddil ==" not in _script(off) and "identity-provider" not in _script(off)
+    assert "BROKER_OPENDDIL" not in json.dumps(_job(off)) and "openddil-first-login" not in off
 
 
 # ---------------------------------------------------------------- arm 2: by reference only
-def test_arm2_the_secret_value_is_only_in_the_secret_object(flipped):
+def test_arm2_the_committed_flip_carries_no_secret_value(flipped):
+    for d in _by_kind(flipped, "Secret"):
+        assert _SECRET_KEY not in (d.get("data") or {}) and _SECRET_KEY not in (d.get("stringData") or {})
+    assert "openddil-broker-client" not in [d["metadata"]["name"] for d in _by_kind(flipped, "Secret")], (
+        "the client Secret is made out of band; the chart must not render (and so own) it")
+
+
+def test_arm2_an_inline_secret_value_is_only_in_the_secret_object(inline):
+    flipped = inline
+    env = {e["name"]: e for e in _job(flipped)["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": "t-secrets", "key": _SECRET_KEY}
     b64 = base64.b64encode(_FAKE_SECRET.encode()).decode()
     hits = []
     for d in _docs(flipped):
@@ -91,8 +113,8 @@ def test_arm2_the_secret_value_is_only_in_the_secret_object(flipped):
     assert _FAKE_SECRET not in _script(flipped)
 
 
-# ---------------------------------------------------------------- arm 3: the pinned leaf reaches Keycloak
-def test_arm3_the_pinned_leaf_reaches_keycloak(flipped, tmp_path):
+# ---------------------------------------------------------------- arm 3: the lab CA reaches Keycloak
+def test_arm3_the_lab_ca_reaches_keycloak(flipped, tmp_path):
     pod = _keycloak_sts(flipped)["spec"]["template"]
     c = pod["spec"]["containers"][0]
     env = {e["name"]: e.get("value") for e in c["env"]}
@@ -117,7 +139,8 @@ def test_arm3_enabled_with_no_source_fails_the_render():
 
 # ---------------------------------------------------------------- arm 4: an untrusted self-signed issuer
 def test_arm4_enabled_https_broker_without_truststore_fails_and_publicca_passes():
-    on = [*_SANDBOX, *_set("keycloak.brokers.openddil.enabled", True),
+    on = [*_SANDBOX, *_set("keycloak.truststore.enabled", False),
+          *_set("keycloak.brokers.openddil.enabled", True),
           *_set("keycloak.brokers.openddil.clientSecret", _FAKE_SECRET)]
     err = _render_fails(*on)
     assert "keycloak.truststore.enabled is false" in err and "openddil" in err
@@ -159,10 +182,14 @@ def test_arm5_second_pass_changes_nothing(passes):
     assert second.state == first.state
 
 
-# ---------------------------------------------------------------- arm 6: committed values enable nothing
-def test_arm6_committed_sandbox_values_enable_no_broker_and_no_truststore(sandbox):
+# ---------------------------------------------------------------- arm 6: committed values flip by reference only
+def test_arm6_committed_sandbox_values_enable_the_broker_by_reference_only(flipped, off):
     v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))["keycloak"]
-    assert v["brokers"]["openddil"]["enabled"] is False and v["truststore"]["enabled"] is False
-    assert not v["brokers"]["openddil"].get("clientSecret") and "caPem" not in v["truststore"]
-    assert "truststore" not in sandbox and "KC_TRUSTSTORE_PATHS" not in sandbox
-    assert "broker-openddil-client-secret" not in sandbox
+    b, t = v["brokers"]["openddil"], v["truststore"]
+    assert b["enabled"] is True and t["enabled"] is True
+    assert b["existingSecret"] == "openddil-broker-client" and b["secretKey"] == "client-secret"
+    assert t["existingSecret"] == "keycloak-openddil-trust" and t["key"] == "ca.pem"
+    assert not b.get("clientSecret") and "caPem" not in t and not t.get("existingConfigMap")
+    assert "KC_TRUSTSTORE_PATHS" in flipped and "broker-openddil-client-secret" not in flipped
+    # the control: the switches are what decide it
+    assert "KC_TRUSTSTORE_PATHS" not in off and "== broker openddil ==" not in _script(off)
