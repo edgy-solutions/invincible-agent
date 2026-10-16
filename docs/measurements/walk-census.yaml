@@ -616,8 +616,8 @@ rows:
   # are deliberately NOT catalogue synonyms (no synonym seal applies); the wording is the subject.
 
   # Q1: Chris's hand repro on rev 185 -- this wording ABSTAINED (no_verb_classified, "no
-  # capability for this subject"). Expected after 186: the FRACAS card, or the unknown-part
-  # refusal. An abstain or a fallback is the defect. NOT YET WALKED LIVE.
+  # capability for this subject"). Expected after 189: the no-failures-recorded refusal (#57).
+  # An abstain or a fallback is the defect. NOT YET WALKED LIVE.
   - id: repro-failures-recorded-for-part-5530-184
     sheet: docs/measurements/hand-repro-walk-sheet.md
     sheet_index: 0

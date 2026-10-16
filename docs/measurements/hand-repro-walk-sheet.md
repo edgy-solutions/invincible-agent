@@ -11,24 +11,28 @@ in both directions by `tests/test_the_walk_census_is_derived_from_the_sheets.py`
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
-| 1 | what failures are recorded for part 5530-184 | `what_failed_on_this_part` | the FRACAS card, or **a refusal** naming `unknown part '5530-184'`; never an abstain |
+| 1 | what failures are recorded for part 5530-184 | `what_failed_on_this_part` | **a refusal (no failures recorded)**: outcome `no_failures_recorded`, the reason naming 5530-184; never an abstain |
 
 ---
 
-## Q1 -- Failures recorded for a PCN26-184 part  **expect a CARD or a NAMED REFUSAL, never an abstain**
+## Q1 -- Failures recorded for a PCN26-184 part  **expect a REFUSAL (no failures recorded), never an abstain**
 
 > **"what failures are recorded for part 5530-184"**
 
 **As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
 **Asked by:** Chris, by hand, on rev 185. **It answered:** "NOT GROUNDED / no capability for this
 subject" -- the supervisor's `no_verb_classified` abstain (`src/iagent/defs/dynamic_supervisor.py`).
-**Expected disposition:** `refused` (or `drawn`) -- **NOT YET WALKED LIVE.**
+**Expected disposition:** `refused`, one disposition only -- **NOT YET WALKED LIVE** (walk after 189 rolls).
 
 The closest declared synonym is "what failures were recorded for this item"
 (`agent_fleet/safety_agent/main.py`:238-243); the asker's wording differs ("are recorded for part"),
-and that difference is the point. 5530-184 is a PCN26-184 part, not a safety-critical item, so the
-engine's own answer is the unknown-part refusal
-(`tests/safety/test_fracas_source_wiring.py`:247): `unknown part '5530-184'`, no `outcome` key.
+and that difference is the point. 5530-184 is a PCN26-184 part: it resolves to a `pcn:Component`
+that no failure source holds a record for, and it is not a safety-critical item. Since #57
+(lane/saf `e862aae1`), the engine's answer is the no-failures-recorded refusal: outcome
+`no_failures_recorded`, a reason naming 5530-184, and no task
+(`tests/safety/test_a_part_number_is_settled_by_the_verb_asked_across_classes.py`,
+`test_a_resolved_component_with_no_records_gets_no_failures_recorded_and_no_task`).
+`unknown_part` is kept for a part string that resolves to nothing.
 
 ### What a correct result looks like BROKEN
 
