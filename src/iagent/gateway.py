@@ -9758,7 +9758,8 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
     (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
     (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
-    identical whether or not the case exists (no existence oracle).
+    identical whether or not the case exists (no existence oracle). R-089: the delegate map
+    is asserted by configuration this pass.
     """
     from starlette.concurrency import run_in_threadpool
 
