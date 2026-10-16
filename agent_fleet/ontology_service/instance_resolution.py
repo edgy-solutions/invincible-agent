@@ -384,12 +384,28 @@ def most_specific_class(
     return winners[0] if len(winners) == 1 else None
 
 
+# RULED 2026-10-16 (Chris): `PN_9001`, `PN-9001` and `pn 9001` are ONE identifier -- case-fold,
+# collapse runs of `-`, `_` and whitespace -- "same as saf's provider already does, so the two layers
+# agree" (`_PN_SEPARATORS` in safety_agent/instances.py, the same class). Before it, the provider
+# offered the normalised hit and this gate refused it: `PN_9001` is ONE segment, so it named no whole
+# segment of `PN-9001`. APPLIED TO `matched_on` ONLY, the field that says what the provider matched;
+# ids and labels keep the 2026-08-30 segment rule unchanged.
+_IDENTIFIER_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def normalise_identifier(text: str) -> str:
+    return _IDENTIFIER_SEPARATORS.sub("-", (text or "").strip().casefold())
+
+
 def passes_candidate_specificity(identifier: str, c: InstanceCandidate) -> bool:
     """The specificity gate for ONE candidate: the identifier names a whole segment of its id,
-    its label, or the string its provider says it matched on."""
+    its label, or the string its provider says it matched on -- or equals that string once both
+    are normalised (`normalise_identifier`)."""
     return (passes_segment_specificity(identifier, c.instance_id)
             or passes_segment_specificity(identifier, c.label)
-            or bool(c.matched_on and passes_segment_specificity(identifier, c.matched_on)))
+            or bool(c.matched_on and (
+                passes_segment_specificity(identifier, c.matched_on)
+                or normalise_identifier(identifier) == normalise_identifier(c.matched_on))))
 
 
 def narrow_to_most_specific(

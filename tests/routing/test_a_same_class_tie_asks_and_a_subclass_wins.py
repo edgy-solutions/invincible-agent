@@ -43,6 +43,7 @@ from agent_fleet.ontology_service.instance_resolution import (
     InstanceCandidate,
     decide,
     most_specific_class,
+    normalise_identifier,
     narrow_to_most_specific,
 )
 from agent_fleet.ontology_service.sustainment_instance_provider import (
@@ -191,6 +192,29 @@ def test_7_a_matched_on_the_identifier_does_not_name_is_still_refused():
     assert decide([bare], identifier="PN-8802").provenance["instance_match"] == "not_specific"
 
 
+def test_7b_a_normalised_spelling_of_matched_on_is_the_same_identifier():
+    """RULED 2026-10-16: `PN_9001`, `PN-9001`, `pn 9001` are one identifier at decide(), as in
+    safety's provider. Normalising is case-fold plus collapsing runs of `-`, `_` and whitespace --
+    NOT dropping them, so a different number is still a different identifier."""
+    assert normalise_identifier("PN_9001") == normalise_identifier("pn 9001") == normalise_identifier(" PN-_9001 ")
+    for spelled in ("PN-9001", "pn 9001", "Pn__9001"):
+        c = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
+                              label="Fuel quantity probe seal kit.", score=0.9, matched_on=spelled)
+        assert decide([c], identifier="PN_9001").provenance["instance_match"] == "fuzzy", spelled
+    # CONTROLS, each differing in one thing: another number, and no matched_on (ids and labels keep
+    # the 2026-08-30 segment rule -- the label spells the part number, normalised, and is refused).
+    other = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
+                              label="Fuel quantity probe seal kit.", score=0.9, matched_on="PN-90011")
+    assert decide([other], identifier="PN_9001").provenance["instance_match"] == "not_specific"
+    # COLLAPSED, NOT DROPPED -- safety's provider maps `PN9001` to `pn9001`, not `pn-9001`, so the
+    # layers agree only if this gate refuses it too.
+    unseparated = replace(other, matched_on="PN9001")
+    assert decide([unseparated], identifier="PN_9001").provenance["instance_match"] == "not_specific"
+    by_label = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
+                                 label="pn 9001", score=0.9)
+    assert decide([by_label], identifier="PN_9001").provenance["instance_match"] == "not_specific"
+
+
 # -- through the service ----------------------------------------------------------------------
 
 @pytest.fixture()
@@ -307,8 +331,8 @@ def test_S3_a_same_class_exact_tie_asks(eo, monkeypatch):
     assert {t["instance_id"] for t in prov["instance_top_candidates"]} == {"CSI-7001", "CSI-7002"}
 
 
-@pytest.mark.xfail(strict=True, reason="the gate does not normalise: identifier PN_9001 names no whole segment of matched_on PN-9001 or pn 9001; needs a ruling")
 def test_S4_a_normalised_tie_asks(eo, monkeypatch):
+    # Was a strict xfail until the 2026-10-16 ruling: the gate now compares matched_on normalised.
     _wire(eo, monkeypatch, eo_rows=())
     _two(monkeypatch, "PN-9001", "pn 9001")
     subject, prov = _resolve(eo, "PN_9001")
@@ -326,7 +350,9 @@ def _fill(eo, monkeypatch, value):
     req = eo.FillSlotsRequest(
         query=f"what failed on {value}", verb_iri="mesh:whatFailedOnThisPart",
         declarations=json.dumps(slots_for("what_failed_on_this_part")),
-        acting_domains=["SUSTAINMENT"], subject_uri="")
+        acting_domains=["SUSTAINMENT"], subject_uri="",
+        # A person: /fill_slots refuses a caller with none (190, PR #59).
+        user_email="tester@example.com")
     return asyncio.run(eo.fill_slots(req))
 
 
