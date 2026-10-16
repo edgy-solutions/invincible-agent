@@ -18,6 +18,13 @@ from rdflib.namespace import RDFS
 from agent_fleet.ontology_service import sustainment_instance_provider as eo
 from agent_fleet.safety_agent import main as safety_main, measures
 
+# engine-o's module imports weaviate -> authlib, which subclasses httpx.Client; _program_filter's import
+# wraps httpx.Client, so engine-o must be imported FIRST (measured: metaclass conflict otherwise).
+try:
+    from agent_fleet.ontology_service import main as _EO_MAIN
+except Exception:  # not installed here: the end-to-end arms skip
+    _EO_MAIN = None
+
 from . import _program_filter as pf
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -140,22 +147,61 @@ def test_the_census_reader_reads_the_refusal_it_is_now_sent():
     assert wc._card_refusals([comp]) == [r]
 
 
-# ── held: the end-to-end arms, until lane/74's decide() subclass read lands (189) ───────────
+# ── the end-to-end arms: need lane/74's decide() (#58 at 7e5b2ba2 or later) ─────────────────
+# They drive the REAL resolve path (engine-o's _resolve_instance, with Engine S's real
+# /resolve_instance over an ASGI transport) through the harness #58's own test file builds. On a
+# master WITHOUT #58 they are RED (ModuleNotFoundError or a wrong subject); they are not xfailed.
 
-@pytest.mark.skip(reason=(
-    "BLOCKED on lane/74's decide() change (ruling 2026-10-15): decide() reads rdfs:subClassOf from "
-    "the ontology and, when two classes resolve one subject and both carry the verb, the most "
-    "specific class wins; same-class tie -> ambiguous_in_class. Unskip when it lands in 189: "
-    "PN-8802 as bob + whatFailedOnThisPart through the service binds SafetyCriticalItem."
-))
-def test_pn_8802_with_the_fracas_verb_is_answered_by_the_safety_item_provider():
-    raise AssertionError("unreachable until decide() reads the subclass axis")
+_TIE = "tests.routing.test_a_same_class_tie_asks_and_a_subclass_wins"
 
 
-@pytest.mark.skip(reason=(
-    "BLOCKED on 189 (lane/74's decide() change plus this PR's registration live): an unlisted "
-    "part number resolves to pcn:Component only, binds whatFailedOnThisPart, and returns the "
-    "named no_failures_recorded refusal through the service (the 5530-184 row). Walk live after 189."
-))
-def test_an_unlisted_part_resolves_to_the_component_only_and_gets_the_refusal_end_to_end():
-    raise AssertionError("unreachable until the registration is live")
+def _harness():
+    import importlib
+    return importlib.import_module(_TIE)
+
+
+@pytest.fixture()
+def eo_main():
+    if _EO_MAIN is None:
+        pytest.skip("ontology_service not importable here; run under the agent-fleet extra")
+    return _EO_MAIN
+
+
+def _verbs_on(class_uri):
+    return {v["verb"] for v in safety_main.VERBS if v.get("input_uri") == class_uri}
+
+
+def test_pn_8802_with_the_fracas_verb_is_answered_by_the_safety_item_provider(eo_main, monkeypatch):
+    h = _harness()
+    h._wire(eo_main, monkeypatch)
+    subject, prov = h._resolve(eo_main, "PN-8802")
+    assert subject == SAFETY_ITEM, prov
+    assert prov["instance_id"] == "CSI-5002" and prov["instance_match"] == "exact"
+    assert "mesh:whatFailedOnThisPart" in _verbs_on(subject), "the resolved class must carry the verb"
+    # PN-8802 is a listed critical item whose sources hold no failure (fixture: only PN-8801 has
+    # records): the provider ANSWERS, by the named refusal, not by unknown_part.
+    out = measures.what_failed_on_this_part(part_number="PN-8802")
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded", out
+
+
+def test_an_unlisted_part_resolves_to_the_component_only_and_gets_the_refusal_end_to_end(eo_main, monkeypatch):
+    h = _harness()
+    iri = "http://internal/components/5530-184"
+    h._wire(eo_main, monkeypatch, eo_rows=(iri,))
+    subject, prov = h._resolve(eo_main, "5530-184")
+    assert subject == COMPONENT, prov
+    assert prov["instance_id"] == iri
+    assert "mesh:whatFailedOnThisPart" in _verbs_on(subject), "Component must carry the verb"
+    # the router hands the verb the instance id, an IRI: the verb must still settle it by name
+    out = measures.what_failed_on_this_part(part_number=prov["instance_id"])
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded", out
+
+
+def test_a_same_class_tie_between_two_critical_items_asks_with_both_candidates(eo_main, monkeypatch):
+    h = _harness()
+    h._wire(eo_main, monkeypatch, eo_rows=())
+    h._two(monkeypatch, "PN-9001", "PN-9001")
+    subject, prov = h._resolve(eo_main, "PN-9001")
+    assert subject == SAFETY_ITEM and prov["instance_match"] == "ambiguous_in_class", prov
+    assert not prov["instance_resolved"]
+    assert {t["instance_id"] for t in prov["instance_top_candidates"]} == {"CSI-7001", "CSI-7002"}
