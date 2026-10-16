@@ -419,6 +419,26 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - **M1** (the gate back to `Exception`) leaves the enumerate seal green. That seal tests outages only; the new seal's defect arms catch M1.
 - **Packet placed:** `2026-10-14-packet-to-74-section-4-built-pr-54-the-visibility-catch-is-the-stores-outage-classes-only.md` (cc the architect and 01).
 
+## 2026-10-15: #54 approved; the kind-tree seal counts a group's members as recipients (#56, `77f5a795`)
+
+- **The ruling:** "#54 approved. The kind-tree test must count a group grant as a recipient (group → members) — fix the test, Lane 1's work-instruction row lands behind it."
+- **The trigger:** Lane 1's packet `2026-10-14-packet-to-gov-kind-tree-seal-reads-grant-to-only-…`. `document_promotion:MANUFACTURING` is `grant_to_groups: [manufacturing-stewards]` only (`050b3164`, on `lane/01-rev189`), and the seal read `grant_to` only.
+  - Measured at `579dfadf` with a stand-in work-instruction row: 1 failed (that row's reviewer case), 64 passed.
+- **The change:** a new branch `lane/gov-kind-tree-groups`, based on `lane/01-rev189`. PR #56 → `lane/01-rev189`, one commit, one file.
+  - A recipient is a `grant_to` user, or a `users.yaml` member of a `grant_to_groups` group that `groups.yaml` declares. Memberless and undeclared groups reach nobody, as in `validate_policy.unusable_group_audiences`.
+  - New arms:
+    - a two-sided control (7 cases);
+    - the join with `validate_policy`, over the real policy plus a fixture holding one group of each outcome;
+    - every `document_promotion` audience reaches someone, and one of them is group-only.
+  - Both policy loaders read UTF-8 explicitly. Both files hold non-ASCII bytes, and the platform default failed collection.
+- **Tests** (gated, one file per run):
+  - this file: 64 passed;
+  - with the stand-in row: 74 passed, and the reviewer case PASSED (the stand-in was removed and never staged);
+  - `test_a_task_audience_granted_to_a_group.py`: 16 passed.
+- **Mutants:** K1–K3 (this file) and V1–V2 (`validate_policy`) are each red on a named arm.
+  - On the first run, the join covered real policy only and K2 and K3 left it green: real policy holds no unusable group, so it only compared "fine" with "fine". The fixture half was added for that reason, and K2 and K3 were measured again.
+- **Packet placed:** `2026-10-15-packet-to-lane-01-kind-tree-seal-counts-group-members-pr-56-your-row-can-land.md` (cc the architect).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -441,3 +461,8 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
 8. **ANSWERED, Q8 above: traced; not changed, needs a ruling.** **The doc-tools `provenance_*` writer's caller is untraced.** The read check trusts the `provenance_ingest_id` on a notice. If any other writer sets it, or a seeded notice lacks it, the content is treated as seeded and is visible.
 9. **ANSWERED (above): Lane 1, in the 187 roll.** The backfill has had no live run (no rolls). It needs `BACKFILL_ACTOR` plus the ledger DSN and Neo4j env. Who runs it, and when: before or after this PR's roll? Until it runs, promoted rows with no origin are withheld from everyone but the dropper.
 10. **ANSWERED, Q10 above: built.** **Carried over:** cortex-ui's lane address, and the `for:` line parsing.
+11. **OPEN (2026-10-15).** **Does a `svc:` group member count as a recipient?**
+    - The kind-tree seal and `validate_policy` both count it today.
+    - Elsewhere it's ruled that a service identity is never a person.
+    - It is latent: `users.yaml` has 11 `svc:` ids, and none of them lists a group.
+    - Not built. A ruling would apply to both predicates together.
