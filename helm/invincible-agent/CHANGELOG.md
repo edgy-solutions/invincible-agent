@@ -1,8 +1,8 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.46 — 2026-10-15
+## 0.4.47 — 2026-10-15
 
-(Written as 0.4.44 on 2026-10-12; renumbered when master reached 0.4.45.)
+(Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, and to 0.4.47 when rev 188b took 0.4.46.)
 
 The OpenDDIL broker flip: the client secret is the only secret; Keycloak trusts OpenDDIL's issuer by
 pinning exactly its self-signed leaf. There is no lab CA. Sits on PR #29 (lane/01-oidc-roundtrip).
@@ -57,6 +57,24 @@ Retired users leave the live realm; the OpenDDIL broker segment is tested by rou
 - `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
   double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
   join seals binding policy grants to the brokered sub.
+
+## 0.4.46 — 2026-10-15
+
+Rev 188b. The fleet image carries #46 (saf), #47 (gov's caller census at bb0b5190, with #52's
+test persona), #51 (one identifier namespace, one claimant) and the walk's capability check asked
+as the run's acting identity rather than the case runner. The fleet imageTag is set at roll time,
+not here. #41 (lane/01-broker-flip) renumbers to 0.4.47 when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:8d0234ab…` (cortex-ui e1b94e2).**
+  cad and xml are drawn "not yet accepted" and only pdf sends, a door 4xx draws as a refusal,
+  every walk row names its persona, and `npm audit` is at zero. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+- **`values-sandbox.yaml` `cortexUi.env.VITE_REVIEW_ROW_EDITS: "false"`.** Steward row edits are
+  off on the sandbox. The architect's condition for keeping them on was one confirmed live
+  correction, and none exists: no grouped review has been acted on since 2026-10-10. Removing the
+  key turns them back on.
 
 ## 0.4.45 — 2026-10-13
 
