@@ -32,7 +32,8 @@ def test_normalised_spelling_resolves_to_the_same_csi(spoken):
 def test_candidate_shape_is_the_id_hit_shape():
     by_pn = instances.resolve("pn 8802", CSI)[0]
     by_id = instances.resolve("CSI-5002", CSI)[0]
-    assert set(by_pn) == set(by_id) == {"class_uri", "instance_id", "label", "score"}
+    assert set(by_pn) == set(by_id) == {"class_uri", "instance_id", "label", "score", "matched_on"}
+    assert (by_pn["matched_on"], by_id["matched_on"]) == ("PN-8802", "")
     assert by_pn["instance_id"] == by_id["instance_id"]
 
 

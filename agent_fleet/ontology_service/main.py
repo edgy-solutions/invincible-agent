@@ -2168,6 +2168,7 @@ try:
     from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        narrow_to_most_specific as _ir_narrow_to_most_specific,
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
@@ -2180,6 +2181,7 @@ except ImportError:
     from instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        narrow_to_most_specific as _ir_narrow_to_most_specific,
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
@@ -2510,6 +2512,7 @@ async def _call_resolver(
                     label=str(c.get("label") or ""),
                     score=float(c.get("score") or 0.0),
                     provider=provider,
+                    matched_on=str(c.get("matched_on") or ""),
                 )
             )
         except Exception:  # noqa: BLE001 — skip malformed candidate
@@ -2663,6 +2666,19 @@ async def _resolve_instance(
         print(f"mesh:resolveInstance: CONTESTED id namespace(s) {_ns_contested}: "
               f"{ {p: sorted(_ns_claimed[p]) for p in _ns_contested} }", flush=True)
 
+    # RULED 2026-10-15 (Chris): ONE `rdfs:subClassOf` CHAIN -> THE MOST SPECIFIC CLASS WINS.
+    # PN-8802 is safety#SafetyCriticalItem (engine_safety_sustainment) and pcn#Component
+    # (engine_o_sustainment); the first is a subclass of the second, so it is one part seen
+    # twice, not two readings. The chain is read from the ontology (same reach as
+    # `_CLASS_CHAIN_CYPHER`) ONLY when more than one class is present. A graph failure leaves
+    # `_chains` empty: nothing narrows and today's `ambiguous_in_domain` stands, with the
+    # axis status on it saying the read was unavailable.
+    _classes = sorted({c.class_uri for c in candidates if c.class_uri})
+    _chains, _axis_status, _axis = {}, "not_needed", None
+    if len(_classes) > 1:
+        _chains, _axis_status = await _read_class_chains(_classes)
+        candidates, _axis = _ir_narrow_to_most_specific(candidates, _chains, identifier)
+
     # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
     #
     # The scoping above removes the CROSS-domain override. It cannot help when both
@@ -2707,7 +2723,8 @@ async def _resolve_instance(
         f"demoted={[d.get('provider') for d in demoted]} "
         f"matched={_matched[:12]}{f' (+{len(_matched) - 12} more)' if len(_matched) > 12 else ''} "
         f"namespace_refused={[(c.provider, c.label) for c in _ns_refused]} "
-        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} }",
+        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} } "
+        f"axis={_axis_status}:{(_axis or {}).get('kept_class')}",
         flush=True,
     )
     if len(_claimants) > 1 and len(_subjects) > 1:
@@ -2716,6 +2733,7 @@ async def _resolve_instance(
             "instance_match": "ambiguous_in_domain",
             "instance_n": len(_above),
             "instance_asked_domains": sorted(_asked),
+            "instance_class_axis_status": _axis_status,
             # Named so the caller can FORM the question. A refusal that withholds the
             # competing readings is a dead end wearing a refusal's clothes — the same
             # defect as a slot refusal that will not say what a valid value looks like.
@@ -2739,8 +2757,11 @@ async def _resolve_instance(
         # token NAMES any of them, which is what let `cage` win. See the segment
         # specificity gate in instance_resolution.py.
         identifier=identifier,
+        class_chains=_chains,
     )
     provenance = dict(decision.provenance)
+    if _axis is not None:
+        provenance.setdefault("instance_class_axis", _axis)
     if demoted:
         # Recorded rather than silent: "nobody knew this name" and "somebody knew it, in
         # another domain" are different answers and the trace must distinguish them.
@@ -2958,6 +2979,26 @@ async def _attach_class_chains(candidates: list) -> list:
     uris = sorted({str(c.get("class_uri")) for c in out if isinstance(c, dict) and c.get("class_uri")})
     if not uris or not _NEO4J_DRIVER:
         return out
+    chains, _status = await _read_class_chains(uris)
+    for c in out:
+        if not isinstance(c, dict) or not c.get("class_uri"):
+            continue
+        chain = chains.get(str(c["class_uri"]))
+        if chain:
+            c["class_chain"] = list(chain)
+    return out
+
+
+async def _read_class_chains(uris) -> tuple[dict[str, list[str]], str]:
+    """One batched `_CLASS_CHAIN_CYPHER` read: class -> [itself, then its ancestors].
+
+    Returns `(chains, "read")`, or `({}, "unavailable")` when there is no driver or the query
+    raises (one line naming the exception type). NEVER RAISES. A class with no node is simply
+    absent from `chains`; nothing is invented.
+    """
+    uris = sorted({str(u) for u in uris if u})
+    if not uris or not _NEO4J_DRIVER:
+        return {}, "unavailable"
 
     def _run() -> dict:
         with _NEO4J_DRIVER.session() as session:
@@ -2965,19 +3006,16 @@ async def _attach_class_chains(candidates: list) -> list:
             return {str(r["uri"]): [str(u) for u in (r["chain"] or []) if u] for r in rows}
 
     try:
-        chains = await asyncio.to_thread(_run)
+        raw = await asyncio.to_thread(_run)
     except Exception as exc:  # noqa: BLE001
         print(f"[Engine O] class-chain lookup failed ({type(exc).__name__}) — "
               f"candidates go out without class_chain")
-        return out
-    for c in out:
-        if not isinstance(c, dict) or not c.get("class_uri"):
-            continue
-        chain = chains.get(str(c["class_uri"]))
+        return {}, "unavailable"
+    chains: dict[str, list[str]] = {}
+    for own, chain in raw.items():
         if chain:
-            own = str(c["class_uri"])
-            c["class_chain"] = [own] + [u for u in chain if u != own]
-    return out
+            chains[own] = [own] + [u for u in chain if u != own]
+    return chains, "read"
 
 
 def _unserved_subject_msg(identifier: str, resolved_uri: str) -> str:
@@ -4800,6 +4838,18 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 "score": prov.get("instance_score", 0.0),
             }]
 
+        # Ruling 3: the chain rides on each candidate so the pure consumer can admit a subclass.
+        # Attached HERE (once), before the referent compares below, which read it.
+        cands = await _attach_class_chains(cands)
+
+        def _in_referent(c: dict) -> bool:
+            # RULED 2026-10-15: a candidate of a SUBCLASS of the referent is the referent's
+            # kind. `class_chain` is [own class, ancestors]; absent, only the exact compare.
+            return bool(referent) and (
+                str(c.get("class_uri") or "") == referent
+                or referent in (c.get("class_chain") or [])
+            )
+
         # TYPE-CHECKED AGAINST THE SLOT'S DECLARED CLASS. A name can resolve perfectly and
         # still be the wrong KIND of thing: "the ERP Modernization project" resolves to
         # initiative I1, and `project_id` wants a Project. Filling it would be a resolution
@@ -4829,12 +4879,34 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # empty it for the case that most needs one; this filters only the ANSWER. Show
         # everything by that name; bind the kind that was asked for.
         _referent_bound = False
+        # The winner is already the referent's kind when its class IS the referent or its chain
+        # holds it (a SafetyCriticalItem for a Component slot). Computed ONCE: a winner in the
+        # referent must never be re-picked by the referent pass below (a silent swap of decide()'s
+        # choice for another instance).
+        _resolved_in_referent = bool(resolved_id and referent) and (
+            resolved_class == referent
+            or any(c.get("instance_id") == resolved_id and referent in (c.get("class_chain") or [])
+                   for c in cands if isinstance(c, dict))
+        )
         if referent and cands:
             _same_class = [
                 c for c in cands
-                if str(c.get("class_uri") or "") == referent and c.get("instance_id")
+                if _in_referent(c) and c.get("instance_id")
             ]
-            if _same_class and (not resolved_id or resolved_class != referent):
+            if _same_class and (not resolved_id or not _resolved_in_referent):
+                _top_score = max(float(c.get("score") or 0.0) for c in _same_class)
+                _tied_ids = {
+                    c.get("instance_id") for c in _same_class
+                    if abs(float(c.get("score") or 0.0) - _top_score) <= 1e-9
+                }
+                if len(_tied_ids) > 1:
+                    # RULED 2026-10-15: THE REFERENT BIND MUST NOT BREAK A TIE. Two distinct
+                    # instances sharing the top score is an ask; `max` would pick the first
+                    # by list order. Nothing binds, `cands` stays the menu.
+                    resolved_id = None
+                    outcome = "ambiguous_in_class"
+                    _same_class = []
+            if _same_class and (not resolved_id or not _resolved_in_referent):
                 _pick = max(_same_class, key=lambda c: float(c.get("score") or 0.0))
                 _slots_logger.info(
                     "fill_slots: %s.%s bound %s from the slot's referent %s "
@@ -4858,7 +4930,12 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 # The fact still travels, as its own field, where a reader can act on it
                 # without any partition having to recognise it.
 
-        if resolved_id and referent and resolved_class and resolved_class != referent:
+        # `_resolved_in_referent` (above) admits a winner whose class_chain contains the referent;
+        # with no chain, the exact compare as before. A referent pick that bound a candidate sets
+        # resolved_class = referent, so recompute for the guard.
+        _resolved_in_referent = _resolved_in_referent or resolved_class == referent
+        if (resolved_id and referent and resolved_class and resolved_class != referent
+                and not _resolved_in_referent):
             _slots_logger.warning(
                 "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
                 request.verb_iri, name, spoken_value, resolved_id, resolved_class, referent,
@@ -4871,9 +4948,6 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             # either of those "wrong class" would make the vocabulary lie to keep its size.
             # Flagged to the elicitation lane as an addition, not smuggled in.
             outcome = "wrong_class"
-
-        # Ruling 3: the chain rides on each candidate so the pure consumer can admit a subclass.
-        cands = await _attach_class_chains(cands)
 
         if resolved_id:
             accepted[name] = resolved_id

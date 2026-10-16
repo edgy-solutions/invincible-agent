@@ -213,9 +213,13 @@ def resolve(identifier: str, class_uri: Optional[str] = None) -> List[Dict[str, 
                     "instance_id": m["identifier"],
                     "label": m["label"],
                     "score": score,
+                    "matched_on": "",  # the id tier does not say which field matched
                 })
-    # A CSI is also spoken by its part number. Same candidate shape as an id hit.
+    # A CSI is also spoken by its part number. Same candidate shape as an id hit. `matched_on`
+    # names the part number, so engine-o's specificity gate sees the name that matched (the
+    # label "PN-8802 -- ... seal kit." ends in `kit`). lane/74, 2026-10-16.
     pn = _part_number_hits(identifier)
+    pn_of = {c.csi_id: c.part_number for c in CRITICAL_ITEMS}
     for cls, members in _members().items():
         if class_uri and class_uri != cls:
             continue
@@ -228,8 +232,11 @@ def resolve(identifier: str, class_uri: Optional[str] = None) -> List[Dict[str, 
             have = next((c for c in out if c["instance_id"] == m["identifier"]), None)
             if have is None:
                 out.append({"class_uri": cls, "instance_id": m["identifier"],
-                            "label": m["label"], "score": score})
+                            "label": m["label"], "score": score,
+                            "matched_on": pn_of.get(m["identifier"], "")})
             else:
+                if score > have["score"]:
+                    have["matched_on"] = pn_of.get(m["identifier"], "")
                 have["score"] = max(have["score"], score)
     out.sort(key=lambda c: (-c["score"], c["instance_id"]))
     return out

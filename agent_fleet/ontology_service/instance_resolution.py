@@ -40,12 +40,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 
 #: THE `instance_match` VOCABULARY, enumerated here because consumers match on it.
 #:
-#:     exact | fuzzy | mixed | not_specific | empty | no_providers | timeout
+#:     exact | fuzzy | mixed | not_specific | empty | no_providers | timeout | ambiguous_in_class
 #:
 #: ONE VALUE IS PRODUCED OUTSIDE THIS MODULE. `/fill_slots` adds `wrong_class` when a name
 #: resolves cleanly and the winner's class disagrees with the slot's declared `referent` —
@@ -69,6 +69,9 @@ class InstanceCandidate:
     label: str
     score: float
     provider: str = ""
+    #: The string the provider actually matched on, when it is not the id or the label
+    #: (a CSI found by its part number). Optional; the specificity gate also reads it.
+    matched_on: str = ""
 
 
 @dataclass(frozen=True)
@@ -278,6 +281,7 @@ def decide(
     exact_threshold: float = DEFAULT_EXACT_THRESHOLD,
     min_score: float = DEFAULT_MIN_SCORE,
     identifier: str = "",
+    class_chains: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> InstanceResolutionDecision:
     """Apply the decision table to a candidate list."""
     above_floor = [c for c in candidates if c.score >= min_score]
@@ -304,9 +308,13 @@ def decide(
         )
 
     if identifier:
-        specific = [c for c in above_floor
-                    if passes_segment_specificity(identifier, c.instance_id)
-                    or passes_segment_specificity(identifier, c.label)]
+        # RULED 2026-10-16: the gate also sees the name that actually matched. The 2026-08-30
+        # rule is unchanged (a WHOLE segment, never a substring); only the set of strings it
+        # is applied to grows. `matched_on` is trusted exactly as `label` is: both are the
+        # provider's word. The case: CSI-5002 matched by part number "PN-8802" while its label
+        # ends "seal kit." -- the label's terminal name is "kit", so the gate refused a
+        # candidate the identifier named exactly.
+        specific = [c for c in above_floor if passes_candidate_specificity(identifier, c)]
         if not specific:
             return InstanceResolutionDecision(
                 subject_uri=None,
@@ -335,8 +343,126 @@ def decide(
             },
         )
 
+    # RULED 2026-10-15 (Chris): CROSS-CLASS ON ONE rdfs:subClassOf CHAIN -> THE MOST SPECIFIC
+    # CLASS WINS. PN-8802 is safety#SafetyCriticalItem (CSI-5002) AND pcn#Component, and
+    # SafetyCriticalItem rdfs:subClassOf pcn:Component: the same part, seen twice. The
+    # ruling's "when both carry the verb asked" needs no verb parameter: the subclass
+    # inherits every verb of its ancestor through subClassOf* (find_compatible_verbs walks
+    # upward), so the narrower class always carries what the broader one does. Classes NOT
+    # on one chain (or whose chain could not be read: `class_chains` empty) are untouched
+    # and fall through to today's `mixed` / `ambiguous_in_domain`.
+    axis = None
+    if class_chains:
+        above_floor, axis = narrow_to_most_specific(above_floor, class_chains, identifier)
+
+    decision = _rank_and_decide(above_floor, exact_threshold)
+    if axis is not None:
+        decision.provenance["instance_class_axis"] = axis
+    return decision
+
+
+def most_specific_class(
+    classes,
+    chains: Mapping[str, Sequence[str]],
+) -> Optional[str]:
+    """The ONE class C such that every OTHER class in `classes` is in `chains[C]`.
+
+    `chains` maps a class to itself plus its ancestors. None when there are fewer than two
+    distinct classes, when any class lacks a chain, when none qualifies, or when more than
+    one does (a cycle). `""` never qualifies and is never in a chain, so a classless
+    candidate blocks narrowing: the conservative direction.
+    """
+    distinct = set(classes)
+    if len(distinct) < 2:
+        return None
+    if any((not c) or c not in chains for c in distinct):
+        return None
+    winners = [
+        c for c in distinct
+        if all(o == c or o in chains[c] for o in distinct)
+    ]
+    return winners[0] if len(winners) == 1 else None
+
+
+def passes_candidate_specificity(identifier: str, c: InstanceCandidate) -> bool:
+    """The specificity gate for ONE candidate: the identifier names a whole segment of its id,
+    its label, or the string its provider says it matched on."""
+    return (passes_segment_specificity(identifier, c.instance_id)
+            or passes_segment_specificity(identifier, c.label)
+            or bool(c.matched_on and passes_segment_specificity(identifier, c.matched_on)))
+
+
+def narrow_to_most_specific(
+    candidates: list[InstanceCandidate],
+    chains: Mapping[str, Sequence[str]],
+    identifier: str = "",
+) -> tuple[list[InstanceCandidate], Optional[dict]]:
+    """Keep only the most specific class's candidates when the classes share one chain."""
+    classes = {c.class_uri for c in candidates}
+    if len(classes) < 2:
+        return candidates, None
+    kept = most_specific_class(classes, chains)
+    if kept is None:
+        return candidates, None
+    # THE AXIS NEVER NARROWS TO A CLASS THE GATE WILL EMPTY. Measured 2026-10-16: with the
+    # narrowing first, a SafetyCriticalItem whose names the identifier does not segment-match
+    # displaced the Component that does, and the gate then refused the survivor (`not_specific`
+    # where the base answered `ambiguous_in_domain`). The subclass wins only when it has a
+    # candidate the gate keeps; otherwise nothing narrows and the base answer stands.
+    if identifier and not any(
+            c.class_uri == kept and passes_candidate_specificity(identifier, c) for c in candidates):
+        return candidates, None
+    narrowed = [c for c in candidates if c.class_uri == kept]
+    return narrowed, {
+        "kept_class": kept,
+        "dropped_classes": sorted(classes - {kept}),
+        "dropped_n": len(candidates) - len(narrowed),
+    }
+
+
+def _rank_and_decide(
+    above_floor: list[InstanceCandidate], exact_threshold: float
+) -> InstanceResolutionDecision:
+    # The fan-out asks two terms, so one instance can arrive twice: dedupe by
+    # (class, instance) keeping the best score. That is not a tie.
+    best: dict[tuple[str, str], InstanceCandidate] = {}
+    for c in above_floor:
+        k = (c.class_uri, c.instance_id)
+        if k not in best or c.score > best[k].score:
+            best[k] = c
+    above_floor = list(best.values())
     above_floor = sorted(above_floor, key=lambda c: c.score, reverse=True)
     top = above_floor[0]
+
+    # RULED 2026-10-15 (Chris): A SAME-CLASS TIE ASKS. Two or more DISTINCT instance_ids of
+    # ONE class sharing the top score used to take the first silently (exact and single-class
+    # fuzzy branches). Checked BEFORE the exact branch. `subject_uri` is the CLASS on
+    # purpose: the class is decided and /resolve routes on it; only the instance is not.
+    # /fill_slots binds only when `instance_resolved` is true and builds its menu from
+    # `instance_top_candidates`. Cross-class ties of UNRELATED classes are unchanged
+    # (`mixed` / `ambiguous_in_domain`).
+    tied = [c for c in above_floor if abs(c.score - top.score) <= 1e-9]
+    if len({c.instance_id for c in tied}) > 1 and len({c.class_uri for c in tied}) == 1:
+        return InstanceResolutionDecision(
+            subject_uri=top.class_uri,
+            confidence=0.0,
+            provenance={
+                "instance_resolved": False,
+                "instance_match": "ambiguous_in_class",
+                "instance_n": len(above_floor),
+                "instance_class_uri": top.class_uri,
+                "instance_score": top.score,
+                "instance_top_candidates": [
+                    {
+                        "instance_id": c.instance_id,
+                        "class_uri": c.class_uri,
+                        "label": c.label,
+                        "score": c.score,
+                    }
+                    for c in sorted(tied, key=lambda c: c.instance_id)
+                ],
+            },
+        )
 
     if top.score >= exact_threshold:
         return InstanceResolutionDecision(
