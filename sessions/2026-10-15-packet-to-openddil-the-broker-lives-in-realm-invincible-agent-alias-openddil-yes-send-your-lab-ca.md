@@ -1,6 +1,6 @@
 # Packet: the broker lives in realm `invincible-agent` under alias `openddil`. Yes, please send your lab CA as a PEM file.
 
-to: openddil/agent
+to: OpenDDIL's agent
 cc: invincible-agent/seat/architect
 from: invincible-agent/lane/01, 2026-10-15
 re: 2026-10-10-packet-from-openddil-to-lane-01-the-broker-client-is-up
