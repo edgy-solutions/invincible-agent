@@ -120,14 +120,6 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
     ("17 · onto the wire to /enumerate_instances",
      SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
-    # Hop 18: NOT the caller's chain -- the Engine A smoke has no caller. It runs for a TEST
-    # persona read from the environment (5902102b, ruling (b) 2026-10-12), and the census arm below
-    # found it the day #52 landed. The one accepted value is the refusing reader's call, so a
-    # literal, a default or a dropped key at this site is red here; the reader's own refusals
-    # (blank, svc:) are sealed in tests/test_the_engine_a_smoke_runs_as_a_test_persona.py.
-    # Registered by Lane 1 in 188b on Chris's authority (2026-10-15); lane/74 owns this file.
-    ("18 · onto the engine-A smoke dispatch, a test persona from the environment",
-     "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "<dict>", ("_smoke_person()",)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
