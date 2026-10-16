@@ -45,6 +45,13 @@ fix, cortex e1b94e2. Roll. Report line on master. Tell 74/saf/gov."
   Your condition for keeping them on was one confirmed live correction, and none exists.
 - **A pre-existing red, not 188b's:** `test_citation_paths` was red on master before 188b, and is
   unchanged by it.
+- **A red that IS 188b's, and that my gate missed.** lane/gov's ratchet
+  `test_the_stub_harness_puts_sys_modules_back.py` fails on `76af7b83` (1 failed, 23 passed). The
+  one file it names is #51's `tests/routing/test_one_identifier_namespace_one_claimant.py`, lines
+  170 and 174: a mesh_registrar loader that writes `sys.modules` with no put-back. It is a test
+  hygiene red, not a runtime one: nothing that rolled changes. #51 added a test file, and the
+  ratchet scans every test file, so it belonged in the 188b gate and was not there. The 189 gate
+  caught it. The fix is lane/74's file, and the seal is gov's. Both are told.
 
 ## The manufacturing-stewards group: synced live, and it survived this roll
 
