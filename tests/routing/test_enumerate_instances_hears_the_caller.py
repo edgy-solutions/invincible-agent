@@ -113,14 +113,14 @@ def test_EVERY_ENUMERATE_PROVIDER_IS_TOLD_THE_PERSON_AND_THE_GRANT(eo):
             "the caller displaced the request it rides with", url, body)
 
 
-def test_CONTROL_NO_PERSON_IS_SENT_AS_AN_EXPLICIT_EMPTY(eo):
-    """Differs from the arm above only in the caller. Both keys still go: a gating provider must
-    be able to tell "nobody" from an asker that predates this wire."""
-    asyncio.run(eo.enumerate_instances(eo.EnumerateInstancesRequest(class_uri=CLASS)))
-    assert eo._test_posts
-    for url, body in eo._test_posts:
-        assert body.get("user_email", None) == "", (url, body)
-        assert body.get("entitled_domains", None) == [], (url, body)
+def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NOTHING_IS_SENT(eo):
+    """Differs from the arm above only in the caller. Was: "nobody" forwarded as an explicit
+    empty. Now (2026-10-16) a caller with no person is refused 422 `no_person` before any
+    provider is asked; the refusal shape is sealed in
+    test_enumerate_instances_refuses_a_caller_who_is_not_a_person.py."""
+    resp = asyncio.run(eo.enumerate_instances(eo.EnumerateInstancesRequest(class_uri=CLASS)))
+    assert resp.status_code == 422
+    assert eo._test_posts == []
 
 
 def test_THE_ROUTER_RECEIVES_BOTH_FIELDS_AND_AN_OLD_CALLER_STILL_PARSES():

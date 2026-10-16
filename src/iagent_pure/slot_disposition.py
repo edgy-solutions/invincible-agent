@@ -168,6 +168,9 @@ _FT_BY_OUTCOME = {
     "fuzzy": FT_NO_PROVIDER,
     "mixed": FT_NO_PROVIDER,
     "ambiguous_in_domain": FT_NO_PROVIDER,
+    # RULED 2026-10-15: a same-class tie is an ask; reaches here with an empty menu only when
+    # every tied candidate is out of the slot's class.
+    "ambiguous_in_class": FT_NO_PROVIDER,
 }
 FREE_TEXT_REASONS = frozenset({
     FT_TOO_MANY, FT_UNSUPPORTED, FT_NO_PROVIDER, FT_NO_REFERENT, FT_CLASS_WIDE,

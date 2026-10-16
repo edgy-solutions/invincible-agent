@@ -60,6 +60,21 @@ WHERE owner IS NOT NULL OR ($is_delegate AND a.seeded_by = $authz_id)
 """ + _RETURN
 
 
+# The artifacts of ONE case, with exactly the fields `is_entitled` decides on (`is_owner`,
+# `seeded_by`) plus what GET /ingest/{id}/status lists (`kind`, `released_at`). The caller filters
+# with `is_entitled`; this statement scopes nothing by caller on its own.
+CASE_ARTIFACTS_CYPHER = """
+MATCH (a:AnswerArtifact {case_id: $case_id})
+OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
+RETURN a.id          AS id,
+       a.kind        AS kind,
+       a.released_at AS released_at,
+       owner IS NOT NULL AS is_owner,
+       a.seeded_by   AS seeded_by
+ORDER BY id
+"""
+
+
 def _as_dict(rec: Any) -> dict:
     return rec.data() if hasattr(rec, "data") else dict(rec)
 

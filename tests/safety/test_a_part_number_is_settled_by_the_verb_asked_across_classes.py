@@ -117,6 +117,21 @@ def test_a_component_with_records_and_no_listing_returns_its_records(monkeypatch
     assert out["refused"] is False and out["failure_count"] == 1, out
 
 
+def test_the_router_hands_over_a_component_iri_and_the_part_number_is_its_last_segment():
+    """MEASURED LIVE 2026-10-16 (rev 193): 'http://internal/components/5530-184' reached the verb as
+    part_number and was refused unknown_part. The IRI and the bare number must answer the same."""
+    iri = measures.what_failed_on_this_part(part_number="http://internal/components/5530-184")
+    bare = measures.what_failed_on_this_part(part_number="5530-184")
+    assert iri == bare and iri["outcome"] == "no_failures_recorded" and iri["part_number"] == "5530-184"
+    listed = measures.what_failed_on_this_part(part_number="http://internal/components/PN-8801")
+    assert listed["refused"] is False and listed["failure_count"] == 2, listed
+
+
+def test_CONTROL_a_string_that_is_no_part_number_is_still_unknown_with_or_without_an_iri():
+    out = measures.what_failed_on_this_part(part_number="http://internal/components/!! no ??")
+    assert out["outcome"] == "unknown_part"
+
+
 def test_the_census_reader_reads_the_refusal_it_is_now_sent():
     """The reader takes a refusal only as `refused: true` plus a string `outcome`."""
     from src.iagent_pure import walk_census as wc

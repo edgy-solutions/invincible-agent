@@ -64,7 +64,8 @@ def test_CONTROL_the_fixture_alone_no_longer_serves_the_verb(monkeypatch):
     assert [r for r in entities.FAILURE_RECORDS if r.part_number == PART], "fixture assumption"
     _serve(monkeypatch, dbl=Double([]))
     out = measures.what_failed_on_this_part(part_number=PART)
-    assert out["failures"] == [] and out["failure_count"] == 0 and out["refused"] is False
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded"
+    assert "failures" not in out
 
 
 def test_the_measures_module_no_longer_holds_the_failure_fixture():

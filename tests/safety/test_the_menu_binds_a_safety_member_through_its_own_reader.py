@@ -64,14 +64,6 @@ def test_my_side_claims_haz_1004_exactly_once():
     assert [(c["instance_id"], c["class_uri"]) for c in cands] == [("HAZ-1004", HAZARD)]
 
 
-@pytest.mark.skip(reason=(
-    "BLOCKED on lane/74 (owns engine_o_sustainment): it also claims HAZ-1004 as a "
-    "pcn#Component, so fill_slots refuses the bind as ambiguous_in_domain. RULED (architect, "
-    "Q3): HAZ-* belongs to the safety engine, an identifier namespace is claimed by exactly one "
-    "engine, and engine-o stops matching HAZ-. Packet: 2026-10-12-packet-to-74-engine-o-"
-    "sustainment-resolver-stops-matching-haz-ruled-and-a-namespace-field-ask.md. Unskip when "
-    "engine-o lands it: fan out _call_resolver over every mesh:resolveInstance provider and "
-    "assert exactly one candidate overall."
-))
-def test_haz_1004_resolves_to_exactly_one_candidate_across_the_fan_out():
-    raise AssertionError("unreachable until the other claimant is named and fixed")
+# The cross-engine HAZ-1004 test (engine-o's HAZ- exclusion is on master) lives in
+# test_id_namespaces_are_declared_by_the_engine_that_owns_them.py, where it reads the engine's own
+# registration.

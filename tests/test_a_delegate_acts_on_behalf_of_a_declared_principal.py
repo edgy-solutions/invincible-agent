@@ -624,7 +624,7 @@ class _ChainCtx:
     async def get(self, k, **_kw):
         return self.state.get(k)
 
-    async def run(self, name, fn):
+    async def run(self, name, fn, **_opts):
         assert name not in self.runs, f"{self._key} journalled {name!r} twice"
         self.runs.append(name)
         return fn()

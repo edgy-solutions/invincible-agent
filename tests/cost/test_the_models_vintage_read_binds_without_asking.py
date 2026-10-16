@@ -93,7 +93,8 @@ def _fill(eo, monkeypatch, slots: dict):
     req = eo.FillSlotsRequest(
         query="did the rates move against the estimate on lot 3, using the 2021-02-01 vintage",
         verb_iri=VERB, declarations=json.dumps(slots_for(FN)),
-        acting_domains=["PRODUCTION_COST"], subject_uri="")
+        acting_domains=["PRODUCTION_COST"], subject_uri="",
+        user_email="tester@example.com")
     return asyncio.run(eo.fill_slots(req))
 
 

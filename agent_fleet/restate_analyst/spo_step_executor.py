@@ -65,6 +65,7 @@ __all__ = [
     "check_can_invoke",
     "execute_direct_call",
     "execute_declared_query",
+    "INTERNAL_WRITE_CAPABILITIES",
 ]
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
@@ -72,10 +73,18 @@ TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "")
 STEP_HTTP_TIMEOUT = float(os.getenv("STEP_HTTP_TIMEOUT", "1800"))
 
 # A direct_call step with no human `user_jwt` attached is machine-initiated by construction
-# (item B, 2026-10-03): it acts under the case runner's OWN delegate identity rather than being
-# sent unauthenticated. `on_behalf_of` is carried separately, by whoever constructs the
-# Initiator at the write boundary — this identity only says WHICH SERVICE is calling.
+# (item B, 2026-10-03). Its credential on the wire is the case runner's OWN minted token
+# (TRANSPORT only). Who the GATE asks about depends on the CAPABILITY (ruling 2026-10-16):
+# a mesh verb gates on the run's acting identity (person, else the event's `dropped_by`), as a
+# declared query does; the runner identity below is the gate subject ONLY for the internal
+# writes named in INTERNAL_WRITE_CAPABILITIES. `on_behalf_of` is carried separately, by whoever
+# constructs the Initiator at the write boundary.
 CASE_RUNNER_AUTHZ_ID = "svc:case-runner"
+
+# The item-B exception, and nothing wider: capabilities that are the case runner's own internal
+# writes. Every other capability (every `mesh:*` verb, any undeclared one) is NOT in this set and
+# gates on the acting identity. Decided on the capability string only, never on the endpoint.
+INTERNAL_WRITE_CAPABILITIES = frozenset({"origin.write"})
 
 
 class StepFailAndRelease(Exception):
@@ -297,10 +306,27 @@ def execute_direct_call(
     """TRANSITIONAL direct_call. GATE FIRST: Topaz ``can_invoke(caller, capability)``
     BEFORE the POST — ungranted → fail-and-release (never dispatch an unauthorized
     capability). Then POST the declared ``endpoint`` (behavior-identical to today's
-    service_task; a 401/403 there also fails-and-releases)."""
+    service_task; a 401/403 there also fails-and-releases).
+
+    GATE SUBJECT (ruling 2026-10-16), decided on the capability string alone: with a
+    ``user_jwt``, or for any capability outside ``INTERNAL_WRITE_CAPABILITIES`` (every mesh
+    verb), it is the run's acting identity, and a blank one is denied, never replaced by the
+    runner's; only an internal write with no ``user_jwt`` runs as ``svc:case-runner``.
+    The minted case-runner bearer is TRANSPORT only, never the gate subject."""
     capability = step.get("capability") or ""
     user_jwt = identity.get("user_jwt")
-    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
+    if not user_jwt and capability in INTERNAL_WRITE_CAPABILITIES:
+        caller = CASE_RUNNER_AUTHZ_ID  # the 10-03 B exception: internal writes only
+    else:
+        # A mesh VERB gates on the acting identity (person, or the event's `dropped_by`), with
+        # or without a user_jwt; a blank one is denied, never replaced by the runner's.
+        caller = (identity.get("authz_id", "") or "").strip()
+        if not caller:
+            raise StepFailAndRelease(
+                f"direct_call {step.get('id')!r}: no acting identity for capability "
+                f"{capability!r} — failing and releasing.",
+                status_code=403,
+            )
     if not check_can_invoke(capability, caller, topaz_url=topaz_url):
         raise StepFailAndRelease(
             f"caller {caller!r} is not authorized (can_invoke) for capability "

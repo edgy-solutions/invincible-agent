@@ -205,6 +205,9 @@ restate:
     size: 5Gi
   ingressPort: 8080
   adminPort: 9070
+  # Days Restate keeps a finished case workflow (engine-a reads it as CASE_WORKFLOW_RETENTION_DAYS).
+  # Restate's own default is 1 day. The durable record is the Postgres case summary; this is the belt.
+  caseWorkflowRetentionDays: 30
 
 # Use this when restate.enabled=false (bring your own Restate)
 externalRestate:

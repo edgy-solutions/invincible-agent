@@ -184,6 +184,12 @@ def test_a_caller_who_may_see_nothing_draws_the_renderers_refusal_not_a_zero_row
     pf.install(monkeypatch, caller=pf.ALICE, members={})
     for fn in _CALLS:
         out = getattr(measures, fn)(**_CALLS[fn])
+        if fn == "what_failed_on_this_part":
+            # no visible failure = a resolved part with no failures: the named refusal (ruled
+            # 2026-10-16), which carries no rows for a renderer to draw at all.
+            assert out["refused"] is True and out["outcome"] == "no_failures_recorded"
+            assert "rows" not in out
+            continue
         assert out["refused"] is False and out["rows"] == []
         assert _project(BOUND[_FRACAS[fn]]["archetype"], out) is None
 

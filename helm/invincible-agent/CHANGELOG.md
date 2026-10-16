@@ -1,11 +1,12 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.51 — 2026-10-16
+## 0.4.52 — 2026-10-16
 
-Renumbered again, to 0.4.51: rev 189 rolled as 0.4.49 and #41 merged as 0.4.50. Before that it
-was 0.4.49, renumbered from 0.4.41 when master was at 0.4.46, lane/01-broker-flip (#41) held 0.4.47
-and lane/01-rev189 held 0.4.48. On 2026-10-10 it was renumbered from 0.4.40, when rev 186 took
-0.4.39 and lane/01-oidc-roundtrip moved to 0.4.40. Content is unchanged by either renumber.
+Renumbered again, to 0.4.52: roll 190 took 0.4.51. Before that it was 0.4.51 (rev 189 rolled as
+0.4.49 and #41 merged as 0.4.50), and before that 0.4.49, renumbered from 0.4.41 when master was
+at 0.4.46, lane/01-broker-flip (#41) held 0.4.47 and lane/01-rev189 held 0.4.48. On 2026-10-10 it
+was renumbered from 0.4.40, when rev 186 took 0.4.39 and lane/01-oidc-roundtrip moved to 0.4.40.
+Content is unchanged by any renumber.
 
 NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
 OFF in the sandbox; nothing rolled.
@@ -22,6 +23,17 @@ OFF in the sandbox; nothing rolled.
 - Sandbox `networkPolicy.directCallers`: engine-o gains postgresql, keycloak, central-gateway,
   dagster-webserver; cortex-bff gains weaviate, fuseki, topaz. Each carries its `via` key and the
   2026-12-14 expiry. See docs/measurements/2026-10-10-the-gate-keeps-cortex-bff-and-engine-o.md.
+
+## 0.4.51 — 2026-10-16
+
+A finished case's Restate workflow is kept 30 days, not Restate's default 1.
+
+### Added
+
+- **`restate.caseWorkflowRetentionDays`** (default `30`). `templates/engines.yaml` renders it into the
+  engine-a Deployment as `CASE_WORKFLOW_RETENTION_DAYS`; the runner puts it on its `run` handler as
+  `workflowCompletionRetention` in discovery. The runner refuses to import below 1 day. Retention is
+  fixed when the handler registers: restate-init re-registers engine-a with `force`, so a roll applies it.
 
 ## 0.4.50 — 2026-10-16
 

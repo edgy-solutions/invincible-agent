@@ -566,18 +566,12 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     it, from EVERY platform (FRACAS's "program") and EVERY system of record, not just the one the
     caller happened to ask from.
 
-    THE INPUT IS A SAFETY-CRITICAL ITEM, NOT A BARE STRING. `part_number` is checked against
-    `CRITICAL_PART_NUMBERS`, the same derived set `assessDeferralRisk` checks, because the verb's
-    declared input class is `safety:SafetyCriticalItem` — an already-declared, engine-owned class,
-    not a new "Part" class invented or mis-cited against a standard that does not define one
-    (ADR-0007). A part number outside that set is UNKNOWN to this verb, the same way an unknown
-    work order is unknown to `assessDeferralRisk`, and refuses for the same reason: answering
-    "no failures" for a part this verb cannot even identify would be indistinguishable from a
-    part it correctly identified and found clean.
-
-    "NO FAILURES" IS A NAMED, NON-REFUSED ANSWER, never conflated with "unknown part". A critical
-    item that has never failed returns an explicit empty `failures` list — the check ran and found
-    nothing, which is a different fact from the check never running at all.
+    THE INPUT IS ANY COMPONENT (RULED 2026-10-15/16). The verb is registered on pcn:Component and
+    on safety:SafetyCriticalItem; the critical list is not a gate. A part with visible records
+    gets them. A well-formed part with none REFUSES `no_failures_recorded` (listed or not), and a
+    string that is not shaped like a part number refuses `unknown_part` (a SHAPE check: whether a
+    well-formed string is a known component is engine-o's resolver's fact, not this engine's).
+    Neither refusal is a clean bill, and neither opens a task.
 
     CITATIONS, NOT NARRATIVE (ADR-0051 §5's CLEARANCE-BOUNDED discipline, carried over from
     `draft_risk_assessment`). Every record names the system of record it came from and a citation
@@ -604,11 +598,19 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     # (`refused`, `outcome`, the id field, `reason`, no task). The census reader reads a refusal
     # ONLY as `refused: true` plus a string `outcome`.
     #
-    #   unknown_part         the string is not a part number at all (nothing could resolve it).
-    #   no_failures_recorded the part is well-formed, no source this engine reads holds a failure
-    #                        for it, and it is not a listed critical item (a listed item with none
-    #                        keeps its explicit empty set below: the check ran and found nothing).
+    #   unknown_part         the string is not shaped like a part number. THIS IS A SHAPE CHECK, not
+    #                        "resolves to nothing": whether a well-formed string is a known component
+    #                        is engine-o's resolver's fact, not this engine's (only listed critical
+    #                        items and parts a failure source holds are known here).
+    #   no_failures_recorded the part is well-formed and no source holds a visible failure for it,
+    #                        whether it is a listed critical item or a plain component.
     part_number = part_number.strip()
+    # MEASURED LIVE 2026-10-16 (rev 193): when the router binds this verb through pcn:Component it
+    # hands over the component's INSTANCE IRI ('http://internal/components/5530-184'), not the bare
+    # part number, and the shape check below refused it as unknown_part. The part number is the
+    # IRI's last segment; a bare number is unchanged.
+    if "://" in part_number:
+        part_number = re.split(r"[/#]", part_number.rstrip("/#"))[-1]
     if not _PART_NUMBER_SHAPE.fullmatch(part_number):
         return {
             "refused": True,
@@ -657,14 +659,14 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
         for i, (mode, rs) in enumerate(ordered, start=1)
     ]
 
-    if not records and part_number not in CRITICAL_PART_NUMBERS:
+    if not records:
         return {
             "refused": True,
             "outcome": "no_failures_recorded",
             "part_number": part_number,
             "reason": (
-                f"no failures recorded for part '{part_number}': the part is not on the "
-                "safety-critical list and no source this engine reads holds a failure for it"
+                f"no failures recorded for part '{part_number}': no source this engine reads "
+                "holds a failure for it"
             ),
         }
 
