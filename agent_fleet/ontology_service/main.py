@@ -2172,6 +2172,8 @@ try:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 except ImportError:
     from instance_resolution import (  # noqa: E402
@@ -2182,6 +2184,8 @@ except ImportError:
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 
 # Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
@@ -2203,7 +2207,8 @@ RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
   coalesce(r.provider, type(r)) AS provider,
   r.timeout_s      AS timeout_s,
-  r.domains        AS domains
+  r.domains        AS domains,
+  r.id_namespaces  AS id_namespaces
 """
 
 #: WHO CAN LIST THE MEMBERS OF A CLASS. Mirrors the resolver discovery above, because the
@@ -2400,6 +2405,9 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
             "provider": r.get("provider") or "unknown",
             "timeout_s": timeout_s,
             "domains": r.get("domains") or [],
+            # The identifier namespaces this provider claims (ruled 2026-10-12). Read through
+            # the decoder, never `list(...)`: a string here would split into one-letter prefixes.
+            "id_namespaces": _ir_declared_namespaces(r.get("id_namespaces")),
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
     _INSTANCE_RESOLVERS_CACHE_TS = now
@@ -2633,6 +2641,27 @@ async def _resolve_instance(
             continue
         candidates.extend(o.candidates)
 
+    # SAY WHICH NAMES MATCHED, not just how many. RULED 2026-10-12 after HAZ-1004: this line
+    # said `candidates=3` and nothing else, so "which component did engine-o match?" could only
+    # be answered by re-asking the provider by hand. Bounded, because a bare fragment once drew
+    # twenty part numbers.
+    _matched = [(c.provider, c.label, round(float(c.score), 3)) for c in candidates]
+
+    # ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 -- the measurement and the rule
+    # are in instance_resolution.refuse_cross_namespace. Applied AFTER domain scoping and BEFORE
+    # the claimant set is taken, because the defect is a second claimant: two part numbers
+    # matched 'HAZ-1004' on a difflib ratio and made `ambiguous_in_domain` refuse a hazard
+    # Engine S resolves exactly. The namespaces come from the providers' own registrations; a
+    # provider that declared none claims nothing and loses nothing.
+    candidates, _ns_refused, _ns_claimed = _ir_refuse_cross_namespace(
+        candidates, terms=_lookup_terms, resolvers=resolvers)
+    _ns_contested = sorted(p for p, o in _ns_claimed.items() if len(o) > 1)
+    if _ns_contested:
+        # The ruling is ONE engine per namespace. Two declarers is a registration defect; both
+        # are kept as owners rather than one chosen by registry order, and the conflict is named.
+        print(f"mesh:resolveInstance: CONTESTED id namespace(s) {_ns_contested}: "
+              f"{ {p: sorted(_ns_claimed[p]) for p in _ns_contested} }", flush=True)
+
     # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
     #
     # The scoping above removes the CROSS-domain override. It cannot help when both
@@ -2674,7 +2703,10 @@ async def _resolve_instance(
         f"mesh:resolveInstance fan-out for {identifier!r}: terms={_lookup_terms} "
         f"candidates={len(candidates)} claimants={sorted(_claimants)} "
         f"subjects={sorted(_subjects)} asked_domains={sorted(_asked)} "
-        f"demoted={[d.get('provider') for d in demoted]}",
+        f"demoted={[d.get('provider') for d in demoted]} "
+        f"matched={_matched[:12]}{f' (+{len(_matched) - 12} more)' if len(_matched) > 12 else ''} "
+        f"namespace_refused={[(c.provider, c.label) for c in _ns_refused]} "
+        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} }",
         flush=True,
     )
     if len(_claimants) > 1 and len(_subjects) > 1:
@@ -2988,6 +3020,31 @@ class EnumerateInstancesRequest(BaseModel):
             "A provider that ignores them answers class-wide and says so via scoped_by."
         ),
     )
+    # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
+    # so a provider gates both verbs on one pair of fields. Forwarded to every provider AND gated
+    # on here, after the fan-out, by `_filter_sustainment_candidates` -- the same origin verdict
+    # `/resolve_instance` and `/notice_parts` apply (ruled 2026-10-10, (d)). Defaulted for the same
+    # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
+                                   body: dict) -> tuple[list[dict], int]:
+    """THE SAME GATE `/resolve_instance` RUNS, applied after the enumerate fan-out to a provider's
+    `members` body. Returns (kept, count). The count is the provider's own minus what was
+    withheld, floored at len(kept), so it never reveals how many were withheld. A lookup failure
+    is the 503 that route answers, never an unfiltered list."""
+    members = body["members"]
+    try:
+        kept = await _filter_sustainment_candidates(
+            members, user_email=request.user_email or "",
+            entitled_domains=list(request.entitled_domains or []))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    provider_count = int(body.get("count") or len(members))
+    return kept, max(len(kept), provider_count - (len(members) - len(kept)))
 
 
 @app.post("/enumerate_instances")
@@ -3059,8 +3116,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
                     # menu from this". Sent unconditionally — an empty dict is the same request
                     # this endpoint made before the field existed, so a provider still on the
                     # old shape sees no change in behaviour, only an extra key.
+                    # THE CALLER TRAVELS ON EVERY POST, empty rather than absent when nobody
+                    # was named, so "no caller" reaches a gate as a value it can refuse on.
                     json={"class_uri": request.class_uri,
-                          "bound_slots": dict(request.bound_slots or {})},
+                          "bound_slots": dict(request.bound_slots or {}),
+                          "user_email": request.user_email or "",
+                          "entitled_domains": list(request.entitled_domains or [])},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -3080,11 +3141,13 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         # shape therefore behaves correctly here without being changed.
         _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
-            print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']} "
-                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
-            return {"outcome": "members", "members": body["members"],
-                    "count": int(body.get("count") or len(body["members"])),
+            kept, count = await _gate_enumerated_members(request, body)
+            if not kept:  # WITHHELD IS UNKNOWN: as `empty`
+                answered_empty += 1
+                continue
+            print(f"[Engine O] enumerate {request.class_uri} -> members ({len(kept)}) "
+                  f"from {prov['provider']} scoped_by={_scoped_by or '[] (class-wide)'}")
+            return {"outcome": "members", "members": kept, "count": count,
                     "provider": prov["provider"],
                     # WHICH slots, not whether. A provider handed `{lot, category}` that
                     # honours only `lot` produced a list scoped by one of two, and a boolean
@@ -3188,8 +3251,9 @@ def _docs_pool_accepts(referent) -> bool:
 
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
-                           narrowed_by: list[str]) -> dict | None:
-    """Bind `spoken` from the referent's enumeration (asked WITH the bound slots), or None.
+                           narrowed_by: list[str], *, user_email: str = "",
+                           entitled_domains: list[str] | None = None) -> dict | None:
+    """Bind `spoken` from the referent's enumeration (asked WITH the bound slots and the caller), or None.
 
     `scoped_by` IS METADATA, NEVER A PRECONDITION (Q4, ruled 2026-10-12; this relaxes the
     2026-09-16 "never a class-wide list wearing a scoped menu" for the bind as for the menu).
@@ -3200,7 +3264,10 @@ async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
     Exact match only (id, or label case-folded), and exactly one member: this replaces no
     scoring — a near-miss still reaches the fan-out and the ask, where its menu lives.
     """
-    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
+    enum = await enumerate_instances(EnumerateInstancesRequest(
+        class_uri=referent, bound_slots=bound,
+        user_email=user_email, entitled_domains=list(entitled_domains or []),
+    ))
     if enum.get("outcome") != "members":
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
@@ -4648,6 +4715,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
             scoped = await _bind_from_scope(
                 referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+                user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
                 accepted[name] = scoped["instance_id"]

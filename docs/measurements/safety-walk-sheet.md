@@ -680,6 +680,10 @@ move Q2's count of three.
 - **A walk row expects exactly one disposition; Q6/Q7 keep expecting elicitation** while the
   sandbox fixture is the failure source. When Lane 1 sets `FAILURE_SOURCE_CONNECTORS` to real
   connectors, Q6/Q7 are updated in the same roll (architect, 2026-10-10). No rows change now.
+- **Q1: the task existing is the pass (architect, 2026-10-12).** The wire shows it as a
+  `KNOWLEDGE_DOCUMENT` carrying `review_request` (`risk_acceptance_medium:SUSTAINMENT`), not as a
+  task card. Lane 1 reads the `human_tasks` row for `risk-acceptance-HAZ-1003-medium` and confirms
+  exactly one task. This runner reads the artifact, so it sees the request and not the row.
 - **A critical item naming a hazard the plane does not hold is refused**: `assess_deferral_risk`
   returns `refused` / `outcome: unknown_hazard` (with `hazard_id` and `reason`), no `assessment`
   key and no task, in the `hazard_closed` shape. It replaces the old `assessment: not_assessed`.

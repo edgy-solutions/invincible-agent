@@ -302,6 +302,16 @@ def _no_answer(stores: dict) -> list:
     return silent
 
 
+def _namespace_list(id_namespaces: Optional[Iterable[str]]) -> list[str]:
+    """``id_namespaces`` as a list of prefixes. A bare string is a caller error, refused loudly:
+    iterating ``"HAZ-"`` registers ``H``, ``A``, ``Z`` and ``-``, which would claim every
+    identifier starting with any of them."""
+    if isinstance(id_namespaces, str):
+        raise TypeError(
+            f"id_namespaces must be a list of prefixes, not the string {id_namespaces!r}")
+    return [str(p) for p in (id_namespaces or [])]
+
+
 def _emit_to_registrar(
     *,
     mint=None,
@@ -325,6 +335,7 @@ def _emit_to_registrar(
     slots: Optional[list] = None,
     arity: Optional[str] = None,
     required_args: Optional[Iterable[str]] = None,
+    id_namespaces: Optional[Iterable[str]] = None,
 ) -> "RegistrationResult":
     """POST a structured manifest to the mesh-registrar gateway.
 
@@ -396,6 +407,10 @@ def _emit_to_registrar(
         # `the missing property name is: arity` on every call.
         "arity": arity,
         "required_args": [str(a) for a in (required_args or [])],
+        # THE IDENTIFIER NAMESPACES THIS PROVIDER CLAIMS (ruled 2026-10-12): prefix patterns
+        # such as "HAZ-". Engine-o's resolveInstance fan-out refuses another provider's FUZZY
+        # match on an identifier in a declared namespace. Empty = claims none, today's behaviour.
+        "id_namespaces": _namespace_list(id_namespaces),
     }
 
     # v0.2 SDK retry semantics per ADR-0006 §Addendum §SDK side:
@@ -523,6 +538,7 @@ def register_engine_to_mesh(
     slots: Optional[list] = None,
     arity: Optional[str] = None,
     required_args: Optional[Iterable[str]] = None,
+    id_namespaces: Optional[Iterable[str]] = None,
 ) -> "RegistrationResult":
     """Emit a DataHub MCP describing this engine as a predicate edge.
 
@@ -581,6 +597,7 @@ def register_engine_to_mesh(
             # below reaches no edge and no reader.
             arity=arity,
             required_args=required_args,
+            id_namespaces=id_namespaces,
         )
 
     gms_url = os.getenv("DATAHUB_GMS_URL")
@@ -676,6 +693,8 @@ def register_engine_to_mesh(
         # for it — no error, no warning. Declarations therefore sit dark rather than half-lit,
         # which is the intended landing order.
         "mesh_slots":                   json.dumps(slots or []),
+        # Mirrors the gateway manifest's `id_namespaces`; the audit record, not the live write.
+        "mesh_id_namespaces":           json.dumps(_namespace_list(id_namespaces)),
         # Versioning; sdk_version=0.0.0 distinguishes engine-helper emits
         # from SDK MeshTool emits at the consume side if anyone wants to
         # branch on it later.
