@@ -70,7 +70,7 @@ _REFERENT_KIND = {
     "work_order_id": _MRO + "MaintenanceWorkOrderRecord",
     # ADR-0056 §Decision-1: `what_failed_on_this_part`'s slot resolves against the ALREADY-OWNED
     # SafetyCriticalItem class, not a new Part concept — see that ADR's survey before reusing it.
-    "part_number":   _SAFETY + "SafetyCriticalItem",
+    "part_number":   "http://internal/sustainment/pcn#Component",
     # ADR-0056, second verb: a platform is the FRACAS program. `safety:Platform` is minted (the
     # survey found no platform class in any vendored ontology); members are DERIVED from the
     # fixtures in instances.py. `platform_id`, not `platform`, so it cannot be mistaken for the

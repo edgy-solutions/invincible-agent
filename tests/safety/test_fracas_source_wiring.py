@@ -247,11 +247,12 @@ def test_the_route_still_answers_engine_fault_for_a_bug_that_is_not_a_source_fau
 def test_PCN26_184_parts_have_no_failure_history_in_the_sandbox_sources(monkeypatch):
     """The two parts the Friday walk's notice names (5530-184, 5530-185; sessions/friday-demo-
     runbook.md section 3, lane 74) are not safety-critical items here and no source holds a
-    failure for them. The answer is a DECIDED refusal ('unknown part'), not a card of zeros;
+    failure for them. The answer is a DECIDED refusal ('no_failures_recorded'), not a card of zeros;
     the notice supplies part numbers only, so no platform or failure mode is asserted for them."""
     monkeypatch.delenv(fs.CONNECTORS_ENV, raising=False)
     for pn in ("5530-184", "5530-185"):
         assert fs.gather(fs.BY_PART, pn) == []
         pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
         r = measures.what_failed_on_this_part(part_number=pn)
-        assert r["refused"] is True and r["reason"] == f"unknown part '{pn}'"
+        assert r["refused"] is True and r["outcome"] == "no_failures_recorded"
+        assert pn in r["reason"]

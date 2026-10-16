@@ -147,7 +147,8 @@ def test_the_safety_rows_that_expect_a_refusal_say_refused_and_name_their_outcom
 # ── Q13-shaped seals: a refusal that names itself only in `reason` (unknown part) ────────────
 
 _REPRO_ID = "repro-failures-recorded-for-part-5530-184"
-_UNKNOWN_PART = {"refused": True, "outcome": "refused", "reason": "unknown part '5530-184'"}
+_UNKNOWN_PART = {"refused": True, "outcome": "no_failures_recorded",
+                 "reason": "no failures recorded for part '5530-184'"}
 
 
 def _fracas(final, status="matched"):
@@ -173,7 +174,7 @@ def test_a_refusal_with_a_different_reason_fails_naming_both_strings():
     bad = _fracas({"components": [_doc(dict(_UNKNOWN_PART, reason="source_unavailable"))]})
     state, why = judge(_repro_row(), bad)
     assert state == FAIL and any(
-        "source_unavailable" in w and "lacks 'unknown part'" in w for w in why), why
+        "source_unavailable" in w and "lacks 'no failures recorded'" in w for w in why), why
 
 
 def test_CONTROL_the_rev_185_abstain_fails_the_repro_row():
@@ -186,7 +187,7 @@ def test_CONTROL_the_rev_185_abstain_fails_the_repro_row():
 def test_the_repro_row_is_the_hand_repro_on_its_own_sheet():
     row = _repro_row()
     assert row.expect_verb == "what_failed_on_this_part"
-    assert row.expect_refusal_reason_contains == "unknown part"
+    assert row.expect_refusal_reason_contains == "no failures recorded"
     assert (row.user, row.persona) == ("bob", "SAFETY_ENGINEER")
     assert row.sheet == "docs/measurements/hand-repro-walk-sheet.md"
     assert not row.sheet.endswith("safety-walk-sheet.md")
