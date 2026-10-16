@@ -2935,6 +2935,51 @@ async def _served_class_uris(domains: list, include_referents: bool = False) -> 
     return served
 
 
+#: One batched walk for a whole response: each distinct class URI -> itself + its ancestors, the
+#: same `*0..5` reach as `_SERVED_CLASSES_CYPHER` and `/find_compatible_verbs`. A different
+#: reach would let a slot admit a subclass the router then cannot route.
+_CLASS_CHAIN_CYPHER = """
+MATCH (c:OntologyClass)
+WHERE c.uri IN $uris
+OPTIONAL MATCH (c)-[:subClassOf*0..5]->(a:OntologyClass)
+RETURN c.uri AS uri, collect(DISTINCT a.uri) AS chain
+"""
+
+
+async def _attach_class_chains(candidates: list) -> list:
+    """Return copies of `candidates` carrying `class_chain` (own class, then ancestors).
+
+    Ruling 3: a slot accepts a subclass of its referent, and `slot_disposition` is pure, so the
+    hierarchy rides on the candidate. ONE query per response, not per candidate. NEVER RAISES
+    and never invents: a graph failure, or a class with no node, leaves that candidate without
+    `class_chain`, and the consumer falls back to exact match.
+    """
+    out = [dict(c) if isinstance(c, dict) else c for c in candidates]
+    uris = sorted({str(c.get("class_uri")) for c in out if isinstance(c, dict) and c.get("class_uri")})
+    if not uris or not _NEO4J_DRIVER:
+        return out
+
+    def _run() -> dict:
+        with _NEO4J_DRIVER.session() as session:
+            rows = session.run(_CLASS_CHAIN_CYPHER, uris=uris)
+            return {str(r["uri"]): [str(u) for u in (r["chain"] or []) if u] for r in rows}
+
+    try:
+        chains = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Engine O] class-chain lookup failed ({type(exc).__name__}) — "
+              f"candidates go out without class_chain")
+        return out
+    for c in out:
+        if not isinstance(c, dict) or not c.get("class_uri"):
+            continue
+        chain = chains.get(str(c["class_uri"]))
+        if chain:
+            own = str(c["class_uri"])
+            c["class_chain"] = [own] + [u for u in chain if u != own]
+    return out
+
+
 def _unserved_subject_msg(identifier: str, resolved_uri: str) -> str:
     """An abstention that KEEPS the resolution it just made.
 
@@ -4827,6 +4872,9 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             # Flagged to the elicitation lane as an addition, not smuggled in.
             outcome = "wrong_class"
 
+        # Ruling 3: the chain rides on each candidate so the pure consumer can admit a subclass.
+        cands = await _attach_class_chains(cands)
+
         if resolved_id:
             accepted[name] = resolved_id
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
@@ -5297,7 +5345,7 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
         raise HTTPException(
             status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
-    return {"candidates": candidates}
+    return {"candidates": await _attach_class_chains(candidates)}
 
 
 class NoticePartsRequest(BaseModel):

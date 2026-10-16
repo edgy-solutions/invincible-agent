@@ -219,6 +219,30 @@ def mandatory_slots(declared: Sequence[Mapping[str, Any]]) -> list[Mapping[str, 
 _mandatory = mandatory_slots
 
 
+def _class_admits(candidate: Mapping[str, Any], referent: str) -> bool:
+    """May this candidate fill a slot whose class is `referent`? (Ruling 3, 2026-10-15.)
+
+    A SUBCLASS OF THE REFERENT IS THE REFERENT'S KIND. PR #57 moved safety's `part_number`
+    from `safety:SafetyCriticalItem` to `pcn:Component`; the critical item is still a
+    Component (`rdfs:subClassOf`), but an exact `class_uri == referent` filter dropped it,
+    so the most safety-relevant part vanished from its own menu.
+
+    THIS MODULE IS PURE, so the hierarchy cannot be looked up here: Engine O attaches
+    `class_chain` to each candidate (its own class first, then its ancestors, the same
+    `subClassOf*0..5` reach `/find_compatible_verbs` walks). A candidate WITHOUT a chain
+    falls back to exact match — the old behaviour — so a missing chain can never admit
+    anything; only a chain that names the referent does. A candidate with no class at all
+    stays admitted, as before.
+    """
+    if not referent:
+        return True
+    cls = candidate.get("class_uri")
+    if not cls or cls == referent:
+        return True
+    chain = candidate.get("class_chain")
+    return isinstance(chain, (list, tuple)) and referent in chain
+
+
 def _from_candidates(
     cands: Sequence[Mapping[str, Any]],
     *,
@@ -239,7 +263,7 @@ def _from_candidates(
     which is why the enumerator answers `too_many` instead of sending its first eight.
     """
     if referent:
-        cands = [c for c in cands if not c.get("class_uri") or c.get("class_uri") == referent]
+        cands = [c for c in cands if _class_admits(c, referent)]
     # DEDUPED BY VALUE, FIRST OCCURRENCE WINS — found by the elicitation corpus, run 1.
     # `"what does the Module Build depend on"` came back `mixed` with candidates
     # [P3, P4, P3] and the menu offered P3 TWICE. Every option routed, so menu integrity
@@ -954,16 +978,14 @@ def validate_bound_slots(
                         labels[str(m["instance_id"])] = str(m.get("label") or "")
         if not offered and resolve_identifier is not None:
             # The disambiguation menu: candidates for what the speaker actually said, filtered
-            # to the slot's class exactly as `_from_candidates` filters them.
+            # to the slot's class (or a subclass of it) exactly as `_from_candidates` filters them.
             try:
                 cands = resolve_identifier(name, referent) or []
             except Exception as exc:  # noqa: BLE001
                 refusals.append(f"{name}: resolver unreachable ({type(exc).__name__})")
                 continue
             for c in cands[:menu_bound]:
-                if c.get("instance_id") and (
-                    not c.get("class_uri") or c.get("class_uri") == referent
-                ):
+                if c.get("instance_id") and _class_admits(c, referent):
                     offered.append(str(c["instance_id"]))
                     labels[str(c["instance_id"])] = str(c.get("label") or "")
 
