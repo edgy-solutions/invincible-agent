@@ -5,8 +5,10 @@ Restate. A case record is durable evidence, not runtime state.
 Arms:
   route   POST /internal/cases/{id}/summary: only svc:case-runner (403 and NOTHING written
           otherwise); the artifact ids come from the graph, by a statement that matches on
-          `case_id`; `released` also stamps `released_at` with a coalesce (first release wins),
-          any other state does not.
+          `case_id`; a case that RELEASED (a hop's outcome is `released`) also stamps
+          `released_at` with a coalesce (first release wins), any other case does not. The
+          decision is on the OUTCOME, never the terminal's name: the real release chain sends
+          `released` on to `closed` (sealed against the chain table itself).
   runner  the normal terminal and the TerminalError handler each post exactly one summary with
           the right state and reason; the TerminalError still propagates; a summary write that
           fails neither fails a released case nor swallows the original error; the journalled
@@ -23,6 +25,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("httpx")
 pytest.importorskip("fastapi")
@@ -101,9 +104,12 @@ def api(monkeypatch):
     gateway.app.dependency_overrides.clear()
 
 
-_BODY = {"state": "released", "final_reason": "ack", "seeded_by": "svc:openddil",
-         "transitions": [{"from": "x", "outcome": "released", "to": "released",
+# The shape production sends: `maint_release` ends on the outcome `released`, and
+# `maint_release_chaining` takes that outcome to its terminal `closed`.
+_BODY = {"state": "closed", "final_reason": "ack", "seeded_by": "svc:openddil",
+         "transitions": [{"from": "maint_release", "outcome": "released", "to": "closed",
                           "at": "2026-10-16T10:00:00Z"}]}
+_CHAIN = _REPO / "policy/overlays/openddil-lab/decisions/maint_release_chaining.yaml"
 
 
 def test_a_caller_that_is_not_the_case_runner_gets_403_and_nothing_is_written(api):
@@ -124,7 +130,7 @@ def test_a_released_case_upserts_with_the_artifact_ids_from_the_graph(api):
     assert len(upserts) == 1
     u = upserts[0]
     assert (u["case_id"], u["state"], u["final_reason"], u["seeded_by"]) == (
-        "E-1", "released", "ack", "svc:openddil")
+        "E-1", "closed", "ack", "svc:openddil")
     assert u["transitions"] == _BODY["transitions"] and u["artifact_ids"] == ["A-1", "A-2"]
 
 
@@ -139,16 +145,46 @@ def test_a_released_case_stamps_released_at_and_the_statement_says_so(api):
     assert params["case_id"] == "E-1" and isinstance(params["now_ms"], int)
 
 
-@pytest.mark.parametrize("state", ["failed", "rejected"])
-def test_a_case_that_did_not_release_stamps_no_released_at(api, state):
+# `closed` without a `released` hop is the control: the SAME terminal as the released body, and
+# no stamp -- the route decides on the outcome, and a test of the terminal's name reds here.
+@pytest.mark.parametrize("state,outcome", [
+    ("failed", "failed"), ("rejected", "rejected"), ("closed", "tier_refused")])
+def test_a_case_that_did_not_release_stamps_no_released_at(api, state, outcome):
     c, driver, upserts = api()
     _login(RUNNER)
-    r = c.post("/internal/cases/E-1/summary", json=dict(_BODY, state=state))
+    body = dict(_BODY, state=state, transitions=[
+        {"from": "maint_release", "outcome": outcome, "to": state, "at": "2026-10-16T10:00:00Z"}])
+    r = c.post("/internal/cases/E-1/summary", json=body)
     assert r.status_code == 200, r.text
     (cypher, params), = driver.calls
     assert "released_at" not in cypher and "now_ms" not in params
     assert "MATCH (a:AnswerArtifact {case_id: $case_id})" in cypher
     assert upserts[0]["state"] == state
+
+
+def test_a_case_that_released_then_failed_still_stamps(api):
+    """A release is a fact about the case's history: a later failure does not un-release it."""
+    c, driver, _ = api()
+    _login(RUNNER)
+    body = dict(_BODY, state="failed", transitions=_BODY["transitions"] + [
+        {"from": "closed", "outcome": "failed", "to": "failed", "at": "2026-10-16T10:01:00Z"}])
+    assert c.post("/internal/cases/E-1/summary", json=body).status_code == 200
+    (cypher, _params), = driver.calls
+    assert "SET a.released_at = coalesce(a.released_at, $now_ms)" in cypher
+
+
+def test_the_route_reads_the_runners_release_outcome():
+    assert gateway._RELEASED_OUTCOME == wr.SEEDED_BY_STAMP_OUTCOME
+
+
+def test_the_release_chain_ends_a_released_case_in_a_state_not_named_released():
+    """Why the route decides on the outcome: the real chain table's `released` row goes to a
+    terminal that is not called `released`, so a state test would never stamp in production."""
+    table = yaml.safe_load(_CHAIN.read_text(encoding="utf-8"))
+    then, = [r["then"] for r in table["rows"]
+             if r["when"].get("outcome") == gateway._RELEASED_OUTCOME]
+    assert then in table["terminals"] and then != gateway._RELEASED_OUTCOME
+    assert _BODY["state"] == then, "the fixture must be the shape production sends"
 
 
 def test_a_blank_state_is_422_and_writes_nothing(api):
@@ -210,6 +246,18 @@ async def test_a_failed_summary_write_does_not_fail_a_released_case(
     assert out["status"] == "CLOSED"
     assert c.case("E-1")["state"] != "failed"
     assert all(t["outcome"] != "failed" for t in c.case("E-1")["transitions"])
+
+
+@pytest.mark.asyncio
+async def test_a_write_that_is_not_terminal_propagates(policy, registered, monkeypatch):
+    """Only TerminalError is swallowed (a refusal, or the SDK's answer once the attempts are
+    spent). A wrong call or a disconnect must stay loud, not become a summary never written."""
+    def _boom(case_id, summary):
+        raise RuntimeError("a defect in the write")
+    monkeypatch.setattr(wr, "_write_case_summary", _boom)
+    c = _Cluster({("E-1~1", "approval_decide"): _answer("ok")})
+    with pytest.raises(RuntimeError, match="a defect in the write"):
+        await c.start("E-1", "fault", _facts("E-1"))
 
 
 @pytest.mark.asyncio

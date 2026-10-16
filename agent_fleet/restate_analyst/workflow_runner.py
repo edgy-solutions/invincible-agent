@@ -169,14 +169,19 @@ def _write_case_summary(case_id: str, summary: dict) -> dict:
 async def _summarize(ctx, case: dict, *, state: str, final_reason: Optional[str]) -> None:
     """Write the case summary at a terminal, through the journal, bounded in attempts. A write that
     cannot be made is LOGGED and swallowed: it must neither turn a released case into a failed one
-    nor replace the TerminalError a failed case is about to raise."""
+    nor replace the TerminalError a failed case is about to raise.
+
+    ONLY TerminalError is swallowed: it is what a refused write raises and what the SDK answers once
+    `max_attempts` is spent (restate-sdk 0.14.0 `create_run_coroutine` journals the failure, the
+    await raises TerminalError). Anything else -- a disconnect, a wrong call -- propagates, so a
+    defect in this write is loud rather than a summary that is silently never written."""
     summary = {"state": state, "final_reason": final_reason,
                "transitions": case["transitions"], "seeded_by": case.get("seeded_by")}
     try:
         await ctx.run("write_case_summary",
                       lambda: _write_case_summary(case["case_id"], summary),
                       max_attempts=CASE_SUMMARY_MAX_ATTEMPTS)
-    except Exception as exc:  # noqa: BLE001 — see the docstring: the summary must not decide the case
+    except restate.TerminalError as exc:
         logger.warning("case %s: the %s summary was not written: %s", case["case_id"], state, exc)
 
 

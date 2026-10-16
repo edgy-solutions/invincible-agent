@@ -10561,6 +10561,8 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
                 recs = list(session.run(
                     artifact_reads.CASE_ARTIFACTS_CYPHER,
                     case_id=row["case_id"], user_id=(current_user.id or "").strip()))
+            # R-089: the delegate map is asserted by configuration this pass; a delegate is listed
+            # only the artifacts it seeded, the same predicate GET /artifacts/{id} applies.
             delegates = _delegate_principals()
             return [{"artifact_id": r["id"], "kind": r["kind"], "released_at": r["released_at"]}
                     for r in recs
@@ -11489,6 +11491,16 @@ _CASE_ARTIFACT_RELEASE_CYPHER = (
     "SET a.released_at = coalesce(a.released_at, $now_ms) RETURN a.id AS id ORDER BY id"
 )
 
+# A case RELEASED when one of its hops had the outcome `released` -- the runner's
+# `SEEDED_BY_STAMP_OUTCOME`, the outcome it stamps seeded_by on. It is an OUTCOME, not the terminal
+# STATE: `maint_release_chaining` sends `released` on to the terminal `closed`, so a case that
+# released ends `closed` and a test of the terminal's name would never stamp.
+_RELEASED_OUTCOME = "released"
+
+
+def _case_released(transitions: list) -> bool:
+    return any(isinstance(t, dict) and t.get("outcome") == _RELEASED_OUTCOME for t in transitions)
+
 
 class CaseSummaryRequest(_BaseModel):
     state: str
@@ -11508,8 +11520,9 @@ async def write_case_summary_route(
     to the Postgres `case_summary` row, so the record outlives Restate. SERVICE-ONLY: only
     `svc:case-runner` may call this, the same gate as `/internal/cases/{case_id}/seeded-by`.
 
-    The artifact ids are read from Neo4j here, not taken from the caller. At `released` the same
-    call stamps `released_at` on those artifacts (first release wins). The upsert is idempotent:
+    The artifact ids are read from Neo4j here, not taken from the caller. When the case RELEASED
+    (a hop's outcome is `released`, see `_case_released`; its terminal state is then e.g.
+    `closed`) the same call stamps `released_at` on those artifacts (first release wins). The upsert is idempotent:
     a re-delivery overwrites the row."""
     from starlette.concurrency import run_in_threadpool
 
@@ -11526,9 +11539,10 @@ async def write_case_summary_route(
         raise HTTPException(status_code=422, detail={"error": "state_is_blank"})
 
     def _write() -> list:
-        cypher = _CASE_ARTIFACT_RELEASE_CYPHER if req.state == "released" else _CASE_ARTIFACT_IDS_CYPHER
+        released = _case_released(req.transitions)
+        cypher = _CASE_ARTIFACT_RELEASE_CYPHER if released else _CASE_ARTIFACT_IDS_CYPHER
         params = {"case_id": case_id}
-        if req.state == "released":
+        if released:
             params["now_ms"] = int(time.time() * 1000)
         with neo4j_driver.session() as session:
             ids = [rec["id"] for rec in session.run(cypher, **params)]
