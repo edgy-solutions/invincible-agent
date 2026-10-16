@@ -159,6 +159,17 @@ def test_the_decoder_reads_only_a_list_of_real_prefixes(value, expected):
 
 _REG_MOD = "mesh_registrar_main__id_namespaces_test"
 
+@pytest.fixture(scope="module", autouse=True)
+def _the_registrar_double_is_put_back():
+    """`_registrar()` installs `sys.modules[_REG_MOD]`; put back what was there when the module ends."""
+    prior = sys.modules.get(_REG_MOD)
+    yield
+    if prior is None:
+        sys.modules.pop(_REG_MOD, None)
+    else:
+        sys.modules[_REG_MOD] = prior
+
+
 
 def _registrar():
     cached = sys.modules.get(_REG_MOD)
