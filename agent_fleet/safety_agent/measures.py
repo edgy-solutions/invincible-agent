@@ -12,6 +12,8 @@ hazard cannot be resolved instead of returning a clean "no hazard".
 """
 from __future__ import annotations
 
+import re
+
 import os as _os
 from datetime import date as _date
 from pathlib import Path as _Path
@@ -551,6 +553,10 @@ def _visible_records(records: List[Any]) -> List[Any]:
     return kept
 
 
+#: A part number: one token of letters, digits and the separators real part numbers carry.
+_PART_NUMBER_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._#/\-]*")
+
+
 def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str, Any]:
     """What failed on this part, across every program and every system of record FRACAS cites.
 
@@ -592,10 +598,24 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     if not part_number:
         return {"refused": True, "reason": "which part?"}
 
-    if part_number not in CRITICAL_PART_NUMBERS:
-        # NOT the same as "no failures found", and reported differently on purpose — see
-        # assess_deferral_risk's identical distinction for an unknown work order.
-        return {"refused": True, "reason": f"unknown part '{part_number}'"}
+    # RULED 2026-10-15: THE LISTING IS NOT A GATE. Any component with failure records gets them;
+    # being on the critical list decides which class is most specific, not whether failures exist.
+    # Two NAMED refusals, each chosen by its own check, in the hazard_closed / unknown_hazard shape
+    # (`refused`, `outcome`, the id field, `reason`, no task). The census reader reads a refusal
+    # ONLY as `refused: true` plus a string `outcome`.
+    #
+    #   unknown_part         the string is not a part number at all (nothing could resolve it).
+    #   no_failures_recorded the part is well-formed, no source this engine reads holds a failure
+    #                        for it, and it is not a listed critical item (a listed item with none
+    #                        keeps its explicit empty set below: the check ran and found nothing).
+    part_number = part_number.strip()
+    if not _PART_NUMBER_SHAPE.fullmatch(part_number):
+        return {
+            "refused": True,
+            "outcome": "unknown_part",
+            "part_number": part_number,
+            "reason": f"unknown part '{part_number}': not a part number this engine can look up",
+        }
 
     records = _visible_records(
         sorted(failure_source.gather(failure_source.BY_PART, part_number),
@@ -636,6 +656,17 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
         }
         for i, (mode, rs) in enumerate(ordered, start=1)
     ]
+
+    if not records and part_number not in CRITICAL_PART_NUMBERS:
+        return {
+            "refused": True,
+            "outcome": "no_failures_recorded",
+            "part_number": part_number,
+            "reason": (
+                f"no failures recorded for part '{part_number}': the part is not on the "
+                "safety-critical list and no source this engine reads holds a failure for it"
+            ),
+        }
 
     out: Dict[str, Any] = {
         "refused": False,

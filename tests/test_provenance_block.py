@@ -102,4 +102,6 @@ def test_standing_is_recorded_per_claim_so_it_can_be_frozen():
 
 def test_every_path_is_expressible():
     for via in OBTAINED_VIA:
-        assert _blk(obtained_via=via)["obtained_via"] == via
+        extra = ({"corrected_by": "steward@example.com", "extracted_value": ""}
+                 if via == "steward-corrected" else {})
+        assert _blk(obtained_via=via, **extra)["obtained_via"] == via

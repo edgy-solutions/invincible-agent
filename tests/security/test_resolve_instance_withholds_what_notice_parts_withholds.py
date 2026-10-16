@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from neo4j.exceptions import ServiceUnavailable
 
 _ROOT = Path(__file__).resolve().parents[2]
 for _p in (_ROOT / "src", _ROOT):
@@ -92,7 +93,7 @@ class _Driver:
 
             def run(self, cypher, params=None, **kw2):
                 if drv.raises:
-                    raise RuntimeError("neo4j down")
+                    raise ServiceUnavailable("neo4j down")
                 # Neo4j refuses a statement run without one of its $parameters; so does this double.
                 missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
                 assert not missing, f"statement run without ${sorted(missing)}"
@@ -113,7 +114,8 @@ class _Jena:
         self.queries.append(query)
         if "subjectToNotice" in query:
             if self.link_raises:
-                raise RuntimeError("jena down")
+                from agent_fleet.ontology_service import main as _m
+                raise _m.SubstrateUnavailable("jena down")
             return [{"c": c, "n": n} for c, ns in self.links.items() if f"<{c}>" in query
                     for n in ns]
         return list(self.instances)
@@ -285,6 +287,8 @@ def test_one_read_session_covers_every_notice_the_candidates_reach(call):
 
 
 # -- a lookup failure is a 503, never an unfiltered list ---------------------------------------
+# The doubles raise the stores' real outage classes (neo4j's ServiceUnavailable, main's
+# SubstrateUnavailable) because the route's catch is narrowed to `_VISIBILITY_OUTAGE`.
 
 def test_a_neo4j_failure_answers_503(call):
     jena = _Jena([_notice("PCN-D1")])

@@ -561,3 +561,92 @@ def test_the_html_half_alone_parses_without_duckdb():
                         template_id="program_finance", as_of="2026-01-01", sha="0" * 40)
     assert check_javascript(html) == []
     assert "cdn.jsdelivr.net" not in html
+
+
+# ── AS_OF IS AN INPUT ────────────────────────────────────────────────────────
+def test_as_of_absent_is_resolved_once_and_reaches_the_engine_fin_body(posts, monkeypatch):
+    import iagent.gateway as gw
+
+    calls = []
+    monkeypatch.setattr(gw, "_export_request_date", lambda: calls.append(1) or "2031-03-04")
+    status, _ = _export({**GOOD, "recipient_scope": SCOPE})
+    assert status == 200 and len(calls) == 1
+    assert [p["json"]["as_of"] for p in posts] == ["2031-03-04"]
+
+
+def test_as_of_explicit_is_forwarded_verbatim_to_engine_fin(posts):
+    status, _ = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
+    assert status == 200
+    assert [p["json"]["as_of"] for p in posts] == ["2026-01-02"]
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
+def test_as_of_malformed_is_refused_by_the_request_model(bad):
+    import iagent.gateway as gw
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        gw.ExportPackageRequest(**GOOD, as_of=bad)
+
+
+def test_engine_as_of_in_the_body_reaches_the_builder(engine):
+    client, built = engine
+    r = client.post("/package_export", json={
+        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+    assert r.status_code == 200, r.text
+    assert built[0]["as_of"] == "2026-02-03"
+
+
+def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+
+    client, built = engine
+    calls = []
+    monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
+    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
+def test_engine_as_of_malformed_is_422_and_builds_nothing(engine, bad):
+    client, built = engine
+    r = client.post("/package_export", json={
+        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
+    assert r.status_code == 422 and built == []
+
+
+def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_stable(
+        tmp_path_factory):
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the as_of fin export is NOT verified (uv sync --extra agent-fleet)")
+    from fastapi.testclient import TestClient
+
+    from agent_fleet.finance_agent import main as fmain
+
+    if not (ROOT / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    dist = tmp_path_factory.mktemp("fin_dist_as_of")
+    canvas = {"template_id": "program_finance", "template_hash": template_ref(_template()),
+              "panels": [{"panel": i, "verb": v, "params": dict(p)}
+                         for i, (v, _s, p) in enumerate(_dispatches())]}
+    html_name, _ = fin_export.artifact_filenames(SCOPE)
+    pages, manifests = [], []
+    real_audit = fin_export.audit_line
+
+    def spy(manifest, **kw):
+        manifests.append(manifest)
+        return real_audit(manifest, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "_dist_dir", lambda root: dist)
+        mp.setattr(fin_export, "audit_line", spy)
+        with TestClient(fmain.app) as client:
+            for _ in range(2):
+                r = client.post("/package_export", json={
+                    "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                assert r.status_code == 200, r.text[:400]
+                pages.append((dist / html_name).read_bytes())
+    assert pages[0] == pages[1]
+    html = pages[0].decode("utf-8")
+    assert "as of 2026-02-03" in html
+    assert [m["as_of"] for m in manifests] == ["2026-02-03", "2026-02-03"]

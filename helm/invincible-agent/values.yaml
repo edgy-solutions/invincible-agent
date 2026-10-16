@@ -853,7 +853,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.8"
+  meshSdkVersion: "v0.9.10"
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
@@ -1652,9 +1652,13 @@ cortexBff:
   #     max_concurrent_runs sits at `received` legitimately; a timeout failure is provisional
   #     until a run starts. <= 0 disables the watchdog.
   #   INGEST_WATCHDOG_INTERVAL_SECONDS: how often each replica ticks.
+  #   INGEST_DOOR_READS_PROCESSABLE_KINDS: POST /ingest refuses a kind absent from the list doc-tools
+  #     publishes to PUT /ingest/processable-kinds. OFF in 0.4.49 (registry behaviour unchanged); flipped
+  #     ON after doc-tools publishes. ON is deny-by-default: 503 before the first publish, then 400.
   env:
     INGEST_RECEIVED_TIMEOUT_SECONDS: "600"
     INGEST_WATCHDOG_INTERVAL_SECONDS: "30"
+    INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"
   # Optional cluster-specific TLS trust override.
   #
   # When the cortex-bff pod needs to talk to an external HTTPS endpoint
@@ -1939,15 +1943,39 @@ keycloak:
       issuer: ""
       # The client the upstream registers for us.
       clientId: iagent-broker
-      # The Secret holding that client's secret, read only via secretKeyRef in the reconcile job.
-      # Never put the value in values or a ConfigMap. The broker is RENDERED only when `enabled`
-      # AND existingSecret is non-empty; enabled with no existingSecret renders no broker objects
-      # and a one-line NOTE in the job script (it does not fail the render).
+      # Where the client's secret comes from, read only via secretKeyRef in the reconcile job. Two
+      # sources: (1) existingSecret/secretKey, a Secret made out of band; or (2) clientSecret, a value
+      # set ONLY in a gitignored `*.secret.yaml` values file, which templates/secrets.yaml renders into
+      # the release Secret `<release>-secrets` under key `broker-<name>-client-secret`. The value is
+      # NEVER put in a ConfigMap, the job script, an env literal, or a committed values file. The broker
+      # is RENDERED only when `enabled` AND (existingSecret OR clientSecret) is non-empty; enabled with
+      # neither renders no broker objects and a one-line NOTE in the job script (no render failure).
       existingSecret: ""
       secretKey: "client-secret"
+      clientSecret: ""
+      # An https issuer needs Keycloak to trust its certificate. The render FAILS when this broker is
+      # enabled, the issuer is https, and keycloak.truststore is not enabled, unless publicCA: true
+      # states that the issuer's certificate is publicly trusted.
+      publicCA: false
       # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
       # `sub` is the upstream's raw subject = the brokered user's authz identity.
       principals: []
+  # Extra trust for Keycloak's JVM (Keycloak 26 `truststore-paths`, env KC_TRUSTSTORE_PATHS). Needed
+  # when a broker's issuer is a self-signed leaf (there is no lab CA): Keycloak itself fetches
+  # discovery, token and JWKS, so it must trust exactly that leaf. The PEM lives in a Secret created
+  # OUT OF BAND (the cert is public, but it does not go in the secret values file), e.g.
+  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=openddil-leaf.pem
+  # and is named by existingSecret (mounted as a `secret` volume; `key` is the PEM's key in it).
+  # existingConfigMap is the only alternative source. Enabled needs EXACTLY ONE of the two; zero or
+  # both fails the render, and so does setting the removed `caPem`. The chart cannot see an existing
+  # Secret's content: the checksum annotation covers kind + name + key, so a rotation means replacing
+  # the Secret AND restarting Keycloak.
+  truststore:
+    enabled: false
+    existingSecret: ""
+    existingConfigMap: ""
+    key: "ca.crt"
+    mountPath: "/opt/keycloak/conf/truststores"
   # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
   # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
   # one; it exists so the name a delegate's writes carry is an identity the realm can be asked
@@ -1956,6 +1984,13 @@ keycloak:
   #   - username: platform-registrar
   #     email: platform-registrar@example.com
   nonInteractiveUsers: []
+  # Local users the reconcile job REMOVES from the live realm. The job is additive, so a user a
+  # chart once declared stays in every Keycloak first booted before the declaration was dropped.
+  # For each name: exact-username lookup; DELETE only if it exists AND has no federated identity
+  # link (a user with a link is a brokered shadow and is never touched); readback FAILS if the
+  # name still exists without a link. A name also in nonInteractiveUsers / localHumanUsers, or
+  # not a plain username, fails the render.
+  retiredUsers: []
   # Realm reconcile (realm-reconcile-job.yaml) — converges the serviceClients list below
   # into the LIVE realm on every install/upgrade, because a realm import only applies at
   # first boot. ADDITIVE ONLY: creates missing clients, repairs a missing authz-id mapper,

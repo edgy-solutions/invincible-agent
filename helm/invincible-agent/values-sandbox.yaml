@@ -454,22 +454,42 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+  # Chart 0.4.36 dropped these three from nonInteractiveUsers: they were MIRRORED email users
+  # (local stand-ins for OpenDDIL's principals), replaced by brokered principals bound to the
+  # upstream `sub` (brokers.openddil.principals below). The reconcile job is additive, so any
+  # Keycloak first booted before 0.4.36 still holds them; this list makes the job remove them
+  # (only when they carry no federated identity link).
+  retiredUsers:
+    - operator.atlantia
+    - operator.borduria
+    - liaison
   # OIDC BROKER to OpenDDIL's realm. OpenDDIL's own principals sign in THROUGH us and their grants
   # bind to THEIR `sub` (authz_id = upstream sub), replacing the three mirrored email users the
-  # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). NOT APPLIED until
-  # OpenDDIL supplies: the real issuer URL (the one below is a PLACEHOLDER on the reserved
-  # .invalid TLD), a client iagent-broker with redirect URI
-  # <our keycloak>/realms/invincible-agent/broker/openddil/endpoint, and its secret in the Secret
-  # named by existingSecret. `sub` values are the fixed ids in OpenDDIL's realm-openddil.json.
+  # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). The issuer and client are
+  # OpenDDIL's (packet 2026-10-10): confidential client iagent-broker, auth-code only, scopes
+  # openid/profile/email. Their redirect URI is
+  # https://keycloak.edgy-solutions.com/realms/invincible-agent/broker/openddil/endpoint (realm
+  # `invincible-agent`); they also registered an `iagent` one, which we will ask them to drop.
+  # THE FLIP (0.4.50, 2026-10-16): OpenDDIL's issuer chains to their lab CA ("OpenDDIL Lab
+  # Internal CA", CA:TRUE, pathlen:0); Keycloak trusts that CA's PEM (public, not a secret) from a
+  # Secret created out of band:
+  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=<lab-ca.pem>
+  # The client secret is ALSO out of band, by reference only: Secret openddil-broker-client, key
+  # client-secret (existingSecret below). Neither value is in any values file, committed or not.
+  truststore:
+    enabled: true   # the flip (0.4.50)
+    existingSecret: keycloak-openddil-trust
+    key: ca.pem
   brokers:
     openddil:
-      # Stays off until OpenDDIL supplies issuer + client + secret (then: enabled true, existingSecret set).
-      enabled: false
+      enabled: true   # the flip (0.4.50)
       displayName: "OpenDDIL"
-      issuer: "https://openddil.invalid/idp/realms/openddil"   # PLACEHOLDER: needs OpenDDIL's value
+      issuer: "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil"
       clientId: iagent-broker
-      existingSecret: ""
+      existingSecret: openddil-broker-client
       secretKey: "client-secret"
+      # The subs below are the fixed ids from OpenDDIL's realm-openddil.json; the 2026-10-10 packet did not
+      # restate them, so they are UNCONFIRMED against the live realm.
       principals:
         - sub: "11111111-1111-4111-8111-111111111111"
           username: operator.atlantia

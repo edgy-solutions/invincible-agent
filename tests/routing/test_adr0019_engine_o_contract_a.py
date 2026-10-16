@@ -109,6 +109,12 @@ def _stub_doubles() -> dict[str, object]:
             {"driver": staticmethod(lambda *a, **k: None)},
         )
         doubles["neo4j"] = n
+        # `neo4j.exceptions`: main.py imports the outage classes from it (16aa5450, #54) and puts
+        # them in `except` tuples, so they are REAL Exception subclasses, not MagicMock attributes.
+        n.exceptions = types.ModuleType("neo4j.exceptions")
+        for _x in ("ServiceUnavailable", "SessionExpired", "TransientError"):
+            setattr(n.exceptions, _x, type(_x, (Exception,), {}))
+        doubles["neo4j.exceptions"] = n.exceptions
 
     if "baml_client" not in sys.modules:
         bc = types.ModuleType("baml_client")

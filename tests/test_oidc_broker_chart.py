@@ -46,6 +46,7 @@ def _set(path: str, value) -> list[str]:
 
 
 _BROKER_ON = [*_set("keycloak.brokers.openddil.enabled", True),
+              *_set("keycloak.brokers.openddil.publicCA", True),
               *_set("keycloak.brokers.openddil.existingSecret", _SECRET)]
 _LIAISON_SUB = "33333333-3333-4333-8333-333333333333"
 
@@ -99,8 +100,20 @@ def _script(rendered: str) -> str:
     return _job(rendered)["spec"]["template"]["spec"]["containers"][0]["args"][0]
 
 
+#: The committed sandbox flips the broker and its truststore ON (chart 0.4.50). The arms below that
+#: read `sandbox` were written against the switches OFF and test the off path, so they render it
+#: explicitly; `committed` is the values as they roll.
+_BROKER_OFF = [*_set("keycloak.brokers.openddil.enabled", False), *_set("keycloak.truststore.enabled", False)]
+
+
 @pytest.fixture(scope="module")
 def sandbox() -> str:
+    """The sandbox values with the broker and truststore switches OFF."""
+    return _render(*_SANDBOX, *_BROKER_OFF)
+
+
+@pytest.fixture(scope="module")
+def committed() -> str:
     return _render(*_SANDBOX)
 
 
@@ -326,7 +339,7 @@ def test_reconcile_renders_the_idp_the_mappers_and_the_first_login_flow(broker):
         "first%20broker%20login/copy",
     ):
         assert frag in s, frag
-    assert "https://openddil.invalid/idp/realms/openddil/.well-known" in s
+    assert "https://openddil.cortex.edgy-solutions.com/idp/realms/openddil/.well-known" in s
 
 
 def test_the_client_secret_reaches_the_job_only_through_secretkeyref(broker):
@@ -427,7 +440,7 @@ def _no_broker(out: str) -> None:
 
 def test_sandbox_renders_no_broker(sandbox, broker):
     _no_broker(sandbox)
-    assert "no existingSecret" not in _script(sandbox)  # disabled says nothing; enabled-without-secret says NOTE
+    assert "no existingSecret or clientSecret" not in _script(sandbox)  # disabled says nothing; enabled-without-secret says NOTE
     assert "identity-provider" in _script(broker)  # the positive control: the same render, broker on
 
 
@@ -445,10 +458,11 @@ def test_enabled_broker_with_its_secret_renders_idp_mappers_flow_and_the_secretk
 
 def test_enabled_broker_without_its_secret_renders_nothing_and_does_not_fail(sandbox):
     out = _render(*_SANDBOX, *_set("keycloak.brokers.openddil.enabled", True),
+                  *_set("keycloak.brokers.openddil.publicCA", True),
                   *_set("keycloak.brokers.openddil.existingSecret", ""))
     _no_broker(out)
-    assert "openddil enabled but no existingSecret: skipped" in _script(out)
-    assert "enabled but no existingSecret" not in _script(sandbox)  # sandbox (disabled) says nothing
+    assert "openddil enabled but no existingSecret or clientSecret: skipped" in _script(out)
+    assert "enabled but no existingSecret or clientSecret" not in _script(sandbox)  # sandbox (disabled) says nothing
 
 
 # ------------------------------------------------------------------ (g) onBehalfOf
@@ -494,13 +508,23 @@ def test_policy_binds_the_brokered_liaison_to_its_sub():
     assert p["liaison.coalition"] == _LIAISON_SUB
 
 
-def test_the_broker_is_disabled_in_the_base_and_in_the_sandbox_with_no_secret_named():
+def test_the_broker_is_disabled_in_the_base_and_on_by_reference_in_the_sandbox():
     base_v = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))
     sb_v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
     assert base_v["keycloak"]["brokers"]["openddil"]["enabled"] is False
-    assert sb_v["keycloak"]["brokers"]["openddil"]["enabled"] is False
     assert base_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == ""
-    assert sb_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == ""
+    assert sb_v["keycloak"]["brokers"]["openddil"]["enabled"] is True
+    assert sb_v["keycloak"]["brokers"]["openddil"]["existingSecret"] == "openddil-broker-client"
+    assert not sb_v["keycloak"]["brokers"]["openddil"].get("clientSecret")
+
+
+def test_the_committed_sandbox_renders_the_broker_from_the_out_of_band_secret(committed):
+    s = _script(committed)
+    assert "identity-provider" in s and 'BFLOW="openddil-first-login"' in s
+    env = {e["name"]: e for e in _job(committed)["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": "openddil-broker-client", "key": "client-secret"}
+    assert "broker-openddil-client-secret" not in committed
 
 
 # ------------------------------------------------------------------ (i) authz_id defaults to email
@@ -667,7 +691,8 @@ def _create_lines(script: str, username: str) -> list[str]:
 
 @pytest.fixture(scope="module")
 def email_claim() -> str:
-    return _render(*_SANDBOX, *_set("keycloak.authzClaim", "email"))
+    # the broker refuses the email claim, so this is the switches-OFF sandbox under it
+    return _render(*_SANDBOX, *_BROKER_OFF, *_set("keycloak.authzClaim", "email"))
 
 
 @pytest.mark.parametrize("who", ["erin", "chris"])
@@ -741,3 +766,72 @@ def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     assert mine and mine == _rows("capability_grants.yaml", other), mine
     assert mine <= _rows("capability_grants.yaml", "alice@example.com"), mine
     assert not _rows("task_grants.yaml", me) and not _rows("asset_grants.yaml", me), who
+
+
+# ------------------------------------------------------------------ keycloak.truststore (ruled 2026-10-12)
+# There is no lab CA: OpenDDIL's issuer is a self-signed leaf, pinned by trusting exactly that leaf. The
+# leaf PEM lives in a Secret created out of band (existingSecret); the chart never carries the cert.
+_TRUST_ON = [*_set("keycloak.truststore.enabled", True),
+             *_set("keycloak.truststore.existingSecret", "leaf-trust"),
+             *_set("keycloak.truststore.key", "ca.pem")]
+
+
+def _kc_pod(rendered: str) -> dict:
+    (sts,) = [d for d in _docs(rendered) if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "t-keycloak"]
+    return sts["spec"]["template"]
+
+
+def test_truststore_a_existing_secret_mounts_a_secret_volume_and_renders_no_configmap():
+    out = _render(*_SANDBOX, *_TRUST_ON)
+    pod = _kc_pod(out)
+    c = pod["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["KC_TRUSTSTORE_PATHS"] == "/opt/keycloak/conf/truststores/ca.pem"
+    (m,) = [m for m in c["volumeMounts"] if m["name"] == "truststore"]
+    assert m["readOnly"] is True
+    (v,) = [v for v in pod["spec"]["volumes"] if v["name"] == "truststore"]
+    assert v.get("secret") == {"secretName": "leaf-trust"} and "configMap" not in v, v
+    assert [d for d in _docs(out) if "truststore" in d["metadata"]["name"]] == []
+    assert "checksum/truststore" in pod["metadata"]["annotations"]
+
+
+def test_truststore_b_enabled_with_no_source_fails_the_render():
+    err = _render_fails(*_SANDBOX, *_set("keycloak.truststore.enabled", True),
+                        *_set("keycloak.truststore.existingSecret", ""))
+    assert "existingSecret" in err and "existingConfigMap" in err and "exactly one" in err
+
+
+def test_truststore_c_enabled_with_both_sources_fails_the_render():
+    err = _render_fails(*_SANDBOX, *_TRUST_ON, *_set("keycloak.truststore.existingConfigMap", "cm"))
+    assert "existingSecret" in err and "existingConfigMap" in err and "exactly one" in err
+
+
+def test_truststore_c2_the_configmap_alone_is_still_a_source():
+    out = _render(*_SANDBOX, *_set("keycloak.truststore.enabled", True),
+                  *_set("keycloak.truststore.existingSecret", ""),
+                  *_set("keycloak.truststore.existingConfigMap", "cm"))
+    (v,) = [v for v in _kc_pod(out)["spec"]["volumes"] if v["name"] == "truststore"]
+    assert v.get("configMap") == {"name": "cm"} and "secret" not in v, v
+
+
+def test_truststore_d_setting_capem_fails_with_the_removal_message():
+    err = _render_fails(*_SANDBOX, *_TRUST_ON, *_set("keycloak.truststore.caPem", "x"))
+    assert "caPem was removed" in err and "keycloak.truststore.existingSecret" in err
+
+
+def test_truststore_e_disabled_renders_no_truststore_volume_or_env(sandbox):
+    out = sandbox
+    pod = _kc_pod(out)
+    assert "KC_TRUSTSTORE_PATHS" not in out
+    assert all(v["name"] != "truststore" for v in pod["spec"]["volumes"])
+    assert "annotations" not in pod["metadata"] or "checksum/truststore" not in pod["metadata"]["annotations"]
+
+
+def test_truststore_f_committed_sandbox_values_trust_the_lab_ca_secret(committed):
+    v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))["keycloak"]
+    t = v["truststore"]
+    assert t["existingSecret"] == "keycloak-openddil-trust" and t["key"] == "ca.pem", t
+    assert t["enabled"] is True and v["brokers"]["openddil"]["enabled"] is True
+    assert "caPem" not in t and not t.get("existingConfigMap")
+    (vol,) = [x for x in _kc_pod(committed)["spec"]["volumes"] if x["name"] == "truststore"]
+    assert vol["secret"]["secretName"] == "keycloak-openddil-trust"

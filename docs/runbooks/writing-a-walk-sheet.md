@@ -78,6 +78,28 @@ each was found by the author choosing parameters and noticing the answer would m
 > available`, is the same defect as a card that will not draw — and it is the one a walk is most
 > likely to mislabel, because "nothing drew" is what both look like.
 
+## A downloaded export is a payload too — check its bytes before you read it
+
+A page cut short in transit opens as a page that stops mid-script, which looks like a renderer
+defect and is not one. The bff serves `/export/package/artifact/{filename}` with a fixed
+`Content-Length`, and the export response that named the file carries `artifact_sha256`. A
+download is the page only when **both** agree: bytes received equal `Content-Length`, and the
+sha256 of the bytes equals that response's `artifact_sha256` (strip the `sha256:` prefix).
+Compare against the response of **the same export** — not a sha copied from an earlier one.
+
+Measured 2026-10-11/12, one 18.5 MB alpha page, as alice:
+
+| path | complete |
+|---|---|
+| `kubectl port-forward` to the bff service | 2 of 5 — each short read followed by kubectl's `error: lost connection to pod` |
+| the bff ingress (what the browser uses) | 49 of 50 — one mid-body `ReadError`, cause not established |
+| inside the bff pod | 10 of 10 |
+
+**The bff logged `200` for every one of them, including the short reads**, and the ingress
+controller logged nothing. The server's log cannot tell you the walker got the whole page; only
+the two checks above can. So: download through the ingress, never judge a page fetched over a
+port-forward without the checks, and when a check fails, **re-download — do not file it**.
+
 ## Say which component owns each possible failure
 
 A check that can fail two ways needs the split written down, or the walker guesses:

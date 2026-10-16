@@ -1,10 +1,9 @@
-# Digest, lane/saf, 2026-10-12: walk on the deployed 187b fleet; namespace declaration pending #51
-
 from: invincible-agent/lane/saf
 to: invincible-agent/seat/architect
-(Lane 1, 2026-10-15, at the 188b merge on Chris's authority: added the from/to lines this digest lacked and removed a kube context name; nothing else changed.)
 
-Deployed (kubectl, ns sandbox, read-only): iagent-engine-safety, iagent-engine-o and
+# Digest, lane/saf, 2026-10-12: walk on the deployed 187b fleet; namespace declaration pending #51
+
+Deployed (read-only check): iagent-engine-safety, iagent-engine-o and
 iagent-cortex-bff all run image tag 49aa5e28cd70 ("chart 0.4.43, rev 187b"; in master). PR #46's
 commits (b8b8fd04 and b4e9c862) are NOT ancestors of 49aa5e28, so the instance_id fix is NOT in the
 safety image. Dagster STARTED/STARTING/QUEUED runs before the walk: 0 (no zombies; nothing cancelled).

@@ -37,7 +37,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
 
 import httpx
@@ -49,7 +49,7 @@ from fastapi import Query as _Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2020,6 +2020,24 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
+    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`. Absent, `export_package` takes the request date
+    # once and forwards it to every engine call, so identical input gives an identical page.
+    as_of: Optional[str] = None
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+        _date.fromisoformat(v)  # a ValueError here is a 422 too
+        return v
+
+
+def _export_request_date() -> str:
+    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -2182,7 +2200,7 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
 
 
 async def _export_package_from_template(
-    body: "ExportPackageRequest", request: Request, current_user: "User",
+    body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,
 ) -> dict:
     """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
     `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
@@ -2279,7 +2297,7 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas},
+                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
@@ -2343,8 +2361,11 @@ async def export_package(
             ),
         )
 
+    # RESOLVED ONCE, then forwarded on every engine call below.
+    as_of = body.as_of or _export_request_date()
+
     if body.template_id:
-        return await _export_package_from_template(body, request, current_user)
+        return await _export_package_from_template(body, request, current_user, as_of)
 
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
@@ -2382,7 +2403,7 @@ async def export_package(
 
     if not any(engine == "fin" for engine, _ in parts):
         # ONLY engine-cost's answers (or none): today's path and today's response, unchanged.
-        params: dict = {"recipient_scope": recipient_scope}
+        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
         if parts:
             params["canvas"] = {"answers": parts[0][1]}
         return await _call_engine_cost_package(
@@ -2397,7 +2418,8 @@ async def export_package(
             continue
         try:
             section = await _call_engine_cost_package(
-                {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
+                {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
+                 "as_of": as_of},
                 bearer, recipient_scope=recipient_scope, template_id=None,
             )
         except HTTPException as exc:
@@ -9880,7 +9902,10 @@ async def ingest_document(
     -> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s
     carry `registered`, the sorted document-branch kind names, so the picker can offer them. Any
     registered document-branch kind passes, including a deliberately domainless one like `pdf`
-    (it lands at `awaiting_origin` later, unchanged). Writing a bare file format into
+    (it lands at `awaiting_origin` later, unchanged). When INGEST_DOOR_READS_PROCESSABLE_KINDS is on
+    (default OFF), one more check follows, still before the bounded read: no published list yet ->
+    503 `processable_kinds_unknown`; a kind absent from doc-tools' published list -> 400
+    `kind_unprocessable` (carrying `processable`). Writing a bare file format into
     `manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as
     ContentKindUnregistered("pdf") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a
     REGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`
@@ -9960,6 +9985,35 @@ async def ingest_document(
                 ),
             },
         )
+
+    # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
+    # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
+    # 503; a list that lacks the declared kind -> 400. Still before the bounded read.
+    if os.getenv("INGEST_DOOR_READS_PROCESSABLE_KINDS", "").strip().lower() in ("1", "true", "yes", "on"):
+        from . import processable_kinds
+
+        try:
+            _processable = await run_in_threadpool(processable_kinds.current)
+        except processable_kinds.StoreUnreachable as exc:
+            # The driver's text can name the database host; it goes to the log, never to a dropper.
+            logger.warning("processable_kinds store unreachable at the ingest door: %s", exc)
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": "the processable-kinds store was unreachable and nothing is cached. "
+                           "Refusing before any write.",
+            })
+        if _processable is None:
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": "doc-tools has not published its processable kinds yet. Refusing before any write.",
+            })
+        if declared_content_kind not in _processable:
+            raise HTTPException(status_code=400, detail={
+                "error": "kind_unprocessable",
+                "message": f"content_kind {declared_content_kind!r} is registered but doc-tools does not "
+                           "process it. Refusing before any write.",
+                "processable": sorted(_processable),
+            })
 
     # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
     # limit in values-sandbox), so one authenticated drop could take the BFF down for every
@@ -10860,6 +10914,69 @@ async def list_ingest_retries(
          "object_prefix": r["object_prefix"], "sha256": r["sha256"],
          "run_id": r["run_id"], "updated_at": r["updated_at"]}
         for r in rows]}
+
+
+class ProcessableKindsBody(BaseModel):
+    kinds: list[str]
+    source: Optional[str] = None
+
+    @field_validator("kinds")
+    @classmethod
+    def _check_kinds(cls, v):
+        if not v or len(v) > 512:
+            raise ValueError("kinds must hold 1..512 entries")
+        out = set()
+        for k in v:
+            k = (k or "").strip()
+            if not k or len(k) > 128 or "/" in k:
+                raise ValueError("each kind must be non-blank, <=128 chars, without '/'")
+            out.add(k)
+        return sorted(out)
+
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, v):
+        if v is not None and len(v) > 200:
+            raise ValueError("source must be <=200 chars")
+        return v
+
+
+@app.put("/ingest/processable-kinds")
+async def put_processable_kinds(
+    body: ProcessableKindsBody,
+    current_user: User = Depends(get_current_user),
+):
+    """PUT /ingest/processable-kinds -- doc-tools publishes the content kinds it can process.
+    SERVICE-ONLY (same gate as GET /ingest/retries). The BFF persists the list (one Postgres row)
+    and caches it; the ingest door reads the cache when INGEST_DOOR_READS_PROCESSABLE_KINDS is on.
+    `unregistered` lists published kinds the registry does not know (informational, not refused).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, processable_kinds
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "PUT /ingest/processable-kinds is callable only by doc-tools' own service identity.",
+        })
+    kinds = list(body.kinds)
+    try:
+        published_at = await run_in_threadpool(
+            lambda: processable_kinds.publish(kinds, body.source, caller))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("processable_kinds publish failed: %s: %s", type(exc).__name__, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "processable_kinds_store_unreachable",
+            "message": "the processable-kinds store did not take the write; nothing was published.",
+        })
+    processable_kinds.set_cache(kinds, published_at)
+    return {
+        "kinds": kinds,
+        "published_at": published_at.isoformat() if hasattr(published_at, "isoformat") else str(published_at),
+        "unregistered": [k for k in kinds if content_kinds.by_kind(k) is None],
+    }
 
 
 @app.post("/ingest/{ingest_id}/stage")
