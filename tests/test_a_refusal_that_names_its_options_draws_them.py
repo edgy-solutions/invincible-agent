@@ -144,7 +144,13 @@ def test_THE_SLOT_TRAVELS_WITH_THE_MENU():
     """A list of values for SOMETHING. A consumer inferring the slot from the verb name is
     re-deriving a fact the producer holds."""
     c = _cost()
-    assert c.count('slot="rate_vintage"') >= 3, (
+    named = c.count('slot="rate_vintage"')
+    # #50 (e63c6f4c): the not_in_model branch names the RAISER's slot when it has one (a bad
+    # `as_of` elicits `as_of`), defaulting to rate_vintage. That branch still names a slot, so
+    # it counts -- by its form, and only while the default is still rate_vintage.
+    if re.search(r'_slot = e\.slot or "rate_vintage"', c):
+        named += c.count("slot=_slot")
+    assert named >= 3, (
         "not every refusal that can carry a menu names the slot it is a menu for"
     )
 
