@@ -23,6 +23,14 @@ All six branches are pushed. The full record is `sessions/2026-10-10-report-gov-
 - **2026-10-14:** "a svc: literal counts as absent in every arm, same as blank; a service identity is never a person." Built at `bb0b5190`.
 - **2026-10-14:** "accepted; the engine-side 422 refusing svc: after 188b, as you say."
 - **2026-10-15:** "#54 approved. The kind-tree test must count a group grant as a recipient (group → members) — fix the test, Lane 1's work-instruction row lands behind it." Built as #56.
+- **2026-10-15, later (gov's list):** "kind-tree test counts group grants; 422 no_person incl. svc: after 188b; resolve_instance gate PR rebased on 74's decide(); packet census → Lane 1 list; AnswerArtifact origin field only when a writer appears."
+  - **"resolve_instance gate PR" is #54; RULED: wait for 188b.**
+    - 189 branches from 188 (`c9091040`), not from 188b. #45 and #47 sit only on 188b, and #54 is stacked on #45.
+    - Measured with `git merge-tree`: #54 picked alone onto `lane/01-rev189` conflicts in `main.py`, and `_gate_enumerated_members` doesn't exist there.
+    - So: rebase #54 onto 74's decide() only once 188b is under 189, or decide() is on 188b. Use a new branch, no force-push.
+    - 74's decide() change (the same-class tie in `instance_resolution.decide`, per saf's 10-15 packets) was not on any pushed ref on 10-15.
+  - **Packet census: RULED done** (the 10-11 list). The misfile it reported is resolved, since the Q10 parser (`e5fb8319`, `9766f984`) is in master. No refresh.
+  - **188b status at 10-15:** held, "stopped on lane/74's person-chain seal" (`13be1472`).
 
 ## What #56 is
 
@@ -50,7 +58,8 @@ All six branches are pushed. The full record is `sessions/2026-10-10-report-gov-
 3. **The 422 `no_person` on engine O, after 188b lands (RULED 2026-10-14).**
    - Population: rows 13–16.
    - It also refuses `svc:`.
-4. **The AnswerArtifact "how resolved" field,** when `test_the_answer_artifact_writer_writes_no_origin_today` goes red.
+4. **#54 onto 74's decide(), once 188b is under 189 (RULED: wait).** Check first: `git merge-base --is-ancestor origin/lane/gov-enumerate-gate <189 tip>`, and that 74's decide() commit is pushed. Rerun #54's five files gated.
+5. **The AnswerArtifact "how resolved" field, only when a writer appears (RULED).** The trigger is `test_the_answer_artifact_writer_writes_no_origin_today` going red.
 
 ## Lessons
 
