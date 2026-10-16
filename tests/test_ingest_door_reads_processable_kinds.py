@@ -57,6 +57,10 @@ def doc_tools():
     yield from _client_for("svc:doc-tools")
 
 
+#: A stand-in for what a real psycopg2 error names: the database host. It must never reach a body.
+_DRIVER_HOST = "pg-host.example.invalid"
+
+
 @pytest.fixture
 def rig(monkeypatch):
     """Fixed registry, write doubles, a stubbed store with spies, and a clean cache."""
@@ -74,12 +78,12 @@ def rig(monkeypatch):
     def _load():
         loads.append(1)
         if store["boom"]:
-            raise RuntimeError("pg down")
+            raise RuntimeError(f"pg down at {_DRIVER_HOST}")
         return store["value"]
 
     def _publish(kinds, source, published_by):
         if store["publish_boom"]:
-            raise RuntimeError("pg down")
+            raise RuntimeError(f"pg down at {_DRIVER_HOST}")
         publishes.append((list(kinds), source, published_by))
         store["value"] = (tuple(kinds), _NOW)
         return _NOW
@@ -230,6 +234,7 @@ def test_put_store_unreachable_is_503(doc_tools, rig):
     r = doc_tools.put("/ingest/processable-kinds", json={"kinds": ["pdf"]})
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "processable_kinds_store_unreachable"
+    assert _DRIVER_HOST not in r.text, "the driver's text (it can name the db host) reached the caller"
 
 
 def test_door_store_unreachable_with_nothing_cached_is_503(client, rig, monkeypatch):
@@ -240,6 +245,7 @@ def test_door_store_unreachable_with_nothing_cached_is_503(client, rig, monkeypa
     d = r.json()["detail"]
     assert d["error"] == "processable_kinds_unknown"
     assert "unreachable" in d["message"]
+    assert _DRIVER_HOST not in r.text, "the driver's text (it can name the db host) reached the dropper"
     _nothing_written(rig)
 
 

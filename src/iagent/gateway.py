@@ -9995,9 +9995,11 @@ async def ingest_document(
         try:
             _processable = await run_in_threadpool(processable_kinds.current)
         except processable_kinds.StoreUnreachable as exc:
+            # The driver's text can name the database host; it goes to the log, never to a dropper.
+            logger.warning("processable_kinds store unreachable at the ingest door: %s", exc)
             raise HTTPException(status_code=503, detail={
                 "error": "processable_kinds_unknown",
-                "message": f"the processable-kinds store was unreachable and nothing is cached ({exc}). "
+                "message": "the processable-kinds store was unreachable and nothing is cached. "
                            "Refusing before any write.",
             })
         if _processable is None:
@@ -10964,9 +10966,10 @@ async def put_processable_kinds(
         published_at = await run_in_threadpool(
             lambda: processable_kinds.publish(kinds, body.source, caller))
     except Exception as exc:  # noqa: BLE001
+        logger.warning("processable_kinds publish failed: %s: %s", type(exc).__name__, exc)
         raise HTTPException(status_code=503, detail={
             "error": "processable_kinds_store_unreachable",
-            "message": f"{type(exc).__name__}: {exc}",
+            "message": "the processable-kinds store did not take the write; nothing was published.",
         })
     processable_kinds.set_cache(kinds, published_at)
     return {
