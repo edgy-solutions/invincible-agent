@@ -849,7 +849,15 @@ cortexUi:
     # .github only moves PRODUCER_REF to 49aa5e28 (a parity-test checkout, not a build arg), so
     # VITE_FEATURES is unchanged. VITE_REVIEW_ROW_EDITS now defaults ON in the image and this
     # chart still does not set it (only the exact string "false" turns it off).
-    digest: "sha256:7b2b612913c7d34caf16b3524c443e5144f55f8e288cf1f8685649178d9c2013"
+    # 2026-10-15, pinned for rev 188b: cortex-ui e1b94e2 (master; merges #23 cad greyed "not yet
+    # accepted" and a door 4xx drawn as a refusal, #24 every walk row names its persona, #25 xml
+    # greyed like cad, #26 npm audit 5 high -> 0 via a compression override, dev-only) -> 8d0234ab.
+    # 88a65d4 is an ancestor of e1b94e2. Measured before pinning: the FULL tag resolves to this
+    # digest (an OCI index, amd64 and arm64); the abbreviated tag and this digest with its last hex
+    # altered both answer not found; the 88a65d4 control still resolves to 7b2b6129. Since 88a65d4
+    # the Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so
+    # VITE_FEATURES is unchanged. From this pin the chart SETS VITE_REVIEW_ROW_EDITS (env below).
+    digest: "sha256:8d0234abfa6720399d12be76befbafa591b9fe5d012d8d4ed852aa4706c44059"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -898,6 +906,12 @@ cortexUi:
     # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
     # dependency. Empty or absent = cortex sends nothing, the pre-186 wire.
     VITE_SEND_FRONTEND_VERSION: "true"
+    # 2026-10-15, rev 188b (architect: confirm one live row-edit correction in the roll packet, or
+    # set this false). None exists to confirm: no grouped review has been acted on since
+    # 2026-10-10, none ever carried row_edits, and no extraction_defect task has ever been filed.
+    # So row edits are OFF on the sandbox until one is confirmed. The image's entrypoint honours
+    # only the exact lowercase string "false"; anything else, including absent, is ON.
+    VITE_REVIEW_ROW_EDITS: "false"
 
 cortexBff:
   enabled: true
