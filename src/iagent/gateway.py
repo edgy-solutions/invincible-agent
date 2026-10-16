@@ -11346,9 +11346,10 @@ async def update_ingest_stage(
             raise
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
-    # everything above either raised (nothing written) or produced a resolvable audience; only
-    # now does the row actually move, so a 422/503 above never strands the row at `review` with
-    # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
+    # everything above either raised or produced a resolvable audience; only now does the row
+    # move to `review`, so a 422/503 above never strands the row at `review` with no task. (A 4xx
+    # refusal of the review wrote `failed` just above so the row is retryable; a 5xx wrote
+    # nothing -- it is transient and the sender retries.) For `extracting`/`failed` there is no task step, so this runs unconditionally.
     # `extraction_ref` rides only on the move INTO review (where it was just validated).
     _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
     if req.stage == ingest_status.REVIEW and _notice.get("notice_id"):
