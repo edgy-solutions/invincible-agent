@@ -129,6 +129,7 @@ S3000L's `control` matches are logistics control numbers and trade-security cont
 safety:SafetyCriticalItem a owl:Class ;
     # RULED 2026-10-15: a critical item IS a component that has a safety listing. The most specific
     # class wins when two classes resolve one subject and both carry the verb asked.
+    # Every verb registered on pcn:Component applies to a critical item; a verb that must not apply to critical items is declared on a sibling class, never on Component.
     rdfs:subClassOf pcn:Component ;
     rdfs:label "Safety-critical item" ;
     rdfs:comment """A part, procedure or inspection whose failure or omission opens a hazard.
