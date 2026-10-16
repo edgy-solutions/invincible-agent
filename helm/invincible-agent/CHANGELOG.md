@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.48 — 2026-10-16
+
+Rev 189, staged, not rolled. The fleet pins iagent-mesh `v0.9.10`, and the domain broker installs
+the same tag. It numbers after #41's 0.4.47 (`lane/01-broker-flip`). If 189 merges first, the two
+swap numbers.
+
+### Changed
+
+- **`domainBroker.meshSdkVersion` `v0.9.8` → `v0.9.10`.** The broker takes the same inbound
+  transport-auth dependency as the fleet, and `tests/test_lock_coherence.py` asserts the two are
+  equal. The fleet's 0.9.10 pin left it at 0.9.8.
+
 ## 0.4.46 — 2026-10-15
 
 Rev 188b. The fleet image carries #46 (saf), #47 (gov's caller census at bb0b5190, with #52's
