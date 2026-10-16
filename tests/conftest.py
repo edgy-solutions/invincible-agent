@@ -40,6 +40,20 @@ _NON_PROPAGATING = ("mesh_registration",)
 
 
 @pytest.fixture(autouse=True)
+def _no_case_summary_wire(monkeypatch):
+    """A case that reaches a terminal POSTs its summary to the BFF (`workflow_runner.
+    _write_case_summary`, ruled 2026-10-16). No runner test is about that wire, and none may reach
+    for a token or the network, so the write is a no-op by default. A test of the wire or of the
+    summary's content overrides THIS fixture by name with its own."""
+    for name in ("workflow_runner", "agent_fleet.restate_analyst.workflow_runner"):
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, "_write_case_summary"):
+            monkeypatch.setattr(mod, "_write_case_summary",
+                                lambda case_id, summary: {"written": True})
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _caplog_sees_non_propagating_loggers(caplog):
     """Let caplog observe loggers that deliberately do not propagate.
 

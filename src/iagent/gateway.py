@@ -209,6 +209,16 @@ async def lifespan(application: FastAPI):
         logger.info("ingestion seam dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("ingest_status migration failed (ingestion seam dormant): %s", exc)
+    # The case summary (ruled 2026-10-16): the durable record of a case that reached a terminal.
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import case_summary
+        await run_in_threadpool(case_summary.apply_migration)
+        logger.info("case_summary migration applied")
+    except ingest_status.IngestStatusConfigError as exc:
+        logger.info("case summary dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("case_summary migration failed (case summary dormant): %s", exc)
     # ADR-0041 Open §1 (ruled 2026-09-30): the document_promotion decision record lives in the
     # same Postgres. Dormant on an unset DSN; `promotion.act` then refuses 503 naming the ledger.
     try:
@@ -11437,6 +11447,69 @@ async def stamp_seeded_by_route(
         return int(rec["n"]) if rec is not None else 0
 
     return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
+
+
+# The case's artifact ids, read from the graph by the SERVER (never the runner's word). At
+# `released` the same call stamps `released_at` (ms epoch, the unit of `created_at`) on the
+# artifacts that do not carry one yet: `coalesce` keeps the FIRST release's instant when the
+# summary is re-delivered. GET /ingest/{id}/status lists it.
+_CASE_ARTIFACT_IDS_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) RETURN a.id AS id ORDER BY id"
+)
+_CASE_ARTIFACT_RELEASE_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) "
+    "SET a.released_at = coalesce(a.released_at, $now_ms) RETURN a.id AS id ORDER BY id"
+)
+
+
+class CaseSummaryRequest(_BaseModel):
+    state: str
+    final_reason: Optional[str] = None
+    transitions: list
+    seeded_by: Optional[str] = None
+
+
+@app.post("/internal/cases/{case_id}/summary")
+async def write_case_summary_route(
+    case_id: str,
+    req: CaseSummaryRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The runner writes the case summary at every terminal transition (released / failed /
+    rejected; ruled 2026-10-16): state, final reason, transitions, seeded_by and the artifact ids,
+    to the Postgres `case_summary` row, so the record outlives Restate. SERVICE-ONLY: only
+    `svc:case-runner` may call this, the same gate as `/internal/cases/{case_id}/seeded-by`.
+
+    The artifact ids are read from Neo4j here, not taken from the caller. At `released` the same
+    call stamps `released_at` on those artifacts (first release wins). The upsert is idempotent:
+    a re-delivery overwrites the row."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_summary
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/summary is callable only by the case "
+                       "runner's own service identity.",
+        })
+    if not req.state.strip():
+        raise HTTPException(status_code=422, detail={"error": "state_is_blank"})
+
+    def _write() -> list:
+        cypher = _CASE_ARTIFACT_RELEASE_CYPHER if req.state == "released" else _CASE_ARTIFACT_IDS_CYPHER
+        params = {"case_id": case_id}
+        if req.state == "released":
+            params["now_ms"] = int(time.time() * 1000)
+        with neo4j_driver.session() as session:
+            ids = [rec["id"] for rec in session.run(cypher, **params)]
+        case_summary.upsert_summary(
+            case_id=case_id, state=req.state, final_reason=req.final_reason,
+            transitions=req.transitions, seeded_by=req.seeded_by, artifact_ids=ids)
+        return ids
+
+    return {"case_id": case_id, "artifact_ids": await run_in_threadpool(_write)}
 
 
 ACTION_RECORD_KIND = "maintenance-action-record"

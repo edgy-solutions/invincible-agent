@@ -1853,6 +1853,21 @@ services:
           record's provenance.case_id must equal the path's case_id (422 before any write); a
           seeded_by that is not a declared delegate (DELEGATE_ON_BEHALF_OF) is 422. The artifact
           id is derived from case_id and action_id, so a retry writes nothing twice.
+      - method: POST
+        path: /internal/cases/{case_id}/summary
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (writes the case summary at every terminal transition)]
+        class: gated
+        justification: >-
+          Ruled 2026-10-16: every terminal transition of a case (released / failed / rejected)
+          writes the case summary (state, final reason, transitions, seeded_by, artifact ids) to
+          the Postgres case_summary row, so the record outlives Restate. One SERVICE identity is
+          accepted, checked before the body is used, so no end user can write a case's record.
+          The artifact ids are read from the graph by the server, never taken from the caller;
+          at `released` the same call stamps released_at (first release wins) on the case's
+          artifacts. The upsert is idempotent, so a re-delivery overwrites the row.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
