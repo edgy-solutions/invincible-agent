@@ -106,16 +106,21 @@ _ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-elect
 
 # ── Ingest watchdog (2026-10-12, pipeline failure must reach the row) ───────────────────
 
-# A row never sits at `received` for more than the timeout without either advancing or failing:
-# the loop below marks stale rows `failed:timeout` (ingest_status.fail_stale_received), carrying
-# the run id if a stage POST ever reported one.
+# A row never sits at `received` or `extracting` for more than its timeout without either
+# advancing or failing: the loop below marks stale rows `failed:timeout`
+# (ingest_status.fail_stalled), naming the stage in failure.step and carrying the run id if a stage
+# POST ever reported one. `extracting` joined 2026-10-16: doc-tools logs a refused stage POST and
+# still ends its run SUCCESS, so a row whose review never landed sat at `extracting` for ever.
+# `review` and `awaiting_origin` are NOT watched -- they wait on a steward, not on the pipeline.
 #
-# THE DEFAULT IS 600 s, NOT THE SENSOR'S 30 s INTERVAL. A row whose run is QUEUED behind
+# THE RECEIVED DEFAULT IS 600 s, NOT THE SENSOR'S 30 s INTERVAL. A row whose run is QUEUED behind
 # `max_concurrent_runs` legitimately sits at `received` for minutes; a 30 s bound would fail every
-# queued drop. The stage route treats a `timeout` failure as PROVISIONAL (a late run supersedes it),
-# so a too-early timeout is recoverable -- but it should still be rare, hence the generous default.
-# A value <= 0 disables the watchdog.
+# queued drop. The stage route treats a `timeout` failure at EITHER stage as PROVISIONAL (a late run
+# supersedes it), so a too-early timeout is recoverable -- but it should still be rare, hence the
+# generous defaults. EXTRACTING gets 3600 s: a large CAD/PDF extraction legitimately runs long.
+# A value <= 0 disables that stage only; the watchdog is off when BOTH are <= 0.
 _INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT = 600
+_INGEST_EXTRACTING_TIMEOUT_SECONDS_DEFAULT = 3600
 _INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT = 30
 
 
@@ -126,27 +131,36 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-async def _ingest_watchdog_tick(timeout_s: int) -> list:
-    """One watchdog pass: fail every stale `received` document row, log each id, return the ids.
-    Split out of the loop so a test can run one tick without sleeping."""
+async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -> list:
+    """One watchdog pass: fail every stale `received` and `extracting` document row (each stage only
+    if its timeout is > 0), log each id with its stage, return the ids. Split out of the loop so a
+    test can run one tick without sleeping."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
 
-    ids = await run_in_threadpool(
-        lambda: ingest_status.fail_stale_received(older_than_seconds=timeout_s))
-    for _id in ids:
-        logger.info("ingest watchdog: %s failed:timeout (no stage move within %ss of arrival)",
-                    _id, timeout_s)
-    return ids
+    all_ids: list = []
+    for stage, limit in ((ingest_status.RECEIVED, timeout_s),
+                         (ingest_status.EXTRACTING, extracting_timeout_s)):
+        if limit <= 0:
+            continue
+        ids = await run_in_threadpool(
+            lambda stage=stage, limit=limit: ingest_status.fail_stalled(
+                stage=stage, older_than_seconds=limit))
+        for _id in ids:
+            logger.info("ingest watchdog: %s failed:timeout at %s (no stage move within %ss)",
+                        _id, stage, limit)
+        all_ids.extend(ids)
+    return all_ids
 
 
-async def _ingest_watchdog_loop(timeout_s: int, interval_s: int) -> None:
+async def _ingest_watchdog_loop(timeout_s: int, interval_s: int,
+                                extracting_timeout_s: int = 0) -> None:
     from . import ingest_status
 
     while True:
         try:
-            await _ingest_watchdog_tick(timeout_s)
+            await _ingest_watchdog_tick(timeout_s, extracting_timeout_s)
         except asyncio.CancelledError:
             raise
         except ingest_status.IngestStatusConfigError as exc:
@@ -161,12 +175,15 @@ async def _ingest_watchdog_loop(timeout_s: int, interval_s: int) -> None:
 
 def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
     timeout_s = _env_int("INGEST_RECEIVED_TIMEOUT_SECONDS", _INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT)
+    extracting_timeout_s = _env_int("INGEST_EXTRACTING_TIMEOUT_SECONDS",
+                                    _INGEST_EXTRACTING_TIMEOUT_SECONDS_DEFAULT)
     interval_s = max(1, _env_int("INGEST_WATCHDOG_INTERVAL_SECONDS",
                                  _INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT))
-    if timeout_s <= 0:
-        logger.info("ingest watchdog disabled (INGEST_RECEIVED_TIMEOUT_SECONDS=%s)", timeout_s)
+    if timeout_s <= 0 and extracting_timeout_s <= 0:
+        logger.info("ingest watchdog disabled (INGEST_RECEIVED_TIMEOUT_SECONDS=%s, "
+                    "INGEST_EXTRACTING_TIMEOUT_SECONDS=%s)", timeout_s, extracting_timeout_s)
         return None
-    return asyncio.create_task(_ingest_watchdog_loop(timeout_s, interval_s))
+    return asyncio.create_task(_ingest_watchdog_loop(timeout_s, interval_s, extracting_timeout_s))
 
 
 # ── Lifespan ──────────────────────────────────────────────
@@ -10558,6 +10575,9 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
         "case_id": row.get("case_id"),
+        # The row's declared kind (nullable, key always present; ruling 2026-10-16): the dropper
+        # needs it to see why a review was refused as `no_declared_domain`.
+        "content_kind": row.get("content_kind"),
         "failure": failure,
         "attempt": attempt,
         "notice_id": notice_id,
@@ -11183,11 +11203,12 @@ async def update_ingest_stage(
         raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
     current_stage = row["status"]
 
-    # A WATCHDOG TIMEOUT IS PROVISIONAL. `fail_stale_received` writes `failed:timeout` for a row
-    # that merely sat at `received` -- which a run queued behind max_concurrent_runs legitimately
-    # does. Treating that failure as terminal would turn a too-early timeout into a permanently
-    # lost document, so such a row behaves as if it still sat at `received` (both in the terminal
-    # check and the forward-order check below). Only a failure doc-tools itself reported, or any
+    # A WATCHDOG TIMEOUT IS PROVISIONAL. `fail_stalled` writes `failed:timeout` for a row that
+    # merely sat at `received` (which a run queued behind max_concurrent_runs legitimately does) or
+    # at `extracting` (ruling 2026-10-16; a long extraction does). Treating that failure as
+    # terminal would turn a too-early timeout into a permanently lost document, so such a row
+    # behaves as if it still sat at `received` at EITHER stage (both in the terminal check and the
+    # forward-order check below), which keeps a late extracting or review POST acceptable. Only a failure doc-tools itself reported, or any
     # other terminal stage, is final.
     _timed_out = (current_stage == ingest_status.FAILED
                   and (row.get("failure") or {}).get("reason_code") == ingest_status.REASON_TIMEOUT)
@@ -11221,6 +11242,28 @@ async def update_ingest_stage(
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
         # kind), never on `kind` (pdf|cad|xml) -- a lookup on the file format always misses the
         # registry, resolves to a None domain, and files a task no one can be entitled to.
+        #
+        # A ROW THE DROP LEFT WITHOUT A KIND ADOPTS THE MANIFEST'S (ruling 2026-10-16): doc-tools
+        # stamps `metadata.content_kind` from the sidecar, so a NULL row column is not "no kind",
+        # it is a kind not yet copied across. Adopt it only when it is REGISTERED, and never over a
+        # kind the row already carries. A failed read is swallowed HERE: find-or-file's own read
+        # produces the real refusal.
+        adopted_kind = None
+        _ref = str(req.extraction_ref or "").strip()
+        _prefix = str(row.get("object_prefix") or "")
+        if not row.get("content_kind") and _ref and _prefix and _ref.startswith(_prefix):
+            try:
+                _m = await run_in_threadpool(lambda: _read_extraction_manifest(_ref))
+                _k = (_m.get("metadata") or {}).get("content_kind")
+                if isinstance(_k, str) and _k.strip() and content_kinds.by_kind(_k) is not None:
+                    adopted_kind = _k
+            except Exception:  # noqa: BLE001 -- find-or-file re-reads and refuses properly
+                adopted_kind = None
+            if adopted_kind is not None:
+                row = {**row, "content_kind": adopted_kind}
+                logger.info("ingest %s: content_kind %r adopted from the extraction manifest",
+                            ingest_id, adopted_kind)
+        _adopt = {"content_kind": adopted_kind} if adopted_kind is not None else {}
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
         # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
         # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
@@ -11251,7 +11294,7 @@ async def update_ingest_stage(
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
                 extraction_ref=req.extraction_ref,
                 detail="origin resolved by evidence, not kind (ruling 2026-10-02)",
-                **_run))
+                **_adopt, **_run))
             # Q2b: the steward's accept may have landed while the row was still extracting.
             promotion_out = await _file_promotion_if_ready(ingest_id, requested_by=caller)
             if promotion_out and promotion_out.get("filed"):
@@ -11268,9 +11311,39 @@ async def update_ingest_stage(
         # discovering there is no entitled audience would strand the row at `review` with no
         # task and no way back (a retry on a row already at `review` is 409), so this call --
         # and everything it can raise -- happens before update_status below ever runs.
-        task_id, task_status = await _file_or_find_document_promotion_task(
-            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref,
-            notice_out=_notice)
+        # A 4xx REFUSAL NOW MOVES THE ROW TO `failed` (ruling 2026-10-16): doc-tools logs a
+        # non-2xx and still ends its run SUCCESS, so a refusal that wrote nothing stranded the row
+        # at `extracting` for ever, unretryable (retry requires `failed`). Failing it names the
+        # refusal and lets the dropper retry. A 5xx is transient and writes NOTHING (the extracting
+        # watchdog covers a row that then stalls). The ORIGINAL exception always re-raises, so
+        # doc-tools still sees the status it would have seen.
+        try:
+            task_id, task_status = await _file_or_find_document_promotion_task(
+                ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref,
+                notice_out=_notice)
+        except HTTPException as exc:
+            if 400 <= exc.status_code < 500:
+                _d = exc.detail if isinstance(exc.detail, dict) else {}
+                _err = _d.get("error") if isinstance(_d.get("error"), str) else None
+                _msg = _d.get("message")
+                _why = f"review refused ({exc.status_code}): {_err or exc.detail}"
+                if _msg:
+                    _why += f": {_msg}"
+                try:
+                    await run_in_threadpool(lambda: ingest_status.update_status(
+                        ingest_id, ingest_status.FAILED, detail=_why,
+                        failure={
+                            "reason_code": (_err if _err and ingest_status.REASON_CODE_RE.match(_err)
+                                            else "review_refused"),
+                            "reason": _why, "step": "review",
+                            "run_id": req.run_id or row.get("run_id"),
+                            "pin_digest": req.pin_digest,
+                            "failed_at": int(time.time() * 1000)},
+                        **_adopt, **_run))
+                except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                    logger.warning("ingest %s: the refused review could not be written as failed "
+                                   "(%s: %s)", ingest_id, type(werr).__name__, werr)
+            raise
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised (nothing written) or produced a resolvable audience; only
@@ -11280,6 +11353,8 @@ async def update_ingest_stage(
     _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
     if req.stage == ingest_status.REVIEW and _notice.get("notice_id"):
         _extra["notice_id"] = _notice["notice_id"]
+    if req.stage == ingest_status.REVIEW:
+        _extra.update(_adopt)
     _detail = req.detail
     if req.stage == ingest_status.FAILED:
         # `reason` falls back to `detail` (legacy posts); the existing non-blank-detail rule in

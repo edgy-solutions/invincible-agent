@@ -1482,7 +1482,9 @@ def test_stage_review_undeclared_content_kind_refuses_and_writes_nothing(
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_declared_domain"
-    assert status_calls == [], "a 422 with no declared domain must write nothing"
+    # ruling 2026-10-16: the refusal moves the row to `failed` (so the dropper can retry) -- it
+    # must still NEVER move it to `review`, and file no task
+    assert [(c[0][1] if isinstance(c[0], tuple) else c[1]) for c in status_calls] == ["failed"],         "a 422 with no declared domain may write only the failed refusal, never review"
     assert task_calls == [], "no task lookup once there is no domain to resolve"
     assert registered == []
 
@@ -1505,7 +1507,8 @@ def test_stage_review_no_entitled_recipients_leaves_row_unmoved(doc_tools_client
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review", "extraction_ref": _extraction_for(row, monkeypatch)})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_entitled_recipients"
-    assert status_calls == [], "update_status must not run when register_task refuses"
+    # ruling 2026-10-16: the only write is the `failed` refusal, never a move to `review`
+    assert [c[0][1] for c in status_calls] == ["failed"],         "register_task refusing may write only the failed refusal, never review"
 
 
 def test_stage_review_files_task_before_moving_status(doc_tools_client, monkeypatch):
@@ -1636,7 +1639,9 @@ def test_stage_review_registration_omitting_domain_key_is_still_422_not_awaiting
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_declared_domain"
-    assert status_calls == [], "a 422 with no declared domain must write nothing"
+    # ruling 2026-10-16: the refusal moves the row to `failed` (so the dropper can retry) -- it
+    # must still NEVER move it to `review`, and file no task
+    assert [(c[0][1] if isinstance(c[0], tuple) else c[1]) for c in status_calls] == ["failed"],         "a 422 with no declared domain may write only the failed refusal, never review"
     assert task_exists_calls == [], "no task lookup once there is no domain to resolve"
     assert register_calls == []
 

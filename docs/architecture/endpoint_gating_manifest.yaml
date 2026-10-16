@@ -1821,6 +1821,9 @@ services:
           learns nothing about which ingest ids exist (403 before the 404 lookup). Stages move
           forward only; a lateral or backwards move, or any move out of a terminal stage, is
           409. Reaching `review` opens the document_promotion task, idempotently.
+          A 4xx refusal of `review` moves the row to `failed` (reason_code = the refusal's error)
+          so the dropper can retry it, and a NULL row content_kind is filled from the extraction
+          manifest's registered declared kind; a 5xx writes nothing.
           The 404 for an unknown id is visible only to doc-tools, which created the ids it
           reports on.
       - method: POST

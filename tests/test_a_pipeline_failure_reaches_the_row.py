@@ -375,14 +375,16 @@ def test_fail_stale_received_is_one_atomic_update_over_stale_received_document_r
     sql, params = cur.execute.call_args[0]
     sql = _norm(sql)
     assert sql.startswith("UPDATE ingest_status_projection")
-    assert "WHERE status = 'received'" in sql
     # an event row at `received` is the case runner's fact, not the pipeline's
     assert "kind <> 'event'" in sql
     assert "updated_at < %s" in sql
     assert "RETURNING id" in sql
     # each row carries its OWN run_id, read in SQL
     assert "'run_id', run_id" in sql
-    assert "'step', 'received'" in sql
+    # the stage is a bound parameter (fail_stalled serves received AND extracting): once as the
+    # failure's step, once in the WHERE predicate
+    assert "'step', %s" in sql and "WHERE status = %s" in sql
+    assert params.count("received") == 2
     assert ist.REASON_TIMEOUT in params
     assert (10_000_000 - 600 * 1000) in params  # the threshold
     assert "600 seconds" in params[1]  # the reason text names the bound
@@ -428,17 +430,19 @@ def test_the_selects_carry_failure_run_id_and_attempt_and_parse_failure_json():
 # ===========================================================================
 # Watchdog
 # ===========================================================================
-def test_one_watchdog_tick_calls_fail_stale_received_with_the_configured_timeout(monkeypatch):
+def test_one_watchdog_tick_calls_fail_stalled_for_received_with_the_configured_timeout(monkeypatch):
     seen = []
-    monkeypatch.setattr(ist, "fail_stale_received",
-                        lambda *, older_than_seconds, now_ms=None: seen.append(older_than_seconds) or ["x"])
+    monkeypatch.setattr(ist, "fail_stalled",
+                        lambda *, stage, older_than_seconds, now_ms=None:
+                        seen.append((stage, older_than_seconds)) or ["x"])
     assert asyncio.run(gateway._ingest_watchdog_tick(321)) == ["x"]
-    assert seen == [321]
+    assert seen == [("received", 321)]
 
 
 @pytest.mark.parametrize("value", ["0", "-5"])
 def test_a_non_positive_timeout_disables_the_watchdog_and_starts_no_task(monkeypatch, value):
     monkeypatch.setenv("INGEST_RECEIVED_TIMEOUT_SECONDS", value)
+    monkeypatch.setenv("INGEST_EXTRACTING_TIMEOUT_SECONDS", value)  # off only when BOTH are off
     with mock.patch.object(gateway.asyncio, "create_task") as ct:
         assert gateway._start_ingest_watchdog() is None
     ct.assert_not_called()

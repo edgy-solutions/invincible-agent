@@ -430,6 +430,7 @@ def update_status(
     failure: Optional[dict] = None,
     run_id: Optional[str] = None,
     notice_id: Optional[str] = None,
+    content_kind: Optional[str] = None,
 ) -> None:
     """Advance a row through the ladder (received -> extracting -> review ->
     promoted|rejected|failed), or (received -> case_opened) on the event branch. Not called by
@@ -455,7 +456,12 @@ def update_status(
     clears it. `run_id` follows the COALESCE discipline: written only when given.
 
     `notice_id` (2026-10-13) is the extraction manifest's `doc_id`, DISPLAY ONLY; same COALESCE
-    discipline: None leaves it unchanged, so a later stage move never erases it."""
+    discipline: None leaves it unchanged, so a later stage move never erases it.
+
+    `content_kind` (architect ruling 2026-10-16) is the kind the review ADOPTED from the extraction
+    manifest for a row the drop left NULL. It is written ONLY WHERE THE COLUMN IS NULL
+    (`COALESCE(content_kind, %s)`): a kind the dropper declared is never overwritten by what the
+    extractor later says, and None leaves the column as it was."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
@@ -476,10 +482,11 @@ def update_status(
                           detail = COALESCE(%s, detail), case_id = COALESCE(%s, case_id),
                           extraction_ref = COALESCE(%s, extraction_ref),
                           failure = %s, run_id = COALESCE(%s, run_id),
-                          notice_id = COALESCE(%s, notice_id), updated_at = %s
+                          notice_id = COALESCE(%s, notice_id),
+                          content_kind = COALESCE(content_kind, %s), updated_at = %s
                     WHERE id = %s""",
                 (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
-                 failure_json, run_id, notice_id, now, ingest_id),
+                 failure_json, run_id, notice_id, content_kind, now, ingest_id),
             )
         conn.commit()
 
@@ -600,11 +607,16 @@ def list_mine(*, caller_id: str, limit: int,
     return out
 
 
-def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
-    """The WATCHDOG (2026-10-12, pipeline failure must reach the row): mark every document row that
-    has sat at `received` for longer than `older_than_seconds` as `failed:timeout`, and return the
+def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
+    """The WATCHDOG (2026-10-12, pipeline failure must reach the row; extended to `extracting`
+    2026-10-16): mark every document row that has sat at `stage` for longer than
+    `older_than_seconds` as `failed:timeout`, naming the stage in `failure.step`, and return the
     ids. ONE atomic UPDATE ... RETURNING, so two BFF replicas ticking at once cannot both claim a
-    row, and the `status = 'received'` predicate is re-evaluated at write time.
+    row, and the `status = <stage>` predicate is re-evaluated at write time.
+
+    Only RECEIVED and EXTRACTING are watched (ValueError otherwise). `review` and
+    `awaiting_origin` are deliberately NOT: each waits on a steward's human decision, which is not
+    a pipeline stall, and failing it would discard a task a person is still entitled to act on.
 
     EVENT rows are excluded: an event row at `received` is the case runner's fact, not the
     pipeline's (POST /ingest/events moves it to `case_opened`, or it stays because the runner
@@ -612,23 +624,32 @@ def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None
 
     `failure` is built in SQL so each row carries its OWN `run_id` (the last run a stage POST
     reported, if any). `pin_digest` is NULL: a timeout means nothing ran far enough to pin."""
+    if stage not in (RECEIVED, EXTRACTING):
+        raise ValueError(f"fail_stalled watches only {RECEIVED!r} and {EXTRACTING!r}, got {stage!r}")
     now = int(time.time() * 1000) if now_ms is None else now_ms
-    reason = f"no stage move was reported within {older_than_seconds} seconds of arrival"
+    where = "of arrival" if stage == RECEIVED else f"of entering {EXTRACTING}"
+    reason = f"no stage move was reported within {older_than_seconds} seconds {where}"
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE ingest_status_projection
                       SET status = 'failed', updated_at = %s, detail = %s,
                           failure = jsonb_build_object(
-                              'reason_code', %s::text, 'reason', %s::text, 'step', 'received',
+                              'reason_code', %s::text, 'reason', %s::text, 'step', %s::text,
                               'run_id', run_id, 'pin_digest', NULL, 'failed_at', %s::bigint)::text
-                    WHERE status = 'received' AND kind <> 'event' AND updated_at < %s
+                    WHERE status = %s AND kind <> 'event' AND updated_at < %s
                 RETURNING id""",
-                (now, reason, REASON_TIMEOUT, reason, now, now - older_than_seconds * 1000),
+                (now, reason, REASON_TIMEOUT, reason, stage, now, stage,
+                 now - older_than_seconds * 1000),
             )
             ids = [r[0] for r in cur.fetchall()]
         conn.commit()
     return ids
+
+
+def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
+    """The `received` half of the watchdog; see `fail_stalled`."""
+    return fail_stalled(stage=RECEIVED, older_than_seconds=older_than_seconds, now_ms=now_ms)
 
 
 def list_pending_retries(*, limit: int) -> list[dict]:
