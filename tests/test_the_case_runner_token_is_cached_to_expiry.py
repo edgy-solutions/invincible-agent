@@ -138,7 +138,7 @@ def _call(monkeypatch, status, identity):
     monkeypatch.setattr(ex.requests, "post", lambda url, json, headers, timeout: sent.append(
         headers.get("Authorization")) or _Resp(status))
     try:
-        ex.execute_direct_call({"id": "w", "endpoint": "http://writer.test/w", "capability": "c"},
+        ex.execute_direct_call({"id": "w", "endpoint": "http://writer.test/w", "capability": "origin.write"},
                                identity)
     except ex.StepFailAndRelease as exc:
         assert exc.status_code == 403, exc.status_code

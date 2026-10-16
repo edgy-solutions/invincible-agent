@@ -183,7 +183,8 @@ def test_direct_call_with_user_jwt_is_byte_identical_and_never_mints():
 
 def test_direct_call_without_user_jwt_uses_case_runner_identity():
     """MUTANT (b): the route/caller used for can_invoke stays the (blank) human authz_id
-    instead of svc:case-runner when there is no user_jwt."""
+    instead of svc:case-runner when there is no user_jwt AND the capability is an internal
+    write (origin.write) -- the 10-03 B exception, kept for internal writes only."""
     seen = {}
     old_mint = ex.mint_case_runner_token
     ex.mint_case_runner_token = lambda **k: "minted-case-runner-token"
@@ -201,7 +202,7 @@ def test_direct_call_without_user_jwt_uses_case_runner_identity():
             ex.check_can_invoke = fake_can_invoke
             try:
                 r = ex.execute_direct_call(
-                    {"id": "s", "endpoint": "http://e", "capability": "cap"},
+                    {"id": "s", "endpoint": "http://e", "capability": "origin.write"},
                     {"authz_id": ""}, topaz_url="http://t")
             finally:
                 ex.check_can_invoke = old_cci
@@ -210,6 +211,74 @@ def test_direct_call_without_user_jwt_uses_case_runner_identity():
     assert r == {"published": True}
     assert seen["caller"] == "svc:case-runner", seen
     assert seen["headers"]["Authorization"] == "Bearer minted-case-runner-token", seen["headers"]
+
+
+
+def _run_gate(capability, identity, grants):
+    """Run execute_direct_call at ONE endpoint ("http://e") with no user_jwt; returns
+    (callers seen by the gate, POST headers seen, result-or-StepFailAndRelease)."""
+    seen = {"callers": [], "posts": []}
+    old_mint, old_cci = ex.mint_case_runner_token, ex.check_can_invoke
+    ex.mint_case_runner_token = lambda **k: "minted-case-runner-token"
+
+    def fake_can_invoke(cap, caller, *, topaz_url):
+        seen["callers"].append(caller)
+        return caller in grants
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["posts"].append(headers)
+        return FakeResp(200, {"published": True})
+
+    ex.check_can_invoke = fake_can_invoke
+    try:
+        with _Patch(requests_post=fake_post):
+            try:
+                out = ex.execute_direct_call(
+                    {"id": "s", "endpoint": "http://e", "capability": capability},
+                    identity, topaz_url="http://t")
+            except ex.StepFailAndRelease as e:
+                out = e
+    finally:
+        ex.mint_case_runner_token, ex.check_can_invoke = old_mint, old_cci
+    return seen, out
+
+
+def test_internal_write_set_distinguishes_the_fixture():
+    assert "origin.write" in ex.INTERNAL_WRITE_CAPABILITIES
+    assert "mesh:publishArtifact" not in ex.INTERNAL_WRITE_CAPABILITIES
+
+
+def test_direct_call_mesh_verb_without_user_jwt_gates_on_the_dropper():
+    seen, out = _run_gate("mesh:publishArtifact", {"authz_id": "svc:openddil"},
+                          {"svc:openddil", "svc:case-runner"})
+    assert out == {"published": True}, out
+    assert seen["callers"] == ["svc:openddil"], seen
+    assert seen["callers"][0] != "svc:case-runner"
+    # transport unchanged: the minted case-runner token
+    assert seen["posts"][0]["Authorization"] == "Bearer minted-case-runner-token", seen["posts"]
+
+
+def test_direct_call_origin_write_without_user_jwt_still_runs_as_the_runner():
+    seen, out = _run_gate("origin.write", {"authz_id": "svc:openddil"},
+                          {"svc:openddil", "svc:case-runner"})
+    assert out == {"published": True}, out
+    assert seen["callers"] == ["svc:case-runner"], seen
+    assert len(seen["posts"]) == 1
+
+
+def test_direct_call_mesh_verb_with_blank_acting_identity_is_denied_never_the_runner():
+    seen, out = _run_gate("mesh:publishArtifact", {"authz_id": ""}, {"svc:case-runner"})
+    assert isinstance(out, ex.StepFailAndRelease), out
+    assert out.status_code == 403, out.status_code
+    assert seen["posts"] == [], "a denied step must never POST"
+    assert "svc:case-runner" not in seen["callers"], seen
+
+
+def test_direct_call_undeclared_capability_without_user_jwt_is_not_the_runners():
+    seen, out = _run_gate("cap", {"authz_id": "alice@example.com"},
+                          {"alice@example.com", "svc:case-runner"})
+    assert out == {"published": True}, out
+    assert seen["callers"] == ["alice@example.com"], seen
 
 
 def test_direct_call_without_user_jwt_mint_failure_fails_and_releases_never_unauthenticated():
@@ -226,7 +295,7 @@ def test_direct_call_without_user_jwt_mint_failure_fails_and_releases_never_unau
         with _Patch(httpx_post=lambda *a, **k: FakeResp(200, {"check": True}),
                     requests_post=lambda *a, **k: calls.append(1) or FakeResp(200)):
             try:
-                ex.execute_direct_call({"id": "s", "endpoint": "http://e", "capability": "cap"},
+                ex.execute_direct_call({"id": "s", "endpoint": "http://e", "capability": "origin.write"},
                                        {"authz_id": ""}, topaz_url="http://t")
             except ex.StepFailAndRelease as e:
                 assert e.status_code == 503, e.status_code
