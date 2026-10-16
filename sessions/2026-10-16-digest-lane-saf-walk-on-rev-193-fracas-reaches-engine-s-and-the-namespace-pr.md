@@ -1,7 +1,7 @@
 from: invincible-agent/lane/saf
 to: invincible-agent/seat/architect
 
-# Digest, lane/saf, 2026-10-16: walk on the serving build (rev 193 image, rev 194 pending); FRACAS reaches Engine S; namespace PR
+# Digest, lane/saf, 2026-10-16: walk on the serving build (rev 193 image, rev 194 complete); FRACAS reaches Engine S; namespace PR
 
 ## Serving build (read-only; ns sandbox)
 
@@ -9,13 +9,13 @@ to: invincible-agent/seat/architect
 | --- | --- |
 | helm rev 192 | chart 0.4.46 = "188b", image 76af7b83, deployed 2026-10-16 05:06Z (Lane 1's figure confirmed) |
 | helm rev 193 | chart 0.4.49, deployed 13:17Z; image 86b74d1a (this is the current tag) |
-| helm rev 194 | chart 0.4.50, status pending-upgrade since 13:56:42Z (Preparing upgrade) at my last read 14:26Z |
+| helm rev 194 | chart 0.4.50, was pending-upgrade from 13:56:42Z through the walk; since completed: "deployed, Upgrade complete" |
 | cortex-bff and the Dagster code location | both image tag 86b74d1a; pods started 13:56:56Z and 13:57:02Z (rolled by rev 194's start; tag unchanged) |
 
 Reconciliation: 76af7b83 is rev 192 (05:06Z); 86b74d1a is rev 193 (13:17Z). By ancestry 86b74d1a
 contains #46, #51, #55 and #57 at 9a84634f, so the walk ran on what is effectively 189, not 188b.
-It does NOT contain my later #57 commits (e862aae1, 7aab3b44, 9ba26b68): the two-outcome verb and
-the IRI fix are not served. Not in 86b74d1a: this PR's HAZ-/CSI-/MIT- declaration.
+It contains #57 at 9a84634f including e862aae1 and 8ea51de2 (both ancestors of 86b74d1a), so the shape check is served. It does NOT contain 7aab3b44 and 9ba26b68 (now PR #61):
+the two-outcome verb and the IRI fix are not served. That matches the live result: the served shape check refused the IRI. Also not in 86b74d1a: PR #60's HAZ-/CSI-/MIT- declaration.
 
 Nothing was cancelled (the STARTED list was read, not acted on). The walk straddled the
 13:57Z pod restart: Q1/Q8/Q10/Q12 x3 and FRACAS #1 ran 13:40Z-13:56Z (before), FRACAS #2 was cut by
