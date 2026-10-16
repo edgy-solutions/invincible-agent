@@ -625,8 +625,11 @@ rows:
     user: bob
     persona: SAFETY_ENGINEER
     domains: [SUSTAINMENT]
+    # RULED 2026-10-15: 5530-184 is a PCN component with no failure record and no safety-critical
+    # listing, so the intended answer is the named refusal, one disposition only. Lands in the SAME
+    # roll as the registration of whatFailedOnThisPart on the component class, not before.
     expect_verb: what_failed_on_this_part
     expect_archetype: null
     min_rows: 0
-    dispositions: [refused, drawn]
+    dispositions: [refused]
     expect_refusal_reason_contains: "unknown part"
