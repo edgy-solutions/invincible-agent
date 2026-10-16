@@ -307,7 +307,7 @@ def _fill(eo, monkeypatch, query, slots_json, acting, subject_uri=""):
     monkeypatch.setattr(eo.b, "FillVerbSlots", _fake)
     req = eo.FillSlotsRequest(query=query, verb_iri="mesh:explain",
                               declarations=json.dumps(_explain_decls()), acting_domains=acting,
-                              subject_uri=subject_uri)
+                              subject_uri=subject_uri, user_email="tester@example.com")
     return asyncio.run(eo.fill_slots(req))
 
 

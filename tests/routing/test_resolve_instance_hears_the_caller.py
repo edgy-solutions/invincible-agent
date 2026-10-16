@@ -107,10 +107,21 @@ def test_EVERY_PROVIDER_IS_TOLD_THE_PERSON_AND_THE_GRANT(eo, monkeypatch):
         assert body.get("identifier"), (url, body)
 
 
-def test_CONTROL_NO_PERSON_IS_SENT_AS_AN_EXPLICIT_EMPTY(eo, monkeypatch):
-    """Differs from the arm above only in the person and the grant. Both keys still go: a gating
-    provider must be able to tell "nobody" from an asker that predates this wire."""
-    _fill(eo, monkeypatch, acting_domains=[])
+def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NO_PROVIDER_IS_ASKED(eo, monkeypatch):
+    """Differs from the arm above only in the person and the grant. `/fill_slots` now refuses a
+    caller with no person (422 no_person; lane/74, 2026-10-16), so no provider is asked at all.
+    The explicit-empty wire this arm used to seal moved to the next arm."""
+    r = _fill(eo, monkeypatch, acting_domains=[])
+    assert r.status_code == 422, r
+    assert eo._test_posts == []
+
+
+def test_CONTROL_THE_FAN_OUT_SENDS_NOBODY_AS_AN_EXPLICIT_EMPTY(eo):
+    """MOVED from the arm above when `/fill_slots` began refusing (2026-10-16). `/resolve` still
+    reaches the fan-out with no person (census rows 13/14, not yet refused), so both keys must
+    still go: a gating provider must be able to tell "nobody" from an asker that predates this
+    wire. Driven at the fan-out itself, the function every route shares."""
+    asyncio.run(eo._resolve_instance("lot 3", "rates on lot 3"))
     assert eo._test_posts
     for url, body in eo._test_posts:
         assert body.get("user_email", None) == "", (url, body)

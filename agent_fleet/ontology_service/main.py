@@ -4693,7 +4693,7 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
 
 
 @app.post("/fill_slots", response_model=FillSlotsResponse)
-async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
+async def fill_slots(request: FillSlotsRequest):
     """Extract the parameters the speaker named, for an already-routed verb.
 
     HONEST-EMPTY ON EVERY FAILURE. No declarations, an unparseable model reply, or a
@@ -4701,6 +4701,22 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     on its defaults). This endpoint must never be able to make routing worse than it was
     before it existed, so it degrades to the old behaviour rather than to an exception.
     """
+    # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
+    # restate_analyst send a real test persona or get refused -- a domains list is never an
+    # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
+    # as blank; a service identity is never a person." Chris, 2026-10-16: "Battery scripts:
+    # /fill_slots refuses no-person callers in 190 -- your PR, same shape as #59." The census
+    # (tests/security/test_every_engine_o_caller_is_classified.py) names the callers now refused:
+    # rows 15/16 (scripts/elicitation_battery.py, scripts/slot_fill_battery.py, NO_PERSON); row 2
+    # (the supervisor, TOKEN) carries a person. REFUSED: blank, whitespace, absent and a `svc:`
+    # head. Nothing is resolved, enumerated or sent. The body copies safety's `no_person`
+    # (safety_agent/main.py, `except measures.NoPerson`) so the fleet has one shape. A refusal is
+    # NOT the honest-empty `{}` below: the caller is told why it got nothing.
+    if not _origin_entitlement.is_person(request.user_email):
+        return JSONResponse(status_code=422, content={
+            "error": "no_person",
+            "message": "this verb answers for a person; the caller carries none",
+            "fn": "fill_slots"})
     declarations = _decode_declarations(request.declarations)
     spec, by_name = _slot_spec(declarations)
     if not by_name:

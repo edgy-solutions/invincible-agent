@@ -2294,6 +2294,23 @@ def _fill_slots_from_query(
             },
             timeout=_fill_slots_budget(declarations),
         )
+        if resp.status_code == 422:
+            # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
+            # `no_person` when the caller carries none (190, lane/74 2026-10-16). It is NOT
+            # raised: tests/planning/test_fill_slots_seam.py seals that no failure path here
+            # raises ("a slot extractor must never be able to break routing"), and a raise
+            # fails the op at `execute_subtask`. So the log names the refusal rather than the
+            # generic non-200 below. A DEFENCE, not a live case: this function sends the
+            # token's person (`user_email`).
+            try:
+                _refusal = resp.json()
+            except ValueError:
+                _refusal = None
+            if isinstance(_refusal, dict) and _refusal.get("error") == "no_person":
+                context.log.warning(
+                    "fill_slots refused no_person verb_iri=%s — running on defaults", verb_iri,
+                )
+                return _FillResult({}, {})
         if resp.status_code != 200:
             context.log.warning(
                 "fill_slots non-200 verb_iri=%s status=%s — running on defaults",
