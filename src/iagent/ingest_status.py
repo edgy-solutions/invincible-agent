@@ -560,6 +560,46 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
     return out
 
 
+def list_mine(*, caller_id: str, limit: int,
+              before: Optional[tuple[int, str]] = None) -> list[dict]:
+    """The document drops THIS caller submitted or is the on_behalf_of principal for, newest first
+    (architect ruling 2026-10-16, GET /ingest/mine). Same columns and the same `origin_suggestion` /
+    `failure` parsing as `get_status_for`, and the same EXISTENCE-ORACLE scoping
+    (`submitted_by = caller OR on_behalf_of = caller`), so another user's rows are never listed.
+    EVENT rows are excluded, as in `list_pending_retries`: a drop is a document.
+
+    Keyset paging, never OFFSET: `before` is `(created_at, id)` of the last row already seen and
+    the next page is everything strictly older in `(created_at DESC, id DESC)` order. An empty
+    `caller_id` lists nothing and does not query."""
+    if not caller_id:
+        return []
+    sql = """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
+                    status, extracted_count, extracted_total, duplicate_of, detail,
+                    created_at, updated_at, origin_suggestion, content_kind, case_id,
+                    extraction_ref, failure, run_id, attempt, notice_id
+               FROM ingest_status_projection
+              WHERE (submitted_by = %s OR on_behalf_of = %s) AND kind <> 'event'"""
+    params: list[Any] = [caller_id, caller_id]
+    if before is not None:
+        sql += " AND (created_at, id) < (%s, %s)"
+        params += [before[0], before[1]]
+    sql += """
+              ORDER BY created_at DESC, id DESC
+              LIMIT %s"""
+    params.append(limit)
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["origin_suggestion"] = json.loads(d["origin_suggestion"]) if d.get("origin_suggestion") else None
+        d["failure"] = _parse_failure(d.get("failure"))
+        out.append(d)
+    return out
+
+
 def fail_stale_received(*, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
     """The WATCHDOG (2026-10-12, pipeline failure must reach the row): mark every document row that
     has sat at `received` for longer than `older_than_seconds` as `failed:timeout`, and return the

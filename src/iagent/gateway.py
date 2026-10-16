@@ -10482,41 +10482,13 @@ async def ingest_event(
     }
 
 
-@app.get("/ingest/{ingest_id}/status")
-async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
-    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
-
-    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
-    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
-    404, indistinguishable from "no such ingest" — same discipline as the human-task
-    resolution lookup (human_tasks.get_task_resolution).
-
-    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
-    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
-    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
-    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
-
-    `failure` (2026-10-12, pipeline failure must reach the row) is None unless `stage` is `failed`;
-    then it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with
-    none stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times
-    the row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).
-
-    `artifacts` (ruled 2026-10-16) lists `{artifact_id, kind, released_at}` for the case the event
-    opened (`case_id`), so a delegate learns its artifact ids from the row it already may read.
-    ONLY what the caller may open: each artifact is filtered through `artifact_reads.is_entitled`,
-    the gate GET /artifacts/{id} applies, so an id the caller could not read is never listed. The
-    key is always present: `[]` means none (no case yet, or none the caller may open); `None` means
-    UNKNOWN (the graph could not be read; logged) -- the row itself still answers.
-    """
+async def _ingest_status_body(row: dict, current_user: User) -> dict:
+    """The status route's response dict for one scoped row (shared by GET /ingest/<id>/status and
+    GET /ingest/mine, so the two shapes cannot drift). `row` is an `ingest_status.get_status_for` /
+    `list_mine` row already scoped to the caller; the duplicate original is re-read with the same scoping."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
-
-    row = await run_in_threadpool(
-        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="ingest not found")
 
     stage = row["status"]
     duplicate = None
@@ -10571,7 +10543,7 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         try:
             artifacts = await run_in_threadpool(_case_artifacts)
         except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
-            logger.warning("ingest %s: the case's artifacts could not be listed: %s", ingest_id, exc)
+            logger.warning("ingest %s: the case's artifacts could not be listed: %s", row["id"], exc)
             artifacts = None
 
     return {
@@ -10591,6 +10563,45 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "notice_id": notice_id,
         "artifacts": artifacts,
     }
+
+
+@app.get("/ingest/{ingest_id}/status")
+async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
+
+    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
+    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
+    404, indistinguishable from "no such ingest" — same discipline as the human-task
+    resolution lookup (human_tasks.get_task_resolution).
+
+    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
+    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
+    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
+    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
+
+    `failure` (2026-10-12, pipeline failure must reach the row) is None unless `stage` is `failed`;
+    then it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with
+    none stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times
+    the row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).
+
+    `artifacts` (ruled 2026-10-16) lists `{artifact_id, kind, released_at}` for the case the event
+    opened (`case_id`), so a delegate learns its artifact ids from the row it already may read.
+    ONLY what the caller may open: each artifact is filtered through `artifact_reads.is_entitled`,
+    the gate GET /artifacts/{id} applies, so an id the caller could not read is never listed. The
+    key is always present: `[]` means none (no case yet, or none the caller may open); `None` means
+    UNKNOWN (the graph could not be read; logged) -- the row itself still answers.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+
+    return await _ingest_status_body(row, current_user)
 
 
 class IngestRetryRequest(_BaseModel):
@@ -10966,6 +10977,47 @@ async def list_ingest_retries(
          "object_prefix": r["object_prefix"], "sha256": r["sha256"],
          "run_id": r["run_id"], "updated_at": r["updated_at"]}
         for r in rows]}
+
+
+@app.get("/ingest/mine")
+async def list_my_ingests(
+    limit: int = _Query(50, ge=1, le=200),
+    before: Optional[str] = _Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /ingest/mine -- the caller's own drops (dropper or on_behalf_of), paged, newest first,
+    each in the same summary shape as GET /ingest/<id>/status. Architect ruling 2026-10-16: the
+    rail reads it on load and merges with live entries; browser storage is a cache, never the
+    record.
+
+    EXISTENCE-ORACLE SAFE BY SCOPING: `ingest_status.list_mine` carries `get_status_for`'s own
+    scoping (`submitted_by = caller OR on_behalf_of = caller`), so the route reveals only the
+    caller's own rows and nothing about anyone else's. Event rows are never listed; drops are
+    documents. A caller with no drops gets 200 `{"items": [], "next": null}`, never a 404.
+
+    PAGING is a keyset cursor, not OFFSET: `before` is the opaque string `{created_at}|{id}` that
+    a previous page returned as `next` (None on the last page). A malformed cursor is 422
+    `invalid_cursor`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    cursor = None
+    if before is not None:
+        created, sep, row_id = before.partition("|")
+        try:
+            cursor = (int(created), row_id)
+        except ValueError:
+            cursor = None
+        if not sep or not row_id or cursor is None:
+            raise HTTPException(status_code=422, detail={"error": "invalid_cursor"})
+    rows = await run_in_threadpool(lambda: ingest_status.list_mine(
+        caller_id=current_user.authz_id, limit=limit + 1, before=cursor))
+    page = rows[:limit]
+    items = [await _ingest_status_body(r, current_user) for r in page]
+    nxt = f"{page[-1]['created_at']}|{page[-1]['id']}" if len(rows) > limit else None
+    return {"items": items, "next": nxt}
 
 
 class ProcessableKindsBody(BaseModel):

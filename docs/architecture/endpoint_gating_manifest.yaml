@@ -1722,6 +1722,21 @@ services:
           review. Terminal rows, failed event rows, event rows at received and documents still in
           doc-tools' pipeline are refused 409 and nothing is written.
       - method: GET
+        path: /ingest/mine
+        identity: keycloak-jwt
+        gate: "get_current_user + ingest_status.list_mine scopes to submitted_by OR on_behalf_of = caller; event rows are never listed"
+        exposes: gated-content
+        consumers: [cortex-ui ingest rail (load + merge)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-16: the caller's own drops, paged newest first, in the status
+          route's summary shape, so the rail can read the record on load and merge it with live
+          entries (browser storage is a cache, never the record). The scoping is
+          ingest_status.get_status_for's, IN THE QUERY, so the listing reveals only rows the
+          caller submitted or is the on_behalf_of principal for, and an empty result is a plain
+          200 with no items, not a 404. Each item is built by the same body as the status route,
+          so an artifact is listed only if the caller may open it.
+      - method: GET
         path: /cases/{case_id}
         identity: keycloak-jwt
         gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; otherwise the identical 404"
