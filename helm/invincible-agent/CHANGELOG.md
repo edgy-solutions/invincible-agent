@@ -1,11 +1,76 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.50 — 2026-10-16
+
+(Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, to 0.4.47 when
+rev 188b took 0.4.46, and to 0.4.50 when rev 189 merged first as 0.4.49.)
+
+The OpenDDIL broker flip, now ON in `values-sandbox.yaml`. The client secret is the only secret, by
+reference: Secret `openddil-broker-client`, key `client-secret`. Keycloak trusts OpenDDIL's issuer
+through their lab CA ("OpenDDIL Lab Internal CA", CA:TRUE, pathlen:0), whose PEM is in Secret
+`keycloak-openddil-trust` key `ca.pem`. Both Secrets are created out of band. Sits on PR #29
+(lane/01-oidc-roundtrip).
+
+Correction: the 0.4.47 text of this entry said "pinning exactly its self-signed leaf. There is no lab
+CA." That was wrong. OpenDDIL's issuer chains to a lab CA, and the CA is what is trusted.
+
+### Added
+
+- **`keycloak.brokers.<name>.clientSecret`** (default `""`; set ONLY in a gitignored `*.secret.yaml`).
+  `templates/secrets.yaml` renders it into `<release>-secrets` key `broker-<name>-client-secret`, and
+  the reconcile job reads it by `secretKeyRef`. `brokerActive` is now enabled AND (existingSecret OR
+  clientSecret). Never in a ConfigMap, the job script or an env literal.
+- **`keycloak.truststore`** (`enabled`, `existingSecret`, `existingConfigMap`, `key`, `mountPath`): extra
+  PEM trust for Keycloak's JVM (`KC_TRUSTSTORE_PATHS`) from a Secret (or, alternatively, a ConfigMap)
+  created out of band, mounted read-only. Exactly one source must be set; zero or both fails the render.
+  The chart cannot see the content of an existing Secret: the `checksum/truststore` annotation hashes
+  source kind + name + key, so a rotation means replacing the Secret AND restarting Keycloak.
+  The `caPem` value was removed (setting it fails the render): the cert is not a secret and does not go
+  in the secret values file.
+- **Guard:** an enabled broker with an `https:` issuer fails the render unless `keycloak.truststore` is
+  enabled or `brokers.<name>.publicCA: true`, so a self-signed issuer cannot flip on silently untrusted.
+- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches `true`;
+  `brokers.openddil.existingSecret: openddil-broker-client`;
+  `truststore.existingSecret: keycloak-openddil-trust`, `key: ca.pem`. The lab CA's PEM is in that
+  Secret, created out of band (`kubectl create secret generic keycloak-openddil-trust
+  --from-file=ca.pem=<lab-ca.pem>`). No secret value is in any values file.
+
+### Tests
+
+- `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only,
+  CA reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
+  enable the broker by reference only).
+- `tests/test_oidc_broker_chart.py`: truststore arms for existingSecret, neither/both sources, caPem
+  removal, disabled, and the committed sandbox values.
+- Existing broker tests now set `publicCA` where they enable the broker.
+
+### Also in this release: written as 0.4.40 on 2026-10-10, a number master then released as rev 186b (tag invincible-agent-0.4.40) without this content
+
+Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
+
+Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
+
+#### Added
+
+- **`keycloak.retiredUsers`** (base `[]`; sandbox: `operator.atlantia`, `operator.borduria`,
+  `liaison`). Chart 0.4.36 removed these mirrored email users from `nonInteractiveUsers`, but the
+  reconcile job is additive, so they survive in any Keycloak first booted earlier. Per name: exact
+  username lookup; DELETE only when `federated-identity` is `[]` (a linked user is a brokered
+  shadow, kept and logged); the readback FAILS if the name still exists without a link. The render
+  fails for a name also in `nonInteractiveUsers`/`localHumanUsers` or not a plain username.
+
+#### Tests
+
+- `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
+  double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
+  join seals binding policy grants to the brokered sub.
+
 ## 0.4.49 — 2026-10-16
 
 Rev 189, the label it rolls under. The door-read flag below is chart content added after 0.4.48's
 bump, so the version moves (`tests/test_chart_version_tracks_chart_content.py`). 0.4.48 was never
 published or deployed. 189 merges before #41 (`lane/01-broker-flip`, 0.4.47), so #41 renumbers
-above this, and #28 after it.
+above this (0.4.50), and #28 after it.
 
 ### Added
 

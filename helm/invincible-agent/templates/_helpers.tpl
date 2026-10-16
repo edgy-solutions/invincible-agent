@@ -265,12 +265,13 @@ Emits nothing on success; `fail`s the render on the first violation.
 {{- end }}
 
 {{/*
-A broker is RENDERED only when enabled AND its client secret's Secret is named. Enabled with no
-existingSecret renders nothing (the reconcile job carries a NOTE) and never fails: a roll survives it.
+A broker is RENDERED only when enabled AND its client secret has a source: an existingSecret, or a
+clientSecret value (set only in a gitignored *.secret.yaml; secrets.yaml puts it in the release
+Secret). Enabled with neither renders nothing (the reconcile job carries a NOTE) and never fails.
 Call: include "invincible-agent.brokerActive" $b  -> "true" or "".
 */}}
 {{- define "invincible-agent.brokerActive" -}}
-{{- if and .enabled .existingSecret }}true{{- end }}
+{{- if and .enabled (or .existingSecret .clientSecret) }}true{{- end }}
 {{- end }}
 
 {{/*
@@ -302,6 +303,9 @@ Fail the render on a broker that cannot work. Called wherever the broker is cons
 {{- end }}
 {{- if not $.Values.keycloak.reconcileClients.enabled }}
 {{- fail (printf "keycloak.brokers.%s is enabled but keycloak.reconcileClients.enabled is false; the broker is created only by the realm-reconcile job" $bn) }}
+{{- end }}
+{{- if and (hasPrefix "https:" $b.issuer) (not $b.publicCA) (not (($.Values.keycloak.truststore | default dict).enabled)) }}
+{{- fail (printf "keycloak.brokers.%s is enabled with an https issuer but keycloak.truststore.enabled is false: Keycloak would not trust a private-CA issuer. Enable keycloak.truststore (caPem or existingConfigMap), or set keycloak.brokers.%s.publicCA: true if the issuer's certificate is publicly trusted" $bn $bn) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -551,4 +555,36 @@ http://{{ .Release.Name }}-dagster.{{ .Release.Namespace }}.svc.cluster.local:{{
   (dict "component" "fuseki" "ports" (list 3030))
   (dict "component" "topaz" "ports" (list 9393))
 | toJson -}}
+{{- end }}{{- /*
+keycloak.retiredUsers guard: every entry is a plain username (letters, digits, . _ -), and none is
+still declared as a local user the chart creates (nonInteractiveUsers / localHumanUsers) -- a name
+both created and deleted on every run is a contradiction, so the render fails.
+*/}}
+{{- define "invincible-agent.validateRetiredUsers" -}}
+{{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $r)) }}
+{{- fail (printf "keycloak.retiredUsers: %q is not a plain username" (toString $r)) }}
+{{- end }}
+{{- range $u := concat ($.Values.keycloak.nonInteractiveUsers | default list) ($.Values.keycloak.localHumanUsers | default list) }}
+{{- if eq $u.username $r }}
+{{- fail (printf "keycloak.retiredUsers: %q is also declared in keycloak.nonInteractiveUsers/localHumanUsers" $r) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+
+
+{{/*
+Keycloak's extra-CA truststore (a pinned self-signed leaf; there is no lab CA). Enabled needs EXACTLY ONE
+of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.yaml.
+*/}}
+{{- define "invincible-agent.validateTruststore" -}}
+{{- $t := $.Values.keycloak.truststore | default dict -}}
+{{- if hasKey $t "caPem" }}
+{{- fail "caPem was removed: the cert is not a secret and does not go in the secret values file; create a Secret and set keycloak.truststore.existingSecret" }}
+{{- end }}
+{{- if and $t.enabled (eq (not $t.existingSecret) (not $t.existingConfigMap)) }}
+{{- fail "keycloak.truststore.enabled is true but not exactly one of existingSecret / existingConfigMap is set (zero or both); set one of them" }}
+{{- end }}
 {{- end }}
