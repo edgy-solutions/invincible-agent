@@ -56,6 +56,32 @@ RESOLVE_FLOOR = 0.5
 _MIN_PHRASE_CHARS = 8
 
 
+#: A part number's separators are interchangeable: "PN-8802", "pn 8802" and "Pn_8802" are one
+#: spoken part. Runs of whitespace, hyphen and underscore collapse to ONE hyphen; nothing else is
+#: dropped, so the bare digits "8802" still do not name PN-8802 (the module's bare-number rule).
+_PN_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def _normalise_part_number(text: str) -> str:
+    return _PN_SEPARATORS.sub("-", text.strip().casefold())
+
+
+def _part_number_hits(query: str) -> Dict[str, List[str]]:
+    """CSI ids whose `part_number` equals the query EXACTLY, and (only if none does) those that
+    equal it after normalising. EXACT BEFORE NORMALISED: an exact hit is the answer and the
+    normalised readings are not offered beside it; with no exact hit, several normalised hits
+    are returned together so the consumer sees the tie and never receives a silent pick."""
+    q = query.strip()
+    if not q:
+        return {"exact": [], "normalised": []}
+    exact = [c.csi_id for c in CRITICAL_ITEMS if c.part_number == q]
+    if exact:
+        return {"exact": exact, "normalised": []}
+    nq = _normalise_part_number(query)
+    return {"exact": [], "normalised": [c.csi_id for c in CRITICAL_ITEMS
+                                         if _normalise_part_number(c.part_number) == nq]}
+
+
 def _members() -> Dict[str, List[Dict[str, str]]]:
     """class URI -> [{identifier, label}], derived from the fixture.
 
@@ -171,6 +197,23 @@ def resolve(identifier: str, class_uri: Optional[str] = None) -> List[Dict[str, 
                     "label": m["label"],
                     "score": score,
                 })
+    # A CSI is also spoken by its part number. Same candidate shape as an id hit.
+    pn = _part_number_hits(identifier)
+    for cls, members in _members().items():
+        if class_uri and class_uri != cls:
+            continue
+        for m in members:
+            tier = ("exact" if m["identifier"] in pn["exact"]
+                    else "normalised" if m["identifier"] in pn["normalised"] else None)
+            if tier is None:
+                continue
+            score = 1.0 if tier == "exact" else 0.9
+            have = next((c for c in out if c["instance_id"] == m["identifier"]), None)
+            if have is None:
+                out.append({"class_uri": cls, "instance_id": m["identifier"],
+                            "label": m["label"], "score": score})
+            else:
+                have["score"] = max(have["score"], score)
     out.sort(key=lambda c: (-c["score"], c["instance_id"]))
     return out
 
