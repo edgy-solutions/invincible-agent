@@ -37,7 +37,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
 
 import httpx
@@ -49,7 +49,7 @@ from fastapi import Query as _Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2020,6 +2020,24 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
+    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`. Absent, `export_package` takes the request date
+    # once and forwards it to every engine call, so identical input gives an identical page.
+    as_of: Optional[str] = None
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+        _date.fromisoformat(v)  # a ValueError here is a 422 too
+        return v
+
+
+def _export_request_date() -> str:
+    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -2182,7 +2200,7 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
 
 
 async def _export_package_from_template(
-    body: "ExportPackageRequest", request: Request, current_user: "User",
+    body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,
 ) -> dict:
     """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
     `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
@@ -2279,7 +2297,7 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas},
+                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
@@ -2343,8 +2361,11 @@ async def export_package(
             ),
         )
 
+    # RESOLVED ONCE, then forwarded on every engine call below.
+    as_of = body.as_of or _export_request_date()
+
     if body.template_id:
-        return await _export_package_from_template(body, request, current_user)
+        return await _export_package_from_template(body, request, current_user, as_of)
 
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
@@ -2382,7 +2403,7 @@ async def export_package(
 
     if not any(engine == "fin" for engine, _ in parts):
         # ONLY engine-cost's answers (or none): today's path and today's response, unchanged.
-        params: dict = {"recipient_scope": recipient_scope}
+        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
         if parts:
             params["canvas"] = {"answers": parts[0][1]}
         return await _call_engine_cost_package(
@@ -2397,7 +2418,8 @@ async def export_package(
             continue
         try:
             section = await _call_engine_cost_package(
-                {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
+                {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
+                 "as_of": as_of},
                 bearer, recipient_scope=recipient_scope, template_id=None,
             )
         except HTTPException as exc:
