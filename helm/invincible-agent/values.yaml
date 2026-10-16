@@ -1652,9 +1652,13 @@ cortexBff:
   #     max_concurrent_runs sits at `received` legitimately; a timeout failure is provisional
   #     until a run starts. <= 0 disables the watchdog.
   #   INGEST_WATCHDOG_INTERVAL_SECONDS: how often each replica ticks.
+  #   INGEST_DOOR_READS_PROCESSABLE_KINDS: POST /ingest refuses a kind absent from the list doc-tools
+  #     publishes to PUT /ingest/processable-kinds. OFF in 0.4.49 (registry behaviour unchanged); flipped
+  #     ON after doc-tools publishes. ON is deny-by-default: 503 before the first publish, then 400.
   env:
     INGEST_RECEIVED_TIMEOUT_SECONDS: "600"
     INGEST_WATCHDOG_INTERVAL_SECONDS: "30"
+    INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"
   # Optional cluster-specific TLS trust override.
   #
   # When the cortex-bff pod needs to talk to an external HTTPS endpoint

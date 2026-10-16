@@ -1,10 +1,24 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.49 — 2026-10-16
+
+Rev 189, the label it rolls under. The door-read flag below is chart content added after 0.4.48's
+bump, so the version moves (`tests/test_chart_version_tracks_chart_content.py`). 0.4.48 was never
+published or deployed. 189 merges before #41 (`lane/01-broker-flip`, 0.4.47), so #41 renumbers
+above this, and #28 after it.
+
+### Added
+
+- **`cortexBff.env` `INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"`.** `POST /ingest` can refuse a
+  registered kind that doc-tools does not process, using the list doc-tools publishes to the new
+  service-only `PUT /ingest/processable-kinds` (persisted in Postgres, cached per pod). The flag
+  ships OFF, so registry behaviour is unchanged; it is flipped ON in 190 after doc-tools
+  publishes. ON is deny-by-default: 503 `processable_kinds_unknown` before the first publish,
+  400 `kind_unprocessable` after.
+
 ## 0.4.48 — 2026-10-16
 
-Rev 189, staged, not rolled. The fleet pins iagent-mesh `v0.9.10`, and the domain broker installs
-the same tag. It numbers after #41's 0.4.47 (`lane/01-broker-flip`). If 189 merges first, the two
-swap numbers.
+Rev 189's first label, never published: the iagent-mesh `v0.9.10` pin. Rolled as 0.4.49, above.
 
 ### Changed
 

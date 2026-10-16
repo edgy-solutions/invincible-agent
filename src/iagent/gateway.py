@@ -9902,7 +9902,10 @@ async def ingest_document(
     -> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s
     carry `registered`, the sorted document-branch kind names, so the picker can offer them. Any
     registered document-branch kind passes, including a deliberately domainless one like `pdf`
-    (it lands at `awaiting_origin` later, unchanged). Writing a bare file format into
+    (it lands at `awaiting_origin` later, unchanged). When INGEST_DOOR_READS_PROCESSABLE_KINDS is on
+    (default OFF), one more check follows, still before the bounded read: no published list yet ->
+    503 `processable_kinds_unknown`; a kind absent from doc-tools' published list -> 400
+    `kind_unprocessable` (carrying `processable`). Writing a bare file format into
     `manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as
     ContentKindUnregistered("pdf") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a
     REGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`
@@ -9982,6 +9985,33 @@ async def ingest_document(
                 ),
             },
         )
+
+    # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
+    # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
+    # 503; a list that lacks the declared kind -> 400. Still before the bounded read.
+    if os.getenv("INGEST_DOOR_READS_PROCESSABLE_KINDS", "").strip().lower() in ("1", "true", "yes", "on"):
+        from . import processable_kinds
+
+        try:
+            _processable = await run_in_threadpool(processable_kinds.current)
+        except processable_kinds.StoreUnreachable as exc:
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": f"the processable-kinds store was unreachable and nothing is cached ({exc}). "
+                           "Refusing before any write.",
+            })
+        if _processable is None:
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": "doc-tools has not published its processable kinds yet. Refusing before any write.",
+            })
+        if declared_content_kind not in _processable:
+            raise HTTPException(status_code=400, detail={
+                "error": "kind_unprocessable",
+                "message": f"content_kind {declared_content_kind!r} is registered but doc-tools does not "
+                           "process it. Refusing before any write.",
+                "processable": sorted(_processable),
+            })
 
     # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
     # limit in values-sandbox), so one authenticated drop could take the BFF down for every
@@ -10882,6 +10912,68 @@ async def list_ingest_retries(
          "object_prefix": r["object_prefix"], "sha256": r["sha256"],
          "run_id": r["run_id"], "updated_at": r["updated_at"]}
         for r in rows]}
+
+
+class ProcessableKindsBody(BaseModel):
+    kinds: list[str]
+    source: Optional[str] = None
+
+    @field_validator("kinds")
+    @classmethod
+    def _check_kinds(cls, v):
+        if not v or len(v) > 512:
+            raise ValueError("kinds must hold 1..512 entries")
+        out = set()
+        for k in v:
+            k = (k or "").strip()
+            if not k or len(k) > 128 or "/" in k:
+                raise ValueError("each kind must be non-blank, <=128 chars, without '/'")
+            out.add(k)
+        return sorted(out)
+
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, v):
+        if v is not None and len(v) > 200:
+            raise ValueError("source must be <=200 chars")
+        return v
+
+
+@app.put("/ingest/processable-kinds")
+async def put_processable_kinds(
+    body: ProcessableKindsBody,
+    current_user: User = Depends(get_current_user),
+):
+    """PUT /ingest/processable-kinds -- doc-tools publishes the content kinds it can process.
+    SERVICE-ONLY (same gate as GET /ingest/retries). The BFF persists the list (one Postgres row)
+    and caches it; the ingest door reads the cache when INGEST_DOOR_READS_PROCESSABLE_KINDS is on.
+    `unregistered` lists published kinds the registry does not know (informational, not refused).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, processable_kinds
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "PUT /ingest/processable-kinds is callable only by doc-tools' own service identity.",
+        })
+    kinds = list(body.kinds)
+    try:
+        published_at = await run_in_threadpool(
+            lambda: processable_kinds.publish(kinds, body.source, caller))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "error": "processable_kinds_store_unreachable",
+            "message": f"{type(exc).__name__}: {exc}",
+        })
+    processable_kinds.set_cache(kinds, published_at)
+    return {
+        "kinds": kinds,
+        "published_at": published_at.isoformat() if hasattr(published_at, "isoformat") else str(published_at),
+        "unregistered": [k for k in kinds if content_kinds.by_kind(k) is None],
+    }
 
 
 @app.post("/ingest/{ingest_id}/stage")
