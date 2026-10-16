@@ -325,6 +325,16 @@ _NOT_ENUMERABLE = {
 }
 
 
+#: THE IDENTIFIER NAMESPACES THIS ENGINE OWNS (RULED 2026-10-12, architect's Q3: a namespace is
+#: claimed by exactly one engine, declared in its registration; engine-o's fan-out then refuses
+#: another provider's FUZZY candidate for an identifier in it). Hazards, safety-critical items
+#: and mitigations are this engine's. `WO-` is deliberately NOT declared: work orders belong to
+#: the maintenance plane (see the resolver's description). Declared on the resolveInstance row,
+#: the row the fan-out reads. Pinned to the fixture's own ids by
+#: tests/safety/test_id_namespaces_are_declared_by_the_engine_that_owns_them.py.
+ID_NAMESPACES = ("HAZ-", "CSI-", "MIT-")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Register every verb as its own predicate edge.
@@ -454,6 +464,7 @@ async def lifespan(app: FastAPI):
     # phone-book hit from some engine matching a digit.
     provider_specs = (
         {
+            "id_namespaces": list(ID_NAMESPACES),
             "name": "engine_safety_sustainment_resolve_instance",
             "verb": "mesh:resolveInstance",
             "input_uri": MESH + "InstanceIdentifier",
@@ -507,6 +518,7 @@ async def lifespan(app: FastAPI):
                 owner_persona=OWNER_PERSONA,
                 domains=DOMAINS,
                 mint=_mint,
+                id_namespaces=spec.get("id_namespaces"),
             )
             attempted.append(spec["verb"])
         except Exception as exc:  # noqa: BLE001
