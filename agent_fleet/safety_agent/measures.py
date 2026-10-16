@@ -605,6 +605,12 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     #   no_failures_recorded the part is well-formed and no source holds a visible failure for it,
     #                        whether it is a listed critical item or a plain component.
     part_number = part_number.strip()
+    # MEASURED LIVE 2026-10-16 (rev 193): when the router binds this verb through pcn:Component it
+    # hands over the component's INSTANCE IRI ('http://internal/components/5530-184'), not the bare
+    # part number, and the shape check below refused it as unknown_part. The part number is the
+    # IRI's last segment; a bare number is unchanged.
+    if "://" in part_number:
+        part_number = re.split(r"[/#]", part_number.rstrip("/#"))[-1]
     if not _PART_NUMBER_SHAPE.fullmatch(part_number):
         return {
             "refused": True,
