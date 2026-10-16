@@ -1,5 +1,29 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.52 — 2026-10-16
+
+Renumbered again, to 0.4.52: roll 190 took 0.4.51. Before that it was 0.4.51 (rev 189 rolled as
+0.4.49 and #41 merged as 0.4.50), and before that 0.4.49, renumbered from 0.4.41 when master was
+at 0.4.46, lane/01-broker-flip (#41) held 0.4.47 and lane/01-rev189 held 0.4.48. On 2026-10-10 it
+was renumbered from 0.4.40, when rev 186 took 0.4.39 and lane/01-oidc-roundtrip moved to 0.4.40.
+Content is unchanged by any renumber.
+
+NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
+OFF in the sandbox; nothing rolled.
+
+### Added
+
+- **`invincible-agent.networkPolicyEgressOnlyTargets`** (`_helpers.tpl`): components an engine may name
+  in `directCallers` that are neither stores nor engines (`dagster-webserver`, 3000). Renders the
+  engine's egress rule and no ingress policy. Needed for `DAGSTER_WEBSERVER_URL`, a flow no other
+  table could express.
+
+### Changed
+
+- Sandbox `networkPolicy.directCallers`: engine-o gains postgresql, keycloak, central-gateway,
+  dagster-webserver; cortex-bff gains weaviate, fuseki, topaz. Each carries its `via` key and the
+  2026-12-14 expiry. See docs/measurements/2026-10-10-the-gate-keeps-cortex-bff-and-engine-o.md.
+
 ## 0.4.51 — 2026-10-16
 
 A finished case's Restate workflow is kept 30 days, not Restate's default 1.

@@ -588,3 +588,18 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
 {{- fail "keycloak.truststore.enabled is true but not exactly one of existingSecret / existingConfigMap is set (zero or both); set one of them" }}
 {{- end }}
 {{- end }}
+
+{{/*
+  invincible-agent.networkPolicyEgressOnlyTargets -- components an engine may be a direct caller
+  of that are NOT stores (no ingress policy is rendered for them, so nothing else is cut) and
+  NOT engines (no `.port` value to read). Only networkpolicy-engines.yaml reads this: it makes the
+  component nameable as a `directCallers` store, rendering the engine's egress rule and no ingress
+  policy. Added because DAGSTER_WEBSERVER_URL (iagent-config, every engine) is a flow no other
+  table could express; a store table entry would have fenced dagster-webserver's ingress for
+  every other caller. Port 3000 is the container port the Service's `http` targetPort resolves to.
+*/}}
+{{- define "invincible-agent.networkPolicyEgressOnlyTargets" -}}
+{{- list
+  (dict "component" "dagster-webserver" "ports" (list 3000))
+| toJson -}}
+{{- end }}
