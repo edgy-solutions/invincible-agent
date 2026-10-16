@@ -51,7 +51,7 @@ of its sha256 are `387b8a`, matching yours.
 
 ## What happens next
 
-When your CA is in, we turn the broker on (chart 0.4.46) and try the first brokered login:
+When your CA is in, we turn the broker on (chart 0.4.47) and try the first brokered login:
 operator.atlantia signs in to cortex with your credentials. We will report the result by packet,
 including:
 - the `sub` our side recorded;
