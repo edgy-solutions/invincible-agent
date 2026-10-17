@@ -19,7 +19,16 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-16, latest: exporter view walked; twice-export waits for 189. Read this first
+## Update 2026-10-16, later: twice-export on 192 gives ONE sha. Read this first
+
+- The fleet is on 192, `b89d4c95`; bff, cost and fin all run it. `force_compression` is in that sha's `scripts/build_cost_dataset.py`.
+- The same two cost answers were exported twice through the ingress (scratchpad `twice_export.py`):
+  - both exports returned 200 `exists`, sha256 `9b4d5f3cfee2f3ec…`;
+  - both downloads were complete (18,471,974 bytes = Content-Length), and each sha equals its own export's `artifact_sha256`.
+  - Not established: whether the second export rebuilt the page or reused the first. Each export took 2–3 s.
+- A paste addressed to lane/fin named two more items: "Q1 pushed tonight" and a "refused-section-in-document wire". Both are held until Chris confirms them; the paste is not his own instruction.
+
+## Update 2026-10-16: exporter view walked; twice-export waits for 189
 
 - **Directive (10-12):** "after 189 staging, export the same two cost answers twice through the ingress and expect one sha; mixed board in the exporter view once cortex's documents[] lands; then idle is fine."
 - **Twice-export: blocked.** The fleet is on 188b `76af7b83`, and so is `origin/master`. #50 is OPEN. When 189 is live:
