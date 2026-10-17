@@ -13,9 +13,11 @@ are the callers now refused.
 WHAT IS SEALED. The refusal body (the shape of safety's `no_person`), that nothing downstream is
 asked (the model call, which is the first thing the route reaches, is never made), the CONTROL
 that differs only in the caller, and the supervisor NAMING a refused person in its log before
-it degrades to defaults. It does not raise: `tests/planning/test_fill_slots_seam.py` seals that
-no failure path of `_fill_slots_from_query` raises, and a raise would fail the op at
-`execute_subtask`. Whether a refused person should fail the run is for a ruling, not this file.
+it degrades to defaults, and MARKING the run's provenance `fill_slots: refused`. RULED
+2026-10-16 (Chris): "keep 'never raise' -- routing must not break on a slot extractor; log it
+and mark the run's provenance fill_slots: refused so a census row can see it." The mark travels
+result -> `subtask_slots_decision` metadata -> the classify path's `resolved_intent` (the
+artifact a census reads); each hop is sealed below.
 
 Run: uv run --frozen pytest tests/security/test_fill_slots_refuses_a_caller_who_is_not_a_person.py -v
 """
@@ -129,10 +131,67 @@ def _fill(monkeypatch, response):
 def test_the_supervisor_names_a_no_person_refusal_and_degrades(monkeypatch):
     got, warnings = _fill(monkeypatch, _response(422, EXPECTED))
     assert got.slots == {} and got.resolution == {}
+    assert got.fill_slots == "refused"
     assert len(warnings) == 1 and "refused no_person" in warnings[0], warnings
 
 
 def test_CONTROL_another_422_is_the_generic_non_200(monkeypatch):
     got, warnings = _fill(monkeypatch, _response(422, {"detail": "bad"}))
     assert got.slots == {} and got.resolution == {}
+    assert got.fill_slots == ""
     assert len(warnings) == 1 and "non-200" in warnings[0] and "no_person" not in warnings[0], warnings
+
+
+# --- the mark reaches what a census reads ----------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _src(rel):
+    return (_REPO / rel).read_text(encoding="utf-8")
+
+
+def test_the_mark_is_the_ruled_word():
+    from iagent.defs import dynamic_supervisor as ds
+    assert ds.FILL_SLOTS_REFUSED == "refused"
+
+
+def test_the_run_carries_the_fillers_mark_onto_its_provenance():
+    """Hop 2: `execute_subtask` takes the mark off the result and puts it on
+    `subtask_slots_decision`. Read from source, as the supervisor's other emissions are
+    (tests/routing/test_a_binding_records_where_it_came_from.py)."""
+    src = _src("src/iagent/defs/dynamic_supervisor.py")
+    assert "_fill_slots_outcome = filled.fill_slots" in src, "the run drops the filler's mark"
+    assert '"fill_slots": MetadataValue.text(_fill_slots_outcome),' in src, (
+        "subtask_slots_decision does not carry fill_slots")
+
+
+def test_resolved_intent_carries_the_mark():
+    """Hop 3: the classify path's `resolved_intent` -- the artifact field a census reads. The
+    direct path never calls /fill_slots, so it has nothing to carry."""
+    assert '"fill_slots": _slots_md.get("fill_slots") or "",' in _src("src/iagent/gateway.py"), (
+        "resolved_intent drops fill_slots; no census row can see a refused fill")
+
+
+def _fill_slots_callers():
+    """Every module under src/iagent that names engine-o's `/fill_slots` in a string literal
+    (a URL, an f-string part) or calls `_fill_slots_from_query`. Comments never reach the AST; a
+    docstring naming the route would count, which errs loud (a red to re-derive), never quiet."""
+    import ast
+    found = set()
+    for path in sorted((_REPO / "src" / "iagent").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                    and "/fill_slots" in n.value) or (
+                    isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_fill_slots_from_query"):
+                found.add(path.relative_to(_REPO).as_posix())
+    return found
+
+
+def test_only_the_supervisor_calls_fill_slots_so_one_resolved_intent_site_is_enough():
+    """The claim the hop-3 arm rests on. A second caller would need its own mark."""
+    found = _fill_slots_callers()
+    assert "src/iagent/defs/dynamic_supervisor.py" in found, (
+        "the detector does not see the one known caller; it proves nothing")
+    assert found == {"src/iagent/defs/dynamic_supervisor.py"}, found

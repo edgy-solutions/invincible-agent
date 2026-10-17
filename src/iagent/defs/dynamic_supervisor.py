@@ -2229,6 +2229,15 @@ class _FillResult(NamedTuple):
     that names a referent is missing from it."""
     slots: Dict[str, Any]
     resolution: Dict[str, Any]
+    # WHY THE FILL WAS EMPTY, when the reason is one a census must count. "" is every other
+    # outcome (filled, defaulted, unavailable); `FILL_SLOTS_REFUSED` is engine-o's 422
+    # `no_person`. Defaulted so the honest-empty `_FillResult({}, {})` keeps its shape.
+    fill_slots: str = ""
+
+
+# RULED 2026-10-16 (Chris): keep "never raise" -- routing must not break on a slot extractor;
+# log it and mark the run's provenance `fill_slots: refused` so a census row can see it.
+FILL_SLOTS_REFUSED = "refused"
 
 
 def _fill_slots_from_query(
@@ -2297,10 +2306,10 @@ def _fill_slots_from_query(
         if resp.status_code == 422:
             # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
             # `no_person` when the caller carries none (190, lane/74 2026-10-16). It is NOT
-            # raised: tests/planning/test_fill_slots_seam.py seals that no failure path here
-            # raises ("a slot extractor must never be able to break routing"), and a raise
-            # fails the op at `execute_subtask`. So the log names the refusal rather than the
-            # generic non-200 below. A DEFENCE, not a live case: this function sends the
+            # raised -- RULED 2026-10-16, see `FILL_SLOTS_REFUSED`; tests/planning/
+            # test_fill_slots_seam.py seals it. The log names the refusal rather than the
+            # generic non-200 below, and the result carries `FILL_SLOTS_REFUSED` to the run's
+            # `subtask_slots_decision`. A DEFENCE, not a live case: this function sends the
             # token's person (`user_email`).
             try:
                 _refusal = resp.json()
@@ -2310,7 +2319,7 @@ def _fill_slots_from_query(
                 context.log.warning(
                     "fill_slots refused no_person verb_iri=%s — running on defaults", verb_iri,
                 )
-                return _FillResult({}, {})
+                return _FillResult({}, {}, FILL_SLOTS_REFUSED)
         if resp.status_code != 200:
             context.log.warning(
                 "fill_slots non-200 verb_iri=%s status=%s — running on defaults",
@@ -2834,6 +2843,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # filler at all; that is what made the row missing rather than wrong.
             resolution = {**resolution, **bound_resolution}
 
+    _fill_slots_outcome = ""
     if not spoken and declared:
         filled = _fill_slots_from_query(
             context,
@@ -2848,6 +2858,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             user_email=config.user_email,
         )
         spoken, resolution = filled.slots, filled.resolution
+        _fill_slots_outcome = filled.fill_slots
         # Extracted from the question by the slot filler, which resolves against the graph.
         _slot_sources.update({k: SLOT_SOURCE_FILLED for k in (spoken or {})})
 
@@ -3024,6 +3035,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     "slot_resolution": MetadataValue.text(
                         json.dumps(resolution, default=str)
                     ),
+                    # `refused` when engine-o refused the fill for want of a person (see
+                    # `FILL_SLOTS_REFUSED`), "" otherwise. Carried to `resolved_intent`.
+                    "fill_slots": MetadataValue.text(_fill_slots_outcome),
                 },
             )
         )

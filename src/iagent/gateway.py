@@ -7436,6 +7436,11 @@ async def _generate_dagster_stream_inner(
                     "subject_uri": _slots_md.get("subject_uri") or "",
                     "subject_instance_id": _slots_md.get("subject_instance_id") or "",
                     "subject_instance_label": _slots_md.get("subject_instance_label") or "",
+                    # `refused` when engine-o refused the slot fill for want of a person
+                    # (dynamic_supervisor `FILL_SLOTS_REFUSED`; ruled 2026-10-16), so a census
+                    # row reading the artifact can count it. Classify path only: the direct
+                    # path never calls /fill_slots.
+                    "fill_slots": _slots_md.get("fill_slots") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
