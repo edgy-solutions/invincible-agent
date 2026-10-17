@@ -1,5 +1,11 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.54 — 2026-10-17
+
+cortex-ui pinned to 68f56bb (`sha256:5d5b5dbb…`), from 8fe23fc (`cc2ad9cc…`). Carries the review
+card to the 10-17 standard, xml drops accepted, and /ingest/mine paging past 50. Frontend image
+only; no template changed.
+
 ## 0.4.53 — 2026-10-17
 
 cortex-ui pinned to 8fe23fc (`sha256:cc2ad9cc…`), from e1b94e2 (`8d0234ab`). The rail reads

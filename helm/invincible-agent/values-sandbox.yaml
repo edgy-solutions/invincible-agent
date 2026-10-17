@@ -886,7 +886,15 @@ cortexUi:
     # Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is
     # unchanged. NOT cortex master: 55d2e6a (xml accepted) and 8066347 (/ingest/mine pages past
     # 50) landed after 8fe23fc and do not roll here.
-    digest: "sha256:cc2ad9cc60a7f1bc0a6e910e7f6f36c7d4870d68acd50df59534469f260a434f"
+    # 2026-10-17, pinned for 194 (architect, "cortex pin 68f56bb (review card)"): cortex-ui 68f56bb
+    # (master; 55d2e6a xml accepted, 8066347 /ingest/mine pages past 50, df7f429 the review card to
+    # the 10-17 standard, f15b88e the pdf.js fix, 68f56bb the outline says cell, table box, or an
+    # inherited date's sentence) -> 5d5b5dbb. 8fe23fc is an ancestor of 68f56bb. Measured before
+    # pinning: the FULL tag resolves to this digest (an OCI index); the abbreviated tag and this
+    # digest with its last hex altered both answer 404; the 8fe23fc control still resolves to
+    # cc2ad9cc. Since 8fe23fc the Dockerfile, docker-entrypoint.sh, nginx config and .github are
+    # unchanged, so VITE_FEATURES is unchanged.
+    digest: "sha256:5d5b5dbbb1dc67e1f885170c5f316b6a2e6e139b9e92b75efa3015986187be06"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
