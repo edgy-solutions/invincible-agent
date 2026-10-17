@@ -25,6 +25,7 @@ try:
 except Exception:  # not installed here: the end-to-end arms skip
     _EO_MAIN = None
 
+from tests._helpers import sustainment_resolution as sr
 from . import _program_filter as pf
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -147,18 +148,9 @@ def test_the_census_reader_reads_the_refusal_it_is_now_sent():
     assert wc._card_refusals([comp]) == [r]
 
 
-# ── the end-to-end arms: need lane/74's decide() (#58 at 7e5b2ba2 or later) ─────────────────
-# They drive the REAL resolve path (engine-o's _resolve_instance, with Engine S's real
-# /resolve_instance over an ASGI transport) through the harness #58's own test file builds. On a
-# master WITHOUT #58 they are RED (ModuleNotFoundError or a wrong subject); they are not xfailed.
-
-_TIE = "tests.routing.test_a_same_class_tie_asks_and_a_subclass_wins"
-
-
-def _harness():
-    import importlib
-    return importlib.import_module(_TIE)
-
+# ── the end-to-end arms: drive the REAL resolve path (engine-o's _resolve_instance, with Engine S's
+# real /resolve_instance over an ASGI transport) through the shared wiring in
+# tests/_helpers/sustainment_resolution.py (moved there by #62). They need #58's decide() on the tree.
 
 @pytest.fixture()
 def eo_main():
@@ -172,9 +164,8 @@ def _verbs_on(class_uri):
 
 
 def test_pn_8802_with_the_fracas_verb_is_answered_by_the_safety_item_provider(eo_main, monkeypatch):
-    h = _harness()
-    h._wire(eo_main, monkeypatch)
-    subject, prov = h._resolve(eo_main, "PN-8802")
+    sr.wire(eo_main, monkeypatch)
+    subject, prov = sr.resolve(eo_main, "PN-8802")
     assert subject == SAFETY_ITEM, prov
     assert prov["instance_id"] == "CSI-5002" and prov["instance_match"] == "exact"
     assert "mesh:whatFailedOnThisPart" in _verbs_on(subject), "the resolved class must carry the verb"
@@ -185,10 +176,9 @@ def test_pn_8802_with_the_fracas_verb_is_answered_by_the_safety_item_provider(eo
 
 
 def test_an_unlisted_part_resolves_to_the_component_only_and_gets_the_refusal_end_to_end(eo_main, monkeypatch):
-    h = _harness()
     iri = "http://internal/components/5530-184"
-    h._wire(eo_main, monkeypatch, eo_rows=(iri,))
-    subject, prov = h._resolve(eo_main, "5530-184")
+    sr.wire(eo_main, monkeypatch, eo_rows=(iri,))
+    subject, prov = sr.resolve(eo_main, "5530-184")
     assert subject == COMPONENT, prov
     assert prov["instance_id"] == iri
     assert "mesh:whatFailedOnThisPart" in _verbs_on(subject), "Component must carry the verb"
@@ -198,10 +188,9 @@ def test_an_unlisted_part_resolves_to_the_component_only_and_gets_the_refusal_en
 
 
 def test_a_same_class_tie_between_two_critical_items_asks_with_both_candidates(eo_main, monkeypatch):
-    h = _harness()
-    h._wire(eo_main, monkeypatch, eo_rows=())
-    h._two(monkeypatch, "PN-9001", "PN-9001")
-    subject, prov = h._resolve(eo_main, "PN-9001")
+    sr.wire(eo_main, monkeypatch, eo_rows=())
+    sr.two(monkeypatch, "PN-9001", "PN-9001")
+    subject, prov = sr.resolve(eo_main, "PN-9001")
     assert subject == SAFETY_ITEM and prov["instance_match"] == "ambiguous_in_class", prov
     assert not prov["instance_resolved"]
     assert {t["instance_id"] for t in prov["instance_top_candidates"]} == {"CSI-7001", "CSI-7002"}
