@@ -22,15 +22,16 @@ report, not defects to silently patch over in either file.
 
 THE CONTRACT 7f BUILDS TO (architect, 2026-10-16): the expected rendered walk for `MRAD-ARR-0417`,
 options and all. `mrad.ttl` stays the per-module drift check. Ruled shape: an option's DMC became
-`procedures[]` (ordered, min 1), and an option may carry cited values `{value, evidence_ref}`.
+`procedures[]` (ordered; RULED 2026-10-17: min 0, the field always present), and an option may
+carry cited values `{value, evidence_ref}`.
 
 - `citations` is the real `s1000d_fault_walk` rendered over `mrad.ttl`, not a transcription.
   DMCs are canonical labels, with no `DMC-` prefix. `bit_text` is the module's own text.
 - `options` are `GROUND-TRUTH.json`'s four. Each one's `dmcs` is split by what it is
   (OVERRULED, architect 2026-10-17: 421A is the module an option comes FROM, not a procedure):
   - `procedures[]` holds only the procedural modules: `520A` then `720A` for the two replace
-    options, and none for options 1 and 2, whose whole action is 421A's own text. That empty list
-    is in tension with the earlier "min 1"; it is with the architect;
+    options, and `[]` for options 1 and 2. An option with no procedures is an inspect/observe
+    option, and its `action` text carries it (architect, 2026-10-17: min 0, field required);
   - 421A stays in `citations.fault_isolation`, and each `action` cites it: the values are 421A's
     `isolationAction` text, verbatim;
   - the IPD module (941A) is the `evidence_ref` of the part values it supplies;

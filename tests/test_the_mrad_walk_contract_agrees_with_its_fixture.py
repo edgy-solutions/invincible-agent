@@ -10,6 +10,8 @@ the graph it is a contract over:
 - its `citations` are what the REAL walk renders over `mrad.ttl` today, not a transcription;
 - every procedure is a procedural module the fault-isolation module refers to, never 421A itself,
   and a replace option's procedures are the remove/install citation's modules;
+- `procedures` is REQUIRED and may be empty (architect, 2026-10-17: min 0): an option with none
+  is an inspect/observe option, and its cited `action` text carries it;
 - a cited part value is the IPD citation's, cited to the IPD module; a cited interval is the
   planning citation's (which the first arm proves the walk renders from 320A's interval).
 
@@ -71,7 +73,10 @@ def test_procedures_are_the_procedural_modules_the_fault_isolation_module_refers
     assert remove_install and remove_install <= referred
     assert [o["n"] for o in c["options"]] == [1, 2, 3, 4]
     for o in c["options"]:
+        assert isinstance(o.get("procedures"), list), o["n"]
         procs = o["procedures"]
+        if not procs:
+            assert "action" in o.get("cited", {}), o["n"]
         assert fi_dmc not in procs, o["n"]
         assert set(procs) <= referred and len(set(procs)) == len(procs), o["n"]
         for dmc in procs:
