@@ -2147,6 +2147,8 @@ def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> 
     API response / exporter's view, never in the customer page. Sealed by
     `tests/test_a_mixed_board_exports_per_engine.py::test_engine_fin_takes_ratified_templates_only`
     and `::test_the_fin_section_states_not_a_ratified_template_and_nothing_else`.
+
+    RULED 2026-10-16: reason_code added; Q2's "nothing else" governs the prose.
     """
     return {
         "engine": "fin",
@@ -2155,8 +2157,37 @@ def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> 
         "status": "failed",
         "recipient_scope": recipient_scope,
         "outcome": "not_in_model",
+        "reason_code": "not_a_ratified_template",
         "reason": "not a ratified template",
     }
+
+
+def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: str) -> list[dict]:
+    """Each refused answer of an engine as a `failed` `documents[]` entry (RULED 2026-10-16:
+    "the refused entries go in documents[] per engine with reason_code and the refusal prose").
+
+    Items are grouped by `reason_code`, in order of each code's first appearance; a group's
+    `answers` are its ids in board order. Every item of one code carries the same constant
+    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reader drops the whole response on any other status. Never rendered on the customer page.
+    """
+    groups: dict[str, dict] = {}
+    for item in refused_answers:
+        code = item.get("reason_code")
+        g = groups.get(code)
+        if g is None:
+            g = groups[code] = {
+                "engine": engine,
+                "answers": [],
+                "export_id": None,
+                "status": "failed",
+                "recipient_scope": recipient_scope,
+                "outcome": "not_in_model",
+                "reason_code": code,
+                "reason": item.get("reason"),
+            }
+        g["answers"].append(item.get("answer_id"))
+    return list(groups.values())
 
 
 async def _call_engine_cost_package(
@@ -2380,7 +2411,11 @@ async def export_package(
     present the response is a 200 carrying `documents`, one section per engine: a refused engine
     (engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates
     only -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then
-    applies to a section, not the response. A cost-only board answers exactly as before.
+    applies to a section, not the response. RULED 2026-10-16: a refused answer is its own
+    `failed` entry in `documents[]` with a `reason_code` and the refusal prose (never on the
+    customer page); a cost-only board switches to `documents[]` only when engine-cost refused
+    something, and otherwise answers exactly as before. The top-level `reason` counts answers
+    ("r of n answers refused"), not engines.
     """
     if body.template_id and body.answers:
         raise HTTPException(
@@ -2432,14 +2467,19 @@ async def export_package(
 
     bearer = _user_bearer(request)
 
-    if not any(engine == "fin" for engine, _ in parts):
-        # ONLY engine-cost's answers (or none): today's path and today's response, unchanged.
+    has_fin = any(engine == "fin" for engine, _ in parts)
+    cost_first: Optional[dict] = None
+    if not has_fin:
+        # ONLY engine-cost's answers (or none): today's path and today's response, unchanged
+        # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
         params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
         if parts:
             params["canvas"] = {"answers": parts[0][1]}
-        return await _call_engine_cost_package(
+        cost_first = await _call_engine_cost_package(
             params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
         )
+        if not cost_first.get("refused_answers"):
+            return cost_first
 
     documents: list[dict] = []
     for engine, answers in parts:
@@ -2447,24 +2487,43 @@ async def export_package(
         if engine == "fin":
             documents.append(_fin_ad_hoc_refusal_section(ids, recipient_scope))
             continue
-        try:
-            section = await _call_engine_cost_package(
-                {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
-                 "as_of": as_of},
-                bearer, recipient_scope=recipient_scope, template_id=None,
-            )
-        except HTTPException as exc:
-            section = _cost_refusal_section(exc, recipient_scope)
-        documents.append({"engine": engine, "answers": ids, **section})
+        if cost_first is not None:
+            section = cost_first
+        else:
+            try:
+                section = await _call_engine_cost_package(
+                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
+                     "as_of": as_of},
+                    bearer, recipient_scope=recipient_scope, template_id=None,
+                )
+            except HTTPException as exc:
+                section = _cost_refusal_section(exc, recipient_scope)
+        refused_items = section.get("refused_answers") or []
+        if refused_items:
+            if section["status"] == "exists":
+                refused_ids = {i.get("answer_id") for i in refused_items}
+                rest = {k: v for k, v in section.items() if k != "refused_answers"}
+                documents.append({
+                    "engine": engine,
+                    "answers": [i for i in ids if i not in refused_ids],
+                    **rest,
+                })
+            documents.extend(_refused_entries(engine, refused_items, recipient_scope))
+            continue
+        doc = {"engine": engine, "answers": ids, **section}
+        if doc["status"] == "failed":
+            oc = doc.get("outcome")
+            doc["reason_code"] = oc if isinstance(oc, str) and oc else "engine_refused"
+        documents.append(doc)
 
     ok = [d["status"] == "exists" for d in documents]
     status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
-    refused = len(ok) - sum(ok)
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
     return {
         "export_id": None,
         "status": status,
         "recipient_scope": recipient_scope,
-        "reason": None if not refused else f"{refused} of {len(ok)} engines refused",
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
         "template_id": None,
         "documents": documents,
     }

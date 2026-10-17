@@ -127,33 +127,47 @@ def test_the_route_carries_refused_answers_when_every_answer_is_refused():
 # -- the gateway only passes the list through --------------------------------------------------
 
 
+def _entries(body):
+    return [d for d in body["documents"] if d["status"] == "failed" and "reason_code" in d]
+
+
+def _expected(items):
+    return sorted((i["reason_code"], i["reason"], i["answer_id"]) for i in items)
+
+
+def _got(entries):
+    return sorted((d["reason_code"], d["reason"], a) for d in entries for a in d["answers"])
+
+
 def test_gateway_passes_refused_answers_through_on_a_cost_only_board(world):
     """Defends: a refused_answers list in the engine's response reaches a single-engine cost
-    board's response; a response without the key gains none."""
+    board's response as failed documents[] entries (RULED 2026-10-16); a response without the
+    key stays in the single shape and gains none."""
     items = _items()
     body = dict(_Resp()._body, refused_answers=items)
     world.reply = _Resp(200, body)
     r = world.post([COST1, COST2])
     assert r.status_code == 200, r.text
-    assert r.json()["refused_answers"] == items
+    assert _got(_entries(r.json())) == _expected(items)
     world.reply = _Resp()
     r = world.post([COST1, COST2])
-    assert "refused_answers" not in r.json()
+    assert "refused_answers" not in r.json() and "documents" not in r.json()
 
 
 def test_gateway_passes_an_in_band_refusal_list_through(world):
-    """Defends: an in-band engine refusal's refused_answers is on the refusal body."""
+    """Defends: an in-band engine refusal's refused_answers becomes documents[] entries."""
     items = _items()
     world.reply = _Resp(200, {"refused": True, "outcome": "not_in_model", "reason": "x",
                               "refused_answers": items})
     r = world.post([COST1])
-    assert r.json()["refused_answers"] == items
+    assert _got(_entries(r.json())) == _expected(items)
 
 
 def test_gateway_cost_section_of_a_mixed_board_carries_refused_answers(world):
-    """Defends: on the mixed path the cost section carries the engine's refused_answers."""
+    """Defends: on the mixed path the engine's refused_answers become cost entries, and the
+    cost document itself no longer carries the list."""
     items = _items()
     world.reply = _Resp(200, dict(_Resp()._body, refused_answers=items))
     body = world.post([COST1, FIN1]).json()
-    cost = [d for d in body["documents"] if d["engine"] == "cost"][0]
-    assert cost["refused_answers"] == items
+    assert _got([d for d in _entries(body) if d["engine"] == "cost"]) == _expected(items)
+    assert all("refused_answers" not in d for d in body["documents"])

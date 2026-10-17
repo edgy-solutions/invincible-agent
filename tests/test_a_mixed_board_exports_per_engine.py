@@ -148,10 +148,11 @@ def test_an_engine_cost_refusal_becomes_its_section_not_the_response(world):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "failed"
-    assert body["reason"] == "2 of 2 engines refused"
+    assert body["reason"] == "2 of 2 answers refused"
     cost = body["documents"][0]
     assert cost["engine"] == "cost" and cost["status"] == "failed"
     assert "lot_not_entitled" in cost["reason"]
+    assert cost["reason_code"] == "engine_refused"  # no outcome on this refusal
     # CONTROL: the same refusal on a COST-ONLY board still raises, as today.
     r2 = world.post([COST1])
     assert r2.status_code == 422
@@ -164,6 +165,7 @@ def test_engine_cost_unreachable_is_an_unavailable_section_on_a_mixed_board(worl
     assert r.status_code == 200, r.text
     cost = r.json()["documents"][0]
     assert cost["status"] == "failed" and cost["outcome"] == "unavailable"
+    assert cost["reason_code"] == "unavailable"
     assert "engine down" in cost["reason"]
     assert world.post([COST1]).status_code == 502  # control: cost-only still raises
 
@@ -211,11 +213,13 @@ def test_engine_fin_takes_ratified_templates_only():
 
 
 def test_the_fin_section_states_not_a_ratified_template_and_nothing_else(world):
+    # RULED 2026-10-16: reason_code added; Q2's "nothing else" governs the prose.
     r = world.post([FIN1, FIN2])
     assert r.status_code == 200, r.text
     doc = r.json()["documents"][0]
     assert set(doc) == {"engine", "answers", "export_id", "status", "recipient_scope",
-                        "outcome", "reason"}
+                        "outcome", "reason_code", "reason"}
+    assert doc["reason_code"] == "not_a_ratified_template"
     assert doc["reason"] == "not a ratified template"
     assert doc["recipient_scope"] == SCOPE
     assert doc["answers"] == ["f1", "f2"]
@@ -287,3 +291,102 @@ def test_a_malformed_as_of_is_a_422_before_any_engine_call(world, bad):
     r = world.post([COST1], as_of=bad)
     assert r.status_code == 422, r.text
     assert world.posts == []
+
+
+# -- RULED 2026-10-16: each refused answer is a failed documents[] entry with a reason_code ------
+
+
+def _refused(aid, code):
+    return {"answer_id": aid, "reason_code": code, "reason": C.REFUSAL_REASONS[code]}
+
+
+def _exists_body(refused):
+    return {"artifact_sha256": GOOD, "artifact_filename": "cost-validation-x.html",
+            "artifact_bytes": 1, "algorithm_sha": "x", "lots_disclosed": [], "sections": [],
+            "refused_answers": refused}
+
+
+REFUSED_KEYS = {"engine", "answers", "export_id", "status", "recipient_scope", "outcome",
+                "reason_code", "reason"}
+
+
+def _cortex_accepts(d):
+    """Mirror of cortex-ui `src/lib/canvasExport.ts` `readExportDocument` (origin/master,
+    L139-152): `engine` non-empty string, `answers` array of strings, `status` in VALID_STATUSES
+    (producing|exists|failed, L136), `export_id` null or string, `recipient_scope` non-empty
+    string. One malformed element drops the whole response."""
+    return (isinstance(d, dict)
+            and isinstance(d.get("engine"), str) and d["engine"] != ""
+            and isinstance(d.get("answers"), list)
+            and all(isinstance(a, str) for a in d["answers"])
+            and d.get("status") in ("producing", "exists", "failed")
+            and (d.get("export_id") is None or isinstance(d["export_id"], str))
+            and isinstance(d.get("recipient_scope"), str) and d["recipient_scope"] != "")
+
+
+def _all_accepted(body):
+    assert body["documents"]
+    assert all(_cortex_accepts(d) for d in body["documents"]), body["documents"]
+
+
+def test_a_cost_only_board_with_a_refusal_answers_in_documents(world):
+    world.reply = _Resp(200, _exists_body([_refused("c2", C.NO_VERB)]))
+    r = world.post([COST1, COST2])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    cost, refused = body["documents"]
+    assert cost["engine"] == "cost" and cost["status"] == "exists"
+    assert cost["answers"] == ["c1"] and "refused_answers" not in cost
+    assert set(refused) == REFUSED_KEYS and refused["status"] == "failed"
+    assert refused["answers"] == ["c2"] and refused["reason_code"] == C.NO_VERB
+    assert refused["reason"] == C.REFUSAL_REASONS[C.NO_VERB]
+    assert body["status"] == "partial" and body["reason"] == "1 of 2 answers refused"
+    _all_accepted(body)
+
+
+def test_refused_answers_group_by_reason_code_in_first_appearance_order(world):
+    c3 = _card("c3", "mesh:costLotBreakdown", "")
+    a, b = C.LOT_NOT_NAMED, C.NO_VERB
+    world.reply = _Resp(200, _exists_body(
+        [_refused("c1", a), _refused("c2", b), _refused("c3", a)]))
+    # all three refused but the engine still answered "exists": entries only follow the items
+    body = world.post([COST1, COST2, c3]).json()
+    refused = [d for d in body["documents"] if d["status"] == "failed"]
+    assert [(d["reason_code"], d["answers"]) for d in refused] == [(a, ["c1", "c3"]), (b, ["c2"])]
+    assert body["reason"] == "3 of 3 answers refused"
+    _all_accepted(body)
+
+
+def test_an_in_band_all_refused_cost_answer_is_entries_only(world):
+    world.reply = _Resp(200, {
+        "refused": True, "outcome": "not_in_model", "reason": "nothing exportable",
+        "refused_answers": [_refused("c1", C.NO_VERB), _refused("c2", C.NO_VERB)]})
+    body = world.post([COST1, COST2]).json()
+    assert [d["reason_code"] for d in body["documents"]] == [C.NO_VERB]
+    assert body["documents"][0]["answers"] == ["c1", "c2"]
+    assert all(set(d) == REFUSED_KEYS for d in body["documents"])
+    assert body["status"] == "failed" and body["reason"] == "2 of 2 answers refused"
+    assert "nothing exportable" not in json.dumps(body)
+    _all_accepted(body)
+
+
+def test_a_mixed_board_lists_cost_exists_cost_refused_then_fin_refused(world):
+    world.reply = _Resp(200, _exists_body([_refused("c2", C.NOT_AN_EXPORTABLE_COST_VERB)]))
+    body = world.post([COST1, COST2, FIN1]).json()
+    docs = body["documents"]
+    assert [(d["engine"], d["status"]) for d in docs] == [
+        ("cost", "exists"), ("cost", "failed"), ("fin", "failed")]
+    assert docs[0]["answers"] == ["c1"]
+    assert docs[1]["reason_code"] == C.NOT_AN_EXPORTABLE_COST_VERB
+    assert docs[2]["reason_code"] == "not_a_ratified_template"
+    assert body["status"] == "partial" and body["reason"] == "2 of 3 answers refused"
+    _all_accepted(body)
+
+
+def test_whole_refusals_are_cortex_compatible(world):
+    world.reply = _Resp(422, {"detail": {"reason": "x"}})
+    _all_accepted(world.post([COST1, FIN1]).json())
+    world.reply = ConnectionError("down")
+    _all_accepted(world.post([COST1, FIN1]).json())
+    world.reply = _Resp()
+    _all_accepted(world.post([COST1, FIN1]).json())
