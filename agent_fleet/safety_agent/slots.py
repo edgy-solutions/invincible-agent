@@ -78,6 +78,12 @@ _REFERENT_KIND = {
     "platform_id":   _SAFETY + "Platform",
 }
 
+#: A slot that wants the BARE IDENTIFIER the caller's words matched, not the resolved instance's
+#: IRI. RULED (architect, 192 item 3, Option 1): declared per slot, so the definitions decide and
+#: the router does not. `part_number` was bound to `http://internal/sustainment/pcn#5530-184`
+#: and the verb parsed the last segment off it; that parse stays as the fallback.
+_BINDS = {"part_number": "identifier"}
+
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing
 #: (a tail, a platform), and `scope_value` is the thing. Declared so the filler
 #: asks "which tail?" rather than putting the word "tail" in the value slot —
@@ -114,6 +120,7 @@ def slots_for(fn_name: str) -> List[dict]:
         referents=_REFERENT_KIND,
         not_a_slot=_NOT_A_SLOT,
         decorate=_attach_scope_pairing,
+        binds=_BINDS,
     )
 
 

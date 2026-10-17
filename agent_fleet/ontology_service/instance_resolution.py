@@ -436,6 +436,12 @@ def narrow_to_most_specific(
     }
 
 
+def _matched_on_of(c: InstanceCandidate) -> dict:
+    """`matched_on` rides on a menu candidate only when the provider set it, so a candidate from
+    a provider that never sets it keeps the exact dict it had before a slot could bind on it."""
+    return {"matched_on": c.matched_on} if c.matched_on else {}
+
+
 def _rank_and_decide(
     above_floor: list[InstanceCandidate], exact_threshold: float
 ) -> InstanceResolutionDecision:
@@ -474,6 +480,7 @@ def _rank_and_decide(
                         "class_uri": c.class_uri,
                         "label": c.label,
                         "score": c.score,
+                        **_matched_on_of(c),
                     }
                     for c in sorted(tied, key=lambda c: c.instance_id)
                 ],
@@ -492,6 +499,7 @@ def _rank_and_decide(
                 "instance_id": top.instance_id,
                 "instance_label": top.label,
                 "instance_score": top.score,
+                **({"instance_matched_on": top.matched_on} if top.matched_on else {}),
             },
         )
 
@@ -508,6 +516,7 @@ def _rank_and_decide(
                 "instance_id": top.instance_id,
                 "instance_label": top.label,
                 "instance_score": top.score,
+                **({"instance_matched_on": top.matched_on} if top.matched_on else {}),
             },
         )
 
@@ -525,6 +534,7 @@ def _rank_and_decide(
                     "class_uri": c.class_uri,
                     "label": c.label,
                     "score": c.score,
+                    **_matched_on_of(c),
                 }
                 for c in above_floor[:3]
             ],

@@ -56,6 +56,9 @@ def resolve_sustainment_candidates(identifier: str, *, rows: list[dict], floor: 
                 "instance_id": s,
                 "class_uri": str(row.get("type") or ""),
                 "label": local,
+                # THE BARE IDENTIFIER THE WORDS MATCHED (`5530-184`), as distinct from the IRI in
+                # `instance_id`. A slot declaring `binds: identifier` receives this, not the IRI.
+                "matched_on": local,
                 "score": round(score, 3),
             })
     candidates.sort(key=lambda c: c["score"], reverse=True)

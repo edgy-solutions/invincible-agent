@@ -246,11 +246,27 @@ def _class_admits(candidate: Mapping[str, Any], referent: str) -> bool:
     return isinstance(chain, (list, tuple)) and referent in chain
 
 
+def bound_value(decl: Mapping[str, Any], cand: Mapping[str, Any]) -> str:
+    """What a slot receives for a candidate: the value a menu offers, a pick is validated against,
+    and `/fill_slots` binds.
+
+    A slot declaring `binds: identifier` wants the bare identifier the caller's words matched
+    (`matched_on`), falling back to `instance_id` when the provider set none. Any other slot gets
+    the `instance_id`. ontology_service does not ship `iagent_pure`, so it carries a mirror
+    (`_bound_value` in its main.py); `test_a_part_number_slot_binds_the_identifier_not_the_iri`
+    pins their agreement.
+    """
+    if decl.get("binds") == "identifier":
+        return str(cand.get("matched_on") or cand.get("instance_id") or "")
+    return str(cand.get("instance_id") or "")
+
+
 def _from_candidates(
     cands: Sequence[Mapping[str, Any]],
     *,
     referent: str,
     menu_bound: int,
+    decl: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[Option, ...], int]:
     """Candidates → a bounded menu.
 
@@ -280,8 +296,10 @@ def _from_candidates(
     seen: set[str] = set()
     opts_list: list[Option] = []
     for c in cands:
-        value = str(c.get("instance_id") or "")
-        if not value or value in seen:
+        if not c.get("instance_id"):
+            continue
+        value = bound_value(decl or {}, c)
+        if value in seen:
             continue
         seen.add(value)
         opts_list.append(Option(value, str(c.get("label") or value)))
@@ -343,6 +361,7 @@ def decide_disposition(
         if outcome in ASK_WITH_CANDIDATES:
             opts, truncated = _from_candidates(
                 res.get("candidates") or [], referent=referent, menu_bound=menu_bound,
+                decl=decl,
             )
             if opts:
                 return Disposition(
@@ -989,8 +1008,8 @@ def validate_bound_slots(
                 continue
             for c in cands[:menu_bound]:
                 if c.get("instance_id") and _class_admits(c, referent):
-                    offered.append(str(c["instance_id"]))
-                    labels[str(c["instance_id"])] = str(c.get("label") or "")
+                    offered.append(bound_value(decl, c))
+                    labels[bound_value(decl, c)] = str(c.get("label") or "")
 
         if not offered:
             refusals.append(f"{name}: no_menu — nothing was offered for this slot")

@@ -4630,6 +4630,18 @@ def _decode_declarations(raw: Any) -> list[dict]:
     return [d for d in raw if isinstance(d, dict) and d.get("name")]
 
 
+def _bound_value(decl: dict, cand: dict) -> str:
+    """What a slot receives for a resolved candidate. Mirror of iagent_pure.slot_disposition.bound_value.
+
+    A slot declaring `binds: identifier` wants the bare identifier the caller's words matched
+    (`matched_on`), falling back to `instance_id` when the provider set none. Every other slot
+    gets the `instance_id`, as before. The IRI stays in `resolution` for provenance.
+    """
+    if (decl or {}).get("binds") == "identifier":
+        return str(cand.get("matched_on") or cand.get("instance_id") or "")
+    return str(cand.get("instance_id") or "")
+
+
 def _anchor_period(declarations: list[dict], today: str = "") -> str:
     """Which fiscal period contains today — the ANCHOR that makes "this quarter" answerable.
 
@@ -4796,7 +4808,7 @@ async def fill_slots(request: FillSlotsRequest):
                 continue
             bound = await _bind_docs_slot("", request.query)
             if bound is not None:
-                accepted[name] = bound["instance_id"]
+                accepted[name] = _bound_value(decl, bound)
                 resolution[name] = bound
 
     # A NARROWED SLOT RESOLVES LAST. Its scoped bind below reads the narrowing slots' RESOLVED
@@ -4819,7 +4831,7 @@ async def fill_slots(request: FillSlotsRequest):
         if _docs_pool_applies(request.acting_domains, request.subject_uri) and _docs_pool_accepts(referent):
             bound = await _bind_docs_slot(spoken_value, request.query)
             if bound is not None:
-                accepted[name] = bound["instance_id"]
+                accepted[name] = _bound_value(decl, bound)
                 resolution[name] = bound
                 continue
 
@@ -4838,7 +4850,7 @@ async def fill_slots(request: FillSlotsRequest):
                 user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
-                accepted[name] = scoped["instance_id"]
+                accepted[name] = _bound_value(decl, scoped)
                 resolution[name] = scoped
                 continue
 
@@ -4872,6 +4884,7 @@ async def fill_slots(request: FillSlotsRequest):
                 "class_uri": _subject or "",
                 "label": prov.get("instance_label", ""),
                 "score": prov.get("instance_score", 0.0),
+                **({"matched_on": prov["instance_matched_on"]} if prov.get("instance_matched_on") else {}),
             }]
 
         # Ruling 3: the chain rides on each candidate so the pure consumer can admit a subclass.
@@ -4986,7 +4999,12 @@ async def fill_slots(request: FillSlotsRequest):
             outcome = "wrong_class"
 
         if resolved_id:
-            accepted[name] = resolved_id
+            _chosen = next((c for c in cands if c.get("instance_id") == resolved_id), None) or {}
+            accepted[name] = _bound_value(decl, {
+                "instance_id": resolved_id,
+                "matched_on": _chosen.get("matched_on")
+                or (prov.get("instance_matched_on") if prov.get("instance_id") == resolved_id else ""),
+            })
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
                                 "instance_id": resolved_id,
                                 "instance_label": prov.get("instance_label", ""),
