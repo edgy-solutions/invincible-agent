@@ -91,6 +91,11 @@ PHANTOM_CITATIONS = {
     "docs/adr/ADR-0016-memory-boundary-revised.md":
         "Linked by ADR-0019. Never created. Same shape as 0006: a numbered ADR referenced as "
         "though it were on file.",
+    "docs/measurements/2026-09-29-the-acceptance-consumer-is-still-unreached-and-the-docs-pages-are-not-missing.md":
+        "WRITTEN, NOT A PHANTOM: added by cea00aad on lane/74-acceptance-and-docs-subject "
+        "(2026-09-29), which never reached master, so the honesty seal reports it PENDING. Cited "
+        "as the full report by the 09-29 packet to the architect. Retires when 74 merges that "
+        "branch or retires it; past PENDING_MAX_AGE_DAYS it reds on its own.",
     # ── THE THREE WALK SHEETS THE CENSUS WAS WAITING ON — ALL THREE LANDED (2026-09-19) ──────
     # No walk sheet is allowlisted any more. They retired themselves, which is what the entries
     # were for; the last one was `docs/measurements/docs-walk-sheet.md`, deleted here when 5f's

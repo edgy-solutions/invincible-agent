@@ -26,7 +26,7 @@ producer does not take. §5 — that is a defect in my own seal, and the best th
 Head had moved to `b662b1a3` by firing time. **The roll used `55dc8614`, exactly as armed and gated.**
 The delta is two commits, and it was measured rather than assumed:
 
-    A  docs/measurements/2026-09-26-roll-5-armed-...md     (the arming doc)
+    A  docs/measurements/2026-09-26-roll-5-armed-at-55dc8614-carrying-the-docs-pool-fix-and-the-menu-producer-half.md     (the arming doc)
     D  helm/invincible-agent/values-retire-dagster-server-pin.yaml
 
 **No code.** So the armed sha and head carry the same payload, and firing the *gated* sha is strictly

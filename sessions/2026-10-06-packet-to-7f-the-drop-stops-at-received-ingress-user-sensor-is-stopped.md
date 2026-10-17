@@ -24,7 +24,7 @@ calls it. Capture: `cortex-ui/sessions/2026-10-06-payload-ingest-pcn26-117-rev-1
 
 ## The owner and the one-line fix (yours)
 
-The owner is the ingress-user lane: `docs/notice-identity-contract.md:3`.
+The owner is the ingress-user lane: `doc-tools/docs/notice-identity-contract.md:3`.
 
 `doc_tools/definitions.py`, in `ingress_user_sensor = S3SensorComponent(...)`, add:
 
