@@ -479,6 +479,40 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
 - **Not touched:** the seal is Lane 1's, so gov proposes arms and does not widen it.
 - **Packet placed:** `2026-10-17-packet-to-lane-01-source-gate-seal-four-clauses-unsealed-two-questions.md` (cc the architect).
 
+## 2026-10-17 (2): Q12 and Q13 built and sealed (#73, `d53d89ca`)
+
+From the architect, via Chris: "S1 gap accepted; Lane 1 adopts your five arms before the seal counts. Q12: Topaz outage is 503, same as #54 — a holder of the task is never told not_entitled because a dependency is down. Q13: a service reads the source of drops it delegated because the delegate rule already grants it (it seeded them), not because it is "the submitter"; a service holding a review task counts for nothing. Seal both arms."
+
+- **Where:** branch `lane/gov-review-gate-rulings`, from master `8ab9551a`, in a throwaway worktree with its own venv. PR #73 → master.
+- **Q12, built:**
+  - `human_tasks.can_act_or_unavailable` raises the fleet's one `AuthorizationUnavailable` (imported from `iagent.authz`, so it is the same module object as `auth.py`'s) on a transport error, a 5xx, or a body that is not JSON.
+  - The gate maps that class and `psycopg2.Error` to 503 `authorization_unavailable`, and `HumanTaskConfigError` to 503 `hitl_unconfigured`. An unknown exception is still a fail-closed 403.
+  - `check_can_act` wraps the new function and keeps its `False` for its other callers.
+- **Q13, built:** a service caller (`svc:`, or a key of `DELEGATE_ON_BEHALF_OF`) is decided only by `artifact_reads.is_entitled`, with seeded_by = `submitted_by`, and is audited `seeding_delegate`. Every other service gets 403 `not_entitled` and never reaches the dropper or task clauses, so Topaz is not asked.
+- **Seal:** `tests/test_ingest_review_gate_outage_and_services.py`, 12 arms. It stubs only boundaries: Topaz at httpx's transport, the task store, and the env delegate map.
+  - Against the unfixed gate: 11 red on named assertions, 1 green (the no-task control). Fixed: 12 green.
+  - The matched control: Topaz up gives yes → admitted, no → 403, and the same holder with Topaz down in three modes → 503.
+- **Mutants:** each was red on gov's seal, on its own arm, and every red is an `AssertionError`. Lane 1's seal stayed green under all eight.
+
+  | mutant | reds |
+  | --- | --- |
+  | M1: service branch removed | 5 |
+  | M2: "the submitter" rule | 1 |
+  | M3: outage except → 403 | 4 |
+  | M3b: store outage → 403 | 2 |
+  | M4: `can_act_or_unavailable` swallows | 2 |
+  | M5: gate calls `check_can_act` | 2 |
+  | M6: non-JSON body is not an outage | 2 |
+  | M7: `hitl_unconfigured` handler removed | 2 |
+
+- **Consequence files, all green:** Lane 1's `test_ingest_review_card_routes` (12), `test_approval_authority_gate` (12), `test_a_delegate_reads_what_it_seeded` (29), `test_ingest_routes_admit_a_declared_delegate` (9), `test_a_document_is_promoted_on_the_approval_plane` (73), `test_steward_correction` (60), `security/test_origin_visibility` (21), `test_the_suite_is_testing_THIS_tree` (7), `test_a_delegate_cannot_read_the_case` (7).
+  - Exception: `test_a_delegate_acts_on_behalf_of_a_declared_principal` is 1 red, 18 green. The red is master's own.
+- **Lane 1's file is touched:** `_gate`'s stub is retargeted from `check_can_act` to `can_act_or_unavailable`, because the gate no longer calls the former.
+  - Their S3 arm ("each raise → 403") now splits by class.
+- **Master red, Lane 1's:** `test_J_…names_R_089` flags `update_ingest_stage`. Since `039563a3` (lane/01-193), it calls `_delegate_principals` with no R-089. The census of all 11 functions the predicate flags on #73's tree found it the only miss. #73 added the R-089 line its own gate needed.
+- **Packet placed:** `2026-10-17-packet-to-lane-01-q12-q13-ruled-and-built-pr-73-two-of-your-five-arms-change.md` (cc the architect).
+- **Decided by gov, flagged below as Q14–Q16:** the unconfigured-URL deny, the stranger's 503, and the undeclared `svc:` submitter.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -506,9 +540,20 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
     - Elsewhere it's ruled that a service identity is never a person.
     - It is latent: `users.yaml` has 11 `svc:` ids, and none of them lists a group.
     - Not built. A ruling would apply to both predicates together.
-12. **OPEN (2026-10-17). The review gate's outage answer** (F5 above).
+12. **ANSWERED (2026-10-17): 503, the same as #54. Built at `d53d89ca` (#73).** The review gate's outage answer (F5 above).
     - A Topaz or task-store failure answers 403 `not_entitled` to a real holder.
     - Keep 403 (fail-closed, and indistinguishable from a refusal), or answer 503 the way #54's outage classes do?
-13. **OPEN (2026-10-17). A `svc:` dropper on the review gate** (F6 above).
+13. **ANSWERED (2026-10-17): by the delegate rule, never as the submitter; a service's task counts for nothing. Built at `d53d89ca` (#73).** A `svc:` dropper on the review gate (F6 above).
     - A delegated drop records the service as `submitted_by`, so the service can read every source it delegated.
     - Does "a service identity is never a person" exclude `submitted_by` here, leaving `on_behalf_of` as the dropper?
+14. **OPEN (2026-10-17). An unconfigured `TOPAZ_DIRECTORY_URL` is still a deny (403), not a 503.**
+    - Built that way, following `check_can_view_program`, where an unset URL is False.
+    - Q12 says a holder "is never told not_entitled because a dependency is down". An unset URL is misconfiguration, not an outage, but a holder still hears `not_entitled`. Should it be 503 `hitl_unconfigured`, the way an unconfigured task store already is?
+15. **OPEN (2026-10-17). A stranger also gets a 503 during an outage.**
+    - The gate cannot decide a stranger without Topaz, so it does not try to.
+    - The cost is a small oracle: a 503 tells a stranger that this ingest has an open task with an audience. With no open task, or a resolved one, the answer is still 403, and Topaz is not asked.
+    - Accept, or refuse strangers earlier? There is no cheap way to tell a stranger from a holder.
+16. **OPEN (2026-10-17). A `svc:` caller that seeded a drop but is not a declared delegate gets 403.**
+    - This is gov's reading of "because the delegate rule already grants it": `is_entitled` grants only when the seeder is also in `DELEGATE_ON_BEHALF_OF`.
+    - **It is reachable, not latent.** A `svc:` caller that sends no `on_behalf_of` takes `_admit_on_behalf_of`'s non-delegated path, `(caller, None)`, and drops as itself. Under #73 it then cannot read its own drop's source or extraction. Gov did not check whether `/ingest` refuses a service elsewhere.
+    - Confirm the 403, or should a service's own non-delegated drop be readable by it? If so, under which rule? It is not the delegate rule.

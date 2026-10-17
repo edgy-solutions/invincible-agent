@@ -70,6 +70,17 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
 - **Item 2: DONE (review only).** Report section "2026-10-17". Four clauses of `_ingest_review_access` are unsealed (S1 task id, S2 audience pass-through, S3 fail-closed, S5 audience presence). S4 and S7 are red. Q12 (outage 403 vs 503) and Q13 (`svc:` dropper) are open. Packet placed: `2026-10-17-packet-to-lane-01-source-gate-seal-four-clauses-unsealed-two-questions.md`.
 - **Item 1: still waiting** on Lane 1's live run of `tests/e2e/walk_document_promotion.py` (`31d0590e`, written, not run at the 193 report). `steward_confirmed` = `origin_resolved_by: "steward"` + `steward_attestation` in `origin_evidence` (CONFIRMED). Plan unchanged: read the promoted row's `origin_*`, then `visible_by_origin` for a user outside the audience (False) and a matched control inside it (True).
 
+### Update, 2026-10-17 (2): Q12 and Q13 ruled, built as #73
+
+> to: invincible-agent/lane/gov — from the architect, via Chris — S1 gap accepted; Lane 1 adopts your five arms before the seal counts. Q12: Topaz outage is 503, same as #54 — a holder of the task is never told not_entitled because a dependency is down. Q13: a service reads the source of drops it delegated because the delegate rule already grants it (it seeded them), not because it is "the submitter"; a service holding a review task counts for nothing. Seal both arms.
+
+- **Built:** `lane/gov-review-gate-rulings` at `d53d89ca` (from master `8ab9551a`), PR #73 → master. Trailer `Lane: ia-gov/lane/gov-review-gate-rulings`. The worktree half is `ia-gov` because the scratch worktree is temporary and the trailer seal requires a registered worktree.
+- **Seal:** `tests/test_ingest_review_gate_outage_and_services.py`. Unfixed: 11 red, 1 green. Fixed: 12 green. Mutants M1–M7 (with M3b) are each red on a named arm. Full record in the report, section "2026-10-17 (2)".
+- **Lane 1's `_gate` stub** in `test_ingest_review_card_routes.py` is retargeted to `can_act_or_unavailable`. Their S3 arm splits by class. Packet placed: `2026-10-17-packet-to-lane-01-q12-q13-ruled-and-built-pr-73-two-of-your-five-arms-change.md`.
+- **Master red, Lane 1's:** test_J (R-089) on `update_ingest_stage`, since `039563a3`.
+- **Open:** Q14 (unset Topaz URL is still 403), Q15 (a stranger's 503 is a small oracle), Q16 (an undeclared `svc:` cannot read its own non-delegated drop; reachable).
+- **The scratch worktree** `rg` (under the session scratchpad) can be removed once #73 merges. Use `git worktree remove` with the inline longpaths config, and make sure the cwd is not inside it.
+
 ## What #56 is
 
 - **The predicate:** a recipient is a `grant_to` user, or a `users.yaml` member of a `grant_to_groups` group that `groups.yaml` declares. Memberless and undeclared groups reach nobody, as in `validate_policy.unusable_group_audiences`.
@@ -92,7 +103,7 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
 ## Next
 
 0. **Brief item 1: origin on bob's promoted row**, once Lane 1's walk has run live (see "Update, 2026-10-17"). Read-only. Then the matched pair.
-0b. **Q12, Q13 (open): the source gate's outage answer and a `svc:` dropper.** Act only on a ruling. The four seal arms are Lane 1's to take.
+0b. **#73 (Q12, Q13 RULED and built).** Await review and merge. If Lane 1's five-arm adoption lands first, rebase onto it on a new branch (no force-push) and rerun both seals gated. Act on Q14–Q16 only on a ruling.
 1. **#56 review.** Then Lane 1 commits the row and runs the file again with it in. The stand-in may differ from the real row in its passes and outputs.
 2. **Q11 (open): `svc:` group members.** Latent; not built.
 3. **The 422 `no_person` on engine O, after 188b lands (RULED 2026-10-14).**
@@ -108,3 +119,5 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
 - **`run_files.sh` exits with its last test, not with pytest's rc.** Read the `rc=` in the log.
 - **A stub that ignores its arguments seals the outcome, never the input.** In the source gate's seal, `lambda t: task` and `lambda aud, who: who in holders` left the task id, the audience and fail-closed all green under mutation. Key a stub on what the code must pass it.
 - **A precondition checked before a merge goes stale.** On 10-16 the route was absent; it merged on 10-17. Re-check `origin/master` on the day you act.
+- **"Latent" is a claim about every path that could reach the case.** Q16 was first drafted as "no undeclared service can create a drop". Reading `_admit_on_behalf_of` showed that the non-delegated path admits any caller as itself. Read the admitting code before you call a case unreachable.
+- **An assertion that stops at its first miss names one offender, not all of them.** test_J's message named `update_ingest_stage`. Only a census of the predicate's full population (11 functions) showed it was the only one.
