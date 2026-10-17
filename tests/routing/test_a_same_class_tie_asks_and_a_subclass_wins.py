@@ -251,9 +251,12 @@ def _fill(eo, monkeypatch, value):
 
 
 def test_S5_fill_slots_binds_the_critical_item_for_a_component_slot(eo, monkeypatch):
+    """`part_number` declares `binds: identifier` (RULED, 192 item 3): the slot holds the
+    identifier the words matched, and the instance the subclass rule chose stays in `resolution`."""
     _wire(eo, monkeypatch)
     r = _fill(eo, monkeypatch, "PN-8802")
-    assert r.slots.get("part_number") == "CSI-5002", (r.slots, r.refused, r.resolution)
+    assert r.slots.get("part_number") == "PN-8802", (r.slots, r.refused, r.resolution)
+    assert r.resolution["part_number"]["instance_id"] == "CSI-5002", r.resolution   # the subclass won
     assert r.resolution["part_number"]["outcome"] == "exact"
 
 
@@ -269,7 +272,9 @@ def test_S5_control_without_the_chain_the_guard_still_says_wrong_class(eo, monke
 
 def test_S5_control_pair_with_the_graph_up_the_same_request_binds(eo, monkeypatch):
     _wire(eo, monkeypatch, eo_rows=())
-    assert _fill(eo, monkeypatch, "PN-8802").slots.get("part_number") == "CSI-5002"
+    r = _fill(eo, monkeypatch, "PN-8802")
+    assert r.slots.get("part_number") == "PN-8802", (r.slots, r.refused, r.resolution)
+    assert r.resolution["part_number"]["instance_id"] == "CSI-5002", r.resolution
 
 
 def test_S6_fill_slots_does_not_break_a_tie_by_the_referent(eo, monkeypatch):
@@ -285,20 +290,28 @@ def test_S6_fill_slots_does_not_break_a_tie_by_the_referent(eo, monkeypatch):
 @pytest.mark.parametrize("csi_score,component_score", [(1.0, 0.95), (0.96, 1.0)])
 def test_S7_a_subclass_winner_is_not_re_picked_by_the_referent(eo, monkeypatch, csi_score, component_score):
     """decide() chose CSI-5002; it is already a Component by the chain, so the referent pick must
-    not run again and swap in another instance (the second case scores the other one HIGHER)."""
+    not run again and swap in another instance (the second case scores the other one HIGHER).
+
+    The provenance carries `matched_on` as decide() emits it since 192 (`instance_matched_on` on
+    the winner, `matched_on` on each candidate). Without it the slot fell back to `instance_id`, so
+    the CSI-5002 this arm expected was the fallback, not a bind. Both candidates matched the same
+    words, so the slot cannot tell them apart: WHICH instance won is read from `resolution`."""
     _wire(eo, monkeypatch, eo_rows=())
 
     async def _fake(*a, **k):
         return SAFETY_ITEM, {
             "instance_resolved": True, "instance_match": "exact", "instance_id": "CSI-5002",
             "instance_label": "PN-8802", "instance_score": csi_score,
-            "instance_class_uri": SAFETY_ITEM,
+            "instance_class_uri": SAFETY_ITEM, "instance_matched_on": "PN-8802",
             "instance_top_candidates": [
-                {"instance_id": "CSI-5002", "class_uri": SAFETY_ITEM, "label": "PN-8802", "score": csi_score},
-                {"instance_id": EO_PART, "class_uri": COMPONENT, "label": "PN-8802", "score": component_score},
+                {"instance_id": "CSI-5002", "class_uri": SAFETY_ITEM, "label": "PN-8802",
+                 "score": csi_score, "matched_on": "PN-8802"},
+                {"instance_id": EO_PART, "class_uri": COMPONENT, "label": "PN-8802",
+                 "score": component_score, "matched_on": "PN-8802"},
             ]}
 
     monkeypatch.setattr(eo, "_resolve_instance", _fake)
     r = _fill(eo, monkeypatch, "PN-8802")
-    assert r.slots.get("part_number") == "CSI-5002", (r.slots, r.resolution)
+    assert r.slots.get("part_number") == "PN-8802", (r.slots, r.resolution)
+    assert r.resolution["part_number"]["instance_id"] == "CSI-5002", r.resolution   # not re-picked
     assert r.resolution["part_number"]["outcome"] == "exact"
