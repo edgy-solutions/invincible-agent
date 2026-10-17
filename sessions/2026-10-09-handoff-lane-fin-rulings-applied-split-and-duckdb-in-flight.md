@@ -37,7 +37,18 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 
   All three are answered in the packet above. In short: Q1 is on the PR branches by the architect's go, never on lane/fin. Q2 (whether an id-less request is refused at the gateway) is open with the architect and nothing is built for it.
 - **Placed (untracked):** the wire shape for cortex-ui at `cortex-ui/sessions/2026-10-17-packet-to-cortex-a-refused-answer-is-a-failed-documents-entry-with-a-reason-code.md`. Their reader at `7810f4c` accepts the entry and drops `reason_code`.
-- **Next:** after the roll, walk a cost board with one no-verb answer through the ingress. Expect `partial`, the cost entry `exists`, a `no_verb` entry, and the same sha as the good-only board. Then idle.
+- **RULED later on 10-17 (architect via Chris):**
+  - (1) retire: built as **#71** `fin/export-no-answers-is-a-400` @ `7021d4ac`;
+  - (2) constant: built as **#72** `fin/export-unentitled-prose-is-constant` @ `9af0ad86`.
+
+  Both were built in the `ia-fin-export-refused-entries` worktree, which now has #72's branch checked out.
+- **Correction:** I first claimed an id-less request gets refused as `not_in_model`. That was false. It exported the whole program, and #71 removes that path. The correction is recorded in both untracked packets.
+- **Merge order:** #67 → #69 → #71 → #72, in one roll.
+- **Next:** after the roll, run two probes through the ingress:
+  - a cost board with one no-verb answer. Expect `partial`, the cost entry `exists`, a `no_verb` entry, and the same sha as the good-only board.
+  - an empty board. Expect a 400 `no_answers`.
+
+  Then idle.
 
 ## Update 2026-10-16, later: twice-export on 192 gives ONE sha
 
