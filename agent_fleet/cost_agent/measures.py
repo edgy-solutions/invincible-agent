@@ -1112,8 +1112,9 @@ def package_export(
     entitled = lots_for_recipient(scope)
     composed = None
     if canvas is not None:
-        # REFUSED BEFORE ANYTHING IS BUILT, and by name: an out-of-scope lot is Unentitled,
-        # an answer this engine cannot export is NotInModel. Nothing is dropped.
+        # REFUSED BEFORE ANYTHING IS BUILT, and by name: an out-of-scope lot is Unentitled
+        # (whole canvas); a canvas with no exportable answer is NotInModel. An answer this
+        # engine cannot export is named in composed["refused"], not fatal (RULED 10-16 Q1).
         composed = canvas_reader.resolve(canvas, recipient_scope=scope, entitled_lots=entitled)
         if include_dataset is False:
             raise NotInModel(
@@ -1315,6 +1316,8 @@ def package_export(
         "sections": package["sections"],
         # WHICH ANSWERS COMPOSED THIS DISCLOSURE, or None for the whole-program export.
         "canvas_answers": package.get("canvas_answers"),
+        # THE CANVAS ANSWERS REFUSED BY NAME (id, reason_code, reason); None without a canvas.
+        "refused_answers": composed["refused"] if composed else None,
     }
 
 

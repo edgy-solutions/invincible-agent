@@ -1993,6 +1993,9 @@ def _shape_export_package_response(
             "reason": out.get("reason"),
             "outcome": out.get("outcome"),
         }
+        if "refused_answers" in out:
+            # THE CANVAS ANSWERS REFUSED BY NAME (RULED 10-16 Q1); passed through, not interpreted.
+            refusal["refused_answers"] = out["refused_answers"]
         if out.get("outcome") == "unavailable":
             # THE ENGINE COULD NOT BUILD, which is not an answer about this caller's export: a
             # missing runtime, an unpinned loader, a dirty algorithm. engine-cost says so in a
@@ -2189,7 +2192,8 @@ async def _call_engine_cost_package(
     out = rr.json()
     return _shape_export_package_response(
         out, recipient_scope=recipient_scope, template_id=template_id,
-        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections"),
+               **({"refused_answers": out["refused_answers"]} if out.get("refused_answers") is not None else {})},
     )
 
 

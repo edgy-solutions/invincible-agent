@@ -39,11 +39,14 @@ class NotInModel(Exception):
     """The named thing is not in the model at all. Distinct from 'has no data'.
 
     `slot` names the caller-supplied value at fault, when the raiser knows it; the route
-    otherwise assumes `rate_vintage`, which was true of every raiser before `as_of`."""
+    otherwise assumes `rate_vintage`, which was true of every raiser before `as_of`.
+    `refused` carries the canvas answers refused by id with a reason_code, when every one was."""
 
-    def __init__(self, *args: object, slot: str | None = None) -> None:
+    def __init__(self, *args: object, slot: str | None = None,
+                 refused: list[dict] | None = None) -> None:
         super().__init__(*args)
         self.slot = slot
+        self.refused = refused
 
 
 class Unentitled(Exception):

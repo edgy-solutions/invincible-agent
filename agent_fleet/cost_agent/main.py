@@ -631,6 +631,8 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
         return _refusal(
             "not_in_model", str(e), slot=_slot,
             **({"available": _avail} if _avail is not None else {}),
+            **({"refused_answers": e.refused}
+               if isinstance(getattr(e, "refused", None), list) and e.refused else {}),
         )
     except Unentitled as e:
         return _refusal("unentitled", str(e))
