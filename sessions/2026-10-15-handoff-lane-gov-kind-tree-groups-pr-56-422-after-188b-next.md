@@ -62,6 +62,14 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
   - Ingest routes on master: `POST /ingest`, `/ingest/events`, `GET /ingest/{id}/status`, `POST /ingest/{id}/retry`, `/ingest/{id}/stage`.
   - Gov reviews the 403 rule against its seal once both are pushed.
 
+
+### Update, 2026-10-17 (from the architect, via Chris)
+
+> to: invincible-agent/lane/gov — steward_confirmed: your reading is right — origin_resolved_by with a steward_attestation entry in origin_evidence IS it; no new field. /ingest/{id}/source is on master since 31d0590e (193, rolled) — you checked before the merge. Review the 403 rule against its seal now. Item 1 unblocks when Lane 1's e2e promotes as bob, approved this morning.
+
+- **Item 2: DONE (review only).** Report section "2026-10-17". Four clauses of `_ingest_review_access` are unsealed (S1 task id, S2 audience pass-through, S3 fail-closed, S5 audience presence). S4 and S7 are red. Q12 (outage 403 vs 503) and Q13 (`svc:` dropper) are open. Packet placed: `2026-10-17-packet-to-lane-01-source-gate-seal-four-clauses-unsealed-two-questions.md`.
+- **Item 1: still waiting** on Lane 1's live run of `tests/e2e/walk_document_promotion.py` (`31d0590e`, written, not run at the 193 report). `steward_confirmed` = `origin_resolved_by: "steward"` + `steward_attestation` in `origin_evidence` (CONFIRMED). Plan unchanged: read the promoted row's `origin_*`, then `visible_by_origin` for a user outside the audience (False) and a matched control inside it (True).
+
 ## What #56 is
 
 - **The predicate:** a recipient is a `grant_to` user, or a `users.yaml` member of a `grant_to_groups` group that `groups.yaml` declares. Memberless and undeclared groups reach nobody, as in `validate_policy.unusable_group_audiences`.
@@ -83,6 +91,8 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
 
 ## Next
 
+0. **Brief item 1: origin on bob's promoted row**, once Lane 1's walk has run live (see "Update, 2026-10-17"). Read-only. Then the matched pair.
+0b. **Q12, Q13 (open): the source gate's outage answer and a `svc:` dropper.** Act only on a ruling. The four seal arms are Lane 1's to take.
 1. **#56 review.** Then Lane 1 commits the row and runs the file again with it in. The stand-in may differ from the real row in its passes and outputs.
 2. **Q11 (open): `svc:` group members.** Latent; not built.
 3. **The 422 `no_person` on engine O, after 188b lands (RULED 2026-10-14).**
@@ -96,3 +106,5 @@ Chris's instruction is to do it exactly as laid out, with a matched control: a u
 - **A join arm decided over a population with one outcome cannot see a disagreement.** Real policy has no unusable group, so mutants K2 and K3 left the join green. Give the join a fixture holding every outcome, and assert that both outcomes occur.
 - **`Path.read_text()` with no encoding is cp1252 on this box.** A policy file with non-ASCII bytes fails collection, and that crash is not a red.
 - **`run_files.sh` exits with its last test, not with pytest's rc.** Read the `rc=` in the log.
+- **A stub that ignores its arguments seals the outcome, never the input.** In the source gate's seal, `lambda t: task` and `lambda aud, who: who in holders` left the task id, the audience and fail-closed all green under mutation. Key a stub on what the code must pass it.
+- **A precondition checked before a merge goes stale.** On 10-16 the route was absent; it merged on 10-17. Re-check `origin/master` on the day you act.

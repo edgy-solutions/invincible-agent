@@ -439,6 +439,46 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - On the first run, the join covered real policy only and K2 and K3 left it green: real policy holds no unusable group, so it only compared "fine" with "fine". The fixture half was added for that reason, and K2 and K3 were measured again.
 - **Packet placed:** `2026-10-15-packet-to-lane-01-kind-tree-seal-counts-group-members-pr-56-your-row-can-land.md` (cc the architect).
 
+
+## 2026-10-17: the `/ingest/{id}/source` 403 rule against its seal (review only; nothing built)
+
+- **The brief (Day 2):** "the /ingest/{id}/source grant — review the 403 rule against the seal." The architect, 10-17: the route has been on master since `31d0590e` (193, rolled), and gov's 10-16 check was made before the merge.
+- **What was reviewed:**
+  - The rule: `_ingest_review_access` (`src/iagent/gateway.py:10646-10687` at master `5d8800e0`), the gate shared by `/extraction` and `/source`.
+  - The seal: `tests/test_ingest_review_card_routes.py`, from `71cdc40b` (Lane 1, `lane/01-193`).
+  - Done in a throwaway worktree at `5d8800e0` with its own venv. Baseline: 11 passed.
+- **The rule as written:**
+  - Absent or EVENT row → 404 `ingest_not_found`.
+  - The caller casefold-equals `submitted_by` or `on_behalf_of` (blanks excluded) → allow, `dropped_by`.
+  - Else, a non-empty caller, and `get_task_open_state("document_promotion:<id>")` is open with an audience, and `check_can_act(audience, caller)` → allow, `task_holder`.
+  - Any exception → deny. Else 403 `not_entitled`.
+  - All of this is decided before the store read, and every decision is audited.
+- **Mutants** (each was gated, run against the seal, restored, cmp silent; `git diff` empty afterwards):
+
+  | mutant | change | seal |
+  | --- | --- | --- |
+  | S1 | the task id → `document_promotion:not-this-ingest` | **green**, 11 passed |
+  | S2 | `check_can_act` gets a literal `document_promotion:SUSTAINMENT`, not the task's audience | **green** |
+  | S3 | the `except` sets `allowed = True` | **green** |
+  | S4 | drop `state.get("open")` | red: `test_gate_dropper_holder_stranger_resolved_and_unknown`, `KeyError: 'detail'` at line 276 |
+  | S5 | drop `and state.get("audience")` | **green** |
+  | S7 | `on_behalf_of` → `""` | red: same test, `('extraction', 'carol@example.com') assert 403 == 200` at line 263 |
+
+- **Why four clauses are unsealed.** The seal's stubs ignore their arguments: `get_task_open_state` is `lambda t: task`, and `check_can_act` is `lambda aud, who: who in holders`. So the seal decides whether the caller is a holder, but never checks which task or which audience the decision was made on.
+- **Findings:**
+  - **F1 (S1). Which task is consulted is unsealed.** A gate that read any open task would let the holder of document A's task read document B. Proposed: a stub keyed on the task id, and an arm where a holder of another ingest's open task gets a 403 with the store untouched.
+  - **F2 (S2). The audience pass-through is unsealed.** Proposed: key the `check_can_act` stub on `(aud, who)`, with a holder of a different audience than the task's.
+  - **F3 (S3). Fail-closed on exception is unsealed.** No arm raises. Proposed: an arm where `get_task_open_state` raises, and one where `check_can_act` raises. Each gives 403 `not_entitled`, `s3.calls == []`, and one deny audit line.
+  - **F4 (S5). An open task with no audience is unsealed** (minor). The same arm as F3, with `{"open": True, "audience": ""}`.
+  - **S4 is a red, but a fragile one.** The RESOLVED holder got a 200, and the test reads `r.json()["detail"]` before it asserts the status, so the failure is a `KeyError` and not the status assertion. Proposed: assert the status first.
+  - **Positive controls:** S4 and S7 are red, so the seal does reach the open check and the `on_behalf_of` clause.
+- **Questions for a ruling** (Q12, Q13 below):
+  - **F5. An outage answers 403 `not_entitled`, not 503.** `check_can_act` returns False on any error (`human_tasks.py:216-217`), and the gate's own `except` denies. So a Topaz or task-store outage tells a real holder they are not entitled. That is fail-closed, which is right, but #54's ruled shape elsewhere is outage → 503.
+  - **F6. A delegated drop's service can read the bytes.** On a delegated drop, `submitted_by` is the service's `authz_id` and `on_behalf_of` is the person (`gateway.py:10169`). The `dropped_by` clause matches either one, so a `svc:` caller gets every source it delegated. `_is_service_caller` (`gateway.py:10844`) is applied by retry but not by this gate. The 10-14 ruling ("a service identity is never a person") was made for engine O's arms. Does it reach this clause?
+  - **F7, not a defect.** A holder through a group audience (bob via `manufacturing-stewards`) is decided inside Topaz, where the seal's stub cannot see. Only the live walk, `tests/e2e/walk_document_promotion.py` (written, not yet run), exercises it.
+- **Not touched:** the seal is Lane 1's, so gov proposes arms and does not widen it.
+- **Packet placed:** `2026-10-17-packet-to-lane-01-source-gate-seal-four-clauses-unsealed-two-questions.md` (cc the architect).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -466,3 +506,9 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
     - Elsewhere it's ruled that a service identity is never a person.
     - It is latent: `users.yaml` has 11 `svc:` ids, and none of them lists a group.
     - Not built. A ruling would apply to both predicates together.
+12. **OPEN (2026-10-17). The review gate's outage answer** (F5 above).
+    - A Topaz or task-store failure answers 403 `not_entitled` to a real holder.
+    - Keep 403 (fail-closed, and indistinguishable from a refusal), or answer 503 the way #54's outage classes do?
+13. **OPEN (2026-10-17). A `svc:` dropper on the review gate** (F6 above).
+    - A delegated drop records the service as `submitted_by`, so the service can read every source it delegated.
+    - Does "a service identity is never a person" exclude `submitted_by` here, leaving `on_behalf_of` as the dropper?
