@@ -82,7 +82,15 @@ _REFERENT_KIND = {
 #: IRI. RULED (architect, 192 item 3, Option 1): declared per slot, so the definitions decide and
 #: the router does not. `part_number` was bound to `http://internal/sustainment/pcn#5530-184`
 #: and the verb parsed the last segment off it; that parse stays as the fallback.
-_BINDS = {"part_number": "identifier"}
+#: EVERY REFERENT SLOT, not only `part_number` (architect, overnight 10-17, Day 2): each measure
+#: looks its subject up by the bare id (`BY_HAZARD_ID`, `w.work_order_id ==`, `PLATFORM_IDS`), so
+#: none of them can use an IRI. Engine S's own provider already publishes the bare id as
+#: `instance_id` with `matched_on` empty, and the fallback makes the declaration a no-op there; it
+#: matters where a provider answers with an IRI, as engine-o does for `pcn:Component`.
+#: `scope_value` is not here: it carries `referent_by`, not `referent`, and `derive_slots` refuses
+#: `binds` on a slot without a referent.
+_BINDS = {name: "identifier" for name in (
+    "hazard_id", "write_up_id", "work_order_id", "part_number", "platform_id")}
 
 #: `scope` is referent-bound in a second sense: its VALUE names a kind of thing
 #: (a tail, a platform), and `scope_value` is the thing. Declared so the filler

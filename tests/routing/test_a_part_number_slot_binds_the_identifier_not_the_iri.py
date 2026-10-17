@@ -17,6 +17,7 @@ import pytest
 # program-filter double wraps httpx.Client (metaclass conflict otherwise).
 pytest.importorskip("rdflib")
 from agent_fleet.ontology_service import main as _EO_MAIN  # noqa: F401,E402
+from agent_fleet.safety_agent import entities as safety_entities  # noqa: E402
 from agent_fleet.safety_agent import main as safety_main  # noqa: E402
 from agent_fleet.safety_agent import slots as safety_slots
 from agent_fleet.utils.slot_declarations import derive_slots
@@ -36,13 +37,31 @@ def _part_slot():
 
 # -- (a) the declaration ---------------------------------------------------------------------
 
-def test_a_safety_part_number_declares_binds_identifier_and_no_other_slot_declares_binds():
+#: The referent slots of Engine S's verbs, as of the Day 2 order (architect, overnight 10-17):
+#: "binds: identifier for the remaining safety slots". Stated so the census below cannot pass on
+#: an empty or shrunken population.
+REFERENT_SLOTS = {
+    ("assess_deferral_risk", "work_order_id"),
+    ("draft_risk_assessment", "hazard_id"),
+    ("failure_trend_for_this_platform_by_month", "platform_id"),
+    (VERB, "part_number"),
+}
+
+
+def test_every_safety_referent_slot_declares_binds_identifier_and_no_other_slot_does():
+    """Was "part_number and no other slot" (192 item 3); widened by the Day 2 order. The population
+    is derived from every registered verb, so a new referent slot without `binds` reds here."""
     assert _part_slot()["binds"] == "identifier"
-    assert set(safety_slots._BINDS) == {"part_number"}
+    assert set(safety_slots._BINDS) == set(safety_slots._REFERENT_KIND)
+    seen = set()
     for fn in sorted({v["fn"] for v in safety_main.VERBS}):
         for s in safety_slots.slots_for(fn):
-            if (fn, s["name"]) != (VERB, "part_number"):
+            if "referent" in s:
+                seen.add((fn, s["name"]))
+                assert s.get("binds") == "identifier", (fn, s)
+            else:
                 assert "binds" not in s, (fn, s)
+    assert seen == REFERENT_SLOTS
 
 
 # -- (b) derive time refusals ------------------------------------------------------------------
@@ -78,9 +97,9 @@ def _alice(monkeypatch):
     pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
 
 
-def _fill(eo, monkeypatch, said, declarations):
+def _fill(eo, monkeypatch, said, declarations, name="part_number"):
     class _Filled:
-        slots_json = json.dumps({"part_number": said})
+        slots_json = json.dumps({name: said})
         confidence = 0.9
         reasoning = "stub"
 
@@ -122,6 +141,24 @@ def test_CONTROL_the_same_fixture_without_the_declaration_still_binds_the_iri(eo
     wire(eo, monkeypatch, eo_rows=(IRI,))
     r = _fill(eo, monkeypatch, "5530-184", _without_binds())
     assert r.slots == {"part_number": IRI}, r
+
+
+@pytest.mark.parametrize("fn,name,said", [
+    ("draft_risk_assessment", "hazard_id", "HAZ-1003"),
+    ("failure_trend_for_this_platform_by_month", "platform_id", safety_entities.PLATFORM_IDS[0]),
+])
+@pytest.mark.parametrize("declared", [True, False], ids=["binds", "CONTROL-no-binds"])
+def test_a_safety_owned_referent_binds_the_bare_id_either_way(eo, monkeypatch, fn, name, said, declared):
+    """saf's provider publishes the bare id as `instance_id` with `matched_on` empty, so the
+    declaration is a no-op on its own classes: the same bare id with and without it."""
+    wire(eo, monkeypatch, eo_rows=())
+    decls = [s for s in safety_slots.slots_for(fn) if s["name"] == name]
+    assert decls[0]["binds"] == "identifier"
+    if not declared:
+        decls = [{k: v for k, v in s.items() if k != "binds"} for s in decls]
+    r = _fill(eo, monkeypatch, said, decls, name=name)
+    assert r.slots == {name: said}, r
+    assert r.resolution[name]["instance_id"] == said, r.resolution
 
 
 def test_the_two_bound_value_rules_agree(eo):
