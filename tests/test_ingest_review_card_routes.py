@@ -216,7 +216,8 @@ def test_extraction_rows_are_mapped_and_evidence_less_rows_are_counted(monkeypat
     assert b["rows_without_evidence"] == 2
     ev = b["rows"][0]["evidence_ref"]
     assert ev == {"page": 2, "bbox": [10.0, 20.0, 30.0, 40.0],
-                  "bboxes": [[10.0, 20.0, 30.0, 40.0]], "page_dims": [612, 792], "units": "pt"}
+                  "bboxes": [[10.0, 20.0, 30.0, 40.0]], "page_dims": [612, 792], "units": "pt",
+                  "quality": "cell"}
 
 
 def test_units_are_pt_for_a_text_layer_cell_and_px_for_anything_else(monkeypatch, s3):
@@ -226,6 +227,18 @@ def test_units_are_pt_for_a_text_layer_cell_and_px_for_anything_else(monkeypatch
     assert rows[0]["evidence_ref"]["units"] == "pt"
     assert rows[1]["obtained_via"] == "layout_fuzzy"
     assert rows[1]["evidence_ref"]["units"] == "px"
+
+
+def test_evidence_quality_is_cell_region_or_undecided():
+    from src.iagent import gateway
+    ev = lambda m: gateway._evidence_ref(_item("parts[0].mpn", "A", method=m))  # noqa: E731
+    assert ev("text_layer_cell")["quality"] == "cell"
+    assert ev("region_preferred")["quality"] == "region"
+    assert ev("region_image")["quality"] == "region"
+    # architect 2026-10-17: an unrecognised method is undecided, never guessed
+    inherited = ev("inherited_doc_level")
+    assert inherited is not None and inherited["quality"] is None
+    assert gateway._evidence_ref(_item("parts[0].mpn", "A", bboxes=None)) is None
 
 
 def test_extraction_refusals(monkeypatch, s3):
