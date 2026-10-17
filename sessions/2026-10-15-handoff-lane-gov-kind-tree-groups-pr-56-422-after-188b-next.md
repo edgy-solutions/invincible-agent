@@ -32,6 +32,36 @@ All six branches are pushed. The full record is `sessions/2026-10-10-report-gov-
   - **Packet census: RULED done** (the 10-11 list). The misfile it reported is resolved, since the Q10 parser (`e5fb8319`, `9766f984`) is in master. No refresh.
   - **188b status at 10-15:** held, "stopped on lane/74's person-chain seal" (`13be1472`).
 
+## Brief, 2026-10-16
+
+From the architect, via Chris — act on it.
+
+> to: invincible-agent/lane/gov
+> Origin on promoted PCN rows: after Lane 1's e2e promotes as bob, read the origin record and confirm resolved_by, steward_confirmed, and that visible_by_origin withholds for a user outside the audience. Day 2: the /ingest/{id}/source grant — review the 403 rule against the seal.
+
+The pasted header read `ia-gov/lane/gov`. Chris says the worktree form was his error, ruled form above, and asks that the pasted form not be carried forward.
+
+Chris's instruction is to do it exactly as laid out, with a matched control: a user inside the audience who sees the row.
+
+**State at 2026-10-16: both items are blocked on a missing precondition.** Checked across `git log --all` on every fetched ref, Lane 1's worktree (tracked, modified and untracked files), and all packets in master's and ia-01's `sessions/`.
+
+- **Item 1. Lane 1's bob promotion has not run.**
+  - No file holds both bob and a promotion on any ref or in ia-01, and no packet reports such a run.
+  - The nearest file is `tests/sandbox_e2e/_seal_pcn_review_bff.py`, where bob only reads the qualification queue.
+- **The brief's names, mapped to the code:**
+  - `visible_by_origin` is `agent_fleet/utils/origin_entitlement.py:129` (master).
+  - `resolved_by` is the node property `origin_resolved_by`.
+  - **`steward_confirmed` exists nowhere** (`git log --all -S` is empty). The nearest shape is the steward rung `promotion_stores.py:301-319`: `origin_resolved_by: "steward"`, with `origin_evidence` carrying `steward_attestation` and the decision record, and no `origin_program`. Gov will read `steward_confirmed` as that shape unless the architect says otherwise.
+  - The record is a Neo4j node property, read by artifact id (`gateway.py` `_ARTIFACT_BY_ID_CYPHER`). No route reads it by ingest or notice id.
+- **The plan when bob's run appears** (read-only; no live write):
+  - Read the promoted row's `origin_*` properties.
+  - Decide `visible_by_origin` for two users: one outside the audience (a user whose domains cannot consume the owner domain), and a **matched control** inside it. The two must share the gate and the population, and differ only in audience membership.
+  - The probe matches the sheet's caller cell.
+- **Item 2 (Day 2). `/ingest/{id}/source` does not exist.**
+  - No route, no 403 rule and no seal on any ref (`git log --all -G`), and no packet or doc names it.
+  - Ingest routes on master: `POST /ingest`, `/ingest/events`, `GET /ingest/{id}/status`, `POST /ingest/{id}/retry`, `/ingest/{id}/stage`.
+  - Gov reviews the 403 rule against its seal once both are pushed.
+
 ## What #56 is
 
 - **The predicate:** a recipient is a `grant_to` user, or a `users.yaml` member of a `grant_to_groups` group that `groups.yaml` declares. Memberless and undeclared groups reach nobody, as in `validate_policy.unusable_group_audiences`.
