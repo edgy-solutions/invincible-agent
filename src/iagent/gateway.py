@@ -3633,6 +3633,12 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+# Kinds whose review files NO document_promotion task (architect ruling 2026-10-17, on 7f's ruling
+# 1). An s1000d data module has no PCN/PDN card -- no notice id, mfr, parts, evidence crops -- so a
+# task filed under the review standard could not be vetted. See the stage route's review branch.
+_PROMOTION_SKIPPED_KINDS = frozenset({"s1000d-data-module"})
+
+
 def _delegate_principals() -> dict[str, frozenset[str]]:
     """R-089: the asserted delegate -> {principal authz_ids} map, read fresh from
     DELEGATE_ON_BEHALF_OF (deploy configuration, see helm configmap.yaml) ON EVERY CALL — never
@@ -10749,6 +10755,7 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
 
 
 def _evidence_ref(it: dict) -> Optional[dict]:
+    mm = it.get("match_method")
     page = it.get("page_number")
     bboxes = it.get("bboxes")
     if (isinstance(page, int) and not isinstance(page, bool) and page >= 1
@@ -10758,14 +10765,20 @@ def _evidence_ref(it: dict) -> Optional[dict]:
                     for b in bboxes)):
         return {"page": page, "bbox": bboxes[0], "bboxes": bboxes,
                 "page_dims": it.get("page_dims"),
-                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px"}
+                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px",
+                # architect 2026-10-17: cortex renders a cell match and a region match
+                # differently. An unrecognised method (e.g. inherited_doc_level) stays None --
+                # undecided, never guessed.
+                "quality": ("cell" if mm == "text_layer_cell"
+                            else "region" if isinstance(mm, str) and mm.startswith("region_")
+                            else None)}
     return None
 
 
 @app.get("/ingest/{ingest_id}/extraction")
 async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
-    evidence reference (page, bbox, units) the review card draws. Gate: `_ingest_review_access`
+    evidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`
     (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
@@ -11546,7 +11559,8 @@ async def update_ingest_stage(
     # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
     # (act_on_human_task above, via promotion.act) -- each carries a decision record this route
     # must never fabricate, so neither is a legal target here even though it is later in
-    # STAGES' own order.
+    # STAGES' own order. The one ruled exception: a delegate's drop of a kind in
+    # `_PROMOTION_SKIPPED_KINDS` is written `promoted` by the review branch below (2026-10-17).
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
     # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal HERE too
@@ -11652,6 +11666,22 @@ async def update_ingest_stage(
                             ingest_id, adopted_kind)
         _adopt = {"content_kind": adopted_kind} if adopted_kind is not None else {}
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        if row.get("content_kind") in _PROMOTION_SKIPPED_KINDS:
+            # NO document_promotion TASK for this kind (architect ruling 2026-10-17, on 7f's ruling
+            # 1): an s1000d data module has no PCN/PDN card to vet, so a task filed under the review
+            # standard could not be decided. A delegate's drop is already trusted and is promoted
+            # outright; a user's drop waits for a steward's origin, exactly as a domainless kind does.
+            _dropper = str(row.get("submitted_by") or "").strip()
+            _to = (ingest_status.PROMOTED if _dropper in _delegate_principals()
+                   else ingest_status.AWAITING_ORIGIN)
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, _to,
+                extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                extraction_ref=req.extraction_ref,
+                detail="content kind files no document_promotion task (ruling 2026-10-17)",
+                **_adopt, **_run))
+            return {"ingest_id": ingest_id, "stage": _to, "task_id": None,
+                    "task_status": "NO_TASK_KIND_SKIPS_PROMOTION"}
         # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
         # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
         # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a
