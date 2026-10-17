@@ -22,6 +22,8 @@ real `/resolve_instance` and engine-o's own `/resolve_instance`, both reached ov
 rdflib from the TTL files the prime manifest loads. WHAT IS STUBBED: the provider registry,
 engine-o's SPARQL, the model's slot extraction, and the Neo4j driver (a double that answers
 `_CLASS_CHAIN_CYPHER` from those files).
+The wiring (`wire`, `two`, `resolve`, the driver double) lives in
+`tests/_helpers/sustainment_resolution.py`, shared with lane/saf (RULED 2026-10-16).
 
 Run: uv run pytest tests/routing/test_a_same_class_tie_asks_and_a_subclass_wins.py -v
 """
@@ -29,15 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
-from rdflib import Graph, URIRef
-from rdflib.namespace import RDFS
 
 from agent_fleet.ontology_service.instance_resolution import (
     InstanceCandidate,
@@ -46,69 +43,23 @@ from agent_fleet.ontology_service.instance_resolution import (
     normalise_identifier,
     narrow_to_most_specific,
 )
-from agent_fleet.ontology_service.sustainment_instance_provider import (
-    _COMPONENT_CLASS as COMPONENT,
-)
-from agent_fleet.safety_agent import entities, instances
-from agent_fleet.safety_agent import main as safety_main
+from agent_fleet.safety_agent import instances
 from agent_fleet.safety_agent.slots import slots_for
 
-_REPO = Path(__file__).resolve().parents[2]
-SAFETY_ITEM = safety_main.SAFETY + "SafetyCriticalItem"
-EO_PART = "http://internal/components/PN-8802"
+from tests._helpers.sustainment_resolution import (  # noqa: F401 (eo is a fixture)
+    COMPONENT,
+    EO_PART,
+    SAFETY_ITEM,
+    chain as _chain,
+    eo,
+    outcomes as _outcomes,
+    resolve as _resolve,
+    two as _two,
+    wire as _wire,
+)
 
 
-# -- the ontology, read from the real files ---------------------------------------------------
-
-def _loaded_ttl() -> Path:
-    """The file the prime manifest actually loads (setup/prime_databases.py), not a guessed path."""
-    manifest = (_REPO / "setup" / "prime_databases.py").read_text(encoding="utf-8")
-    m = re.search(r'"name":\s*"safety_extension",\s*"s3_key":\s*"[^"]+",\s*"path":\s*"([^"]+)"', manifest)
-    assert m, "safety_extension is not in the prime manifest"
-    return _REPO / "setup" / m.group(1)
-
-
-_GRAPH = Graph()
-_GRAPH.parse(_loaded_ttl(), format="turtle")
-_GRAPH.parse(_REPO / "setup" / "ontologies" / "pcn_extension.ttl", format="turtle")
-
-
-def _chain(uri: str, depth: int = 5) -> list:
-    """`subClassOf*0..depth` from `uri`, itself first -- the reach of `_CLASS_CHAIN_CYPHER`."""
-    out, frontier = [uri], [uri]
-    for _ in range(depth):
-        nxt = [str(o) for f in frontier for o in _GRAPH.objects(URIRef(f), RDFS.subClassOf)
-               if isinstance(o, URIRef) and str(o) not in out]
-        out.extend(nxt)
-        frontier = nxt
-    return out
-
-
-class _Session:
-    def __init__(self, drv):
-        self._d = drv
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return False
-
-    def run(self, cypher, **params):
-        self._d.calls.append((cypher, params))
-        if self._d.fail:
-            raise RuntimeError("graph down")
-        return [{"uri": u, "chain": _chain(u)} for u in params["uris"]
-                if (URIRef(u), None, None) in _GRAPH]
-
-
-class _Driver:
-    def __init__(self, fail=False):
-        self.fail, self.calls = fail, []
-
-    def session(self):
-        return _Session(self)
-
+# -- the double the helpers wire in reads the real files ---------------------------------------
 
 def test_the_double_reads_the_real_axiom():
     assert _chain(SAFETY_ITEM)[:2] == [SAFETY_ITEM, COMPONENT]
@@ -216,63 +167,6 @@ def test_7b_a_normalised_spelling_of_matched_on_is_the_same_identifier():
 
 
 # -- through the service ----------------------------------------------------------------------
-
-@pytest.fixture()
-def eo():
-    return pytest.importorskip(
-        "agent_fleet.ontology_service.main",
-        reason="ontology_service not importable here; run under the agent-fleet extra")
-
-
-_REAL_CLIENT = httpx.AsyncClient
-
-
-def _wire(eo, monkeypatch, *, graph_down=False, eo_rows=(EO_PART,)):
-    """Real `_call_resolver` -> real saf and engine-o apps over an ASGI transport routed by host."""
-    drv = _Driver(fail=graph_down)
-    monkeypatch.setattr(eo, "_NEO4J_DRIVER", drv)
-    # saf declares no id_namespaces (grep agent_fleet/safety_agent), so neither row does.
-    rows = [
-        {"provider": "engine_safety_sustainment", "endpoint_url": "http://safety.test/resolve_instance",
-         "timeout_s": None, "domains": ["SUSTAINMENT"], "id_namespaces": []},
-        {"provider": "engine_o_sustainment", "endpoint_url": "http://eo.test/resolve_instance",
-         "timeout_s": None, "domains": ["SUSTAINMENT"], "id_namespaces": []},
-    ]
-    monkeypatch.setattr(eo, "_discover_instance_resolvers", lambda *a, **k: SimpleNamespace(
-        outcome="ok", detail=None, rows=rows))
-
-    async def _sparql(query, *a, **k):
-        if query == eo._SUSTAINMENT_INSTANCES_QUERY:
-            return [{"s": s, "type": COMPONENT} for s in eo_rows]
-        return []  # the subjectToNotice link query
-
-    monkeypatch.setattr(eo, "execute_sparql", _sparql)
-    apps = {"safety.test": safety_main.app, "eo.test": eo.app}
-
-    async def dispatcher(scope, receive, send):
-        host = dict(scope["headers"])[b"host"].decode().split(":")[0]
-        await apps[host](scope, receive, send)
-
-    def _factory(*a, timeout=None, **k):
-        return _REAL_CLIENT(transport=httpx.ASGITransport(app=dispatcher), timeout=timeout)
-
-    monkeypatch.setattr(eo.httpx, "AsyncClient", _factory)
-    return drv
-
-
-def _two(monkeypatch, a, b):
-    base = entities.CRITICAL_ITEMS[0]
-    monkeypatch.setattr(instances, "CRITICAL_ITEMS", (
-        replace(base, csi_id="CSI-7001", part_number=a), replace(base, csi_id="CSI-7002", part_number=b)))
-
-
-def _resolve(eo, identifier):
-    return asyncio.run(eo._resolve_instance(identifier, "q", ["SUSTAINMENT"]))
-
-
-def _outcomes(prov):
-    return {o["provider"]: o for o in prov["instance_provider_outcomes"]}
-
 
 def test_8_the_axis_never_narrows_to_a_class_the_gate_would_empty():
     chains = {SAFETY_ITEM: _chain(SAFETY_ITEM), COMPONENT: _chain(COMPONENT)}
