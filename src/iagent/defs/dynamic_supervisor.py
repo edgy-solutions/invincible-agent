@@ -1589,7 +1589,18 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # is the service, so the gate would decide about the wrong subject: it would grant or deny
 # for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
 # the identity has to be right on the day the gate starts to read it.
-_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas", "explain"})
+#
+# `whatFailedOnThisPart` and `failureTrendForThisPlatformByMonth` (Engine S) join because
+# Engine S's program filter (ADR-0056 Q2) decides on the ASKER, read only from the bearer: a
+# service identity is never a member of a program, so dispatched as svc:supervisor the answer
+# is a 422 `no_person` (lane saf's 192 walk, FRACAS 5530-184). These are the measures that reach
+# `_visible_records` (derived, and sealed by tests/identity/
+# test_the_per_person_verb_call_carries_the_caller.py). Architect ruling 2026-10-17: the verb
+# CALL carries the acting identity, through this set, not by flipping every dispatch.
+_CALLER_IDENTITY_VERBS = frozenset({
+    "seedPortfolioCanvas", "seedCanvas", "explain",
+    "whatFailedOnThisPart", "failureTrendForThisPlatformByMonth",
+})
 
 
 class CallerIdentityUnavailable(Exception):
