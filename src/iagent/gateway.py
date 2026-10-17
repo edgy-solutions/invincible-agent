@@ -10993,6 +10993,9 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         if out and out.get("filed"):
             return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
                     "task_id": out["task_id"], "task_status": out["task_status"]}
+        if out and out.get("promoted"):
+            return {"ingest_id": ingest_id, "stage": ingest_status.PROMOTED,
+                    "task_id": None, "task_status": out["task_status"]}
         if out is None:
             raise HTTPException(status_code=409, detail={
                 "error": "awaiting_origin", "stage": stage,
@@ -11959,6 +11962,15 @@ async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Opti
         return {"filed": False, "error": "origin_unreadable"}
     if origin is None:
         return None
+    if row.get("content_kind") in _PROMOTION_SKIPPED_KINDS:
+        # The steward's accept is this kind's exit from `awaiting_origin` (architect ruling
+        # 2026-10-17): the origin is recorded, the row goes `promoted`, and NO document_promotion
+        # task is filed -- the same rule as the delegate path in the stage route, one step later.
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.PROMOTED,
+            detail="accepted origin; content kind files no document_promotion task (ruling 2026-10-17)"))
+        return {"filed": False, "promoted": True, "task_id": None,
+                "task_status": "NO_TASK_KIND_SKIPS_PROMOTION"}
     _notice: dict = {}
     try:
         task_id, task_status = await _file_or_find_document_promotion_task(

@@ -9,6 +9,7 @@ Run: uv run --frozen pytest tests/test_stage_kind_skips_promotion.py -v
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -27,6 +28,7 @@ _PREFIX = f"ingress-user/xml/{_HEX}/"
 _REF = f"{_PREFIX}generated/doc_xml/doc-tools@61f74dc/manifest.json"
 ALICE = "alice@example.com"
 DELEGATE = "svc:seeder"
+_REAL_FILE_PROMOTION_IF_READY = gateway._file_promotion_if_ready  # before _world() stubs it
 
 
 class World:
@@ -104,3 +106,67 @@ def test_CONTROL_the_same_fixture_with_a_pcn_files_a_task_and_moves_to_review(mo
     assert r.status_code == 200, r.text
     assert r.json()["task_id"] == "T-1" and r.json()["task_status"] == "FILED"
     assert w.filed == ["pcn"] and w.moves == ["review"]
+
+
+# -- the later exit: a steward's accepted origin on a row at `awaiting_origin` -------------------
+# Same ruling, one step later: an s1000d row records the origin and goes `promoted` with no task.
+# (a) and (b) differ ONLY in `content_kind`.
+
+def _exit_from_awaiting_origin(monkeypatch, kind):
+    w = _world(monkeypatch, kind)
+    w.row["status"] = "awaiting_origin"
+    monkeypatch.setattr(gateway, "_read_accepted_origin",
+                        lambda i: {"owner_domain": "SUSTAINMENT", "program": None,
+                                   "resolved_by": "steward"})
+    out = asyncio.run(_REAL_FILE_PROMOTION_IF_READY(_ID, requested_by="svc:case-runner"))
+    return w, out
+
+
+def test_a_steward_origin_on_an_awaiting_s1000d_row_promotes_it_and_files_no_task(monkeypatch):
+    w, out = _exit_from_awaiting_origin(monkeypatch, "s1000d-data-module")
+    assert w.moves == ["promoted"], w.moves
+    assert w.filed == [], w.filed
+    assert out["task_id"] is None and out["task_status"] == "NO_TASK_KIND_SKIPS_PROMOTION"
+    assert not out["filed"]
+
+
+def test_CONTROL_a_steward_origin_on_an_awaiting_pcn_row_files_the_task_as_before(monkeypatch):
+    w, out = _exit_from_awaiting_origin(monkeypatch, "pcn")
+    assert w.filed == ["pcn"], w.filed
+    assert w.moves == ["review"], w.moves
+    assert out["filed"] is True and out["task_id"] == "T-1"
+
+
+# -- the retry route's view of the same exit ------------------------------------------------------
+# POST /ingest/{id}/retry on a row at `awaiting_origin` re-files through `_file_promotion_if_ready`;
+# an s1000d row is promoted by it, so the route answers 200 `promoted`, not a 503.
+
+def _retry_awaiting_origin(monkeypatch, kind):
+    w = _world(monkeypatch, kind)
+    w.row["status"] = "awaiting_origin"
+    monkeypatch.setattr(gateway, "_file_promotion_if_ready", _REAL_FILE_PROMOTION_IF_READY)
+    monkeypatch.setattr(gateway, "_read_accepted_origin",
+                        lambda i: {"owner_domain": "SUSTAINMENT", "program": None,
+                                   "resolved_by": "steward"})
+    monkeypatch.setattr(ist, "get_status_for", lambda i, caller_id=None: dict(w.row))
+    person = type("U", (), {"authz_id": ALICE, "id": ALICE, "sub": ALICE, "email": ALICE,
+                            "persona": None, "entitled_domains": [], "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: person
+    return w, TestClient(gateway.app).post(f"/ingest/{_ID}/retry")
+
+
+def test_a_retry_on_an_awaiting_s1000d_row_answers_promoted_and_files_no_task(monkeypatch):
+    w, r = _retry_awaiting_origin(monkeypatch, "s1000d-data-module")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["stage"] == "promoted", b
+    assert b["task_id"] is None and b["task_status"] == "NO_TASK_KIND_SKIPS_PROMOTION", b
+    assert w.filed == [] and w.moves == ["promoted"]
+
+
+def test_CONTROL_a_retry_on_an_awaiting_pcn_row_returns_the_filed_task_shape(monkeypatch):
+    w, r = _retry_awaiting_origin(monkeypatch, "pcn")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["stage"] == "review" and b["task_id"] == "T-1" and b["task_status"] == "FILED", b
+    assert w.filed == ["pcn"]
