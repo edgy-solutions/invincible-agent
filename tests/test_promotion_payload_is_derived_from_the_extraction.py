@@ -160,7 +160,10 @@ def test_route_without_an_extraction_ref_files_nothing(doc_tools_client, wired):
     r = doc_tools_client.post(f"/ingest/{ID}/stage", json={"stage": "review"})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "no_extraction_ref"
-    assert wired["status"] == [] and wired["registered"] == [] and wired["reads"] == []
+    # 191 (a768c34d): a refused review writes `failed` naming the refusal, never nothing.
+    assert [(st, (kw.get("failure") or {}).get("reason_code")) for st, kw in wired["status"]] == [
+        ("failed", "no_extraction_ref")]
+    assert wired["registered"] == [] and wired["reads"] == []
 
 
 def test_route_refuses_a_ref_outside_the_documents_directory_before_reading(
@@ -170,7 +173,10 @@ def test_route_refuses_a_ref_outside_the_documents_directory_before_reading(
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["error"] == "extraction_unbound"
     assert wired["reads"] == []
-    assert wired["status"] == [] and wired["registered"] == []
+    # 191 (a768c34d): a refused review writes `failed` naming the refusal, never nothing.
+    assert [(st, (kw.get("failure") or {}).get("reason_code")) for st, kw in wired["status"]] == [
+        ("failed", "extraction_unbound")]
+    assert wired["registered"] == []
 
 
 def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_client, wired):
