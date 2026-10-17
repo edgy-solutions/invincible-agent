@@ -13,6 +13,10 @@ re: your Q1–Q3 answers and the origin-on-promotion ruling -- built, sealed, on
   A trial merge against `origin/master` (`3976a9e0`) is clean. The only file both sides touch is
   `gateway.py`; master's hunk there is the action-record route, which writes no origin property.
   **No roll was done.**
+- **PR [#39](https://github.com/edgy-solutions/invincible-agent/pull/39)** (`lane/gov-resolve-instance` → `lane/gov`, open, tip `ac6e4ff0`): the Q7 gate on `/resolve_instance`, plus S (ruling (b)), P (Q8 behind one flag), and the outage seal re-derived at eleven. 187 merged it at `2999bdca`, and that merge is held until 187 re-merges `ac6e4ff0`.
+- **PR [#45](https://github.com/edgy-solutions/invincible-agent/pull/45)** (`lane/gov-enumerate-gate` → `lane/gov-resolve-instance`, open, tip `9393ff08`): ruling (d), the enumerate gate. It merges lane/74's #40 (`311999f4`).
+- **#39 and #45 were ACCEPTED by the architect on 2026-10-11.**
+- **PR [#47](https://github.com/edgy-solutions/invincible-agent/pull/47)** (`lane/gov-caller-census` → `lane/gov-enumerate-gate`, open, tip `4f172cda`): Day 2's caller census. It seals "a service identity is never a grant" at the callers. Since 2026-10-12 it merges lane/74's #48 (`d7f8f3c1`).
 
 ## What landed
 
@@ -272,6 +276,209 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
   - The new file passes 7; `test_promotion_records_origin` passes 25 and the e2e seal 8. Mutants B1–B4 each red their arm.
   - **Not run live.** It has had no DSN here; Lane 1 runs it in the roll.
 
+## 2026-10-11: rulings (b), (d) and Q8 built; the outage seal re-derived
+
+- **S, ruling (b): a service identity is never a grant.** Built on #39 at `657864f5`.
+  - `origin_entitlement.is_person` is False for no caller, a blank caller, or `svc:`. It runs first in `notice_visible`, the one verdict `read_notice_parts`, `/resolve_instance` and now enumerate share.
+  - A non-person sees seeded content only. No route refuses yet: the 422 `no_person` waits for lane/74's caller side of (a).
+  - The new seal passes 11. Mutants S1–S3 each red their arms.
+- **P, Q8 (parked behind doc-tools stamping seed provenance).** `SEED_PROVENANCE_STAMPED = False`, and both "seeded" branches read it, so behaviour is unchanged. The new seal passes 6, and mutants P1–P2 are red.
+- **Wire arms deleted with the measurement.** In ten wire mutants, every one that failed gov's six wire arms also failed lane/74's `test_resolve_instance_hears_the_caller`, and only lane/74's killed W5. W3 is equivalent.
+- **The outage seal, re-derived at eleven (`ac6e4ff0`).**
+  - #39's link query is the eleventh `execute_sparql` site. **I shipped `657864f5` with that seal red** because I had not run the file.
+  - The classification is read from the AST: scoped, with no `GRAPH`/`SERVICE`/`FROM`. The file passes 13, and a `FROM` mutant gives the named red.
+  - The first mutant run survived: an escape collapsed to a backspace byte through a heredoc.
+- **Ruling (d): the enumerate gate (#45).**
+  - Members go through the same `_filter_sustainment_candidates`. All-withheld reads as `empty`, the count does not reveal what was withheld, and a failure answers 503.
+  - The new seal passes 10, mutants E1–E5 are red, and nine keep-green files are green on `9393ff08`.
+  - **Residual:** `too_many` is unfiltered, and its count includes anything withheld.
+- **The retry collision (lane/01's packet, Q2c vs pin-driven).** I placed facts and costs, and asked for neither option.
+  - Nothing calls `/ingest/{id}/retry` today.
+  - Under (b), the `awaiting_origin` branch needs a pin exemption, or Q2c is unreachable.
+  - **Waiting on your ruling.**
+- **Checked (2026-10-11):** the architect confirmed the 21:29/22:11 rulings as Q2b (a state function), Q2c (a retry re-runs it) and Q8 (sealed behind seed-stamp). That matches what was built, so there is nothing to change.
+- **Day 2:** done; see the next section.
+
+## 2026-10-11: Day 2, the caller census, the AnswerArtifact check and the packet census
+
+**1. Caller census: PR #47 (`d8e61dd2`).** The file is `tests/security/test_every_engine_o_caller_is_classified.py`; it passes 26.
+
+- **What it derives:**
+  - every POST to `/resolve`, `/resolve_instance`, `/fill_slots`, `/enumerate_instances` and `/analyze` across `agent_fleet/`, `src/`, `scripts/` and `setup/`, using a `.py` URL detector plus a `.sh` curl scan;
+  - each site's class from its payload: PERSON or NO_PERSON, with DOMAINS_WITHOUT_PERSON as a sub-shape.
+- **What it declares:** the split of PERSON into TOKEN and FORWARD.
+- **There are 17 rows. NO_PERSON has 10 sites**, and they are the 422 `no_person` population:
+  - review_composer;
+  - run_resolver_corpus ×4;
+  - verify_tier3_live;
+  - phase1_stable_harness.sh;
+  - elicitation_battery;
+  - slot_fill_battery;
+  - agent_routers → /analyze.
+- **Mutants:**
+  - M1–M5 are red: a class flip at review_composer, a class flip at `_resolve_subject`, a new site, a deleted row, and the domains shape.
+  - X (the supervisor passing `user_email=""`) is green here and in `hears_the_caller`. It is red only in lane/74's `test_the_person_reaches_the_migrated_route.py`, so supervisor-hop provenance is theirs.
+  - This corrects my earlier claim that `hears_the_caller` covered it.
+
+**2. AnswerArtifact origin field: not built, because no writer exists.**
+- I ran the tripwire's detector over 71 distinct blobs from 99 refs: `gateway.py` 51, `notice_parts.py` 6, `promotion_stores.py` 5, `answer_artifact_writer.py` 4, `artifact_reads.py` 3 and `origin_writer.py` 2.
+- It found no AnswerArtifact origin site and no offender.
+
+**3. Packet census, placed for lane/01.**
+- There are 86 placed files. Master's parser misfiles 58 ruled-form packets until #32's Q10 parser lands with 187.
+- There are 10 `from: lane/saf` packets with no repo prefix.
+
+**Retry collision:** I restated (a) and (b) in one line each in the Day 2 digest to the architect. **RULED 2026-10-12: (a), no pin exemption needed.** 187 already carries (a), so gov changes nothing and Q2c's arm 4 stays as built.
+
+## 2026-10-12: the census counts lane/74's five sites as having a person (#47, `4f172cda`)
+
+- **The ruling:** "add a category for person derived from the artifact's ingest record so 74's five sites count as having a person".
+- **`79f90f36` merges lane/74's #48 (`d7f8f3c1`)** into `lane/gov-caller-census`. The merge was clean and brings four commits, including master `c56a0ca2`. The census has to read 74's code to measure the move.
+- **The five sites have two shapes, so there are two declared classes. This departs from the ruling's single name, and I flagged it in the packet to 74 (cc the architect):**
+  - **INGEST_RECORD** (row 8, review_composer): the `user_email` value uses the `on_behalf_of` parameter, which the BFF fills from the ingest's status row.
+  - **TEST_PERSONA** (rows 9–11, run_resolver_corpus, 4 sites): the `user_email` value is `_person()`, which reads `IA_CORPUS_ON_BEHALF_OF` and raises without it.
+- **NO_PERSON is 5 sites** (rows 13–17). Lane/74 left them deliberately for the 422 to refuse.
+- **UNDECIDED**, lane/74's finding: an unreadable payload used to count as NO_PERSON. It is now a red.
+- **DOMAINS_WITHOUT_PERSON** is empty, and it is now derived over the whole census.
+- **Mutants N1–N5 all give named reds.** Under N1 (the composer sends `""`), the count arm stays green and only the class arm catches it.
+- **Test:** 26 passed.
+- **Not run:** lane/74's own seals on the merged tree. The docstring says so.
+
+## 2026-10-12 (2): a blank `user_email` is absent in every arm (#47, `8fc4d1e5`)
+
+- **The ruling:** "two categories approved, accurately described beats one name. Blank "" user_email — make the count arm treat empty as absent, so both arms catch it."
+- **One predicate decides PERSON in every arm.** `carries_person` is used by the derived class, arm C, arm D and arm E, for Python, in-process and shell sites.
+- **What counts as absent:** a missing key; or any value found for it that is a blank literal (`""`, whitespace or `None`); or, at a shell site, `user_email":""`.
+- **What stays out of scope:** a blank passed as a call argument (mutant X). Lane/74's seal owns it.
+- **New control:** `test_CONTROL_a_blank_user_email_is_absent_never_a_person`.
+- **Test:** 27 passed.
+- **Mutants:**
+  - **N1b** (composer `""`): red on row 8, DOMAINS_WITHOUT_PERSON and the count.
+  - **N6** (dynamic_supervisor:429 stores `""`): red on row 1, DOMAINS_WITHOUT_PERSON and the count. **It survived the test at `4f172cda`** (26 passed, measured), which means a blank at a TOKEN row was invisible to every arm.
+  - **N7** (`_bind_from_scope` passes `""`): red on row 7 and the count.
+- **Packet placed:** `2026-10-12-packet-to-74-a-blank-user-email-is-now-absent-in-every-census-arm.md` (cc the architect).
+
+## 2026-10-13: row 17 moves with #52; NO_PERSON is 4 (#47, `6780e7d9`)
+
+- **The rulings (architect, 2026-10-12 13:13):** "gov: accepted; row 17 moves with #52 in the 188 landing; blank user_email = absent (done)."
+- **`0eb0de7a` merges lane/74's #52 (`5902102b`).** #52 is based on a newer master, so the merge also brings in 29 rev-187 commits. The merge was clean.
+  - Three packets that were untracked in ia-gov, and that master now tracks, blocked the merge. Each was byte-identical to master's copy. I backed them up, moved them aside, merged, and cmp'd them back.
+- **Before the move**, on the merged tree, there were exactly 2 reds: row 17 and the count (4 vs 5). POPULATION was green, so rev 187 adds no caller site.
+- **`6780e7d9`:** row 17 is now TEST_PERSONA, because `_smoke_person()` reads `IA_SMOKE_ON_BEHALF_OF` and raises without it. NO_PERSON is 4 (rows 13–16). 27 passed.
+- **Mutants:**
+  - R1 (no raise): red on row 17.
+  - R2 (`""`): red on row 17 and the count.
+  - R3 (`"svc:supervisor"`): red on row 17 only. The count arm treats a service literal as a person, so the TEST_PERSONA arm is the only guard for that shape.
+- **Packet placed:** `2026-10-13-packet-to-01-for-188-take-47-at-6780e7d9-it-carries-52-and-moves-row-17.md` (cc the architect and 74).
+
+## 2026-10-14: a `svc:` user_email is absent in every arm (#47, `bb0b5190`)
+
+- **The ruling:** "a svc: literal counts as absent in every arm, same as blank; a service identity is never a person." It answers the question I raised on 2026-10-13, after R3.
+- **The change:** `_is_blank` becomes `_names_nobody`, so `carries_person` treats a literal whose head is `svc:` as absent, the same as a blank.
+  - The head can be a str constant, an f-string head or the left side of a `+`, matched case-insensitively.
+  - At shell sites the rule matches `user_email":"svc:…`.
+  - `u or "svc:x"` stays PERSON, the same as `u or ""`.
+- **Control:** `test_CONTROL_a_svc_user_email_is_absent_never_a_person`, with checks on both sides.
+- **Test:** 28 passed. No real site sends a `svc:` literal, so the classes and NO_PERSON (4) are unchanged.
+- **Mutants**, each measured now and against the test at `6780e7d9`:
+  - S1 (composer): now red on row 8, DOMAINS_WITHOUT_PERSON and the count. Before: row 8 only.
+  - **S2** (DS:429 `"svc:supervisor"`): now red on row 1, DOMAINS_WITHOUT_PERSON and the count. **Before: survived (27 passed).**
+  - **S3** (`_bind_from_scope` `"svc:engine-o"`): now red on row 7 and the count. **Before: survived (27 passed).**
+  - S4 and S5 (agent_routers, a str and an f-string): now red on row 17 and the count. Before: row 17 only.
+  - S6 (harness curl gains `svc:`): green, because the site stays NO_PERSON. Its control S6c (`a@b`) is red on row 14 and the count.
+- **Packet placed:** `2026-10-14-packet-to-01-47-moved-to-bb0b5190-a-svc-user-email-is-absent-take-it-for-188.md` (cc the architect and 74).
+- **Later the same day, the architect ruled:** "accepted; the engine-side 422 refusing svc: after 188b, as you say."
+
+## 2026-10-14 (2): the visibility catch takes the stores' outage classes only (#54, `16aa5450`)
+
+- **The ask:** lane/74's §4 (2026-10-11 packet): "catch what the lookup's stores actually raise … and let everything else answer 500 … The defence belongs to both routes."
+- **The change:** a new branch `lane/gov-narrow-except`, stacked on #45, one commit.
+  - `/resolve_instance` and `_gate_enumerated_members` now catch `_VISIBILITY_OUTAGE` and answer 503. Anything else answers 500.
+  - `_VISIBILITY_OUTAGE` holds:
+    - `SubstrateUnavailable` (execute_sparql's only escaping exception);
+    - neo4j `ServiceUnavailable`, `SessionExpired` and `TransientError` (from `visible_notice_ids`);
+    - `httpx.HTTPError` (from `program_membership` → Topaz).
+  - **`ValueError` is excluded on purpose:** a garbled Topaz body is a defect. A 500 still fails closed.
+  - The filter's "graph not connected" now raises `SubstrateUnavailable`, not `RuntimeError`.
+  - `/resolve_instance`'s older 502 catch is narrowed to `SubstrateUnavailable`. It predates gov (`cac536e0`).
+- **Tests** (gated, one file per run):
+
+  | file | result |
+  | --- | --- |
+  | new seal `test_the_visibility_check_answers_503_only_for_an_outage.py` | 31 passed |
+  | resolve withholds | 16 passed |
+  | enumerate withholds | 10 passed |
+  | `test_an_outage_is_not_an_empty_answer.py` | 13 passed |
+  | `test_enumerate_fans_out.py` | 18 passed |
+
+- **The withholds doubles now raise the real classes.** The old `RuntimeError` doubles, measured against the new `main.py`, are red on three arms (neo4j, link query, enumerate LOOKUP).
+- **Before** (the new seal against `9393ff08`):
+  - Red: the 12 defect arms (each defect came back as a 503) and the AST arm.
+  - Crashed on a missing attribute, not red: the tuple, not-connected, outage and 502 arms.
+- **Mutants M1–M5 are each red on a named arm** (see the PR body and the commit message).
+  - **M1** (the gate back to `Exception`) leaves the enumerate seal green. That seal tests outages only; the new seal's defect arms catch M1.
+- **Packet placed:** `2026-10-14-packet-to-74-section-4-built-pr-54-the-visibility-catch-is-the-stores-outage-classes-only.md` (cc the architect and 01).
+
+## 2026-10-15: #54 approved; the kind-tree seal counts a group's members as recipients (#56, `77f5a795`)
+
+- **The ruling:** "#54 approved. The kind-tree test must count a group grant as a recipient (group → members) — fix the test, Lane 1's work-instruction row lands behind it."
+- **The trigger:** Lane 1's packet `2026-10-14-packet-to-gov-kind-tree-seal-reads-grant-to-only-…`. `document_promotion:MANUFACTURING` is `grant_to_groups: [manufacturing-stewards]` only (`050b3164`, on `lane/01-rev189`), and the seal read `grant_to` only.
+  - Measured at `579dfadf` with a stand-in work-instruction row: 1 failed (that row's reviewer case), 64 passed.
+- **The change:** a new branch `lane/gov-kind-tree-groups`, based on `lane/01-rev189`. PR #56 → `lane/01-rev189`, one commit, one file.
+  - A recipient is a `grant_to` user, or a `users.yaml` member of a `grant_to_groups` group that `groups.yaml` declares. Memberless and undeclared groups reach nobody, as in `validate_policy.unusable_group_audiences`.
+  - New arms:
+    - a two-sided control (7 cases);
+    - the join with `validate_policy`, over the real policy plus a fixture holding one group of each outcome;
+    - every `document_promotion` audience reaches someone, and one of them is group-only.
+  - Both policy loaders read UTF-8 explicitly. Both files hold non-ASCII bytes, and the platform default failed collection.
+- **Tests** (gated, one file per run):
+  - this file: 64 passed;
+  - with the stand-in row: 74 passed, and the reviewer case PASSED (the stand-in was removed and never staged);
+  - `test_a_task_audience_granted_to_a_group.py`: 16 passed.
+- **Mutants:** K1–K3 (this file) and V1–V2 (`validate_policy`) are each red on a named arm.
+  - On the first run, the join covered real policy only and K2 and K3 left it green: real policy holds no unusable group, so it only compared "fine" with "fine". The fixture half was added for that reason, and K2 and K3 were measured again.
+- **Packet placed:** `2026-10-15-packet-to-lane-01-kind-tree-seal-counts-group-members-pr-56-your-row-can-land.md` (cc the architect).
+
+
+## 2026-10-17: the `/ingest/{id}/source` 403 rule against its seal (review only; nothing built)
+
+- **The brief (Day 2):** "the /ingest/{id}/source grant — review the 403 rule against the seal." The architect, 10-17: the route has been on master since `31d0590e` (193, rolled), and gov's 10-16 check was made before the merge.
+- **What was reviewed:**
+  - The rule: `_ingest_review_access` (`src/iagent/gateway.py:10646-10687` at master `5d8800e0`), the gate shared by `/extraction` and `/source`.
+  - The seal: `tests/test_ingest_review_card_routes.py`, from `71cdc40b` (Lane 1, `lane/01-193`).
+  - Done in a throwaway worktree at `5d8800e0` with its own venv. Baseline: 11 passed.
+- **The rule as written:**
+  - Absent or EVENT row → 404 `ingest_not_found`.
+  - The caller casefold-equals `submitted_by` or `on_behalf_of` (blanks excluded) → allow, `dropped_by`.
+  - Else, a non-empty caller, and `get_task_open_state("document_promotion:<id>")` is open with an audience, and `check_can_act(audience, caller)` → allow, `task_holder`.
+  - Any exception → deny. Else 403 `not_entitled`.
+  - All of this is decided before the store read, and every decision is audited.
+- **Mutants** (each was gated, run against the seal, restored, cmp silent; `git diff` empty afterwards):
+
+  | mutant | change | seal |
+  | --- | --- | --- |
+  | S1 | the task id → `document_promotion:not-this-ingest` | **green**, 11 passed |
+  | S2 | `check_can_act` gets a literal `document_promotion:SUSTAINMENT`, not the task's audience | **green** |
+  | S3 | the `except` sets `allowed = True` | **green** |
+  | S4 | drop `state.get("open")` | red: `test_gate_dropper_holder_stranger_resolved_and_unknown`, `KeyError: 'detail'` at line 276 |
+  | S5 | drop `and state.get("audience")` | **green** |
+  | S7 | `on_behalf_of` → `""` | red: same test, `('extraction', 'carol@example.com') assert 403 == 200` at line 263 |
+
+- **Why four clauses are unsealed.** The seal's stubs ignore their arguments: `get_task_open_state` is `lambda t: task`, and `check_can_act` is `lambda aud, who: who in holders`. So the seal decides whether the caller is a holder, but never checks which task or which audience the decision was made on.
+- **Findings:**
+  - **F1 (S1). Which task is consulted is unsealed.** A gate that read any open task would let the holder of document A's task read document B. Proposed: a stub keyed on the task id, and an arm where a holder of another ingest's open task gets a 403 with the store untouched.
+  - **F2 (S2). The audience pass-through is unsealed.** Proposed: key the `check_can_act` stub on `(aud, who)`, with a holder of a different audience than the task's.
+  - **F3 (S3). Fail-closed on exception is unsealed.** No arm raises. Proposed: an arm where `get_task_open_state` raises, and one where `check_can_act` raises. Each gives 403 `not_entitled`, `s3.calls == []`, and one deny audit line.
+  - **F4 (S5). An open task with no audience is unsealed** (minor). The same arm as F3, with `{"open": True, "audience": ""}`.
+  - **S4 is a red, but a fragile one.** The RESOLVED holder got a 200, and the test reads `r.json()["detail"]` before it asserts the status, so the failure is a `KeyError` and not the status assertion. Proposed: assert the status first.
+  - **Positive controls:** S4 and S7 are red, so the seal does reach the open check and the `on_behalf_of` clause.
+- **Questions for a ruling** (Q12, Q13 below):
+  - **F5. An outage answers 403 `not_entitled`, not 503.** `check_can_act` returns False on any error (`human_tasks.py:216-217`), and the gate's own `except` denies. So a Topaz or task-store outage tells a real holder they are not entitled. That is fail-closed, which is right, but #54's ruled shape elsewhere is outage → 503.
+  - **F6. A delegated drop's service can read the bytes.** On a delegated drop, `submitted_by` is the service's `authz_id` and `on_behalf_of` is the person (`gateway.py:10169`). The `dropped_by` clause matches either one, so a `svc:` caller gets every source it delegated. `_is_service_caller` (`gateway.py:10844`) is applied by retry but not by this gate. The 10-14 ruling ("a service identity is never a person") was made for engine O's arms. Does it reach this clause?
+  - **F7, not a defect.** A holder through a group audience (bob via `manufacturing-stewards`) is decided inside Topaz, where the seal's stub cannot see. Only the live walk, `tests/e2e/walk_document_promotion.py` (written, not yet run), exercises it.
+- **Not touched:** the seal is Lane 1's, so gov proposes arms and does not widen it.
+- **Packet placed:** `2026-10-17-packet-to-lane-01-source-gate-seal-four-clauses-unsealed-two-questions.md` (cc the architect).
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -294,3 +501,14 @@ Rulings issued 2026-10-10 (21:29 and 22:11): Q2–Q10 as above. #32 ships in rev
 8. **ANSWERED, Q8 above: traced; not changed, needs a ruling.** **The doc-tools `provenance_*` writer's caller is untraced.** The read check trusts the `provenance_ingest_id` on a notice. If any other writer sets it, or a seeded notice lacks it, the content is treated as seeded and is visible.
 9. **ANSWERED (above): Lane 1, in the 187 roll.** The backfill has had no live run (no rolls). It needs `BACKFILL_ACTOR` plus the ledger DSN and Neo4j env. Who runs it, and when: before or after this PR's roll? Until it runs, promoted rows with no origin are withheld from everyone but the dropper.
 10. **ANSWERED, Q10 above: built.** **Carried over:** cortex-ui's lane address, and the `for:` line parsing.
+11. **OPEN (2026-10-15).** **Does a `svc:` group member count as a recipient?**
+    - The kind-tree seal and `validate_policy` both count it today.
+    - Elsewhere it's ruled that a service identity is never a person.
+    - It is latent: `users.yaml` has 11 `svc:` ids, and none of them lists a group.
+    - Not built. A ruling would apply to both predicates together.
+12. **OPEN (2026-10-17). The review gate's outage answer** (F5 above).
+    - A Topaz or task-store failure answers 403 `not_entitled` to a real holder.
+    - Keep 403 (fail-closed, and indistinguishable from a refusal), or answer 503 the way #54's outage classes do?
+13. **OPEN (2026-10-17). A `svc:` dropper on the review gate** (F6 above).
+    - A delegated drop records the service as `submitted_by`, so the service can read every source it delegated.
+    - Does "a service identity is never a person" exclude `submitted_by` here, leaving `on_behalf_of` as the dropper?
