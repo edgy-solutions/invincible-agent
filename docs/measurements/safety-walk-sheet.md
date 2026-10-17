@@ -535,8 +535,27 @@ ruling reverses it. The Low-cell task is walked by Q12 (HAZ-1008, open), because
 audience is reachable only through a hazard that is not closed.
 
 ```json
-{"refused": true, "outcome": "hazard_closed", "hazard_id": "HAZ-1005",
- "reason": "hazard 'HAZ-1005' is closed; there is no open risk to accept"}
+{
+ "refused": true,
+ "outcome": "hazard_closed",
+ "hazard_id": "HAZ-1005",
+ "evidence": {
+  "hazard_id": "HAZ-1005",
+  "status": "closed",
+  "severity": "IV",
+  "probability": "E",
+  "opened_on": "2025-11-05",
+  "mitigations": [
+   {
+    "mitigation_id": "MIT-2105",
+    "owner": "tech.pubs@example.invalid",
+    "verified_in_field": "true"
+   }
+  ],
+  "closure_record": "not held"
+ },
+ "reason": "hazard 'HAZ-1005' is closed; there is no open risk to accept. Held: status closed; severity IV, probability E; mitigations MIT-2105 (owner tech.pubs@example.invalid, verified_in_field true). No closure record (date, closer) is held."
+}
 ```
 
 ### Checks that distinguish
@@ -607,9 +626,22 @@ is implied; the refusal names the missing half. Until then this row recorded a `
 DRAFT (`refused: false`) that carried no `review_request`; the ruling replaces that shape.
 
 ```json
-{"refused": true, "outcome": "not_assessed", "hazard_id": "HAZ-1006",
+{
+ "refused": true,
+ "outcome": "not_assessed",
+ "hazard_id": "HAZ-1006",
  "gap": "severity is not assessed on this hazard; no risk level is resolved and no authority is implied",
- "reason": "hazard 'HAZ-1006' has not been assessed: severity is not assessed on this hazard; no risk level is resolved and no authority is implied"}
+ "evidence": {
+  "hazard_id": "HAZ-1006",
+  "status": "not_assessed",
+  "severity": null,
+  "probability": null,
+  "opened_on": "2026-08-30",
+  "mitigations": [],
+  "closure_record": "not held"
+ },
+ "reason": "hazard 'HAZ-1006' has not been assessed: severity is not assessed on this hazard; no risk level is resolved and no authority is implied. Held: status not_assessed; neither severity nor probability held; opened 2026-08-30. To proceed, obtain a severity and probability assessment for HAZ-1006."
+}
 ```
 
 ### Checks that distinguish

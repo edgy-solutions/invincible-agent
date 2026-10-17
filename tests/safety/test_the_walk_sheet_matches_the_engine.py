@@ -18,6 +18,7 @@ IDENTITIES and the REASONS are asserted, and the arithmetic is asserted only as 
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -378,6 +379,8 @@ def test_Q9_a_closed_hazard_is_refused_hazard_closed_and_creates_no_task(client)
     assert "review_request" not in body and "risk_level" not in body and "acceptance_audience" not in body
     for claim in ('"outcome": "hazard_closed"', '"hazard_id": "HAZ-1005"'):
         assert claim in _SHEET.read_text(encoding="utf-8"), claim
+    assert json.dumps(body["reason"], ensure_ascii=False) in _SHEET.read_text(encoding="utf-8")
+    assert "No closure record (date, closer) is held." in body["reason"]
 
 
 @requires_rdflib
@@ -402,6 +405,8 @@ def test_Q11_a_not_assessed_hazard_is_refused_not_assessed_and_creates_no_task(c
         assert absent not in body, absent
     for claim in ('"outcome": "not_assessed"', '"hazard_id": "HAZ-1006"'):
         assert claim in _SHEET.read_text(encoding="utf-8"), claim
+    assert json.dumps(body["reason"], ensure_ascii=False) in _SHEET.read_text(encoding="utf-8")
+    assert "opened 2026-08-30" in body["reason"] and "obtain a" in body["reason"]
 
 
 @requires_rdflib

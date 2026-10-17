@@ -288,6 +288,30 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
     return out
 
 
+def _mitigations_clause(h) -> str:
+    """The mitigations this hazard holds, as held (id, owner, verified_in_field), or the plain
+    statement that none are recorded. Never a default owner, never an inferred verification."""
+    if not h.mitigations:
+        return "no mitigations recorded"
+    parts = [f"{m.mitigation_id} (owner {m.owner if m.owner is not None else 'none recorded'}, "
+             f"verified_in_field {m.verified_in_field})" for m in h.mitigations]
+    return "mitigations " + ", ".join(parts)
+
+
+def _hazard_evidence(h) -> Dict[str, Any]:
+    """The record pointers behind a decided refusal: ids and held values, nothing else."""
+    return {
+        "hazard_id": h.hazard_id,
+        "status": h.status,
+        "severity": h.severity,
+        "probability": h.probability,
+        "opened_on": h.opened_on,
+        "mitigations": [{"mitigation_id": m.mitigation_id, "owner": m.owner,
+                         "verified_in_field": m.verified_in_field} for m in h.mitigations],
+        "closure_record": "not held",
+    }
+
+
 def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any]:
     """Draft a risk assessment for one hazard: severity, probability, level, authority, citations.
 
@@ -322,11 +346,23 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         # gateway a review_request, and the gateway would open a risk-acceptance task against a
         # condition the programme has already closed. Named so a caller can tell this decided
         # refusal from an unknown id; carries no review_request, so no task is created.
+        # THE REFUSAL CITES WHAT THIS ENGINE HOLDS, AND SAYS WHAT IT DOES NOT (ruled 2026-10-17):
+        # status, severity/probability and each mitigation (id, owner, verified_in_field) as
+        # held. The hazard model has NO closure record (date, closer), so the prose says so
+        # rather than imply one. Ids and held values only; nothing here widens visibility.
+        evidence = _hazard_evidence(h)
+        held = "; ".join([
+            f"status {h.status}",
+            f"severity {h.severity or 'not recorded'}, probability {h.probability or 'not recorded'}",
+            _mitigations_clause(h),
+        ])
         return {
             "refused": True,
             "outcome": "hazard_closed",
             "hazard_id": h.hazard_id,
-            "reason": f"hazard '{h.hazard_id}' is closed; there is no open risk to accept",
+            "evidence": evidence,
+            "reason": (f"hazard '{h.hazard_id}' is closed; there is no open risk to accept. "
+                       f"Held: {held}. No closure record (date, closer) is held."),
         }
 
     # DERIVED_FROM: every source object this draft actually read. Seal 10 asserts each one
@@ -355,12 +391,24 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         gap = (
             "severity" if h.severity is None else "probability"
         ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
+        missing = "severity" if h.severity is None else "probability"
+        held_other = (
+            f"probability {h.probability}" if h.severity is None and h.probability is not None
+            else f"severity {h.severity}" if h.probability is None and h.severity is not None
+            else "neither severity nor probability"
+        )
+        if h.severity is None and h.probability is None:
+            missing = "severity and probability"
+        evidence = _hazard_evidence(h)
         return {
             "refused": True,
             "outcome": "not_assessed",
             "hazard_id": h.hazard_id,
             "gap": gap,
-            "reason": f"hazard '{h.hazard_id}' has not been assessed: {gap}",
+            "evidence": evidence,
+            "reason": (f"hazard '{h.hazard_id}' has not been assessed: {gap}. "
+                       f"Held: status {h.status}; {held_other} held; opened {h.opened_on}. "
+                       f"To proceed, obtain a {missing} assessment for {h.hazard_id}."),
         }
 
     out["severity"] = h.severity
