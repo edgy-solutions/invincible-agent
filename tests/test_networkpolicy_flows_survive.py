@@ -41,7 +41,11 @@ import netpol_eval as ne  # noqa: E402
 _CHART = _REPO / "helm" / "invincible-agent"
 _SANDBOX = _CHART / "values-sandbox.yaml"
 _OVERLAY = _REPO / "tests" / "fixtures" / "netpol" / "values-flows.yaml"
-_FQDN = ".default.svc.cluster.local"
+# Rendered in the namespace the chart is deployed to, so the derived hosts carry that namespace's
+# suffix. Rendering with none put every host in `default` -- the legacy-DNS spelling the ratchet in
+# tests/routing/test_no_legacy_dns_references.py refuses (architect 10-17: fix it, not allowlist it).
+_NAMESPACE = "sandbox"
+_FQDN = f".{_NAMESPACE}.svc.cluster.local"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -82,7 +86,7 @@ EXPECTED = {BFF: _COMMON | {("iagent-electric", 3000)}, ENGINE_O: _COMMON}
 
 
 def _render(*extra: str) -> list[dict]:
-    cmd = ["helm", "template", "iagent", str(_CHART), "-f", str(_SANDBOX), "-f", str(_OVERLAY), *extra]
+    cmd = ["helm", "template", "iagent", str(_CHART), "--namespace", _NAMESPACE, "-f", str(_SANDBOX), "-f", str(_OVERLAY), *extra]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, f"helm template failed: {proc.stderr[-2000:]}"
     return [d for d in yaml.safe_load_all(proc.stdout) if isinstance(d, dict)]
@@ -90,12 +94,12 @@ def _render(*extra: str) -> list[dict]:
 
 @pytest.fixture(scope="module")
 def on() -> ne.Cluster:
-    return ne.Cluster(_render("--set", "networkPolicy.enabled=true"), external_hosts=EXTERNAL_HOSTS)
+    return ne.Cluster(_render("--set", "networkPolicy.enabled=true"), namespace=_NAMESPACE, external_hosts=EXTERNAL_HOSTS)
 
 
 @pytest.fixture(scope="module")
 def off() -> ne.Cluster:
-    return ne.Cluster(_render("--set", "networkPolicy.enabled=false"), external_hosts=EXTERNAL_HOSTS)
+    return ne.Cluster(_render("--set", "networkPolicy.enabled=false"), namespace=_NAMESPACE, external_hosts=EXTERNAL_HOSTS)
 
 
 def _short(host: str) -> str:
