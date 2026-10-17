@@ -213,6 +213,9 @@ def test_the_page_carries_only_the_canvas_sections(state, tmp_path):
 
 
 def test_a_lot_outside_the_recipients_scope_is_UNENTITLED_and_named():
+    # Seals the LOG detail: the exception keeps the answer id and the lot. The ROUTE's prose is
+    # constant (RULED 2026-10-17: canvas.ENTITLEMENT_REFUSAL, sealed in
+    # test_an_entitlement_refusal_names_no_lot.py); this detail only reaches the engine's log.
     canvas = {"answers": [_a("mine", "costLaborComposition", 2),
                           _a("theirs", "costLaborComposition", 7)]}
     with pytest.raises(C.Unentitled, match=r"theirs \(lot 7\)"):
