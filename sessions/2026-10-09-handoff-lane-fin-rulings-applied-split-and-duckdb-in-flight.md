@@ -19,7 +19,27 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-16, later: twice-export on 192 gives ONE sha. Read this first
+## Update 2026-10-17, latest: Q1 is #67, the refused entries are #69 (stacked). Read this first
+
+- **Rulings (architect via Chris, 10-16):**
+  - the twice-export is accepted;
+  - Q1: export the good answers and name the refused ones;
+  - "refused-section-in-document" means ONLY the `documents[]` entry, with a reason_code and prose. The 10-10 ruling is unamended.
+- **#67** `fin/export-good-answers-name-refused` @ `439865f2`, worktree `ia-fin-export-good-answers`. The cost canvas exports its good answers; refused answers are named by `no_verb`, `not_an_exportable_cost_verb` or `lot_not_named`.
+- **#69** `fin/export-refused-entries-in-documents` @ `c219526a`, worktree `ia-fin-export-refused-entries`, with #67's branch as its base. Refused answers become `failed` `documents[]` entries grouped by reason_code; the fin section gains a reason_code; the top reason reads "r of n answers refused".
+- **Merge order:** #67, then #69, in one roll. Lane 1 merges.
+- **Unruled choice, flagged in the packet:** entitlement still refuses the whole canvas.
+- **Packet (untracked):** `invincible-agent/sessions/2026-10-17-packet-to-lane-01-fin-q1-is-pr67-refused-entries-pr69-merge-in-order.md`.
+- **Lane 1's packets, committed here:**
+  - 10-16 "Q1 ruled…": asked for the wire shape and for Q2.
+  - 10-16 "rides 192".
+  - 10-17 "Q1 is not on lane/fin".
+
+  All three are answered in the packet above. In short: Q1 is on the PR branches by the architect's go, never on lane/fin. Q2 (whether an id-less request is refused at the gateway) is open with the architect and nothing is built for it.
+- **Placed (untracked):** the wire shape for cortex-ui at `cortex-ui/sessions/2026-10-17-packet-to-cortex-a-refused-answer-is-a-failed-documents-entry-with-a-reason-code.md`. Their reader at `7810f4c` accepts the entry and drops `reason_code`.
+- **Next:** after the roll, walk a cost board with one no-verb answer through the ingress. Expect `partial`, the cost entry `exists`, a `no_verb` entry, and the same sha as the good-only board. Then idle.
+
+## Update 2026-10-16, later: twice-export on 192 gives ONE sha
 
 - The fleet is on 192, `b89d4c95`; bff, cost and fin all run it. `force_compression` is in that sha's `scripts/build_cost_dataset.py`.
 - The same two cost answers were exported twice through the ingress (scratchpad `twice_export.py`):
