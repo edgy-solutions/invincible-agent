@@ -95,11 +95,26 @@ def _lot_number(subject: Any) -> Optional[int]:
     return None
 
 
+NO_VERB = "no_verb"
+NOT_AN_EXPORTABLE_COST_VERB = "not_an_exportable_cost_verb"
+LOT_NOT_NAMED = "lot_not_named"
+REFUSAL_REASONS = {
+    NO_VERB: "the question resolved no verb, so there is no cost answer to export",
+    NOT_AN_EXPORTABLE_COST_VERB:
+        f"not a verb this engine exports; exportable verbs: {sorted(EXPORTABLE)}",
+    LOT_NOT_NAMED: "an answer about a lot that names no lot",
+}
+
+
 def resolve(canvas: Any, *, recipient_scope: str, entitled_lots: Iterable[int]) -> dict[str, Any]:
     """Read a canvas into the lots and sections its export carries. Refuses by name.
 
     `canvas` is `{"answers": [{"id", "verb_iri", "subject_instance_id"}, ...]}`: the fields
     the bff's `ArtifactResponse` carries for each answer on a board. Extra keys are ignored.
+
+    RULED 2026-10-16 (Q1): the canvas refuses whole only for shape and entitlement faults, or
+    when no answer is exportable. Otherwise a refused answer is named in `refused` (id,
+    reason_code, reason), not fatal, and `answers`/`lots`/`sections` cover the exportable ones.
     """
     entitled = tuple(entitled_lots)
     if not isinstance(canvas, dict) or not isinstance(canvas.get("answers"), list):
@@ -133,20 +148,34 @@ def resolve(canvas: Any, *, recipient_scope: str, entitled_lots: Iterable[int]) 
             f"{recipient_scope!r} is not entitled to the lot(s) these answers are about: "
             + ", ".join(f"{aid} (lot {s})" for aid, s in unentitled))
 
-    unexportable = [aid for aid, verb, _ in parsed if verb not in EXPORTABLE]
-    if unexportable:
+    refused: list[dict[str, str]] = []
+    good: list[tuple[str, str, Any]] = []
+    for aid, verb, subj in parsed:
+        if verb is None:
+            code = NO_VERB
+        elif verb not in EXPORTABLE:
+            code = NOT_AN_EXPORTABLE_COST_VERB
+        elif EXPORTABLE[verb]["spans"] == "lot" and _lot_number(subj) is None:
+            code = LOT_NOT_NAMED
+        else:
+            good.append((aid, verb, subj))
+            continue
+        refused.append({"answer_id": aid, "reason_code": code, "reason": REFUSAL_REASONS[code]})
+
+    if not good:
+        unexportable = [r["answer_id"] for r in refused
+                        if r["reason_code"] in (NO_VERB, NOT_AN_EXPORTABLE_COST_VERB)]
+        if unexportable:
+            raise NotInModel(
+                "these canvas answers are not cost answers this engine can export: "
+                f"{unexportable}. Exportable verbs: {sorted(EXPORTABLE)}", refused=refused)
         raise NotInModel(
-            "these canvas answers are not cost answers this engine can export: "
-            f"{unexportable}. Exportable verbs: {sorted(EXPORTABLE)}")
-    no_subject = [aid for aid, verb, subj in parsed
-                  if EXPORTABLE[verb]["spans"] == "lot" and _lot_number(subj) is None]
-    if no_subject:
-        raise NotInModel(
-            f"these canvas answers are about a lot and name none: {no_subject}")
+            "these canvas answers are about a lot and name none: "
+            f"{[r['answer_id'] for r in refused]}", refused=refused)
 
     lots: set[int] = set()
     sections: set[str] = set()
-    for _aid, verb, subj in parsed:
+    for _aid, verb, subj in good:
         row = EXPORTABLE[verb]
         sections.update(row["sections"])
         if row["spans"] == "lot":
@@ -156,10 +185,11 @@ def resolve(canvas: Any, *, recipient_scope: str, entitled_lots: Iterable[int]) 
     if not lots:
         raise NotInModel(
             "no answer on the canvas is about a lot, so the package would verify nothing: "
-            "add a lot-bound or program-wide cost answer")
+            "add a lot-bound or program-wide cost answer", refused=refused)
 
     return {
         "lots": tuple(n for n in entitled if n in lots),
         "sections": tuple(s for s in SECTIONS if s in sections),
-        "answers": [aid for aid, _, _ in parsed],
+        "answers": [aid for aid, _, _ in good],
+        "refused": refused,
     }

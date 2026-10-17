@@ -147,7 +147,8 @@ def test_the_VERB_narrows_the_page_it_writes_not_only_its_response(state, isolat
 
 def test_one_labor_answer_discloses_one_lot_and_shows_its_two_sections(state):
     composed = _resolve({"answers": [_a("only", "costLaborComposition", 3)]})
-    assert composed == {"lots": (3,), "sections": ("labor", "sepm"), "answers": ["only"]}
+    assert composed == {"lots": (3,), "sections": ("labor", "sepm"), "answers": ["only"],
+                        "refused": []}
     pkg = _dataset_package(state, composed)
     assert pkg["lots"] == [3]
     assert [c["lot"] for c in pkg["manifest"]["checks"]] == [3]
