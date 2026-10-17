@@ -10718,17 +10718,41 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
     Row absent or an EVENT row -> 404 `ingest_not_found`. ALLOWED when the caller is the row's
     `submitted_by` or `on_behalf_of` (casefold; reason `dropped_by`), or when the
     `document_promotion:<id>` task exists, is still OPEN and the caller passes
-    `human_tasks.check_can_act` on its audience (fail-closed; reason `task_holder`). Otherwise
-    403 `not_entitled`. Decided BEFORE any artifact-store read. Every decision is audited."""
+    `human_tasks.can_act_or_unavailable` on its audience (reason `task_holder`). Otherwise
+    403 `not_entitled`. Decided BEFORE any artifact-store read. Every decision is audited.
+
+    The architect, 2026-10-17:
+      * "Topaz outage is 503 ... a holder of the task is never told not_entitled because a
+        dependency is down." A Topaz or task-store failure is 503 `authorization_unavailable`
+        (an unconfigured task store is the fleet's `hitl_unconfigured`). Any other failure of
+        the task check still denies.
+      * "a service reads the source of drops it delegated because the delegate rule already
+        grants it (it seeded them), not because it is 'the submitter'; a service holding a
+        review task counts for nothing." A service caller (`_is_service_caller`) is decided
+        by the seeding-delegate rule alone (`artifact_reads.is_entitled`; reason
+        `seeding_delegate`), never by the dropper fields or a task. R-089: the delegate map is
+        asserted by configuration this pass."""
     from starlette.concurrency import run_in_threadpool
 
+    import psycopg2
+
     from . import human_tasks, ingest_status, promotion
+    from .artifact_reads import is_entitled
 
     caller = (current_user.authz_id or "").strip()
     row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
     if row is None or row.get("kind") == ingest_status.EVENT:
         _audit_ingest_access(route, ingest_id, caller, "deny", "ingest_not_found")
         raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    if _is_service_caller(caller):
+        if is_entitled({"seeded_by": str(row.get("submitted_by") or "").strip()},
+                       authz_id=caller, delegates=_delegate_principals()):
+            _audit_ingest_access(route, ingest_id, caller, "allow", "seeding_delegate")
+            return row, "seeding_delegate"
+        _audit_ingest_access(route, ingest_id, caller, "deny", "not_entitled")
+        raise HTTPException(status_code=403, detail={
+            "error": "not_entitled",
+            "message": "a service reads only the drops it seeded as a declared delegate"})
     cf = caller.casefold()
     if cf and cf in {str(row.get("submitted_by") or "").strip().casefold(),
                      str(row.get("on_behalf_of") or "").strip().casefold()} - {""}:
@@ -10741,7 +10765,17 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
                 lambda: human_tasks.get_task_open_state(f"{promotion.KIND}:{ingest_id}"))
             if state and state.get("open") and state.get("audience"):
                 allowed = bool(await run_in_threadpool(
-                    lambda: human_tasks.check_can_act(state["audience"], caller)))
+                    lambda: human_tasks.can_act_or_unavailable(state["audience"], caller)))
+        except human_tasks.HumanTaskConfigError as exc:
+            _audit_ingest_access(route, ingest_id, caller, "deny", "hitl_unconfigured")
+            raise HTTPException(status_code=503, detail={
+                "error": "hitl_unconfigured", "message": str(exc)}) from exc
+        except (human_tasks.AuthorizationUnavailable, psycopg2.Error) as exc:
+            logger.warning("ingest access task check unavailable: %s", type(exc).__name__)
+            _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+            raise HTTPException(status_code=503, detail={
+                "error": "authorization_unavailable",
+                "message": "could not verify the caller against the promotion task"}) from exc
         except Exception as exc:  # noqa: BLE001 -- fail closed
             logger.warning("ingest access task check failed: %s", type(exc).__name__)
             allowed = False

@@ -37,6 +37,10 @@ import httpx
 import psycopg2
 import psycopg2.extras
 
+# The fleet's ONE class for "Topaz could not answer" (ADR-0026), imported the way auth.py does,
+# so a raise here and a catch at the BFF are the same module object.
+from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
+
 try:
     from agent_fleet.utils import program_membership as _program_membership
 except ImportError:  # pragma: no cover - run outside the repo root
@@ -194,11 +198,16 @@ def _resolve_audience_actors(audience: str) -> list[str]:
     return actors
 
 
-def check_can_act(audience: str, caller_id: str) -> bool:
-    """Application-layer gate: re-check Topaz `can_act` for this caller on this
-    audience at resolve time (defense in depth over the replication filter).
-    `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
-    identity -> False."""
+def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
+    """Topaz `can_act` for this caller on this audience, the same question as
+    :func:`check_can_act`, except that a Topaz failure (no connection, a non-2xx, an unreadable
+    body) RAISES the fleet's one `AuthorizationUnavailable` (`iagent.authz`, ADR-0026: "auth is
+    down" is not "you're denied") instead of reading as False. For a route that must answer 503,
+    not a deny, when Topaz is down (architect, 2026-10-17: "a holder of the task is never told
+    not_entitled because a dependency is down").
+    An empty identity or an unconfigured TOPAZ_DIRECTORY_URL is still False, as in
+    :func:`check_can_view_program`: a deployment that declared no directory, not a request that
+    attempted one and failed."""
     if not caller_id or not _TOPAZ_DIRECTORY_URL:
         return False
     payload = {
@@ -213,6 +222,17 @@ def check_can_act(audience: str, caller_id: str) -> bool:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return bool(r.json().get("check"))
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+
+
+def check_can_act(audience: str, caller_id: str) -> bool:
+    """Application-layer gate: re-check Topaz `can_act` for this caller on this
+    audience at resolve time (defense in depth over the replication filter).
+    `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
+    identity -> False."""
+    try:
+        return can_act_or_unavailable(audience, caller_id)
     except Exception:
         return False  # fail-closed
 
