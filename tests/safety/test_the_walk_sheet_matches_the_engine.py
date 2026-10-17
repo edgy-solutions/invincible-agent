@@ -427,3 +427,26 @@ def test_Q11_a_half_assessed_hazard_is_refused_and_names_the_missing_half(client
     body = _measure(client, "draft_risk_assessment", {"hazard_id": "HAZ-1006"})
     assert body["refused"] is True and body["outcome"] == "not_assessed", body
     assert "probability" in body["gap"] and "review_request" not in body
+
+
+# ---------------------------------------------------------------------------
+# Q3 follow-on -- a critical item naming a hazard the plane does not hold
+# ---------------------------------------------------------------------------
+
+def test_a_critical_item_naming_an_unheld_hazard_is_refused_unknown_hazard(client, monkeypatch):
+    """WO-3001 (PN-8801) is on CSI-5001, which names HAZ-1001. With HAZ-1001 not held the verb
+    refuses by name: same shape as hazard_closed, no `assessment`, no task."""
+    from agent_fleet.safety_agent import measures
+    monkeypatch.delitem(measures.BY_HAZARD_ID, "HAZ-1001")
+    body = _measure(client, "assess_deferral_risk", {"work_order_id": "WO-3001"})
+    assert body["refused"] is True and body["outcome"] == "unknown_hazard", body
+    assert body["hazard_id"] == "HAZ-1001" and "HAZ-1001" in body["reason"]
+    assert "not held by this engine" in body["reason"], body["reason"]
+    assert "assessment" not in body and "review_request" not in body
+
+
+def test_unknown_hazard_CONTROL_the_same_item_naming_a_held_hazard_assesses(client):
+    """Differs from the subject in ONE thing: whether the hazard is held."""
+    body = _measure(client, "assess_deferral_risk", {"work_order_id": "WO-3001"})
+    assert body.get("refused") is not True and body["assessment"] == "drafted", body
+    assert body["reopens_hazard_id"] == "HAZ-1001"

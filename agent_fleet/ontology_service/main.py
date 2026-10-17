@@ -2432,7 +2432,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
 
 
 async def _call_resolver(
-    resolver: dict, identifier: str, query: str
+    resolver: dict, identifier: str, query: str, *,
+    user_email: str = "", entitled_domains: list | tuple = (),
 ) -> _ResolverOutcome:
     """Call one mesh:resolveInstance provider with the provider's own
     declared timeout budget (falling back to the router floor).
@@ -2442,6 +2443,13 @@ async def _call_resolver(
     2s-strangle bug. Candidates are always returned (possibly empty);
     the caller decides whether the empty list represents abstention
     or a kill upstream.
+
+    THE CALLER TRAVELS WITH THE TERM (2026-10-10). A provider whose instances carry an origin
+    (engine-o's SUSTAINMENT store holds drop-derived notices) cannot gate what it returns on a
+    caller it was never told. Both fields go on EVERY call, empty when the asker named nobody,
+    so a provider reads "no caller" as an explicit empty value, never as a field it was not
+    sent. The names match `/notice_parts` (`user_email`, `entitled_domains`). The gate is the
+    provider's, not this router's.
     """
     import time
     provider = resolver.get("provider") or ""
@@ -2454,7 +2462,9 @@ async def _call_resolver(
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
                 endpoint_url,
-                json={"identifier": identifier, "query": query},
+                json={"identifier": identifier, "query": query,
+                      "user_email": user_email or "",
+                      "entitled_domains": list(entitled_domains or [])},
             )
             resp.raise_for_status()
             data = resp.json() or {}
@@ -2502,9 +2512,14 @@ async def _call_resolver(
 
 
 async def _resolve_instance(
-    identifier: str, query: str, asked_domains: list | None = None
+    identifier: str, query: str, asked_domains: list | None = None, *,
+    user_email: str = "", entitled_domains: list | None = None,
 ) -> tuple[str | None, dict]:
     """Run the instance-resolution pre-step.
+
+    ``asked_domains`` RANKS (demotes out-of-domain hits); ``entitled_domains`` is the caller's
+    grant and is only forwarded, with ``user_email``, to every provider. They are separate
+    parameters because a routing domain is not an entitlement.
 
     Returns ``(subject_uri or None, provenance)``. ``None`` means
     abstain → the caller keeps the LLM's class guess. Provenance
@@ -2570,7 +2585,9 @@ async def _resolve_instance(
         else:
             _lookup_terms.append(_name)
 
-    tasks = [_call_resolver(r, term, query)
+    _entitled = list(entitled_domains or [])
+    tasks = [_call_resolver(r, term, query,
+                            user_email=user_email, entitled_domains=_entitled)
              for r in resolvers for term in _lookup_terms]
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
@@ -3506,6 +3523,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
                 asked_domains=request.domains or ([request.domain] if request.domain else []),
+                user_email=request.user_email, entitled_domains=list(request.domains or []),
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
@@ -3604,6 +3622,9 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # and ranks; forwarding it as an entitlement would grant what nobody granted.
+            user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
@@ -4368,6 +4389,11 @@ class FillSlotsRequest(BaseModel):
     #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
     #: falls back to `_acts_in_docs` alone.
     subject_uri: str = ""
+    #: THE PERSON ASKING, forwarded with `acting_domains` to every `mesh:resolveInstance`
+    #: provider so a provider holding origin-scoped instances can gate on who asked (2026-10-10,
+    #: gov's origin-at-read report). `/resolve` has carried it since ADR-0025; `/fill_slots`
+    #: never did. Empty is an explicit "no caller", which a gating provider must refuse on.
+    user_email: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -4630,7 +4656,8 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # slot's referent class for the same reason. Scoping here would hide the very
         # cross-domain match a person needs to see when disambiguating.
         _subject, prov = await _resolve_instance(
-            spoken_value, request.query, asked_domains=list(request.acting_domains or [])
+            spoken_value, request.query, asked_domains=list(request.acting_domains or []),
+            user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
@@ -5090,6 +5117,77 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
+    #: The caller, as the fan-out sends it (`_call_resolver`); same names as `/notice_parts`.
+    #: GATED ON by `_filter_sustainment_candidates` below: the same origin verdict
+    #: `/notice_parts` applies (`notice_parts.notice_visible`).
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+_NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
+_COMPONENT_IRI_PREFIX = "http://internal/components/"
+_SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"
+
+
+def _iri_is_safe(iri: str) -> bool:
+    return not any(ch in iri for ch in ('>', '"')) and not any(ch.isspace() for ch in iri)
+
+
+async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: str,
+                                         entitled_domains: list[str]) -> list[dict]:
+    """Withhold the candidates the SAME origin rule `/notice_parts` applies would withhold
+    (`notice_parts.notice_visible`): a drop-derived notice no caller may yet see, and a component
+    reachable only through such notices. A withheld candidate is simply absent, so the answer is
+    the one a Jena without that row would give. Raises on a lookup failure (the route answers 503).
+    Components with no linked notice and every non-sustainment IRI pass untouched."""
+    notice_ids: dict[str, str] = {}
+    comp_iris: list[str] = []
+    unsafe: set[str] = set()
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri.startswith(_NOTICE_IRI_PREFIX):
+            notice_ids[iri] = _notice_parts.notice_id_of({}, iri)
+        elif iri.startswith(_COMPONENT_IRI_PREFIX):
+            if _iri_is_safe(iri):
+                comp_iris.append(iri)
+            else:
+                unsafe.add(iri)
+    links: dict[str, set[str]] = {}
+    if comp_iris:
+        values = " ".join(f"<{i}>" for i in comp_iris)
+        link_rows = await execute_sparql(
+            f"SELECT ?c ?n WHERE {{ VALUES ?c {{ {values} }} ?c <{_SUBJECT_TO_NOTICE}> ?n }}",
+            domain="SUSTAINMENT",
+        )
+        for r in link_rows or []:
+            links.setdefault(str(r.get("c") or ""), set()).add(str(r.get("n") or ""))
+    linked_ids = {n: _notice_parts.notice_id_of({}, n)
+                  for ns in links.values() for n in ns if n.startswith(_NOTICE_IRI_PREFIX)}
+    all_ids = {i for i in [*notice_ids.values(), *linked_ids.values()] if i}
+    visible: set[str] = set()
+    if all_ids:
+        if _NEO4J_DRIVER is None:
+            raise RuntimeError("the sustainment graph is not connected")
+        visible = await asyncio.to_thread(
+            _notice_parts.visible_notice_ids, _NEO4J_DRIVER, all_ids,
+            caller_id=user_email, viewer_domains=entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
+    out: list[dict] = []
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri in unsafe:
+            continue
+        if iri in notice_ids:
+            if notice_ids[iri] and notice_ids[iri] not in visible:
+                continue
+        elif iri in links:
+            tied = [linked_ids[n] for n in links[iri] if linked_ids.get(n)]
+            if tied and not any(t in visible for t in tied):
+                continue
+        out.append(c)
+    return out
 
 
 @app.post("/resolve_instance")
@@ -5103,6 +5201,14 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
+    try:
+        candidates = await _filter_sustainment_candidates(
+            candidates, user_email=request.user_email,
+            entitled_domains=request.entitled_domains,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
     return {"candidates": candidates}
 
 
