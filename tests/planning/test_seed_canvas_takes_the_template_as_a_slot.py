@@ -150,7 +150,10 @@ def test_the_identity_list_is_not_merely_NON_EMPTY():
     the list is a short allowlist rather than a catch-all that grants identity broadly."""
     from iagent.defs.dynamic_supervisor import _CALLER_IDENTITY_VERBS
 
-    assert len(_CALLER_IDENTITY_VERBS) <= 4, (
+    # Raised 4 -> 5: the architect ruled on 2026-10-10 that safety's two program-filtered verbs join.
+    # tests/identity/test_a_service_identity_never_gets_a_program.py is now the per-verb argument;
+    # this ceiling is kept as the catch-all control.
+    assert len(_CALLER_IDENTITY_VERBS) <= 5, (
         f"the caller-identity allowlist has grown to {len(_CALLER_IDENTITY_VERBS)} — it "
         f"dispenses the caller's own token and is meant to be short and argued"
     )
