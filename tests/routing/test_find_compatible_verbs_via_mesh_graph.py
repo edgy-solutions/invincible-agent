@@ -2,13 +2,13 @@
 
 `COMPATIBLE_VERBS_VIA_MESH` moves LEG 1 (coverage) onto `Neo4jGraph.verbs_for`, whose statement
 `tests/test_mesh_graph_conforms.py::test_verbs_for_IS_THE_ROUTES_LEG_1` holds equal to the route's
-own, and reads LEG 3's universal-referent confirmation from Jena as the person the request names
-in `on_behalf_of`. With the flag off, LEG 3's read is made as `_POOL_READ_INITIATOR`, a service,
-and is refused before it is sent (`test_the_pool_reaches_the_universal_referent.py` seals that).
+own. LEG 3 reads the Neo4j node property `universal_referent` on BOTH paths (architect ruling
+2026-10-17) and no Jena read is made; `test_the_pool_reaches_the_universal_referent.py` seals the
+statement text.
 
 WHAT THE FLAG MAY CHANGE, AND NOTHING ELSE:
 
-- the pool gains the universal leg's rows, because the explain read is finally made as someone;
+- nothing about the universal leg: it is the same flag read on both paths;
 - a request with no person is a 400, and a hop bound `verbs_for` does not walk is a 400;
 - a substrate failure is a 503 rather than a 500.
 
@@ -44,19 +44,18 @@ from tests.conftest import stub_modules
 _REPO = Path(__file__).resolve().parents[2]
 _SVC = _REPO / "agent_fleet" / "ontology_service"
 _MOD_NAME = "engine_o_main__compatible_verbs_via_mesh_test"
-_TEST_JENA_ENDPOINT = "http://ontology.invalid/ds/sparql"
 _FLAG = "COMPATIBLE_VERBS_VIA_MESH"
 
 PERSON = "seal-person@example.invalid"
 SUBJECT = "http://invincible-agent/cost#ProductionLot"
 #: A subclass two hops below SUBJECT: the same legs reach it at a greater distance.
 CHILD_SUBJECT = "http://invincible-agent/cost#ProductionLotChild"
-THING = "http://invincible-agent/mesh#Thing"
+FLAG_TEST = "coalesce(ref.universal_referent, false) = true"
 
 # Installed UNCONDITIONALLY, for this module's arms only, and put back after them by `stub_modules`:
 # a guard that yields to whatever got there first makes the load depend on collection order
 # (`tests/test_the_stub_harness_puts_sys_modules_back.py`). Nothing here asserts on what these
-# recorded. `rdflib` is never replaced -- the explain arms parse real Turtle through it.
+# recorded. `rdflib` is never replaced.
 _ORIGINAL: dict[str, type] = {}
 
 _SHIMMED = (
@@ -99,7 +98,7 @@ def engine_o():
             graph = getattr(mod, "Neo4jGraph", None)
             if graph is None:
                 from agent_fleet.ontology_service.mesh_graph import Neo4jGraph as graph
-            _ORIGINAL.update(jena=type(mod._JENA_ONTOLOGY), graph=graph)
+            _ORIGINAL.update(graph=graph)
             yield mod
 
 
@@ -200,67 +199,44 @@ class _LegSession:
             raise RuntimeError("store down")
         rows: list[dict] = []
         for leg in legs:
-            if leg == "universal" and THING not in (params.get("universal_referents") or []):
+            if leg == "universal" and not (self._d.flagged and FLAG_TEST in cypher):
                 continue
             rows.extend(dict(r) for r in _ROWS_BY_SUBJECT[params["subject_uri"]][leg])
         return rows
 
 
 class _LegDriver:
-    """Answers each leg present in the statement it is handed, and LEG 3 only when the confirmed
-    list it is handed contains the candidate -- as the real join on `$universal_referents` does."""
+    """Answers each leg present in the statement it is handed, and LEG 3 only when the statement
+    tests the node flag AND the store holds a flagged referent (`flagged`) -- as the real
+    `coalesce(ref.universal_referent, false) = true` does, an absent flag reading as false."""
 
-    def __init__(self, raise_on: tuple[str, ...] = ()) -> None:
+    def __init__(self, raise_on: tuple[str, ...] = (), flagged: bool = True) -> None:
         self.statements: list[tuple[str, dict]] = []
         self.raise_on = set(raise_on)
+        self.flagged = flagged
 
     def session(self):
         return _LegSession(self)
 
 
-class _Resp:
-    def __init__(self, status: int, text: str) -> None:
-        self.status_code = status
-        self.text = text
-
-
-class _Post:
-    def __init__(self, text: str) -> None:
-        self._text = text
-        self.calls: list[str] = []
-
-    def __call__(self, url, *, data, headers):
-        self.calls.append(url)
-        return _Resp(200, self._text)
-
-
-def _turtle(flagged: bool) -> str:
-    body = "@prefix mesh: <http://invincible-agent/mesh#> .\n"
-    body += "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n"
-    body += "mesh:Thing a owl:Class .\n"
-    if flagged:
-        body += 'mesh:Thing mesh:universalReferent "true" .\n'
-    return body
-
-
 class _JenaSpy:
-    """The real `JenaMeshOntology` over a recording POST, with every initiator it was asked as."""
+    """LEG 3 reads no Jena: any CONSTRUCT or ASK is recorded and then raises."""
 
-    def __init__(self, real) -> None:
-        self._real = real
+    def __init__(self) -> None:
         self.initiators: list[Initiator] = []
 
     def construct(self, initiator, **kw):
         self.initiators.append(initiator)
-        return self._real.construct(initiator, **kw)
+        raise AssertionError("a Jena read was made; LEG 3 reads the Neo4j node flag")
+
+    ask = construct
 
 
 class _Stage:
     def __init__(self, mod, monkeypatch, *, flag: bool, flagged: bool = True,
                  raise_on: tuple[str, ...] = ()) -> None:
-        self.driver = _LegDriver(raise_on)
-        self.post = _Post(_turtle(flagged))
-        self.jena = _JenaSpy(_ORIGINAL["jena"](endpoint=_TEST_JENA_ENDPOINT, post=self.post))
+        self.driver = _LegDriver(raise_on, flagged)
+        self.jena = _JenaSpy()
         self.graph_initiators: list[Initiator] = []
         real_graph = _ORIGINAL["graph"]
         seen = self.graph_initiators
@@ -315,7 +291,7 @@ def test_THE_FLAG_DEFAULTS_ON():
 # ── flag off: today's route, exactly ─────────────────────────────────────────────────────────
 
 
-def test_FLAG_OFF_IS_ONE_STATEMENT_AND_THE_EXPLAIN_READ_IS_STILL_REFUSED(engine_o, monkeypatch):
+def test_FLAG_OFF_IS_ONE_STATEMENT_AND_LEG_3_READS_THE_NODE_FLAG_NOT_JENA(engine_o, monkeypatch):
     s = _Stage(engine_o, monkeypatch, flag=False)
     without = _verbs(s.ask())
     with_person = _verbs(s.ask(on_behalf_of=PERSON))
@@ -324,11 +300,14 @@ def test_FLAG_OFF_IS_ONE_STATEMENT_AND_THE_EXPLAIN_READ_IS_STILL_REFUSED(engine_
     assert len(s.driver.statements) == 2, "flag off should send one statement per ask"
     for cypher, params in s.driver.statements:
         assert _legs_in(cypher) == ["subject", "referent", "universal"]
-        assert params["universal_referents"] == []
+        assert FLAG_TEST in cypher and "$universal_referents" not in cypher
+        assert "universal_referents" not in params, params
     assert s.graph_initiators == [], "flag off read through MeshGraph"
-    assert {i.kind for i in s.jena.initiators} == {"service"}
-    assert s.post.calls == [], "the service read reached Jena"
-    assert "mesh:explain" not in {v["verb_iri"] for v in without}
+    assert s.jena.initiators == [], "a Jena read was made"
+    assert "mesh:explain" in {v["verb_iri"] for v in without}
+    # CONTROL: the same store with no flagged referent admits nothing from LEG 3.
+    c = _Stage(engine_o, monkeypatch, flag=False, flagged=False)
+    assert "mesh:explain" not in {v["verb_iri"] for v in _verbs(c.ask())}
 
 
 # ── flag on: the same verbs, plus the leg that is finally read as someone ────────────────────
@@ -341,17 +320,18 @@ def test_THE_HOP_RANGE_THE_PARITY_ARMS_WALK_IS_THE_CLOSED_RANGE_verbs_for_WALKS(
 
 @pytest.mark.parametrize("subject", list(_ROWS_BY_SUBJECT), ids=["subject", "child"])
 @pytest.mark.parametrize("hops", _HOPS)
-def test_FLAG_ON_ANSWERS_THE_SAME_VERBS_PLUS_ONLY_THE_UNIVERSAL_LEG(
+def test_FLAG_ON_ANSWERS_THE_SAME_VERBS_AS_FLAG_OFF_INCLUDING_THE_UNIVERSAL_LEG(
     engine_o, monkeypatch, hops, subject
 ):
-    """Over every hop bound `verbs_for` walks and every subject the double can answer: the flag-on
-    pool is the flag-off pool plus `mesh:explain` and nothing else, and both paths walked `hops`."""
+    """Over every hop bound `verbs_for` walks and every subject the double can answer: LEG 3 reads
+    the same node flag on both paths, so the two pools are equal, `mesh:explain` is in both, and
+    both paths walked `hops`."""
     # A stage patches the module, so each is built and asked before the next is built.
     off_s = _Stage(engine_o, monkeypatch, flag=False)
     off = _verbs(off_s.ask(on_behalf_of=PERSON, max_hops=hops, subject_uri=subject))
     on_s = _Stage(engine_o, monkeypatch, flag=True)
     on = _verbs(on_s.ask(on_behalf_of=PERSON, max_hops=hops, subject_uri=subject))
-    assert [v for v in on if v["compatibility"] != "universal"] == off
+    assert on == off
     assert [v["verb_iri"] for v in on if v["compatibility"] == "universal"] == ["mesh:explain"]
     walked_off, walked_on = _hops_walked(off_s), _hops_walked(on_s)
     assert walked_off and set(walked_off) == {hops}, walked_off
@@ -360,11 +340,11 @@ def test_FLAG_ON_ANSWERS_THE_SAME_VERBS_PLUS_ONLY_THE_UNIVERSAL_LEG(
 
 @pytest.mark.parametrize("subject", list(_ROWS_BY_SUBJECT), ids=["subject", "child"])
 @pytest.mark.parametrize("hops", _HOPS)
-def test_FLAG_ON_WHEN_JENA_CONFIRMS_NOTHING_IS_THE_FLAG_OFF_ANSWER_EXACTLY(
+def test_FLAG_ON_WHEN_NO_REFERENT_IS_FLAGGED_IS_THE_FLAG_OFF_ANSWER_EXACTLY(
     engine_o, monkeypatch, hops, subject
 ):
     # A stage patches the module, so each is built and asked before the next is built.
-    off_s = _Stage(engine_o, monkeypatch, flag=False)
+    off_s = _Stage(engine_o, monkeypatch, flag=False, flagged=False)
     off = off_s.ask(on_behalf_of=PERSON, entitled_domains=["COST"], max_hops=hops,
                     subject_uri=subject)
     on_s = _Stage(engine_o, monkeypatch, flag=True, flagged=False)
@@ -390,17 +370,21 @@ def test_FLAG_ON_READS_LEG_1_THROUGH_verbs_for_AS_THE_PERSON(engine_o, monkeypat
     assert _legs_in(leg1) == ["subject"] and p1 == {"subject_uri": SUBJECT}
     assert "*0..4]" in leg1
     assert _legs_in(rest) == ["referent", "universal"]
-    assert p2["subject_uri"] == SUBJECT and p2["universal_referents"] == [THING]
+    assert p2 == {"subject_uri": SUBJECT}, "LEG 3 takes no parameter beyond the subject"
+    assert FLAG_TEST in rest and "$universal_referents" not in rest
     assert "$MAXHOPS$" not in rest and "$UNREACHABLE$" not in rest
     assert "MeshGraph.verbs_for" in r.json()["cypher_executed"]
 
 
-def test_FLAG_ON_THE_EXPLAIN_LEG_IS_READ_AS_THE_PERSON(engine_o, monkeypatch):
+def test_FLAG_ON_THE_EXPLAIN_LEG_IS_THE_NODE_FLAG_AND_READS_NO_JENA(engine_o, monkeypatch):
     s = _Stage(engine_o, monkeypatch, flag=True)
     verbs = _verbs(s.ask(on_behalf_of=PERSON))
-    assert [(i.subject, i.kind) for i in s.jena.initiators] == [(PERSON, "person")]
-    assert s.post.calls, "the person's read never reached Jena"
+    assert s.jena.initiators == [], "a Jena read was made"
     assert ("mesh:explain", "universal") in {(v["verb_iri"], v["compatibility"]) for v in verbs}
+    # CONTROL: the same fixture without the flag admits nothing from LEG 3; LEGs 1+2 unchanged.
+    c = _Stage(engine_o, monkeypatch, flag=True, flagged=False)
+    bare = _verbs(c.ask(on_behalf_of=PERSON))
+    assert [v for v in verbs if v["compatibility"] != "universal"] == bare
 
 
 # ── flag on: what it refuses ─────────────────────────────────────────────────────────────────
