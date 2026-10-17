@@ -294,6 +294,27 @@ def task_exists(task_id: str) -> bool:
             return cur.fetchone() is not None
 
 
+def get_task_open_state(task_id: str) -> Optional[dict[str, Any]]:
+    """`{audience, open}` for a logical task, or None when no row carries the id. `open` is True
+    while ANY recipient row is still `pending` (the only status the queues read as open; a
+    resolution flips every recipient row at once). Read-only and NOT caller-scoped, so -- like
+    :func:`task_exists` -- only a route that goes on to gate on `check_can_act` may use it."""
+    if not task_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT MAX(audience) AS audience,
+                          COALESCE(BOOL_OR(status = 'pending'), FALSE) AS open
+                     FROM human_task_projection
+                    WHERE task_id = %s
+                   HAVING COUNT(*) > 0""",
+                (task_id,),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
 # ── Registration (materialize rows from the Topaz decision) ──────────────────
 
 def register_task(

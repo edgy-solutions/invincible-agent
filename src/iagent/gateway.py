@@ -10629,6 +10629,213 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
     return await _ingest_status_body(row, current_user)
 
 
+_ingest_access_log = logging.getLogger("iagent.audit.ingest_access")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_ingest_access_log)
+
+
+def _audit_ingest_access(route: str, ingest_id: str, caller: str, decision: str,
+                         reason: str) -> None:
+    """ONE audit line per access decision (allow INFO, deny WARNING). Names the route, the ingest
+    id, the caller and the decision -- never bytes, keys or presigned URLs."""
+    (_ingest_access_log.info if decision == "allow" else _ingest_access_log.warning)(
+        "ingest_access route=%s ingest_id=%s caller=%s decision=%s reason=%s",
+        route, ingest_id, caller, decision, reason)
+
+
+async def _ingest_review_access(ingest_id: str, current_user: User, route: str) -> tuple[dict, str]:
+    """The shared gate of GET /ingest/{id}/extraction and /source. Returns `(row, reason)`.
+
+    Row absent or an EVENT row -> 404 `ingest_not_found`. ALLOWED when the caller is the row's
+    `submitted_by` or `on_behalf_of` (casefold; reason `dropped_by`), or when the
+    `document_promotion:<id>` task exists, is still OPEN and the caller passes
+    `human_tasks.check_can_act` on its audience (fail-closed; reason `task_holder`). Otherwise
+    403 `not_entitled`. Decided BEFORE any artifact-store read. Every decision is audited."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, ingest_status, promotion
+
+    caller = (current_user.authz_id or "").strip()
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row.get("kind") == ingest_status.EVENT:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "ingest_not_found")
+        raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    cf = caller.casefold()
+    if cf and cf in {str(row.get("submitted_by") or "").strip().casefold(),
+                     str(row.get("on_behalf_of") or "").strip().casefold()} - {""}:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "dropped_by")
+        return row, "dropped_by"
+    allowed = False
+    if caller:
+        try:
+            state = await run_in_threadpool(
+                lambda: human_tasks.get_task_open_state(f"{promotion.KIND}:{ingest_id}"))
+            if state and state.get("open") and state.get("audience"):
+                allowed = bool(await run_in_threadpool(
+                    lambda: human_tasks.check_can_act(state["audience"], caller)))
+        except Exception as exc:  # noqa: BLE001 -- fail closed
+            logger.warning("ingest access task check failed: %s", type(exc).__name__)
+            allowed = False
+    if allowed:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "task_holder")
+        return row, "task_holder"
+    _audit_ingest_access(route, ingest_id, caller, "deny", "not_entitled")
+    raise HTTPException(status_code=403, detail={
+        "error": "not_entitled",
+        "message": "only the dropper or a holder of the open promotion task may read this document"})
+
+
+def _evidence_ref(it: dict) -> Optional[dict]:
+    page = it.get("page_number")
+    bboxes = it.get("bboxes")
+    if (isinstance(page, int) and not isinstance(page, bool) and page >= 1
+            and isinstance(bboxes, list) and bboxes
+            and all(isinstance(b, (list, tuple)) and len(b) == 4
+                    and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in b)
+                    for b in bboxes)):
+        return {"page": page, "bbox": bboxes[0], "bboxes": bboxes,
+                "page_dims": it.get("page_dims"),
+                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px"}
+    return None
+
+
+@app.get("/ingest/{ingest_id}/extraction")
+async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
+    evidence reference (page, bbox, units) the review card draws. Gate: `_ingest_review_access`
+    (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
+    review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
+    is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
+    `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`."""
+    from starlette.concurrency import run_in_threadpool
+
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    ref = str(row.get("extraction_ref") or "").strip()
+    if not ref:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_extraction_ref",
+            "message": f"ingest {ingest_id} has no extraction_ref yet"})
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix or not ref.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory {prefix!r}"})
+    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    key = _review_json_key(manifest, ref)
+    if not key or not key.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"the review rows are not under this document's directory {prefix!r}"})
+    review = await run_in_threadpool(lambda: _read_review_json(key))
+    items = _review_items(review)
+    mpn_by_part: dict = {}
+    for it in items:
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if m and m.group(2) == "affected_mpn":
+            mpn_by_part.setdefault(int(m.group(1)), it.get("value"))
+    rows_out = []
+    without = 0
+    for it in items:
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if not m:
+            continue
+        pi = int(m.group(1))
+        ev = _evidence_ref(it)
+        if ev is None:
+            without += 1
+        rows_out.append({
+            "row_index": len(rows_out), "part_index": pi, "mpn": mpn_by_part.get(pi),
+            "field": m.group(2), "extracted_value": it.get("value"),
+            "obtained_via": it.get("match_method"),
+            "match_confidence": it.get("match_confidence"),
+            "needs_review": it.get("needs_review"), "review_reason": it.get("review_reason"),
+            "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
+    summ = _review_notice_summary(review)
+    return {
+        "ingest_id": ingest_id,
+        "notice_id": str(manifest.get("doc_id") or "").strip() or row.get("notice_id"),
+        "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
+        "notice": {"mfr": summ["mfr"], "mfr_parent": summ["mfr_parent"],
+                   "notice_date": summ["notice_date"]},
+        "part_count": summ["part_count"],
+        "rows": rows_out, "rows_without_evidence": without, "review_ref": key}
+
+
+_SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
+
+
+def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
+    """Sync (threadpool): resolve the row's own source object and open it. The key comes from the
+    drop manifest's `object_ref` (the seam's `<prefix><safe_name>`), which must be one of the
+    seam's keys for THIS document (`promotion.object_prefix_for`) and under the row's
+    `object_prefix`, else 422 `source_unbound`. 404 `source_absent`, 503
+    `artifact_store_unreachable`. Returns `(s3 Body, key)`."""
+    import json as _j
+
+    from . import promotion
+
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
+
+    def _get(key: str):
+        try:
+            return _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"]
+        except Exception as exc:  # noqa: BLE001
+            code = ""
+            resp = getattr(exc, "response", None)
+            if isinstance(resp, dict):
+                code = str((resp.get("Error") or {}).get("Code") or "")
+            if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+                raise HTTPException(status_code=404, detail={"error": "source_absent"})
+            raise HTTPException(status_code=503, detail={
+                "error": "artifact_store_unreachable",
+                "message": f"the artifact store did not answer: {type(exc).__name__}"})
+
+    try:
+        dropped = _j.loads(_get(f"{prefix}manifest.json").read())
+    except (ValueError, UnicodeDecodeError):
+        dropped = None
+    ref = dropped.get("object_ref") if isinstance(dropped, dict) else None
+    if (not isinstance(ref, str) or promotion.object_prefix_for(ingest_id, ref) is None
+            or not ref.startswith(prefix)):
+        raise HTTPException(status_code=422, detail={
+            "error": "source_unbound",
+            "message": f"the drop's source object is not a key under {prefix!r}"})
+    return _get(ref), ref
+
+
+@app.get("/ingest/{ingest_id}/source")
+async def ingest_source_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never
+    buffered whole). Same gate and audit as `/extraction`; works for the dropper before any
+    extraction exists. 422 `source_unbound`, 404 `source_absent`, 503 `artifact_store_unreachable`.
+    The app-wide middleware sets `Cache-Control: no-store` on the response."""
+    import posixpath
+    from starlette.concurrency import run_in_threadpool
+
+    row, _why = await _ingest_review_access(ingest_id, current_user, "source")
+    body, key = await run_in_threadpool(lambda: _open_source_object(ingest_id, row))
+
+    def _chunks():
+        try:
+            while True:
+                chunk = body.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            close = getattr(body, "close", None)
+            if close:
+                close()
+
+    name = posixpath.basename(key).replace('"', "")
+    return StreamingResponse(
+        _chunks(), media_type=_SOURCE_MEDIA_TYPES.get(str(row.get("kind")), "application/octet-stream"),
+        headers={"Content-Disposition": f'inline; filename="{name}"',
+                 "Cache-Control": "private, no-store"})
+
+
 class IngestRetryRequest(_BaseModel):
     """POST /ingest/{id}/retry's body: the extractor pin the caller observed NOW."""
     pin_digest: str = Field(..., min_length=1)
@@ -10859,6 +11066,99 @@ def _read_extraction_manifest(key: str) -> dict:
     return doc
 
 
+_PART_FIELD_RE = re.compile(r"^parts\[(\d+)\]\.(.+)$")
+
+
+def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the review.json doc-tools wrote beside the manifest's `text_location` (same
+    directory), or None when `text_location` is an s3:// URL for another bucket. `text_location`
+    is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the directory of the
+    manifest itself (`extraction_ref`), which is the same generated/<base>/<version>/ directory."""
+    import posixpath
+    from urllib.parse import urlparse
+
+    loc = str((manifest or {}).get("text_location") or "").strip()
+    if loc.startswith("s3://"):
+        u = urlparse(loc)
+        if u.netloc != _ARTIFACT_BUCKET:
+            return None
+        key = u.path.lstrip("/")
+    else:
+        key = loc or str(extraction_ref or "").strip()
+    return posixpath.dirname(key) + "/review.json"
+
+
+def _read_review_json(key: str) -> dict:
+    """Read review.json at `key` (sync; threadpool). Same mapping as `_read_extraction_manifest`
+    but its own error names: 422 `extraction_rows_absent` (store said NoSuchKey), 503
+    `artifact_store_unreachable`, 422 `extraction_unreadable` (not a JSON object)."""
+    import json as _j
+
+    try:
+        body = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_rows_absent",
+                "message": "the store answered that this extraction has no review.json"})
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer: {type(exc).__name__}"})
+    try:
+        doc = _j.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unreadable", "message": "review.json is not a JSON object"})
+    return doc
+
+
+def _review_items(review: dict) -> list:
+    items = review.get("review_items")
+    return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+
+
+def _review_notice_summary(review: dict) -> dict:
+    """`{mfr, mfr_parent, notice_date, part_count}` from a parsed review.json. `mfr` is the
+    `header.mfr` item's value, else `notice_identity.mfr`; dates are strings as given."""
+    by_path: dict = {}
+    parts: set = set()
+    for it in _review_items(review):
+        fp = str(it.get("field_path") or "")
+        by_path.setdefault(fp, it.get("value"))
+        m = _PART_FIELD_RE.match(fp)
+        if m:
+            parts.add(int(m.group(1)))
+    ident = review.get("notice_identity")
+    mfr = by_path.get("header.mfr")
+    if mfr is None and isinstance(ident, dict):
+        mfr = ident.get("mfr")
+    return {"mfr": mfr, "mfr_parent": by_path.get("header.mfr_parent"),
+            "notice_date": by_path.get("header.pub_date"), "part_count": len(parts)}
+
+
+async def _soft_review_summary(manifest: dict, extraction_ref: str, prefix: str) -> Optional[dict]:
+    """The notice summary for the review card's payload, or None when review.json is absent,
+    unbound or unreadable -- NEVER a refusal: the task must still file."""
+    from starlette.concurrency import run_in_threadpool
+
+    key = _review_json_key(manifest, extraction_ref)
+    if not key or not key.startswith(prefix):
+        return None
+    try:
+        review = await run_in_threadpool(lambda: _read_review_json(key))
+    except HTTPException:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+    return _review_notice_summary(review)
+
+
 async def _file_or_find_document_promotion_task(
     ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
     domain: Optional[str] = None, notice_out: Optional[dict] = None,
@@ -10886,7 +11186,14 @@ async def _file_or_find_document_promotion_task(
     THE PAYLOAD IS DERIVED, NOT ASSERTED (ADR-0034): everything the act needs beyond the domain
     and the dropper comes from the versioned extraction manifest `extraction_ref` names, read
     here and turned into the payload by `promotion.payload_from_extraction`. An existing task
-    needs no manifest, so `ALREADY_FILED` is answered before any of that.
+    needs no manifest, so `ALREADY_FILED` is answered before any of that -- and keeps the
+    payload and title it was filed with (a task filed before 193.2 never gains
+    `mfr`/`notice_date`/`part_count`/`attempt`).
+
+    The payload also carries the review card's four header facts, always present, None when
+    unknown: `mfr`, `notice_date`, `part_count` (from the review.json beside the manifest's
+    `text_location`, read softly -- absent or unreadable never refuses the filing) and `attempt`
+    (the row's). The title is the notice id when there is one.
 
     Raises HTTPException for every refusal (422 `no_declared_domain`, 422 `no_extraction_ref`,
     422 `extraction_unbound`, 422 `extraction_absent`, 422 `extraction_unreadable`, 422
@@ -10949,13 +11256,25 @@ async def _file_or_find_document_promotion_task(
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
+    summ = await _soft_review_summary(manifest, ref, prefix)
+    attempt = row.get("attempt")
     payload = {**derived, "review_pool": domain, "dropped_by": {
-        "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")}}
+        "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")},
+        "mfr": summ["mfr"] if summ else None,
+        "notice_date": summ["notice_date"] if summ else None,
+        "part_count": summ["part_count"] if summ else None,
+        "attempt": attempt}
+    notice_id_ = str(payload.get("notice_id") or "").strip()
+    ck_ = str(payload.get("content_kind") or "").strip()
+    kind_label = ck_.upper() if ck_.lower() in ("pcn", "pdn") else (ck_ or "Document")
+    pc_ = payload["part_count"]
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
-            title=f"Promote document {ingest_id}",
-            summary=f"Review the extracted document {ingest_id} for promotion.",
+            title=notice_id_ or f"Promote document {ingest_id}",
+            summary=(f"{kind_label} {notice_id_ or ingest_id} — "
+                     f"{payload['mfr'] or 'manufacturer unknown'}, "
+                     f"{pc_ if pc_ is not None else '?'} parts, attempt {attempt}."),
             requested_by=requested_by, subject_ref=ingest_id,
             payload=payload,
         ))
