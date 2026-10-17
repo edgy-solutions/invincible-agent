@@ -149,6 +149,12 @@ def _get(path):
         return c.get(path)
 
 
+def _refused(r, code, error, *ctx):
+    """The status is asserted FIRST: a wrong status fails here, not as a KeyError on `detail`."""
+    assert r.status_code == code, (r.status_code, code, ctx, r.text[:200])
+    assert r.json()["detail"]["error"] == error, (error, ctx, r.text[:200])
+
+
 # ── Part A: payload and title ────────────────────────────────────────────────────────────────
 
 def _file(monkeypatch, s3, row=None):
@@ -245,24 +251,24 @@ def test_extraction_refusals(monkeypatch, s3):
     _as(monkeypatch, DROPPER)
     _gate(monkeypatch, row=_row(extraction_ref=None))
     r = _get(f"/ingest/{ID}/extraction")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "no_extraction_ref")
+    _refused(r, 422, "no_extraction_ref")
     _gate(monkeypatch, row=_row(extraction_ref="ingress-user/pdf/other/generated/m.json"))
     r = _get(f"/ingest/{ID}/extraction")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "extraction_unbound")
+    _refused(r, 422, "extraction_unbound")
     # text_location pointing outside the prefix is refused BEFORE the read
     s3.objects[REF] = json.dumps({**MANIFEST, "text_location": "elsewhere/text.json"}).encode()
     _gate(monkeypatch, row=_row())
     s3.calls.clear()
     r = _get(f"/ingest/{ID}/extraction")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "extraction_unbound")
+    _refused(r, 422, "extraction_unbound")
     assert "elsewhere/review.json" not in s3.calls
     s3.objects[REF] = json.dumps(MANIFEST).encode()
     del s3.objects[REVIEW_KEY]
     r = _get(f"/ingest/{ID}/extraction")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "extraction_rows_absent")
+    _refused(r, 422, "extraction_rows_absent")
     s3.objects[REVIEW_KEY] = b"[1]"
     r = _get(f"/ingest/{ID}/extraction")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "extraction_unreadable")
+    _refused(r, 422, "extraction_unreadable")
 
 
 # ── gate and audit ───────────────────────────────────────────────────────────────────────────
@@ -286,7 +292,7 @@ def test_gate_dropper_holder_stranger_resolved_and_unknown(monkeypatch, s3, capl
             _as(monkeypatch, who)
             s3.calls.clear()
             r = _get(f"/ingest/{ID}/{path}")
-            assert (r.status_code, r.json()["detail"]["error"]) == (403, "not_entitled"), (path, who)
+            _refused(r, 403, "not_entitled", path, who)
             assert s3.calls == [], f"{path}: the store was read before the gate said no"
         # unknown id and an event row: 404
         for row in (None, _row(kind=ist.EVENT)):
@@ -294,7 +300,7 @@ def test_gate_dropper_holder_stranger_resolved_and_unknown(monkeypatch, s3, capl
             _as(monkeypatch, DROPPER)
             s3.calls.clear()
             r = _get(f"/ingest/{ID}/{path}")
-            assert (r.status_code, r.json()["detail"]["error"]) == (404, "ingest_not_found")
+            _refused(r, 404, "ingest_not_found")
             assert s3.calls == []
 
 
@@ -341,12 +347,12 @@ def test_source_other_kinds_and_refusals(monkeypatch, s3):
     _gate(monkeypatch, row=_row())
     s3.calls.clear()
     r = _get(f"/ingest/{ID}/source")
-    assert (r.status_code, r.json()["detail"]["error"]) == (422, "source_unbound")
+    _refused(r, 422, "source_unbound")
     assert "ingress-user/pdf/" + "a" * 64 + "/x.pdf" not in s3.calls
     # the manifest names a seam key that is not in the store: 404
     s3.objects[PREFIX + "manifest.json"] = json.dumps({"object_ref": PREFIX + "gone.pdf"}).encode()
     r = _get(f"/ingest/{ID}/source")
-    assert (r.status_code, r.json()["detail"]["error"]) == (404, "source_absent")
+    _refused(r, 404, "source_absent")
 
 
 # ── Part D: the gating manifest ──────────────────────────────────────────────────────────────
@@ -359,3 +365,73 @@ def test_the_gating_manifest_declares_both_routes():
         i = text.index(f"path: {p}\n")
         block = text[i:i + 900]
         assert "class: gated" in block and "method: GET" in text[i - 40:i], p
+
+
+# ── the gate decides on WHICH task and WHICH audience, not merely on who the caller is ─────────
+# The `_gate` stubs ignore their arguments, so they cannot tell a holder of THIS ingest's task from
+# a holder of another's. These stubs are keyed: the task by its id, `check_can_act` by (aud, who).
+
+TASK_ID = f"{promotion.KIND}:{ID}"
+OTHER_TASK_ID = f"{promotion.KIND}:sha256:{'d' * 64}"
+
+
+def _keyed_gate(monkeypatch, *, tasks, grants, row=None):
+    """tasks: {task_id: open-state}; grants: {(audience, authz_id)} check_can_act says yes to."""
+    monkeypatch.setattr(ist, "get_row", lambda i: row or _row())
+    monkeypatch.setattr(ht, "get_task_open_state", lambda t: tasks.get(t))
+    monkeypatch.setattr(ht, "check_can_act", lambda aud, who: (aud, who) in grants)
+
+
+def _denied_untouched(s3, path, who, monkeypatch):
+    _as(monkeypatch, who)
+    s3.calls.clear()
+    r = _get(f"/ingest/{ID}/{path}")
+    _refused(r, 403, "not_entitled", path, who)
+    assert s3.calls == [], f"{path}: the store was read before the gate said no"
+
+
+def test_a_holder_of_ANOTHER_ingests_open_task_is_refused(monkeypatch, s3):
+    for path in ("extraction", "source"):
+        # control: the same grants, with the open task on THIS ingest, admit the holder
+        _keyed_gate(monkeypatch, tasks={TASK_ID: OPEN}, grants={(OPEN["audience"], HOLDER)})
+        _as(monkeypatch, HOLDER)
+        assert _get(f"/ingest/{ID}/{path}").status_code == 200, path
+        # the task that is open belongs to another document
+        _keyed_gate(monkeypatch, tasks={OTHER_TASK_ID: OPEN}, grants={(OPEN["audience"], HOLDER)})
+        _denied_untouched(s3, path, HOLDER, monkeypatch)
+
+
+def test_a_holder_of_a_DIFFERENT_audience_than_the_tasks_is_refused(monkeypatch, s3):
+    for path in ("extraction", "source"):
+        # the task's audience is not the one a literal could be spelled as; HOLDER holds the
+        # task's audience in the control and only ANOTHER audience in the refusal
+        task = {"open": True, "audience": "document_promotion:MANUFACTURING"}
+        _keyed_gate(monkeypatch, tasks={TASK_ID: task}, grants={(task["audience"], HOLDER)})
+        _as(monkeypatch, HOLDER)
+        assert _get(f"/ingest/{ID}/{path}").status_code == 200, path  # control
+        _keyed_gate(monkeypatch, tasks={TASK_ID: task}, grants={(OPEN["audience"], HOLDER)})
+        _denied_untouched(s3, path, HOLDER, monkeypatch)
+
+
+def test_an_open_task_with_an_empty_audience_admits_nobody(monkeypatch, s3):
+    for path in ("extraction", "source"):
+        _keyed_gate(monkeypatch, tasks={TASK_ID: {"open": True, "audience": ""}}, grants=set())
+        monkeypatch.setattr(ht, "check_can_act", lambda aud, who: True)  # only the guard can refuse
+        _denied_untouched(s3, path, HOLDER, monkeypatch)
+
+
+@pytest.mark.parametrize("failing", ["get_task_open_state", "check_can_act"])
+def test_a_failing_task_check_is_refused_with_one_deny_audit_line(monkeypatch, s3, caplog, failing):
+    caplog.set_level(logging.INFO, logger="iagent.audit.ingest_access")
+    for path in ("extraction", "source"):
+        _keyed_gate(monkeypatch, tasks={TASK_ID: OPEN}, grants={(OPEN["audience"], HOLDER)})
+
+        def _boom(*a, **kw):
+            raise RuntimeError("topaz down")
+
+        monkeypatch.setattr(ht, failing, _boom)
+        caplog.clear()
+        _denied_untouched(s3, path, HOLDER, monkeypatch)
+        lines = [r for r in caplog.records if r.name == "iagent.audit.ingest_access"]
+        assert len(lines) == 1, (path, [r.getMessage() for r in lines])
+        assert "decision=deny" in lines[0].getMessage() and lines[0].levelno == logging.WARNING
