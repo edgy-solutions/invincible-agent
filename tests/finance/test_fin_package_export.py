@@ -241,7 +241,7 @@ def test_both_export_routes_shape_through_the_ONE_helper():
 
 
 def test_the_cost_path_without_a_template_id_still_demands_a_recipient(posts):
-    status, detail = _export({})
+    status, detail = _export({"answers": [{"artifact_id": "a1"}]})
     assert status == 409 and detail["reason"] == "recipient_required" and posts == []
 
 

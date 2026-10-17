@@ -2398,8 +2398,12 @@ async def export_package(
     which governs, and is refused rather than guessed at (422). Given `template_id`, this
     dispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.
 
-    Absent `template_id`, four hard stops, in order, each refusing before the next is even
-    attempted:
+    Absent `template_id`, a request naming no answers (`answers` omitted or `[]`) is 400
+    `no_answers` (RULED 2026-10-17), BEFORE the recipient checks below: it is a shape fault,
+    refused ahead of entitlement, so a no-answers request with no recipient is a 400, not a 409.
+    The whole-program export through this route is gone.
+
+    Then four hard stops, in order, each refusing before the next is even attempted:
       1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
@@ -2433,6 +2437,13 @@ async def export_package(
     if body.template_id:
         return await _export_package_from_template(body, request, current_user, as_of)
 
+    # RULED 2026-10-17: a request naming no answers (and no template) is refused. An empty
+    # list used to export the recipient's whole program -- a disclosure path nothing in the
+    # UI can reach (cortex-ui disables the button on an empty board). It is a shape fault, so
+    # it comes before the entitlement checks (409/403), the canvas's own order.
+    if not body.answers:
+        raise HTTPException(status_code=400, detail={"reason": "no_answers"})
+
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
     recipient_scope = (body.recipient_scope or "").strip()
@@ -2455,26 +2466,21 @@ async def export_package(
             },
         )
 
-    parts: list[tuple[str, list[dict]]] = []
-    if body.answers:
-        # ALL ids resolve (404/503) BEFORE any engine is called or the board is split.
-        resolved = _resolve_export_answers(
-            [a.artifact_id for a in body.answers], current_user.id
-        )
-        parts = _partition_export_answers(resolved)
-    # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
-    # program, same as it did before canvases existed.
+    # ALL ids resolve (404/503) BEFORE any engine is called or the board is split.
+    resolved = _resolve_export_answers(
+        [a.artifact_id for a in body.answers], current_user.id
+    )
+    parts: list[tuple[str, list[dict]]] = _partition_export_answers(resolved)
 
     bearer = _user_bearer(request)
 
     has_fin = any(engine == "fin" for engine, _ in parts)
     cost_first: Optional[dict] = None
     if not has_fin:
-        # ONLY engine-cost's answers (or none): today's path and today's response, unchanged
+        # ONLY engine-cost's answers: today's path and today's response, unchanged
         # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
         params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
-        if parts:
-            params["canvas"] = {"answers": parts[0][1]}
+        params["canvas"] = {"answers": parts[0][1]}
         cost_first = await _call_engine_cost_package(
             params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
         )
