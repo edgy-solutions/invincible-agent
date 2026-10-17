@@ -388,9 +388,11 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         # used to return a draft carrying `assessment: not_assessed`; it carries no
         # review_request either way, so no task is created. Named, so a caller can tell this
         # decided refusal from an unknown id (which has no `outcome`).
+        both = h.severity is None and h.probability is None
         gap = (
-            "severity" if h.severity is None else "probability"
-        ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
+            "severity and probability are" if both
+            else ("severity" if h.severity is None else "probability") + " is"
+        ) + " not assessed on this hazard; no risk level is resolved and no authority is implied"
         missing = "severity" if h.severity is None else "probability"
         held_other = (
             f"probability {h.probability}" if h.severity is None and h.probability is not None

@@ -46,7 +46,7 @@ def test_not_assessed_cites_gap_other_half_opened_on_and_what_to_obtain():
     b = measures.draft_risk_assessment(hazard_id="HAZ-1006")
     assert b["outcome"] == "not_assessed"
     assert b["reason"] == (
-        "hazard 'HAZ-1006' has not been assessed: severity is not assessed on this hazard; no risk "
+        "hazard 'HAZ-1006' has not been assessed: severity and probability are not assessed on this hazard; no risk "
         "level is resolved and no authority is implied. Held: status not_assessed; neither severity "
         "nor probability held; opened 2026-08-30. To proceed, obtain a severity and probability "
         "assessment for HAZ-1006.")
@@ -70,3 +70,11 @@ def test_CONTROL_an_open_hazard_is_not_refused_and_carries_no_evidence_block(mon
     _with(monkeypatch, "HAZ-1005", status="open")
     b = measures.draft_risk_assessment(hazard_id="HAZ-1005")
     assert b["refused"] is False and "evidence" not in b
+
+
+def test_gap_names_both_halves_only_when_both_are_missing(monkeypatch):
+    both = measures.draft_risk_assessment(hazard_id="HAZ-1006")["gap"]
+    assert both.startswith("severity and probability are not assessed")
+    _with(monkeypatch, "HAZ-1006", severity="IV")
+    one = measures.draft_risk_assessment(hazard_id="HAZ-1006")["gap"]
+    assert one.startswith("probability is not assessed") and "severity" not in one

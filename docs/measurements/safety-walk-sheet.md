@@ -630,7 +630,7 @@ DRAFT (`refused: false`) that carried no `review_request`; the ruling replaces t
  "refused": true,
  "outcome": "not_assessed",
  "hazard_id": "HAZ-1006",
- "gap": "severity is not assessed on this hazard; no risk level is resolved and no authority is implied",
+ "gap": "severity and probability are not assessed on this hazard; no risk level is resolved and no authority is implied",
  "evidence": {
   "hazard_id": "HAZ-1006",
   "status": "not_assessed",
@@ -640,7 +640,7 @@ DRAFT (`refused: false`) that carried no `review_request`; the ruling replaces t
   "mitigations": [],
   "closure_record": "not held"
  },
- "reason": "hazard 'HAZ-1006' has not been assessed: severity is not assessed on this hazard; no risk level is resolved and no authority is implied. Held: status not_assessed; neither severity nor probability held; opened 2026-08-30. To proceed, obtain a severity and probability assessment for HAZ-1006."
+ "reason": "hazard 'HAZ-1006' has not been assessed: severity and probability are not assessed on this hazard; no risk level is resolved and no authority is implied. Held: status not_assessed; neither severity nor probability held; opened 2026-08-30. To proceed, obtain a severity and probability assessment for HAZ-1006."
 }
 ```
 
