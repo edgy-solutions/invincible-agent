@@ -1,0 +1,64 @@
+{
+  "bit_code": "MRAD-ARR-0417",
+  "bit_text": "Array module fault, section 3.",
+  "citations": {
+    "fault_isolation": {"dmc": "ODMRAD-A-34-10-01-00A-421A-A"},
+    "remove_install": {"dmc": ["ODMRAD-A-34-10-01-00A-520A-A", "ODMRAD-A-34-10-01-00A-720A-A"]},
+    "ipd": {
+      "dmc": "ODMRAD-A-34-10-01-00A-941A-A",
+      "part_number": "ODM-AM-0001",
+      "quantity": 1,
+      "icn": "ICN-ODMRAD-00001",
+      "hotspot_id": null
+    },
+    "planning_interval": {"dmc": "ODMRAD-A-34-10-01-00A-320A-A", "interval": "180 days"}
+  },
+  "options": [
+    {
+      "n": 1,
+      "outline": "no fault confirmed after a BIT re-run: return to service and monitor",
+      "picture_spare": "any",
+      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A"],
+      "cited": {
+        "action": {"value": "No fault confirmed. Return the array module to service and monitor.",
+                   "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"}
+      }
+    },
+    {
+      "n": 2,
+      "outline": "reseat the module connector and re-run BIT",
+      "picture_spare": "any",
+      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A"],
+      "cited": {
+        "action": {"value": "Reseat the array module connector, then re-run BIT.",
+                   "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"}
+      }
+    },
+    {
+      "n": 3,
+      "outline": "replace the array module from a spare on hand",
+      "picture_spare": "on_hand",
+      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
+                     "ODMRAD-A-34-10-01-00A-720A-A"],
+      "cited": {
+        "action": {"value": "Replace array module.", "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"},
+        "part_number": {"value": "ODM-AM-0001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
+        "quantity": {"value": 1, "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
+        "icn": {"value": "ICN-ODMRAD-00001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"}
+      }
+    },
+    {
+      "n": 4,
+      "outline": "replace the array module with a spare from the nearest site with stock",
+      "picture_spare": "nearest_site_with_stock",
+      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
+                     "ODMRAD-A-34-10-01-00A-720A-A"],
+      "cited": {
+        "action": {"value": "Replace array module.", "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"},
+        "part_number": {"value": "ODM-AM-0001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
+        "quantity": {"value": 1, "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
+        "icn": {"value": "ICN-ODMRAD-00001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"}
+      }
+    }
+  ]
+}
