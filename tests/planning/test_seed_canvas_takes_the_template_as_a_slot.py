@@ -150,7 +150,8 @@ def test_the_identity_list_is_not_merely_NON_EMPTY():
     the list is a short allowlist rather than a catch-all that grants identity broadly."""
     from iagent.defs.dynamic_supervisor import _CALLER_IDENTITY_VERBS
 
-    assert len(_CALLER_IDENTITY_VERBS) <= 4, (
+    # The fifth slot is Engine S's per-person verbs, architect ruling 2026-10-17 (FRACAS no_person).
+    assert len(_CALLER_IDENTITY_VERBS) <= 5, (
         f"the caller-identity allowlist has grown to {len(_CALLER_IDENTITY_VERBS)} — it "
         f"dispenses the caller's own token and is meant to be short and argued"
     )
