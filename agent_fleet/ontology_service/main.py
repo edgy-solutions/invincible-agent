@@ -369,9 +369,10 @@ _JENA = _jena_posture(os.environ)
 _JENA_ENDPOINT = _JENA.endpoint
 _JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
 
-# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena, for LEG 3 of
-# `_FIND_COMPAT_VERBS_CYPHER` (the universal-referent leg). Flatten-aware import, same shape as
-# `substrate_posture` above.
+# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena. LEG 3 of
+# `_FIND_COMPAT_VERBS_CYPHER` no longer reads it (ruling 2026-10-17: it reads the Neo4j node
+# property); the instance is kept, unconsumed here, for the seal that proves LEG 3 never calls it.
+# Flatten-aware import, same shape as `substrate_posture` above.
 try:
     from mesh_ontology import JenaMeshOntology as _JenaMeshOntology  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -3441,11 +3442,8 @@ def _docs_pool_applies(domains, subject_uri) -> bool:
 def _docs_pool_accepts(referent) -> bool:
     """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
 
-    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is refused
-    on every call today (`_POOL_READ_INITIATOR` is a service identity and `require_person` refuses
-    it), so it returns [] and this would never fire. The question here is a TYPE fact about the
-    declaration — `mesh:Thing` accepts anything — not the pool membership LEG 3 needs Jena to
-    confirm.
+    THE PYTHON LITERAL, deliberately. The question here is a TYPE fact about the declaration —
+    `mesh:Thing` accepts anything — not the pool membership LEG 3 reads off the node property.
     """
     return bool(referent) and (
         referent == _DOCPAGE_CLASS or referent in _CANDIDATE_UNIVERSAL_REFERENTS
@@ -6133,112 +6131,17 @@ class FindCompatibleVerbsResponse(BaseModel):
 # never returned.
 UNREACHABLE = 10**6
 
-# THE CANDIDATE UNIVERSAL REFERENTS LEG 3 ASKS JENA TO CONFIRM. `MeshOntology.ask`/`.construct`
-# are IRI-keyed — the Protocol declares NAMED OPERATIONS ONLY, deliberately, so there is no "list
-# every class where P" query to discover this set with. The pool can only CONFIRM a candidate,
-# never discover one, so a second universal referent needs its IRI added here the same way it
-# needs adding to `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
+# THE CANDIDATE UNIVERSAL REFERENTS, AS A TYPE FACT. LEG 3 no longer uses this set (it reads the
+# node property `universal_referent`, see the comment in `_FIND_COMPAT_VERBS_CYPHER`); it survives
+# for `_docs_pool_accepts`, which asks whether a slot's DECLARED referent is universal. A second
+# universal referent needs its IRI added here the same way it needs adding to
+# `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
 # declared today (`setup/ontologies/mesh_system.ttl:736`) — engines are independently deployed
 # with no shared import path between them, so this is not a second copy of a Python constant, it
 # is the SAME IRI read out of the SAME ttl by two engines that cannot import one another.
 _CANDIDATE_UNIVERSAL_REFERENTS: tuple[str, ...] = (
     "http://invincible-agent/mesh#Thing",
 )
-
-_RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-_OWL_CLASS_IRI = "http://www.w3.org/2002/07/owl#Class"
-_UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
-
-# WHO THIS READ IS ATTRIBUTED TO, AND A GAP FLAGGED RATHER THAN PAPERED OVER. `Initiator` is a
-# required argument on every `MeshOntology` operation, and `require_person` refuses a "service"
-# identity at the boundary — by design, so a read is never attributed to nobody a person can be
-# asked about. `find_compatible_verbs` carries no caller identity today: its request is exactly
-# `{subject_uri, max_hops, entitled_domains}`, and this endpoint has no real person to attribute
-# a Jena read to. Declaring `kind="person"` here to get past the refusal would be fabricating an
-# identity, which is precisely what the boundary check exists to prevent — so this is declared
-# `kind="service"` HONESTLY, which means `.construct()` below is refused EVERY TIME by
-# `require_person` until this route carries a real caller identity to attribute the read to (the
-# same undeliverable-today gap `agent_fleet/docs_agent/reads.py` documents for `audience_hint`).
-# That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
-# it is exercised here rather than worked around — threading a real identity through this route
-# is a design decision for a person, not a substitute this pool should invent.
-#
-# THE GAP CLOSES BEHIND `COMPATIBLE_VERBS_VIA_MESH`. With the flag on, the request carries
-# `on_behalf_of` and the route hands `_universal_referent_iris` that person instead; this service
-# initiator remains what the flag-off route reads with, and it is still refused.
-_POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
-
-
-def _confirms_universal_referent(rows, subject: str) -> bool:
-    """Does this CONSTRUCT result say `subject` is BOTH an `owl:Class` AND flagged universal?
-
-    Pure and offline-checkable on purpose: `rows` is whatever `MeshResult.rows` holds, and the
-    two facts are read off the SAME subgraph rather than assumed from the candidate list — the
-    pool trusts what Jena answered, not the Python literal that named the candidate.
-
-    `rows` IS TURTLE TEXT, ONE DOCUMENT PER ROW. `JenaMeshOntology.construct` returns the store's
-    own Turtle rather than rdflib triples, because triples lose every term type once a
-    `MeshResult` is serialized (see its docstring). This function was written against the
-    triples and iterated each row as `(s, p, o)`; on the Turtle contract that raised for every
-    candidate and folded into "not confirmed", so LEG 3 contributed nothing. Each document is
-    parsed here, which is the consumer's half of that contract.
-    """
-    from rdflib import Graph  # local, as in mesh_ontology.py: rdflib stays off the import path
-
-    triples = []
-    for document in rows:
-        graph = Graph()
-        graph.parse(data=document, format="turtle")
-        triples.extend(graph)
-    is_class = False
-    carries_flag = False
-    for s, p, o in triples:
-        if str(s) != subject:
-            continue
-        if str(p) == _RDF_TYPE_IRI and str(o) == _OWL_CLASS_IRI:
-            is_class = True
-        elif str(p) == _UNIVERSAL_REFERENT_PROP_IRI and str(o).strip().lower() == "true":
-            carries_flag = True
-    return is_class and carries_flag
-
-
-def _universal_referent_iris(initiator: Initiator | None = None) -> list[str]:
-    """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
-
-    Read as `initiator` when one is given (the person, with `COMPATIBLE_VERBS_VIA_MESH` on), else
-    as `_POOL_READ_INITIATOR`, looked up at call time.
-
-    NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
-    documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
-    into "not confirmed" — the caller gets an empty list, LEG 3 contributes zero rows, and the
-    pool degrades to LEGs 1+2. Logged AT MOST ONCE per call, not once per candidate, so an empty
-    result reads as one line rather than a burst.
-    """
-    confirmed: list[str] = []
-    refusal_detail: str | None = None
-    for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
-        try:
-            result = _JENA_ONTOLOGY.construct(initiator or _POOL_READ_INITIATOR, subject=candidate)
-        except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
-            refusal_detail = f"{type(exc).__name__}: {exc}"
-            continue
-        if not result.answered_ok:
-            refusal_detail = f"{result.outcome}: {result.detail}"
-            continue
-        try:
-            confirms = _confirms_universal_referent(result.rows, candidate)
-        except Exception as exc:  # noqa: BLE001 - an unreadable answer is "not confirmed"
-            refusal_detail = f"unreadable CONSTRUCT rows, {type(exc).__name__}: {exc}"
-            continue
-        if confirms:
-            confirmed.append(candidate)
-    if not confirmed and refusal_detail:
-        logging.info(
-            "LEG 3 universal-referent read produced nothing (%s) — pool degrades to LEGs 1+2",
-            refusal_detail,
-        )
-    return confirmed
-
 
 # NB on the shape of this query: the `*0..N` form is the trick that
 # unifies "the subject's own class" with "any registered ancestor"
@@ -6353,21 +6256,22 @@ UNION ALL
 // position in the class tree, and this leg admits on the flag rather than on coverage - which is
 // exactly why LEG 2's `subClassOf*` walk can never reach `mesh:Thing` and why that is correct.
 //
-// THE FLAG IS READ FROM JENA, NOT FROM A NEO4J PROPERTY, AND NOT BY PARSING `r.slots` HERE - the
-// same reason LEG 2 reads an edge instead of parsing a declaration: two readers of one fact go
-// out of agreement at the first edit nobody mirrored. `mesh:universalReferent` is primed into
-// Jena, not Neo4j, so `find_compatible_verbs` asks Jena which candidate classes carry it and
-// hands the CONFIRMED set in as `$universal_referents` - a plain IRI list, never a class name
-// baked into this query. An empty list (Jena unreachable, the read refused, or a candidate Jena
-// does not confirm) makes this leg contribute zero rows; degrading to LEGs 1+2 is the point, not
-// a bug to route around.
+// THE FLAG IS READ FROM THE NEO4J NODE PROPERTY `universal_referent`, ABSENT = FALSE (architect
+// ruling 2026-10-17, on 7f's ruling 5). doc-tools' ontology sync writes it onto the
+// `:OntologyClass` node (`doc_tools/assets/ontology_assets.py UNIVERSAL_REFERENT_PROP`, snake_case;
+// today exactly `mesh#Thing` carries it, `true`), so this leg reads the graph it already queries and
+// no longer asks Jena. The Jena read it replaces was refused for the service initiator on every call
+// and degraded to an empty list, so LEG 3 never fired. `coalesce(..., false)` is the rule for a
+// class that was never flagged AND for one whose flag was withdrawn: a Cypher `SET c.prop = null`
+// REMOVES the property, so "absent" is the only shape an un-flagged class can take, and it must
+// read as false. The IRI is still never baked into this query - the flag is the data.
 //
 // SCOPED TO CLASSES ON BOTH ENDS. `start` must already be a registered `:OntologyClass` - never
 // a bare string that happens to match `$subject_uri` - and the referent match requires
 // `ref:OntologyClass`, so a universal-referent IRI that is not a graph class admits nothing.
 MATCH (start:OntologyClass {uri: $subject_uri})
 MATCH (ref:OntologyClass)
-WHERE ref.uri IN $universal_referents
+WHERE coalesce(ref.universal_referent, false) = true
 MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
 WHERE coalesce(p.required, false) = true
   AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
@@ -6408,12 +6312,12 @@ RETURN DISTINCT
 _COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
 _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
-#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
-#: 3's Jena read, both as the person the request names in `on_behalf_of`. ON by default: every
+#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` as the
+#: person the request names in `on_behalf_of`. ON by default: every
 #: caller of the route now hands the person down (the seal derives the callers and holds each to
 #: it), so the 400 for a request with no person is reached only by a caller that is itself wrong.
-#: LEG 3 is live (the flag-off read is a service and is refused), so the pool gains `mesh:explain`
-#: on every class subject; LEGs 1 and 2 answer what they answer off. Turn it off with
+#: LEG 3 reads the node flag on both paths (ruling 2026-10-17), so the pool gains `mesh:explain`
+#: on every class subject either way; LEGs 1 and 2 answer what they answer off. Turn it off with
 #: `COMPATIBLE_VERBS_VIA_MESH=false` (one statement, no identity, no 400s).
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
@@ -6464,7 +6368,6 @@ def _compat_rows_via_mesh_sync(
             status_code=503,
             detail=f"MeshGraph.verbs_for did not answer ({coverage.outcome}): {coverage.detail}",
         )
-    universal_referents = _universal_referent_iris(initiator)
     cypher = (
         _COMPAT_LEGS_AFTER_COVERAGE
         .replace("$MAXHOPS$", str(max_hops))
@@ -6475,7 +6378,7 @@ def _compat_rows_via_mesh_sync(
             rest = [
                 dict(r)
                 for r in session.run(
-                    cypher, subject_uri=subject_uri, universal_referents=universal_referents
+                    cypher, subject_uri=subject_uri
                 )
             ]
     except Exception as exc:  # noqa: BLE001 - the substrate's failure, whatever shape it takes
@@ -6521,20 +6424,11 @@ async def find_compatible_verbs(
             .replace("$MAXHOPS$", str(max_hops))
             .replace("$UNREACHABLE$", str(UNREACHABLE))
         )
-        # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
-        # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
-        # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
-        universal_referents = await asyncio.to_thread(_universal_referent_iris)
-
         def _run() -> list[dict]:
             with _NEO4J_DRIVER.session() as session:
                 return [
                     dict(r)
-                    for r in session.run(
-                        cypher,
-                        subject_uri=request.subject_uri,
-                        universal_referents=universal_referents,
-                    )
+                    for r in session.run(cypher, subject_uri=request.subject_uri)
                 ]
 
         try:
