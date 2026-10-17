@@ -49,7 +49,6 @@ from src.iagent import ingest_status as ist  # noqa: E402
 
 FP = "IPCN25300X"
 INGEST = "sha256:" + "ab12" * 16   # a real ingest id: NOT the extracted doc_id
-INGEST = "sha256:" + "ab12" * 16   # a real ingest id: NOT the extracted doc_id
 EV = "p3 table 2 row 7"
 IRI = "http://internal/components/"
 PIN = "doc-tools@61f74dc"
