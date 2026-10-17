@@ -18,7 +18,7 @@
       "n": 1,
       "outline": "no fault confirmed after a BIT re-run: return to service and monitor",
       "picture_spare": "any",
-      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A"],
+      "procedures": [],
       "cited": {
         "action": {"value": "No fault confirmed. Return the array module to service and monitor.",
                    "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"}
@@ -28,7 +28,7 @@
       "n": 2,
       "outline": "reseat the module connector and re-run BIT",
       "picture_spare": "any",
-      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A"],
+      "procedures": [],
       "cited": {
         "action": {"value": "Reseat the array module connector, then re-run BIT.",
                    "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"}
@@ -38,8 +38,7 @@
       "n": 3,
       "outline": "replace the array module from a spare on hand",
       "picture_spare": "on_hand",
-      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
-                     "ODMRAD-A-34-10-01-00A-720A-A"],
+      "procedures": ["ODMRAD-A-34-10-01-00A-520A-A", "ODMRAD-A-34-10-01-00A-720A-A"],
       "cited": {
         "action": {"value": "Replace array module.", "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"},
         "part_number": {"value": "ODM-AM-0001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
@@ -51,13 +50,13 @@
       "n": 4,
       "outline": "replace the array module with a spare from the nearest site with stock",
       "picture_spare": "nearest_site_with_stock",
-      "procedures": ["ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
-                     "ODMRAD-A-34-10-01-00A-720A-A"],
+      "procedures": ["ODMRAD-A-34-10-01-00A-520A-A", "ODMRAD-A-34-10-01-00A-720A-A"],
       "cited": {
         "action": {"value": "Replace array module.", "evidence_ref": "ODMRAD-A-34-10-01-00A-421A-A"},
         "part_number": {"value": "ODM-AM-0001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
         "quantity": {"value": 1, "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
-        "icn": {"value": "ICN-ODMRAD-00001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"}
+        "icn": {"value": "ICN-ODMRAD-00001", "evidence_ref": "ODMRAD-A-34-10-01-00A-941A-A"},
+        "interval": {"value": "180 days", "evidence_ref": "ODMRAD-A-34-10-01-00A-320A-A"}
       }
     }
   ]

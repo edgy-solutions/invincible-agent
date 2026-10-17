@@ -1,13 +1,20 @@
 """`walk-MRAD-ARR-0417.json` is the contract 7f builds to; `mrad.ttl` is the per-module drift check.
 
-RULED (architect, 2026-10-16): an option's DMC becomes `procedures[]` (ordered, min 1), and an option
+RULED (architect, 2026-10-16): an option's DMC becomes `procedures[]` (ordered), and an option
 may carry cited values `{value, evidence_ref}`. The file is the EXPECTED RENDERED WALK for the fault
-code, options and all. These arms keep it honest against the graph it is a contract over:
+code, options and all. OVERRULED (architect, 2026-10-17): 421A is the module an option comes FROM,
+not a procedure the mechanic performs, so `procedures[]` holds only procedural modules and 421A
+stays in `citations`; option 4 cites the 320A interval. These arms keep the file honest against
+the graph it is a contract over:
 
 - its `citations` are what the REAL walk renders over `mrad.ttl` today, not a transcription;
-- every procedure and evidence_ref is a data module in that graph, procedures start at the
-  fault-isolation module, and the rest are the procedures that module refers to;
-- a cited part value is the IPD citation's, cited to the IPD module.
+- every procedure is a procedural module the fault-isolation module refers to, never 421A itself,
+  and a replace option's procedures are the remove/install citation's modules;
+- a cited part value is the IPD citation's, cited to the IPD module; a cited interval is the
+  planning citation's (which the first arm proves the walk renders from 320A's interval).
+
+Not asserted: procedure ORDER. `mrad.ttl` carries none, so 7f's output must (an rdf:List or an
+explicit mil:stepIndex); the order arm goes in once 7f says which.
 
 The options themselves are not in the graph yet (no option node exists), so the walk cannot render
 them: that arm is a STRICT xfail and goes red the day the walk does, which is the day to drop it.
@@ -54,19 +61,23 @@ def test_the_contracts_citations_are_what_the_real_walk_renders():
     assert (r["bit_code"], r["bit_text"], r["citations"]) == (c["bit_code"], c["bit_text"], c["citations"])
 
 
-def test_every_option_has_procedures_starting_at_the_fault_isolation_module():
+def test_procedures_are_the_procedural_modules_the_fault_isolation_module_refers_to():
     c, g = _contract(), _graph()
     fi_dmc = c["citations"]["fault_isolation"]["dmc"]
     fi = _module(g, fi_dmc)
     referred = {str(g.value(dm, rdflib.RDFS.label)) for dm in g.objects(fi, _MIL.refersToDataModule)
                 if (dm, rdflib.RDF.type, _MIL.ProcedureDataModule) in g}
+    remove_install = set(c["citations"]["remove_install"]["dmc"])
+    assert remove_install and remove_install <= referred
     assert [o["n"] for o in c["options"]] == [1, 2, 3, 4]
     for o in c["options"]:
         procs = o["procedures"]
-        assert procs and procs[0] == fi_dmc, o["n"]
-        assert set(procs[1:]) <= referred and len(set(procs)) == len(procs), o["n"]
+        assert fi_dmc not in procs, o["n"]
+        assert set(procs) <= referred and len(set(procs)) == len(procs), o["n"]
         for dmc in procs:
             _module(g, dmc)
+        replaces = "part_number" in o.get("cited", {})
+        assert set(procs) == (remove_install if replaces else set()), o["n"]
 
 
 def test_a_cited_value_names_a_module_and_a_part_value_is_the_ipd_citations():
@@ -80,6 +91,10 @@ def test_a_cited_value_names_a_module_and_a_part_value_is_the_ipd_citations():
                 assert cv == {"value": ipd[key], "evidence_ref": ipd["dmc"]}, (o["n"], key)
             if key == "action":
                 assert cv["evidence_ref"] == c["citations"]["fault_isolation"]["dmc"], o["n"]
+            if key == "interval":
+                pi = c["citations"]["planning_interval"]
+                assert cv == {"value": pi["interval"], "evidence_ref": pi["dmc"]}, o["n"]
+    assert "interval" in c["options"][3]["cited"]
 
 
 @pytest.mark.xfail(strict=True, reason="no option node in the graph yet: 7f builds to this file, "
