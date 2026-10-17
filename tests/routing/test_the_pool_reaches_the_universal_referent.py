@@ -433,6 +433,65 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     assert FLAG_TEST in cypher and "universal_referents" not in params
 
 
+# ── the control: an ordinary ask gains EXACTLY mesh:explain from the leg ────────────────────────
+# `test_find_compatible_verbs_via_mesh_graph.py` asserts explain is IN a COST-entitled pool; this
+# asserts the DIFFERENCE the leg makes is that one verb - not "non-empty", not "unchanged".
+
+_COST_SUBJECT = "http://invincible-agent/cost#LotCost"
+
+
+def _cost_row(verb: str, compatibility: str) -> dict:
+    return {**_mesh_explain_row(), "verb_iri": f"http://invincible-agent/cost#{verb}",
+            "verb_local": verb, "input_uri": _COST_SUBJECT, "output_uri": _COST_SUBJECT,
+            "endpoint_url": f"http://engine-cost.invalid/{verb}", "domains": ["COST"],
+            "hops": 0 if compatibility == "subject" else 1, "compatibility": compatibility}
+
+
+class _LegAwareSession(_FakeCompatSession):
+    """Answers the subject and referent rows always, and the universal rows only when the
+    statement tests the node flag AND the store holds a flagged referent (`flagged`) - as the
+    real `coalesce(ref.universal_referent, false) = true` does, an absent flag reading false."""
+
+    def __init__(self, universal_rows: list[dict], flagged: bool):
+        super().__init__([_cost_row("costLotBreakdown", "subject"),
+                          _cost_row("lotYield", "referent")])
+        self._universal, self._flagged = universal_rows, flagged
+
+    def run(self, cypher: str, **params):
+        self.executed = (cypher, params)
+        out = list(self._rows)
+        if self._flagged and FLAG_TEST in cypher:
+            out.extend(self._universal)
+        return out
+
+
+def _cost_pool(engine_o_module, client, monkeypatch, *, flagged: bool,
+               universal_rows: list[dict]) -> set[str]:
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
+    monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", _JenaMustNotBeCalled())
+    driver = _FakeCompatDriver(rows=[])
+    driver.session_obj = _LegAwareSession(universal_rows, flagged)
+    monkeypatch.setattr(engine_o_module, "_NEO4J_DRIVER", driver)
+    r = client.post("/find_compatible_verbs",
+                    json={"subject_uri": _COST_SUBJECT, "entitled_domains": ["COST"]})
+    assert r.status_code == 200, r.text
+    return {v["verb_iri"] for v in r.json()["verbs"]}
+
+
+def test_THE_POOL_GAINS_ONLY_mesh_explain_FOR_AN_ORDINARY_COST_ASK(
+    engine_o_module, client, monkeypatch
+):
+    universal = [_mesh_explain_row()]
+    without = _cost_pool(engine_o_module, client, monkeypatch, flagged=False,
+                         universal_rows=universal)
+    with_leg = _cost_pool(engine_o_module, client, monkeypatch, flagged=True,
+                          universal_rows=universal)
+    assert without == {"http://invincible-agent/cost#costLotBreakdown",
+                       "http://invincible-agent/cost#lotYield"}, without  # the ask is ordinary
+    assert with_leg - without == {"mesh:explain"}, sorted(with_leg - without)
+    assert without <= with_leg, sorted(without - with_leg)  # the leg removes nothing
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _put_the_loaded_module_back():
     """PUT sys.modules BACK. This file registers a module it loaded by path under a private
