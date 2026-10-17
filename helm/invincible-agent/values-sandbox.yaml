@@ -877,7 +877,16 @@ cortexUi:
     # altered both answer not found; the 88a65d4 control still resolves to 7b2b6129. Since 88a65d4
     # the Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so
     # VITE_FEATURES is unchanged. From this pin the chart SETS VITE_REVIEW_ROW_EDITS (env below).
-    digest: "sha256:8d0234abfa6720399d12be76befbafa591b9fe5d012d8d4ed852aa4706c44059"
+    # 2026-10-17, pinned for 193 (architect): cortex-ui 8fe23fc (master; the rail reads
+    # GET /ingest/mine on load, 366a73a a retried drop sits at its latest activity, 4a276e0 the
+    # drop chip names the row's content_kind, 9a84692 export sends the board, #27 the brokered-login
+    # walk check) -> cc2ad9cc. e1b94e2 is an ancestor of 8fe23fc. Measured before pinning: the FULL
+    # tag resolves to this digest (an OCI index); the abbreviated tag and this digest with its last
+    # hex altered both answer 404; the e1b94e2 control still resolves to 8d0234ab. Since e1b94e2 the
+    # Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is
+    # unchanged. NOT cortex master: 55d2e6a (xml accepted) and 8066347 (/ingest/mine pages past
+    # 50) landed after 8fe23fc and do not roll here.
+    digest: "sha256:cc2ad9cc60a7f1bc0a6e910e7f6f36c7d4870d68acd50df59534469f260a434f"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

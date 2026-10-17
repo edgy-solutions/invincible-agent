@@ -1,5 +1,11 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.53 — 2026-10-17
+
+cortex-ui pinned to 8fe23fc (`sha256:cc2ad9cc…`), from e1b94e2 (`8d0234ab`). The rail reads
+GET /ingest/mine on load, and a retried drop sits at its latest activity. Frontend image only;
+no template changed.
+
 ## 0.4.52 — 2026-10-16
 
 Renumbered again, to 0.4.52: roll 190 took 0.4.51. Before that it was 0.4.51 (rev 189 rolled as
