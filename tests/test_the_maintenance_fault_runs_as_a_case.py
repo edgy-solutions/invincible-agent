@@ -767,3 +767,17 @@ def test_NO_ROWS_IS_UNAVAILABLE_AND_A_PLAIN_OPTION_PASSES_THROUGH():
     assert off == [plain, "str"] and off[0] is not plain and un == {}, (off, un)
     off, un = main._offer_options([_opt()], where="t")
     assert off[0]["available"] is True and "unavailable_reason" not in off[0] and un == {}, off
+
+
+# ── D3: THE RECORD'S MANUAL NODES ARE A FLAT LIST ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_THE_RELEASED_RECORD_NAMES_ITS_MANUAL_NODES_AS_A_FLAT_LIST(registered):
+    """`remove_install.dmc` is a list; the record spells `.0` and `.1`, so `manual_nodes_consulted`
+    is five strings, not four with a list inside."""
+    _out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    [rec] = _emitted(c)
+    assert rec["provenance"]["manual_nodes_consulted"] == [
+        "ODMRAD-A-34-10-01-00A-421A-A", "ODMRAD-A-34-10-01-00A-520A-A",
+        "ODMRAD-A-34-10-01-00A-720A-A", _ipd(c)["dmc"], "ODMRAD-A-34-10-01-00A-320A-A"], rec
+    assert all(isinstance(x, str) for x in rec["provenance"]["manual_nodes_consulted"])

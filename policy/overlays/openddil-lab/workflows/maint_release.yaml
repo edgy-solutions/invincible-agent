@@ -50,7 +50,10 @@ steps:
         workflow_instance_id: "{case.instance_id}"
         manual_nodes_consulted:
           - "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"
-          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"
+          # The walk's `remove_install.dmc` is a LIST (remove, install): spelled `.0` and `.1`
+          # so the record holds a FLAT list of strings, as maint_fault_propose's task_refs do.
+          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.0}"
+          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.1}"
           - "{outputs.maint_fault_propose.walk.citations.ipd.dmc}"
           - "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"
 
