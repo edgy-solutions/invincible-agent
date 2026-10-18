@@ -2,25 +2,25 @@
 
 **Twelve questions, four different answer SHAPES -- Q4 and Q5 reuse Q3's, Q6 and Q7 are their
 populated twins, Q8, Q10 and Q12 are Q1's twins at three other matrix cells, Q9 and Q11 are drafts
-that must be REFUSED and make no task.** Three draw a card (Q2, Q6, Q7), four create a TASK and
-draw nothing (Q1, Q8, Q10, Q12), three REFUSE by asking for a slot (Q3, Q4, Q5), and two end in a
-NAMED refusal with no card and no task (Q9, Q11). A walker who expects twelve cards will score
-nine defects that are not there.
+that must be REFUSED and make no task.** Three draw a card (Q2, Q6, Q7), four DRAFT: a card AND a
+task (Q1, Q8, Q10, Q12 -- the card is the draft, the task is the review; architect, 2026-10-18),
+three REFUSE by asking for a slot (Q3, Q4, Q5), and two end in a NAMED refusal with no card and no
+task (Q9, Q11). A walker who expects twelve cards will score nine defects that are not there.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
-| 1 | draft a risk assessment for HAZ-1003 | `draft_risk_assessment` | **a task in bob's queue**, not a card |
+| 1 | draft a risk assessment for HAZ-1003 | `draft_risk_assessment` | **a draft card AND a task in bob's queue** |
 | 2 | what hazards are unattended | `find_orphaned_hazards` | a `CONTRIBUTION_RANKING` card, 3 rows |
 | 3 | risk of deferring this work order | `assess_deferral_risk` | **a refusal** asking for `work_order_id` |
 | 4 | what failed on this part | `what_failed_on_this_part` | **a refusal** asking for `part_number` |
 | 5 | failure trend for this platform by month | `failure_trend_for_this_platform_by_month` | **a refusal** asking for `platform_id` |
 | 6 | what failed on this part PN-8801 | `what_failed_on_this_part` | a `CONTRIBUTION_RANKING` card, 1 row (bob sees one program) |
 | 7 | failures per month on this platform PLT-ALPHA | `failure_trend_for_this_platform_by_month` | a `MULTI_SERIES` card, 1 period (bob sees one program) |
-| 8 | draft a risk assessment for HAZ-1001 | `draft_risk_assessment` | **a task** for the `risk_acceptance_serious` audience, not a card |
+| 8 | draft a risk assessment for HAZ-1001 | `draft_risk_assessment` | **a draft card AND a task** for the `risk_acceptance_serious` audience |
 | 9 | draft a risk assessment for HAZ-1005 | `draft_risk_assessment` | **a refusal**, `hazard_closed`, no task |
-| 10 | draft a risk assessment for HAZ-1007 | `draft_risk_assessment` | **a task** for the `risk_acceptance_high` audience, not a card |
+| 10 | draft a risk assessment for HAZ-1007 | `draft_risk_assessment` | **a draft card AND a task** for the `risk_acceptance_high` audience |
 | 11 | draft a risk assessment for HAZ-1006 | `draft_risk_assessment` | **a refusal**, `not_assessed`, naming the gap, no task |
-| 12 | draft a risk assessment for HAZ-1008 | `draft_risk_assessment` | **a task** for the `risk_acceptance_low` audience, not a card |
+| 12 | draft a risk assessment for HAZ-1008 | `draft_risk_assessment` | **a draft card AND a task** for the `risk_acceptance_low` audience |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -46,9 +46,10 @@ and the ORDER does not.** Check the order and the shape; do not check the intege
 
 ## READ THIS BEFORE THE FIRST QUESTION — five ways a CORRECT result looks broken
 
-1. **Q1 draws no card at all, and that is the PASS.** The answer is a row in `human_tasks`, not a
-   200 with a payload. An engine that rendered a risk assessment as a finished card would be
-   asserting the acceptance had happened. *If you see a card for Q1, that is the defect.*
+1. **Q1 draws a card AND requests a task, and both are the PASS (architect, 2026-10-18).** The card
+   (a `KNOWLEDGE_DOCUMENT`) is the DRAFT, `acceptance_status: drafted`; the task is the REVIEW, a row
+   in `human_tasks`. *The defect is a card that reads as accepted, or a draft with no
+   `review_request`; a card by itself is not.*
 
 2. **Q3 refuses, and the refusal is the PASS.** `work_order_id` is spoken-mandatory; the engine
    asks rather than guessing a work order. A verb that answered "the risk of deferring this work
@@ -72,7 +73,7 @@ and the ORDER does not.** Check the order and the shape; do not check the intege
 
 ---
 
-## Q1 — Draft a risk assessment  ⚠ **the answer is a TASK, not a card**
+## Q1 — Draft a risk assessment  ⚠ **a draft card AND a TASK**
 
 > **"draft a risk assessment for HAZ-1003"**
 
@@ -137,8 +138,9 @@ holds no hazards). Captured from the provider:
 
 ### What a correct result looks like BROKEN
 
-- **A card rendering the assessment** — correct data, wrong outcome. The acceptance is a human
-  act; drawing it as a finished artifact is what §7 exists to prevent.
+- **A card that reads as an accepted risk** (`acceptance_status` other than `drafted`, or no
+  `review_request`) — correct data, wrong outcome. The acceptance is a human act; a card is the
+  DRAFT, and drawing it as a finished artifact is what §7 exists to prevent.
 - **A task assigned to alice.** alice holds High and Serious; this is a Medium. A Medium landing
   with the High authority means the matrix resolved the wrong level — read `risk_level` before
   blaming the grant.
@@ -474,7 +476,7 @@ instance resolver's question (`safety:Platform` members: `PLT-ALPHA`, `PLT-BRAVO
 
 ---
 
-## Q8 — Draft a risk assessment at the worst severity row  ⚠ **a TASK, and Severity I is NOT High**
+## Q8 — Draft a risk assessment at the worst severity row  ⚠ **a draft card AND a TASK, and Severity I is NOT High**
 
 > **"draft a risk assessment for HAZ-1001"**
 
@@ -570,7 +572,7 @@ audience is reachable only through a hazard that is not closed.
 
 ---
 
-## Q10 — Draft a risk assessment in the High cell  ⚠ **a TASK, for the senior authority**
+## Q10 — Draft a risk assessment in the High cell  ⚠ **a draft card AND a TASK, for the senior authority**
 
 > **"draft a risk assessment for HAZ-1007"**
 
@@ -657,7 +659,7 @@ DRAFT (`refused: false`) that carried no `review_request`; the ruling replaces t
 
 ---
 
-## Q12 — Draft a risk assessment in the Low cell  ⚠ **a TASK, for the program manager's tier**
+## Q12 — Draft a risk assessment in the Low cell  ⚠ **a draft card AND a TASK, for the program manager's tier**
 
 > **"draft a risk assessment for HAZ-1008"**
 
