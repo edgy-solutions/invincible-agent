@@ -1772,6 +1772,20 @@ services:
           Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
           case and one the caller may not read answer the same 404. A runner that cannot be
           reached is a different fact and answers 503 runner_unavailable, not 404.
+      - method: GET
+        path: /cases/{case_id}/action
+        identity: keycloak-jwt
+        gate: "get_current_user; a delegate caller is admitted only if the runner's case exists and its seeded_by is the caller (else one identical 403 not_your_case, with no artifact-store read); any other caller passes GET /cases/{case_id}'s case_projection.can_view_case gate, else the identical 404"
+        exposes: gated-content
+        consumers: [cortex-ui case view (who chose, approved and released a maintenance action)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-17: a delegate reads only its own cases' action records, 403
+          on others and on /cases/{id}. The record is written at release, so a viewable case
+          before release answers 404 no_action_record (a delegate's own pending case included). A
+          delegate's refusal is the same 403 for a missing case, another delegate's case and a
+          case with no seeded_by, so there is no existence oracle. A Neo4j failure is 503
+          artifact_store_unavailable, an unreachable runner 503 runner_unavailable.
       - method: POST
         path: /cases/{case_id}/signals/{signal}
         identity: keycloak-jwt

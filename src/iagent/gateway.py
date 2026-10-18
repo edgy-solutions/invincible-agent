@@ -9849,38 +9849,18 @@ async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
     return _restate_answer(resp)
 
 
-@app.get("/cases/{case_id}")
-async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
-    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
-    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
-
-    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
-    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
-    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
-    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
-
-    The pure projection and the entitlement gate live in `case_projection`; this route only
-    fetches runner/DB state and calls them.
-
-    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
-    (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
-    (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
-    identical whether or not the case exists (no existence oracle). R-089: the delegate map
-    is asserted by configuration this pass.
-    """
+async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, dict]:
+    """The case-visibility gate `GET /cases/{case_id}` and `GET /cases/{case_id}/action` share:
+    fetch the case (runner unreachable -> 503 `runner_unavailable`), then 404 `case not found`
+    when it is absent OR the caller may not read it (`case_projection.can_view_case`), the two
+    answering IDENTICALLY. Returns `(case, definitions)`."""
     from starlette.concurrency import run_in_threadpool
 
     from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
         WorkflowDefinitionError, get_workflow_definition,
     )
 
-    from . import case_projection, human_tasks
-
-    if current_user.authz_id in _delegate_principals():
-        raise HTTPException(status_code=403, detail={
-            "error": "delegate_reads_artifacts_only",
-            "message": "a delegate reads the artifacts it seeded (GET /artifacts/{id}), "
-                       "never the whole case"})
+    from . import case_projection
 
     try:
         case = await _fetch_case(case_id)
@@ -9915,6 +9895,40 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
     ):
         raise HTTPException(status_code=404, detail="case not found")
+    return case, definitions
+
+
+@app.get("/cases/{case_id}")
+async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
+    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
+
+    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
+    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
+    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
+    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
+
+    The pure projection and the entitlement gate live in `case_projection`; this route only
+    fetches runner/DB state and calls them.
+
+    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
+    (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
+    (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
+    identical whether or not the case exists (no existence oracle). R-089: the delegate map
+    is asserted by configuration this pass.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_projection, human_tasks
+
+    # R-089: the delegate map is asserted by configuration this pass, not verified.
+    if current_user.authz_id in _delegate_principals():
+        raise HTTPException(status_code=403, detail={
+            "error": "delegate_reads_artifacts_only",
+            "message": "a delegate reads the artifacts it seeded (GET /artifacts/{id}), "
+                       "never the whole case"})
+
+    case, definitions = await _load_viewable_case(case_id, current_user)
 
     instance_ids = [inst.get("instance_id") for inst in (case.get("instances") or [])
                     if inst.get("instance_id")]
@@ -12272,6 +12286,150 @@ async def write_action_record_route(
     if not written and not exists_already:
         raise HTTPException(status_code=503, detail={"error": "artifact_write_failed"})
     return {"case_id": case_id, "artifact_id": artifact_id, "written": written}
+
+
+def _read_action_records(case_id: str) -> list[dict]:
+    """Every maintenance action-record AnswerArtifact of the case, OLDEST first by `valid_as_of`:
+    `{artifact_id, seeded_by, valid_as_of, record}`. Decoded the way `/answers/{id}/body` decodes
+    (`rendered_output` is JSON text, the record at its `record` key). A node whose body does not
+    carry a record dict is skipped, never defaulted. Raises on a Neo4j failure."""
+    from .projector.apply_loop import _parse_json
+
+    with neo4j_driver.session() as session:
+        rows = list(session.run(
+            "MATCH (a:AnswerArtifact {kind: $kind, case_id: $case_id}) "
+            "RETURN a.id AS id, a.seeded_by AS seeded_by, a.valid_as_of AS valid_as_of, "
+            "a.rendered_output AS rendered_output",
+            kind=ACTION_RECORD_KIND, case_id=case_id,
+        ))
+    out: list[dict] = []
+    for row in rows:
+        body = _parse_json(row["rendered_output"])
+        record = body.get("record") if isinstance(body, dict) else None
+        if not isinstance(record, dict):
+            continue
+        out.append({"artifact_id": str(row["id"]), "seeded_by": row["seeded_by"],
+                    "valid_as_of": row["valid_as_of"] or 0, "record": record})
+    out.sort(key=lambda r: r["valid_as_of"])
+    return out
+
+
+def _action_chain(record: dict, transitions: list) -> list[dict]:
+    """The acts of one action record, in order chose -> approved* -> released. An act is present
+    only if it was recorded; no who/at is ever defaulted."""
+    transitions = [t for t in (transitions or []) if isinstance(t, dict)]
+    work_order = record.get("work_order") if isinstance(record.get("work_order"), dict) else {}
+    chain: list[dict] = []
+
+    option = work_order.get("option")
+    chosen = [t for t in transitions if option is not None and t.get("outcome") == option]
+    if chosen:
+        t = chosen[-1]
+        chain.append({"act": "chose", "who": t.get("by"), "at": t.get("at"), "option": option,
+                      "instance_id": t.get("instance_id")})
+    for e in record.get("approval_chain") or []:
+        if isinstance(e, dict) and e.get("decision") == "approved":
+            act = {"act": "approved", "who": e.get("approver_sub"), "at": e.get("decided_at"),
+                   "role": e.get("role")}
+            if "acted_via" in e:
+                act["acted_via"] = e["acted_via"]
+            chain.append(act)
+    released = [t for t in transitions if t.get("outcome") == _RELEASED_OUTCOME]
+    if released:
+        t = released[-1]
+        chain.append({"act": "released", "who": t.get("by"), "at": t.get("at"),
+                      "instance_id": t.get("instance_id")})
+    return chain
+
+
+@app.get("/cases/{case_id}/action")
+async def get_case_action(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,
+    with the work order and the manual data modules it cites.
+
+    BODY. The stored ActionRecord verbatim AT THE TOP LEVEL (action_id, event_id, asset_id,
+    owning_tier, label, work_order, approval_chain, provenance, whatever keys it has), plus the
+    additive keys `case_id`, `artifact_id`, `acts`, `dmcs_cited`, and `action_ids` only when the
+    case has more than one record. A key the record already carries is never overwritten.
+
+    WHERE EACH ACT IS READ FROM. `chose`: the LAST case transition (runner state, as
+    `GET /cases/{id}`) whose outcome is the record's `work_order.option`. `approved`: one per
+    `approval_chain` entry of the record whose decision is `approved`, chain order (`acted_via`
+    only if recorded). `released`: the LAST case transition whose outcome is `released`. An act
+    that was not recorded is absent -- never invented. `dmcs_cited` is the record's
+    `provenance.manual_nodes_consulted`, de-duplicated, first-seen order.
+
+    THE RECORD IS WRITTEN WHEN THE CASE IS RELEASED (the release instance's outbox is read at its
+    completion, `/internal/cases/{id}/action-record`). A case that was approved but is not yet
+    released, or that was rejected, has no record and answers 404 `no_action_record`. With more
+    than one record the newest by `valid_as_of` is answered and `action_ids` lists them all,
+    oldest first.
+
+    GATE, two species. A DELEGATE (a key of `_delegate_principals()`) reads the action record of
+    a case it seeded and no other (ruled 2026-10-17 by the architect: "delegate reads only its
+    own cases' action records, 403 on others and on /cases/{id}"). Ownership is decided by the
+    CASE: the runner's case is fetched first (503 `runner_unavailable`) and the delegate is
+    admitted iff the case exists and its `seeded_by` is the caller; a nonexistent case, another
+    delegate's case and a case with no `seeded_by` answer one IDENTICAL 403 `not_your_case`, with
+    no artifact-store read. An admitted delegate with no record is 404 `no_action_record` (its
+    own pending case: nothing yet, not forbidden); a record whose own `seeded_by` differs is 403
+    too. No spec/definitions/`can_view_case` for a delegate. Any OTHER caller passes exactly
+    `GET /cases/{id}`'s gate (`_load_viewable_case`), then 404 `no_action_record` if none. A
+    Neo4j failure is 503 `artifact_store_unavailable`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    async def _records() -> list[dict]:
+        try:
+            return await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+
+    def _not_your_case() -> HTTPException:
+        return HTTPException(status_code=403, detail={
+            "error": "not_your_case",
+            "message": "a delegate reads the action record of a case it seeded, and no other"})
+
+    # R-089: the delegate map is asserted by configuration this pass, not verified.
+    is_delegate = current_user.authz_id in _delegate_principals()
+    if is_delegate:
+        try:
+            case = await _fetch_case(case_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503,
+                                detail={"error": "runner_unavailable"}) from exc
+        seeded_by = case.get("seeded_by") if case else None
+        if not seeded_by or seeded_by != current_user.authz_id:
+            raise _not_your_case()
+    else:
+        case, _definitions = await _load_viewable_case(case_id, current_user)
+    records = await _records()
+    if not records:
+        raise HTTPException(status_code=404, detail={"error": "no_action_record"})
+    newest = records[-1]
+    if is_delegate and newest["seeded_by"] != current_user.authz_id:
+        raise _not_your_case()
+
+    record = newest["record"]
+    prov = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    dmcs: list = []
+    for d in prov.get("manual_nodes_consulted") or []:
+        if d and d not in dmcs:
+            dmcs.append(d)
+    additive = {
+        "case_id": case_id,
+        "artifact_id": newest["artifact_id"],
+        "acts": _action_chain(record, (case or {}).get("transitions") or []),
+        "dmcs_cited": dmcs,
+    }
+    if len(records) > 1:
+        additive["action_ids"] = [r["record"].get("action_id") for r in records]
+    body = dict(record)
+    for k, v in additive.items():
+        body.setdefault(k, v)  # a key the record carries is never overwritten
+    return body
 
 
 # ════════════════════════════════════════════════════════════════════
