@@ -743,6 +743,16 @@ class HumanTaskRegisterRequest(_BaseModel):
     # DECLARED HERE because this model drops unknown fields silently: undeclared, an exclusion
     # sent by the runner would vanish and the dropper would be routed the task.
     excludes: list[str] = []
+    # The case this task belongs to (architect ruling 2026-10-17): a holder of the task may read
+    # the case. Blank is absent. DECLARED HERE because this model drops unknown fields silently.
+    case_id: Optional[str] = None
+
+    @field_validator("case_id", mode="before")
+    @classmethod
+    def _blank_case_id_is_absent(cls, v):
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
 
 
 _GROUPED_REJECT_CODES = ("not_a_notice", "parts_list_unusable", "superseded_or_duplicate")
@@ -863,6 +873,7 @@ async def register_human_task(
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
                 payload=req.payload, workflow_service=req.workflow_service,
                 promise_name=req.promise_name, excludes=req.excludes,
+                case_id=req.case_id,
             )
         )
     except human_tasks.HumanTaskConfigError as exc:
@@ -9920,7 +9931,19 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
         case, instance1_spec, definitions,
         caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
     ):
-        raise HTTPException(status_code=404, detail="case not found")
+        # A HOLDER OF A TASK ON THIS CASE MAY READ IT (architect ruling 2026-10-17): the person
+        # a task was routed to must see what they are asked to decide, whatever their domain
+        # cells. Any status counts. The admission is by recipient row alone; a store that is
+        # unconfigured or down admits nobody, and the answer stays the identical 404.
+        from . import human_tasks
+
+        try:
+            _holds = await run_in_threadpool(
+                human_tasks.holds_task_on_case, case_id, current_user.authz_id)
+        except Exception:  # noqa: BLE001 -- unreadable store: deny, same 404
+            _holds = False
+        if not _holds:
+            raise HTTPException(status_code=404, detail="case not found")
     return case, definitions
 
 

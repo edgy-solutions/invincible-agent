@@ -728,7 +728,7 @@ def n_policy(tmp_path, monkeypatch):
                        str(_n_dump(tmp_path / "workflows", _N_DEFINITIONS)))
     monkeypatch.setattr(wd, "load_stub_verbs", lambda: {})
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": {})
+                        lambda wf, task, kind="workflow_ack", case_id=None: {})
     return tmp_path
 
 

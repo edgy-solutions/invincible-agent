@@ -1764,18 +1764,21 @@ services:
       - method: GET
         path: /cases/{case_id}
         identity: keycloak-jwt
-        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; otherwise the identical 404"
+        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; OR the caller is the recipient of a human_task_projection row whose case_id is this case (any status); otherwise the identical 404"
         exposes: gated-content
         consumers: [cortex-ui case view (WorkflowCasePayload)]
         class: gated
         justification: >-
           Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
           case and one the caller may not read answer the same 404. A runner that cannot be
-          reached is a different fact and answers 503 runner_unavailable, not 404.
+          reached is a different fact and answers 503 runner_unavailable, not 404. Architect ruling
+          2026-10-17: a holder of a task filed on the case (recipient of a human_task_projection row
+          with this case_id, any status) may read it, so the person asked to decide sees what they
+          decide; an unreadable task store admits nobody (same 404).
       - method: GET
         path: /cases/{case_id}/action
         identity: keycloak-jwt
-        gate: "get_current_user; a delegate caller is admitted only if the runner's case exists and its seeded_by is the caller (else one identical 403 not_your_case, with no artifact-store read); any other caller passes GET /cases/{case_id}'s case_projection.can_view_case gate, else the identical 404"
+        gate: "get_current_user; a delegate caller is admitted only if the runner's case exists and its seeded_by is the caller (else one identical 403 not_your_case, with no artifact-store read); any other caller passes GET /cases/{case_id}'s gate (can_view_case, or holds a task on the case), else the identical 404"
         exposes: gated-content
         consumers: [cortex-ui case view (who chose, approved and released a maintenance action)]
         class: gated

@@ -1635,7 +1635,8 @@ def _excluded_key(promise_name: str) -> str:
     return f"excluded_{promise_name}"
 
 
-def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack") -> dict:
+def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack",
+                         case_id: Optional[str] = None) -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
     authorized actors from Topaz and materializes one queue row per actor; the
@@ -1682,6 +1683,10 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     # Only when declared: every other register's body is unchanged.
     if task.get("excludes"):
         body["excludes"] = list(task["excludes"])
+    # The case the task belongs to (architect ruling 2026-10-17): a holder may read it. Only when
+    # the caller is a case run; a standalone run's body is unchanged.
+    if case_id:
+        body["case_id"] = case_id
     # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
     # applied to the register it named as its sibling. This used to send the trigger's stored
     # `user_jwt`, which failed two ways: a definition that suspends for human latency outlives
@@ -2316,7 +2321,8 @@ async def _run_definition(
             # BPMNWorkflowRunner hands a client's request straight in. See _register_human_task.
             await ctx.run(
                 f"register_{step.id}",
-                lambda t=task, k=step_kind: _register_human_task(workflow_id, t, k),
+                lambda t=task, k=step_kind, c=(case or {}).get("case_id"): _register_human_task(
+                    workflow_id, t, k, c),
             )
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #

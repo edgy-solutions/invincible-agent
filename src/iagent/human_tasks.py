@@ -95,6 +95,9 @@ CREATE INDEX IF NOT EXISTS idx_htp_status ON human_task_projection (status);
 -- a guessed default. IDEMPOTENT via IF NOT EXISTS.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS workflow_service TEXT;
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS promise_name TEXT;
+-- case_id: the case a task belongs to (architect ruling 2026-10-17); NULLABLE, honest-absent for
+-- tasks not filed from a case. Lets a task holder read the case the task is about.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 """
 
 
@@ -351,6 +354,7 @@ def register_task(
     workflow_service: Optional[str] = None,
     promise_name: Optional[str] = None,
     excludes: Optional[list[str]] = None,
+    case_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
@@ -413,7 +417,7 @@ def register_task(
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
-            None, None, None, None, now, now, workflow_service, promise_name,
+            None, None, None, None, now, now, workflow_service, promise_name, case_id,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -424,7 +428,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name)
+                        workflow_service, promise_name, case_id)
                        VALUES %s""",
                     rows,
                 )
@@ -443,13 +447,27 @@ def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str,
             cur.execute(
                 """SELECT id, kind, task_id, workflow_id, audience, status, title,
                           summary, requested_by, subject_ref, payload, created_at,
-                          workflow_service, promise_name
+                          workflow_service, promise_name, case_id
                      FROM human_task_projection
                     WHERE recipient_id = %s AND status = %s
                     ORDER BY created_at DESC""",
                 (caller_id, status),
             )
             return [dict(r) for r in cur.fetchall()]
+
+
+def holds_task_on_case(case_id: str, caller_id: str) -> bool:
+    """True iff the caller is the recipient of a task filed on `case_id`, ANY status (a decided
+    task still shows the person the case it was about). Architect ruling 2026-10-17."""
+    if not case_id or not caller_id:
+        return False
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM human_task_projection WHERE case_id = %s AND recipient_id = %s LIMIT 1",
+                (case_id, caller_id),
+            )
+            return cur.fetchone() is not None
 
 
 # ── Case-1 fulfillment: write an asset_grants.yaml assertion + grant_sync ─────

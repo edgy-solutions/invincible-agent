@@ -120,7 +120,7 @@ def _declared_walk_double(monkeypatch):
 def registered(monkeypatch):
     rows: list = []
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": rows.append(
+                        lambda wf, task, kind="workflow_ack", case_id=None: rows.append(
                             (wf, task["audience"], kind)) or {})
     return rows
 
