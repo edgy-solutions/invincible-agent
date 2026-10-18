@@ -9938,6 +9938,12 @@ class CaseSignalRequest(_BaseModel):
     comments: str = ""
 
 
+# The case/instance separator: an instance key is `{case}~{n}`. The gateway does not import
+# agent_fleet, so the value is restated here; its source is
+# agent_fleet/restate_analyst/case_routing.py CHILD_SEP (a test seals that they agree).
+_CASE_INSTANCE_SEP = "~"
+
+
 @app.post("/cases/{case_id}/signals/{signal}")
 async def answer_case_signal(
     case_id: str,
@@ -9956,6 +9962,14 @@ async def answer_case_signal(
 
     Not checked here: the audience / `can_act` (the `case` projection does not expose the
     awaiting signal's audience, so the BFF cannot re-check it without inventing a read).
+
+    THE SIGNAL GOES TO THE INSTANCE, NOT THE CASE (D1, lane/74 live walk 10-17, case
+    712382d7-00c2-5610-a3cf-0e1c9ef5ea70). A `signal_await` journals `signal_accepts:<name>` on
+    the INSTANCE key `{case}~{n}`, so the runner refused every post to the bare case key with
+    "no signal ... is awaited". A `case_id` with no instance separator is therefore resolved
+    first: the awaiting instance is the LAST entry of the case record's `instances` (`run`
+    appends an instance before it calls it and runs them one at a time). A `case_id` that
+    already carries the separator is forwarded unchanged.
     """
     acted_by = (current_user.authz_id or "").strip()
     if not acted_by:
@@ -9963,10 +9977,24 @@ async def answer_case_signal(
             "error": "no_actor",
             "message": "a case signal needs an authenticated caller with an authz_id",
         })
+    target = case_id
+    if _CASE_INSTANCE_SEP not in case_id:
+        try:
+            case = await _fetch_case(case_id)
+        except Exception as exc:  # noqa: BLE001 — connect errors, timeouts
+            raise HTTPException(status_code=502, detail={
+                "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
+        if case is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        instances = case.get("instances") or []
+        # A case with no instance yet keeps the case key: nothing is awaited, and the runner
+        # says so (a refusal the caller can read) rather than the BFF inventing a target.
+        if instances:
+            target = instances[-1].get("instance_id") or case_id
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             rr = await client.post(
-                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/signal",
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(target)}/signal",
                 json={"signal": signal, "status": req.status, "comments": req.comments,
                       "acted_by": acted_by},
             )
@@ -9975,7 +10003,8 @@ async def answer_case_signal(
             "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
     sc = rr.status_code
     if sc == 200:
-        return {"case_id": case_id, "signal": signal, "status": req.status, "acted_by": acted_by}
+        return {"case_id": case_id, "instance_id": target, "signal": signal,
+                "status": req.status, "acted_by": acted_by}
     msg = _restate_refusal_message(rr)
     if sc == 400:
         raise HTTPException(status_code=400, detail={"error": "signal_refused", "message": msg})

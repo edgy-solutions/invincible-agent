@@ -31,10 +31,24 @@ class _FakeResp:
     def json(self):
         return self._body
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError("status", request=None, response=self)
+
+
+_NO_CASE = object()
+
 
 class _FakeRunner:
-    def __init__(self, status=200, body=None, boom=False):
+    """Answers the shared `case` handler with `case` (default: C1 with one instance, `C1~1`;
+    `_NO_CASE` answers the empty 200 Restate gives for a case that does not exist) and every
+    other POST (the signal) with `status` / `body`."""
+
+    def __init__(self, status=200, body=None, boom=False, case="default"):
         self.status, self.body, self.boom = status, body, boom
+        if case == "default":
+            case = {"instances": [{"n": 1, "instance_id": "C1~1", "definition_id": "maint_release"}]}
+        self.case = case
         self.posts = []
 
     def __call__(self, *a, **k):
@@ -50,7 +64,17 @@ class _FakeRunner:
         self.posts.append({"url": url, "json": json})
         if self.boom:
             raise httpx.ConnectError("runner unreachable")
+        if url.endswith("/case"):
+            if self.case is _NO_CASE:
+                resp = _FakeResp(200)
+                resp.content = b""
+                return resp
+            return _FakeResp(200, self.case)
         return _FakeResp(self.status, self.body)
+
+    @property
+    def signal_posts(self):
+        return [p for p in self.posts if p["url"].endswith("/signal")]
 
 
 @pytest.fixture
@@ -72,11 +96,11 @@ def test_happy_path_posts_the_token_actor_to_the_runner(client_for):
     runner = _FakeRunner(200, {})
     resp = client_for("tier@x", runner).post(_URL, json={"status": "released"})
     assert resp.status_code == 200
-    assert resp.json() == {"case_id": "C1", "signal": "tier_ack", "status": "released",
-                           "acted_by": "tier@x"}
-    assert len(runner.posts) == 1
-    assert runner.posts[0]["url"].endswith("/WorkflowRunner/C1/signal")
-    assert runner.posts[0]["json"] == {"signal": "tier_ack", "status": "released",
+    assert resp.json() == {"case_id": "C1", "instance_id": "C1~1", "signal": "tier_ack",
+                           "status": "released", "acted_by": "tier@x"}
+    assert len(runner.signal_posts) == 1
+    assert runner.signal_posts[0]["url"].endswith("/WorkflowRunner/C1~1/signal")
+    assert runner.signal_posts[0]["json"] == {"signal": "tier_ack", "status": "released",
                                        "comments": "", "acted_by": "tier@x"}
 
 
@@ -104,10 +128,25 @@ def test_runner_400_is_400_with_its_message(client_for):
 
 
 def test_unknown_case_is_404(client_for):
-    runner = _FakeRunner(404, {"message": "no case"})
+    runner = _FakeRunner(404, {"message": "no case"}, case=_NO_CASE)
     resp = client_for("tier@x", runner).post("/cases/nope/signals/tier_ack",
                                              json={"status": "released"})
     assert resp.status_code == 404
+    assert runner.signal_posts == []
+
+
+def test_runner_404_on_the_signal_is_404(client_for):
+    runner = _FakeRunner(404, {"message": "no case"})
+    resp = client_for("tier@x", runner).post(_URL, json={"status": "released"})
+    assert resp.status_code == 404
+
+
+def test_a_case_with_no_instance_is_forwarded_to_the_case_key(client_for):
+    runner = _FakeRunner(403, {"message": "no signal 'tier_ack' is awaited on 'C1'"},
+                         case={"instances": []})
+    resp = client_for("tier@x", runner).post(_URL, json={"status": "released"})
+    assert resp.status_code == 403
+    assert runner.signal_posts[0]["url"].endswith("/WorkflowRunner/C1/signal")
 
 
 def test_runner_unreachable_is_502(client_for):
@@ -128,3 +167,54 @@ def test_no_authz_id_is_401_and_nothing_is_sent(client_for, authz_id):
     resp = client_for(authz_id, runner).post(_URL, json={"status": "released"})
     assert resp.status_code == 401
     assert runner.posts == []
+
+
+# --- D1: the signal reaches the awaiting INSTANCE (lane/74 live walk 10-17) -----------------
+_CASE = "712382d7-00c2-5610-a3cf-0e1c9ef5ea70"
+_DEFS = ["maint_fault_propose", "maint_supervisor_review", "maint_release"]
+
+
+class _KeyedRunner(_FakeRunner):
+    """The real runner's shape: `signal_accepts:tier_ack` is journalled on `<case>~3` ONLY, so a
+    signal answers 200 for that key and the runner's own TerminalError for any other."""
+
+    def __init__(self):
+        super().__init__(case={"instances": [
+            {"n": n, "instance_id": f"{_CASE}~{n}", "definition_id": d}
+            for n, d in enumerate(_DEFS, start=1)]})
+        self.accepts = {f"{_CASE}~3": {"tier_ack": ["released"]}}
+
+    async def post(self, url, json=None, **kw):
+        if url.endswith("/case"):
+            return await super().post(url, json=json, **kw)
+        self.posts.append({"url": url, "json": json})
+        from urllib.parse import unquote
+        key = unquote(url.split("/WorkflowRunner/")[1].rsplit("/signal", 1)[0])
+        if json["status"] in self.accepts.get(key, {}).get(json["signal"], []):
+            return _FakeResp(200)
+        return _FakeResp(403, {"code": 403,
+                               "message": f"no signal '{json['signal']}' is awaited on '{key}'"})
+
+
+def test_a_case_id_reaches_the_instance_that_awaits_the_signal(client_for):
+    runner = _KeyedRunner()
+    resp = client_for("tier@x", runner).post(f"/cases/{_CASE}/signals/tier_ack",
+                                             json={"status": "released"})
+    assert resp.status_code == 200, resp.text
+    assert runner.signal_posts[0]["url"].endswith(f"/WorkflowRunner/{_CASE}~3/signal")
+    assert resp.json()["instance_id"] == f"{_CASE}~3"
+    assert resp.json()["case_id"] == _CASE
+
+
+def test_control_an_instance_id_is_forwarded_unchanged(client_for):
+    runner = _KeyedRunner()
+    resp = client_for("tier@x", runner).post(f"/cases/{_CASE}~3/signals/tier_ack",
+                                             json={"status": "released"})
+    assert resp.status_code == 200, resp.text
+    assert runner.signal_posts[0]["url"].endswith(f"/WorkflowRunner/{_CASE}~3/signal")
+    assert not any(p["url"].endswith("/case") for p in runner.posts)
+
+
+def test_the_gateways_separator_is_the_runners():
+    from agent_fleet.restate_analyst.case_routing import CHILD_SEP
+    assert gateway._CASE_INSTANCE_SEP == CHILD_SEP
