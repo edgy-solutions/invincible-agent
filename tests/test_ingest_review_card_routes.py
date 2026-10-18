@@ -134,10 +134,10 @@ def _cleanup():
 
 def _gate(monkeypatch, *, row=None, task=None, holders=()):
     """row: what ingest_status.get_row answers; task: get_task_open_state's answer;
-    holders: authz ids check_can_act says yes to."""
+    holders: authz ids can_act_or_unavailable says yes to."""
     monkeypatch.setattr(ist, "get_row", lambda i: row)
     monkeypatch.setattr(ht, "get_task_open_state", lambda t: task)
-    monkeypatch.setattr(ht, "check_can_act", lambda aud, who: who in holders)
+    monkeypatch.setattr(ht, "can_act_or_unavailable", lambda aud, who: who in holders)
 
 
 OPEN = {"audience": "document_promotion:SUSTAINMENT", "open": True}
