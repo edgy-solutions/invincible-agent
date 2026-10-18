@@ -2741,6 +2741,18 @@ async def _resolve_instance(
                 {(c.provider, c.class_uri, c.label) for c in _above},
                 key=lambda t: (t[0], t[1]),
             ),
+            # AND THE CANDIDATES THEMSELVES, in the shape `decide()` emits on its asks. MEASURED
+            # on 195 (safety sheet Q6): "what failed on this part PN-8801" drew CSI-5001 from saf
+            # and notice fuzzies from engine-o, this branch refused, and `/fill_slots` -- which
+            # builds its candidates from this field or `instance_id` -- had none, so the slot's
+            # referent (pcn#Component, which CSI-5001's chain holds) never got to choose. Still a
+            # refusal of the INSTANCE; only a slot's declared class can make it a bind, and a tie
+            # inside that class still asks. Unbounded: the referent's candidate may rank last.
+            "instance_top_candidates": [
+                {"instance_id": c.instance_id, "class_uri": c.class_uri, "label": c.label,
+                 "score": c.score, **({"matched_on": c.matched_on} if c.matched_on else {})}
+                for c in sorted(_above, key=lambda c: (-float(c.score), c.instance_id))
+            ],
             "instance_provider_outcomes": [
                 {"provider": o.provider, "status": o.status,
                  "n_candidates": len(o.candidates), "elapsed_s": round(o.elapsed_s, 3)}

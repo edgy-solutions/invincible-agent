@@ -75,10 +75,12 @@ except Exception as _exc:  # noqa: BLE001
 
 
 class _Cand:
-    """Shaped like `InstanceCandidate` — the four fields the scoping rule reads."""
-    def __init__(self, instance_id, class_uri, label, score, provider):
+    """Shaped like `InstanceCandidate` — the four fields the scoping rule reads, and `matched_on`
+    (empty, as a provider that never sets it), which `decide()` and the ask read since 7e5b2ba2."""
+    def __init__(self, instance_id, class_uri, label, score, provider, matched_on=""):
         self.instance_id, self.class_uri = instance_id, class_uri
         self.label, self.score, self.provider = label, score, provider
+        self.matched_on = matched_on
 
 
 class _Outcome:
