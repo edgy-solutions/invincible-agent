@@ -507,7 +507,7 @@ def test_ROUTE_with_TODAYS_stores_and_NO_LEDGER_is_503_naming_ONLY_the_ledger_an
 
     c, calls, mp = route
     mp.setattr(promotion_stores, "_PG_DSN", "")
-    r = _post(c, decision, comment="why")
+    r = _post(c, decision, comment="unreadable: why")
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "promotion_store_unconfigured"
     message = r.json()["detail"]["message"]
@@ -547,7 +547,7 @@ def test_ROUTE_promotes_then_resolves_the_projection(route):
 def test_ROUTE_a_record_write_failure_leaves_the_task_PENDING(route):
     c, calls, _, stores = _wired(route)
     stores.ledger.result = {"ok": False, "reason": "unreachable"}
-    r = _post(c, "rejected", comment="superseded")
+    r = _post(c, "rejected", comment="duplicate: superseded")
     assert r.status_code == 503, r.text
     assert _kinds(calls["log"]) == ["record"] and calls["resolved"] == []
 
@@ -555,7 +555,7 @@ def test_ROUTE_a_record_write_failure_leaves_the_task_PENDING(route):
 def test_ROUTE_an_effect_failure_leaves_the_task_PENDING(route):
     c, calls, _, stores = _wired(route)
     stores.objects.fail = True
-    r = _post(c, "rejected", comment="superseded")
+    r = _post(c, "rejected", comment="duplicate: superseded")
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "promotion_effect_incomplete"
     assert calls["resolved"] == []
@@ -591,9 +591,9 @@ def test_ROUTE_rejection_updates_the_ingest_status_projection_with_the_comment(r
     updates: list = []
     mp.setattr(ingest_status, "update_status",
               lambda ingest_id, stage, *, detail=None: updates.append((ingest_id, stage, detail)))
-    r = _post(c, "rejected", comment="superseded revision")
+    r = _post(c, "rejected", comment="duplicate: superseded revision")
     assert r.status_code == 200, r.text
-    assert updates == [(INGEST_ID, "rejected", "superseded revision")]
+    assert updates == [(INGEST_ID, "rejected", "duplicate: superseded revision")]
 
 
 @pytest.mark.parametrize("comment", ["", "   "])

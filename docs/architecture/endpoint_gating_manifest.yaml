@@ -2313,7 +2313,7 @@ services:
         exposes: action
         consumers: [cortex-ui]
         class: gated
-        justification: "high-privilege: approve/reject -> resumes a Restate workflow / writes a grant; deny-by-default Topaz can_act"
+        justification: "high-privilege: approve/reject -> resumes a Restate workflow / writes a grant; deny-by-default Topaz can_act. Refuses 422 reject_code_unknown (a document_promotion reject names one of not_a_notice, unreadable, parts_unusable, duplicate; architect ruling 2026-10-17) and 422 row_edits_not_for_kind (row_edits is read only on grouped_review), both before any write"
       - method: POST
         path: /orchestrate
         identity: "get_current_user -> user_email + entitled_domains + persona"

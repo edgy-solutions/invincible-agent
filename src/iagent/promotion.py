@@ -76,6 +76,13 @@ KIND = "document_promotion"
 PROMOTED, REJECTED = "promoted", "rejected"
 VERBS = (PROMOTED, REJECTED)
 
+#: The codes a `rejected` comment may name (architect ruling 2026-10-17, "Reject codes, final").
+#: A wrong value, a wrong part or missing rows is a CORRECTION -- the steward fixes the row in
+#: place on the grouped review (row_edits) and the correction files extraction_defect -- so a
+#: reject carrying one would send nothing back to the extractor and lose it. The wire carries the
+#: code AS the comment (`<code>` or `<code>: <note>`); nothing new is stored.
+PROMOTION_REJECT_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
+
 INGEST_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 #: What the task's payload must carry — written by the door that registers the task, read here.

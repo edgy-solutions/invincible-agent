@@ -3812,6 +3812,14 @@ async def act_on_human_task(
             raise HTTPException(status_code=409, detail={
                 "error": "delegated_act_unsupported", "kind": match.get("kind")})
 
+    # row_edits is read ONLY by the grouped_review branch below. Sent on any other kind it would be
+    # accepted and silently dropped, losing the correction (architect ruling 2026-10-17). Asked
+    # before verb validation so the refusal names the real cause, and before any write.
+    if req.row_edits is not None and match.get("kind") != "grouped_review":
+        raise HTTPException(status_code=422, detail={
+            "error": "row_edits_not_for_kind", "kind": match.get("kind"),
+            "message": "row edits are read only on a grouped review; sent here they would be lost"})
+
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
     try:
@@ -3857,6 +3865,21 @@ async def act_on_human_task(
         from . import ingest_status, promotion
         from .decision_record_writer import DECISION_RECORD_ERA
 
+        # A reject names one of the ruled codes (architect ruling 2026-10-17): `<code>` or
+        # `<code>: <note>`, case-sensitive. Asked after the blank-reason refusal (the declaration,
+        # above) and before `promotion.act`, so a refused code writes and resolves nothing.
+        _reject_code = None
+        if req.decision == promotion.REJECTED:
+            _c = req.comment.strip()
+            _reject_code = _c.split(":", 1)[0].strip() if ":" in _c else _c
+            if _reject_code not in promotion.PROMOTION_REJECT_CODES:
+                raise HTTPException(status_code=422, detail={
+                    "error": "reject_code_unknown", "codes": list(promotion.PROMOTION_REJECT_CODES),
+                    "task_id": task_id,
+                    "message": "a reject names one of the listed codes; a wrong value, a wrong "
+                               "part or missing rows is a correction (approve with row_edits on "
+                               "the grouped review), not a reject"})
+
         try:
             from .trust_table import load_trust_table
             _tbl = load_trust_table().ref
@@ -3880,9 +3903,9 @@ async def act_on_human_task(
             lambda: human_tasks.mark_task_resolved(
                 task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment))
-        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
+        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s code=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
-                    actor)
+                    actor, _reject_code)
 
         # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
         # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
@@ -3907,7 +3930,10 @@ async def act_on_human_task(
             logger.warning("ingest_status.update_status failed for ingest_id=%s (decision=%s): %s",
                            done["ingest_id"], req.decision, exc)
 
-        return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
+        _body = {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
+        if _reject_code is not None:
+            _body["reject_code"] = _reject_code
+        return _body
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
     # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
