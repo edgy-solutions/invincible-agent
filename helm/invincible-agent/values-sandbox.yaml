@@ -900,7 +900,14 @@ cortexUi:
     # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
     # answer 404; the 68f56bb control still resolves to 5d5b5dbb. Since 68f56bb the Dockerfile,
     # docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is unchanged.
-    digest: "sha256:5c41175694ee0ed52f5817f79ef7394a16685c5ff27d61fa29ef5507bf7fd6a6"
+    # 2026-10-18, pinned for 196 (architect, "196 pins b3bdab7"): cortex-ui b3bdab7 (master; the
+    # /case/{id} and /ask?q= deep links OpenDDIL builds against) -> 94599a96. 9b23135 is an
+    # ancestor. Measured before pinning: the FULL tag resolves to this digest (an OCI index); the
+    # abbreviated tag and this digest with its last hex altered both answer 404; the 9b23135
+    # control still resolves to 5c411756. Since 9b23135 only the BUILD stage moved (node 20 -> 22
+    # in the Dockerfile and both workflows); docker-entrypoint.sh and the nginx config are
+    # unchanged, so VITE_FEATURES is unchanged.
+    digest: "sha256:94599a96a5ee7f563473d51ba757393acc8e92e6794dd22f810d17d7875bccd3"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

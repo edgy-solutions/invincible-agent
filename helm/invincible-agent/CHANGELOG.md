@@ -1,5 +1,11 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.56 — 2026-10-18
+
+cortex-ui pinned to b3bdab7 (`sha256:94599a96…`), from 9b23135 (`5c411756…`). Carries the
+`/case/{id}` and `/ask?q=` deep links. Only the build stage moved (node 22); the runtime
+entrypoint and nginx config are unchanged. Frontend image only; no template changed.
+
 ## 0.4.55 — 2026-10-17
 
 cortex-ui pinned to 9b23135 (`sha256:5c411756…`), from 68f56bb (`5d5b5dbb…`). Adds the
