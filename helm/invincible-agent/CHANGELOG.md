@@ -1,5 +1,11 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.55 — 2026-10-17
+
+cortex-ui pinned to 9b23135 (`sha256:5c411756…`), from 68f56bb (`5d5b5dbb…`). Adds the
+MODEL_EXPLANATION card behind the `modelCanvas` feature flag. The image's entrypoint reads
+`VITE_FEATURES` at runtime (default empty) and the chart sets none, so the card stays off. Frontend image only; no template changed.
+
 ## 0.4.54 — 2026-10-17
 
 cortex-ui pinned to 68f56bb (`sha256:5d5b5dbb…`), from 8fe23fc (`cc2ad9cc…`). Carries the review

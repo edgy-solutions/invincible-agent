@@ -894,7 +894,13 @@ cortexUi:
     # digest with its last hex altered both answer 404; the 8fe23fc control still resolves to
     # cc2ad9cc. Since 8fe23fc the Dockerfile, docker-entrypoint.sh, nginx config and .github are
     # unchanged, so VITE_FEATURES is unchanged.
-    digest: "sha256:5d5b5dbbb1dc67e1f885170c5f316b6a2e6e139b9e92b75efa3015986187be06"
+    # 2026-10-17, pinned for 195 (architect, "cortex 9b23135"): cortex-ui 9b23135 (master; 68f56bb
+    # plus the MODEL_EXPLANATION card, which draws only when VITE_FEATURES lists modelCanvas) ->
+    # 5c411756. 68f56bb is its parent. Measured before pinning: the FULL tag resolves to this
+    # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
+    # answer 404; the 68f56bb control still resolves to 5d5b5dbb. Since 68f56bb the Dockerfile,
+    # docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is unchanged.
+    digest: "sha256:5c41175694ee0ed52f5817f79ef7394a16685c5ff27d61fa29ef5507bf7fd6a6"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
