@@ -58,3 +58,18 @@ Failed runs: Q7 x3 and FRACAS x3 (6 of 36), all `STEP_FAILURE` in `assert_every_
    the sheet change, or is the card a defect? (Whether a `human_tasks` row exists is unmeasured by me.)
 5. Do you want a `human_tasks` read for bob on the next walk? I cannot read it from here without a live read
    path you name.
+
+## Addendum, 2026-10-18: architect rulings on this walk
+
+- **Q2 (ruled): the sheet stands; this is cortex's registration gap, not a design change.** Expectation kept:
+  `CONTRIBUTION_RANKING`, 3 rows. Observed on 194: archetype `KNOWLEDGE_DOCUMENT`, `presentation_source=refused`,
+  reason: the caller has no render menu ("a live view recomputes against moving state and is a standing contract;
+  it requires a caller that has registered its own render menu. The one-shot rendering of the same data remains
+  available."). Read from the SSE `final_payload`: `components[0].archetype` and
+  `presentation_provenance.presentation_source`, 3 of 3. Run ids:
+  68fe088c-c519-47e4-bee6-2546877b7d2a, 2c04fd99-b75c-4ba6-bb7a-58a08b0b2478, fc5379e7-d582-44a8-902f-ad1f626c5152.
+  Cortex owns registering the menu; Lane 1 confirms the one-shot path. Question 3 above is answered by this.
+- **Q4 (draft card and task)** is answered by #75 (the sheet now says a draft is a card AND a task); #75 merges in 195.
+- **Q3 and Q4 routing** are walked again on 195 and recorded as seen; Lane 1's classifier report is a separate thread.
+- **Tasks** are read on every walk from 195 on, with `GET /me/human_tasks` as bob: ids and status only, and each
+  draft card's `review_request.task_id` is matched to a returned task.
