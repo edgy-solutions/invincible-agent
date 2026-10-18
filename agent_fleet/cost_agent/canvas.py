@@ -98,6 +98,10 @@ def _lot_number(subject: Any) -> Optional[int]:
 NO_VERB = "no_verb"
 NOT_AN_EXPORTABLE_COST_VERB = "not_an_exportable_cost_verb"
 LOT_NOT_NAMED = "lot_not_named"
+#: RULED 2026-10-17: the export's entitlement refusal says it was refused for entitlement and
+#: nothing more -- no recipient, no answer id, no lot. The `Unentitled` exception keeps all of
+#: that for the engine's log; the route (`/measure/package_export`) returns only this prose.
+ENTITLEMENT_REFUSAL = "the document was refused for entitlement"
 REFUSAL_REASONS = {
     NO_VERB: "the question resolved no verb, so there is no cost answer to export",
     NOT_AN_EXPORTABLE_COST_VERB:

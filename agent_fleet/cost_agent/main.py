@@ -36,6 +36,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import canvas
     import instances
     import measures
     import slots as slot_decls
@@ -47,6 +48,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import seed
     from utils.subject_coverage import assert_subject_coverage as _assert_coverage
 except ImportError:
+    from agent_fleet.cost_agent import canvas
     from agent_fleet.cost_agent import instances
     from agent_fleet.cost_agent import measures
     from agent_fleet.cost_agent import slots as slot_decls
@@ -635,6 +637,13 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
                if isinstance(getattr(e, "refused", None), list) and e.refused else {}),
         )
     except Unentitled as e:
+        if fn_name == "package_export":
+            # RULED 2026-10-17: the export's refusal prose is constant -- refused for
+            # entitlement, nothing more. The exception names the recipient, answer ids and
+            # lots; that detail goes to the log, never to the response.
+            log.warning("package_export refused for entitlement: %s", e)
+            return _refusal("unentitled", canvas.ENTITLEMENT_REFUSAL)
+        # Every other verb keeps its own message unchanged (not ruled).
         return _refusal("unentitled", str(e))
     except SourceUnavailable as e:
         return _refusal("unavailable", str(e))
