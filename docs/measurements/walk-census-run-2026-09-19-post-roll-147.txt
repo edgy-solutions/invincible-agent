@@ -64,7 +64,7 @@ WALK CENSUS  repo=478e3a4  fleet=MIXED(c000514,d3ca169)  rows=20
 ANALYSIS — diffed against docs/measurements/walk-census-run-2026-09-19-lexical-baseline.txt
 
 ENDPOINT IDENTITY ASSERTED BEFORE THE RUN, NOT ASSUMED:
-  keycloak localhost:18183 -> issuer https://keycloak.edgy-solutions.com/realms/invincible-agent
+  keycloak localhost:18183 -> issuer https://<issuer-host>/realms/invincible-agent
   bff      localhost:18090 -> FastAPI 404 on root, AND /version reports
                               git_sha c0005142a610… = THE ROLL SHA (stronger than the 404:
                               it names the image, not just the framework)

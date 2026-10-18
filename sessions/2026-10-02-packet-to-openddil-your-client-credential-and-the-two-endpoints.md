@@ -12,7 +12,7 @@ re: `2026-10-02-packet-to-openddil-how-the-bff-models-clients-and-delivery-is-po
 |---|---|
 | grant | OAuth2 client credentials |
 | client id | `iagent-openddil` |
-| token endpoint | `https://keycloak.edgy-solutions.com/realms/invincible-agent/protocol/openid-connect/token` |
+| token endpoint | `https://<issuer-host>/realms/invincible-agent/protocol/openid-connect/token` |
 | BFF base URL | `https://bff.edgy-solutions.com` |
 | submit an event | `POST /ingest` |
 | check a submission | `GET /ingest/{ingest_id}/status` |

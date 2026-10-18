@@ -468,7 +468,7 @@ keycloak:
   # 0.4.25 block carried (operator.atlantia, operator.borduria, liaison). The issuer and client are
   # OpenDDIL's (packet 2026-10-10): confidential client iagent-broker, auth-code only, scopes
   # openid/profile/email. Their redirect URI is
-  # https://keycloak.edgy-solutions.com/realms/invincible-agent/broker/openddil/endpoint (realm
+  # https://<issuer-host>/realms/invincible-agent/broker/openddil/endpoint (realm
   # `invincible-agent`); they also registered an `iagent` one, which we will ask them to drop.
   # THE FLIP (0.4.50, 2026-10-16): OpenDDIL's issuer chains to their lab CA ("OpenDDIL Lab
   # Internal CA", CA:TRUE, pathlen:0); Keycloak trusts that CA's PEM (public, not a secret) from a
