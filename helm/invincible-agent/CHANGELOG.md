@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.57 — 2026-10-18
+
+cortex-ui pinned to 1f5482f (`sha256:1f3ae4ed…`), from b3bdab7 (`94599a96…`). Promote is
+held when there are no rows or no drawn source page; Reject offers the four ruled codes; a
+`?idp=openddil` deep link starts the brokered login. Build stage, entrypoint and nginx
+config unchanged. Frontend image only; no template changed.
+
 ## 0.4.56 — 2026-10-18
 
 cortex-ui pinned to b3bdab7 (`sha256:94599a96…`), from 9b23135 (`5c411756…`). Carries the
