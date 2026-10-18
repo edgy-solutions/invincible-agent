@@ -84,6 +84,9 @@ def world(monkeypatch):
                 "pipeline_version": "doc-tools@61f74dc", "ingest_id": _ID,
                 "provenance": {"standing": "supervised", "ingest_id": _ID}}
     monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
+    # the zero-row gate reads review.json at REVIEW entry (architect ruling 2026-10-17); one part row
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {
+        "review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})
     monkeypatch.setattr(ht, "task_exists",
                         lambda task_id: any(k["task_id"] == task_id for k in w.registered))
 

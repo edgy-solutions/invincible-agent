@@ -58,6 +58,10 @@ def _world(monkeypatch, kind, dropper=ALICE):
     reg = type("Reg", (), {"domain": "SUSTAINMENT"})()
     monkeypatch.setattr(ck, "by_kind", lambda k: reg)
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", w.file_task)
+    # the zero-row gate reads the extraction at REVIEW entry (architect ruling 2026-10-17); one part row
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: {})
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {
+        "review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})
 
     async def _no_file(*a, **kw):
         raise AssertionError("_file_promotion_if_ready must not run on the skipped-kind branch")

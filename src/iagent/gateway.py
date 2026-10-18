@@ -11311,6 +11311,34 @@ def _review_items(review: dict) -> list:
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
 
 
+def _extraction_row_count(review: dict) -> int:
+    """How many part ROWS an extraction holds: the distinct `i` of the `parts[i].*` items of
+    review.json -- the same items `GET /ingest/{id}/extraction` serves as `rows` (one per field),
+    counted per part. Header items are not rows."""
+    return len({int(m.group(1)) for it in _review_items(review)
+                if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
+
+
+async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Optional[int]:
+    """The SERVER's row count for the extraction `extraction_ref` names, or None when it cannot be
+    read (no ref, not under the document's directory, store down, bad JSON). None is not zero:
+    a read failure keeps today's behaviour rather than becoming `extraction_empty`."""
+    from starlette.concurrency import run_in_threadpool
+
+    ref = str(extraction_ref or "").strip()
+    if not ref or not prefix or not ref.startswith(prefix):
+        return None
+    try:
+        manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+        key = _review_json_key(manifest, ref)
+        if not key or not key.startswith(prefix):
+            return None
+        review = await run_in_threadpool(lambda: _read_review_json(key))
+    except Exception:  # noqa: BLE001 -- HTTPException or anything else: unreadable, not empty
+        return None
+    return _extraction_row_count(review)
+
+
 def _review_notice_summary(review: dict) -> dict:
     """`{mfr, mfr_parent, notice_date, part_count}` from a parsed review.json. `mfr` is the
     `header.mfr` item's value, else `notice_identity.mfr`; dates are strings as given."""
@@ -11795,6 +11823,33 @@ async def update_ingest_stage(
                 **_adopt, **_run))
             return {"ingest_id": ingest_id, "stage": _to, "task_id": None,
                     "task_status": "NO_TASK_KIND_SKIPS_PROMOTION"}
+        # A ZERO-ROW EXTRACTION NEVER FILES document_promotion (architect ruling 2026-10-17): a card
+        # with nothing to vet cannot be decided. Asked HERE, once, for every kind that files a
+        # promotion -- now (find-or-file) or later (`awaiting_origin` -> `_file_promotion_if_ready`)
+        # -- and before either moves or files anything. The count is the SERVER's, from review.json;
+        # a nonzero `extracted_count` claim does not outvote a zero count. The row goes
+        # failed:extraction_empty, which `ingest_status.retry_failed` re-opens (any failed
+        # non-event row). An unreadable review.json is NOT empty: today's refusal stands.
+        _rows = await _server_extraction_row_count(req.extraction_ref, _prefix)
+        if _rows == 0 or req.extracted_count == 0:
+            _why = "the extraction found no part rows"
+            try:
+                await run_in_threadpool(lambda: ingest_status.update_status(
+                    ingest_id, ingest_status.FAILED, detail=_why,
+                    failure={
+                        "reason_code": "extraction_empty", "reason": _why, "step": "review",
+                        "run_id": req.run_id or row.get("run_id"),
+                        "pin_digest": req.pin_digest,
+                        "failed_at": int(time.time() * 1000)},
+                    **_adopt, **_run))
+            except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                logger.warning("ingest %s: the empty extraction could not be written as failed "
+                               "(%s: %s)", ingest_id, type(werr).__name__, werr)
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_empty", "stage": ingest_status.FAILED,
+                "reason_code": "extraction_empty", "retryable": True,
+                "message": f"{_why}; the row is failed and may be retried"})
+
         # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
         # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
         # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a

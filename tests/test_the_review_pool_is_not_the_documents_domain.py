@@ -54,6 +54,7 @@ def registered(monkeypatch):
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: rec.append(kw) or {"task_id": kw["task_id"], "recipients": []})
     monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: dict(MANIFEST))
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {"review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})  # zero-row gate, ruling 2026-10-17
     return rec
 
 

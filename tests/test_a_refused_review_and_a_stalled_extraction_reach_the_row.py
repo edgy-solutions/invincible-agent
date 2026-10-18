@@ -161,6 +161,7 @@ def _rig(monkeypatch, *, manifest_kind="pcn", registered=("pcn",), manifest_rais
             m["metadata"] = {"content_kind": manifest_kind}
         return m
     monkeypatch.setattr(gateway, "_read_extraction_manifest", _read)
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {"review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})  # zero-row gate, ruling 2026-10-17
     monkeypatch.setattr(ht, "task_exists", lambda task_id: False)
     tasks: list = []
     monkeypatch.setattr(ht, "register_task",

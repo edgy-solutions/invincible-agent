@@ -1378,6 +1378,7 @@ def _extraction_for(row, monkeypatch, *, name="doc.pdf"):
                 "pipeline_version": "doc-tools@61f74dc", "ingest_id": row["id"],
                 "provenance": {"standing": "supervised", "ingest_id": row["id"]}}
     monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {"review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})  # zero-row gate, ruling 2026-10-17
     return ref
 
 

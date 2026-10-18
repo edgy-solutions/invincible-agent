@@ -153,6 +153,9 @@ def wired(monkeypatch):
                                                                       "recipients": ["x"]})
     monkeypatch.setattr(gateway, "_read_extraction_manifest",
                         lambda key: rec["reads"].append(key) or copy.deepcopy(MANIFEST))
+    # the zero-row gate reads review.json at REVIEW entry (architect ruling 2026-10-17); one part row
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {
+        "review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})
     return rec
 
 
@@ -183,7 +186,8 @@ def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_clien
     r = doc_tools_client.post(f"/ingest/{ID}/stage",
                               json={"stage": "review", "extraction_ref": REF})
     assert r.status_code == 200, r.text
-    assert wired["reads"] == [REF]
+    # two reads of the one manifest: the zero-row gate at review entry, then find-or-file
+    assert wired["reads"] == [REF, REF]
     (reg,) = wired["registered"]
     p = reg["payload"]
     for f in promotion.PAYLOAD_FIELDS:
