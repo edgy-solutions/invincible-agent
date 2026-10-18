@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 
+import psycopg2
 import pytest
 
 httpx = pytest.importorskip("httpx")
@@ -369,17 +370,18 @@ def test_the_gating_manifest_declares_both_routes():
 
 # ── the gate decides on WHICH task and WHICH audience, not merely on who the caller is ─────────
 # The `_gate` stubs ignore their arguments, so they cannot tell a holder of THIS ingest's task from
-# a holder of another's. These stubs are keyed: the task by its id, `check_can_act` by (aud, who).
+# a holder of another's. These stubs are keyed: the task by its id, `can_act_or_unavailable` by (aud, who)
+# (#73: the gate no longer calls `check_can_act`, so a stub of it would stub nothing).
 
 TASK_ID = f"{promotion.KIND}:{ID}"
 OTHER_TASK_ID = f"{promotion.KIND}:sha256:{'d' * 64}"
 
 
 def _keyed_gate(monkeypatch, *, tasks, grants, row=None):
-    """tasks: {task_id: open-state}; grants: {(audience, authz_id)} check_can_act says yes to."""
+    """tasks: {task_id: open-state}; grants: {(audience, authz_id)} can_act_or_unavailable says yes to."""
     monkeypatch.setattr(ist, "get_row", lambda i: row or _row())
     monkeypatch.setattr(ht, "get_task_open_state", lambda t: tasks.get(t))
-    monkeypatch.setattr(ht, "check_can_act", lambda aud, who: (aud, who) in grants)
+    monkeypatch.setattr(ht, "can_act_or_unavailable", lambda aud, who: (aud, who) in grants)
 
 
 def _denied_untouched(s3, path, who, monkeypatch):
@@ -416,22 +418,42 @@ def test_a_holder_of_a_DIFFERENT_audience_than_the_tasks_is_refused(monkeypatch,
 def test_an_open_task_with_an_empty_audience_admits_nobody(monkeypatch, s3):
     for path in ("extraction", "source"):
         _keyed_gate(monkeypatch, tasks={TASK_ID: {"open": True, "audience": ""}}, grants=set())
-        monkeypatch.setattr(ht, "check_can_act", lambda aud, who: True)  # only the guard can refuse
+        monkeypatch.setattr(ht, "can_act_or_unavailable", lambda aud, who: True)  # only the guard can refuse
         _denied_untouched(s3, path, HOLDER, monkeypatch)
 
 
-@pytest.mark.parametrize("failing", ["get_task_open_state", "check_can_act"])
-def test_a_failing_task_check_is_refused_with_one_deny_audit_line(monkeypatch, s3, caplog, failing):
+# S3 splits by class under the architect's Q12 (#73): a dependency that is down is 503, never
+# not_entitled; only a failure of no known class still fails closed as 403. Each raise leaves the
+# store untouched and writes exactly one deny audit line.
+_FAILURES = [
+    ("get_task_open_state", lambda: psycopg2.OperationalError("task store down"),
+     503, "authorization_unavailable"),
+    ("can_act_or_unavailable", lambda: ht.AuthorizationUnavailable("topaz down"),
+     503, "authorization_unavailable"),
+    ("get_task_open_state", lambda: ht.HumanTaskConfigError("no task store configured"),
+     503, "hitl_unconfigured"),
+    ("get_task_open_state", lambda: RuntimeError("unknown"), 403, "not_entitled"),
+    ("can_act_or_unavailable", lambda: RuntimeError("unknown"), 403, "not_entitled"),
+]
+
+
+@pytest.mark.parametrize("failing,exc,code,error", _FAILURES,
+                         ids=[f"{f}-{e().__class__.__name__}" for f, e, _, _ in _FAILURES])
+def test_a_failing_task_check_answers_by_class_with_one_deny_audit_line(
+        monkeypatch, s3, caplog, failing, exc, code, error):
     caplog.set_level(logging.INFO, logger="iagent.audit.ingest_access")
     for path in ("extraction", "source"):
         _keyed_gate(monkeypatch, tasks={TASK_ID: OPEN}, grants={(OPEN["audience"], HOLDER)})
 
         def _boom(*a, **kw):
-            raise RuntimeError("topaz down")
+            raise exc()
 
         monkeypatch.setattr(ht, failing, _boom)
         caplog.clear()
-        _denied_untouched(s3, path, HOLDER, monkeypatch)
+        _as(monkeypatch, HOLDER)
+        s3.calls.clear()
+        _refused(_get(f"/ingest/{ID}/{path}"), code, error, path, failing)
+        assert s3.calls == [], f"{path}: the store was read before the gate said no"
         lines = [r for r in caplog.records if r.name == "iagent.audit.ingest_access"]
         assert len(lines) == 1, (path, [r.getMessage() for r in lines])
         assert "decision=deny" in lines[0].getMessage() and lines[0].levelno == logging.WARNING
