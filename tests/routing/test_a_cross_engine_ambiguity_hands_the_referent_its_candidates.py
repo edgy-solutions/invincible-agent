@@ -149,6 +149,6 @@ def test_Q5_the_referent_candidate_need_not_rank_first(eo, monkeypatch):
     _wire_notices(eo, monkeypatch)
     r = _fill(eo, monkeypatch, "PN-8801", referent=PCN + "ProductDiscontinuationNotice")
     res = r.resolution["part_number"]
-    ranked = [c["instance_id"] for c in res["candidates"]]
-    assert ranked.index(DOC + "PDN-23_0120") >= 2, ranked
     assert res["instance_id"] == DOC + "PDN-23_0120" and res["referent_disambiguated"] is True, res
+    ranked = [c["instance_id"] for c in res["candidates"]]
+    assert ranked.index(DOC + "PDN-23_0120") >= 2, f"the premise: it does not rank first {ranked}"
