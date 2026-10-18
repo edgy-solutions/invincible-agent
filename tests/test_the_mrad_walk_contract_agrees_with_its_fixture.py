@@ -18,15 +18,17 @@ the graph it is a contract over:
 Not asserted: procedure ORDER. `mrad.ttl` carries none, so 7f's output must (an rdf:List or an
 explicit mil:stepIndex); the order arm goes in once 7f says which.
 
-The options themselves are not in the graph yet (no option node exists), so the walk cannot render
-them: that arm is a STRICT xfail and goes red the day the walk does, which is the day to drop it.
+The options are rendered by the `render` step of the `maint_fault_propose` template, not by the
+walk, so no arm here can see them: this file reads the fixture graph, which can never flip. Whether
+a case renders them is checked live by the e2e step `tests/sandbox_e2e/test_mrad_case_walks_to_
+closed.py`, and lane/74's walk of 2026-10-17 (`MRAD-ARR-0417 walked live to closed`, case
+712382d7) is the record of the flip.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import pytest
 import rdflib
 
 from tests.test_the_maintenance_fault_runs_as_a_case import _MRAD_TTL, _shaped_walk, main
@@ -101,8 +103,3 @@ def test_a_cited_value_names_a_module_and_a_part_value_is_the_ipd_citations():
                 assert cv == {"value": pi["interval"], "evidence_ref": pi["dmc"]}, o["n"]
     assert "interval" in c["options"][3]["cited"]
 
-
-@pytest.mark.xfail(strict=True, reason="no option node in the graph yet: 7f builds to this file, "
-                                       "then the walk declares its options; drop this mark then")
-def test_the_real_walk_renders_the_contracts_options():
-    assert _rendered().get("options") == _contract()["options"]
