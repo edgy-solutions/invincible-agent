@@ -65,6 +65,23 @@ def client():
     gateway.app.dependency_overrides.clear()
 
 
+#: ONE named cost answer (RULED 2026-10-17: an export naming no answers is a 400, so every
+#: test that needs to get past that shape check names one).
+NAMED = [{"artifact_id": "a1"}]
+
+
+@pytest.fixture(autouse=True)
+def _one_named_cost_answer(monkeypatch):
+    """`a1` resolves to a cost card, so a request naming it reaches the recipient checks and
+    the engine call. A test that wants another resolver re-patches over this."""
+    monkeypatch.setattr(
+        gateway, "_resolve_export_answers",
+        lambda ids, user_id: [
+            {"id": i, "verb_iri": "mesh#Foo", "subject_instance_id": "inst-1"} for i in ids
+        ],
+    )
+
+
 @pytest.fixture
 def stub_engine(monkeypatch):
     """Records what the BFF sends to engine-cost and lets a test control what it returns.
@@ -102,7 +119,7 @@ def stub_engine(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_missing_recipient_scope_refuses_with_alices_own_options(client, stub_engine):
-    r = client.post("/export/package", json={"answers": []})
+    r = client.post("/export/package", json={"answers": NAMED})
     assert r.status_code == 409, r.text
     detail = r.json()["detail"]
     assert detail["reason"] == "recipient_required"
@@ -185,11 +202,12 @@ def test_happy_path_builds_canvas_and_forwards_the_callers_own_bearer(
     assert canvas["answers"][1]["subject_instance_id"] == "inst-2"
 
 
-def test_empty_answers_omits_the_canvas_key_entirely(client, stub_engine):
+def test_one_named_answer_sends_exactly_that_canvas(client, stub_engine):
     r = client.post("/export/package",
-                    json={"recipient_scope": "notional-customer-alpha", "answers": []})
+                    json={"recipient_scope": "notional-customer-alpha", "answers": NAMED})
     assert r.status_code == 200, r.text
-    assert "canvas" not in stub_engine["post"]["json"]["params"]
+    canvas = stub_engine["post"]["json"]["params"]["canvas"]
+    assert [a["id"] for a in canvas["answers"]] == ["a1"]
 
 
 def test_engine_refusal_passes_through_as_a_failed_export(client, stub_engine):
@@ -197,7 +215,7 @@ def test_engine_refusal_passes_through_as_a_failed_export(client, stub_engine):
         "refused": True, "outcome": "unentitled", "reason": "not an entitled recipient",
     })
     r = client.post("/export/package",
-                    json={"recipient_scope": "notional-customer-alpha", "answers": []})
+                    json={"recipient_scope": "notional-customer-alpha", "answers": NAMED})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "failed"
@@ -212,7 +230,7 @@ def test_malformed_sha_reports_a_failed_export(client, stub_engine):
         "artifact_sha256": "abc", "artifact_filename": ALPHA_HTML,
     })
     r = client.post("/export/package",
-                    json={"recipient_scope": "notional-customer-alpha", "answers": []})
+                    json={"recipient_scope": "notional-customer-alpha", "answers": NAMED})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "failed"
@@ -229,7 +247,7 @@ def test_engine_unreachable_on_production_is_502(client, monkeypatch):
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Boom)
     r = client.post("/export/package",
-                    json={"recipient_scope": "notional-customer-alpha", "answers": []})
+                    json={"recipient_scope": "notional-customer-alpha", "answers": NAMED})
     assert r.status_code == 502, r.text
     assert r.json()["detail"]["error"] == "cost_engine_unreachable"
 
