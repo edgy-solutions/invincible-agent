@@ -125,16 +125,26 @@ def registered(monkeypatch):
     return rows
 
 
+@pytest.fixture
+def tasks(monkeypatch):
+    """Every task dict the runner registered, in order -- what the decider is handed."""
+    rows: list = []
+    monkeypatch.setattr(main, "_register_human_task",
+                        lambda wf, task, kind="workflow_ack": rows.append(task) or {})
+    return rows
+
+
 #: The nearest site's row (ca's ruling, 2026-10-02): one `spares[]` row's shape, lifted out.
 _NEAREST = {"site": "SITE-B", "on_hand": 3, "as_of": "2026-10-01T00:00:00Z",
             "lead_time_days": 5, "lead_time_source": "stand-in"}
 
 
-def _event(event_id="EV-1", me=False, kind="cm_discrepancy", nearest="row"):
+def _event(event_id="EV-1", me=False, kind="cm_discrepancy", nearest="row", here_on_hand=1):
     """A MaintenanceEvent in the week-1 bridge contract's shape, with `battle_condition` in the
     shape OpenDDIL answered on 2026-10-02 (a boolean `mission_essential` and its `basis`), and
     the spares picture as ca ruled it: `spares[]` plus `nearest_spare`, null when no site has
-    stock. `nearest=None` is that null."""
+    stock. `nearest=None` is that null. The local row is keyed by the OWNING TIER, as the live
+    picture keys it (edge-01 for owning_tier edge-01); `here_on_hand` is its stock."""
     nearest_row = dict(_NEAREST) if nearest == "row" else nearest
     return {
         "event_id": event_id, "kind": kind, "asset_id": "AST-7", "owning_tier": "ORG",
@@ -142,7 +152,7 @@ def _event(event_id="EV-1", me=False, kind="cm_discrepancy", nearest="row"):
                   "observed_at": "2026-10-02T00:00:00Z"},
         "sources": [{"system": "bit"}],
         "picture": {"readiness": "PMC", "factors": ["fuel"], "lifecycle": "in_service",
-                    "spares": [{"site": "HERE", "on_hand": 0, "as_of": "2026-10-01T00:00:00Z",
+                    "spares": [{"site": "ORG", "on_hand": here_on_hand, "as_of": "2026-10-01T00:00:00Z",
                                 "lead_time_days": 0, "lead_time_source": "supply-system"},
                                dict(_NEAREST)],
                     "nearest_spare": nearest_row,
@@ -604,3 +614,156 @@ def test_THE_CHART_COMPOSES_EVERY_OVERLAY_THAT_DECLARES_TASK_KINDS():
                for p in root.glob("policy/overlays/*/task_kinds") if p.is_dir()}
     assert "/app/policy/overlays/openddil-lab/task_kinds" in shipped, shipped
     assert shipped <= composed, sorted(shipped - composed)
+
+
+# ── D2: AN OPTION WITH NO STOCK AT ITS SITE IS OFFERED UNAVAILABLE, NEVER CHOOSABLE ──────────
+
+def _ipd(c):
+    return c.ctx("EV-1").state["instance:2"]["outputs"]["maint_fault_propose"]["walk"][
+        "citations"]["ipd"]
+
+
+@pytest.mark.asyncio
+async def test_ZERO_STOCK_AT_THE_OWNING_TIER_OFFERS_REPLACE_NOW_UNAVAILABLE(registered):
+    """With 0 on hand at the owning tier, `replace_now` is carried as `available: False` with the
+    item and the site in its reason; no option still carries the `available_when` declaration;
+    the other three options carry no `available` key at all."""
+    ev = _event(here_on_hand=0)
+    out, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
+    opts = _options(c)
+    assert opts[0]["verb"] == "replace_now" and opts[0]["available"] is False, opts[0]
+    assert ev["fault"]["item"] in opts[0]["unavailable_reason"], opts[0]
+    assert "ORG" in opts[0]["unavailable_reason"], opts[0]
+    assert not any("available_when" in o for o in opts), opts
+    assert all("available" not in o for o in opts[1:]), opts
+
+
+@pytest.mark.asyncio
+async def test_STOCK_AT_THE_OWNING_TIER_OFFERS_REPLACE_NOW_AVAILABLE_AND_IT_CLOSES(registered):
+    """Positive control: with a spare on hand, `replace_now` is `available: True`, carries no
+    reason, and choosing it closes the case."""
+    out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
+    opt = _options(c)[0]
+    assert opt["available"] is True and "unavailable_reason" not in opt, opt
+    assert "available_when" not in opt, opt
+
+
+@pytest.mark.asyncio
+async def test_AN_UNAVAILABLE_OPTION_CHOSEN_PAST_THE_APPROVE_GATE_IS_REFUSED_BY_THE_RUN(registered):
+    """Defence in depth: the harness resolves the promise directly (bypassing approve), so the
+    run itself must refuse an unavailable verb -- 409, naming the verb and the reason -- and emit
+    nothing."""
+    c = _Cluster({("EV-1~1", DECIDE): _answer("replace_now", "m@x", "because 1")})
+    msg = await _refused(c.start("EV-1", TRIGGER, copy.deepcopy(_event(here_on_hand=0))), 409)
+    assert "replace_now" in msg and "No " in msg and "on hand at ORG" in msg, msg
+    assert _emitted(c) == [] and not any(
+        ctx.state.get("outbox:maintenance_action") for ctx in c.ctxs.values())
+
+
+@pytest.mark.asyncio
+async def test_THE_APPROVE_GATE_REFUSES_WHAT_THE_RUN_JOURNALLED_AS_UNAVAILABLE(
+        registered, monkeypatch):
+    """The join, on the run's OWN journal: a zero-stock case journals the unavailable verbs under
+    the promise it awaits, and `_approve_impl` reads that key -- 409 and NO promise resolved for
+    `replace_now`; `replace_after_resupply` on the same context resolves."""
+    _out, c = await _run(_event(here_on_hand=0),
+                         [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    ctx = c.ctx("EV-1~1")
+    reason = _options(c)[0]["unavailable_reason"]
+    assert ctx.state[f"unavailable_options:{DECIDE}"] == {"replace_now": reason}, ctx.state
+    monkeypatch.setattr(main, "_check_can_act", lambda aud, who: True)
+    req = {"task_id": "t", "acted_by": "m@x", "promise_name": DECIDE}
+    msg = await _refused(main._approve_impl(ctx, {**req, "status": "replace_now"}), 409)
+    assert reason in msg and "replace_now" in msg, msg
+    assert ctx.resolved == [], ctx.resolved
+    await main._approve_impl(ctx, {**req, "status": "replace_after_resupply"})
+    assert [name for name, _p in ctx.resolved] == [DECIDE], ctx.resolved
+
+
+@pytest.mark.asyncio
+async def test_A_CHOICE_WITH_NOTHING_UNAVAILABLE_JOURNALS_NO_UNAVAILABLE_KEY(registered):
+    """Replay safety: the key is written only when something is unavailable, so a journal for an
+    all-available offer is the one it always was."""
+    _out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    assert not [k for k in c.ctx("EV-1~1").state if k.startswith("unavailable_options")]
+
+
+@pytest.mark.asyncio
+async def test_THE_DECIDER_IS_HANDED_THE_OFFERED_OPTIONS(tasks):
+    """The decide task's payload carries the offered list -- `available` and the reason included
+    -- and is the very list carried to instance 2."""
+    _out, c = await _run(_event(here_on_hand=0),
+                         [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    decide = tasks[0]
+    assert decide["payload"] == {"options": _options(c)}, decide
+    assert decide["payload"]["options"][0]["available"] is False, decide
+
+
+def test_THE_REGISTER_BODY_CARRIES_A_PAYLOAD_ONLY_WHEN_DECLARED(monkeypatch):
+    """`_register_human_task` sends `payload` when the task has one and no key at all otherwise."""
+    sent: list = []
+
+    class _R:
+        status_code, text = 200, ""
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(main, "mint_service_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(main.requests, "post",
+                        lambda url, **kw: sent.append(kw.get("json")) or _R())
+    base = {"id": "w:s", "audience": "a:ORG", "title": "t", "summary": "s", "subject_ref": None,
+            "requested_by": "x", "user_jwt": None}
+    main._register_human_task("w", {**base, "payload": {"options": [{"verb": "v"}]}})
+    main._register_human_task("w", dict(base))
+    assert sent[0]["payload"] == {"options": [{"verb": "v"}]}, sent[0]
+    assert "payload" not in sent[1], sent[1]
+
+
+_GATE = {"rows": [{"site": "A", "on_hand": 2}], "match": {"site": "A"}, "positive": "on_hand"}
+
+
+def _opt(**over):
+    gate = {**_GATE, **over.pop("gate", {})}
+    return {"verb": "v", "unavailable_reason": "none here", "available_when": gate, **over}
+
+
+@pytest.mark.parametrize("opt, fragment", [
+    (_opt(gate={"extra": 1}), "exactly rows, match and positive"),
+    ({"verb": "v", "available_when": {"rows": [], "match": {"a": 1}}}, "exactly rows, match"),
+    ({"verb": "v", "available_when": "x"}, "exactly rows, match"),
+    (_opt(gate={"rows": {"site": "A"}}), "rows must be a list"),
+    (_opt(gate={"rows": ["A"]}), "rows must be a list"),
+    (_opt(gate={"match": {}}), "match must be a non-empty mapping"),
+    (_opt(gate={"positive": " "}), "positive must name a field"),
+    (_opt(gate={"rows": [{"site": "A", "on_hand": 1}, {"site": "A", "on_hand": 2}]}), "ambiguous"),
+    (_opt(gate={"rows": [{"site": "A", "on_hand": "3"}]}), "not a number"),
+    (_opt(gate={"rows": [{"site": "A", "on_hand": True}]}), "not a number"),
+    (_opt(gate={"rows": [{"site": "A"}]}), "not a number"),
+    ({"verb": "v", "available_when": {**_GATE, "rows": []}}, "without a reason"),
+])
+def test_AN_ILL_FORMED_AVAILABILITY_IS_REFUSED(opt, fragment):
+    """Each malformed `available_when` is a 400 naming what is wrong -- never a silent offer."""
+    with pytest.raises(restate.TerminalError) as exc:
+        main._offer_options([opt], where="t")
+    assert exc.value.status_code == 400 and fragment in str(exc.value), (fragment, exc.value)
+
+
+def test_NO_ROWS_IS_UNAVAILABLE_AND_A_PLAIN_OPTION_PASSES_THROUGH():
+    """`rows: None` (the producer carried none) matches nothing, so the option is unavailable; a
+    None match value matches nothing; an option without `available_when` is an equal COPY with no
+    `available` key."""
+    off, un = main._offer_options([_opt(gate={"rows": None})], where="t")
+    assert off[0]["available"] is False and un == {"v": "none here"}, (off, un)
+    off, un = main._offer_options([_opt(gate={"match": {"site": None}})], where="t")
+    assert off[0]["available"] is False, off
+    plain = {"verb": "p", "label": "x"}
+    off, un = main._offer_options([plain, "str"], where="t")
+    assert off == [plain, "str"] and off[0] is not plain and un == {}, (off, un)
+    off, un = main._offer_options([_opt()], where="t")
+    assert off[0]["available"] is True and "unavailable_reason" not in off[0] and un == {}, off

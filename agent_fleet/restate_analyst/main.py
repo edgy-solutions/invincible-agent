@@ -1635,6 +1635,11 @@ def _excluded_key(promise_name: str) -> str:
     return f"excluded_{promise_name}"
 
 
+def _unavailable_key(promise_name: str) -> str:
+    """Where a choice step journals the verbs it offered as unavailable, for the approve gate."""
+    return f"unavailable_options:{promise_name}"
+
+
 def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack") -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
@@ -1682,6 +1687,10 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     # Only when declared: every other register's body is unchanged.
     if task.get("excludes"):
         body["excludes"] = list(task["excludes"])
+    # Only when declared: the options a decider is offered ride the row only on a choice step, so
+    # every other register's body is unchanged. The BFF's register model already accepts it.
+    if task.get("payload") is not None:
+        body["payload"] = task["payload"]
     # MINT AT USE -- the 2026-08-04 ruling `dispatch_driver._mint_dispatch_task` already follows,
     # applied to the register it named as its sibling. This used to send the trigger's stored
     # `user_jwt`, which failed two ways: a definition that suspends for human latency outlives
@@ -1775,6 +1784,83 @@ def _resolve_path(context: dict, path: str, *, null_safe: bool = False) -> "tupl
         if safe and node is None:
             return True, None
     return True, node
+
+
+def _replace_at_path(context: dict, path: str, value: object) -> None:
+    """Replace the value at a dotted path, walking dicts and lists exactly as `_resolve_path`
+    reads them. An absent path is refused (400), never created: a write-back that invents a
+    branch would put the offer somewhere no reader looks."""
+    segs = path.split(".")
+    found, parent = _resolve_path(context, ".".join(segs[:-1])) if len(segs) > 1 else (True, context)
+    last = segs[-1]
+    if found and isinstance(parent, list) and last.isdigit() and int(last) < len(parent):
+        parent[int(last)] = value
+    elif found and isinstance(parent, dict) and last in parent:
+        parent[last] = value
+    else:
+        raise restate.TerminalError(
+            f"cannot write back at {path!r}: the path is absent from the run's context",
+            status_code=400)
+
+
+def _offer_options(options: list, *, where: str) -> "tuple[list, dict]":
+    """``(offered, unavailable)`` for an already-RENDERED options list. An option that declares
+    `available_when` is gated on STOCK AT ITS SITE: it is offered with `available` True/False
+    and, when False, its `unavailable_reason`; `unavailable` maps verb -> reason for the approve
+    gate. An option without `available_when` is copied through unchanged (no `available` key),
+    so every existing definition's options stay byte-identical. Pure: the input is never
+    mutated, and the result is derived from rendered values, so a replay computes the same."""
+    offered: list = []
+    unavailable: dict = {}
+    for i, o in enumerate(options):
+        o = copy.deepcopy(o)
+        if not isinstance(o, dict) or "available_when" not in o:
+            offered.append(o)
+            continue
+        at = f"{where}[{i}]"
+        gate = o.pop("available_when")
+        if not isinstance(gate, dict) or set(gate) != {"rows", "match", "positive"}:
+            raise restate.TerminalError(
+                f"{at}: available_when must be a mapping with exactly rows, match and positive "
+                f"(have: {sorted(gate) if isinstance(gate, dict) else type(gate).__name__})",
+                status_code=400)
+        rows, match, positive = gate["rows"], gate["match"], gate["positive"]
+        if rows is not None and (not isinstance(rows, list)
+                                 or not all(isinstance(r, dict) for r in rows)):
+            raise restate.TerminalError(
+                f"{at}: available_when.rows must be a list of mappings or None", status_code=400)
+        if not isinstance(match, dict) or not match:
+            raise restate.TerminalError(
+                f"{at}: available_when.match must be a non-empty mapping", status_code=400)
+        if not isinstance(positive, str) or not positive.strip():
+            raise restate.TerminalError(
+                f"{at}: available_when.positive must name a field", status_code=400)
+        hits = [r for r in (rows or [])
+                if all(v is not None and r.get(k) == v for k, v in match.items())]
+        if len(hits) > 1:
+            raise restate.TerminalError(
+                f"{at}: {len(hits)} rows match {match!r} -- ambiguous: which site's stock?",
+                status_code=400)
+        available = False
+        if hits:
+            stock = hits[0].get(positive)
+            if isinstance(stock, bool) or not isinstance(stock, (int, float)):
+                raise restate.TerminalError(
+                    f"{at}: {positive!r} is {stock!r} -- a stock that is not a number cannot gate",
+                    status_code=400)
+            available = stock > 0
+        if available:
+            o["available"] = True
+            o.pop("unavailable_reason", None)
+        else:
+            reason = o.get("unavailable_reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise restate.TerminalError(
+                    f"{at}: offered as unavailable without a reason", status_code=400)
+            o["available"] = False
+            unavailable[o.get("verb")] = reason
+        offered.append(o)
+    return offered, unavailable
 
 
 def _render(template: object, context: dict, *, where: str) -> object:
@@ -2274,6 +2360,22 @@ async def _run_definition(
                 # never trusted bare off the row.
                 "workflow_service": workflow_service,
             }
+            if step.chooses_from:
+                # THE OFFER IS DECIDED BEFORE ANYTHING IS JOURNALLED OR REGISTERED: an option with
+                # no stock at its site is offered unavailable, never choosable. The offered list
+                # is written BACK into the context, so the decider, the next instance's inputs
+                # and the recorded `chosen` all carry the offer, not the raw template.
+                _found, _opts = _resolve_path(context, step.chooses_from)
+                if not _found or not isinstance(_opts, list):
+                    raise restate.TerminalError(
+                        f"step {step.id}: chooses_from {step.chooses_from!r} is not a list of "
+                        "options in the run's context", status_code=400)
+                _offered, _unavailable = _offer_options(
+                    _opts, where=f"step {step.id} chooses_from")
+                _replace_at_path(context, step.chooses_from, _offered)
+                task["payload"] = {"options": _offered}
+            else:
+                _unavailable = {}
             # STRUCTURAL EXCLUSION, bound BEFORE the audience is journalled and before the row
             # exists: an exclusion that cannot bind fails the step while nothing about this promise
             # is resolvable yet, so there is no moment at which an audience stands without the
@@ -2295,6 +2397,11 @@ async def _run_definition(
                 # ...AND NEVER ROUTED (ruled 2026-10-02): the register drops them from the
                 # audience's actors before any row exists. The gate above stays the backstop.
                 task["excludes"] = [x.strip() for x in _excluded]
+            if _unavailable:
+                # Only when something is unavailable: a journal without the key replays
+                # unchanged. The definition is journalled at `ctx.run("definition", ...)`, so an
+                # in-flight instance replays its OLD template and never reaches this write.
+                ctx.set(_unavailable_key(promise_name), _unavailable)
             # THE KIND: declared on the step when the definition came from the registry, else the
             # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
             # not ignored -- ignoring it would register a kind other than the one the YAML reads
@@ -2372,12 +2479,7 @@ async def _run_definition(
                 # RECEIVED the answer -- journalled, so a replay reads the same instant.
                 _out["decided_at"] = await ctx.run(f"decided_at_{step.id}", _now_iso)
             if step.chooses_from:
-                _found, _options = _resolve_path(context, step.chooses_from)
-                if not _found or not isinstance(_options, list):
-                    raise restate.TerminalError(
-                        f"step {step.id}: chooses_from {step.chooses_from!r} is not a list of "
-                        "options in the run's context", status_code=400)
-                _hits = [o for o in _options if isinstance(o, dict) and o.get("verb") == _verb]
+                _hits = [o for o in _offered if isinstance(o, dict) and o.get("verb") == _verb]
                 if len(_hits) > 1:
                     raise restate.TerminalError(
                         f"step {step.id}: {len(_hits)} options answer to verb {_verb!r}",
@@ -2386,6 +2488,12 @@ async def _run_definition(
                     raise restate.TerminalError(
                         f"step {step.id}: {_verb!r} approves and no option carries it -- an "
                         "approval of nothing", status_code=400)
+                if _hits and _hits[0].get("available") is False:
+                    # Defence in depth: the approve gate refuses an unavailable verb first, so
+                    # this fires only for a promise resolved by some other route.
+                    raise restate.TerminalError(
+                        f"step {step.id}: {_verb!r} was offered as unavailable -- "
+                        f"{_hits[0].get('unavailable_reason')}", status_code=409)
                 _out["chosen"] = copy.deepcopy(_hits[0]) if _hits else None
             if step.approves:
                 if _verb in step.approves:
@@ -2905,6 +3013,15 @@ async def _approve_impl(ctx: WorkflowSharedContext, request: dict) -> dict:
             )
 
     acted_by = await _authorize_resolution(ctx, promise_name, acted_by_raw, acted_via)
+
+    # THE SINGLE ENFORCEMENT POINT for an option offered as unavailable (no stock at its site).
+    # Refused BEFORE the promise resolves, so the run never wakes on it; the BFF's `/act` leaves
+    # the task pending on a non-200, so the decider can choose again.
+    _unavailable = await ctx.get(_unavailable_key(promise_name)) or {}
+    if request.get("status") in _unavailable:
+        raise restate.TerminalError(
+            f"{request.get('status')!r} was offered as unavailable and cannot be chosen: "
+            f"{_unavailable[request.get('status')]}", status_code=409)
 
     approval_payload = {
         "status": request.get("status", "APPROVED"),

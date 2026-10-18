@@ -60,6 +60,16 @@ steps:
             icn: "{outputs.maint_fault_propose.walk.citations.ipd.icn}"
             hotspot_id: "{outputs.maint_fault_propose.walk.citations.ipd.hotspot_id}"
             source_site: here
+        # STOCK AT THE SITE, OR NOT A CHOICE (architect 10-17, D2): this option says "from local
+        # stock", and the live case 712382d7 released it with 0 on hand at edge-01. The runner
+        # offers it `available: false` (with the reason) when the owning tier's spares row holds
+        # nothing, and the approve gate refuses it. `replace_after_resupply` is NOT gated: with no
+        # stock anywhere it still orders from supply.
+        available_when:
+          rows: "{trigger.picture.spares}"
+          match: {site: "{trigger.owning_tier}"}
+          positive: on_hand
+        unavailable_reason: "No {trigger.fault.item} spare on hand at {trigger.owning_tier}: replacing now needs a spare here"
         spares: "{trigger.picture.spares}"
         input_revision: "{input.revision}"
         # THE ONE OPTION WHOSE SECOND APPROVAL TURNS ON MISSION-ESSENTIAL cites the fact and its
