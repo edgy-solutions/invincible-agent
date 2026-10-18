@@ -427,13 +427,17 @@ def _episode(facts):
 
 
 @pytest.mark.asyncio
-async def test_A_SECOND_EVENT_IN_AN_OPEN_EPISODE_ATTACHES(policy, registered):
+async def test_A_SECOND_EVENT_IN_AN_OPEN_EPISODE_IS_A_STEP_OF_IT(policy, registered):
+    """OpenDDIL ask 4: a step of the open case, not a case of its own (the maintenance-fault arms
+    are in test_an_arrival_in_an_open_episode_is_a_step_of_its_case.py)."""
     c = _Cluster()
     c.obj(_episode(_facts("E-2"))).state["open"] = "E-1"
     out = await c.start("E-2", "fault", _facts("E-2"))
-    assert (out["status"], out["attached_to"]) == ("ATTACHED", "E-1"), out
-    assert _hops(c.case("E-2"))[-1] == ("received", "duplicate", "attached")
-    assert registered == [] and c.obj(_episode(_facts())).state["open"] == "E-1"
+    assert (out["status"], out["step_of"]) == ("STEP", "E-1"), out
+    assert _hops(c.case("E-2"))[-1] == ("received", "arrival", "step")
+    ep = c.obj(_episode(_facts())).state
+    assert registered == [] and ep["open"] == "E-1"
+    assert [a["case_id"] for a in ep["arrivals"]] == ["E-2"], ep
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,18 @@ returns. A newer one replaces the facts the next instance and the next chaining 
 case record keeps ``input_revisions[]`` and every instance sees ``input.revision``. The original
 event is revision 1. Nothing is written to a store.
 
+## AN EPISODE HAS ONE OPEN CASE, AND ITS CASES FORM A LINE
+
+A case is keyed by its event's key (the bridge's ``event_id``, which OpenDDIL mints per episode of
+ITS OWN). The trigger's ``episode`` is the derived fault -- ``(asset_id, fault.item,
+fault.fault_code)`` -- and ``CaseEpisode`` holds the one open case for it. A NEW key arriving while
+that case is open is a STEP of the open case: it is appended to the open case's ``arrivals`` and
+opens no instance (OpenDDIL ask 4; it was a separate ATTACHED case nobody read). A new key arriving
+after the open case was released opens a case of its own that ``follows`` it. A repeat of the SAME
+key is neither: it is a revision, through ``revise``. Both lists are kept on the episode while the
+case holds it, read through ``case``, and folded into the record when the case releases -- planted
+by ``claim`` and returned by ``release``, so an open case's journal gains no command before its end.
+
 ## EVERY CHOICE IS JOURNALLED
 
 Selection, each chaining decision and each definition load run inside ``ctx.run``. A case lasts
@@ -43,7 +55,8 @@ from datetime import timedelta
 from typing import Any, Optional
 
 import restate
-from restate import ObjectContext, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
+from restate import (ObjectContext, ObjectSharedContext, VirtualObject, Workflow, WorkflowContext,
+                     WorkflowSharedContext)
 
 logger = logging.getLogger(__name__)
 
@@ -312,13 +325,19 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     # ── TRIAGE: one open case per episode ───────────────────────────────────────────────────
     if episode:
         # The holder's claim plants revision 1 as the chain's head, so a push appends after it.
+        # THE ARG IS UNCHANGED ON PURPOSE: an open case replays this call on every resume, and a
+        # different argument is a journal mismatch. What ask 4 adds is planted INSIDE `claim`.
         owner = await ctx.object_call(claim, key=episode, arg={
             "case_id": case_id, "head": {"revision": rev1, "facts": facts}})
         if owner != case_id:
-            await _record(ctx, case, frm="received", outcome="duplicate", to="attached",
+            # A STEP OF THE OPEN CASE, not a case: `claim` appended this arrival to the holder's
+            # `arrivals` in the same exclusive call that found it open, so no release can fall
+            # between the two. This record is the pointer the door's `case_id` resolves through.
+            case["step_of"] = owner
+            await _record(ctx, case, frm="received", outcome="arrival", to="step",
                           by="system", reason=f"episode {episode} is open in case {owner}",
-                          at_name="at_attached")
-            return {"case_id": case_id, "status": "ATTACHED", "attached_to": owner,
+                          at_name="at_step")
+            return {"case_id": case_id, "status": "STEP", "step_of": owner,
                     "transitions": case["transitions"]}
     await _record(ctx, case, frm="received", outcome="triaged", to="triaged", by="system",
                   at_name="at_triaged")
@@ -406,13 +425,25 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                       reason=str(exc), at_name="at_failed")
         await _summarize(ctx, case, state="failed", final_reason=str(exc))
         if episode:
-            ctx.object_send(release, key=episode, arg={"case_id": case_id})
+            await _release(ctx, case, episode)
         raise
 
     if episode:
-        ctx.object_send(release, key=episode, arg={"case_id": case_id})
+        await _release(ctx, case, episode)
     return {"case_id": case_id, "status": "CLOSED", "terminal": case["terminal"],
             "transitions": case["transitions"], "approval_chain": chain}
+
+
+async def _release(ctx, case: dict, episode: str) -> None:
+    """Free the episode and fold what it kept for this case -- ``follows`` and ``arrivals`` -- into
+    the record. A CALL, not a send: the fold needs the answer. It is the case's last command, so a
+    case that was open across this change replays its journal unchanged up to here. Between the
+    release and the ``set`` a ``case`` read finds neither on the episode nor on the record: one
+    journal step wide, and the next read has them."""
+    held = await ctx.object_call(release, key=episode, arg={"case_id": case["case_id"]})
+    if held is not None:
+        case.update(held)
+        ctx.set("case", case)
 
 
 def _input_of(revision: dict, case_id: str) -> dict:
@@ -557,8 +588,15 @@ async def signal(ctx: WorkflowSharedContext, request: dict) -> dict:
 
 @workflow_runner.handler()
 async def case(ctx: WorkflowSharedContext, request: Any = None) -> Optional[dict]:
-    """The case record: state, transitions (from, outcome, to, by, at, reason), instances."""
-    return await ctx.get("case")
+    """The case record: state, transitions (from, outcome, to, by, at, reason), instances -- and,
+    for a case that holds an episode, the ``follows`` and ``arrivals`` the episode keeps for it
+    until the case releases and folds them into its own record (``_release``)."""
+    rec = await ctx.get("case")
+    if rec and rec.get("episode") and "arrivals" not in rec and not rec.get("step_of"):
+        held = await ctx.object_call(holding, key=rec["episode"], arg={"case_id": ctx.key()})
+        if held is not None:
+            rec = {**rec, **held}
+    return rec
 
 
 @workflow_runner.handler()
@@ -602,22 +640,53 @@ async def outbox(ctx: WorkflowSharedContext, request: dict) -> list:
 @case_episode.handler()
 async def claim(ctx: ObjectContext, request: dict) -> str:
     """The open case for this episode: the caller's, if none was open. The caller that becomes
-    the holder plants its revision 1 as the head of the episode's chain."""
+    the holder plants its revision 1 as the head of the episode's chain, and ``follows`` the case
+    that last released it (None for the episode's first). ANOTHER case's call, while one is open,
+    is an arrival: it is appended to the holder's ``arrivals`` HERE, in the same exclusive call
+    that found the episode open -- a separate call after this one could land after the release,
+    and the arrival would belong to no case."""
     cur = await ctx.get("open")
+    caller = request["case_id"]
     if cur:
+        if cur != caller:
+            arrivals = list(await ctx.get("arrivals") or [])
+            if caller not in {a.get("case_id") for a in arrivals}:
+                at = await ctx.run(f"arrival_at_{caller}", _main()._now_iso)
+                arrivals.append({"case_id": caller, "at": at})
+                ctx.set("arrivals", arrivals)
         return cur
-    ctx.set("open", request["case_id"])
+    ctx.set("open", caller)
     ctx.set("revision", request.get("head"))
-    return request["case_id"]
+    ctx.set("follows", await ctx.get("last"))
+    ctx.set("arrivals", [])
+    return caller
+
+
+@case_episode.handler(kind="shared")
+async def holding(ctx: ObjectSharedContext, request: dict) -> Optional[dict]:
+    """What this episode keeps for the case that holds it -- ``{follows, arrivals}`` -- or None
+    when the caller is not the holder. Shared: a read of the case must not queue behind a claim."""
+    if await ctx.get("open") != request.get("case_id"):
+        return None
+    return {"follows": await ctx.get("follows"),
+            "arrivals": list(await ctx.get("arrivals") or [])}
 
 
 @case_episode.handler()
-async def release(ctx: ObjectContext, request: dict) -> None:
+async def release(ctx: ObjectContext, request: dict) -> Optional[dict]:
     """Close the episode -- only by the case that holds it -- and drop its chain, which belongs
-    to that case: the next case on this episode opens on its own event, as revision 1."""
-    if await ctx.get("open") == request.get("case_id"):
-        ctx.clear("open")
-        ctx.clear("revision")
+    to that case: the next case on this episode opens on its own event, as revision 1, and
+    ``follows`` this one. Returns what was kept for the holder (``{follows, arrivals}``), for its
+    record; None to anyone else, who released nothing."""
+    holder = await ctx.get("open")
+    if not holder or holder != request.get("case_id"):
+        return None
+    held = {"follows": await ctx.get("follows"),
+            "arrivals": list(await ctx.get("arrivals") or [])}
+    ctx.set("last", holder)
+    for k in ("open", "revision", "follows", "arrivals"):
+        ctx.clear(k)
+    return held
 
 
 @case_episode.handler()
@@ -651,6 +720,6 @@ async def keep_revision(ctx: ObjectContext, request: dict) -> dict:
 async def newest_revision(ctx: ObjectContext, request: dict) -> Optional[dict]:
     """The head of this episode's chain (``{revision, facts}``), else None. IT IS THE HOLDER'S
     BY CONSTRUCTION: only the holder plants or appends one (``claim``, ``keep_revision``),
-    ``release`` drops it with the episode, and only the holder refreshes -- an attached case
-    returns before it runs anything."""
+    ``release`` drops it with the episode, and only the holder refreshes -- an arrival that is a
+    step of the holder returns before it runs anything."""
     return await ctx.get("revision")
