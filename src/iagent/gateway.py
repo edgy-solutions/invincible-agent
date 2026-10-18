@@ -11714,6 +11714,7 @@ async def update_ingest_stage(
             # 1): an s1000d data module has no PCN/PDN card to vet, so a task filed under the review
             # standard could not be decided. A delegate's drop is already trusted and is promoted
             # outright; a user's drop waits for a steward's origin, exactly as a domainless kind does.
+            # R-089: the delegate map is asserted by configuration this pass, not verified.
             _dropper = str(row.get("submitted_by") or "").strip()
             _to = (ingest_status.PROMOTED if _dropper in _delegate_principals()
                    else ingest_status.AWAITING_ORIGIN)
