@@ -203,7 +203,8 @@ def object_prefix_for(ingest_id: str, object_ref: str) -> Optional[str]:
 _UNSTAMPED = frozenset({"", "unset", "unstamped", "unknown", "none"})
 
 
-def payload_from_extraction(ingest_id: str, row: dict, manifest: Any, extraction_ref: str) -> dict:
+def payload_from_extraction(ingest_id: str, row: dict, manifest: Any, extraction_ref: str, *,
+                            notice_id: Optional[str] = None) -> dict:
     """The promotion task's payload, DERIVED from the extraction manifest rather than asserted.
 
     ADR-0034: a caller may not assert `pipeline_version` or `format_fingerprint`; a decision
@@ -215,7 +216,10 @@ def payload_from_extraction(ingest_id: str, row: dict, manifest: Any, extraction
     this document's own key); `content_kind` the ingest row's (set at the seam); `pipeline_version`
     the manifest's; `format_fingerprint` `format_fingerprint_from_manifest`; `standing` the
     manifest's frozen `provenance.standing`; `extraction_ref` the argument; `notice_id` the
-    manifest's `doc_id`. The result is passed through `subject_from_payload` so anything the act
+    argument: the notice's own id as the extraction PRINTED it (review.json's `doc_id_raw`, read
+    by the caller), "" when none was extracted. NEVER the manifest's `doc_id`: that is the
+    filename-derived transport key (the workflow id, the prefix, the graph IRI), and displayed as
+    a notice id it named TI and IDT by their file stems (2026-10-18). The result is passed through `subject_from_payload` so anything the act
     would refuse is refused at filing time with the act's own error.
     """
     def refuse(error: str, message: str):
@@ -262,7 +266,7 @@ def payload_from_extraction(ingest_id: str, row: dict, manifest: Any, extraction
         "format_fingerprint": format_fingerprint_from_manifest(manifest),
         "standing": standing,
         "extraction_ref": ref,
-        "notice_id": str(manifest.get("doc_id") or ""),
+        "notice_id": str(notice_id or "").strip(),
     }
     subject_from_payload(payload)
     return payload

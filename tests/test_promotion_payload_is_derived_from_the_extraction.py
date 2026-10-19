@@ -56,8 +56,13 @@ def test_the_captures_own_failure_reproduced():
                 'standing', 'extraction_ref']) in str(ei.value)
 
 
+#: The notice's own id as the extraction printed it (review.json's `doc_id_raw`), passed in by the
+#: caller. Deliberately NOT the manifest's `doc_id` "PCN26-119", the filename-derived key.
+PRINTED = "PCN #26-119"
+
+
 def test_every_field_comes_from_its_stated_source_and_the_act_accepts_it():
-    p = promotion.payload_from_extraction(ID, ROW, MANIFEST, "  " + REF + " ")
+    p = promotion.payload_from_extraction(ID, ROW, MANIFEST, "  " + REF + " ", notice_id=PRINTED)
     assert p == {
         "ingest_id": ID,
         "object_ref": PREFIX + "PCN26-119.pdf",
@@ -66,10 +71,16 @@ def test_every_field_comes_from_its_stated_source_and_the_act_accepts_it():
         "format_fingerprint": "unknown/unknown/v1",
         "standing": "supervised",
         "extraction_ref": REF,
-        "notice_id": "PCN26-119",
+        "notice_id": PRINTED,
     }
     s = promotion.subject_from_payload(p)
-    assert s.extraction_ref == REF and s.notice_id == "PCN26-119"
+    assert s.extraction_ref == REF and s.notice_id == PRINTED
+
+
+def test_the_payload_never_takes_the_manifests_key_for_the_notice_id():
+    # No printed id: "" (the record's DISPLAY field stays empty), never the key beside it.
+    assert promotion.payload_from_extraction(ID, ROW, MANIFEST, REF)["notice_id"] == ""
+    assert promotion.payload_from_extraction(ID, ROW, MANIFEST, REF, notice_id="  ")["notice_id"] == ""
 
 
 def _fi(doc_type, source, mfr="Acme"):
@@ -155,6 +166,7 @@ def wired(monkeypatch):
                         lambda key: rec["reads"].append(key) or copy.deepcopy(MANIFEST))
     # the zero-row gate reads review.json at REVIEW entry (architect ruling 2026-10-17); one part row
     monkeypatch.setattr(gateway, "_read_review_json", lambda key: {
+        "doc_id_raw": PRINTED,
         "review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})
     return rec
 
@@ -196,7 +208,8 @@ def test_route_with_the_good_ref_files_a_payload_the_act_accepts(doc_tools_clien
     assert p["dropped_by"] == {"authz_id": "alice@example.com",
                                "on_behalf_of": "carol@example.com"}
     assert p["extraction_ref"] == REF and p["pipeline_version"] == "doc-tools@61f74dc"
+    assert p["notice_id"] == PRINTED  # the status row and the payload, from the one review.json read
     promotion.subject_from_payload(p)
     assert wired["status"] == [("review", {"extracted_count": None, "extracted_total": None,
                                            "detail": None, "extraction_ref": REF,
-                                           "notice_id": "PCN26-119"})]
+                                           "notice_id": PRINTED})]

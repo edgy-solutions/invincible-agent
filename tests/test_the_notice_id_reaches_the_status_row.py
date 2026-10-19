@@ -1,11 +1,14 @@
 """The notice's own id (e.g. PCN26-184) reaches the status row and the status route (2026-10-13).
 
 The contract promised to cortex: `notice_id` ABSENT = no claim (an old fleet); `null` = claimed,
-none known yet; a string = the notice's own id. It is DISPLAY ONLY and never an identity (it is the
-LLM-extracted `doc_id`). The source is the extraction manifest's `doc_id`, the same field
-`promotion.payload_from_extraction` derives the payload's `notice_id` from. It is written in the
-SAME update_status call that moves the row into `review`, from the manifest the stage route already
-reads to file the promotion task (no new read). Blank is stored as NULL, never "".
+none known yet; a string = the notice's own id. It is DISPLAY ONLY and never an identity.
+
+The source (2026-10-19, 197) is review.json's `doc_id_raw`: the id as the extraction PRINTED it,
+null when the header pass extracted none (doc-tools #141). It is the same value the payload's
+`notice_id` gets, from the one review.json read the stage route already makes to file the
+promotion task. It is NEVER the manifest's `doc_id`, which is the filename-derived transport key:
+displayed, it titled TI and IDT by their file stems (2026-10-18). It is written in the SAME
+update_status call that moves the row into `review`. Blank is stored as NULL, never "".
 """
 from __future__ import annotations
 
@@ -57,7 +60,17 @@ def dropper():
     yield from _client_for("alice@example.com")
 
 
-def _review_rig(monkeypatch, manifest):
+PRINTED = "PCN #26-184"  # deliberately not the manifest's key "PCN26-184"
+
+
+def _review(raw=PRINTED):
+    r = {"review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]}
+    if raw != "MISSING":
+        r["doc_id_raw"] = raw
+    return r
+
+
+def _review_rig(monkeypatch, manifest, review=None):
     row = {"id": ID, "status": "extracting", "kind": "pdf", "content_kind": "pcn",
            "object_prefix": PREFIX, "submitted_by": "alice@example.com"}
     calls = []
@@ -69,31 +82,28 @@ def _review_rig(monkeypatch, manifest):
     monkeypatch.setattr(ht, "register_task",
                         lambda **kw: {"task_id": kw["task_id"], "recipients": []})
     monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: manifest)
-    monkeypatch.setattr(gateway, "_read_review_json", lambda key: {"review_items": [{"field_path": "parts[0].affected_mpn", "value": "X"}]})  # zero-row gate, ruling 2026-10-17
+    review = _review() if review is None else review  # one part row: the zero-row gate, 2026-10-17
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: review)
     return calls
 
 
 # (a) the notice id rides the same update as the stage move ------------------------------------
-def test_a_review_transition_writes_the_manifests_doc_id_in_the_same_update(doc_tools_client, monkeypatch):
+def test_a_review_transition_writes_the_printed_notice_id_in_the_same_update(doc_tools_client, monkeypatch):
     calls = _review_rig(monkeypatch, _manifest())
     r = doc_tools_client.post(f"/ingest/{ID}/stage", json={"stage": "review", "extraction_ref": REF})
     assert r.status_code == 200, r.text
     (args, kw), = calls
     assert args == (ID, "review")
-    assert kw["notice_id"] == "PCN26-184"
+    assert kw["notice_id"] == PRINTED != _manifest()["doc_id"]
     assert kw["extraction_ref"] == REF  # one act: the stage, the ref and the notice id together
 
 
 # (b) blank / missing is NULL, never "" ---------------------------------------------------------
-@pytest.mark.parametrize("doc_id", ["", "   ", None, "MISSING"])
-def test_a_blank_or_missing_doc_id_writes_no_notice_id_not_an_empty_string(
-        doc_tools_client, monkeypatch, doc_id):
-    m = _manifest()
-    if doc_id == "MISSING":
-        del m["doc_id"]
-    else:
-        m["doc_id"] = doc_id
-    calls = _review_rig(monkeypatch, m)
+@pytest.mark.parametrize("raw", ["", "   ", None, "MISSING", 7])
+def test_an_unextracted_notice_id_writes_none_not_the_key_nor_an_empty_string(
+        doc_tools_client, monkeypatch, raw):
+    # The manifest still carries its key: a fallback to it is exactly what must not happen.
+    calls = _review_rig(monkeypatch, _manifest(), review=_review(raw))
     r = doc_tools_client.post(f"/ingest/{ID}/stage", json={"stage": "review", "extraction_ref": REF})
     assert r.status_code == 200, r.text
     (_, kw), = calls

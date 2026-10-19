@@ -10961,7 +10961,7 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     summ = _review_notice_summary(review)
     return {
         "ingest_id": ingest_id,
-        "notice_id": str(manifest.get("doc_id") or "").strip() or row.get("notice_id"),
+        "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
         "notice": {"mfr": summ["mfr"], "mfr_parent": summ["mfr_parent"],
                    "notice_date": summ["notice_date"]},
@@ -11362,9 +11362,19 @@ async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Opti
     return _extraction_row_count(review)
 
 
+def _review_notice_id(review: dict) -> Optional[str]:
+    """The notice's own id as the extraction printed it -- review.json's `doc_id_raw`
+    (`PCN#20210316000.1`), or None when the header pass extracted none. doc-tools #141 (2026-10-17)
+    made it extraction-only: null, never a fallback to the key or the filename. DISPLAY ONLY. The
+    manifest's `doc_id` is NOT this: it is the filename-derived transport key."""
+    v = review.get("doc_id_raw")
+    return (v.strip() or None) if isinstance(v, str) else None
+
+
 def _review_notice_summary(review: dict) -> dict:
-    """`{mfr, mfr_parent, notice_date, part_count}` from a parsed review.json. `mfr` is the
-    `header.mfr` item's value, else `notice_identity.mfr`; dates are strings as given."""
+    """`{notice_id, mfr, mfr_parent, notice_date, part_count}` from a parsed review.json.
+    `notice_id` is `_review_notice_id`; `mfr` is the `header.mfr` item's value, else
+    `notice_identity.mfr`; dates are strings as given."""
     by_path: dict = {}
     parts: set = set()
     for it in _review_items(review):
@@ -11377,7 +11387,8 @@ def _review_notice_summary(review: dict) -> dict:
     mfr = by_path.get("header.mfr")
     if mfr is None and isinstance(ident, dict):
         mfr = ident.get("mfr")
-    return {"mfr": mfr, "mfr_parent": by_path.get("header.mfr_parent"),
+    return {"notice_id": _review_notice_id(review),
+            "mfr": mfr, "mfr_parent": by_path.get("header.mfr_parent"),
             "notice_date": by_path.get("header.pub_date"), "part_count": len(parts)}
 
 
@@ -11486,16 +11497,19 @@ async def _file_or_find_document_promotion_task(
                        f"{prefix!r}.",
         })
     manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    summ = await _soft_review_summary(manifest, ref, prefix)
+    # The notice's own id (DISPLAY ONLY, never an identity), for the status row AND the payload
+    # from ONE read: review.json's `doc_id_raw`, None when not extracted or not readable. Never the
+    # manifest's `doc_id`, the filename-derived key (2026-10-18: TI and IDT titled by file stem).
+    notice_id = (summ or {}).get("notice_id")
     if notice_out is not None:
-        # The notice's own id, for the status row (DISPLAY ONLY, never an identity): the SAME
-        # `doc_id` the payload's `notice_id` is derived from, blank stored as None.
-        notice_out["notice_id"] = str(manifest.get("doc_id") or "").strip() or None
+        notice_out["notice_id"] = notice_id
     try:
-        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref)
+        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref,
+                                                    notice_id=notice_id)
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    summ = await _soft_review_summary(manifest, ref, prefix)
     attempt = row.get("attempt")
     payload = {**derived, "review_pool": domain, "dropped_by": {
         "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")},

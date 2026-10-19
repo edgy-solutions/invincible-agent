@@ -54,8 +54,14 @@ def _item(fp, value, *, page=2, bboxes=((10.0, 20.0, 30.0, 40.0),), method="text
             "needs_review": False, "review_reason": None, "approval_state": "pending"}
 
 
+#: The notice's own id as the extraction PRINTED it. Deliberately NOT the manifest's `doc_id`
+#: ("PCN26-119", the filename-derived key): a fixture where the two agree cannot tell the right
+#: source from the rejected one (2026-10-18: TI and IDT were titled by their file stems).
+PRINTED = "PCN #26-119"
+
 REVIEW = {
-    "doc_id": "PCN26-119", "notice_identity": {"mfr": "FallbackCo"}, "pages": [],
+    "doc_id": "PCN26-119", "doc_id_raw": PRINTED,
+    "notice_identity": {"mfr": "FallbackCo"}, "pages": [],
     "stats": {"text_layer_parts": 2},
     "review_items": [
         _item("header.mfr", "Acme Semi"),
@@ -178,9 +184,9 @@ def test_payload_carries_the_card_facts_and_title_is_the_notice_id(monkeypatch, 
     p = reg["payload"]
     assert (p["mfr"], p["notice_date"], p["part_count"], p["attempt"]) == (
         "Acme Semi", "2026-03-04", 2, 2)
-    assert reg["title"] == "PCN26-119"
-    assert reg["summary"] == "PCN PCN26-119 — Acme Semi, 2 parts, attempt 2."
-    assert p["notice_id"] == "PCN26-119" and p["ingest_id"] == ID and p["content_kind"] == "pcn"
+    assert reg["title"] == PRINTED and PRINTED != MANIFEST["doc_id"]
+    assert reg["summary"] == f"PCN {PRINTED} — Acme Semi, 2 parts, attempt 2."
+    assert p["notice_id"] == PRINTED and p["ingest_id"] == ID and p["content_kind"] == "pcn"
     assert p["dropped_by"]["authz_id"] == DROPPER
 
 
@@ -199,7 +205,25 @@ def test_review_json_absent_still_files_with_the_four_keys_none(monkeypatch):
     for k in ("mfr", "notice_date", "part_count"):
         assert k in p and p[k] is None, k
     assert p["attempt"] == 2
-    assert reg["summary"] == "PCN PCN26-119 — manufacturer unknown, ? parts, attempt 2."
+    # No review.json, so no printed id: the title falls back to the DROP id, never to the
+    # manifest's filename-derived `doc_id`.
+    assert p["notice_id"] == ""
+    assert reg["title"] == f"Promote document {ID}"
+    assert reg["summary"] == f"PCN {ID} — manufacturer unknown, ? parts, attempt 2."
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "MISSING", 7])
+def test_an_unextracted_notice_id_titles_the_task_by_its_drop_id(monkeypatch, raw):
+    review = dict(REVIEW)
+    if raw == "MISSING":
+        del review["doc_id_raw"]
+    else:
+        review["doc_id_raw"] = raw
+    fake = FakeS3(_objects(review=review))
+    monkeypatch.setattr(gateway, "_build_s3_client", lambda: fake)
+    reg = _file(monkeypatch, fake)
+    assert reg["payload"]["notice_id"] == ""
+    assert reg["title"] == f"Promote document {ID}", reg["title"]
 
 
 # ── Part B: extraction rows ──────────────────────────────────────────────────────────────────
@@ -225,6 +249,23 @@ def test_extraction_rows_are_mapped_and_evidence_less_rows_are_counted(monkeypat
     assert ev == {"page": 2, "bbox": [10.0, 20.0, 30.0, 40.0],
                   "bboxes": [[10.0, 20.0, 30.0, 40.0]], "page_dims": [612, 792], "units": "pt",
                   "quality": "cell"}
+
+
+def test_extraction_notice_id_is_the_printed_id_not_the_key_nor_the_row(monkeypatch, s3):
+    _gate(monkeypatch, row=_row(notice_id="STALE-ROW-VALUE"))
+    _as(monkeypatch, DROPPER)
+    b = _get(f"/ingest/{ID}/extraction").json()
+    assert b["notice_id"] == PRINTED, b["notice_id"]
+
+
+def test_extraction_notice_id_is_null_when_none_was_extracted(monkeypatch):
+    review = {k: v for k, v in REVIEW.items() if k != "doc_id_raw"}
+    fake = FakeS3(_objects(review=review))
+    monkeypatch.setattr(gateway, "_build_s3_client", lambda: fake)
+    _gate(monkeypatch, row=_row(notice_id="STALE-ROW-VALUE"))
+    _as(monkeypatch, DROPPER)
+    b = _get(f"/ingest/{ID}/extraction").json()
+    assert "notice_id" in b and b["notice_id"] is None, b["notice_id"]
 
 
 def test_units_are_pt_for_a_text_layer_cell_and_px_for_anything_else(monkeypatch, s3):
