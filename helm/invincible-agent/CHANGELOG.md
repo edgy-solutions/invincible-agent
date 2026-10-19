@@ -1,5 +1,11 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.58 — 2026-10-19
+
+cortex-ui pinned to 3bd3e80 (`sha256:2b61d76f…`), from 1f5482f (`1f3ae4ed`). The pdf.js worker
+`.mjs` is served as JavaScript, so the source pane draws; the pane names the real failure.
+Frontend image only; no template changed.
+
 ## 0.4.57 — 2026-10-18
 
 cortex-ui pinned to 1f5482f (`sha256:1f3ae4ed…`), from b3bdab7 (`94599a96…`). Promote is

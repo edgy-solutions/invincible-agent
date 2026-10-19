@@ -915,7 +915,15 @@ cortexUi:
     # control still resolves to 94599a96. Since b3bdab7 the Dockerfile, docker-entrypoint.sh,
     # nginx config and .github are unchanged, and the diff reads no new env, so VITE_FEATURES
     # is unchanged.
-    digest: "sha256:1f3ae4ed969ed8f561c981d6685e0daf2f5eb32d966620a876e6c5802c639154"
+    # 2026-10-19, pinned for 197 (architect P0: "roll 197 with cortex's pin"): cortex-ui 3bd3e80
+    # (master; the pdf.js worker .mjs is served as text/javascript, and the source pane names the
+    # real failure) -> 2b61d76f. 1f5482f is an ancestor. Measured before pinning: the FULL tag
+    # resolves to this digest (an OCI index); the abbreviated tag and this digest with its last
+    # hex altered both answer 404; the 1f5482f control still resolves to 1f3ae4ed. Since 1f5482f
+    # only nginx.conf moved at runtime (an http-level `types { text/javascript mjs; }`); the
+    # Dockerfile, docker-entrypoint.sh and .github are unchanged, and the diff reads no new env,
+    # so VITE_FEATURES is unchanged.
+    digest: "sha256:2b61d76fed5d2927de93f798e127ccad8f08ef2eddd60e28de21650ccc7b2218"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
