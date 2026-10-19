@@ -80,12 +80,19 @@ def test_a_first_decision_is_INSERTED_as_its_canonical_bytes_and_answers_ok():
     assert conn.committed
 
 
-def test_a_second_decision_answers_WHAT_WAS_DECIDED_by_whom_and_when():
-    ledger, cur, _ = _ledger(None, ("rejected", "al", 5))
+@pytest.mark.parametrize("row,record", [
+    (("rejected", "al", 5, canonical_json(RECORD)), canonical_json(RECORD)),
+    (("rejected", "al", 5), None),   # a row without its record: the replay then refuses corrections
+])
+def test_a_second_decision_answers_WHAT_WAS_DECIDED_by_whom_and_when(row, record):
+    """`record` rides along so a replay can hold a retry's row_edits to what was recorded."""
+    ledger, cur, _ = _ledger(None, row)
     out = ledger.append(RECORD, acted_by="bob", acted_at=1_000)
     assert out == {"ok": False, "reason": "immutable_conflict",
-                   "existing": {"decision": "rejected", "acted_by": "al", "acted_at": 5}}
+                   "existing": {"decision": "rejected", "acted_by": "al", "acted_at": 5,
+                                "record": record}}
     assert cur.executed[1] == (promotion_stores._EXISTING_SQL, ("dr-1", INGEST_ID))
+    assert "record" in promotion_stores._EXISTING_SQL.split("FROM")[0]
 
 
 def test_a_conflict_whose_row_cannot_be_read_is_NOT_a_conflict_answer():

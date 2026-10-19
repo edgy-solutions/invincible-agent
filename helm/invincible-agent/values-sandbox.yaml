@@ -995,6 +995,10 @@ cortexBff:
     MINIO_ACCESS_KEY: "minio-sandbox"
     MINIO_SECRET_KEY: "minio-sandbox-secret"
     MINIO_REGION: "us-east-1"
+    # Steward corrections (row_edits) on a document_promotion. OFF until one live correction is
+    # proven; then this and cortexUi.env.VITE_REVIEW_ROW_EDITS go "true" together. Only the exact
+    # word "true" turns it on.
+    IAGENT_PROMOTION_ROW_EDITS: "false"
   ingress:
     enabled: true
     className: traefik

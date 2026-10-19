@@ -2,9 +2,10 @@
 codes, final": not_a_notice, unreadable, parts_unusable, duplicate).
 
 The wire carries the code AS the comment (`<code>` or `<code>: <note>`) and the stored detail is
-that comment verbatim. A wrong value, a wrong part or missing rows is a CORRECTION (approve with
-row_edits on the grouped review), so those three are refused. `row_edits` is read only by the
-grouped_review branch; sent on any other kind it would be dropped, so it is refused by name.
+that comment verbatim. A wrong value, a wrong part or missing rows is a CORRECTION (promote with
+row_edits), so those three are refused. `row_edits` is read by the grouped_review branch and, behind
+IAGENT_PROMOTION_ROW_EDITS (default off), the document_promotion branch; sent anywhere it is not
+read it would be dropped, so it is refused by name.
 """
 from __future__ import annotations
 
@@ -123,11 +124,21 @@ def test_a_blank_reason_keeps_its_own_refusal(world):
     assert r.status_code == 422 and "REQUIRES a reason" in r.text
 
 
-def test_row_edits_on_a_document_promotion_is_refused_before_any_write(world):
-    r = world.client.post("/human_tasks/t-1/act", json={"decision": "approved", "row_edits": EDITS})
+def test_row_edits_on_a_document_promotion_is_refused_before_any_write(world, monkeypatch):
+    """Flag OFF (unset): the refusal is by name, with enabled False, and nothing runs."""
+    monkeypatch.delenv("IAGENT_PROMOTION_ROW_EDITS", raising=False)
+    r = world.client.post("/human_tasks/t-1/act", json={"decision": "promoted", "row_edits": EDITS})
     assert r.status_code == 422, r.text
     d = r.json()["detail"]
     assert d["error"] == "row_edits_not_for_kind" and d["kind"] == promotion.KIND
+    assert d["enabled"] is False
+    assert world.acts == [] and world.resolved == []
+
+
+def test_row_edits_with_the_grouped_verb_on_a_promotion_is_also_refused(world, monkeypatch):
+    monkeypatch.delenv("IAGENT_PROMOTION_ROW_EDITS", raising=False)
+    r = world.client.post("/human_tasks/t-1/act", json={"decision": "approved", "row_edits": EDITS})
+    assert r.status_code == 422, r.text
     assert world.acts == [] and world.resolved == []
 
 

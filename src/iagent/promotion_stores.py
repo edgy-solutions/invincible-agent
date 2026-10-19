@@ -89,7 +89,7 @@ RETURNING record_id
 """
 
 _EXISTING_SQL = """
-SELECT decision, acted_by, acted_at FROM document_decision_record
+SELECT decision, acted_by, acted_at, record FROM document_decision_record
 WHERE record_id = %s OR ingest_id = %s
 """
 
@@ -143,9 +143,13 @@ class PgDecisionLedger:
             return {"ok": True}
         if existing is None:
             return {"ok": False, "reason": "conflict_unreadable"}
-        decision, by, at = existing
+        decision, by, at = existing[:3]
+        # The stored record rides along so a replay can be held to what was recorded (its
+        # steward corrections); None when the row did not return it.
+        stored = existing[3] if len(existing) > 3 else None
         return {"ok": False, "reason": "immutable_conflict",
-                "existing": {"decision": decision, "acted_by": by, "acted_at": int(at)}}
+                "existing": {"decision": decision, "acted_by": by, "acted_at": int(at),
+                             "record": stored}}
 
 
 class S3Quarantine:

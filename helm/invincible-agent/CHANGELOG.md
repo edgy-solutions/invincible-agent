@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.59 — 2026-10-19
+
+`cortexBff.env.IAGENT_PROMOTION_ROW_EDITS: "false"` in `values-sandbox.yaml`. The BFF can now take
+steward corrections (`row_edits`) on a `document_promotion`, behind this flag. It ships off and goes
+on together with `cortexUi.env.VITE_REVIEW_ROW_EDITS` once one live correction is proven. Values
+only; no template changed.
+
 ## 0.4.58 — 2026-10-19
 
 cortex-ui pinned to 3bd3e80 (`sha256:2b61d76f…`), from 1f5482f (`1f3ae4ed`). The pdf.js worker

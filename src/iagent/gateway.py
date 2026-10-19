@@ -789,7 +789,9 @@ class CorrectedRow(_RowEditsModel):
 class RowEdits(_RowEditsModel):
     """Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's
     `steward_correction.validate_row_edits` restates every rule against the server-authored batch;
-    this is the wire half, so a bad payload is a 422 before it reaches Restate."""
+    this is the wire half, so a bad payload is a 422 before it reaches Restate. It is also the
+    document_promotion wire (carried on a `promoted` decision, server-flagged by
+    IAGENT_PROMOTION_ROW_EDITS)."""
     deleted: list[DeletedRow] = []
     added: list[AddedRow] = []
     corrected: list[CorrectedRow] = []
@@ -815,21 +817,29 @@ class RowEdits(_RowEditsModel):
         return self
 
 
+def _promotion_row_edits_enabled() -> bool:
+    """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
+    Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
+    return os.environ.get("IAGENT_PROMOTION_ROW_EDITS", "").strip().lower() == "true"
+
+
 class HumanTaskActRequest(_BaseModel):
     decision: str  # "approved" | "rejected"
     comment: str = ""
     # Grouped review only. A narrow REJECT (wrong document / not a notice / duplicate) names why;
     # REQUIRED for a grouped_review reject (checked at the route, where the kind is known).
     reason_code: Optional[Literal["not_a_notice", "parts_list_unusable", "superseded_or_duplicate"]] = None
-    # Grouped review approval only: steward deletes / additions / corrections, each with evidence.
+    # Grouped review approval, or document promotion `promoted` (flag-gated at the route): steward
+    # deletes / additions / corrections, each with evidence.
     row_edits: Optional[RowEdits] = None
 
     @model_validator(mode="after")
     def _verb_fields(self):
         if self.reason_code is not None and self.decision != "rejected":
             raise ValueError("reason_code is only valid with decision='rejected'")
-        if self.row_edits is not None and self.decision != "approved":
-            raise ValueError("row_edits is only valid with decision='approved'")
+        if self.row_edits is not None and self.decision not in ("approved", "promoted"):
+            raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
+                             "or 'promoted' (document promotion)")
         return self
 
     # PCN grouped review only: optional per-part disposition overrides the reviewer
@@ -3823,13 +3833,24 @@ async def act_on_human_task(
             raise HTTPException(status_code=409, detail={
                 "error": "delegated_act_unsupported", "kind": match.get("kind")})
 
-    # row_edits is read ONLY by the grouped_review branch below. Sent on any other kind it would be
-    # accepted and silently dropped, losing the correction (architect ruling 2026-10-17). Asked
-    # before verb validation so the refusal names the real cause, and before any write.
+    # row_edits is read ONLY by the grouped_review branch and (flag IAGENT_PROMOTION_ROW_EDITS on)
+    # the document_promotion branch below. Sent on any other kind, or on a promotion while the flag
+    # is off, it would be accepted and silently dropped, losing the correction (architect rulings
+    # 2026-10-17, 2026-10-18). Asked before verb validation so the refusal names the real cause,
+    # and before any write.
     if req.row_edits is not None and match.get("kind") != "grouped_review":
-        raise HTTPException(status_code=422, detail={
-            "error": "row_edits_not_for_kind", "kind": match.get("kind"),
-            "message": "row edits are read only on a grouped review; sent here they would be lost"})
+        if match.get("kind") == "document_promotion":
+            if not _promotion_row_edits_enabled():
+                raise HTTPException(status_code=422, detail={
+                    "error": "row_edits_not_for_kind", "kind": "document_promotion",
+                    "enabled": False,
+                    "message": "row edits on a document promotion are off on this deployment "
+                               "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+        else:
+            raise HTTPException(status_code=422, detail={
+                "error": "row_edits_not_for_kind", "kind": match.get("kind"),
+                "message": "row edits are read only on a grouped review or a document "
+                           "promotion; sent here they would be lost"})
 
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
@@ -3888,8 +3909,64 @@ async def act_on_human_task(
                     "error": "reject_code_unknown", "codes": list(promotion.PROMOTION_REJECT_CODES),
                     "task_id": task_id,
                     "message": "a reject names one of the listed codes; a wrong value, a wrong "
-                               "part or missing rows is a correction (approve with row_edits on "
-                               "the grouped review), not a reject"})
+                               "part or missing rows is a correction (promote with row_edits), "
+                               "not a reject"})
+
+        # STEWARD CORRECTIONS (architect ruling 2026-10-18; flag-gated above). Everything that can
+        # refuse is asked BEFORE `promotion.act`, so a refusal writes nothing.
+        edits = None
+        corrections = None
+        defect_aud = None
+        subject = None
+        if req.row_edits is not None:
+            from agent_fleet.restate_analyst import steward_correction
+            try:
+                subject = promotion.subject_from_payload(match.get("payload"))
+                _mpns = await run_in_threadpool(lambda: _review_mpns_for_payload(subject))
+                try:
+                    edits = steward_correction.validate_row_edits(
+                        req.row_edits.model_dump(), extracted_mpns=_mpns)
+                except steward_correction.EditRefusal as exc:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "row_edits_refused", "task_id": task_id, "message": str(exc)})
+                if edits.is_empty():
+                    edits = None
+                else:
+                    defect_aud = f"dispatch_failure:{promotion.domain_of(audience)}"
+            except promotion.PromotionRefused as exc:
+                raise HTTPException(status_code=exc.status, detail={
+                    "error": exc.error, "task_id": task_id, "message": str(exc)})
+            if edits is not None:
+                _unroutable = {
+                    "error": "extraction_defect_unroutable", "audience": defect_aud,
+                    "task_id": task_id,
+                    "message": f"a correction files an extraction_defect, and nobody holds "
+                               f"{defect_aud}; nothing was written"}
+                try:
+                    _holders = await run_in_threadpool(
+                        lambda: human_tasks._resolve_audience_actors(defect_aud))
+                except Exception:  # noqa: BLE001 — cannot-know is a refusal, nothing written
+                    raise HTTPException(status_code=503, detail=_unroutable)
+                if not _holders:
+                    raise HTTPException(status_code=409, detail=_unroutable)
+                _by = current_user.authz_id
+                corrections = []
+                for r in edits.corrected:
+                    corrections.append({"op": "corrected", "mpn": r["mpn"].strip(),
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=r["mpn"].strip(),
+                                            corrected=r["corrected_mpn"].strip(),
+                                            evidence=r["evidence"].strip())})
+                for r in edits.added:
+                    corrections.append({"op": "added", "mpn": r["mpn"].strip(),
+                                        "disposition": r["disposition"], "reason": r["reason"],
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=None,
+                                            corrected=r["mpn"].strip(),
+                                            evidence=r["evidence"].strip())})
+                for r in edits.deleted:
+                    corrections.append({"op": "deleted", "mpn": r["mpn"].strip(),
+                                        "reason": r["reason"]})
 
         try:
             from .trust_table import load_trust_table
@@ -3906,17 +3983,43 @@ async def act_on_human_task(
                         human_tasks.declaration_for(promotion.KIND)),
                     "trust_table_ref": _tbl,
                 },
-                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000)))
+                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
+                row_edits=corrections))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
+        defect = None
+        if edits is not None:
+            # Filed AFTER the record stands and BEFORE the task resolves: a failure leaves the task
+            # pending, and acting again replays the record (immutable_conflict) and files it.
+            defect = steward_correction.defect_task(
+                notice=(subject.notice_id or subject.ingest_id), decision_id=done["record_id"],
+                pipeline_version=subject.pipeline_version, edits=edits, audience=defect_aud,
+                requested_by=actor, acted_by=current_user.authz_id)
+
+            def _file_defect():
+                if not human_tasks.task_exists(defect["task_key"]):
+                    human_tasks.register_task(
+                        kind=defect["kind"], task_id=defect["task_key"],
+                        audience=defect["audience"], title=defect["title"],
+                        summary=defect["summary"], requested_by=actor,
+                        subject_ref=subject.ingest_id, payload=defect["payload"])
+            try:
+                await run_in_threadpool(_file_defect)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=503, detail={
+                    "error": "extraction_defect_not_filed", "task_id": task_id,
+                    "record_id": done["record_id"],
+                    "message": f"the promotion and its corrections are recorded but the "
+                               f"extraction_defect was not filed ({type(exc).__name__}); the "
+                               f"task stays pending and acting again files it"})
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
                 task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment))
-        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s code=%s",
+        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s code=%s edits=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
-                    actor, _reject_code)
+                    actor, _reject_code, len(corrections or []))
 
         # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
         # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
@@ -3944,6 +4047,11 @@ async def act_on_human_task(
         _body = {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
         if _reject_code is not None:
             _body["reject_code"] = _reject_code
+        if defect is not None:
+            _body["row_edits"] = {"corrected": len(edits.corrected), "added": len(edits.added),
+                                  "deleted": len(edits.deleted)}
+            _body["corrections"] = corrections
+            _body["extraction_defect"] = defect["task_key"]
         return _body
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
@@ -11327,6 +11435,34 @@ def _read_review_json(key: str) -> dict:
         raise HTTPException(status_code=422, detail={
             "error": "extraction_unreadable", "message": "review.json is not a JSON object"})
     return doc
+
+
+def _review_mpns_for_payload(subject) -> list:
+    """The affected_mpn of every part row of the review a promotion task points at (sync;
+    threadpool). 422 `extraction_unbound` when the extraction is not under the document's own
+    directory; the readers raise their own HTTPException on a store failure."""
+    from . import promotion
+
+    ref = str(subject.extraction_ref or "").strip()
+    prefix = promotion.object_prefix_for(subject.ingest_id, subject.object_ref)
+    if not prefix or not ref.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory {prefix!r}"})
+    manifest = _read_extraction_manifest(ref)
+    key = _review_json_key(manifest, ref)
+    if not key or not key.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"the review rows are not under this document's directory {prefix!r}"})
+    out = []
+    for it in _review_items(_read_review_json(key)):
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if m and m.group(2) == "affected_mpn":
+            v = it.get("value")
+            if isinstance(v, str) and v.strip():
+                out.append(v)
+    return out
 
 
 def _review_items(review: dict) -> list:

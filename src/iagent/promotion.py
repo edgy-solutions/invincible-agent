@@ -104,7 +104,8 @@ class PromotionRefused(RuntimeError):
 class DecisionLedger(Protocol):
     """The decision record's home. `append` answers `{"ok": True}`, or `{"ok": False,
     "reason": ...}`, and on `immutable_conflict` also `"existing": {"decision", "acted_by",
-    "acted_at"}`."""
+    "acted_at", "record"}`, where `record` is the stored record (canonical JSON text, or None
+    when unreadable)."""
 
     def append(self, record: dict, *, acted_by: str, acted_at: int) -> dict: ...
 
@@ -279,14 +280,21 @@ def ruleset_ref(declaration: dict) -> str:
 
 
 def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, audience: str,
-                 comment: str, governing: dict, era: str) -> dict:
-    check = make_check("human_review", verdict=decision, inputs={
+                 comment: str, governing: dict, era: str,
+                 row_edits: Optional[list] = None) -> dict:
+    """The decision record. A steward's corrections (`row_edits`, each stamped
+    `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
+    grant. With none, the inputs are exactly what they always were (no new key)."""
+    inputs = {
         "extraction_ref": subject.extraction_ref,
         "content_kind": subject.content_kind,
         "reviewed_by": f"human:{acted_by}",
         "audience": audience,
         "comment": comment or "",
-    })
+    }
+    if isinstance(row_edits, list) and row_edits:
+        inputs["row_edits"] = row_edits
+    check = make_check("human_review", verdict=decision, inputs=inputs)
     return build_decision_record(
         request_key=subject.ingest_id,
         source_key=subject.object_ref,
@@ -372,12 +380,28 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
             f"acting again completes it", status=503) from exc
 
 
+def _recorded_row_edits(stored: Any) -> Optional[list]:
+    """The `row_edits` on a stored record's human_review check, or None (none, or unreadable)."""
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            return None
+    checks = stored.get("checks") if isinstance(stored, dict) else None
+    for c in checks if isinstance(checks, list) else []:
+        if isinstance(c, dict) and c.get("name") == "human_review":
+            edits = (c.get("inputs") or {}).get("row_edits")
+            return edits if isinstance(edits, list) else None
+    return None
+
+
 def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: str = "",
         can_act: Callable[[str, str], bool],
         stores: Optional[PromotionStores],
-        governing: dict, era: str, now_ms: int) -> dict:
+        governing: dict, era: str, now_ms: int, row_edits: Optional[list] = None) -> dict:
     """Promote or reject one document. Returns what happened; raises `PromotionRefused` for
-    everything that did not."""
+    everything that did not. `row_edits` (the steward's corrections, already validated by the
+    route) is written onto the decision record, which is the grant."""
     if decision not in VERBS:
         raise PromotionRefused("invalid_decision_for_kind",
                                f"{KIND} takes {list(VERBS)}, not {decision!r}", status=422)
@@ -419,7 +443,7 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 f"to be a fact about. Nothing was written", status=409)
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
-                          comment=comment, governing=governing, era=era)
+                          comment=comment, governing=governing, era=era, row_edits=row_edits)
     try:
         written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
     except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok
@@ -441,6 +465,14 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 "promotion_already_decided",
                 f"{subject.ingest_id} was already decided ({prior!r}); one document takes one "
                 f"decision", status=409)
+        if (row_edits or None) != (_recorded_row_edits(existing.get("record")) or None):
+            # A replay re-applies the STORED record. Corrections that are not the record's would
+            # be answered (and filed as the extraction_defect) without ever being recorded.
+            raise PromotionRefused(
+                "row_edits_differ_from_the_record",
+                f"{subject.ingest_id} is already {decision!r} and its record carries different "
+                f"steward corrections; the record stands as written. Nothing was written",
+                status=409)
         effect_by, effect_at, replayed = existing["acted_by"], existing["acted_at"], True
 
     out = {"decision": decision, "ingest_id": subject.ingest_id,
