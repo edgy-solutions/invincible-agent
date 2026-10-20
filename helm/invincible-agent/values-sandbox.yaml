@@ -929,7 +929,15 @@ cortexUi:
     # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
     # answer 404. Since 3bd3e80 the Dockerfile, docker-entrypoint.sh, nginx.conf and .github are
     # unchanged, and the diff reads no new env, so VITE_FEATURES is unchanged.
-    digest: "sha256:7b51701c04935bab87798b3b53f50bd77bb40aa24917b7616cdfcbc8a022e512"
+    # 2026-10-20, pinned for 199 (cortex: "It replaces 47e96ea as the 199 candidate"): cortex-ui
+    # d44b0cc (header_edits on the title line, the review card's leaf, `unchanged` in the console
+    # line) -> b248af5c. 3d2f7a3 is an ancestor. Measured before pinning: the FULL tag resolves to
+    # this digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
+    # answer 404; the 3d2f7a3 control still resolves to 7b51701c. Since 3d2f7a3 only
+    # .github/workflows/build.yml moved (a test checkout's PRODUCER_REF, not a build arg); the
+    # Dockerfile, docker-entrypoint.sh and nginx.conf are unchanged, and the only env the src diff
+    # reads is the existing VITE_REVIEW_ROW_EDITS, so VITE_FEATURES is unchanged.
+    digest: "sha256:b248af5c686ca772538f1e8f6c9cdcecf4a6bc451fac1595f00a0dadc0edc0b1"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -983,7 +991,10 @@ cortexUi:
     # 2026-10-10, none ever carried row_edits, and no extraction_defect task has ever been filed.
     # So row edits are OFF on the sandbox until one is confirmed. The image's entrypoint honours
     # only the exact lowercase string "false"; anything else, including absent, is ON.
-    VITE_REVIEW_ROW_EDITS: "false"
+    # 2026-10-20, ON for 199: the row and header editors both sit behind this flag, and the first
+    # live correction (TYC's mfr, header_edits) is made THROUGH the card, so the card's flag has to
+    # be on for the correction that proves it. The server's IAGENT_PROMOTION_ROW_EDITS is on since 198.
+    VITE_REVIEW_ROW_EDITS: "true"
 
 cortexBff:
   enabled: true
