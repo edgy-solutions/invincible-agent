@@ -923,7 +923,13 @@ cortexUi:
     # only nginx.conf moved at runtime (an http-level `types { text/javascript mjs; }`); the
     # Dockerfile, docker-entrypoint.sh and .github are unchanged, and the diff reads no new env,
     # so VITE_FEATURES is unchanged.
-    digest: "sha256:2b61d76fed5d2927de93f798e127ccad8f08ef2eddd60e28de21650ccc7b2218"
+    # 2026-10-20, pinned for 198 (architect: "Next pin: cortex 3d2f7a3 (refusal reasons in the
+    # toast) in 198"): cortex-ui 3d2f7a3 (a refused grouped /act names the platform's reasons)
+    # -> 7b51701c. 3bd3e80 is an ancestor. Measured before pinning: the FULL tag resolves to this
+    # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
+    # answer 404. Since 3bd3e80 the Dockerfile, docker-entrypoint.sh, nginx.conf and .github are
+    # unchanged, and the diff reads no new env, so VITE_FEATURES is unchanged.
+    digest: "sha256:7b51701c04935bab87798b3b53f50bd77bb40aa24917b7616cdfcbc8a022e512"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -998,7 +1004,9 @@ cortexBff:
     # Steward corrections (row_edits) on a document_promotion. OFF until one live correction is
     # proven; then this and cortexUi.env.VITE_REVIEW_ROW_EDITS go "true" together. Only the exact
     # word "true" turns it on.
-    IAGENT_PROMOTION_ROW_EDITS: "false"
+    # 2026-10-20, ON for 198 with cortex's flag still off (step 2 of the order in the 10-19
+    # morning report): the server takes row_edits on a promotion, no UI sends them yet.
+    IAGENT_PROMOTION_ROW_EDITS: "true"
   ingress:
     enabled: true
     className: traefik

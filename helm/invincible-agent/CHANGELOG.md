@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.61 — 2026-10-20
+
+Sandbox only, for roll 198. `cortexUi.image.digest` pins cortex-ui `3d2f7a3` (`sha256:7b51701c`,
+refusal reasons in the toast), and `cortexBff.env.IAGENT_PROMOTION_ROW_EDITS` is `"true"`. cortex's
+`VITE_REVIEW_ROW_EDITS` stays `"false"`, so the server takes row_edits on a promotion and no UI sends
+them yet.
+
 ## 0.4.60 — 2026-10-19
 
 `primeSubstrate.reregisterEngines.deployments` gains `cortex-bff`. The BFF now persists each
