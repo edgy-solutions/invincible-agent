@@ -1439,6 +1439,13 @@ primeSubstrate:
       # derives this list from who calls register_engine_to_mesh, so an omission fails CI
       # rather than a demo. Renders as <release>-engine-cost.
       - engine-cost
+      # cortex-bff is not an engine: it replays the frontend render menus it stored (Postgres
+      # `frontend_menu`) into the graph on startup (architect ruling Q9, 2026-10-19: a render
+      # menu is a registration like an engine's, and registrations survive prime). Prime wipes
+      # the graph, cortex posts its menu once at login, and nothing else puts it back -- so the
+      # post-prime restart is what restores cortex's menu after the wipe. Renders as
+      # <release>-cortex-bff (frontend.yaml); a disabled BFF is a harmless skip.
+      - cortex-bff
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.

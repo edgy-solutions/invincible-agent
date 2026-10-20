@@ -56,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from . import frontend_menu_store
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
@@ -409,9 +410,17 @@ async def lifespan(application: FastAPI):
         )
 
     _watchdog = _start_ingest_watchdog()
+    # Ruling Q9 (2026-10-19): replay the stored frontend menus into the graph. A background
+    # task: it must not hold startup or /health, and its exceptions never escape.
+    _menu_replay = asyncio.create_task(_replay_frontend_menus())
     try:
         yield
     finally:
+        _menu_replay.cancel()
+        try:
+            await _menu_replay
+        except asyncio.CancelledError:
+            pass
         if _watchdog is not None:
             _watchdog.cancel()
             try:
@@ -4662,6 +4671,9 @@ class RegisterFrontendCapabilitiesResponse(BaseModel):
     # Refused rows are RETURNED, never silently dropped. A drop would reproduce the very
     # defect admission validation exists to prevent, one layer earlier.
     rejected: list[dict] = []
+    # True when the stored menu matched and the graph already held it, so nothing was emitted.
+    # `accepted` is len(admitted) either way (cortex checks sent == accepted).
+    unchanged: bool = False
 
 
 # Dedicated logger so registrations are easy to slice out in log search.
@@ -8594,6 +8606,193 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
 # ══════════════════════════════════════════════════════════
 
 
+def _emit_menu_to_registrar(registrar_url: str, frontend_id: str, frontend_version: str | None,
+                          admitted: list[dict]) -> tuple[int, list]:
+    """Emit each admitted capability to the registrar (SYNC HTTP: run it off the event loop).
+
+    Shared by the registration route and the startup replay. Returns (registered, failed)."""
+    from agent_fleet.presentation_agent.capabilities import capability_slug as _capability_slug
+    _graph_registered, _graph_failed = 0, []
+    from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+
+    for _c in admitted:
+        _contract = _c.get("contract") if isinstance(_c, dict) else None
+        _recomputes = None
+        if isinstance(_contract, dict) and "recomputes" in _contract:
+            # Tri-state preserved end to end: only a DECLARED value travels.
+            _recomputes = bool(_contract.get("recomputes"))
+        _outcome = _emit_presentation_to_registrar(
+            registrar_url=registrar_url,
+            # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
+            # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
+            # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
+            # `#`, so the whole thing survived and the name became
+            #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
+            # — a URN DELIMITER inside a URN component. Measured on the live substrate
+            # 2026-09-02: the __system_default__ rows written by the presentation agent
+            # were clean and the cortex-ui-desktop rows written HERE carried the colon,
+            # which is what identified this as the second site.
+            #
+            # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
+            # THERE, in the same week the five-registries lesson was written up. Fixing
+            # the instance you found is what stops you looking for the sibling. Imported
+            # rather than re-implemented so there is no third copy to diverge.
+            #
+            # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
+            # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
+            # this ships leaves the colon-bearing rows standing and double-binds every
+            # subject. It must ride the same migration as the archetype-out-of-the-name
+            # ruling, which moves every presentation urn anyway.
+            name=(
+                f"presentation_{str(_c.get('archetype') or '').lower()}"
+                f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
+                f"__{frontend_id}"
+            ),
+            description=(
+                f"{frontend_id} renders {_c.get('subject_uri')} "
+                f"as {_c.get('archetype')}"
+            ),
+            subject_uri=str(_c.get("subject_uri") or ""),
+            object_uri=str(_c.get("object_uri") or ""),
+            archetype=str(_c.get("archetype") or ""),
+            expected_fields=list(_c.get("expected_fields") or []),
+            persona_fit=list(_c.get("persona_fit") or []),
+            domain_fit=list(_c.get("domain_fit") or []),
+            # The mesh helper takes `version: str`. An ABSENT version is carried as
+            # empty rather than the string "None", which is what `str(None)` would put
+            # into the graph and what a reader would then see as a version.
+            version=frontend_version or "",
+            frontend_id=frontend_id,
+            recomputes=_recomputes,
+        )
+        if _outcome is True:
+            _graph_registered += 1
+        else:
+            _graph_failed.append({"subject_uri": _c.get("subject_uri"),
+                                  "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+    return _graph_registered, _graph_failed
+
+
+
+_frontend_menu_store_instance = None
+_frontend_menu_store_warned = False
+
+
+def _frontend_menu_store():
+    """The menu store, or None when PROJECTOR_POSTGRES_DSN is unset (logged once, never a crash)."""
+    global _frontend_menu_store_instance, _frontend_menu_store_warned
+    if not frontend_menu_store.configured():
+        if not _frontend_menu_store_warned:
+            _frontend_menu_store_warned = True
+            _frontend_registry_logger.warning(
+                "frontend menu store dormant (no PROJECTOR_POSTGRES_DSN): menus are not "
+                "persisted and will not be replayed after a graph wipe")
+        return None
+    if _frontend_menu_store_instance is None:
+        _frontend_menu_store_instance = frontend_menu_store.PgFrontendMenuStore()
+    return _frontend_menu_store_instance
+
+
+def _fetch_graph_entries():
+    """The graph's registered menus, or None when it is unreachable (sync; run off the loop)."""
+    from agent_fleet.presentation_agent.graph_menu_source import fetch_registered_entries
+
+    return fetch_registered_entries()
+
+
+def _graph_holds_menu(entries, frontend_id: str, frontend_version: str | None,
+                      admitted: list[dict]) -> bool:
+    """True only when the graph (a dict, not None) holds this frontend's version with every
+    admitted capability.
+
+    COVERAGE IS KEYED BY (subject_uri, archetype), not by count: those two fields are what the
+    emit puts in the row's name (presentation_<archetype>_for_<subject>__<frontend_id>) and
+    both survive the graph read (`input_uri` -> subject_uri, `archetype`), so the key is
+    recoverable on both sides. A count would call a menu with one capability swapped for another
+    "held". The graph may hold MORE than the post (a stale row); that is covered, and a changed
+    menu is caught by the digest, not here.
+    """
+    if not isinstance(entries, dict):
+        return False
+    entry = entries.get(frontend_id)
+    if not isinstance(entry, dict):
+        return False
+    group = (entry.get("versions") or {}).get(frontend_version or "")
+    if not isinstance(group, dict):
+        return False
+    held = {(c.get("subject_uri") or "", c.get("archetype") or "")
+            for c in (group.get("capabilities") or [])}
+    wanted = {(str(c.get("subject_uri") or ""), str(c.get("archetype") or "")) for c in admitted}
+    return wanted <= held
+
+
+# Replay retry schedule: 6 attempts, ~5 minutes in all (seconds slept BEFORE attempts 2..6).
+_FRONTEND_MENU_REPLAY_DELAYS = (15, 30, 60, 90, 105)
+
+
+def _replay_frontend_menus_once() -> bool:
+    """One replay pass. Returns True when done, False when it should be retried.
+
+    Retry while the graph read is None (unreachable) or the registrar refused every
+    capability of some frontend. Sync: run off the event loop.
+    """
+    from agent_fleet.presentation_agent import capability_registry as _cap_registry
+
+    registrar_url = os.getenv("MESH_REGISTRAR_URL")
+    store = _frontend_menu_store()
+    if store is None or not registrar_url:
+        return True
+    rows = store.load_all()
+    if not rows:
+        return True
+    for row in rows:
+        _cap_registry.register(row["frontend_id"], row["frontend_version"], row["menu"])
+    entries = _fetch_graph_entries()
+    if entries is None:
+        _frontend_registry_logger.warning(json.dumps({
+            "event": "frontend_menu_replay_graph_unreachable", "frontends": len(rows)}))
+        return False
+    done = True
+    for row in rows:
+        fid, ver, menu = row["frontend_id"], row["frontend_version"], row["menu"]
+        if not menu or _graph_holds_menu(entries, fid, ver, menu):
+            _frontend_registry_logger.info(json.dumps({
+                "event": "frontend_menu_replayed", "frontend_id": fid,
+                "registered": 0, "failed": 0, "skipped": len(menu)}))
+            continue
+        registered, failed = _emit_menu_to_registrar(registrar_url, fid, ver, menu)
+        _frontend_registry_logger.info(json.dumps({
+            "event": "frontend_menu_replayed", "frontend_id": fid,
+            "registered": registered, "failed": len(failed), "skipped": 0}))
+        if registered == 0 and failed:
+            done = False
+    return done
+
+
+async def _replay_frontend_menus() -> None:
+    """Background task at BFF startup: put stored frontend menus back into the graph after a wipe.
+
+    Never blocks startup or /health and never raises.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    attempts = len(_FRONTEND_MENU_REPLAY_DELAYS) + 1
+    for attempt in range(attempts):
+        if attempt:
+            await asyncio.sleep(_FRONTEND_MENU_REPLAY_DELAYS[attempt - 1])
+        try:
+            if await run_in_threadpool(_replay_frontend_menus_once):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a replay fault is retried, never raised
+            _frontend_registry_logger.warning("frontend menu replay attempt %d failed: %s",
+                                              attempt + 1, exc)
+    _frontend_registry_logger.warning(json.dumps({
+        "event": "frontend_menu_replay_gave_up", "attempts": attempts}))
+
+
+
 @app.post("/register_frontend_capabilities", response_model=RegisterFrontendCapabilitiesResponse)
 async def register_frontend_capabilities(
     payload: RegisterFrontendCapabilitiesRequest,
@@ -8679,6 +8878,7 @@ async def register_frontend_capabilities(
     # field the way "engine-f" did -- and every UI behind this bff would then share
     # one menu. There is deliberately no default: absent is refused above.
     _graph_registered, _graph_failed = 0, []
+    _unchanged = False
     _registrar_url = os.getenv("MESH_REGISTRAR_URL")
     if _registrar_url:
         # ── THE EMIT LOOP RUNS OFF THE EVENT LOOP ──────────────────────────────────
@@ -8692,68 +8892,44 @@ async def register_frontend_capabilities(
         # `_cap_registry.register` above is an in-process dict and stays on the loop.
         from starlette.concurrency import run_in_threadpool
 
-        def _emit_all() -> tuple[int, list]:
-            _graph_registered, _graph_failed = 0, []
-            from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+        _, _admit_sha = frontend_menu_store.menu_digest(_admitted)
+        _store = _frontend_menu_store()
+        if _store is not None:
+            # NO-OP WHEN THE STORED MENU MATCHES AND THE GRAPH STILL HOLDS IT (ruling Q9). The
+            # store alone is not enough: a wipe empties the graph and leaves the row, so the
+            # graph is read too. An unreachable graph (None) is never a no-op.
+            def _already_registered() -> bool:
+                _row = _store.load(payload.frontend_id)
+                if not _row or _row["menu_sha256"] != _admit_sha:
+                    return False
+                if (_row["frontend_version"] or "") != (payload.frontend_version or ""):
+                    return False
+                return _graph_holds_menu(_fetch_graph_entries(), payload.frontend_id,
+                                         payload.frontend_version, _admitted)
 
-            for _c in _admitted:
-                _contract = _c.get("contract") if isinstance(_c, dict) else None
-                _recomputes = None
-                if isinstance(_contract, dict) and "recomputes" in _contract:
-                    # Tri-state preserved end to end: only a DECLARED value travels.
-                    _recomputes = bool(_contract.get("recomputes"))
-                _outcome = _emit_presentation_to_registrar(
-                    registrar_url=_registrar_url,
-                    # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
-                    # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
-                    # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
-                    # `#`, so the whole thing survived and the name became
-                    #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
-                    # — a URN DELIMITER inside a URN component. Measured on the live substrate
-                    # 2026-09-02: the __system_default__ rows written by the presentation agent
-                    # were clean and the cortex-ui-desktop rows written HERE carried the colon,
-                    # which is what identified this as the second site.
-                    #
-                    # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
-                    # THERE, in the same week the five-registries lesson was written up. Fixing
-                    # the instance you found is what stops you looking for the sibling. Imported
-                    # rather than re-implemented so there is no third copy to diverge.
-                    #
-                    # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
-                    # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
-                    # this ships leaves the colon-bearing rows standing and double-binds every
-                    # subject. It must ride the same migration as the archetype-out-of-the-name
-                    # ruling, which moves every presentation urn anyway.
-                    name=(
-                        f"presentation_{str(_c.get('archetype') or '').lower()}"
-                        f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
-                        f"__{payload.frontend_id}"
-                    ),
-                    description=(
-                        f"{payload.frontend_id} renders {_c.get('subject_uri')} "
-                        f"as {_c.get('archetype')}"
-                    ),
-                    subject_uri=str(_c.get("subject_uri") or ""),
-                    object_uri=str(_c.get("object_uri") or ""),
-                    archetype=str(_c.get("archetype") or ""),
-                    expected_fields=list(_c.get("expected_fields") or []),
-                    persona_fit=list(_c.get("persona_fit") or []),
-                    domain_fit=list(_c.get("domain_fit") or []),
-                    # The mesh helper takes `version: str`. An ABSENT version is carried as
-                    # empty rather than the string "None", which is what `str(None)` would put
-                    # into the graph and what a reader would then see as a version.
-                    version=payload.frontend_version or "",
-                    frontend_id=payload.frontend_id,
-                    recomputes=_recomputes,
-                )
-                if _outcome is True:
-                    _graph_registered += 1
-                else:
-                    _graph_failed.append({"subject_uri": _c.get("subject_uri"),
-                                          "reason_class": _outcome[0], "detail": _outcome[1][:200]})
-            return _graph_registered, _graph_failed
-
-        _graph_registered, _graph_failed = await run_in_threadpool(_emit_all)
+            _unchanged = await run_in_threadpool(_already_registered)
+        if _unchanged:
+            _frontend_registry_logger.info(json.dumps({
+                "event": "frontend_capabilities_unchanged",
+                "frontend_id": payload.frontend_id,
+                "frontend_version": payload.frontend_version,
+                "admitted_count": len(_admitted),
+            }))
+        else:
+            _graph_registered, _graph_failed = await run_in_threadpool(
+                _emit_menu_to_registrar, _registrar_url, payload.frontend_id,
+                payload.frontend_version, _admitted)
+            if _store is not None:
+                _saved = await run_in_threadpool(
+                    lambda: _store.save(payload.frontend_id, payload.frontend_version, _admitted,
+                                        registered_by=str(current_user.id),
+                                        registered_at=int(time.time())))
+                if not _saved.get("ok"):
+                    _frontend_registry_logger.error(json.dumps({
+                        "event": "frontend_menu_save_failed",
+                        "frontend_id": payload.frontend_id,
+                        "reason": _saved.get("reason"),
+                    }))
         if _graph_failed:
             # LOUD, and per-capability: a menu that is half in the graph renders
             # inconsistently depending on which shape an answer takes, which is far
@@ -8801,6 +8977,7 @@ async def register_frontend_capabilities(
         accepted=len(_admitted),
         rejected=_rejected,
         frontend_id=payload.frontend_id,
+        unchanged=_unchanged,
     )
 
 

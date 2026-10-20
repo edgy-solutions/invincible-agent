@@ -1,5 +1,13 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.60 — 2026-10-19
+
+`primeSubstrate.reregisterEngines.deployments` gains `cortex-bff`. The BFF now persists each
+frontend's render menu in Postgres (`frontend_menu`) and replays it into the graph at startup
+(architect ruling Q9), so the post-prime restart is what puts cortex's menu back after a wipe.
+The list entry is the only chart change; the BFF's login-time post becomes a no-op when the
+stored menu matches and the graph still holds it.
+
 ## 0.4.59 — 2026-10-19
 
 `cortexBff.env.IAGENT_PROMOTION_ROW_EDITS: "false"` in `values-sandbox.yaml`. The BFF can now take
