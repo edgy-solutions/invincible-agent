@@ -40,6 +40,7 @@ import psycopg2.extras
 # The fleet's ONE class for "Topaz could not answer" (ADR-0026), imported the way auth.py does,
 # so a raise here and a catch at the BFF are the same module object.
 from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
+from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
 
 try:
     from agent_fleet.utils import program_membership as _program_membership
@@ -208,11 +209,15 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
     down" is not "you're denied") instead of reading as False. For a route that must answer 503,
     not a deny, when Topaz is down (architect, 2026-10-17: "a holder of the task is never told
     not_entitled because a dependency is down").
-    An empty identity or an unconfigured TOPAZ_DIRECTORY_URL is still False, as in
-    :func:`check_can_view_program`: a deployment that declared no directory, not a request that
-    attempted one and failed."""
-    if not caller_id or not _TOPAZ_DIRECTORY_URL:
+    An empty identity is still False. An unset TOPAZ_DIRECTORY_URL RAISES
+    `AuthorizationUnconfigured` (`iagent.authz`) before any HTTP (architect, 2026-10-17, Q14:
+    "unset Topaz URL is 503 authorization_unconfigured, not 403 -- our misconfiguration is never
+    reported as entitlement."). `check_can_act`, which swallows every exception, still returns
+    False for its other callers."""
+    if not caller_id:
         return False
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
     payload = {
         "object_type": "task_audience",
         "object_id": audience,

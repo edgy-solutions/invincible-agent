@@ -11213,6 +11213,10 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
         dependency is down." A Topaz or task-store failure is 503 `authorization_unavailable`
         (an unconfigured task store is the fleet's `hitl_unconfigured`). Any other failure of
         the task check still denies.
+      * Q14: "unset Topaz URL is 503 authorization_unconfigured, not 403 -- our
+        misconfiguration is never reported as entitlement." An unset TOPAZ_DIRECTORY_URL, met on
+        an open task, is 503 `authorization_unconfigured`. With no open task the answer does not
+        depend on Topaz, so it is still 403 `not_entitled` and Topaz is not consulted.
       * "a service reads the source of drops it delegated because the delegate rule already
         grants it (it seeded them), not because it is 'the submitter'; a service holding a
         review task counts for nothing." A service caller (`_is_service_caller`) is decided
@@ -11257,6 +11261,11 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
             _audit_ingest_access(route, ingest_id, caller, "deny", "hitl_unconfigured")
             raise HTTPException(status_code=503, detail={
                 "error": "hitl_unconfigured", "message": str(exc)}) from exc
+        except human_tasks.AuthorizationUnconfigured as exc:
+            _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+            raise HTTPException(status_code=503, detail={
+                "error": "authorization_unconfigured",
+                "message": "the deployment declares no authorization directory"}) from exc
         except (human_tasks.AuthorizationUnavailable, psycopg2.Error) as exc:
             logger.warning("ingest access task check unavailable: %s", type(exc).__name__)
             _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
