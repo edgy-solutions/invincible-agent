@@ -31,7 +31,8 @@ try:  # lazy-import dance (container flattens the dir)
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_bulk_resolve import ItemResolution
 
-REASON_CODES = ("not_a_notice", "parts_list_unusable", "superseded_or_duplicate")
+# The four reject codes (ruling 2026-10-19: every reject surface takes the promotion's four).
+REASON_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
 OBTAINED_VIA = "steward-corrected"
 EXTRACTION_DEFECT_KIND = "extraction_defect"
 

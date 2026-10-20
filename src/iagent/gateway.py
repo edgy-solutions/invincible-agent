@@ -755,7 +755,14 @@ class HumanTaskRegisterRequest(_BaseModel):
         return v
 
 
-_GROUPED_REJECT_CODES = ("not_a_notice", "parts_list_unusable", "superseded_or_duplicate")
+#: The grouped review's reject codes ARE the promotion's (architect ruling 2026-10-19: "the
+#: four-code ruling applies to every reject surface"), in `PROMOTION_REJECT_CODES`'s order --
+#: cortex's parity seal reads this literal and the Literal below, in order.
+_GROUPED_REJECT_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
+#: TRANSITION ONLY: the pre-ruling names a client pinned before the widening still sends. Each
+#: maps to its four-code successor at the boundary, so nothing past the model sees an old name.
+_LEGACY_GROUPED_REJECT_CODES = {"parts_list_unusable": "parts_unusable",
+                                "superseded_or_duplicate": "duplicate"}
 
 
 def _nonblank(v: str) -> str:
@@ -828,10 +835,15 @@ class HumanTaskActRequest(_BaseModel):
     comment: str = ""
     # Grouped review only. A narrow REJECT (wrong document / not a notice / duplicate) names why;
     # REQUIRED for a grouped_review reject (checked at the route, where the kind is known).
-    reason_code: Optional[Literal["not_a_notice", "parts_list_unusable", "superseded_or_duplicate"]] = None
+    reason_code: Optional[Literal["not_a_notice", "unreadable", "parts_unusable", "duplicate"]] = None
     # Grouped review approval, or document promotion `promoted` (flag-gated at the route): steward
     # deletes / additions / corrections, each with evidence.
     row_edits: Optional[RowEdits] = None
+
+    @field_validator("reason_code", mode="before")
+    @classmethod
+    def _legacy_code_takes_its_successor(cls, v):
+        return _LEGACY_GROUPED_REJECT_CODES.get(v, v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _verb_fields(self):
