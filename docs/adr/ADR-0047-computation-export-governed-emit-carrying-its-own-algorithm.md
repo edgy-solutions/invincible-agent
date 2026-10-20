@@ -263,6 +263,58 @@ delegate and answers everyone else exactly as it answers an absent id.
 `policy/sync/validate_policy.py::service_identity_recipients` is **unchanged**, because it governs
 *grants*, and a seeding is not a grant. See ADR-0041 §8.1.
 
+**NOTE, 2026-10-20: TWO MORE READS APPLY THE SEEDING-DELEGATE RULE, both ruled 2026-10-17.** The
+amendment above names one read gate. Two more routes now apply the same rule, each with a gate of its own:
+
+1. **`GET /ingest/{id}/source` and `GET /ingest/{id}/extraction`**: the shared gate
+   `_ingest_review_access` in `src/iagent/gateway.py`, merged to master as `80660167`. The rulings:
+   > Q13: a service reads the source of drops it delegated because the delegate rule already
+   > grants it (it seeded them), not because it is "the submitter"; a service holding a review
+   > task counts for nothing.
+
+   > Q16: keep 403 — a service that drops as itself without delegation is the misuse.
+
+   A service caller (`svc:` or a declared delegate) is decided by `artifact_reads.is_entitled`
+   alone, with the row's `submitted_by` read as `seeded_by`. The dropper fields and the review task
+   are never consulted for it. The seal is `tests/test_ingest_review_gate_outage_and_services.py`.
+2. **`GET /cases/{case_id}/action`**: `get_case_action` in `src/iagent/gateway.py`, from `d1fcdc0c`. The ruling:
+   "delegate reads only its own cases' action records, 403 on others and on /cases/{id}". A declared
+   delegate is admitted only if the runner's case exists and its `seeded_by` is the caller. It is
+   then refused again if the newest action record's own `seeded_by` differs. `GET /cases/{id}`
+   refuses every delegate with 403 `delegate_reads_artifacts_only` (ruled 2026-10-16). The seal is
+   `tests/test_a_case_action_record_names_who_chose_approved_released.py`.
+
+**The three gates refuse in three different shapes.** §5 rules that the shape of a refusal is
+itself a disclosure decision, to be chosen deliberately and recorded:
+
+| route | absent id | present, but not this delegate's |
+| --- | --- | --- |
+| `GET /artifacts/{id}` | `empty` | `empty`: same as absent |
+| `GET /cases/{id}/action` | 403 `not_your_case` | 403 `not_your_case`: same as absent |
+| `GET /ingest/{id}/source`, `/extraction` | 404 `ingest_not_found` | 403 `not_entitled`: **differs** |
+
+On the ingest routes, then, a service that did not seed a drop can tell whether that ingest id
+exists. That shape fell out of the gate's order: the row lookup runs before the service branch.
+Neither the 10-17 rulings nor this ADR choose it. **OPEN, routed to the architect:** keep it,
+recording why, or answer it as an absent id.
+
+**Census, master `166fafc0`.** `gateway.py` reads the delegate map (`_delegate_principals`) in 11
+places:
+- **Four disclosure reads:**
+  - `GET /artifacts/{id}`, through `GatewayArtifacts.get`;
+  - the case's artifact list in `GET /ingest/{id}/status`, which uses the same `is_entitled`
+    predicate;
+  - the two gates above.
+- **One refusal:** `GET /cases/{id}`.
+- **One classifier:** `_is_service_caller`, used by the ingest gate above and by
+  `POST /ingest/{id}/retry`.
+- **Five admissions or stamps on writes:**
+  - `_admit_on_behalf_of`;
+  - `POST /ingest/events`'s `seeded_by`;
+  - `update_ingest_stage`;
+  - `POST /internal/cases/{id}/seeded-by`;
+  - `POST /internal/cases/{id}/action-record`.
+
 ---
 
 ## §6 — The package is a `PublishedArtifact`
