@@ -19,7 +19,16 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-17, latest: Q1 is #67, the refused entries are #69 (stacked). Read this first
+## Update 2026-10-20, latest: both live export checks pass on `016473bb` (helm rev 203). Read this first
+
+- **What's live.** All four PRs are live. #67 and #69 went out at revision 199 (roll 194), and #71 and #72 at roll 195. I confirmed this by content in the running pods, not by image tag.
+- **Empty board.** It returns 400 `no_answers`, three ways: `answers: []`, `answers` omitted, and an empty list with no recipient.
+- **[no-verb, labour] board, fired 3 times.** Each run came back `partial`, "1 of 2 answers refused". The labour answer exports; the supplier answer is a `failed` entry with `no_verb`. The sha matched the labour-only board's (`2489b6a4…`) on every run.
+- **Packet (untracked):** `invincible-agent/sessions/2026-10-20-packet-to-lane-01-fin-both-live-export-checks-pass-on-016473bb.md`.
+- **Not checked live:** #72's entitlement prose, because there was no unentitled-lot answer to hand.
+- **Next:** idle. Nothing open on lane/fin.
+
+## Update 2026-10-17: Q1 is #67, the refused entries are #69 (stacked)
 
 - **Rulings (architect via Chris, 10-16):**
   - the twice-export is accepted;
