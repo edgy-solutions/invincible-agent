@@ -10109,7 +10109,8 @@ def _build_s3_client():
     )
 
 
-def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict) -> None:
+def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict,
+                         kind: str = "") -> None:
     """Write the raw bytes + manifest.json (manifest + embedded provenance block, ADR-0041
     §8) under `object_prefix` in the processing-artifacts bucket — the SAME bucket
     extraction_review_sensor.py's S3 sensor watches, so a future classifier pass can pick
@@ -10129,7 +10130,8 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
     """
     s3 = _build_s3_client()
     safe_name = os.path.basename(filename) or "upload"
-    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body)
+    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body,
+                  ContentType=_SOURCE_MEDIA_TYPES.get(kind, "application/octet-stream"))
     s3.put_object(
         Bucket=_ARTIFACT_BUCKET,
         Key=f"{object_prefix}manifest.json",
@@ -10438,6 +10440,26 @@ async def answer_case_signal(
         "error": "signal_failed", "code": sc, "message": msg})
 
 
+def _sniff_file_kind(head: bytes) -> Optional[str]:
+    """What the leading bytes say a drop is: "pdf", "xml" or None. Pure.
+
+    pdf: `%PDF-` anywhere in the first 1024 bytes (PDF readers accept the header anywhere in the
+    first KiB, and real files carry leading junk). xml: after an optional UTF-8 BOM and leading
+    ASCII whitespace the bytes start `<?xml`; a UTF-16 BOM (FF FE / FE FF) followed by `<?xml` in
+    that encoding counts too."""
+    head = bytes(head[:1024])
+    if b"%PDF-" in head:
+        return "pdf"
+    t = head[3:] if head.startswith(b"\xef\xbb\xbf") else head
+    if t.lstrip(b" \t\r\n\x0b\x0c").startswith(b"<?xml"):
+        return "xml"
+    if head[:2] == b"\xff\xfe" and head[2:].startswith("<?xml".encode("utf-16-le")):
+        return "xml"
+    if head[:2] == b"\xfe\xff" and head[2:].startswith("<?xml".encode("utf-16-be")):
+        return "xml"
+    return None
+
+
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
@@ -10603,6 +10625,16 @@ async def ingest_document(
             )
         _chunks.append(_chunk)
     body = b"".join(_chunks)
+    # THE SNIFF BINDS (architect ruling): the declared pdf|xml must be what the bytes are, checked
+    # before the dedupe row, the S3 object or the graph node. cad has no magic.
+    if kind in ("pdf", "xml"):
+        _sniffed = _sniff_file_kind(body[:1024])
+        if _sniffed != kind:
+            raise HTTPException(status_code=400, detail={
+                "error": "kind_mismatch", "declared_kind": kind, "sniffed_kind": _sniffed,
+                "filename": file.filename,
+                "message": f"the drop says {kind!r} but its bytes are "
+                           f"{_sniffed or 'neither pdf nor xml'}; refusing before any write"})
     sha256 = hashlib.sha256(body).hexdigest()
     # THE SAME DERIVATION `document_promotion` requires (promotion.INGEST_ID_RE): minting the
     # id any other way would refuse every seam-minted document's later promotion.
@@ -10684,7 +10716,7 @@ async def ingest_document(
     await run_in_threadpool(
         lambda: _write_ingest_object(
             object_prefix=object_prefix, filename=file.filename or "upload",
-            body=body, manifest=manifest,
+            body=body, manifest=manifest, kind=kind,
         )
     )
     row = await run_in_threadpool(
@@ -11272,7 +11304,10 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
     `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.
-    `leaf` / `leaf_source` are the notice's pcn|pdn and where it came from (`_review_leaf`)."""
+    `leaf` / `leaf_source` are the notice's pcn|pdn and where it came from (`_review_leaf`).
+    A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
+    rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
+    `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
     from starlette.concurrency import run_in_threadpool
 
     row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
@@ -11286,13 +11321,24 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         raise HTTPException(status_code=422, detail={
             "error": "extraction_unbound",
             "message": f"extraction_ref {ref!r} is not under this document's directory {prefix!r}"})
-    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    reloc = await run_in_threadpool(lambda: _rejected_relocation(ingest_id, row))
+    ref_at = _relocated(ref, reloc)
+    if ref_at is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under the rejection's source prefix"})
+    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref_at))
     key = _review_json_key(manifest, ref)
     if not key or not key.startswith(prefix):
         raise HTTPException(status_code=422, detail={
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
-    review = await run_in_threadpool(lambda: _read_review_json(key))
+    key_at = _relocated(key, reloc)
+    if key_at is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": "the review rows are not under the rejection's source prefix"})
+    review = await run_in_threadpool(lambda: _read_review_json(key_at))
     items = _review_items(review)
     mpn_by_part: dict = {}
     for it in items:
@@ -11327,10 +11373,48 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
                    "mfr_parent": summ["mfr_parent"],
                    "notice_date": summ["notice_date"]},
         "part_count": summ["part_count"],
-        "rows": rows_out, "rows_without_evidence": without, "review_ref": key}
+        "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
+        "relocated_to": reloc[1] if reloc else None}
 
 
 _SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
+
+
+def _rejected_relocation(ingest_id: str, row: dict) -> Optional[tuple]:
+    """Sync (threadpool): for a REJECTED row, `(from, to)` -- the prefix the rejection moved the
+    document's objects out of and into, read from the rejection record and never guessed. None for
+    any other row (`review_rejected`, the grouped narrow reject, moves nothing). 503
+    `decision_ledger_unreachable`; 404 `rejected_evidence_unlocated` when the record does not say
+    where the objects went (it predates the field)."""
+    from . import ingest_status, promotion_stores
+
+    if row.get("status") != ingest_status.REJECTED:
+        return None
+    try:
+        rec = promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    q = rec.get("quarantine") if isinstance(rec, dict) and rec.get("outcome") == "rejected" else None
+    frm = q.get("from") if isinstance(q, dict) else None
+    to = q.get("to") if isinstance(q, dict) else None
+    if not (isinstance(frm, str) and frm and isinstance(to, str) and to):
+        raise HTTPException(status_code=404, detail={
+            "error": "rejected_evidence_unlocated",
+            "message": f"ingest {ingest_id} was rejected and the rejection record does not say "
+                       "where its objects went (it predates the field); nothing is guessed"})
+    return frm, to
+
+
+def _relocated(key: str, reloc: Optional[tuple]) -> Optional[str]:
+    """`key` where the evidence now is: unchanged with no relocation; under the record's `to` when
+    `key` was under its `from`; None when it was not (the caller's `*_unbound` 422)."""
+    if reloc is None:
+        return key
+    frm, to = reloc
+    return to + key[len(frm):] if key.startswith(frm) else None
 
 
 def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
@@ -11338,7 +11422,9 @@ def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
     drop manifest's `object_ref` (the seam's `<prefix><safe_name>`), which must be one of the
     seam's keys for THIS document (`promotion.object_prefix_for`) and under the row's
     `object_prefix`, else 422 `source_unbound`. 404 `source_absent`, 503
-    `artifact_store_unreachable`. Returns `(s3 Body, key)`."""
+    `artifact_store_unreachable`. A REJECTED row's objects live under `rejected/<id>/`: they are
+    read there through the rejection record (404 `rejected_evidence_unlocated`, 503
+    `decision_ledger_unreachable`). Returns `(s3 Body, original key)`."""
     import json as _j
 
     from . import promotion
@@ -11361,8 +11447,12 @@ def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
                 "error": "artifact_store_unreachable",
                 "message": f"the artifact store did not answer: {type(exc).__name__}"})
 
+    reloc = _rejected_relocation(ingest_id, row)
+    man_at = _relocated(f"{prefix}manifest.json", reloc)
+    if man_at is None:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
     try:
-        dropped = _j.loads(_get(f"{prefix}manifest.json").read())
+        dropped = _j.loads(_get(man_at).read())
     except (ValueError, UnicodeDecodeError):
         dropped = None
     ref = dropped.get("object_ref") if isinstance(dropped, dict) else None
@@ -11371,14 +11461,19 @@ def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
         raise HTTPException(status_code=422, detail={
             "error": "source_unbound",
             "message": f"the drop's source object is not a key under {prefix!r}"})
-    return _get(ref), ref
+    ref_at = _relocated(ref, reloc)
+    if ref_at is None:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
+    return _get(ref_at), ref
 
 
 @app.get("/ingest/{ingest_id}/source")
 async def ingest_source_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never
     buffered whole). Same gate and audit as `/extraction`; works for the dropper before any
-    extraction exists. 422 `source_unbound`, 404 `source_absent`, 503 `artifact_store_unreachable`.
+    extraction exists. 422 `source_unbound`, 404 `source_absent`, 503 `artifact_store_unreachable`;
+    a rejected row is read from `rejected/<id>/` through its record: 404 `rejected_evidence_unlocated`,
+    503 `decision_ledger_unreachable`.
     The app-wide middleware sets `Cache-Control: no-store` on the response."""
     import posixpath
     from starlette.concurrency import run_in_threadpool

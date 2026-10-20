@@ -49,15 +49,17 @@ non-empty declaration RAISES rather than answering a zero it did not measure.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import psycopg2
 from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
-from .promotion import INGEST_ID_RE, object_prefix_for
+from .promotion import (INGEST_ID_RE, REJECTED_PREFIX, object_prefix_for,  # noqa: F401
+                        quarantine_prefix_for)
 
 try:  # the package layout first; the container's flattened `utils` second (v2_substrate's idiom)
     from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
@@ -67,8 +69,6 @@ except ImportError:  # pragma: no cover — runtime-dependent import path
 logger = logging.getLogger(__name__)
 
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
-
-REJECTED_PREFIX = "rejected/"
 
 _MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS document_decision_record (
@@ -91,6 +91,10 @@ RETURNING record_id
 _EXISTING_SQL = """
 SELECT decision, acted_by, acted_at, record FROM document_decision_record
 WHERE record_id = %s OR ingest_id = %s
+"""
+
+_RECORD_FOR_SQL = """
+SELECT record FROM document_decision_record WHERE ingest_id = %s
 """
 
 
@@ -152,6 +156,23 @@ class PgDecisionLedger:
                              "record": stored}}
 
 
+    def record_for(self, ingest_id: str) -> Optional[dict]:
+        """The stored decision record for `ingest_id`, or None when there is no row. A READ:
+        a store fault RAISES (the caller turns it into a 503)."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_RECORD_FOR_SQL, (ingest_id,))
+                row = cur.fetchone()
+        if row is None:
+            return None
+        rec = row[0]
+        if isinstance(rec, (bytes, bytearray, memoryview)):
+            rec = bytes(rec).decode("utf-8")
+        if isinstance(rec, str):
+            rec = json.loads(rec)
+        return rec if isinstance(rec, dict) else None
+
+
 class S3Quarantine:
     """`promotion.IngestObjects` over the seam's bucket."""
 
@@ -177,7 +198,7 @@ class S3Quarantine:
             token = page["NextContinuationToken"]
         moved = []
         for key in keys:
-            dest = f"{REJECTED_PREFIX}{ingest_id}/{key[len(prefix):]}"
+            dest = quarantine_prefix_for(ingest_id) + key[len(prefix):]
             s3.copy_object(Bucket=self._bucket, Key=dest,
                            CopySource={"Bucket": self._bucket, "Key": key})
             moved.append(dest)

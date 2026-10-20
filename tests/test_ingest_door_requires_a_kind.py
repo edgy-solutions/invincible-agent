@@ -64,7 +64,7 @@ def rig(monkeypatch):
 
 
 def _drop(client, **extra):
-    return client.post("/ingest", files={"file": ("f.pdf", b"door bytes", "application/pdf")},
+    return client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 door bytes", "application/pdf")},
                        data={"kind": "pdf", "on_behalf_of": "alice@example.com", **extra})
 
 

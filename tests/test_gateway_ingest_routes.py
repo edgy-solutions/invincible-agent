@@ -164,7 +164,7 @@ def test_ingest_accepts_an_s1000d_data_module_as_xml_under_its_registered_kind(
     monkeypatch.setattr(ist, "record_received",
                         lambda **kw: received.update(kw) or {"id": kw["ingest_id"], "status": "received"})
     r = client.post("/ingest", files={"file": ("DMC-S1000DBIKE-AAA-D00-00-00-00AA-041A-A_001-00_EN-US.xml",
-                                               b"<dmodule/>", "application/xml")},
+                                               b'<?xml version="1.0"?><dmodule/>', "application/xml")},
                     data={"kind": "xml", "on_behalf_of": "alice@example.com",
                           "content_kind": "s1000d-data-module"})
     assert r.status_code == 200, r.text
@@ -203,7 +203,7 @@ def test_ingest_dedupe_hit_returns_the_message_and_never_writes(
     received_called = {"v": False}
     monkeypatch.setattr(ist, "record_received", lambda **kw: received_called.__setitem__("v", True))
 
-    r = client.post("/ingest", files={"file": ("re-drop.pdf", b"same bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("re-drop.pdf", b"%PDF-1.4 same bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200
     body = r.json()
@@ -227,7 +227,7 @@ def test_ingest_new_arrival_writes_the_object_and_records_received(
         return {"id": kw["ingest_id"], "status": "received"}
     monkeypatch.setattr(ist, "record_received", _record_received)
 
-    body_bytes = b"brand new bytes"
+    body_bytes = b"%PDF-1.4 brand new bytes"
     r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200
@@ -290,7 +290,7 @@ def test_ingest_new_arrival_still_returns_200_when_create_ingest_node_raises(
         raise RuntimeError("neo4j unreachable")
     monkeypatch.setattr(gateway, "_create_ingest_node", _boom)
 
-    body_bytes = b"node creation fails but the upload must not"
+    body_bytes = b"%PDF-1.4 node creation fails but the upload must not"
     r = client.post("/ingest", files={"file": ("notice.pdf", body_bytes, "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
@@ -307,7 +307,7 @@ def test_ingest_declared_content_kind_lands_in_manifest_and_metadata(client, fak
     monkeypatch.setattr(ist, "record_received",
                         lambda **kw: {"id": kw["ingest_id"], "status": "received"})
 
-    r = client.post("/ingest", files={"file": ("wi.pdf", b"declared kind bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"%PDF-1.4 declared kind bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "work-instruction"})
     assert r.status_code == 200, r.text
@@ -327,7 +327,7 @@ def test_ingest_refuses_a_malformed_content_kind_before_any_write(
         looked["n"] += 1
         return None
     monkeypatch.setattr(ist, "find_primary_by_sha", _find)
-    r = client.post("/ingest", files={"file": ("wi.pdf", b"stub", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"%PDF-1.4 stub", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": bad_content_kind})
     assert r.status_code == 422, r.text
@@ -336,7 +336,7 @@ def test_ingest_refuses_a_malformed_content_kind_before_any_write(
 
 def test_ingest_refuses_a_content_kind_over_128_chars(client, fake_s3, monkeypatch):
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
-    r = client.post("/ingest", files={"file": ("wi.pdf", b"stub", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"%PDF-1.4 stub", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "x" * 129})
     assert r.status_code == 422, r.text
@@ -355,12 +355,12 @@ def test_ingest_refuses_one_byte_over_the_cap_before_any_lookup_or_write(client,
     monkeypatch.setattr(ist, "find_primary_by_sha", _find)
     monkeypatch.setattr(ist, "record_received", lambda **kw: {"id": kw["sha256"], "status": "received"})
 
-    over = client.post("/ingest", files={"file": ("big.pdf", b"x" * 17, "application/pdf")},
+    over = client.post("/ingest", files={"file": ("big.pdf", b"%PDF-1.4" + b"x" * 9, "application/pdf")},
                        data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert over.status_code == 413, over.text
     assert looked["n"] == 0 and fake_s3 == [], "an oversize drop must be refused before any lookup or write"
 
-    at = client.post("/ingest", files={"file": ("ok.pdf", b"x" * 16, "application/pdf")},
+    at = client.post("/ingest", files={"file": ("ok.pdf", b"%PDF-1.4" + b"x" * 8, "application/pdf")},
                      data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert at.status_code == 200, at.text
     assert looked["n"] == 1
@@ -611,7 +611,7 @@ def test_ingest_declared_and_registered_kind_fills_domain_type(
                                         passes=("p",), outputs=("o",))
         if kind == "work-instruction" else None,
     )
-    r = client.post("/ingest", files={"file": ("wi.pdf", b"registered kind bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"%PDF-1.4 registered kind bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "work-instruction"})
     assert r.status_code == 200, r.text
@@ -632,7 +632,7 @@ def test_ingest_declared_but_unregistered_kind_is_refused_at_the_door(
     recorded = []
     monkeypatch.setattr(ist, "record_received", lambda **kw: recorded.append(kw))
     monkeypatch.setattr(_ck, "by_kind", lambda kind: None)
-    r = client.post("/ingest", files={"file": ("wi.pdf", b"unregistered kind bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("wi.pdf", b"%PDF-1.4 unregistered kind bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "work-instruction"})
     assert r.status_code == 400, r.text
@@ -651,7 +651,7 @@ def test_ingest_records_dropped_by_authz_id_not_sub(client, fake_s3, fake_create
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
     monkeypatch.setattr(ist, "record_received",
                         lambda **kw: {"id": kw["ingest_id"], "status": "received"})
-    r = client.post("/ingest", files={"file": ("f.pdf", b"sub vs authz_id bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 sub vs authz_id bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice-authz-id", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     manifest_call = next(c for c in fake_s3 if c["Key"].endswith("manifest.json"))
@@ -722,7 +722,7 @@ def test_ingest_document_kind_starts_no_workflow(
                                         passes=("p",), outputs=("o",))
         if kind == "maintenance-action-record" else None,
     )
-    r = client.post("/ingest", files={"file": ("d.pdf", b"document kind bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("d.pdf", b"%PDF-1.4 document kind bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "maintenance-action-record"})
     assert r.status_code == 200, r.text
@@ -1292,7 +1292,7 @@ def test_ingest_origin_suggestion_hit_records_and_opens_its_own_case(
     monkeypatch.setattr(ist, "record_origin_suggestion",
                         lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
     monkeypatch.setattr(_orr, "resolve", lambda artifact: dict(_SUGGESTION))
-    r = client.post("/ingest", files={"file": ("f.pdf", b"origin hit bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 origin hit bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -1323,7 +1323,7 @@ def test_ingest_origin_suggestion_miss_records_and_opens_nothing(
     monkeypatch.setattr(ist, "record_origin_suggestion",
                         lambda ingest_id, suggestion: recorded.append((ingest_id, suggestion)))
     monkeypatch.setattr(_orr, "resolve", lambda artifact: None)
-    r = client.post("/ingest", files={"file": ("f.pdf", b"origin miss bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 origin miss bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     assert recorded == [], recorded
@@ -1343,7 +1343,7 @@ def test_ingest_origin_resolver_failure_still_returns_200(
     def _boom(artifact):
         raise RuntimeError("systems-of-record load failed (stubbed)")
     monkeypatch.setattr(_orr, "resolve", _boom)
-    r = client.post("/ingest", files={"file": ("f.pdf", b"origin resolver boom bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 origin resolver boom bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com", "content_kind": "notice"})
     assert r.status_code == 200, r.text
     assert calls == []
@@ -1716,7 +1716,7 @@ def test_ingest_declared_content_kind_reaches_record_received(client, fake_s3, f
         recorded.append(kw)
         return {"id": kw["ingest_id"], "status": "received"}
     monkeypatch.setattr(ist, "record_received", _record_received)
-    r = client.post("/ingest", files={"file": ("f.pdf", b"declared pcn bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 declared pcn bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "pcn"})
     assert r.status_code == 200, r.text
@@ -1734,7 +1734,7 @@ def test_ingest_undeclared_drop_is_refused_at_the_door_and_records_nothing(
     monkeypatch.setattr(ist, "find_primary_by_sha", lambda sha: None)
     recorded = []
     monkeypatch.setattr(ist, "record_received", lambda **kw: recorded.append(kw))
-    r = client.post("/ingest", files={"file": ("f.pdf", b"undeclared bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 undeclared bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com"})
     assert r.status_code == 400, r.text
     assert r.json()["detail"]["error"] == "content_kind_required"
@@ -1752,7 +1752,7 @@ def test_ingest_duplicate_arrival_passes_content_kind_to_record_duplicate_arriva
         recorded.append(kw)
         return {"id": "dup-id", "detail": "already processed"}
     monkeypatch.setattr(ist, "record_duplicate_arrival", _record_dup)
-    r = client.post("/ingest", files={"file": ("f.pdf", b"dup-content-bytes", "application/pdf")},
+    r = client.post("/ingest", files={"file": ("f.pdf", b"%PDF-1.4 dup-content-bytes", "application/pdf")},
                     data={"kind": "pdf", "on_behalf_of": "alice@example.com",
                           "content_kind": "pcn"})
     assert r.status_code == 200, r.text

@@ -120,8 +120,16 @@ def test_an_unset_DSN_refuses_to_connect(monkeypatch):
 _SQL = {n: v for n, v in vars(promotion_stores).items() if n.endswith("_SQL")}
 
 
-def test_the_statement_population_is_the_three_known():
-    assert set(_SQL) == {"_MIGRATION_SQL", "_INSERT_SQL", "_EXISTING_SQL"}
+def test_the_statement_population_is_the_four_known():
+    assert set(_SQL) == {"_MIGRATION_SQL", "_INSERT_SQL", "_EXISTING_SQL", "_RECORD_FOR_SQL"}
+
+
+def test_every_statement_is_a_module_constant_the_population_can_see():
+    """An inline `execute("...")` string is invisible to `_SQL`, so the append-only arm below
+    would never read it. Every statement goes through a `*_SQL` constant."""
+    src = open(promotion_stores.__file__, encoding="utf-8").read()
+    assert re.findall(r"\.execute\(\s*(?:[rbfu]{0,2})?[\"']", src) == []
+    assert len(re.findall(r"\.execute\(\s*_[A-Z_]+_SQL\b", src)) >= 4
 
 
 @pytest.mark.parametrize("name", sorted(_SQL))

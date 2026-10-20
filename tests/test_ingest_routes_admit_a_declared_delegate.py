@@ -59,7 +59,7 @@ def _notice_is_a_registered_document_kind(monkeypatch):
 # -- POST /ingest ------------------------------------------------------------------------------
 
 def _drop(client, on_behalf_of):
-    return client.post("/ingest", files={"file": ("n.pdf", b"same bytes", "application/pdf")},
+    return client.post("/ingest", files={"file": ("n.pdf", b"%PDF-1.4 same bytes", "application/pdf")},
                        data={"kind": "pdf", "on_behalf_of": on_behalf_of, "content_kind": "notice"})
 
 

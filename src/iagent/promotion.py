@@ -201,6 +201,15 @@ def object_prefix_for(ingest_id: str, object_ref: str) -> Optional[str]:
     return None
 
 
+REJECTED_PREFIX = "rejected/"
+
+
+def quarantine_prefix_for(ingest_id: str) -> str:
+    """Where a rejected document's objects are moved: the ONE destination, shared by the move
+    (`S3Quarantine`) and the rejection record that names it."""
+    return f"{REJECTED_PREFIX}{ingest_id}/"
+
+
 _UNSTAMPED = frozenset({"", "unset", "unstamped", "unknown", "none"})
 
 
@@ -284,7 +293,12 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
                  row_edits: Optional[list] = None) -> dict:
     """The decision record. A steward's corrections (`row_edits`, each stamped
     `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
-    grant. With none, the inputs are exactly what they always were (no new key)."""
+    grant. With none, the inputs are exactly what they always were (no new key).
+
+    A REJECTED record also carries a top-level `quarantine: {"from": <seam prefix>, "to":
+    <rejected/<ingest_id>/>}` naming where the objects go, so the evidence readers relocate
+    through the record and guess nothing. A promoted record has no such key. `record_id` hashes
+    `request_key` only, and `validate_decision_record` ignores extra keys."""
     inputs = {
         "extraction_ref": subject.extraction_ref,
         "content_kind": subject.content_kind,
@@ -295,7 +309,7 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
     if isinstance(row_edits, list) and row_edits:
         inputs["row_edits"] = row_edits
     check = make_check("human_review", verdict=decision, inputs=inputs)
-    return build_decision_record(
+    rec = build_decision_record(
         request_key=subject.ingest_id,
         source_key=subject.object_ref,
         notice_id=subject.notice_id,
@@ -308,6 +322,12 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
         trust_rung=subject.standing,
         era=era,
     )
+    if decision == REJECTED:
+        rec["quarantine"] = {
+            "from": object_prefix_for(subject.ingest_id, subject.object_ref),
+            "to": quarantine_prefix_for(subject.ingest_id),
+        }
+    return rec
 
 
 def promotion_fact(*, acted_by: str, record_id: str, promoted_at: int) -> dict:
