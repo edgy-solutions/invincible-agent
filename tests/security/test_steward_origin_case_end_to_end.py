@@ -162,6 +162,8 @@ class _StoreSession:
             return _Single({"n": 1 if node is not None else 0})
         if cypher is promotion_stores._ORIGIN_RUNG_CYPHER:
             return _Single(None if node is None else {"rung": node.get("origin_resolved_by")})
+        if cypher == promotion_stores._NOTICE_MPNS_CYPHER.format(domain="SUSTAINMENT"):
+            return _Single({"notices": 0, "mpns": []})     # no notice node: nothing to reconcile
         raise AssertionError(f"the store ran a statement this graph does not model: {cypher!r}")
 
 

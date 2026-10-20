@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Callable, Optional
 
 import psycopg2
@@ -250,6 +251,42 @@ _DELETE_BARE_NODE_CYPHER = (
     f"DELETE n"
 )
 
+# -- ROW EDITS: the steward's corrections applied to THIS notice's SUBJECT_TO edges -------------
+# Component nodes are SHARED across notices (keyed on mpn alone): only this notice's edge is ever
+# deleted or written, never a node. The domain is a label, so it is validated before it is
+# interpolated.
+_DOMAIN_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+_NOTICE_COUNT_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "RETURN count(n) AS n"
+)
+_DELETE_EDGE_CYPHER = (
+    "MATCH (c:Component:{domain} {{mpn: $mpn}})-[r:SUBJECT_TO]->(n:SustainmentNotice:{domain})\n"
+    "WHERE n.provenance_ingest_id = $ingest_id\n"
+    "DELETE r\n"
+    "RETURN count(*) AS n"
+)
+_NOTICE_MPNS_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "OPTIONAL MATCH (c:Component:{domain})-[:SUBJECT_TO]->(n)\n"
+    "RETURN count(DISTINCT n) AS notices, collect(c.mpn) AS mpns"
+)
+_REMOVE_EDGES_CYPHER = (
+    "MATCH (c:Component:{domain})-[r:SUBJECT_TO]->(n:SustainmentNotice:{domain})\n"
+    "WHERE n.provenance_ingest_id = $ingest_id AND c.mpn IN $mpns\n"
+    "DELETE r\n"
+    "RETURN count(*) AS n"
+)
+_WRITE_EDGE_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "MERGE (c:Component:{domain} {{mpn: $mpn}})\n"
+    "MERGE (c)-[r:SUBJECT_TO]->(n)\n"
+    "SET r.obtained_via = $obtained_via, r.corrected_by = $corrected_by,\n"
+    "    r.extracted_value = $extracted_value, r.evidence = $evidence,\n"
+    "    r.record_id = $record_id, r.disposition = $disposition, r.reason = $reason"
+)
+
 
 class Neo4jIngestGraph:
     """`promotion.IngestGraph` over the property graph. Every write is the acting person's.
@@ -383,6 +420,72 @@ class Neo4jIngestGraph:
                 f"swept and the bare-node delete ran against it: a node survives only if it "
                 f"still carries an edge of another family, which this sweep must not cross")
         return count
+
+    def notice_mpns(self, ingest_id: str, *, domain: str) -> Optional[list]:
+        """READ: the exact `mpn` of every Component with a SUBJECT_TO edge to this ingest's
+        notice. None when no such notice node exists; [] for a notice with no edges."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        with self._driver.session() as session:
+            row = session.run(_NOTICE_MPNS_CYPHER.format(domain=domain),
+                              ingest_id=ingest_id).single()
+        if row is None or int(row["notices"]) < 1:
+            return None
+        return [m for m in row["mpns"] if isinstance(m, str)]
+
+    def remove_notice_edges(self, ingest_id: str, mpns: list, *, domain: str) -> int:
+        """Delete THIS notice's SUBJECT_TO edge for each exact mpn: `DELETE r` only, never a
+        node (Components are shared across notices). Zero matches is a converged replay."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        if not mpns:
+            return 0
+        with self._driver.session() as session:
+            row = session.run(_REMOVE_EDGES_CYPHER.format(domain=domain),
+                              mpns=list(mpns), ingest_id=ingest_id).single()
+        return int(row["n"]) if row is not None else 0
+
+    def apply_row_edits(self, ingest_id: str, row_edits: list, *, domain: str,
+                        record_id: str) -> dict:
+        """Apply a steward's row edits to THIS notice's SUBJECT_TO edges (the graph must be true
+        on its own, not filtered at read). deleted: remove the part's edge. corrected: remove the
+        extracted part's edge, write the corrected part's with obtained_via=steward-corrected.
+        added: write the part's edge. header_corrected is NOT applied (named in `not_applied`).
+        Every statement is a MERGE or a DELETE of a matched edge, so a re-run converges."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        out = {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
+        edits = [e for e in (row_edits or []) if isinstance(e, dict)]
+        applicable = [e for e in edits if e.get("op") in ("deleted", "corrected", "added")]
+        out["not_applied"] = [e.get("field") for e in edits if e.get("op") == "header_corrected"]
+        if not applicable:
+            return out
+        fmt = {"domain": domain}
+        with self._driver.session() as session:
+            row = session.run(_NOTICE_COUNT_CYPHER.format(**fmt), ingest_id=ingest_id).single()
+            if row is None or int(row["n"]) < 1:
+                raise RuntimeError(
+                    f"no SustainmentNotice:{domain} carries provenance_ingest_id {ingest_id}; "
+                    f"the row edits cannot be applied")
+            for e in applicable:
+                op = e["op"]
+                if op in ("deleted", "corrected"):
+                    r = session.run(_DELETE_EDGE_CYPHER.format(**fmt),
+                                    mpn=e["mpn"], ingest_id=ingest_id).single()
+                    if op == "deleted":
+                        out["deleted"] += int(r["n"]) if r is not None else 0
+                if op in ("corrected", "added"):
+                    target = e["corrected_value"] if op == "corrected" else e["mpn"]
+                    session.run(
+                        _WRITE_EDGE_CYPHER.format(**fmt), ingest_id=ingest_id, mpn=target,
+                        obtained_via="steward-corrected",
+                        corrected_by=e.get("corrected_by"),
+                        extracted_value=e.get("extracted_value"),
+                        evidence=e.get("evidence"), record_id=record_id,
+                        disposition=e.get("disposition"), reason=e.get("reason"))
+                    out[op] += 1
+        return out
+
 
 
 # ── THE INDEXES ───────────────────────────────────────────────────────────────────────────────

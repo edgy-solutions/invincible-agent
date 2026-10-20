@@ -3972,12 +3972,15 @@ async def act_on_human_task(
         corrections = None
         defect_aud = None
         subject = None
+        _reviewed = None
+        _earlier = None
         if req.row_edits is not None or req.header_edits:
             from agent_fleet.restate_analyst import steward_correction
             try:
                 subject = promotion.subject_from_payload(match.get("payload"))
                 if req.row_edits is not None:
                     _mpns = await run_in_threadpool(lambda: _review_mpns_for_payload(subject))
+                    _reviewed = _mpns
                     try:
                         edits = steward_correction.validate_row_edits(
                             req.row_edits.model_dump(), extracted_mpns=_mpns)
@@ -4047,6 +4050,28 @@ async def act_on_human_task(
                                             acted_by=_by, extracted=r.get("extracted"),
                                             corrected=r["value"], evidence=r["evidence_ref"])})
 
+        if req.decision == promotion.PROMOTED:
+            # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
+            # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
+            # notice node exists).
+            try:
+                if subject is None:
+                    subject = promotion.subject_from_payload(match.get("payload"))
+            except promotion.PromotionRefused:
+                subject = None      # `promotion.act` refuses the same payload by name
+            if subject is not None:
+                if _reviewed is None and subject.extraction_ref:
+                    _s = subject
+                    _reviewed = await run_in_threadpool(lambda: _review_mpns_for_payload(_s))
+                if subject.notice_id:
+                    _s2 = subject
+                    try:
+                        _earlier = await run_in_threadpool(
+                            lambda: ingest_status.ingests_naming_notice(
+                                _s2.notice_id, exclude_ingest_id=_s2.ingest_id))
+                    except Exception:  # noqa: BLE001 — best effort; the record says unavailable
+                        _earlier = None
+
         try:
             from .trust_table import load_trust_table
             _tbl = load_trust_table().ref
@@ -4063,7 +4088,7 @@ async def act_on_human_task(
                     "trust_table_ref": _tbl,
                 },
                 era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
-                row_edits=corrections))
+                row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})

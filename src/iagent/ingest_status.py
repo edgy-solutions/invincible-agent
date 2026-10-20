@@ -695,3 +695,21 @@ def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[in
             r = cur.fetchone()
         conn.commit()
     return r[0] if r else None
+
+
+def ingests_naming_notice(notice_id: str, *, exclude_ingest_id: str) -> list[str]:
+    """The ingest ids of OTHER arrivals whose status row names `notice_id`, oldest first. The
+    graph's SUBJECT_TO edge carries no ingest id, so this is the best available attribution of a
+    stale edge to an earlier ingest: a candidate list, not proof."""
+    if not notice_id:
+        return []
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id FROM ingest_status_projection
+                    WHERE notice_id = %s AND id <> %s
+                    ORDER BY created_at""",
+                (notice_id, exclude_ingest_id),
+            )
+            rows = cur.fetchall()
+    return [r[0] for r in rows]

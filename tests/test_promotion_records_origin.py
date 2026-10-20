@@ -56,6 +56,9 @@ class Graph:
     def node_exists(self, iid):
         return True
 
+    def notice_mpns(self, ingest_id, *, domain):
+        return None
+
     def write_fact(self, iid, fact):
         self.facts.append((iid, fact))
         self.writes += 1
@@ -113,6 +116,8 @@ class _Session:
             row = {"n": 1 if node is not None else 0}
         elif cypher == promotion_stores._ORIGIN_RUNG_CYPHER:
             row = None if node is None else {"rung": node.get("origin_resolved_by")}
+        elif cypher == promotion_stores._NOTICE_MPNS_CYPHER.format(domain="SUSTAINMENT"):
+            row = {"notices": 0, "mpns": []}      # no notice node: nothing to reconcile
         else:  # pragma: no cover
             raise AssertionError(cypher)
         return type("R", (), {"single": lambda _self: row})()

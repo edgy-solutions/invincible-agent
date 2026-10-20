@@ -123,6 +123,18 @@ class IngestGraph(Protocol):
 
     def delete_carrying(self, ingest_id: str) -> int: ...
 
+    def notice_mpns(self, ingest_id: str, *, domain: str) -> Optional[list]:
+        """The exact `mpn` of every part this ingest's notice is SUBJECT_TO-linked from; None when
+        no such notice node exists, [] for a notice with no edges. A READ."""
+
+    def remove_notice_edges(self, ingest_id: str, mpns: list, *, domain: str) -> int:
+        """Delete THIS notice's SUBJECT_TO edge for each exact mpn (never a node); returns how
+        many edges went. Idempotent."""
+
+    def apply_row_edits(self, ingest_id: str, row_edits: list, *, domain: str,
+                        record_id: str) -> dict:
+        """Apply the steward's row edits to this ingest's notice edges (PROMOTED only)."""
+
 
 class IngestIndexes(Protocol):
     def delete_carrying(self, ingest_id: str) -> int: ...
@@ -290,7 +302,8 @@ def ruleset_ref(declaration: dict) -> str:
 
 def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, audience: str,
                  comment: str, governing: dict, era: str,
-                 row_edits: Optional[list] = None) -> dict:
+                 row_edits: Optional[list] = None,
+                 reconciliation: Optional[dict] = None) -> dict:
     """The decision record. A steward's corrections (`row_edits`, each stamped
     `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
     grant. With none, the inputs are exactly what they always were (no new key).
@@ -308,6 +321,8 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
     }
     if isinstance(row_edits, list) and row_edits:
         inputs["row_edits"] = row_edits
+    if isinstance(reconciliation, dict):
+        inputs["reconciliation"] = reconciliation
     check = make_check("human_review", verdict=decision, inputs=inputs)
     rec = build_decision_record(
         request_key=subject.ingest_id,
@@ -374,18 +389,77 @@ def _excluded_attesters(payload: Any) -> set:
             if isinstance(v, str) and v}
 
 
+RECONCILE_REASON = "not_in_reviewed_set"
+RECONCILE_ATTRIBUTION = (
+    "candidates_by_notice_id: SUBJECT_TO carries no ingest id; these are the other ingests whose "
+    "status row names this notice")
+RECONCILE_ATTRIBUTION_UNAVAILABLE = (
+    "candidates_by_notice_id: the lookup of other ingests naming this notice was unavailable; "
+    "SUBJECT_TO carries no ingest id, so the earlier ingest is not attributed")
+
+
+def _strip(v: Any) -> str:
+    return v.strip() if isinstance(v, str) else str(v)
+
+
+def reconcile_plan(current: list, reviewed_mpns: list, row_edits: Optional[list]) -> list:
+    """The mpns (exact graph values, sorted) whose edge on this notice is not in the reviewed set
+    after the steward's edits and is not already dealt with by a row edit. Compared on `.strip()`,
+    removed by the graph's exact value."""
+    edits = [e for e in (row_edits or []) if isinstance(e, dict)]
+    deleted = {_strip(e["mpn"]) for e in edits if e.get("op") == "deleted" and "mpn" in e}
+    corrected_from = {_strip(e["mpn"]) for e in edits if e.get("op") == "corrected" and "mpn" in e}
+    keep = {_strip(m) for m in reviewed_mpns}
+    keep -= deleted | corrected_from
+    for e in edits:
+        if e.get("op") == "corrected" and e.get("corrected_value") is not None:
+            keep.add(_strip(e["corrected_value"]))
+        elif e.get("op") == "added" and "mpn" in e:
+            keep.add(_strip(e["mpn"]))
+    return sorted(m for m in current
+                  if _strip(m) not in keep and _strip(m) not in deleted
+                  and _strip(m) not in corrected_from)
+
+
+def reconciliation_record(pruned: list, earlier_ingests: Optional[list]) -> dict:
+    return {"removed": [{"mpn": m, "reason": RECONCILE_REASON} for m in pruned],
+            "earlier_ingests": list(earlier_ingests) if earlier_ingests is not None else None,
+            "attribution": (RECONCILE_ATTRIBUTION if earlier_ingests is not None
+                            else RECONCILE_ATTRIBUTION_UNAVAILABLE)}
+
+
 def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
-           acted_by: str, acted_at: int, record_id: str, domain: str = "") -> dict:
+           acted_by: str, acted_at: int, record_id: str, domain: str = "",
+           row_edits: Optional[list] = None,
+           reconcile_mpns: Optional[list] = None) -> dict:
     """The effect. Every step is keyed, so running it again after a partial failure converges."""
     step = "graph"
     try:
         if decision == PROMOTED:
+            applied = None
+            if row_edits:
+                step = "row_edits"
+                applied = stores.graph.apply_row_edits(
+                    subject.ingest_id, row_edits, domain=domain, record_id=record_id)
+            reconciled = None
+            if reconcile_mpns is not None:
+                step = "reconcile"
+                n = (stores.graph.remove_notice_edges(
+                    subject.ingest_id, list(reconcile_mpns), domain=domain)
+                    if reconcile_mpns else 0)
+                reconciled = {"removed": n, "mpns": list(reconcile_mpns)}
+            step = "graph"
             fact = promotion_fact(acted_by=acted_by, record_id=record_id, promoted_at=acted_at)
             stores.graph.write_fact(subject.ingest_id, dict(fact))
             step = "origin"
             origin = stores.graph.attest_origin(
                 subject.ingest_id, owner_domain=domain, record_id=record_id)
-            return {"fact": fact, "origin": origin}
+            out = {"fact": fact, "origin": origin}
+            if applied is not None:
+                out["row_edits_applied"] = applied
+            if reconciled is not None:
+                out["reconciled"] = reconciled
+            return out
         swept = {"graph": stores.graph.delete_carrying(subject.ingest_id)}
         step = "indexes"
         swept["indexes"] = stores.indexes.delete_carrying(subject.ingest_id)
@@ -415,13 +489,35 @@ def _recorded_row_edits(stored: Any) -> Optional[list]:
     return None
 
 
+def _recorded_reconciliation(stored: Any) -> Optional[list]:
+    """The mpns a stored record's `reconciliation` names as removed, or None (the record has no
+    reconciliation, or is unreadable). The graph deletes only what a record names."""
+    rec = stored
+    if isinstance(stored, str):
+        try:
+            rec = json.loads(stored)
+        except ValueError:
+            return None
+    if not isinstance(rec, dict):
+        return None
+    for c in rec.get("checks") if isinstance(rec.get("checks"), list) else []:
+        if isinstance(c, dict) and c.get("name") == "human_review":
+            rc = (c.get("inputs") or {}).get("reconciliation")
+            if not isinstance(rc, dict) or not isinstance(rc.get("removed"), list):
+                return None
+            return [e["mpn"] for e in rc["removed"] if isinstance(e, dict) and "mpn" in e]
+    return None
+
+
 def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: str = "",
         can_act: Callable[[str, str], bool],
         stores: Optional[PromotionStores],
-        governing: dict, era: str, now_ms: int, row_edits: Optional[list] = None) -> dict:
+        governing: dict, era: str, now_ms: int, row_edits: Optional[list] = None,
+        reviewed_mpns: Optional[list] = None, earlier_ingests: Optional[list] = None) -> dict:
     """Promote or reject one document. Returns what happened; raises `PromotionRefused` for
     everything that did not. `row_edits` (the steward's corrections, already validated by the
     route) is written onto the decision record, which is the grant."""
+    reconciliation = None
     if decision not in VERBS:
         raise PromotionRefused("invalid_decision_for_kind",
                                f"{KIND} takes {list(VERBS)}, not {decision!r}", status=422)
@@ -461,9 +557,28 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 "ingest_node_absent",
                 f"no ingest artifact node exists for {subject.ingest_id}; the fact has nothing "
                 f"to be a fact about. Nothing was written", status=409)
+        # The notice's SUBJECT_TO set becomes exactly the reviewed rows. The list of edges to
+        # remove is computed BEFORE the record (which is immutable) so the record names it.
+        try:
+            current = stores.graph.notice_mpns(subject.ingest_id, domain=domain)
+        except Exception as exc:  # noqa: BLE001 — unknown is not absent
+            raise PromotionRefused(
+                "promotion_store_unavailable",
+                f"could not read the notice's parts for {subject.ingest_id} "
+                f"({type(exc).__name__}); nothing was written", status=503) from exc
+        if current is not None:
+            if reviewed_mpns is None:
+                raise PromotionRefused(
+                    "promotion_reviewed_set_unknown",
+                    f"the notice for {subject.ingest_id} is in the graph but the reviewed set of "
+                    f"parts could not be determined; a notice cannot be published without "
+                    f"knowing what was reviewed. Nothing was written", status=409)
+            reconciliation = reconciliation_record(
+                reconcile_plan(list(current), list(reviewed_mpns), row_edits), earlier_ingests)
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
-                          comment=comment, governing=governing, era=era, row_edits=row_edits)
+                          comment=comment, governing=governing, era=era, row_edits=row_edits,
+                          reconciliation=reconciliation)
     try:
         written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
     except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok
@@ -494,9 +609,15 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 f"steward corrections; the record stands as written. Nothing was written",
                 status=409)
         effect_by, effect_at, replayed = existing["acted_by"], existing["acted_at"], True
+        # A replay prunes what the STORED record names, never a recomputed list.
+        rm = _recorded_reconciliation(existing.get("record"))
+        reconciliation = {"removed": [{"mpn": m} for m in rm]} if rm is not None else None
 
     out = {"decision": decision, "ingest_id": subject.ingest_id,
            "record_id": record["record_id"], "replayed": replayed}
     out.update(_apply(decision, subject, stores, acted_by=effect_by, acted_at=effect_at,
-                      record_id=record["record_id"], domain=domain))
+                      record_id=record["record_id"], domain=domain,
+                      row_edits=row_edits,
+                      reconcile_mpns=([e["mpn"] for e in reconciliation["removed"]]
+                                      if reconciliation is not None else None)))
     return out

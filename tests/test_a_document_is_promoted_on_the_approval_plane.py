@@ -88,6 +88,9 @@ class Graph:
             raise self.answer
         return self.answer if self.answer is not None else iid in self.nodes
 
+    def notice_mpns(self, ingest_id, *, domain):
+        return None
+
     def write_fact(self, iid, fact):
         self.log.append(("fact", iid, fact))
         if self.fail == "write":
@@ -460,6 +463,7 @@ def route(monkeypatch, fresh_declarations):
         return calls.get("allow", True)
 
     monkeypatch.setattr(human_tasks, "check_can_act", can_act)
+    monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: [])   # the reviewed set
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: calls["resolved"].append((tid, kw)) or 1)
     user = type("U", (), {"authz_id": "bob", "sub": "bob", "email": "bob@x",

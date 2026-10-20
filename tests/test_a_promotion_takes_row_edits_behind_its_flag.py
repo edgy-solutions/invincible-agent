@@ -47,8 +47,14 @@ class _Graph:
     def node_exists(self, ingest_id):
         return True
 
+    def notice_mpns(self, ingest_id, *, domain):
+        return None
+
     def write_fact(self, ingest_id, fact):
         return None
+
+    def apply_row_edits(self, ingest_id, row_edits, *, domain, record_id):
+        return {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
 
     def attest_origin(self, ingest_id, *, owner_domain, record_id):
         return {"ok": True}

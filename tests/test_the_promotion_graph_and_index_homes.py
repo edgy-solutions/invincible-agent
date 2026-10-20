@@ -263,7 +263,12 @@ def test_promotion_stores_contains_no_raw_MERGE_for_the_ingest_node():
     A literal grep, not a parse -- the thing this guards against is exactly a stray Cypher
     string, which a parse-based check could miss as readily as the thing it is checking for."""
     src = (REPO / "src" / "iagent" / "promotion_stores.py").read_text(encoding="utf-8")
-    assert "MERGE" not in src, (
+    # `apply_row_edits` MERGEs a notice's Component and its SUBJECT_TO edge (row edits, ruled
+    # 2026-10-20); those are not the ingest node. Every OTHER MERGE line is still refused.
+    stray = [ln for ln in src.splitlines() if "MERGE" in ln
+             and "Component:{domain}" not in ln and "[r:SUBJECT_TO]" not in ln
+             and "apply_row_edits" not in ln and "MERGE or" not in ln]
+    assert not stray, (
         "a raw MERGE reappeared in promotion_stores.py -- the ingest node must be created "
         "through Neo4jGraphWriter.write_node (SDK v0.9.6), not a raw driver write")
 
