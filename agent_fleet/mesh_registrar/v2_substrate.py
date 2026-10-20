@@ -915,6 +915,28 @@ def sweep_stale_weaviate_predicate_rows(
     return deleted
 
 
+def _registered_at_utc(value: Any) -> "datetime | None":
+    """Normalise a ``registered_at`` to a tz-aware datetime, or None when undated.
+
+    The weaviate v4 client hands a DATE property back as ``datetime`` (naive is
+    taken as UTC); older paths hand back an ISO-8601 str (``Z`` suffix, fractional
+    seconds). Empty, None or unparseable is undated.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def evict_undeployed_frontend_versions(
     *,
     weaviate_client: Any,
@@ -946,12 +968,18 @@ def evict_undeployed_frontend_versions(
     versions of a frontend therefore share ONE edge; deleting it for an evicted
     version would remove the live version's half of the conjunctive-read pair.
 
+    ``registered_at`` arrives as a ``datetime`` from the weaviate client and as a
+    str from older paths; both are normalised to tz-aware datetimes (naive =
+    UTC) before comparing. An unparseable value counts as undated.
+
     Returns ``[{uuid, frontend_version, archetype, input_uri}]`` for what it deleted.
     """
     from weaviate.classes.query import Filter
 
     now = now or datetime.now(timezone.utc)
-    cutoff = (now - timedelta(seconds=retention_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now - timedelta(seconds=retention_s)
     keep_version = keep_version or ""
 
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
@@ -969,7 +997,7 @@ def evict_undeployed_frontend_versions(
         ver = props.get("frontend_version") or ""
         if ver == keep_version:
             continue
-        reg_at = props.get("registered_at") or ""
+        reg_at = _registered_at_utc(props.get("registered_at"))
         # keep_version "" never reaches here with ver "" (equal, kept above), so an
         # unversioned row survives an unversioned registration without a clause of its own.
         if ver and reg_at and reg_at >= cutoff:

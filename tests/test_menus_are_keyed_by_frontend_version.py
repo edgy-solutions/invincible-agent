@@ -369,9 +369,21 @@ def _ts(delta_s):
     return (NOW - timedelta(seconds=delta_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _p(uuid, ver, age_s, *, fid="cortex", kind="Presentation", arch="A"):
+def _ts_dt(delta_s, *, naive=False):
+    """What the weaviate v4 client really returns for a DATE property."""
+    d = NOW - timedelta(seconds=delta_s)
+    return d.replace(tzinfo=None) if naive else d
+
+
+def _p(uuid, ver, age_s, *, fid="cortex", kind="Presentation", arch="A", stamp="str"):
+    if age_s is None:
+        reg = ""
+    elif stamp == "str":
+        reg = _ts(age_s)
+    else:
+        reg = _ts_dt(age_s, naive=(stamp == "naive"))
     return _Obj(uuid, tool_kind=kind, frontend_id=fid, frontend_version=ver,
-                registered_at=_ts(age_s) if age_s is not None else "",
+                registered_at=reg,
                 archetype=arch, input_uri=f"{_MESH}{uuid}")
 
 
@@ -402,6 +414,30 @@ def test_f_deletes_old_past_retention_and_unversioned_keeps_the_rest():
 def test_f_a_versioned_row_with_no_stamp_is_evictable():
     c, out = _evict([_p("undated", "1.0.0", None)], "2.0.0")
     assert [d["uuid"] for d in out] == ["undated"]
+
+
+def test_f_datetime_registered_at_from_the_client_does_not_raise():
+    """The live client returns a tz-aware datetime; a str-only compare raised
+    TypeError on every registration and nothing was ever evicted."""
+    rows = [_p("old", "1.0.0", 7200, stamp="aware"), _p("fresh", "1.5.0", 60, stamp="aware"),
+            _p("kept", "2.0.0", 7200, stamp="aware")]
+    c, out = _evict(rows, "2.0.0")
+    assert {d["uuid"] for d in out} == {"old"}
+    assert {o.uuid for o in c.objs} == {"fresh", "kept"}
+
+
+def test_f_naive_datetime_registered_at_is_taken_as_utc():
+    rows = [_p("old", "1.0.0", 7200, stamp="naive"), _p("fresh", "1.5.0", 60, stamp="naive")]
+    c, out = _evict(rows, "2.0.0")
+    assert {d["uuid"] for d in out} == {"old"}
+    assert {o.uuid for o in c.objs} == {"fresh"}
+
+
+def test_f_an_unparseable_stamp_is_undated_and_evictable():
+    row = _p("junk", "1.0.0", 60)
+    row.properties["registered_at"] = "not-a-date"
+    c, out = _evict([row], "2.0.0")
+    assert [d["uuid"] for d in out] == ["junk"]
 
 
 def test_f_empty_keep_version_deletes_no_unversioned_row():

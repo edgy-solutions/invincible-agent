@@ -155,7 +155,7 @@ def _schema_has(base: str, prop: str, timeout: float) -> bool:
         return False
 
 
-def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optional[Dict[str, Dict[str, Any]]]:
+def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500, max_rows: int = 20000) -> Optional[Dict[str, Dict[str, Any]]]:
     """Read every registered presentation menu from the graph.
 
     Returns ``{frontend_id: {frontend_id, frontend_version, capabilities[],
@@ -199,25 +199,39 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
     if _filter_on_complete:
         fields.append("registration_complete")
 
-    query = "{Get{%s(limit:%d){%s}}}" % (_COLLECTION, int(limit), " ".join(fields))
-    try:
-        data = _gql(base, query, timeout)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("graph menu source unreachable (%s: %s); caller falls back",
-                       type(exc).__name__, exc)
-        return None
-    if data is None:
-        return None
-
-    rows = (data.get("Get") or {}).get(_COLLECTION) or []
-    if len(rows) >= limit:
-        # ANY RESULT SET EQUAL TO ITS LIMIT IS UNVERIFIED UNTIL COUNTED. A menu
-        # silently truncated at the limit looks like a smaller menu, not a broken
-        # read, and the missing capability presents as "that shape can't render".
-        logger.warning(
-            "graph menu read returned exactly its limit (%d) — the menu may be "
-            "TRUNCATED and some registered capabilities invisible", limit,
-        )
+    # PAGED BY CURSOR. A single `limit:N` read silently capped the menu (644 live
+    # rows read as 500). `after` pages by id; Weaviate CANNOT combine the cursor
+    # with where/sort, so a filter must never be added to this query.
+    rows: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    page_size = max(1, int(limit))
+    while True:
+        args = "limit:%d" % page_size
+        if after is not None:
+            args += ' after:"%s"' % after
+        query = "{Get{%s(%s){%s _additional{id}}}}" % (_COLLECTION, args, " ".join(fields))
+        try:
+            data = _gql(base, query, timeout)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("graph menu source unreachable (%s: %s); caller falls back",
+                           type(exc).__name__, exc)
+            return None
+        if data is None:
+            return None  # any page failing -> no partial menu
+        page = (data.get("Get") or {}).get(_COLLECTION) or []
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+        last_id = ((page[-1].get("_additional") or {}).get("id")) or ""
+        if not last_id:
+            logger.warning("graph menu read: a full page carried no _additional.id; "
+                           "cannot advance the cursor, menu may be TRUNCATED")
+            break
+        after = last_id
+        if len(rows) >= max_rows:
+            logger.warning("graph menu read is TRUNCATED at max_rows=%d; some registered "
+                           "capabilities are invisible", max_rows)
+            break
 
     groups: Dict[str, Dict[str, Dict[str, Any]]] = {}
     orphans = 0
