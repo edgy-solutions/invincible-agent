@@ -40,6 +40,9 @@ _DELETED_KEYS = frozenset({"mpn", "reason"})
 _ADDED_KEYS = frozenset({"mpn", "disposition", "reason", "evidence"})
 _CORRECTED_KEYS = frozenset({"mpn", "corrected_mpn", "evidence"})
 _TOP_KEYS = frozenset({"deleted", "added", "corrected"})
+#: Header fields a steward may correct on the same wire as rows (ruling 10-20, Q8 amended).
+HEADER_FIELDS = ("mfr", "notice_id", "notice_date")
+_HEADER_KEYS = frozenset({"field", "value", "evidence_ref", "reason"})
 
 
 class EditRefusal(ValueError):
@@ -52,9 +55,10 @@ class RowEdits:
     deleted: list = field(default_factory=list)     # [{mpn, reason}]
     added: list = field(default_factory=list)       # [{mpn, disposition, reason, evidence}]
     corrected: list = field(default_factory=list)   # [{mpn, corrected_mpn, evidence}]
+    header: list = field(default_factory=list)      # [{field, value, evidence_ref, reason, extracted}]
 
     def is_empty(self) -> bool:
-        return not (self.deleted or self.added or self.corrected)
+        return not (self.deleted or self.added or self.corrected or self.header)
 
 
 def _text(v) -> str:
@@ -143,6 +147,38 @@ def validate_row_edits(raw, *, extracted_mpns: Optional[Iterable[str]] = None) -
     return edits
 
 
+def validate_header_edits(raw, *, extracted: dict) -> list:
+    """Parse and validate ``header_edits``: ``[{field, value, evidence_ref, reason}]``. ``extracted``
+    maps a header field to the review's value; a missing value (None/blank) is fine -- that is a true
+    extraction miss. Returns the stripped items, each with the ``extracted`` value it corrects.
+    Raises ``EditRefusal``."""
+    if not isinstance(raw, list):
+        raise EditRefusal("header_edits must be a list")
+    out: list = []
+    seen: set = set()
+    for r in raw:
+        if not isinstance(r, dict):
+            raise EditRefusal("header_edits entries must be objects")
+        if set(r) != _HEADER_KEYS:
+            raise EditRefusal(f"a header edit has exactly the keys {sorted(_HEADER_KEYS)}")
+        f = r.get("field")
+        if f not in HEADER_FIELDS:
+            raise EditRefusal(f"header field {f!r} is not one of {list(HEADER_FIELDS)}")
+        for k in ("value", "evidence_ref", "reason"):
+            if not _text(r.get(k)):
+                raise EditRefusal(f"a header edit needs a non-empty {k} (field {f!r})")
+        if f in seen:
+            raise EditRefusal(f"header field {f!r} appears more than once")
+        seen.add(f)
+        ext_t = _text((extracted or {}).get(f)) or None
+        value = _text(r["value"])
+        if ext_t is not None and ext_t.casefold() == value.casefold():
+            raise EditRefusal(f"header {f} value equals the extracted value; not a correction")
+        out.append({"field": f, "value": value, "evidence_ref": _text(r["evidence_ref"]),
+                    "reason": _text(r["reason"]), "extracted": ext_t})
+    return out
+
+
 def check_overrides(overrides: dict, edits: RowEdits) -> None:
     """Overrides stay keyed by the EXTRACTED mpn. Added rows travel only in ``added``; an override
     aimed at a deleted row or at a corrected value is a re-keying attempt and is refused."""
@@ -223,6 +259,9 @@ def edit_log(edits: RowEdits) -> list:
     for r in edits.deleted:
         out.append({"op": "deleted", "extracted": _text(r["mpn"]), "corrected": None,
                     "reason": _text(r["reason"])})
+    for r in edits.header:
+        out.append({"op": "header_corrected", "field": r["field"], "extracted": r.get("extracted"),
+                    "corrected": r["value"], "evidence": r["evidence_ref"], "reason": r["reason"]})
     return out
 
 
@@ -256,7 +295,8 @@ def defect_task(*, notice: str, decision_id: str, pipeline_version, edits: RowEd
         "summary": (f"A steward corrected the extraction of notice {notice}: "
                     f"{sum(1 for e in log if e['op'] == 'corrected')} corrected, "
                     f"{sum(1 for e in log if e['op'] == 'added')} added, "
-                    f"{sum(1 for e in log if e['op'] == 'deleted')} deleted."
+                    f"{sum(1 for e in log if e['op'] == 'deleted')} deleted, "
+                    f"{sum(1 for e in log if e['op'] == 'header_corrected')} header field corrected."
                     + (" Extractor pin unknown (no pipeline_version on the record)."
                        if pin["pin_fields_missing"] else "")),
         "disposition": EXTRACTION_DEFECT_KIND,

@@ -833,6 +833,21 @@ class RowEdits(_RowEditsModel):
         return self
 
 
+class HeaderEdit(_RowEditsModel):
+    """A steward correction of one header field of a promotion (ruling 10-20, Q8 amended), on the
+    same wire and flag as row_edits."""
+    field: Literal["mfr", "notice_id", "notice_date"]
+    value: str
+    evidence_ref: str
+    reason: str
+
+    @model_validator(mode="after")
+    def _rules(self):
+        for v in (self.value, self.evidence_ref, self.reason):
+            _nonblank(v)
+        return self
+
+
 def _promotion_row_edits_enabled() -> bool:
     """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
     Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
@@ -848,6 +863,8 @@ class HumanTaskActRequest(_BaseModel):
     # Grouped review approval, or document promotion `promoted` (flag-gated at the route): steward
     # deletes / additions / corrections, each with evidence.
     row_edits: Optional[RowEdits] = None
+    # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
+    header_edits: Optional[list[HeaderEdit]] = None
 
     @field_validator("reason_code", mode="before")
     @classmethod
@@ -861,6 +878,15 @@ class HumanTaskActRequest(_BaseModel):
         if self.row_edits is not None and self.decision not in ("approved", "promoted"):
             raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
                              "or 'promoted' (document promotion)")
+        if self.header_edits is not None and not self.header_edits:
+            self.header_edits = None
+        if self.header_edits is not None:
+            if self.decision != "promoted":
+                raise ValueError("header_edits is only valid with decision='promoted' "
+                                 "(document promotion)")
+            _fields = [h.field for h in self.header_edits]
+            if len(set(_fields)) != len(_fields):
+                raise ValueError("header_edits names a field more than once")
         return self
 
     # PCN grouped review only: optional per-part disposition overrides the reviewer
@@ -3873,6 +3899,19 @@ async def act_on_human_task(
                 "message": "row edits are read only on a grouped review or a document "
                            "promotion; sent here they would be lost"})
 
+    # header_edits (ruling 10-20): document_promotion only, behind the SAME flag as row_edits.
+    if req.header_edits and match.get("kind") != "document_promotion":
+        raise HTTPException(status_code=422, detail={
+            "error": "header_edits_not_for_kind", "kind": match.get("kind"),
+            "message": "header edits are read only on a document promotion; sent here they "
+                       "would be lost"})
+    if req.header_edits and not _promotion_row_edits_enabled():
+        raise HTTPException(status_code=422, detail={
+            "error": "header_edits_not_for_kind", "kind": "document_promotion",
+            "enabled": False,
+            "message": "header edits on a document promotion are off on this deployment "
+                       "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
     try:
@@ -3939,17 +3978,33 @@ async def act_on_human_task(
         corrections = None
         defect_aud = None
         subject = None
-        if req.row_edits is not None:
+        if req.row_edits is not None or req.header_edits:
             from agent_fleet.restate_analyst import steward_correction
             try:
                 subject = promotion.subject_from_payload(match.get("payload"))
-                _mpns = await run_in_threadpool(lambda: _review_mpns_for_payload(subject))
-                try:
-                    edits = steward_correction.validate_row_edits(
-                        req.row_edits.model_dump(), extracted_mpns=_mpns)
-                except steward_correction.EditRefusal as exc:
-                    raise HTTPException(status_code=422, detail={
-                        "error": "row_edits_refused", "task_id": task_id, "message": str(exc)})
+                if req.row_edits is not None:
+                    _mpns = await run_in_threadpool(lambda: _review_mpns_for_payload(subject))
+                    try:
+                        edits = steward_correction.validate_row_edits(
+                            req.row_edits.model_dump(), extracted_mpns=_mpns)
+                    except steward_correction.EditRefusal as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "row_edits_refused", "task_id": task_id,
+                            "message": str(exc)})
+                else:
+                    edits = steward_correction.RowEdits()
+                if req.header_edits:
+                    _hdr = await run_in_threadpool(lambda: _review_header_for_payload(subject))
+                    try:
+                        edits.header = steward_correction.validate_header_edits(
+                            [h.model_dump() for h in req.header_edits],
+                            extracted={"mfr": _hdr.get("mfr"),
+                                       "notice_id": _hdr.get("notice_id"),
+                                       "notice_date": _hdr.get("notice_date")})
+                    except steward_correction.EditRefusal as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "header_edits_refused", "task_id": task_id,
+                            "message": str(exc)})
                 if edits.is_empty():
                     edits = None
                 else:
@@ -3988,6 +4043,12 @@ async def act_on_human_task(
                 for r in edits.deleted:
                     corrections.append({"op": "deleted", "mpn": r["mpn"].strip(),
                                         "reason": r["reason"]})
+                for r in edits.header:
+                    corrections.append({"op": "header_corrected", "field": r["field"],
+                                        "reason": r["reason"],
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=r.get("extracted"),
+                                            corrected=r["value"], evidence=r["evidence_ref"])})
 
         try:
             from .trust_table import load_trust_table
@@ -4070,7 +4131,7 @@ async def act_on_human_task(
             _body["reject_code"] = _reject_code
         if defect is not None:
             _body["row_edits"] = {"corrected": len(edits.corrected), "added": len(edits.added),
-                                  "deleted": len(edits.deleted)}
+                                  "deleted": len(edits.deleted), "header": len(edits.header)}
             _body["corrections"] = corrections
             _body["extraction_defect"] = defect["task_key"]
         return _body
@@ -11626,10 +11687,10 @@ def _read_review_json(key: str) -> dict:
     return doc
 
 
-def _review_mpns_for_payload(subject) -> list:
-    """The affected_mpn of every part row of the review a promotion task points at (sync;
-    threadpool). 422 `extraction_unbound` when the extraction is not under the document's own
-    directory; the readers raise their own HTTPException on a store failure."""
+def _bound_review_for_payload(subject) -> dict:
+    """The parsed review.json a promotion task points at (sync; threadpool). 422
+    `extraction_unbound` when the extraction is not under the document's own directory; the
+    readers raise their own HTTPException on a store failure."""
     from . import promotion
 
     ref = str(subject.extraction_ref or "").strip()
@@ -11644,8 +11705,19 @@ def _review_mpns_for_payload(subject) -> list:
         raise HTTPException(status_code=422, detail={
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
+    return _read_review_json(key)
+
+
+def _review_header_for_payload(subject) -> dict:
+    """`_review_notice_summary` of the bound review (sync; threadpool); same binding checks."""
+    return _review_notice_summary(_bound_review_for_payload(subject))
+
+
+def _review_mpns_for_payload(subject) -> list:
+    """The affected_mpn of every part row of the review a promotion task points at (sync;
+    threadpool); binding as `_bound_review_for_payload`."""
     out = []
-    for it in _review_items(_read_review_json(key)):
+    for it in _review_items(_bound_review_for_payload(subject)):
         m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
         if m and m.group(2) == "affected_mpn":
             v = it.get("value")

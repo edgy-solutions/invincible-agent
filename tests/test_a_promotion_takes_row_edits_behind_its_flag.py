@@ -132,7 +132,7 @@ def test_flag_on_a_correction_rides_the_record_and_files_one_defect(world, monke
     assert reg["kind"] == "extraction_defect" and reg["audience"] == "dispatch_failure:SUSTAINMENT"
     assert reg["task_id"] == f"extraction-defect:PCN26-119:{rid}"
     assert body["extraction_defect"] == reg["task_id"]
-    assert body["row_edits"] == {"corrected": 1, "added": 0, "deleted": 0}
+    assert body["row_edits"] == {"corrected": 1, "added": 0, "deleted": 0, "header": 0}
     assert body["corrections"] == got
     assert len(world.resolved) == 1
 
