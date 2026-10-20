@@ -483,9 +483,10 @@ Gov decides and I adapt. Gov's newest packet to lane/01 (#77/#78) does not addre
 | what | value |
 | --- | --- |
 | lane head | `lane/01-197` = `411cf3d8` plus this report. Not on master. |
+| what roll 200 carries | 10 commits since roll 199, `938d7639..411cf3d8`. Code changes: `988e70c7`, rejected-row evidence into quarantine and the door's sniff; `46e54949`, lane 74's Q7(a) resolver half in engine-o; `f07ac60d`, the Q9 menu-key fix you accepted; `411cf3d8`, this report's §1. All but `411cf3d8` are on master (`90c58c1d`). |
 | image build | run `39490207255`: 20 of 20 jobs succeeded. All 17 live iagent repos return a 200 manifest at `411cf3d80effd505ce34696cf2b806d19811db34`. |
 | roll | **roll 200 = helm revision 206.** Deployed 2026-10-20 at 20:2xZ, outside the 07:00Z window. Dagster had no run in flight beforehand. Every iagent container is at `411cf3d8`, with no `938d7639` left. cortex-ui is unchanged from 199b (`7a7666d`). |
 | health | BFF `/health` returned 200 three times in-pod. cortex-ui returned 200 three times in-pod. |
 | cortex login | passed (1 test, 9.8s). |
 | port-forwards | Keycloak (for the mint) and BFF (for the proof): each opened for its one use, then closed. |
-| other lanes' rolls | saf was told on 10-20 that `938d7639` at revision 204 is roll 199. **Roll 200 changes every iagent image**, so saf's arms now run against `411cf3d8`. |
+| other lanes' rolls | saf was told on 10-20 that `938d7639` at revision 204 is roll 199. **Roll 200 changes every iagent image**, so saf's arms now run against `411cf3d8`. I told saf in a packet placed in its sessions/ tonight. |
