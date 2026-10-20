@@ -2816,6 +2816,67 @@ try:
 except ImportError:
     from agent_fleet.ontology_service.recall_guard import recall_override_guard as _recall_override_guard
 
+# Input-declared grounding (ruled 2026-10-20): when every recalled class is a dead end, ground on the
+# class the question's top verb declares as its input. Pure logic in a dep-free sibling.
+try:
+    from input_declared import input_declared_classes as _input_declared_classes, DEFAULT_MIN_SCORE as _INPUT_DECLARED_DEFAULT  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.input_declared import input_declared_classes as _input_declared_classes, DEFAULT_MIN_SCORE as _INPUT_DECLARED_DEFAULT
+
+_INPUT_DECLARED_MIN_SCORE = float(os.getenv("INPUT_DECLARED_MIN_SCORE", str(_INPUT_DECLARED_DEFAULT)))
+
+
+def _local_name(uri: str) -> str:
+    return uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+
+
+async def _input_declared_pool(request, domains) -> tuple[list[dict], dict]:
+    """Classes the question's top verb declares as input, or ([], trace). NEVER raises.
+
+    Degrades to today's behaviour on any failure: a failure here must not fail /resolve.
+    """
+    try:
+        rows = await predicate_hybrid_search(
+            request.query, list(domains), limit=10, user_email=request.user_email)
+    except Exception as exc:
+        print(f"[Engine O] input-declared verb recall failed ({type(exc).__name__}) - "
+              "keeping the recalled pool")
+        return [], {"reason": "verb_recall_failed", "error": type(exc).__name__}
+    # include_referents=False IS THIS QUESTION'S FORM, passed explicitly: "can this class be
+    # ANSWERED", the post-preemption check's question, not the gate's "may it be offered".
+    try:
+        served = await _served_class_uris(list(domains), include_referents=False)
+    except Exception as exc:
+        print(f"[Engine O] input-declared served lookup failed ({type(exc).__name__})")
+        return [], {"reason": "served_lookup_failed", "error": type(exc).__name__}
+    if not served:
+        return [], {"reason": "served_lookup_empty"}
+    if ENABLE_AGENTIC_AUTH:
+        def visible(uri):
+            return _can_view_class(request.user_email, uri)
+    else:
+        def visible(uri):
+            return True
+    classes, trace = _input_declared_classes(
+        rows, served=served, visible=visible, floor=_INPUT_DECLARED_MIN_SCORE)
+    if not classes:
+        return [], trace
+    labels: dict = {}
+    if _NEO4J_DRIVER is not None:
+        def _read():
+            with _NEO4J_DRIVER.session() as session:
+                return [(r["uri"], r["label"]) for r in session.run(
+                    "MATCH (c:OntologyClass) WHERE c.uri IN $uris RETURN c.uri AS uri, c.label AS label",
+                    uris=[c["uri"] for c in classes])]
+        try:
+            labels = {u: l for u, l in await asyncio.to_thread(_read) if l}
+        except Exception as exc:
+            print(f"[Engine O] input-declared label read failed ({type(exc).__name__})")
+    for c in classes:
+        c["label"] = labels.get(c["uri"]) or _local_name(c["uri"])
+        c["description"] = f"Declared input of {c['via_verb']}. {c['verb_description']}".strip()
+    return classes, trace
+
 try:
     from sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -3591,6 +3652,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # refused: that is the signature of a served-set computed against the wrong domains, and
     # answering from a dead end beats answering nothing while the cause is found.
     _gate_excluded: list[dict] = []
+    _input_declared_trace: dict | None = None
     if candidates:
         # include_referents=True IS THE GATE'S QUESTION AND IS PASSED EXPLICITLY, not defaulted.
         # "May the resolver OFFER this class?" — a declared mesh:ResolvableReferent is groundable
@@ -3626,16 +3688,34 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # above records what it REMOVES; this branch removes nothing, but a reader of
                 # the artifact still needs to see that the gate stood down rather than never
                 # having run — so every candidate it declined to filter is recorded too.
-                _gate_excluded = [
-                    {
-                        "kind": "class",
-                        "uri": str(c.get("uri") or ""),
-                        "gate": "productive_option",
-                        "disposal": "retained",
-                        "reason": "no_verb_in_scope_but_pool_would_empty",
-                    }
-                    for c in candidates
-                ]
+                _injected, _input_declared_trace = await _input_declared_pool(
+                    request, request.domains or ([request.domain] if request.domain else []))
+                if _injected:
+                    print("[Engine O] input-declared grounding: every recalled class is a dead end; "
+                          f"offering the declared input(s) of {_input_declared_trace.get('verb_iri')}: "
+                          f"{[c['uri'] for c in _injected]}")
+                    _gate_excluded = [
+                        {
+                            "kind": "class",
+                            "uri": str(c.get("uri") or ""),
+                            "gate": "productive_option",
+                            "disposal": "removed",
+                            "reason": "input_declared_preferred",
+                        }
+                        for c in candidates
+                    ]
+                    candidates = _injected
+                else:
+                    _gate_excluded = [
+                        {
+                            "kind": "class",
+                            "uri": str(c.get("uri") or ""),
+                            "gate": "productive_option",
+                            "disposal": "retained",
+                            "reason": "no_verb_in_scope_but_pool_would_empty",
+                        }
+                        for c in candidates
+                    ]
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
@@ -3814,6 +3894,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
+        if _input_declared_trace is not None:
+            instance_provenance["input_declared"] = _input_declared_trace
         if instance_subject is not None:
             # POST-PREEMPTION PRODUCTIVITY CHECK — site 2 of 2. This is the path the
             # engine-cost lane measured: 10 of 18 draws overridden onto fin:WBSElement.
@@ -3923,6 +4005,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         str(result.resolved_uri), result.confidence_score,
         candidates, result.reasoning, None,
     )
+    if _input_declared_trace is not None:
+        _prov["input_declared"] = _input_declared_trace
     return SemanticResolutionResponse(
         resolved_uri=str(result.resolved_uri),
         confidence_score=_conf,
