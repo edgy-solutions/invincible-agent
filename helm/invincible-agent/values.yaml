@@ -1613,6 +1613,11 @@ cortexUi:
     VITE_API_URL: "http://localhost:8000"
     VITE_KEYCLOAK_REALM_URL: "http://localhost:8080/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
+    # The steward row/header editors. The image defaults them ON when this is absent, so the chart
+    # says "false" for every environment; only values-sandbox.yaml turns them on (architect
+    # 2026-10-20: "Work cluster and any other environment stay off until that proof is in a
+    # report"). The server half, cortexBff IAGENT_PROMOTION_ROW_EDITS, is off unless set "true".
+    VITE_REVIEW_ROW_EDITS: "false"
   ingress:
     enabled: false
     className: ""

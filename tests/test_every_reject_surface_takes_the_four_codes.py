@@ -53,16 +53,14 @@ def test_each_of_the_four_is_taken_as_itself(code):
     assert gateway.HumanTaskActRequest(decision="rejected", reason_code=code).reason_code == code
 
 
-@pytest.mark.parametrize("legacy,successor", [("parts_list_unusable", "parts_unusable"),
-                                              ("superseded_or_duplicate", "duplicate")])
-def test_a_pre_ruling_name_becomes_its_successor(legacy, successor):
-    assert gateway.HumanTaskActRequest(decision="rejected", reason_code=legacy).reason_code == successor
+@pytest.mark.parametrize("legacy", ["parts_list_unusable", "superseded_or_duplicate"])
+def test_a_pre_ruling_name_is_refused_since_the_aliases_were_dropped(legacy):
+    with pytest.raises(ValidationError):
+        gateway.HumanTaskActRequest(decision="rejected", reason_code=legacy)
 
 
-def test_the_alias_map_only_maps_old_names_onto_the_four():
-    legacy = gateway._LEGACY_GROUPED_REJECT_CODES
-    assert set(legacy.values()) <= set(FOUR)
-    assert not set(legacy) & set(FOUR), "an alias shadows a code"
+def test_no_alias_map_survives():
+    assert not hasattr(gateway, "_LEGACY_GROUPED_REJECT_CODES")
 
 
 @pytest.mark.parametrize("bad", ["wrong_value", "superseded", "", "PARTS_UNUSABLE"])

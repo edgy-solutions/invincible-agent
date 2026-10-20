@@ -768,10 +768,9 @@ class HumanTaskRegisterRequest(_BaseModel):
 #: four-code ruling applies to every reject surface"), in `PROMOTION_REJECT_CODES`'s order --
 #: cortex's parity seal reads this literal and the Literal below, in order.
 _GROUPED_REJECT_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
-#: TRANSITION ONLY: the pre-ruling names a client pinned before the widening still sends. Each
-#: maps to its four-code successor at the boundary, so nothing past the model sees an old name.
-_LEGACY_GROUPED_REJECT_CODES = {"parts_list_unusable": "parts_unusable",
-                                "superseded_or_duplicate": "duplicate"}
+#: The pre-ruling names (`parts_list_unusable`, `superseded_or_duplicate`) were aliased onto these
+#: for the transition and are REFUSED since 199 (architect 2026-10-20: "drop the reject-code
+#: aliases (cortex already sends the four)").
 
 
 def _nonblank(v: str) -> str:
@@ -865,11 +864,6 @@ class HumanTaskActRequest(_BaseModel):
     row_edits: Optional[RowEdits] = None
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
-
-    @field_validator("reason_code", mode="before")
-    @classmethod
-    def _legacy_code_takes_its_successor(cls, v):
-        return _LEGACY_GROUPED_REJECT_CODES.get(v, v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _verb_fields(self):

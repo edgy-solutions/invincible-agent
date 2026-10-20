@@ -265,19 +265,14 @@ def test_reject_reaches_submit_decision_with_the_code_and_the_row_ends_review_re
     assert all(i != FP for i, _, _ in act.statuses), "the extracted doc_id was used as a row key"
 
 
-@pytest.mark.parametrize("legacy,successor", [("parts_list_unusable", "parts_unusable"),
-                                              ("superseded_or_duplicate", "duplicate")])
-def test_a_pre_ruling_code_reaches_submit_decision_as_its_four_code_successor(act, legacy, successor):
-    """TRANSITION: a client pinned before the widening still sends the old name; the workflow, which
-    takes only the four, must receive the successor."""
-    _FakeAsyncClient.submit_response = {"status": "accepted", "accepted": True, "rejected": True,
-                                        "reason_code": successor, "resolved_count": 0,
-                                        "notice_fingerprint": FP, "ingest_id": INGEST}
+@pytest.mark.parametrize("legacy", ["parts_list_unusable", "superseded_or_duplicate"])
+def test_a_pre_ruling_code_is_refused_before_submit_decision(act, legacy):
+    """The transition aliases were dropped in 199 (cortex sends only the four): an old name is a
+    422 at the model, and the workflow is never asked."""
     r = act.post("/human_tasks/grouped:wf-1/act",
                  json={"decision": "rejected", "reason_code": legacy, "comment": "x"})
-    assert r.status_code == 200, r.text
-    (sent,) = _submits()
-    assert sent["decision"]["reason_code"] == successor
+    assert r.status_code == 422, r.text
+    assert _submits() == []
 
 
 def test_reject_of_a_review_with_no_ingest_id_writes_no_row_and_says_unlinked(act):
