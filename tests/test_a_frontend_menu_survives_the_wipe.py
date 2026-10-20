@@ -326,6 +326,60 @@ def test_coverage_is_keyed_by_subject_and_archetype_not_count():
     assert gateway._graph_holds_menu(ent(adm), FID, "other", adm) is False
 
 
+def _held(*pairs):
+    caps = [{"subject_uri": u, "archetype": a} for u, a in pairs]
+    return {FID: {"versions": {"v": {"capabilities": caps}}}}
+
+
+FIN = "http://invincible-agent/fin#"
+
+
+def test_a_curie_post_is_held_by_the_expanded_graph_row_and_the_reverse():
+    from agent_fleet.presentation_agent.capabilities import canonical_iri_for_lookup
+    assert canonical_iri_for_lookup("fin:BurnRateSeries") == FIN + "BurnRateSeries"
+    curie = [{"subject_uri": "fin:BurnRateSeries", "archetype": "MULTI_SERIES"}]
+    full = [{"subject_uri": FIN + "BurnRateSeries", "archetype": "MULTI_SERIES"}]
+    assert gateway._graph_holds_menu(_held((FIN + "BurnRateSeries", "MULTI_SERIES")),
+                                     FID, "v", curie) is True
+    assert gateway._graph_holds_menu(_held(("fin:BurnRateSeries", "MULTI_SERIES")),
+                                     FID, "v", full) is True
+
+
+def test_canonicalising_does_not_widen_a_different_name_or_archetype():
+    curie = [{"subject_uri": "fin:BurnRateSeries", "archetype": "MULTI_SERIES"}]
+    assert gateway._graph_holds_menu(_held((FIN + "Other", "MULTI_SERIES")),
+                                     FID, "v", curie) is False
+    assert gateway._graph_holds_menu(_held((FIN + "BurnRateSeries", "KPI")),
+                                     FID, "v", curie) is False
+
+
+def test_an_unknown_prefix_matches_only_itself_verbatim():
+    from agent_fleet.presentation_agent.capabilities import canonical_iri_for_lookup
+    assert canonical_iri_for_lookup("zz:Thing") == "zz:Thing"
+    adm = [{"subject_uri": "zz:Thing", "archetype": "X"}]
+    assert gateway._graph_holds_menu(_held(("zz:Thing", "X")), FID, "v", adm) is True
+    assert gateway._graph_holds_menu(_held(("http://invincible-agent/zz#Thing", "X")),
+                                     FID, "v", adm) is False
+
+
+def _expanded_graph(w, body, version):
+    w.graph = {FID: {"versions": {version: {"capabilities": [
+        {"subject_uri": c["subject_uri"].replace("fin:", FIN, 1), "archetype": c["archetype"]}
+        for c in body["capabilities"]]}}}}
+
+
+def test_an_identical_post_is_unchanged_when_the_graph_holds_the_expanded_form(world):
+    world.graph = {}
+    body = _body(prefix="fin:Subject")
+    _post(body)
+    _expanded_graph(world, body, "t1")
+    world.emits.clear()
+    r = _post(body)
+    assert r.status_code == 200
+    assert r.json()["unchanged"] is True and r.json()["accepted"] == N
+    assert world.emits == []
+
+
 # ── REPLAY ─────────────────────────────────────────────────────────────────────────────────────
 
 def _stored(w, fid=FID, version="t1", n=N):
@@ -385,3 +439,11 @@ def test_replay_registers_the_stored_menu_in_process(world, monkeypatch):
     world.graph = {}
     gateway._replay_frontend_menus_once()
     assert seen == [("replay-fe", "t1", N)]
+
+
+def test_replay_skips_a_menu_whose_graph_copy_is_in_expanded_form(world):
+    body = _body(prefix="fin:Subject")
+    world.store.save(FID, "t1", _admitted_of(body), registered_by="u", registered_at=1)
+    _expanded_graph(world, body, "t1")
+    assert gateway._replay_frontend_menus_once() is True
+    assert world.emits == []

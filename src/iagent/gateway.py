@@ -8766,11 +8766,12 @@ def _graph_holds_menu(entries, frontend_id: str, frontend_version: str | None,
     admitted capability.
 
     COVERAGE IS KEYED BY (subject_uri, archetype), not by count: those two fields are what the
-    emit puts in the row's name (presentation_<archetype>_for_<subject>__<frontend_id>) and
-    both survive the graph read (`input_uri` -> subject_uri, `archetype`), so the key is
-    recoverable on both sides. A count would call a menu with one capability swapped for another
-    "held". The graph may hold MORE than the post (a stale row); that is covered, and a changed
-    menu is caught by the digest, not here.
+    emit puts in the row's name (presentation_<archetype>_for_<subject>__<frontend_id>). The
+    graph read returns the EXPANDED IRI while the post may carry a CURIE (`fin:X`), so both
+    sides are canonicalised with `canonical_iri_for_lookup` before comparing (measured on the
+    sandbox 2026-10-20: 35 of 49 keys missed). A count would call a menu with one capability
+    swapped for another "held". The graph may hold MORE than the post (a stale row); that is
+    covered, and a changed menu is caught by the digest, not here.
     """
     if not isinstance(entries, dict):
         return False
@@ -8780,9 +8781,12 @@ def _graph_holds_menu(entries, frontend_id: str, frontend_version: str | None,
     group = (entry.get("versions") or {}).get(frontend_version or "")
     if not isinstance(group, dict):
         return False
-    held = {(c.get("subject_uri") or "", c.get("archetype") or "")
+    from agent_fleet.presentation_agent.capabilities import canonical_iri_for_lookup as _canon
+
+    held = {(_canon(str(c.get("subject_uri") or "")), c.get("archetype") or "")
             for c in (group.get("capabilities") or [])}
-    wanted = {(str(c.get("subject_uri") or ""), str(c.get("archetype") or "")) for c in admitted}
+    wanted = {(_canon(str(c.get("subject_uri") or "")), str(c.get("archetype") or ""))
+              for c in admitted}
     return wanted <= held
 
 
