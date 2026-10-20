@@ -84,7 +84,10 @@ def world(monkeypatch):
     monkeypatch.setattr(promotion, "act", spy_act)
     monkeypatch.setattr(gateway, "_promotion_stores", lambda acted_by: stores)
     monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: ["A-1", "B-2"])
-    monkeypatch.setattr(gateway, "_review_header_for_payload", lambda subject: dict(w.header))
+    monkeypatch.setattr(
+        gateway, "_review_header_for_payload",
+        lambda subject: {"mfr_source": "header" if w.header.get("mfr") else None,
+                         "mfr_identity": None, **w.header})
     monkeypatch.setattr(ingest_status, "update_status",
                         lambda iid, stage, *, detail=None: w.statuses.append((iid, stage, detail)))
     user = SimpleNamespace(authz_id="bob", sub="bob", email="bob@x", persona=None,
@@ -235,8 +238,114 @@ def test_is_empty_counts_header_and_the_log_and_summary_carry_it():
     assert not edits.is_empty() and sc.RowEdits().is_empty()
     (e,) = sc.edit_log(edits)
     assert e == {"op": "header_corrected", "field": "mfr", "extracted": None, "corrected": "TYC",
-                 "evidence": "p1", "reason": "text layer dropped ti"}
+                 "evidence": "p1", "reason": "text layer dropped ti", "fallback": None}
     t = sc.defect_task(notice="N", decision_id="d", pipeline_version="v", edits=edits,
                        audience="a", requested_by="x", acted_by="y")
     assert "0 corrected, 0 added, 0 deleted, 1 header field corrected." in t["summary"]
     assert "(1 steward edit(s))" in t["title"]
+
+
+# ---- the equality refusal is against header.mfr, never the identity fallback (architect ruling)
+
+FB = {"source": "notice_identity", "value": "TYC"}
+
+
+def test_arm_u1_a_value_equal_to_the_fallback_fills_a_missing_field():
+    (it,) = sc.validate_header_edits([_item(value="TYC")], extracted={"mfr": None},
+                                     fallback={"mfr": "TYC"})
+    assert it["fallback"] == FB and it["extracted"] is None
+
+
+def test_arm_u2_casefold_equality_to_the_fallback_does_not_refuse():
+    (it,) = sc.validate_header_edits([_item(value="tyc")], extracted={"mfr": None},
+                                     fallback={"mfr": "TYC"})
+    assert it["value"] == "tyc" and it["fallback"] == FB
+
+
+def test_arm_u3_a_present_header_value_still_refuses_an_equal_one():
+    with pytest.raises(sc.EditRefusal):
+        sc.validate_header_edits([_item(value="TYC")], extracted={"mfr": "TYC"},
+                                 fallback={"mfr": "TYC"})
+
+
+def test_arm_u4_a_present_header_value_leaves_no_fallback():
+    (it,) = sc.validate_header_edits([_item(value="TYC")], extracted={"mfr": "Acme"},
+                                     fallback={"mfr": "TYC"})
+    assert it["fallback"] is None
+
+
+def test_arm_u5_no_fallback_keyword_is_the_old_behaviour():
+    items = sc.validate_header_edits([_item(value="TYC")], extracted={"mfr": None})
+    assert [i["fallback"] for i in items] == [None]
+
+
+def _review(header_mfr=None, ident_mfr=None, blank=False):
+    items = []
+    if header_mfr is not None:
+        items.append({"field_path": "header.mfr", "value": header_mfr})
+    r = {"review_items": items}
+    if ident_mfr is not None:
+        r["notice_identity"] = {"mfr": ident_mfr}
+    return r
+
+
+def test_arm_s6_header_mfr_present_is_sourced_header():
+    s = gateway._review_notice_summary(_review("Acme", "TYC"))
+    assert (s["mfr"], s["mfr_source"], s["mfr_identity"]) == ("Acme", "header", "TYC")
+
+
+def test_arm_s7_header_absent_falls_back_to_identity():
+    s = gateway._review_notice_summary(_review(None, "TYC"))
+    assert (s["mfr"], s["mfr_source"], s["mfr_identity"]) == ("TYC", "identity", "TYC")
+
+
+def test_arm_s8_a_blank_header_mfr_is_sourced_identity():
+    s = gateway._review_notice_summary(_review("  ", "TYC"))
+    assert (s["mfr"], s["mfr_source"], s["mfr_identity"]) == ("TYC", "identity", "TYC")
+
+
+def test_arm_s9_neither_is_none():
+    s = gateway._review_notice_summary(_review(None, None))
+    assert (s["mfr"], s["mfr_source"], s["mfr_identity"]) == (None, None, None)
+
+
+def _tyc(world, monkeypatch, header_mfr):
+    review = _review(header_mfr, "TYC")
+    monkeypatch.setattr(gateway, "_review_header_for_payload",
+                        lambda subject: gateway._review_notice_summary(review))
+    return review
+
+
+def test_arm10_tyc_shaped_act_is_accepted_with_the_fallback_as_evidence(world, monkeypatch):
+    _tyc(world, monkeypatch, None)
+    r = _act(world, [MFR])
+    assert r.status_code == 200, r.text
+    (c,) = world.act_kwargs[0]["row_edits"]
+    assert c["extracted_value"] is None and c["extracted_fallback"] == FB
+    (reg,) = world.registered
+    (e,) = reg["payload"]["edits"]
+    assert e["fallback"] == FB
+
+
+def test_arm11_tyc_with_a_header_mfr_still_refuses_equality(world, monkeypatch):
+    _tyc(world, monkeypatch, "TYC")
+    r = _act(world, [MFR])
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "header_edits_refused"
+
+
+def test_arm12_the_extraction_card_shows_the_fallback_as_one(world, monkeypatch):
+    review = _review(None, "TYC")
+    row = {"extraction_ref": PREFIX + "m.json", "object_prefix": PREFIX}
+
+    async def access(*a, **k):
+        return row, "dropper"
+
+    monkeypatch.setattr(gateway, "_ingest_review_access", access)
+    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda ref: {})
+    monkeypatch.setattr(gateway, "_review_json_key", lambda m, ref: PREFIX + "review.json")
+    monkeypatch.setattr(gateway, "_read_review_json", lambda key: review)
+    r = world.client.get(f"/ingest/{INGEST_ID}/extraction")
+    assert r.status_code == 200, r.text
+    n = r.json()["notice"]
+    assert n["mfr"] == "TYC" and n["mfr_source"] == "identity"

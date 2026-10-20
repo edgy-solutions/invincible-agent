@@ -3998,9 +3998,11 @@ async def act_on_human_task(
                     try:
                         edits.header = steward_correction.validate_header_edits(
                             [h.model_dump() for h in req.header_edits],
-                            extracted={"mfr": _hdr.get("mfr"),
+                            extracted={"mfr": (_hdr.get("mfr")
+                                               if _hdr.get("mfr_source") == "header" else None),
                                        "notice_id": _hdr.get("notice_id"),
-                                       "notice_date": _hdr.get("notice_date")})
+                                       "notice_date": _hdr.get("notice_date")},
+                            fallback={"mfr": _hdr.get("mfr_identity")})
                     except steward_correction.EditRefusal as exc:
                         raise HTTPException(status_code=422, detail={
                             "error": "header_edits_refused", "task_id": task_id,
@@ -4045,6 +4047,7 @@ async def act_on_human_task(
                                         "reason": r["reason"]})
                 for r in edits.header:
                     corrections.append({"op": "header_corrected", "field": r["field"],
+                                        "extracted_fallback": r.get("fallback"),
                                         "reason": r["reason"],
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=r.get("extracted"),
@@ -4739,6 +4742,8 @@ class RegisterFrontendCapabilitiesResponse(BaseModel):
 
 # Dedicated logger so registrations are easy to slice out in log search.
 _frontend_registry_logger = logging.getLogger("iagent.registry.frontend_capabilities")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_frontend_registry_logger)
 
 
 def _sse(event: str, data: str) -> str:
@@ -11324,7 +11329,8 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
         "leaf": leaf, "leaf_source": leaf_source,
-        "notice": {"mfr": summ["mfr"], "mfr_parent": summ["mfr_parent"],
+        "notice": {"mfr": summ["mfr"], "mfr_source": summ["mfr_source"],
+                   "mfr_parent": summ["mfr_parent"],
                    "notice_date": summ["notice_date"]},
         "part_count": summ["part_count"],
         "rows": rows_out, "rows_without_evidence": without, "review_ref": key}
@@ -11792,9 +11798,12 @@ def _review_leaf(content_kind, review) -> tuple:
 
 
 def _review_notice_summary(review: dict) -> dict:
-    """`{notice_id, mfr, mfr_parent, notice_date, part_count}` from a parsed review.json.
-    `notice_id` is `_review_notice_id`; `mfr` is the `header.mfr` item's value, else
-    `notice_identity.mfr`; dates are strings as given."""
+    """`{notice_id, mfr, mfr_source, mfr_identity, mfr_parent, notice_date, part_count}` from a
+    parsed review.json. `notice_id` is `_review_notice_id`; `mfr` is the `header.mfr` item's value,
+    else `notice_identity.mfr`; `mfr_source` says which: `"header"` (non-blank header value),
+    `"identity"` (the fallback supplied a non-blank value) or None. `mfr_identity` is
+    `notice_identity.mfr` stripped (None when absent or blank) whatever `mfr_source` is -- the act
+    route's evidence for a steward filling a missing header.mfr. Dates are strings as given."""
     by_path: dict = {}
     parts: set = set()
     for it in _review_items(review):
@@ -11805,10 +11814,21 @@ def _review_notice_summary(review: dict) -> dict:
             parts.add(int(m.group(1)))
     ident = review.get("notice_identity")
     mfr = by_path.get("header.mfr")
-    if mfr is None and isinstance(ident, dict):
-        mfr = ident.get("mfr")
+    ident_mfr = ident.get("mfr") if isinstance(ident, dict) else None
+    mfr_identity = ident_mfr.strip() if isinstance(ident_mfr, str) and ident_mfr.strip() else None
+    if isinstance(mfr, str) and mfr.strip():
+        mfr_source = "header"
+    elif mfr_identity is not None:
+        mfr_source = "identity"
+    else:
+        mfr_source = None
+    if mfr_source == "identity":
+        mfr = mfr_identity          # a BLANK header value is a miss too; show what the source names
+    elif mfr is None:
+        mfr = ident_mfr
     return {"notice_id": _review_notice_id(review),
-            "mfr": mfr, "mfr_parent": by_path.get("header.mfr_parent"),
+            "mfr": mfr, "mfr_source": mfr_source, "mfr_identity": mfr_identity,
+            "mfr_parent": by_path.get("header.mfr_parent"),
             "notice_date": by_path.get("header.pub_date"), "part_count": len(parts)}
 
 

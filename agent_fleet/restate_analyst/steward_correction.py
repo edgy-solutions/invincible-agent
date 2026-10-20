@@ -147,11 +147,14 @@ def validate_row_edits(raw, *, extracted_mpns: Optional[Iterable[str]] = None) -
     return edits
 
 
-def validate_header_edits(raw, *, extracted: dict) -> list:
+def validate_header_edits(raw, *, extracted: dict, fallback: Optional[dict] = None) -> list:
     """Parse and validate ``header_edits``: ``[{field, value, evidence_ref, reason}]``. ``extracted``
     maps a header field to the review's value; a missing value (None/blank) is fine -- that is a true
     extraction miss. Returns the stripped items, each with the ``extracted`` value it corrects.
-    Raises ``EditRefusal``."""
+    The equality refusal is against ``extracted`` ONLY. ``fallback`` (field -> value, e.g. mfr from
+    notice_identity) is EVIDENCE, not the extracted value: where ``extracted`` is missing and a
+    fallback exists, the item carries ``fallback={"source": "notice_identity", "value": ...}`` and a
+    value equal to it is accepted -- the steward is filling a missing field. Raises ``EditRefusal``."""
     if not isinstance(raw, list):
         raise EditRefusal("header_edits must be a list")
     out: list = []
@@ -174,8 +177,10 @@ def validate_header_edits(raw, *, extracted: dict) -> list:
         value = _text(r["value"])
         if ext_t is not None and ext_t.casefold() == value.casefold():
             raise EditRefusal(f"header {f} value equals the extracted value; not a correction")
+        fb_t = _text((fallback or {}).get(f)) or None
+        fb = {"source": "notice_identity", "value": fb_t} if (ext_t is None and fb_t) else None
         out.append({"field": f, "value": value, "evidence_ref": _text(r["evidence_ref"]),
-                    "reason": _text(r["reason"]), "extracted": ext_t})
+                    "reason": _text(r["reason"]), "extracted": ext_t, "fallback": fb})
     return out
 
 
@@ -261,7 +266,8 @@ def edit_log(edits: RowEdits) -> list:
                     "reason": _text(r["reason"])})
     for r in edits.header:
         out.append({"op": "header_corrected", "field": r["field"], "extracted": r.get("extracted"),
-                    "corrected": r["value"], "evidence": r["evidence_ref"], "reason": r["reason"]})
+                    "corrected": r["value"], "evidence": r["evidence_ref"], "reason": r["reason"],
+                    "fallback": r.get("fallback")})
     return out
 
 

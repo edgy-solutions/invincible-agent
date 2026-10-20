@@ -235,7 +235,7 @@ def test_extraction_rows_are_mapped_and_evidence_less_rows_are_counted(monkeypat
     assert r.status_code == 200, r.text
     b = r.json()
     assert b["review_ref"] == REVIEW_KEY and b["part_count"] == 2
-    assert b["notice"] == {"mfr": "Acme Semi", "mfr_parent": "Acme Holdings",
+    assert b["notice"] == {"mfr": "Acme Semi", "mfr_source": "header", "mfr_parent": "Acme Holdings",
                            "notice_date": "2026-03-04"}
     assert [(x["part_index"], x["field"], x["mpn"], x["extracted_value"]) for x in b["rows"]] == [
         (0, "affected_mpn", "ABC123", "ABC123"), (0, "replacement_mpn", "ABC123", "ABC123-R"),
