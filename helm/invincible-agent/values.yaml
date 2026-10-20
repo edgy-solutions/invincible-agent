@@ -1613,11 +1613,13 @@ cortexUi:
     VITE_API_URL: "http://localhost:8000"
     VITE_KEYCLOAK_REALM_URL: "http://localhost:8080/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
-    # The steward row/header editors. The image defaults them ON when this is absent, so the chart
-    # says "false" for every environment; only values-sandbox.yaml turns them on (architect
-    # 2026-10-20: "Work cluster and any other environment stay off until that proof is in a
-    # report"). The server half, cortexBff IAGENT_PROMOTION_ROW_EDITS, is off unless set "true".
-    VITE_REVIEW_ROW_EDITS: "false"
+    # The steward promotion row/header editors (architect 2026-10-20: "Work cluster and any other
+    # environment stay off until that proof is in a report"). From cortex 7a7666d (pinned for 200)
+    # they sit behind VITE_PROMOTION_ROW_EDITS, OFF in the image unless exactly "true", so no key
+    # is set here: only values-sandbox.yaml turns them on. VITE_REVIEW_ROW_EDITS now gates grouped
+    # review only (live everywhere since 10-12), so the base "false" set for 199 is deleted rather
+    # than kept, since it would hide grouped review's Reject. The server half, cortexBff
+    # IAGENT_PROMOTION_ROW_EDITS, is off unless set "true".
   ingress:
     enabled: false
     className: ""

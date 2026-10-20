@@ -937,7 +937,13 @@ cortexUi:
     # .github/workflows/build.yml moved (a test checkout's PRODUCER_REF, not a build arg); the
     # Dockerfile, docker-entrypoint.sh and nginx.conf are unchanged, and the only env the src diff
     # reads is the existing VITE_REVIEW_ROW_EDITS, so VITE_FEATURES is unchanged.
-    digest: "sha256:b248af5c686ca772538f1e8f6c9cdcecf4a6bc451fac1595f00a0dadc0edc0b1"
+    # 2026-10-20, pinned for 200 (architect: "flip the editor default to OFF ... Pin for 200"):
+    # cortex-ui 7a7666d (the promotion editor gets its own flag, VITE_PROMOTION_ROW_EDITS, OFF in
+    # the image unless exactly "true"; the card reads `mfr_source`) -> f2707184. Measured before
+    # pinning: the FULL tag resolves to this digest; the abbreviated tag and this digest with its
+    # last hex altered both answer 404. Since d44b0cc docker-entrypoint.sh gains only
+    # VITE_PROMOTION_ROW_EDITS (sanitised, empty by default), set below.
+    digest: "sha256:f27071841aa284ffb873998cc96ff2ec6d304e4284d1d3e88df3d991270d421e"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -995,6 +1001,11 @@ cortexUi:
     # live correction (TYC's mfr, header_edits) is made THROUGH the card, so the card's flag has to
     # be on for the correction that proves it. The server's IAGENT_PROMOTION_ROW_EDITS is on since 198.
     VITE_REVIEW_ROW_EDITS: "true"
+    # 2026-10-20, for 200: from cortex 7a7666d the promotion card's row and header editors have
+    # their own flag, OFF in the image unless exactly lowercase "true"; VITE_REVIEW_ROW_EDITS above
+    # now gates grouped review only. The sandbox keeps the promotion editor on, with the server's
+    # IAGENT_PROMOTION_ROW_EDITS.
+    VITE_PROMOTION_ROW_EDITS: "true"
 
 cortexBff:
   enabled: true
