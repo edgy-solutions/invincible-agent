@@ -11272,7 +11272,8 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
-    `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`."""
+    `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.
+    `leaf` / `leaf_source` are the notice's pcn|pdn and where it came from (`_review_leaf`)."""
     from starlette.concurrency import run_in_threadpool
 
     row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
@@ -11317,10 +11318,12 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
             "needs_review": it.get("needs_review"), "review_reason": it.get("review_reason"),
             "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
     summ = _review_notice_summary(review)
+    leaf, leaf_source = _review_leaf(row.get("content_kind"), review)
     return {
         "ingest_id": ingest_id,
         "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
+        "leaf": leaf, "leaf_source": leaf_source,
         "notice": {"mfr": summ["mfr"], "mfr_parent": summ["mfr_parent"],
                    "notice_date": summ["notice_date"]},
         "part_count": summ["part_count"],
@@ -11766,6 +11769,26 @@ def _review_notice_id(review: dict) -> Optional[str]:
     manifest's `doc_id` is NOT this: it is the filename-derived transport key."""
     v = review.get("doc_id_raw")
     return (v.strip() or None) if isinstance(v, str) else None
+
+
+_LEAVES = ("pcn", "pdn")
+
+
+def _review_leaf(content_kind, review) -> tuple:
+    """(leaf, leaf_source) for the review card. The ingest row wins when its `content_kind` names a
+    leaf (`pcn`/`pdn`) -> `(leaf, "ingest")`. A pre-191 row carries a family name instead, so the
+    extraction's own title evidence is read: `doc_type` counts only when `doc_type_source == "title"`
+    -> `(leaf, "extraction-title")`. A defaulted `doc_type` is refused: doc-tools fills `"PCN"` when
+    it derived nothing (sources `no-title-evidence`, `title-ambiguous`, `defaulted`, or absent), so it
+    is a routing default, not a fact about the notice. Otherwise `(None, None)`."""
+    ck = str(content_kind or "").strip().lower()
+    if ck in _LEAVES:
+        return (ck, "ingest")
+    rv = review or {}
+    dt = str(rv.get("doc_type") or "").strip().lower()
+    if rv.get("doc_type_source") == "title" and dt in _LEAVES:
+        return (dt, "extraction-title")
+    return (None, None)
 
 
 def _review_notice_summary(review: dict) -> dict:
