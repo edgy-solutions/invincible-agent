@@ -513,6 +513,131 @@ From the architect, via Chris: "S1 gap accepted; Lane 1 adopts your five arms be
 - **Packet placed:** `2026-10-17-packet-to-lane-01-q12-q13-ruled-and-built-pr-73-two-of-your-five-arms-change.md` (cc the architect).
 - **Decided by gov, flagged below as Q14–Q16:** the unconfigured-URL deny, the stranger's 503, and the undeclared `svc:` submitter.
 
+## 2026-10-20: origin on bob's two promoted rows, the matched pair, §5.1 instance 1 sealed (#77, `01d8605b`), Q14 built (#78, `3e9b25a9`)
+
+From the architect, via Chris: "origin on bob's two promoted rows (TI, IDT) + matched pair. ADR-0047 §5.1 note with both instances." Q6, relayed in Lane 1's 10-20 packet: "The action-route read is an instance of §5.1 ... Note it in ADR-0047 as the first instance; the stage-enum read ruled for after the 23rd is the second. Gov seals both against §5.1's wording." Lane 1 wrote the note (lane/01-197 `b3fdad7f`, "INSTANCES OF THE SEEDING-DELEGATE READ"). Gov's part is the seals.
+
+### The origin on both rows (live, read-only)
+
+Origin fields are on the `IngestArtifact` row. The PROMOTION self-loop is on the same row.
+
+| row | owner | resolved_by | evidence | program | promoted_by | promotion_ref | promoted_at |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TI `sha256:65b3e80d…` | SUSTAINMENT | steward | `steward_attestation:dr-771aee2b12d8c98e` | NULL | `human:bob@example.com` | `dr-771aee2b12d8c98e` | 2026-10-18T04:56:22Z |
+| IDT `sha256:65992cb6…` | SUSTAINMENT | steward | `steward_attestation:dr-e0e72d0a8dee0fcc` | NULL | `human:bob@example.com` | `dr-e0e72d0a8dee0fcc` | 2026-10-18T05:04:35Z |
+
+- **`steward_confirmed` holds on both** in the 10-17 sense: `origin_resolved_by` is "steward", and `origin_evidence` has a `steward_attestation` entry whose id equals the promotion's ref.
+- Each row's evidence and promotion name the same decision record.
+- Both rows were submitted by alice. Both have program NULL, so the program conjunct does not apply (Q1).
+- The notices derived from them:
+  - `PCN-20210316000.1`: 9 parts, `dropped_by` alice, rung steward, promoted by bob;
+  - `OV-19-05`: 17 parts, the same.
+
+### The matched pair
+
+**Run:** live, read-only, on 199 (`938d7639`) after the window closed at 03:08Z.
+- `scratchpad/live/pair.py` ran in the cortex-bff pod against `iagent-engine-o:8084`, using each user's live Topaz cells.
+- It was fired three times, and the outputs are byte-identical.
+- The seeded controls (`IPCN25300X`, `PCN-23-002`) are two of the 11 SUSTAINMENT notices with no `provenance_ingest_id`, from a read-only Cypher count.
+- The bodies were compared by sha256[:8], with the notice id masked.
+
+| caller | domains | TI `PCN-20210316000.1` resolve hit (candidates) | IDT `OV-19-05` resolve hit (candidates) | seeded `IPCN25300X` / `PCN-23-002` |
+| --- | --- | --- | --- | --- |
+| alice (dropper) | all 12 | 1 (37) | 2 (2) | 1 / 1 |
+| bob (promoter) | AVIATION, DOCS, MESH, SUSTAINMENT | 1 (35) | 2 (2) | 1 / 1 |
+| erin | all 12 | 1 (35) | 2 (2) | 1 / 1 |
+| **carol** | AVIATION, DOCS, MESH | **0 (34)** | **0 (0)** | 1 / 1 |
+| **carol + SUSTAINMENT** (the one-thing control) | + SUSTAINMENT | **1 (35)** | **2 (2)** | 1 / 1 |
+| `11111111-…` (a second outsider) | DOCS, MAINTENANCE, MESH | 0 (34) | 0 (0) | 1 / 1 |
+
+- **The pair holds on both rows, at the route that reaches the rule.**
+  - `/resolve_instance` has no SUSTAINMENT prefilter, so carol reaches `visible_by_origin` there.
+  - Carol is withheld both rows. The same caller id with only SUSTAINMENT added sees both, with the candidate count bob gets.
+  - The withheld row is removed, not marked: 34 candidates against 35.
+- **The seeded control shows the rule doing it, not the domain.** Carol does see the two seeded SUSTAINMENT notices on the same route. So the route serves her SUSTAINMENT content, and what withholds TI and IDT is the origin rule (`can_consume` on owner SUSTAINMENT).
+- **Inside the audience,** bob and erin see both rows through `by_origin`; neither dropped them. Alice sees them as the dropper.
+- **`/notice_parts` refuses an outsider earlier.**
+  - Carol and `11111111-…` get 200 `not_entitled` with one body (`3e76fbd6`) for a promoted row, a seeded row and an unknown id alike, before any graph read. So that layer gives no existence signal.
+  - With SUSTAINMENT added, carol's body equals bob's: `a3de172a`, 9 parts; `1b9acc1c`, 17 parts.
+  - Unknown, inside: `unknown_notice` (`33b56465`).
+- **Not reachable live: "withheld answers exactly as unknown" at `/notice_parts`.**
+  - Every live user who passes the SUSTAINMENT prefilter can consume a SUSTAINMENT, program-less origin. So no live caller reaches that route's withheld branch for these rows.
+  - That equality stays sealed by `tests/security/test_origin_visibility.py` only. It was not measured here.
+
+### §5.1 instance 1: `GET /cases/{case_id}/action`, sealed, with one defect fixed (#77 → lane/01-197)
+
+- **The defect:** an undeclared `svc:` could read a case's action record.
+  - The route sent every caller that is not a declared delegate to the person gate.
+  - That gate admits the dropper, a holder of every label, and a task holder.
+  - `/ingest/events` admits any caller as itself, so a service can be a case's dropper. This is derived from the code, not measured live.
+  - §5.1: "Every other `svc:` recipient is still refused." Q16 ruled that shape the misuse at `/source`.
+- **The fix:** any other service gets the delegate's 403 `not_your_case`, before any read. Persons and declared delegates are unchanged.
+  - **It changes Lane 1's route on gov's reading. It needs the architect's OK, or a revert (Q17).**
+- **The seal:** `tests/test_the_action_route_reads_as_adr_0047_5_1_words_it.py`, 9 arms.
+  - W1, an undeclared service is never a recipient: three service-versus-person pairs (dropper, label holder, task holder).
+  - W2, the case's `seeded_by` decides: a seeder pair, and a delegate that qualifies every person way, with the person gate a spy.
+  - W3, every refusal is the absent-case body, with no store read: asserted inside each refusal arm.
+  - Unfixed: 3 red (the W1 service arms), 6 green. Fixed: 9 green.
+- **Mutants** (each was restored and cmp'd):
+
+  | mutant | gov | Lane 1 |
+  | --- | --- | --- |
+  | M1: case level admits any declared delegate | 2 | 1 |
+  | M2: fix removed | 3 | 0 |
+  | M3: fix refuses persons | 3 | 7 |
+  | M4: delegate falls to the person gate | 5 | 1 |
+  | M5: record-level check dropped | 0 | 1 |
+  | M6: refusal reads the store | 3 | 0 |
+  | M7: refusal body differs | 3 | 0 |
+
+  - Under M4, the W1 service arms are red only through the absent-case reference body, which becomes 404. Their own subject is not what reds them.
+  - M5 is Lane 1's arm and is deliberately not duplicated.
+  - Lane 1's arms red under M1 only through their store-read assertion.
+- **Consequence files, one at a time, all green:**
+  - Lane 1's action-record file (13);
+  - `test_the_runner_writes_the_action_record_at_released` (19);
+  - `test_cases_route` (11);
+  - `test_a_delegate_acts_on_behalf_of_a_declared_principal` (19);
+  - `test_ingest_review_gate_outage_and_services` (12).
+- **Not run:** the full suite (Lane 1's), and live.
+- **Instance 2, the stage-enum read, is not built.** No route or packet names it yet. Gov seals it once it lands, after the 23rd.
+
+### The census, and PR #76 closed
+
+- **`gateway.py` at master `166fafc0` has 11 reads of `_delegate_principals`:**
+  - 4 disclosures:
+    - `GET /artifacts/{id}`;
+    - the artifact list in `/ingest/{id}/status`;
+    - `_ingest_review_access` (`/source`, `/extraction`);
+    - `get_case_action`.
+  - 1 refusal: `get_case`.
+  - 1 classifier: `_is_service_caller`.
+  - 5 write admissions or stamps:
+    - `_admit_on_behalf_of`;
+    - `/ingest/events` `seeded_by`;
+    - `update_ingest_stage`;
+    - `/internal/cases/{id}/seeded-by`;
+    - `/internal/cases/{id}/action-record`.
+- **PR #76 is closed.** I wrote its ADR note before reading Q6 in `ia-gov/sessions/`. The note named two 10-17 instances and contradicted the ruling, so I closed it as superseded. Its open questions move here as Q18 and Q19.
+- **Process note:** a packet to gov can be placed in ia-gov's own `sessions/`. I now read both trees' `sessions/` before acting.
+
+### Q14 built: an unset Topaz URL is 503 `authorization_unconfigured` (#78 → lane/01-197, `3e9b25a9`)
+
+- **What changed:**
+  - `can_act_or_unavailable` raises the new `iagent.authz.AuthorizationUnconfigured` before any HTTP.
+  - The review gate answers it 503 `authorization_unconfigured`, audited.
+  - `check_can_act` still returns `False` for its other callers.
+- **What is unchanged:**
+  - With no open task, the answer is still 403 and Topaz is not consulted.
+  - The dropper and the seeding delegate never meet the URL.
+  - Q15 holds: a stranger gets the same 503.
+- **The seal:** five arms (seven cases), added to gov's #73 file.
+  - Unfixed: 5 red, 14 green. Fixed: 19 green.
+  - All nine mutants red at least one named arm, on the assertion each should break.
+  - Limit: no mutant isolates arm d's delegate case.
+- **Consequence files, one at a time, all rc=0:** card routes 27, quarantine evidence 24, approval authority 12, the delegate reads 29.
+- **Process note:** the implementer called the runner with the test file as its first argument. That argument is the log path, and the runner truncates it, so the file went to 0 bytes. The implementer restored it from HEAD and the diff is insertions only. The runner should refuse a `.py` log argument.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -546,14 +671,30 @@ From the architect, via Chris: "S1 gap accepted; Lane 1 adopts your five arms be
 13. **ANSWERED (2026-10-17): by the delegate rule, never as the submitter; a service's task counts for nothing. Built at `d53d89ca` (#73).** A `svc:` dropper on the review gate (F6 above).
     - A delegated drop records the service as `submitted_by`, so the service can read every source it delegated.
     - Does "a service identity is never a person" exclude `submitted_by` here, leaving `on_behalf_of` as the dropper?
-14. **OPEN (2026-10-17). An unconfigured `TOPAZ_DIRECTORY_URL` is still a deny (403), not a 503.**
+14. **ANSWERED (2026-10-17): "unset Topaz URL is 503 authorization_unconfigured, not 403". Built at `3e9b25a9` (#78).** An unconfigured `TOPAZ_DIRECTORY_URL` was still a deny (403), not a 503.
     - Built that way, following `check_can_view_program`, where an unset URL is False.
     - Q12 says a holder "is never told not_entitled because a dependency is down". An unset URL is misconfiguration, not an outage, but a holder still hears `not_entitled`. Should it be 503 `hitl_unconfigured`, the way an unconfigured task store already is?
-15. **OPEN (2026-10-17). A stranger also gets a 503 during an outage.**
+15. **ANSWERED (2026-10-17): "during an outage everyone gets 503". #73 kept as built.** A stranger also gets a 503 during an outage.
     - The gate cannot decide a stranger without Topaz, so it does not try to.
     - The cost is a small oracle: a 503 tells a stranger that this ingest has an open task with an audience. With no open task, or a resolved one, the answer is still 403, and Topaz is not asked.
     - Accept, or refuse strangers earlier? There is no cheap way to tell a stranger from a holder.
-16. **OPEN (2026-10-17). A `svc:` caller that seeded a drop but is not a declared delegate gets 403.**
+16. **ANSWERED (2026-10-17): "keep 403 — a service that drops as itself without delegation is the misuse." #73 kept as built.** A `svc:` caller that seeded a drop but is not a declared delegate gets 403.
     - This is gov's reading of "because the delegate rule already grants it": `is_entitled` grants only when the seeder is also in `DELEGATE_ON_BEHALF_OF`.
     - **It is reachable, not latent.** A `svc:` caller that sends no `on_behalf_of` takes `_admit_on_behalf_of`'s non-delegated path, `(caller, None)`, and drops as itself. Under #73 it then cannot read its own drop's source or extraction. Gov did not check whether `/ingest` refuses a service elsewhere.
     - Confirm the 403, or should a service's own non-delegated drop be readable by it? If so, under which rule? It is not the delegate rule.
+17. **OPEN (2026-10-20). #77 changes Lane 1's action route on gov's reading. Is that OK, or should it be reverted?**
+    - An undeclared `svc:` now gets 403 `not_your_case` before any read.
+    - The basis is §5.1's "Every other `svc:` recipient is still refused" and the Q16 precedent. No ruling names this route.
+    - If not OK'd: revert the four lines and keep the seal with its three W1 service arms xfailed.
+18. **OPEN (2026-10-20, from closed #76). Is the `/ingest/{id}/source` and `/extraction` gate a third §5.1 instance?**
+    - It meets Q6's test: the record derives from the event the delegate seeded.
+    - It decides a service by `is_entitled` with `seeded_by` = `submitted_by`.
+    - Q6 names two instances, and this is not one of them.
+19. **OPEN (2026-10-20, from closed #76). Should that gate's existence signal stay?**
+    - An absent id is 404 `ingest_not_found`. A present id that is not the caller's is 403 `not_entitled`.
+    - §5.1 says a delegate "answers everyone else exactly as it answers an absent id". If the gate is an instance, the two answers differ where §5.1 says they must not.
+    - The other two shapes: `/artifacts/{id}` answers `empty` for both, and `/cases/{id}/action` answers 403 `not_your_case` for both.
+20. **OPEN (2026-10-20). `GET /cases/{id}`: an undeclared `svc:` reaches the person gate.**
+    - It refuses declared delegates (403 `delegate_reads_artifacts_only`).
+    - Any other service is decided as a person: dropper, labels, or task. It then reads the whole case.
+    - It is not a §5.1 instance under Q6. Refuse it the way #77 does at `/action`?
