@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Optional
 
@@ -37,7 +38,7 @@ OBTAINED_VIA = "steward-corrected"
 EXTRACTION_DEFECT_KIND = "extraction_defect"
 
 # `evidence_ref` is OPTIONAL on every row op until cortex-ui ships it (build 201); absent or None is
-# the same thing, present must be a non-blank string.
+# the same thing, present must be one of the two forms `normalize_evidence_ref` accepts.
 _DELETED_KEYS = frozenset({"mpn", "reason", "evidence_ref"})
 _ADDED_KEYS = frozenset({"mpn", "disposition", "reason", "evidence", "evidence_ref"})
 _CORRECTED_KEYS = frozenset({"mpn", "corrected_mpn", "evidence", "evidence_ref"})
@@ -50,6 +51,52 @@ _HEADER_KEYS = frozenset({"field", "value", "evidence_ref", "reason"})
 class EditRefusal(ValueError):
     """A row_edits payload that violates a rule. Subclasses ValueError so ``evaluate_submission``
     maps it to a refused ``Submission`` (the review stays pending) exactly like a bulk refusal."""
+
+
+_EVIDENCE_REF_KEYS = frozenset({"page", "bbox", "note"})
+
+
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def normalize_evidence_ref(v) -> dict:
+    """ONE shape for an evidence_ref, used at the BFF act and at the runner (architect 2026-10-21:
+    the SDK's `{page, bbox}` wins, plus an optional `note`; the BFF's free string becomes `note`).
+    Accepts (a) `{page: int >= 1, bbox: [x0, y0, x1, y1], note?: non-blank str}` (extra keys refused;
+    `note: None` is absent, as `evidence_ref: None` is), or (b) the legacy non-blank string.
+    Returns `{"page", "bbox"[, "note"]}` or `{"note": <stripped>}`; deterministic, so a replay
+    writes identical bytes. Raises ``EditRefusal``."""
+    if isinstance(v, str):
+        if not v.strip():
+            raise EditRefusal("an evidence_ref string must be non-blank")
+        return {"note": v.strip()}
+    if not isinstance(v, dict):
+        raise EditRefusal("an evidence_ref is {page, bbox, note?} or a non-blank string")
+    extra = set(v) - _EVIDENCE_REF_KEYS
+    if extra:
+        raise EditRefusal(f"an evidence_ref has unknown key(s) {sorted(extra)}")
+    page, bbox = v.get("page"), v.get("bbox")
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        raise EditRefusal("an evidence_ref needs a page that is an integer >= 1")
+    if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+            or not all(_num(x) for x in bbox)):
+        raise EditRefusal("an evidence_ref needs a bbox of 4 finite numbers [x0, y0, x1, y1]")
+    out = {"page": page, "bbox": list(bbox)}
+    note = v.get("note")
+    if note is not None:
+        if not isinstance(note, str) or not note.strip():
+            raise EditRefusal("an evidence_ref note must be a non-blank string when given")
+        out["note"] = note.strip()
+    return out
+
+
+def evidence_text(ref: dict) -> str:
+    """A normalized evidence_ref as the STRING a str-typed consumer takes: its `note` when it has
+    one, else the canonical JSON of the struct. No prose is invented."""
+    if ref.get("note"):
+        return ref["note"]
+    return json.dumps(ref, sort_keys=True, separators=(",", ":"))
 
 
 @dataclass
@@ -107,9 +154,12 @@ def validate_row_edits(raw, *, extracted_mpns: Optional[Iterable[str]] = None) -
     for op, rows in (("deleted", edits.deleted), ("added", edits.added),
                      ("corrected", edits.corrected)):
         for r in rows:
-            if "evidence_ref" in r and not _text(r["evidence_ref"]):
-                raise EditRefusal(f"a {op} row's evidence_ref must be a non-blank string "
-                                  f"when given (row {r.get('mpn')!r})")
+            if "evidence_ref" in r:
+                try:
+                    r["evidence_ref"] = normalize_evidence_ref(r["evidence_ref"])
+                except EditRefusal as exc:
+                    raise EditRefusal(f"a {op} row's evidence_ref is refused when given: {exc} "
+                                      f"(row {r.get('mpn')!r})") from None
     for r in edits.deleted:
         if not _text(r.get("mpn")):
             raise EditRefusal("a deleted row needs an mpn")
@@ -178,9 +228,13 @@ def validate_header_edits(raw, *, extracted: dict, fallback: Optional[dict] = No
         f = r.get("field")
         if f not in HEADER_FIELDS:
             raise EditRefusal(f"header field {f!r} is not one of {list(HEADER_FIELDS)}")
-        for k in ("value", "evidence_ref", "reason"):
+        for k in ("value", "reason"):
             if not _text(r.get(k)):
                 raise EditRefusal(f"a header edit needs a non-empty {k} (field {f!r})")
+        try:
+            ev_ref = normalize_evidence_ref(r.get("evidence_ref"))
+        except EditRefusal as exc:
+            raise EditRefusal(f"a header edit needs a valid evidence_ref (field {f!r}): {exc}")                 from None
         if f in seen:
             raise EditRefusal(f"header field {f!r} appears more than once")
         seen.add(f)
@@ -190,7 +244,7 @@ def validate_header_edits(raw, *, extracted: dict, fallback: Optional[dict] = No
             raise EditRefusal(f"header {f} value equals the extracted value; not a correction")
         fb_t = _text((fallback or {}).get(f)) or None
         fb = {"source": "notice_identity", "value": fb_t} if (ext_t is None and fb_t) else None
-        out.append({"field": f, "value": value, "evidence_ref": _text(r["evidence_ref"]),
+        out.append({"field": f, "value": value, "evidence_ref": ev_ref,
                     "reason": _text(r["reason"]), "extracted": ext_t, "fallback": fb})
     return out
 
@@ -263,8 +317,9 @@ def added_resolutions(edits: RowEdits, *, notice_fingerprint: str, acted_by: str
 
 
 def _ref(r: dict) -> dict:
-    """`{"evidence_ref": <stripped>}` when the row carries one, else nothing."""
-    return {"evidence_ref": _text(r["evidence_ref"])} if r.get("evidence_ref") is not None else {}
+    """`{"evidence_ref": <normalized dict>}` when the row carries one, else nothing. The row was
+    normalized by `validate_row_edits`; this does not re-parse it."""
+    return {"evidence_ref": r["evidence_ref"]} if r.get("evidence_ref") is not None else {}
 
 
 def edit_log(edits: RowEdits) -> list:
@@ -283,7 +338,8 @@ def edit_log(edits: RowEdits) -> list:
                     "reason": _text(r["reason"]), **_ref(r)})
     for r in edits.header:
         out.append({"op": "header_corrected", "field": r["field"], "extracted": r.get("extracted"),
-                    "corrected": r["value"], "evidence": r["evidence_ref"], "reason": r["reason"],
+                    "corrected": r["value"], "evidence": evidence_text(r["evidence_ref"]),
+                    "evidence_ref": r["evidence_ref"], "reason": r["reason"],
                     "fallback": r.get("fallback")})
     return out
 

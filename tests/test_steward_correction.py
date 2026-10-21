@@ -650,10 +650,10 @@ def _one(op, **extra):
 
 
 @pytest.mark.parametrize("op", sorted(_REF_OPS))
-def test_each_row_op_accepts_an_evidence_ref_and_the_log_carries_it_stripped(op):
+def test_each_row_op_accepts_a_legacy_evidence_ref_and_the_log_carries_it_as_the_note(op):
     edits = sc.validate_row_edits(_one(op, evidence_ref="  s3://ev/1.png "))
     (entry,) = sc.edit_log(edits)
-    assert entry["op"] == op and entry["evidence_ref"] == "s3://ev/1.png"
+    assert entry["op"] == op and entry["evidence_ref"] == {"note": "s3://ev/1.png"}
 
 
 @pytest.mark.parametrize("op", sorted(_REF_OPS))
@@ -687,3 +687,71 @@ def test_defect_task_names_the_ingest_only_when_given():
               audience="dispatch_failure:SUSTAINMENT", requested_by="r", acted_by="a")
     assert sc.defect_task(**kw, ingest_id=INGEST)["payload"]["ingest_id"] == INGEST
     assert "ingest_id" not in sc.defect_task(**kw)["payload"]
+
+
+# ---------------------------------------------------------------------------
+# evidence_ref is the SDK struct {page, bbox, note?}; the legacy string becomes `note` (2026-10-21)
+# ---------------------------------------------------------------------------
+_S = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "  the cell  "}
+_S_NORM = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "the cell"}
+_S_BARE = {"page": 3, "bbox": [1, 2, 3, 4]}
+_GOOD = [(_S, _S_NORM), (_S_BARE, _S_BARE), ("  legacy ref ", {"note": "legacy ref"})]
+_GOOD_IDS = ["struct", "struct_no_note", "legacy_string"]
+_BAD_REFS = [
+    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"page": 1},
+    {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": True, "bbox": [1, 2, 3, 4]},
+    {"page": "1", "bbox": [1, 2, 3, 4]}, {"page": 1, "bbox": [1, 2, 3]},
+    {"page": 1, "bbox": [1, 2, 3, 4, 5]}, {"page": 1, "bbox": [True, 2, 3, 4]},
+    {"page": 1, "bbox": [float("nan"), 2, 3, 4]}, {"page": 1, "bbox": [float("inf"), 2, 3, 4]},
+    {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
+    {"page": 1, "bbox": [1, 2, 3, 4], "note": " "}, {"page": 1, "bbox": [1, 2, 3, 4], "note": 7},
+]
+_BAD_IDS = ["blank", "spaces", "int", "list", "empty_obj", "no_page", "no_bbox", "page0",
+            "page_bool", "page_str", "bbox3", "bbox5", "bbox_bool", "bbox_nan", "bbox_inf",
+            "extra_key", "blank_note", "note_not_str"]
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+@pytest.mark.parametrize("sent,want", _GOOD, ids=_GOOD_IDS)
+def test_the_runner_normalizes_each_good_evidence_ref_on_every_row_op(op, sent, want):
+    edits = sc.validate_row_edits(_one(op, evidence_ref=sent))
+    (row,) = getattr(edits, op)
+    assert row["evidence_ref"] == want
+    assert sc.edit_log(edits)[0]["evidence_ref"] == want
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+@pytest.mark.parametrize("bad", _BAD_REFS, ids=_BAD_IDS)
+def test_the_runner_refuses_each_malformed_evidence_ref(op, bad):
+    with pytest.raises(sc.EditRefusal) as ei:
+        sc.validate_row_edits(_one(op, evidence_ref=bad))
+    assert op in str(ei.value) and "evidence_ref" in str(ei.value)
+
+
+_HDR = {"field": "mfr", "value": "TYC", "evidence_ref": "p1", "reason": "text layer dropped ti"}
+
+
+@pytest.mark.parametrize("sent,want", _GOOD, ids=_GOOD_IDS)
+def test_a_header_edit_takes_both_forms_and_the_log_carries_the_normalized_ref(sent, want):
+    (it,) = sc.validate_header_edits([dict(_HDR, evidence_ref=sent)], extracted={})
+    assert it["evidence_ref"] == want
+    (e,) = sc.edit_log(sc.RowEdits(header=[it]))
+    assert e["evidence_ref"] == want and e["evidence"] == sc.evidence_text(want)
+
+
+@pytest.mark.parametrize("bad", _BAD_REFS + [None], ids=_BAD_IDS + ["missing"])
+def test_a_header_edit_refuses_each_malformed_or_missing_evidence_ref(bad):
+    with pytest.raises(sc.EditRefusal):
+        sc.validate_header_edits([dict(_HDR, evidence_ref=bad)], extracted={})
+
+
+def test_normalizing_is_deterministic_and_never_adds_a_none_note():
+    a, b = sc.normalize_evidence_ref(dict(_S_BARE)), sc.normalize_evidence_ref(dict(_S_BARE))
+    assert a == b == _S_BARE and "note" not in a
+    assert sc.normalize_evidence_ref({**_S_BARE, "note": None}) == _S_BARE
+
+
+def test_a_string_consumer_gets_the_note_else_the_canonical_json():
+    assert sc.evidence_text(_S_NORM) == "the cell"
+    assert sc.evidence_text({"note": "p1"}) == "p1"
+    assert sc.evidence_text({"page": 3, "bbox": [1, 2, 3, 4]}) == '{"bbox":[1,2,3,4],"page":3}'

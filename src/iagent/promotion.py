@@ -537,6 +537,30 @@ def _recorded_row_edits(stored: Any) -> Optional[list]:
     return None
 
 
+def _with_normalized_evidence(edits: Optional[list]) -> Optional[list]:
+    """A record written before evidence_ref took `{page, bbox, note?}` holds a bare string there.
+    Stored data is never rewritten; for the replay comparison only, that string reads as the
+    `{"note": s}` the act now builds from it (a pre-struct header correction, which recorded only
+    `evidence`, gets the `evidence_ref` it would carry now). An already-normalized value passes through, and
+    anything unparseable is left as stored (so it simply fails to match)."""
+    if not edits:
+        return edits
+    from agent_fleet.restate_analyst import steward_correction as _sc
+    out = []
+    for e in edits:
+        if (isinstance(e, dict) and e.get("op") == "header_corrected"
+                and "evidence_ref" not in e and isinstance(e.get("evidence"), str)):
+            # a pre-struct header correction recorded only the string, as `evidence`
+            e = {**e, "evidence_ref": e["evidence"]}
+        if isinstance(e, dict) and isinstance(e.get("evidence_ref"), str):
+            try:
+                e = {**e, "evidence_ref": _sc.normalize_evidence_ref(e["evidence_ref"])}
+            except _sc.EditRefusal:
+                pass
+        out.append(e)
+    return out
+
+
 def _recorded_reconciliation(stored: Any) -> Optional[list]:
     """The mpns a stored record's `reconciliation` names as removed, or None (the record has no
     reconciliation, or is unreadable). The graph deletes only what a record names."""
@@ -658,7 +682,8 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 "promotion_already_decided",
                 f"{subject.ingest_id} was already decided ({prior!r}); one document takes one "
                 f"decision", status=409)
-        if (row_edits or None) != (_recorded_row_edits(existing.get("record")) or None):
+        if ((row_edits or None)
+                != (_with_normalized_evidence(_recorded_row_edits(existing.get("record"))) or None)):
             # A replay re-applies the STORED record. Corrections that are not the record's would
             # be answered (and filed as the extraction_defect) without ever being recorded.
             raise PromotionRefused(

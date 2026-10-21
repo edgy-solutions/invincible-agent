@@ -90,7 +90,8 @@ def world(monkeypatch):
         w.act_kwargs.append(kw)
         return real_act(payload, **kw)
 
-    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=_Outbox())
+    w.corrections = _Outbox()
+    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=w.corrections)
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
@@ -255,7 +256,8 @@ def test_is_empty_counts_header_and_the_log_and_summary_carry_it():
     assert not edits.is_empty() and sc.RowEdits().is_empty()
     (e,) = sc.edit_log(edits)
     assert e == {"op": "header_corrected", "field": "mfr", "extracted": None, "corrected": "TYC",
-                 "evidence": "p1", "reason": "text layer dropped ti", "fallback": None}
+                 "evidence": "p1", "evidence_ref": {"note": "p1"},
+                 "reason": "text layer dropped ti", "fallback": None}
     t = sc.defect_task(notice="N", decision_id="d", pipeline_version="v", edits=edits,
                        audience="a", requested_by="x", acted_by="y")
     assert "0 corrected, 0 added, 0 deleted, 1 header field corrected." in t["summary"]
@@ -366,3 +368,70 @@ def test_arm12_the_extraction_card_shows_the_fallback_as_one(world, monkeypatch)
     assert r.status_code == 200, r.text
     n = r.json()["notice"]
     assert n["mfr"] == "TYC" and n["mfr_source"] == "identity"
+
+
+# -- evidence_ref on a header edit: the SDK struct or the legacy string, required (2026-10-21) ----
+STRUCT = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "  the cell  "}
+STRUCT_NORM = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "the cell"}
+STRUCT_NO_NOTE = {"page": 3, "bbox": [1, 2, 3, 4]}
+_GOOD = [(STRUCT, STRUCT_NORM), (STRUCT_NO_NOTE, STRUCT_NO_NOTE),
+         ("  p1  ", {"note": "p1"})]
+
+
+@pytest.mark.parametrize("sent,want", _GOOD, ids=["struct", "struct_no_note", "legacy_string"])
+def test_every_surface_records_a_header_edits_normalized_evidence_ref(world, sent, want):
+    r = _act(world, [dict(MFR, evidence_ref=sent)])
+    assert r.status_code == 200, r.text
+    (c,) = world.act_kwargs[0]["row_edits"]
+    assert c["evidence_ref"] == want
+    assert c["evidence"] == sc.evidence_text(want)      # the str-typed field: note, else JSON
+    (stored,) = world.ledger.records.values()
+    assert stored["record"]["checks"][0]["inputs"]["row_edits"] == [c]
+    (e,) = world.registered[0]["payload"]["edits"]
+    assert e["evidence_ref"] == want and e["evidence"] == c["evidence"]
+    (rec,) = world.corrections.emitted
+    assert rec["row_edits"] == [c]
+    assert ("note" in c["evidence_ref"]) == ("note" in want)
+
+
+@pytest.mark.parametrize("bad", [
+    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"page": 1},
+    {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": True, "bbox": [1, 2, 3, 4]},
+    {"page": 1, "bbox": [1, 2, 3]}, {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
+    {"page": 1, "bbox": [1, 2, 3, 4], "note": " "},
+], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "no_bbox", "page0", "page_bool",
+        "bbox3", "extra_key", "blank_note"])
+def test_a_malformed_header_evidence_ref_is_a_wire_422(world, bad):
+    r = _act(world, [dict(MFR, evidence_ref=bad)])
+    assert r.status_code == 422, r.text
+    _nothing_written(world)
+
+
+def test_a_header_edit_without_evidence_ref_is_still_a_422(world):
+    no_ref = {k: v for k, v in MFR.items() if k != "evidence_ref"}
+    r = _act(world, [no_ref])
+    assert r.status_code == 422, r.text
+    r = _act(world, [dict(MFR, evidence_ref=None)])
+    assert r.status_code == 422, r.text
+    _nothing_written(world)
+
+
+@pytest.mark.parametrize("sent", [STRUCT, "p1"], ids=["struct", "legacy_string"])
+def test_the_same_header_act_twice_writes_byte_identical_correction_records(world, sent):
+    import json as _json
+    assert _act(world, [dict(MFR, evidence_ref=sent)]).status_code == 200
+    r2 = _act(world, [dict(MFR, evidence_ref=sent)])
+    assert r2.status_code == 200 and r2.json()["replayed"] is True, r2.text
+    blobs = {_json.dumps(e, sort_keys=True) for e in world.corrections.emitted}
+    assert len(world.corrections.emitted) >= 2 and len(blobs) == 1
+
+
+def test_a_header_record_stored_before_the_struct_still_replays(world):
+    """An earlier build recorded a header correction with only `evidence` (the string)."""
+    assert _act(world, [MFR]).status_code == 200
+    (stored,) = world.ledger.records.values()
+    (e,) = stored["record"]["checks"][0]["inputs"]["row_edits"]
+    assert e["evidence_ref"] == {"note": "p1"}
+    del e["evidence_ref"]
+    r2 = _act(world, [MFR])
+    assert r2.status_code == 200 and r2.json()["replayed"] is True, r2.text

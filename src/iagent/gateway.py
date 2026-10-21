@@ -731,6 +731,9 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 # in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
 
 from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
+from pydantic import StrictInt as _StrictInt  # noqa: E402
+from typing import Annotated as _Annotated  # noqa: E402
 
 
 class HumanTaskRegisterRequest(_BaseModel):
@@ -788,10 +791,47 @@ class _RowEditsModel(_BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class EvidenceRef(_BaseModel):
+    """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
+    (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
+    the pre-ruling free string is now `note`). The wire also still takes that bare string until
+    cortex ships the struct; `_wire_evidence_ref` validates both."""
+    model_config = {"extra": "forbid", "frozen": True}
+    page: _StrictInt = Field(ge=1)
+    bbox: list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]] = Field(
+        min_length=4, max_length=4)
+    note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _note(self):
+        if self.note is not None:
+            _nonblank(self.note)
+        return self
+
+
+def _wire_evidence_ref(v):
+    """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
+    non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
+    act normalizes it with `steward_correction.normalize_evidence_ref`, the same function the
+    runner applies to whatever it is forwarded."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return _nonblank(v)
+    if isinstance(v, dict):
+        ref = EvidenceRef.model_validate(v)
+        return {"page": ref.page, "bbox": list(ref.bbox),
+                **({"note": ref.note.strip()} if ref.note is not None else {})}
+    raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
+
+
+_WireEvidenceRef = _Annotated[Optional[Any], _BeforeValidator(_wire_evidence_ref)]
+
+
 class DeletedRow(_RowEditsModel):
     mpn: str
     reason: str   # a delete needs a reason
-    evidence_ref: Optional[str] = None   # optional until cortex-ui ships it; blank is a 422
+    evidence_ref: _WireEvidenceRef = None   # {page, bbox, note?} | non-blank str; optional until cortex-ui ships it
 
 
 class AddedRow(_RowEditsModel):
@@ -799,14 +839,14 @@ class AddedRow(_RowEditsModel):
     disposition: str
     reason: str
     evidence: str
-    evidence_ref: Optional[str] = None
+    evidence_ref: _WireEvidenceRef = None
 
 
 class CorrectedRow(_RowEditsModel):
     mpn: str            # the EXTRACTED mpn -- identity never moves
     corrected_mpn: str
     evidence: str
-    evidence_ref: Optional[str] = None
+    evidence_ref: _WireEvidenceRef = None
 
 
 class RowEdits(_RowEditsModel):
@@ -821,9 +861,6 @@ class RowEdits(_RowEditsModel):
 
     @model_validator(mode="after")
     def _rules(self):
-        for r in list(self.deleted) + list(self.added) + list(self.corrected):
-            if r.evidence_ref is not None:      # absent is fine; present-but-blank is a 422
-                _nonblank(r.evidence_ref)
         for r in self.deleted:
             _nonblank(r.mpn); _nonblank(r.reason)
         for r in self.added:
@@ -848,12 +885,14 @@ class HeaderEdit(_RowEditsModel):
     same wire and flag as row_edits."""
     field: Literal["mfr", "notice_id", "notice_date"]
     value: str
-    evidence_ref: str
+    evidence_ref: _WireEvidenceRef      # required: {page, bbox, note?} | non-blank str
     reason: str
 
     @model_validator(mode="after")
     def _rules(self):
-        for v in (self.value, self.evidence_ref, self.reason):
+        if self.evidence_ref is None:
+            raise ValueError("a header edit needs an evidence_ref")
+        for v in (self.value, self.reason):
             _nonblank(v)
         return self
 
@@ -4069,7 +4108,7 @@ async def act_on_human_task(
                 corrections = []
                 for r in edits.corrected:
                     corrections.append({"op": "corrected", "mpn": r["mpn"].strip(),
-                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                        **({"evidence_ref": r["evidence_ref"]}
                                            if r.get("evidence_ref") is not None else {}),
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=r["mpn"].strip(),
@@ -4078,7 +4117,7 @@ async def act_on_human_task(
                 for r in edits.added:
                     corrections.append({"op": "added", "mpn": r["mpn"].strip(),
                                         "disposition": r["disposition"], "reason": r["reason"],
-                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                        **({"evidence_ref": r["evidence_ref"]}
                                            if r.get("evidence_ref") is not None else {}),
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=None,
@@ -4087,7 +4126,7 @@ async def act_on_human_task(
                 for r in edits.deleted:
                     corrections.append({"op": "deleted", "mpn": r["mpn"].strip(),
                                         "reason": r["reason"],
-                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                        **({"evidence_ref": r["evidence_ref"]}
                                            if r.get("evidence_ref") is not None else {})})
                 for r in edits.header:
                     corrections.append({"op": "header_corrected", "field": r["field"],
@@ -4095,7 +4134,10 @@ async def act_on_human_task(
                                         "reason": r["reason"],
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=r.get("extracted"),
-                                            corrected=r["value"], evidence=r["evidence_ref"])})
+                                            corrected=r["value"],
+                                            evidence=steward_correction.evidence_text(
+                                                r["evidence_ref"])),
+                                        "evidence_ref": r["evidence_ref"]})
 
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),

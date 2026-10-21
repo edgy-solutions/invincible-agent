@@ -28,6 +28,9 @@ PAYLOAD = {
 EXTRACTED = ["A-1", "B-2"]
 CORRECT = {"corrected": [{"mpn": "A-1", "corrected_mpn": "A-100", "evidence": "page 2, row 1"}]}
 FLAG = "IAGENT_PROMOTION_ROW_EDITS"
+STRUCT = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "  the cell  "}
+STRUCT_NORM = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "the cell"}
+STRUCT_NO_NOTE = {"page": 3, "bbox": [1, 2, 3, 4]}
 
 
 class _Ledger:
@@ -94,7 +97,8 @@ def world(monkeypatch):
             raise w.register_error
         w.registered.append(kw)
 
-    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=_Outbox())
+    w.corrections = _Outbox()
+    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=w.corrections)
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
@@ -354,17 +358,17 @@ def _with(op, **extra):
 
 
 @pytest.mark.parametrize("op", sorted(_OPS))
-def test_a_row_op_evidence_ref_reaches_the_recorded_row_edits_stripped(world, monkeypatch, op):
+def test_a_legacy_string_evidence_ref_is_recorded_stripped_as_the_note(world, monkeypatch, op):
     monkeypatch.setenv(FLAG, "true")
     r = _promote(world, _with(op, evidence_ref="  s3://ev/p2.png  "))
     assert r.status_code == 200, r.text
     got = world.act_kwargs[0]["row_edits"]
-    assert len(got) == 1 and got[0]["op"] == op and got[0]["evidence_ref"] == "s3://ev/p2.png"
+    assert len(got) == 1 and got[0]["op"] == op and got[0]["evidence_ref"] == {"note": "s3://ev/p2.png"}
     (stored,) = world.ledger.records.values()
     assert stored["record"]["checks"][0]["inputs"]["row_edits"] == got
     # and the extraction_defect's edit log carries it
     (edit,) = world.registered[0]["payload"]["edits"]
-    assert edit["evidence_ref"] == "s3://ev/p2.png"
+    assert edit["evidence_ref"] == {"note": "s3://ev/p2.png"}
 
 
 @pytest.mark.parametrize("op", sorted(_OPS))
@@ -394,3 +398,85 @@ def test_the_defect_payload_names_the_ingest_and_the_response_names_the_correcti
     assert world.registered[0]["payload"]["ingest_id"] == PAYLOAD["ingest_id"]
     assert r.json()["correction"]["key"] == (
         f"corrections/{PAYLOAD['ingest_id'][7:]}/{r.json()['record_id']}.json")
+
+
+# -- evidence_ref takes the SDK struct {page, bbox, note?}; the legacy string becomes `note` -----
+# (architect 2026-10-21)
+
+def _surfaces(w):
+    """The three places a row edit is recorded: the act's row_edits (= the ledger's check inputs),
+    the extraction_defect's edit log, and the correction record 7f reads."""
+    (stored,) = w.ledger.records.values()
+    got = w.act_kwargs[0]["row_edits"]
+    assert stored["record"]["checks"][0]["inputs"]["row_edits"] == got
+    (rec,) = w.corrections.emitted
+    assert rec["row_edits"] == got
+    return got, w.registered[0]["payload"]["edits"], rec["row_edits"]
+
+
+@pytest.mark.parametrize("op", sorted(_OPS))
+@pytest.mark.parametrize("sent,want", [
+    (STRUCT, STRUCT_NORM), (STRUCT_NO_NOTE, STRUCT_NO_NOTE),
+    ("  legacy ref ", {"note": "legacy ref"}),
+], ids=["struct", "struct_no_note", "legacy_string"])
+def test_every_surface_records_the_normalized_evidence_ref(world, monkeypatch, op, sent, want):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world, _with(op, evidence_ref=sent))
+    assert r.status_code == 200, r.text
+    got, log, rec = _surfaces(world)
+    assert len(got) == len(log) == len(rec) == 1
+    assert got[0]["evidence_ref"] == want
+    assert log[0]["evidence_ref"] == want
+    assert rec[0]["evidence_ref"] == want
+    assert ("note" in got[0]["evidence_ref"]) == ("note" in want)     # never a `note: None`
+
+
+@pytest.mark.parametrize("op", sorted(_OPS))
+@pytest.mark.parametrize("bad", [
+    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"page": 1},
+    {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": -1, "bbox": [1, 2, 3, 4]},
+    {"page": True, "bbox": [1, 2, 3, 4]}, {"page": "1", "bbox": [1, 2, 3, 4]},
+    {"page": 1.5, "bbox": [1, 2, 3, 4]},
+    {"page": 1, "bbox": [1, 2, 3]}, {"page": 1, "bbox": [1, 2, 3, 4, 5]},
+    {"page": 1, "bbox": [True, 2, 3, 4]}, {"page": 1, "bbox": ["1", 2, 3, 4]},
+    {"page": 1, "bbox": "1,2,3,4"},
+    {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
+    {"page": 1, "bbox": [1, 2, 3, 4], "note": " "}, {"page": 1, "bbox": [1, 2, 3, 4], "note": 7},
+], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "no_bbox", "page0", "page_neg",
+        "page_bool", "page_str", "page_float", "bbox3", "bbox5", "bbox_bool", "bbox_str",
+        "bbox_not_list", "extra_key", "blank_note", "note_not_str"])
+def test_a_malformed_evidence_ref_is_a_wire_422_and_nothing_is_written(world, monkeypatch, op, bad):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world, _with(op, evidence_ref=bad))
+    assert r.status_code == 422, r.text
+    _nothing_written(world)
+
+
+@pytest.mark.parametrize("sent", [STRUCT, "legacy ref"], ids=["struct", "legacy_string"])
+def test_the_same_act_twice_writes_byte_identical_correction_records(world, monkeypatch, sent):
+    monkeypatch.setenv(FLAG, "true")
+    body = _with("corrected", evidence_ref=sent)
+    assert _promote(world, body).status_code == 200
+    r2 = _promote(world, body)
+    assert r2.status_code == 200 and r2.json()["replayed"] is True, r2.text
+    import json as _json
+    blobs = {_json.dumps(e, sort_keys=True) for e in world.corrections.emitted}
+    assert len(world.corrections.emitted) >= 2 and len(blobs) == 1
+    (stored,) = world.ledger.records.values()
+    assert _json.dumps(world.corrections.emitted[0]["row_edits"], sort_keys=True) == _json.dumps(
+        stored["record"]["checks"][0]["inputs"]["row_edits"], sort_keys=True)
+
+
+def test_a_record_stored_with_a_legacy_string_still_replays(world, monkeypatch):
+    """Recorded data is never re-parsed into the new shape: a record written before the struct
+    holds `evidence_ref: "<string>"`, and the same act arriving now must still replay it."""
+    monkeypatch.setenv(FLAG, "true")
+    body = _with("corrected", evidence_ref="p2 legacy")
+    assert _promote(world, body).status_code == 200
+    (stored,) = world.ledger.records.values()
+    (e,) = stored["record"]["checks"][0]["inputs"]["row_edits"]
+    assert e["evidence_ref"] == {"note": "p2 legacy"}
+    e["evidence_ref"] = "p2 legacy"                  # the record as an earlier build wrote it
+    r2 = _promote(world, body)
+    assert r2.status_code == 200 and r2.json()["replayed"] is True, r2.text
+    assert stored["record"]["checks"][0]["inputs"]["row_edits"][0]["evidence_ref"] == "p2 legacy"
