@@ -52,10 +52,7 @@ _SRC = _MAIN.read_text(encoding="utf-8")
 def _gate(candidates: list, served: frozenset) -> list:
     if not candidates or not served:
         return candidates
-    productive = [c for c in candidates if c in served]
-    if not productive:
-        return candidates
-    return productive
+    return [c for c in candidates if c in served]
 
 
 A, B, DEAD = "idp#Portfolio", "idp#Site", "cost#CostCategory"
@@ -79,11 +76,12 @@ def test_an_EMPTY_served_set_does_NOT_filter():
     assert _gate([A, DEAD, B], frozenset()) == [A, DEAD, B]
 
 
-def test_a_filter_that_would_empty_the_pool_is_REFUSED():
-    """The signature of a served-set computed against the wrong domains. Answering from a
-    dead end beats answering nothing while the cause is found — and an empty pool would
-    present as UNKNOWN, which reads as 'we do not understand you' rather than as a fault."""
-    assert _gate([A, B], frozenset({"cost#Something"})) == [A, B]
+def test_a_pool_with_no_served_class_is_EMPTIED():
+    """Architect ruling 2026-10-20: "a class enters the candidate pool only if some verb
+    declares it as input." With a non-empty served set, a pool holding no served class is
+    EMPTIED, not retained. This is a local mirror and cannot red on main.py; the real
+    resolve() is driven in tests/routing/test_a_class_enters_the_pool_only_as_a_verbs_input.py."""
+    assert _gate([A, B], frozenset({"cost#Something"})) == []
 
 
 def test_the_gate_is_a_noop_on_an_empty_pool():
