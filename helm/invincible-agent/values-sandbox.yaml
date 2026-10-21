@@ -500,9 +500,14 @@ keycloak:
         - sub: "33333333-3333-4333-8333-333333333333"
           username: liaison.coalition
           label: "Coalition liaison"
+        # Ruled 2026-10-21: every OpenDDIL operator the delegate may drop for. Its login lands on
+        # MECHANIC/MAINTENANCE since the 10-21 Topaz apply.
+        - sub: "55555555-5555-4555-8555-555555555555"
+          username: operator.regioneast
+          label: "Operator, Region East"
   # OpenDDIL's delegate client (2026-10-02), "Model Y": an external workload like doc-tools —
   # a separate release, credential created here because the realm lives here. It authenticates
-  # AS ITSELF (kind: delegate), never as the three brokered principals above (by username; the
+  # AS ITSELF (kind: delegate), never as the brokered principals above (by username; the
   # DELEGATE_ON_BEHALF_OF env carries their SUBs); those are RECORDED in
   # onBehalfOf, not verified this pass (R-089). configmap.yaml renders it as
   # DELEGATE_ON_BEHALF_OF; the BFF's /human_tasks/{id}/act reads it to let this client act for
@@ -521,6 +526,8 @@ keycloak:
         - user: operator.atlantia
           role: operator
         - user: operator.borduria
+          role: operator
+        - user: operator.regioneast
           role: operator
         - user: liaison.coalition
           role: supervisor

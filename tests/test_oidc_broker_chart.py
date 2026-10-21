@@ -468,7 +468,8 @@ def test_enabled_broker_without_its_secret_renders_nothing_and_does_not_fail(san
 # ------------------------------------------------------------------ (g) onBehalfOf
 
 def test_onbehalfof_names_a_declared_principal_whether_or_not_the_broker_renders(sandbox, broker):
-    want = sorted(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", _LIAISON_SUB])
+    want = sorted(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", _LIAISON_SUB,
+                   "55555555-5555-4555-8555-555555555555"])
     assert json.loads(_config(broker)["DELEGATE_ON_BEHALF_OF"])["svc:openddil"] == want
     assert json.loads(_config(sandbox)["DELEGATE_ON_BEHALF_OF"])["svc:openddil"] == want  # broker off: still renders
     # A name nobody declares is still refused.
@@ -479,6 +480,16 @@ def test_onbehalfof_names_a_declared_principal_whether_or_not_the_broker_renders
 def test_the_mirrored_users_are_gone_from_the_non_interactive_list(sandbox):
     values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
     assert [u["username"] for u in values["keycloak"]["nonInteractiveUsers"]] == ["platform-registrar"]
+
+
+def test_the_openddil_delegate_may_act_for_every_declared_openddil_principal(sandbox):
+    """Ruled 2026-10-21 (regioneast joins): the delegate may drop for every OpenDDIL principal.
+
+    Derived from the principals list, so a principal added there and left off onBehalfOf reds here."""
+    vs = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    declared = {p["sub"] for p in vs["keycloak"]["brokers"]["openddil"]["principals"]}
+    assert "55555555-5555-4555-8555-555555555555" in declared
+    assert set(json.loads(_config(sandbox)["DELEGATE_ON_BEHALF_OF"])["svc:openddil"]) == declared
 
 
 # ------------------------------------------------------------------ (h) grants bind to the sub
