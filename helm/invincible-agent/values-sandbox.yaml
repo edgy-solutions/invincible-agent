@@ -950,7 +950,13 @@ cortexUi:
     # pinning: the FULL tag resolves to this digest; the abbreviated tag and this digest with its
     # last hex altered both answer 404. Since d44b0cc docker-entrypoint.sh gains only
     # VITE_PROMOTION_ROW_EDITS (sanitised, empty by default), set below.
-    digest: "sha256:f27071841aa284ffb873998cc96ff2ec6d304e4284d1d3e88df3d991270d421e"
+    # 2026-10-21, pinned for 202 (architect: "Pin cortex 8eed1c5 for 202"): cortex-ui 8eed1c5
+    # (reads awaiting_origin and review_rejected instead of freezing at extracting; the leaf chip,
+    # dormant until the status row carries `leaf_source`) -> c58b7dfe. Measured before pinning:
+    # the FULL tag resolves to this digest; the abbreviated tag and the full sha with its last hex
+    # altered both answer 404. 8eed1c5 descends from 7a7666d, and Dockerfile, docker-entrypoint.sh,
+    # nginx.conf and the src's import.meta.env reads are unchanged between them, so no env moves.
+    digest: "sha256:c58b7dfe287206bb01748b3bf4916a63e2ace17e83cf4596f2c1aa714ab075ed"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
