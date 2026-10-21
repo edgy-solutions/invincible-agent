@@ -78,6 +78,18 @@ except ImportError:
     except ImportError:
         pass
 
+# ENGINE O JOINS AN IDENTICAL MODEL CALL THAT IS STILL RUNNING. Architect ruling 2026-10-20:
+# "Engine O dedupes identical in-flight calls (prompt hash; a retry joins the running call
+# instead of starting another)". MEASURED 2026-10-20 (revision 199): Engine A re-posted the same
+# prompt 4 and 8 times while the first ClassifyDomainIntent call (max 52,553 ms) was still
+# running, and every abandoned call completed as a full model call. A cache would have caught
+# none of them; this does not cache -- see inflight.py.
+try:
+    from inflight import CoalescingClient  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.inflight import CoalescingClient
+b = CoalescingClient(b, log=logging.getLogger(__name__))
+
 # Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
 # and source-layout both supported. embed_query is for READ paths — it
 # applies the nomic-embed-text task prefix that pairs with embed_document's
