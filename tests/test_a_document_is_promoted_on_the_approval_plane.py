@@ -232,7 +232,10 @@ def test_a_PROMOTION_needs_no_index_and_no_object_store():
 
 def test_every_store_field_is_required_by_SOME_verb():
     fields = {f.name for f in dataclasses.fields(promotion.PromotionStores)}
-    assert fields == set().union(*promotion.REQUIRES.values())
+    # `corrections` is conditional (only a promotion that changes the parts needs it), so no verb
+    # requires it outright; `act` refuses it by name when it is wanted and absent.
+    assert "corrections" not in set().union(*promotion.REQUIRES.values())
+    assert fields - {"corrections"} == set().union(*promotion.REQUIRES.values())
 
 
 @pytest.mark.parametrize("answer,status,error", [

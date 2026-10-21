@@ -43,6 +43,17 @@ class _Ledger:
         return {"ok": True}
 
 
+class _Outbox:
+    """Records the correction records a promotion leaves for 7f (build 201)."""
+
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, record):
+        self.emitted.append(record)
+        return f"corrections/{record['ingest_id'][7:]}/{record['record_id']}.json"
+
+
 class _Graph:
     def node_exists(self, ingest_id):
         return True
@@ -83,7 +94,7 @@ def world(monkeypatch):
             raise w.register_error
         w.registered.append(kw)
 
-    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph())
+    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=_Outbox())
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
@@ -314,3 +325,61 @@ def test_control_a_replay_without_corrections_on_a_record_without_them_finishes(
     r = _promote(world, edits=None)
     assert r.status_code == 200, r.text
     assert r.json()["replayed"] is True
+
+
+# -- evidence_ref on every row op (build 201): optional on the wire, blank is a 422 ---------------
+
+_OPS = {
+    "corrected": {"corrected": [{"mpn": "A-1", "corrected_mpn": "A-100", "evidence": "p2"}]},
+    "added": {"added": [{"mpn": "C-3", "disposition": "affected", "reason": "missed",
+                         "evidence": "p3"}]},
+    "deleted": {"deleted": [{"mpn": "B-2", "reason": "not on the notice"}]},
+}
+
+
+def _with(op, **extra):
+    edits = {k: [dict(r, **extra) for r in rows] for k, rows in _OPS[op].items()}
+    return edits
+
+
+@pytest.mark.parametrize("op", sorted(_OPS))
+def test_a_row_op_evidence_ref_reaches_the_recorded_row_edits_stripped(world, monkeypatch, op):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world, _with(op, evidence_ref="  s3://ev/p2.png  "))
+    assert r.status_code == 200, r.text
+    got = world.act_kwargs[0]["row_edits"]
+    assert len(got) == 1 and got[0]["op"] == op and got[0]["evidence_ref"] == "s3://ev/p2.png"
+    (stored,) = world.ledger.records.values()
+    assert stored["record"]["checks"][0]["inputs"]["row_edits"] == got
+    # and the extraction_defect's edit log carries it
+    (edit,) = world.registered[0]["payload"]["edits"]
+    assert edit["evidence_ref"] == "s3://ev/p2.png"
+
+
+@pytest.mark.parametrize("op", sorted(_OPS))
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_row_op_evidence_ref_is_a_422_and_nothing_is_written(world, monkeypatch, op, blank):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world, _with(op, evidence_ref=blank))
+    assert r.status_code == 422, r.text
+    _nothing_written(world)
+
+
+@pytest.mark.parametrize("op", sorted(_OPS))
+def test_a_row_op_without_evidence_ref_records_exactly_todays_dict(world, monkeypatch, op):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world, _with(op))
+    assert r.status_code == 200, r.text
+    got = world.act_kwargs[0]["row_edits"]
+    assert len(got) == 1 and "evidence_ref" not in got[0]
+    (edit,) = world.registered[0]["payload"]["edits"]
+    assert "evidence_ref" not in edit
+
+
+def test_the_defect_payload_names_the_ingest_and_the_response_names_the_correction(world, monkeypatch):
+    monkeypatch.setenv(FLAG, "true")
+    r = _promote(world)
+    assert r.status_code == 200, r.text
+    assert world.registered[0]["payload"]["ingest_id"] == PAYLOAD["ingest_id"]
+    assert r.json()["correction"]["key"] == (
+        f"corrections/{PAYLOAD['ingest_id'][7:]}/{r.json()['record_id']}.json")

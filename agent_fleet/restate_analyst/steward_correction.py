@@ -36,9 +36,11 @@ REASON_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
 OBTAINED_VIA = "steward-corrected"
 EXTRACTION_DEFECT_KIND = "extraction_defect"
 
-_DELETED_KEYS = frozenset({"mpn", "reason"})
-_ADDED_KEYS = frozenset({"mpn", "disposition", "reason", "evidence"})
-_CORRECTED_KEYS = frozenset({"mpn", "corrected_mpn", "evidence"})
+# `evidence_ref` is OPTIONAL on every row op until cortex-ui ships it (build 201); absent or None is
+# the same thing, present must be a non-blank string.
+_DELETED_KEYS = frozenset({"mpn", "reason", "evidence_ref"})
+_ADDED_KEYS = frozenset({"mpn", "disposition", "reason", "evidence", "evidence_ref"})
+_CORRECTED_KEYS = frozenset({"mpn", "corrected_mpn", "evidence", "evidence_ref"})
 _TOP_KEYS = frozenset({"deleted", "added", "corrected"})
 #: Header fields a steward may correct on the same wire as rows (ruling 10-20, Q8 amended).
 HEADER_FIELDS = ("mfr", "notice_id", "notice_date")
@@ -81,7 +83,10 @@ def _rows(raw: dict, key: str, allowed: frozenset) -> list:
         extra = set(r) - allowed
         if extra:
             raise EditRefusal(f"row_edits.{key} entry has unknown key(s) {sorted(extra)}")
-    return list(rows)
+    # pydantic's model_dump() emits `evidence_ref: None` for an absent field; None is absent, so
+    # the key is dropped and a row without one stays byte-identical to what it was before.
+    return [{k: v for k, v in r.items() if not (k == "evidence_ref" and v is None)}
+            for r in rows]
 
 
 def validate_row_edits(raw, *, extracted_mpns: Optional[Iterable[str]] = None) -> RowEdits:
@@ -99,6 +104,12 @@ def validate_row_edits(raw, *, extracted_mpns: Optional[Iterable[str]] = None) -
                      added=_rows(raw, "added", _ADDED_KEYS),
                      corrected=_rows(raw, "corrected", _CORRECTED_KEYS))
 
+    for op, rows in (("deleted", edits.deleted), ("added", edits.added),
+                     ("corrected", edits.corrected)):
+        for r in rows:
+            if "evidence_ref" in r and not _text(r["evidence_ref"]):
+                raise EditRefusal(f"a {op} row's evidence_ref must be a non-blank string "
+                                  f"when given (row {r.get('mpn')!r})")
     for r in edits.deleted:
         if not _text(r.get("mpn")):
             raise EditRefusal("a deleted row needs an mpn")
@@ -251,19 +262,25 @@ def added_resolutions(edits: RowEdits, *, notice_fingerprint: str, acted_by: str
     return out
 
 
+def _ref(r: dict) -> dict:
+    """`{"evidence_ref": <stripped>}` when the row carries one, else nothing."""
+    return {"evidence_ref": _text(r["evidence_ref"])} if r.get("evidence_ref") is not None else {}
+
+
 def edit_log(edits: RowEdits) -> list:
     """The edits as the extraction_defect payload carries them."""
     out = []
     for r in edits.corrected:
         out.append({"op": "corrected", "extracted": _text(r["mpn"]),
-                    "corrected": _text(r["corrected_mpn"]), "evidence": _text(r["evidence"])})
+                    "corrected": _text(r["corrected_mpn"]), "evidence": _text(r["evidence"]),
+                    **_ref(r)})
     for r in edits.added:
         out.append({"op": "added", "extracted": None, "corrected": _text(r["mpn"]),
                     "evidence": _text(r["evidence"]), "reason": _text(r["reason"]),
-                    "disposition": _text(r["disposition"])})
+                    "disposition": _text(r["disposition"]), **_ref(r)})
     for r in edits.deleted:
         out.append({"op": "deleted", "extracted": _text(r["mpn"]), "corrected": None,
-                    "reason": _text(r["reason"])})
+                    "reason": _text(r["reason"]), **_ref(r)})
     for r in edits.header:
         out.append({"op": "header_corrected", "field": r["field"], "extracted": r.get("extracted"),
                     "corrected": r["value"], "evidence": r["evidence_ref"], "reason": r["reason"],
@@ -284,7 +301,8 @@ def pin_digest_of(pipeline_version) -> dict:
 
 
 def defect_task(*, notice: str, decision_id: str, pipeline_version, edits: RowEdits,
-                audience: str, requested_by: str, acted_by: str) -> Optional[dict]:
+                audience: str, requested_by: str, acted_by: str,
+                ingest_id: Optional[str] = None) -> Optional[dict]:
     """The ONE extraction_defect task for a decision, or None when the decision made no edits (an
     approval with no edits files nothing). ``task_key`` is deterministic on (notice, decision id), so
     a re-delivery registers the same task rather than a second."""
@@ -292,6 +310,11 @@ def defect_task(*, notice: str, decision_id: str, pipeline_version, edits: RowEd
         return None
     pin = pin_digest_of(pipeline_version)
     log = edit_log(edits)
+    payload = {"notice": notice, "pin_digest": pin["pin_digest"],
+               "pin_fields_missing": pin["pin_fields_missing"],
+               "decision_id": decision_id, "edits": log}
+    if ingest_id is not None:
+        payload["ingest_id"] = ingest_id    # `notice` falls back to the ingest id; name it outright
     return {
         "kind": EXTRACTION_DEFECT_KIND,
         "task_key": f"extraction-defect:{notice}:{decision_id}",
@@ -310,7 +333,5 @@ def defect_task(*, notice: str, decision_id: str, pipeline_version, edits: RowEd
         "notice_fingerprint": notice,
         "requested_by": requested_by,
         "acted_by": acted_by,
-        "payload": {"notice": notice, "pin_digest": pin["pin_digest"],
-                    "pin_fields_missing": pin["pin_fields_missing"],
-                    "decision_id": decision_id, "edits": log},
+        "payload": payload,
     }

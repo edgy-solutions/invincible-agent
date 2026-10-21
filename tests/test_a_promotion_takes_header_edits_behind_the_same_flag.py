@@ -44,6 +44,17 @@ class _Ledger:
         return {"ok": True}
 
 
+class _Outbox:
+    """Records the correction records a promotion leaves for 7f (build 201)."""
+
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, record):
+        self.emitted.append(record)
+        return f"corrections/{record['ingest_id'][7:]}/{record['record_id']}.json"
+
+
 class _Graph:
     def node_exists(self, ingest_id):
         return True
@@ -79,7 +90,7 @@ def world(monkeypatch):
         w.act_kwargs.append(kw)
         return real_act(payload, **kw)
 
-    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph())
+    stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=_Outbox())
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",

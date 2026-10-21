@@ -48,6 +48,17 @@ class Ledger:
         return {"ok": True}
 
 
+class Outbox:
+    """Records the correction records a promotion leaves for 7f (build 201)."""
+
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, record):
+        self.emitted.append(record)
+        return f"corrections/{record['ingest_id'][7:]}/{record['record_id']}.json"
+
+
 class Graph:
     def __init__(self, fail=False):
         self.calls, self.fail = [], fail
@@ -75,7 +86,7 @@ class Graph:
 
 
 def _act(graph, ledger=None, row_edits=None):
-    stores = promotion.PromotionStores(ledger=ledger or Ledger(), graph=graph)
+    stores = promotion.PromotionStores(ledger=ledger or Ledger(), graph=graph, corrections=Outbox())
     return promotion.act(
         dict(PAYLOAD), decision="promoted", acted_by="bob", audience=AUDIENCE, comment="why",
         can_act=lambda a, c: True, stores=stores, governing=GOVERNING, era="commissioning",

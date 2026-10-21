@@ -59,8 +59,8 @@ import psycopg2
 from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
-from .promotion import (INGEST_ID_RE, REJECTED_PREFIX, object_prefix_for,  # noqa: F401
-                        quarantine_prefix_for)
+from .promotion import (INGEST_ID_RE, REJECTED_PREFIX, correction_key,  # noqa: F401
+                        object_prefix_for, quarantine_prefix_for)
 
 try:  # the package layout first; the container's flattened `utils` second (v2_substrate's idiom)
     from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
@@ -206,6 +206,24 @@ class S3Quarantine:
         for key in keys:
             s3.delete_object(Bucket=self._bucket, Key=key)
         return moved
+
+
+class S3CorrectionOutbox:
+    """`promotion.CorrectionOutbox` over the seam's bucket: one JSON object per correction record,
+    keyed `corrections/<ingest hex>/<record_id>.json`. Sorted keys and fixed separators make a
+    replay's bytes identical to the first write's, so the put converges."""
+
+    def __init__(self, client_factory: Callable[[], Any], bucket: str):
+        self._client = client_factory
+        self._bucket = bucket
+
+    def emit(self, record: dict) -> str:
+        key = correction_key(record["ingest_id"], record["record_id"])
+        body = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False).encode("utf-8")
+        self._client().put_object(Bucket=self._bucket, Key=key, Body=body,
+                                  ContentType="application/json")
+        return key
 
 
 # ── THE GRAPH ─────────────────────────────────────────────────────────────────────────────────

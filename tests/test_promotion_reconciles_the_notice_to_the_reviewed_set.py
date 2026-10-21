@@ -47,6 +47,17 @@ class Ledger:
         return next(iter(self.records.values()))["record"]
 
 
+class Outbox:
+    """Records the correction records a promotion leaves for 7f (build 201)."""
+
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, record):
+        self.emitted.append(record)
+        return f"corrections/{record['ingest_id'][7:]}/{record['record_id']}.json"
+
+
 class Graph:
     """An in-memory notice: `edges` is the set of exact mpns the notice is SUBJECT_TO-linked from;
     None means no notice node."""
@@ -96,7 +107,7 @@ class Graph:
 
 
 def _act(graph, ledger=None, *, reviewed, row_edits=None, earlier=EARLIER):
-    stores = promotion.PromotionStores(ledger=ledger or Ledger(), graph=graph)
+    stores = promotion.PromotionStores(ledger=ledger or Ledger(), graph=graph, corrections=Outbox())
     return promotion.act(
         dict(PAYLOAD), decision="promoted", acted_by="bob", audience=AUDIENCE, comment="why",
         can_act=lambda a, c: True, stores=stores, governing=GOVERNING, era="commissioning",

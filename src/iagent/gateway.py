@@ -786,6 +786,7 @@ class _RowEditsModel(_BaseModel):
 class DeletedRow(_RowEditsModel):
     mpn: str
     reason: str   # a delete needs a reason
+    evidence_ref: Optional[str] = None   # optional until cortex-ui ships it; blank is a 422
 
 
 class AddedRow(_RowEditsModel):
@@ -793,12 +794,14 @@ class AddedRow(_RowEditsModel):
     disposition: str
     reason: str
     evidence: str
+    evidence_ref: Optional[str] = None
 
 
 class CorrectedRow(_RowEditsModel):
     mpn: str            # the EXTRACTED mpn -- identity never moves
     corrected_mpn: str
     evidence: str
+    evidence_ref: Optional[str] = None
 
 
 class RowEdits(_RowEditsModel):
@@ -813,6 +816,9 @@ class RowEdits(_RowEditsModel):
 
     @model_validator(mode="after")
     def _rules(self):
+        for r in list(self.deleted) + list(self.added) + list(self.corrected):
+            if r.evidence_ref is not None:      # absent is fine; present-but-blank is a 422
+                _nonblank(r.evidence_ref)
         for r in self.deleted:
             _nonblank(r.mpn); _nonblank(r.reason)
         for r in self.added:
@@ -3764,9 +3770,10 @@ def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str,
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
-    All four are built here: the ledger (Postgres, beside human_task_projection), the objects
-    (the seam's bucket), the GRAPH through the SDK graph writer, and the INDEXES over the
-    declared ingest-carrying collections. The graph writes as the PERSON acting -- `acted_by`,
+    All five are built here: the ledger (Postgres, beside human_task_projection), the objects
+    (the seam's bucket), the GRAPH through the SDK graph writer, the INDEXES over the
+    declared ingest-carrying collections, and the CORRECTION OUTBOX (the same bucket, under
+    `corrections/`, for 7f to apply to RDF). The graph writes as the PERSON acting -- `acted_by`,
     the caller `can_act` is asked about -- so it is built per act, never once at startup.
 
     What this does NOT lift: a promotion still needs the ingest node. `/ingest` now creates one
@@ -3791,6 +3798,7 @@ def _promotion_stores(acted_by: str):
         graph=graph,
         indexes=promotion_stores.DeclaredIngestIndexes(),
         objects=promotion_stores.S3Quarantine(_build_s3_client, _ARTIFACT_BUCKET),
+        corrections=promotion_stores.S3CorrectionOutbox(_build_s3_client, _ARTIFACT_BUCKET),
     )
 
 
@@ -4028,6 +4036,8 @@ async def act_on_human_task(
                 corrections = []
                 for r in edits.corrected:
                     corrections.append({"op": "corrected", "mpn": r["mpn"].strip(),
+                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                           if r.get("evidence_ref") is not None else {}),
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=r["mpn"].strip(),
                                             corrected=r["corrected_mpn"].strip(),
@@ -4035,13 +4045,17 @@ async def act_on_human_task(
                 for r in edits.added:
                     corrections.append({"op": "added", "mpn": r["mpn"].strip(),
                                         "disposition": r["disposition"], "reason": r["reason"],
+                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                           if r.get("evidence_ref") is not None else {}),
                                         **steward_correction.provenance_for(
                                             acted_by=_by, extracted=None,
                                             corrected=r["mpn"].strip(),
                                             evidence=r["evidence"].strip())})
                 for r in edits.deleted:
                     corrections.append({"op": "deleted", "mpn": r["mpn"].strip(),
-                                        "reason": r["reason"]})
+                                        "reason": r["reason"],
+                                        **({"evidence_ref": r["evidence_ref"].strip()}
+                                           if r.get("evidence_ref") is not None else {})})
                 for r in edits.header:
                     corrections.append({"op": "header_corrected", "field": r["field"],
                                         "extracted_fallback": r.get("fallback"),
@@ -4099,7 +4113,8 @@ async def act_on_human_task(
             defect = steward_correction.defect_task(
                 notice=(subject.notice_id or subject.ingest_id), decision_id=done["record_id"],
                 pipeline_version=subject.pipeline_version, edits=edits, audience=defect_aud,
-                requested_by=actor, acted_by=current_user.authz_id)
+                requested_by=actor, acted_by=current_user.authz_id,
+                ingest_id=subject.ingest_id)
 
             def _file_defect():
                 if not human_tasks.task_exists(defect["task_key"]):

@@ -633,3 +633,57 @@ def test_the_envelope_keeps_hazard_id_and_gap_when_the_body_has_them(pres):
 def test_the_envelope_gets_neither_key_when_the_body_has_neither(pres):
     env = pres._refusal_envelope({"refused": True, "outcome": "source_unavailable", "reason": "r"})
     assert "hazard_id" not in env and "gap" not in env
+
+
+# ===========================================================================
+# evidence_ref on every row op (build 201) -- optional; None is absent; blank is refused
+# ===========================================================================
+_REF_OPS = {
+    "deleted": {"mpn": "C", "reason": "not on the notice"},
+    "added": {"mpn": "D", "disposition": "affected", "reason": "missed", "evidence": EV},
+    "corrected": {"mpn": "B", "corrected_mpn": "B2", "evidence": EV},
+}
+
+
+def _one(op, **extra):
+    return {op: [dict(_REF_OPS[op], **extra)]}
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+def test_each_row_op_accepts_an_evidence_ref_and_the_log_carries_it_stripped(op):
+    edits = sc.validate_row_edits(_one(op, evidence_ref="  s3://ev/1.png "))
+    (entry,) = sc.edit_log(edits)
+    assert entry["op"] == op and entry["evidence_ref"] == "s3://ev/1.png"
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+@pytest.mark.parametrize("blank", ["", "   ", 5, []])
+def test_a_present_but_blank_evidence_ref_is_refused_naming_the_op_and_mpn(op, blank):
+    with pytest.raises(sc.EditRefusal) as ei:
+        sc.validate_row_edits(_one(op, evidence_ref=blank))
+    assert op in str(ei.value) and repr(_REF_OPS[op]["mpn"]) in str(ei.value)
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+def test_a_none_evidence_ref_is_absent_the_key_is_dropped_and_the_log_omits_it(op):
+    edits = sc.validate_row_edits(_one(op, evidence_ref=None))
+    (row,) = getattr(edits, op)
+    assert "evidence_ref" not in row
+    (entry,) = sc.edit_log(edits)
+    assert "evidence_ref" not in entry
+
+
+@pytest.mark.parametrize("op", sorted(_REF_OPS))
+def test_a_row_without_evidence_ref_is_byte_identical_to_today(op):
+    edits = sc.validate_row_edits(_one(op))
+    (row,) = getattr(edits, op)
+    assert row == _REF_OPS[op]
+    assert "evidence_ref" not in sc.edit_log(edits)[0]
+
+
+def test_defect_task_names_the_ingest_only_when_given():
+    edits = sc.validate_row_edits(_one("deleted"))
+    kw = dict(notice="PCN-1", decision_id="d1", pipeline_version=PIN, edits=edits,
+              audience="dispatch_failure:SUSTAINMENT", requested_by="r", acted_by="a")
+    assert sc.defect_task(**kw, ingest_id=INGEST)["payload"]["ingest_id"] == INGEST
+    assert "ingest_id" not in sc.defect_task(**kw)["payload"]

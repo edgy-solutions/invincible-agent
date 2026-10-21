@@ -146,12 +146,21 @@ class IngestObjects(Protocol):
     def quarantine(self, ingest_id: str, object_ref: str) -> list: ...
 
 
+class CorrectionOutbox(Protocol):
+    """Where a promotion that changed the notice's parts leaves its correction record for 7f
+    (doc-tools) to apply to RDF. `emit` returns the object key it wrote."""
+
+    def emit(self, record: dict) -> str: ...
+
+
 @dataclass(frozen=True)
 class PromotionStores:
     ledger: Optional[DecisionLedger] = None
     graph: Optional[IngestGraph] = None
     indexes: Optional[IngestIndexes] = None
     objects: Optional[IngestObjects] = None
+    # Not in REQUIRES: only a promotion that changes the parts needs it (see `act`).
+    corrections: Optional[CorrectionOutbox] = None
 
 
 #: What each verb needs. A rejection touches every store; a promotion writes no index or object.
@@ -428,6 +437,36 @@ def reconciliation_record(pruned: list, earlier_ingests: Optional[list]) -> dict
                             else RECONCILE_ATTRIBUTION_UNAVAILABLE)}
 
 
+#: Where the correction records live in the artifact bucket, one object per (ingest, record).
+CORRECTION_PREFIX = "corrections/"
+
+
+def correction_key(ingest_id: str, record_id: str) -> str:
+    if not isinstance(ingest_id, str) or not INGEST_ID_RE.match(ingest_id):
+        raise ValueError(f"not a sha256:<64hex> ingest id: {ingest_id!r}")
+    return f"{CORRECTION_PREFIX}{ingest_id.removeprefix('sha256:')}/{record_id}.json"
+
+
+def correction_record(subject: PromotionSubject, *, record_id: str, domain: str, acted_by: str,
+                      acted_at: int, row_edits: Optional[list],
+                      reconcile_mpns: Optional[list]) -> dict:
+    """The self-contained record 7f applies to RDF (ruling: corrected parts reach BOTH stores).
+    Pure: no clock, no randomness, so a replay produces identical bytes."""
+    return {"schema_version": "1",
+            "kind": "promotion_correction",
+            "ingest_id": subject.ingest_id,
+            "record_id": record_id,
+            "notice_id": subject.notice_id,
+            "domain": domain,
+            "object_ref": subject.object_ref,
+            "extraction_ref": subject.extraction_ref,
+            "pipeline_version": subject.pipeline_version,
+            "acted_by": acted_by,
+            "acted_at": acted_at,
+            "row_edits": list(row_edits or []),
+            "reconciled": {"removed": sorted(reconcile_mpns or []), "reason": RECONCILE_REASON}}
+
+
 def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
            acted_by: str, acted_at: int, record_id: str, domain: str = "",
            row_edits: Optional[list] = None,
@@ -448,6 +487,13 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
                     subject.ingest_id, list(reconcile_mpns), domain=domain)
                     if reconcile_mpns else 0)
                 reconciled = {"removed": n, "mpns": list(reconcile_mpns)}
+            out_correction = None
+            step = "corrections"
+            if row_edits or reconcile_mpns:
+                key = stores.corrections.emit(correction_record(
+                    subject, record_id=record_id, domain=domain, acted_by=acted_by,
+                    acted_at=acted_at, row_edits=row_edits, reconcile_mpns=reconcile_mpns))
+                out_correction = {"key": key}
             step = "graph"
             fact = promotion_fact(acted_by=acted_by, record_id=record_id, promoted_at=acted_at)
             stores.graph.write_fact(subject.ingest_id, dict(fact))
@@ -459,6 +505,8 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
                 out["row_edits_applied"] = applied
             if reconciled is not None:
                 out["reconciled"] = reconciled
+            if out_correction is not None:
+                out["correction"] = out_correction
             return out
         swept = {"graph": stores.graph.delete_carrying(subject.ingest_id)}
         step = "indexes"
@@ -575,6 +623,16 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                     f"knowing what was reviewed. Nothing was written", status=409)
             reconciliation = reconciliation_record(
                 reconcile_plan(list(current), list(reviewed_mpns), row_edits), earlier_ingests)
+
+    # A promotion that changes the parts leaves a correction record for RDF; asked BEFORE the
+    # record, so a missing outbox writes nothing.
+    if (decision == PROMOTED and (row_edits or (reconciliation or {}).get("removed"))
+            and stores.corrections is None):
+        raise PromotionRefused(
+            "promotion_store_unconfigured",
+            "a promotion that changes the notice's parts needs ['corrections'] and corrections is "
+            "not configured; the task stays pending rather than resolving into a decision whose "
+            "correction record nothing could leave for RDF", status=503)
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
                           comment=comment, governing=governing, era=era, row_edits=row_edits,
