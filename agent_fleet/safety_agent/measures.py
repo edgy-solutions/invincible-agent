@@ -312,6 +312,16 @@ def _hazard_evidence(h) -> Dict[str, Any]:
     }
 
 
+def _case_id(hazard_id: str, level_slug: str) -> str:
+    """The acceptance case key. MIRROR of `iagent_pure.acceptance_request.acceptance_workflow_id`.
+
+    This engine does not ship `iagent_pure` (the agent image omits it), so the format is mirrored
+    here and sealed equal to the real function by
+    tests/safety/test_the_card_case_id_equals_the_minted_case_key.py.
+    """
+    return f"risk-acceptance-{hazard_id}-{level_slug}"
+
+
 def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any]:
     """Draft a risk assessment for one hazard: severity, probability, level, authority, citations.
 
@@ -489,7 +499,15 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     # REMOVED ONLY AFTER `policy/decisions/` COMPOSED, per the rule in that amendment. Removing
     # it first would have turned every Serious/High acceptance into a direct one, silently.
 
+    # THE CASE KEY, carried on the card so a frontend can open the case before any task exists.
+    # MIRROR of `iagent_pure.acceptance_request.acceptance_workflow_id` (this engine does not ship
+    # `iagent_pure`; same pattern as presentation_agent's STATUS_BY_DISPOSITION mirror). The slug is
+    # derived as the minter's caller derives it: payload `risk_level_slug`, which is `level.lower()`
+    # (acceptance_request.py:118 falls back to the same expression). Sealed by
+    # tests/safety/test_the_card_case_id_equals_the_minted_case_key.py, which calls the real function.
+    level_slug = level.lower()
     out["review_request"] = {
+        "case_id": _case_id(h.hazard_id, level_slug),
         "kind": f"risk_acceptance_{level.lower()}",
         "task_id": f"risk-acceptance-{h.hazard_id}",
         "audience": audience,
@@ -506,7 +524,7 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
             "severity": h.severity,
             "probability": h.probability,
             "risk_level": level,
-            "risk_level_slug": level.lower(),
+            "risk_level_slug": level_slug,
             "citations": citations,
             "derived_from": derived_from,
             # STATED IN THE PAYLOAD, not only in this ADR: the disposer must see that a
