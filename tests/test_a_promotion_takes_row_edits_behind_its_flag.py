@@ -434,7 +434,7 @@ def test_every_surface_records_the_normalized_evidence_ref(world, monkeypatch, o
 
 @pytest.mark.parametrize("op", sorted(_OPS))
 @pytest.mark.parametrize("bad", [
-    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"page": 1},
+    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"bbox": None},
     {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": -1, "bbox": [1, 2, 3, 4]},
     {"page": True, "bbox": [1, 2, 3, 4]}, {"page": "1", "bbox": [1, 2, 3, 4]},
     {"page": 1.5, "bbox": [1, 2, 3, 4]},
@@ -443,7 +443,7 @@ def test_every_surface_records_the_normalized_evidence_ref(world, monkeypatch, o
     {"page": 1, "bbox": "1,2,3,4"},
     {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
     {"page": 1, "bbox": [1, 2, 3, 4], "note": " "}, {"page": 1, "bbox": [1, 2, 3, 4], "note": 7},
-], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "no_bbox", "page0", "page_neg",
+], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "null_bbox_no_page", "page0", "page_neg",
         "page_bool", "page_str", "page_float", "bbox3", "bbox5", "bbox_bool", "bbox_str",
         "bbox_not_list", "extra_key", "blank_note", "note_not_str"])
 def test_a_malformed_evidence_ref_is_a_wire_422_and_nothing_is_written(world, monkeypatch, op, bad):

@@ -63,9 +63,11 @@ def _num(v) -> bool:
 def normalize_evidence_ref(v) -> dict:
     """ONE shape for an evidence_ref, used at the BFF act and at the runner (architect 2026-10-21:
     the SDK's `{page, bbox}` wins, plus an optional `note`; the BFF's free string becomes `note`).
-    Accepts (a) `{page: int >= 1, bbox: [x0, y0, x1, y1], note?: non-blank str}` (extra keys refused;
-    `note: None` is absent, as `evidence_ref: None` is), or (b) the legacy non-blank string.
-    Returns `{"page", "bbox"[, "note"]}` or `{"note": <stripped>}`; deterministic, so a replay
+    Accepts (a) `{page: int >= 1, bbox: [x0, y0, x1, y1] | null, note?: non-blank str}` (extra keys
+    refused; `note: None` is absent, as `evidence_ref: None` is; a null or omitted `bbox` is "stated on
+    this page, no box we can draw", architect spec 205 -- `page` is never optional), or (b) the legacy
+    non-blank string. Returns `{"page", "bbox"[, "note"]}` (`bbox` always present, None when
+    absent) or `{"note": <stripped>}`; deterministic, so a replay
     writes identical bytes. Raises ``EditRefusal``."""
     if isinstance(v, str):
         if not v.strip():
@@ -79,10 +81,10 @@ def normalize_evidence_ref(v) -> dict:
     page, bbox = v.get("page"), v.get("bbox")
     if not isinstance(page, int) or isinstance(page, bool) or page < 1:
         raise EditRefusal("an evidence_ref needs a page that is an integer >= 1")
-    if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
-            or not all(_num(x) for x in bbox)):
-        raise EditRefusal("an evidence_ref needs a bbox of 4 finite numbers [x0, y0, x1, y1]")
-    out = {"page": page, "bbox": list(bbox)}
+    if bbox is not None and (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+                             or not all(_num(x) for x in bbox)):
+        raise EditRefusal("an evidence_ref bbox is null or 4 finite numbers [x0, y0, x1, y1]")
+    out = {"page": page, "bbox": list(bbox) if bbox is not None else None}
     note = v.get("note")
     if note is not None:
         if not isinstance(note, str) or not note.strip():

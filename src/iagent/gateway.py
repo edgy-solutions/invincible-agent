@@ -156,8 +156,10 @@ def _backstop_candidates(raw) -> list:
     """Map a manifest `leaf.candidates` list to `hold_for_kind`'s input (spec 204 D3 + the 10-21
     page-fraction ruling). A candidate is kept only when its `leaf` (lowercased) is a leaf, `score`
     is a finite number in [0, 1], and its `evidence_ref` carries `page` (an int >= 1 -- ONLY `page`,
-    never the older `page_number`, whose boxes are pixels) and a `bbox` in page fractions. `note` is
-    carried when a non-blank string. Anything else drops THAT candidate."""
+    never the older `page_number`, whose boxes are pixels) and a `bbox` that is null/absent (kept as
+    `"bbox": None`: stated on the page, no box to draw) or in page fractions (a pixel or malformed box
+    drops the candidate). `note` is carried when a non-blank string. Anything else drops THAT
+    candidate."""
     import math
 
     from . import ingest_status
@@ -177,9 +179,10 @@ def _backstop_candidates(raw) -> list:
         page = ev.get("page")
         if isinstance(page, bool) or not isinstance(page, int) or page < 1:
             continue
-        if not _bbox_is_page_fractions(ev.get("bbox")):
+        bbox = ev.get("bbox")
+        if bbox is not None and not _bbox_is_page_fractions(bbox):
             continue
-        ref = {"page": page, "bbox": list(ev["bbox"])}
+        ref = {"page": page, "bbox": list(bbox) if bbox is not None else None}
         note = ev.get("note")
         if isinstance(note, str) and note.strip():
             ref["note"] = note.strip()
@@ -929,11 +932,16 @@ class EvidenceRef(_BaseModel):
     """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
     (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
     the pre-ruling free string is now `note`). The wire also still takes that bare string until
-    cortex ships the struct; `_wire_evidence_ref` validates both."""
+    cortex ships the struct; `_wire_evidence_ref` validates both.
+
+    Architect ruling (spec 205): "bbox may be null; page may not. Null bbox means 'stated on this
+    page, no box we can draw'. The card jumps to the page with no outline and labels it 'on page N,
+    no box'. Derived fields carry no evidence_ref at all." So `page` is required and `bbox` is
+    `None` (or omitted, which is the same) or four finite numbers."""
     model_config = {"extra": "forbid", "frozen": True}
     page: _StrictInt = Field(ge=1)
-    bbox: list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]] = Field(
-        min_length=4, max_length=4)
+    bbox: Optional[list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]]] = Field(
+        default=None, min_length=4, max_length=4)
     note: Optional[str] = None
 
     @model_validator(mode="after")
@@ -954,7 +962,7 @@ def _wire_evidence_ref(v):
         return _nonblank(v)
     if isinstance(v, dict):
         ref = EvidenceRef.model_validate(v)
-        return {"page": ref.page, "bbox": list(ref.bbox),
+        return {"page": ref.page, "bbox": list(ref.bbox) if ref.bbox is not None else None,
                 **({"note": ref.note.strip()} if ref.note is not None else {})}
     raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
 
@@ -13036,7 +13044,7 @@ class TitleEvidenceRef(EvidenceRef):
 
     @model_validator(mode="after")
     def _fractions(self):
-        if not _bbox_is_page_fractions(self.bbox):
+        if self.bbox is not None and not _bbox_is_page_fractions(self.bbox):
             raise ValueError("a title candidate's bbox is [x0, y0, x1, y1] in page fractions: "
                              "0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1")
         return self

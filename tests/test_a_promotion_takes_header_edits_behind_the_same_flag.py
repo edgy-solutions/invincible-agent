@@ -396,11 +396,11 @@ def test_every_surface_records_a_header_edits_normalized_evidence_ref(world, sen
 
 
 @pytest.mark.parametrize("bad", [
-    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"page": 1},
+    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"bbox": None},
     {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": True, "bbox": [1, 2, 3, 4]},
     {"page": 1, "bbox": [1, 2, 3]}, {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
     {"page": 1, "bbox": [1, 2, 3, 4], "note": " "},
-], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "no_bbox", "page0", "page_bool",
+], ids=["blank", "spaces", "int", "list", "empty_obj", "no_page", "null_bbox_no_page", "page0", "page_bool",
         "bbox3", "extra_key", "blank_note"])
 def test_a_malformed_header_evidence_ref_is_a_wire_422(world, bad):
     r = _act(world, [dict(MFR, evidence_ref=bad)])

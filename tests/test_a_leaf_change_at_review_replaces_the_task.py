@@ -280,7 +280,6 @@ def test_an_ambiguous_manifest_leaf_holds_the_row_with_mapped_candidates(db, mon
     cands = [
         {"leaf": "PDN", "score": 0.6,
          "evidence_ref": {"page": 1, "bbox": [0.1, 0.1, 0.5, 0.2], "note": " title "}},
-        {"leaf": "pcn", "score": 0.4, "evidence_ref": {"page": 1}},                      # no bbox
         {"leaf": "pcn", "score": 0.35, "evidence_ref": {"page_number": 1,                 # old form
                                                        "bbox": [300, 200, 1400, 260]}},
         {"leaf": "pcn", "score": 0.3, "evidence_ref": {"page": 1,                         # pixels
@@ -410,3 +409,51 @@ def test_the_stale_answer_never_names_the_acted_on_task_as_its_replacement(monke
     assert exc.status_code == 409 and exc.detail["error"] == "stale_extraction"
     assert exc.detail["new_task_id"] is None and exc.detail["task_id"] == g0
     assert str(exc.detail["message"]).strip()
+
+
+# ---------------------------------------------------------------------------------------------
+# spec 205: a null bbox ("stated on this page, no box we can draw"); a page is never optional
+# ---------------------------------------------------------------------------------------------
+def _title_ev(db, ev):
+    db.add(status="extracting")
+    body = {"doc_type": "PCN", "doc_type_source": "defaulted",
+            "candidates": [{"leaf": "pcn", "score": 0.5, "evidence_ref": ev}]}
+    return _title(_as(DOCTOOLS), body)
+
+
+@pytest.mark.parametrize("ev", [{"page": 2, "bbox": None}, {"page": 2}], ids=["null", "absent"])
+def test_spec_205_title_leaf_stores_a_null_or_absent_bbox_as_none(db, ev):
+    r = _title_ev(db, ev)
+    assert r.status_code == 200, r.text
+    assert r.json()["leaf_candidates"][0]["evidence_ref"] == {"page": 2, "bbox": None}
+    (stored,) = ist._parse_candidates(db.rows[ID]["leaf_candidates"])
+    assert stored["evidence_ref"] == {"page": 2, "bbox": None}
+
+
+@pytest.mark.parametrize("ev", [{"bbox": None}, {"bbox": [0.1, 0.1, 0.5, 0.2]}, {"page": 0, "bbox": None},
+                                {"page": 1, "bbox": [300, 200, 1400, 260]}],
+                         ids=["no_page", "no_page_with_box", "page0", "pixel_box"])
+def test_spec_205_title_leaf_still_refuses_no_page_page0_and_a_pixel_box(db, ev):
+    r = _title_ev(db, ev)
+    assert r.status_code == 422, r.text
+    assert db.rows[ID]["status"] == "extracting"
+
+
+def test_spec_205_the_backstop_keeps_null_and_absent_bbox_and_still_drops_the_rest():
+    c = lambda ev, leaf="pcn": {"leaf": leaf, "score": 0.5, "evidence_ref": ev}  # noqa: E731
+    got = gateway._backstop_candidates([
+        c({"page": 2, "bbox": None}), c({"page": 3}, "pdn"),
+        c({"page_number": 1}), c({"page_number": 1, "bbox": None}),
+        c({"page": 1, "bbox": [300, 200, 1400, 260]}), c({"bbox": None}), c({"page": 0})])
+    assert [x["evidence_ref"] for x in got] == [{"page": 2, "bbox": None}, {"page": 3, "bbox": None}]
+
+
+def test_spec_205_the_steward_evidence_ref_takes_a_null_or_absent_bbox_but_needs_a_page():
+    w = gateway._wire_evidence_ref
+    assert w({"page": 3, "bbox": None}) == {"page": 3, "bbox": None}
+    assert w({"page": 3}) == {"page": 3, "bbox": None}
+    assert w({"page": 3, "bbox": [1, 2, 3, 4], "note": " n "}) == {
+        "page": 3, "bbox": [1, 2, 3, 4], "note": "n"}
+    for bad in ({"bbox": None}, {"page": 3, "bbox": [1, 2, 3]}):
+        with pytest.raises(Exception):
+            w(bad)
