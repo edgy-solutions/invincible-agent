@@ -638,6 +638,45 @@ Origin fields are on the `IngestArtifact` row. The PROMOTION self-loop is on the
 - **Consequence files, one at a time, all rc=0:** card routes 27, quarantine evidence 24, approval authority 12, the delegate reads 29.
 - **Process note:** the implementer called the runner with the test file as its first argument. That argument is the log path, and the runner truncates it, so the file went to 0 bytes. The implementer restored it from HEAD and the diff is insertions only. The runner should refuse a `.py` log argument.
 
+## 2026-10-21: the withholding arms vs Lane 1's class-chain read. Option 1: the arms were wrong (#82, `b0d9385b`)
+
+The directive: "Lane 1's 739b0c74 (class-chain read) turns two arms in your withholding test red. Decide today: are the arms wrong given the chain read, or is the read wrong?"
+
+- **The red arms.** In `tests/security/test_resolve_instance_withholds_what_notice_parts_withholds.py`:
+  - `test_a_component_with_no_linked_notice_is_visible_and_neo4j_is_not_asked`;
+  - `test_a_candidate_that_is_not_sustainment_content_is_untouched`.
+
+  Both asserted `drv.sessions == 0`. Run alone at `lane/01-202` (`6a10a62a`): 2 failed, 14 passed, which is Lane 1's measurement reproduced.
+- **The read, checked in `main.py`:**
+  - `resolve_instance` runs `_attach_class_chains` on what `_filter_sustainment_candidates` returns, so it runs after the filter and only on the survivors' class URIs.
+  - `_CLASS_CHAIN_CYPHER` matches `OntologyClass` nodes only.
+  - `_read_class_chains` catches every exception. It is not a visibility read and cannot produce the 503.
+- **Decision: the arms were wrong.** Their subject is "Neo4j is not asked about a notice". The session count stood in for that subject while the visibility read was Neo4j's only caller.
+- **The edit, one file (PR #82 → `lane/01-202`).**
+  - The double speaks Neo4j's kwargs. Before, it rejected `uris=`, so the arms ran the degraded path.
+  - The double sorts each statement as a notice read, a class read, or unclassified.
+  - The two arms assert `_asked_about_no_notice(drv)`.
+  - The one-session arm counts `notice_sessions`. It was green only because its candidate is withheld.
+  - New positive control: `test_the_double_tells_a_class_read_from_a_notice_read` sorts the real `_CLASS_CHAIN_CYPHER` and `NOTICE_PARTS_CYPHER`.
+  - Census: no other tracked test counts `.sessions`.
+- **After the edit:** 17 passed.
+- **Mutants:**
+
+  | mutant | what it does | result |
+  | --- | --- | --- |
+  | N1 | an unlinked component is looked up | red |
+  | N2b | a non-sustainment IRI is asked about | red |
+  | N3 | one session per notice | red |
+  | N4 | the chain cypher also matches a `Notice` | red |
+  | N5 | the chain read carries `notice_id` | red |
+  | N2 (prefix flip only) | | equivalent |
+
+  N2 is equivalent because `notice_id_of` returns `""` for a non-notice IRI. That is a second guard, not a hole. Scripts: `mut_wh.py` and `mut_wh_n2b.py` in the session scratchpad.
+- **Not run:** any other file, or the full suite (Lane 1's).
+- **Packets placed in master's `sessions/`:**
+  - to Lane 1: `2026-10-21-packet-to-lane-01-option-1-the-arms-were-wrong-the-chain-read-stands-pr-82.md`;
+  - to the architect, with Q18–Q20 at the top and then Q17: `2026-10-21-packet-to-architect-gov-q18-q20-open-q17-open-withholding-arms-decided-option-1.md`.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
