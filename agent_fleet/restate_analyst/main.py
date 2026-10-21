@@ -629,6 +629,10 @@ def _resolve_ontology(
     for the person who holds it. A blank ``user_email`` now raises a 422
     ``no_person`` TerminalError BEFORE any call to Engine O: terminal, because a
     replay cannot conjure a person the request never named.
+
+    A TIMED-OUT CALL REFUSES, IT IS NOT RETRIED. A read timeout raises a terminal 504
+    ``resolution_timeout`` (see the comment at the post): inside ``ctx.run`` an ordinary
+    exception is retried by Restate, and each retry is another full model call.
     """
     if not str(user_email or "").strip():
         raise restate.TerminalError(
@@ -665,18 +669,34 @@ def _resolve_ontology(
     if _domains:
         payload["domains"] = _domains
         payload["domain"] = _domains[0]
-    resp = requests.post(
-        ONTOLOGY_RESOLVE_URL,
-        json=payload,
-        timeout=ONTOLOGY_TIMEOUT,
-        # svc:engine-a — TRANSPORT identity, named HERE. The enforcement SUBJECT stays
-        # `user_email` in the payload above: this is the call whose dropped identity
-        # [[identity-reaches-enforcement-point]] was written for, and the credential must not
-        # be mistaken for the fix to that. Two identities, one request, on purpose.
-        headers=outbound_auth_headers(
-            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
-        ),
-    )
+    # ── A TIMED-OUT MODEL CALL IS NEVER RETRIED AUTOMATICALLY ───────────────────────────
+    #
+    # Architect ruling 2026-10-20: "a Restate retry on a timed-out model call is never
+    # automatic -- it refuses with `resolution_timeout` and the supervisor decides." MEASURED
+    # 2026-10-20 (revision 199): this call runs inside `ctx.run("resolve_ontology")`, where an
+    # ordinary exception is retried by Restate on every read timeout; one prompt was
+    # re-resolved 4 and 8 times, each a full model call that Engine O completed. A ReadTimeout
+    # therefore becomes a TERMINAL 504. ConnectionError and HTTPError stay retryable.
+    try:
+        resp = requests.post(
+            ONTOLOGY_RESOLVE_URL,
+            json=payload,
+            timeout=ONTOLOGY_TIMEOUT,
+            # svc:engine-a — TRANSPORT identity, named HERE. The enforcement SUBJECT stays
+            # `user_email` in the payload above: this is the call whose dropped identity
+            # [[identity-reaches-enforcement-point]] was written for, and the credential must not
+            # be mistaken for the fix to that. Two identities, one request, on purpose.
+            headers=outbound_auth_headers(
+                client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+            ),
+        )
+    except requests.exceptions.ReadTimeout as exc:
+        raise restate.TerminalError(
+            f"resolution_timeout: Engine O's /resolve did not answer inside "
+            f"{ONTOLOGY_TIMEOUT}s; a timed-out model call is not retried automatically -- "
+            f"the supervisor decides",
+            status_code=504,
+        ) from exc
     resp.raise_for_status()
     return resp.json()
 
