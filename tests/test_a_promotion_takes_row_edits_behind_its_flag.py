@@ -211,6 +211,17 @@ def test_a_defect_that_cannot_be_filed_leaves_the_task_pending_and_a_retry_finis
     assert len(world.ledger.records) == 1
 
 
+def test_a_no_requester_filing_the_defect_is_a_terminal_422_not_a_retried_503(world, monkeypatch):
+    """Same fixture as arm 6 (RuntimeError -> 503, the control); it differs only in the exception
+    type: a NoRequester is permanent, so 422 no_requester, never the retried 503."""
+    monkeypatch.setenv(FLAG, "true")
+    world.register_error = human_tasks.NoRequester("no requester")
+    r = _promote(world)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "no_requester"
+    assert world.resolved == []
+
+
 def test_an_existing_defect_task_is_not_registered_again(world, monkeypatch):
     """Arm 7: idempotent on the task key."""
     monkeypatch.setenv(FLAG, "true")

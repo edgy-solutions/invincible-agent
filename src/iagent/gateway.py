@@ -4151,13 +4151,19 @@ async def act_on_human_task(
 
             def _file_defect():
                 if not human_tasks.task_exists(defect["task_key"]):
-                    human_tasks.register_task(
-                        kind=defect["kind"], task_id=defect["task_key"],
-                        audience=defect["audience"], title=defect["title"],
-                        summary=defect["summary"], requested_by=actor,
-                        subject_ref=subject.ingest_id, payload=defect["payload"])
+                    try:
+                        human_tasks.register_task(
+                            kind=defect["kind"], task_id=defect["task_key"],
+                            audience=defect["audience"], title=defect["title"],
+                            summary=defect["summary"], requested_by=actor,
+                            subject_ref=subject.ingest_id, payload=defect["payload"])
+                    except human_tasks.NoRequester as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "no_requester", "message": str(exc)})
             try:
                 await run_in_threadpool(_file_defect)
+            except HTTPException:
+                raise
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=503, detail={
                     "error": "extraction_defect_not_filed", "task_id": task_id,
